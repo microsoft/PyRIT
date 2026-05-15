@@ -11,7 +11,7 @@ import yaml
 from pyrit.auxiliary_attacks.gcg.experiments.train import GreedyCoordinateGradientAdversarialSuffixGenerator
 from pyrit.setup.initialization import _load_environment_files
 
-_MODEL_NAMES: list[str] = ["mistral", "llama_2", "llama_3", "vicuna", "phi_3_mini"]
+_MODEL_NAMES: list[str] = ["mistral", "llama_2", "llama_3", "vicuna", "phi_3_mini", "phi_4"]
 _ALL_MODELS: str = "all_models"
 
 

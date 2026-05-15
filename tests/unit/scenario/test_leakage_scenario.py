@@ -14,6 +14,7 @@ from pyrit.models import SeedAttackGroup, SeedDataset, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.airt import Leakage, LeakageStrategy
+from pyrit.scenario.core import BaselinePolicy
 from pyrit.score import TrueFalseCompositeScorer
 
 
@@ -102,10 +103,9 @@ class TestLeakageInitialization:
         scorer_path = DATASETS_PATH / "score" / "true_false_question" / "leakage.yaml"
         assert scorer_path.exists(), f"Expected leakage.yaml scorer at {scorer_path}"
 
-    def test_init_include_baseline_true(self, mock_objective_scorer):
-        """Test that include_baseline is always True."""
-        scenario = Leakage(objective_scorer=mock_objective_scorer)
-        assert scenario._include_baseline is True
+    def test_init_supports_default_baseline(self):
+        """Leakage opts into the parent's default baseline."""
+        assert Leakage.BASELINE_POLICY is BaselinePolicy.Enabled
 
 
 @pytest.mark.usefixtures(*FIXTURES)

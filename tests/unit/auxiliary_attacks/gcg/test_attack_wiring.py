@@ -7,6 +7,7 @@ These tests catch kwarg mismatches between IndividualPromptAttack/ProgressiveMul
 and MultiPromptAttack.__init__(), and template compatibility issues in _update_ids().
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -43,11 +44,32 @@ MANAGERS = {
 
 
 def _make_mock_worker() -> MagicMock:
-    """Create a mock worker with required attributes for attack construction."""
+    """Create a mock worker whose tokenizer can stand in for a real chat tokenizer.
+
+    The wiring tests construct real ``GCGAttackPrompt`` instances which call
+    ``tokenizer.apply_chat_template`` and then walk character positions in the
+    rendered prompt. We need a real string + a tokenizer that can answer
+    ``char_to_token`` queries on it, so we back the mock with a real
+    distilgpt2 tokenizer (the smallest available transformers tokenizer that
+    ships with all the methods we touch).
+    """
+    from transformers import AutoTokenizer
+
+    real_tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    real_tokenizer.pad_token = real_tokenizer.eos_token
+    real_tokenizer.chat_template = (
+        "{%- for m in messages -%}"
+        "{%- if m['role'] == 'user' -%}"
+        "[INST] {{ m['content'] }} [/INST] "
+        "{%- elif m['role'] == 'assistant' -%}"
+        "{{ m['content'] }}"
+        "{%- endif -%}"
+        "{%- endfor -%}"
+    )
+
     worker = MagicMock()
     worker.model.name_or_path = "test-model"
-    worker.tokenizer.name_or_path = "test-tokenizer"
-    worker.conv_template.name = "test-template"
+    worker.tokenizer = real_tokenizer
     return worker
 
 
@@ -131,7 +153,7 @@ class TestAttackClassWiring:
                 filter_cand=True,
             )
 
-    def test_create_attack_individual_wires_correctly(self) -> None:
+    def test_create_attack_individual_wires_correctly(self, tmp_path: Path) -> None:
         """_create_attack with transfer=False should produce an IndividualPromptAttack
         that can create internal MPA instances without error."""
         worker = _make_mock_worker()
@@ -139,7 +161,7 @@ class TestAttackClassWiring:
         params = Generator._build_params(
             transfer=False,
             control_init="! ! !",
-            result_prefix="test",
+            result_prefix=str(tmp_path / "test"),
             learning_rate=0.01,
             batch_size=64,
             n_steps=5,

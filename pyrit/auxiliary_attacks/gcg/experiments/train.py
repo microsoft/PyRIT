@@ -41,7 +41,6 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
         tokenizer_paths: Optional[list[str]] = None,
         model_name: str = "",
         model_paths: Optional[list[str]] = None,
-        conversation_templates: Optional[list[str]] = None,
         result_prefix: str = "",
         train_data: str = "",
         control_init: str = _DEFAULT_CONTROL_INIT,
@@ -81,7 +80,6 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
             tokenizer_paths (Optional[list[str]]): Paths to tokenizer models.
             model_name (str): Name identifier for the model.
             model_paths (Optional[list[str]]): Paths to model weights.
-            conversation_templates (Optional[list[str]]): Conversation template names.
             result_prefix (str): Prefix for result file paths.
             train_data (str): URL or path to training data CSV.
             control_init (str): Initial control string for optimization.
@@ -117,8 +115,6 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
             tokenizer_paths = []
         if model_paths is None:
             model_paths = []
-        if conversation_templates is None:
-            conversation_templates = []
         if devices is None:
             devices = ["cuda:0"]
         if model_kwargs is None:
@@ -131,7 +127,6 @@ class GreedyCoordinateGradientAdversarialSuffixGenerator:
             tokenizer_paths=tokenizer_paths,
             model_name=model_name,
             model_paths=model_paths,
-            conversation_templates=conversation_templates,
             result_prefix=result_prefix,
             train_data=train_data,
             control_init=control_init,

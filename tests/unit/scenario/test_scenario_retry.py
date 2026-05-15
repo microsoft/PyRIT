@@ -3,6 +3,7 @@
 
 """Tests for Scenario retry functionality."""
 
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
@@ -12,7 +13,7 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult
 from pyrit.scenario import DatasetConfiguration, ScenarioResult
-from pyrit.scenario.core import AtomicAttack, Scenario, ScenarioStrategy
+from pyrit.scenario.core import AtomicAttack, BaselinePolicy, Scenario, ScenarioStrategy
 
 # Test constants
 TEST_ATTACK_TYPE = "TestAttack"
@@ -136,10 +137,9 @@ def create_mock_atomic_attack(name: str, objectives: list[str], run_async_mock: 
 class ConcreteScenario(Scenario):
     """Concrete implementation of Scenario for testing."""
 
-    def __init__(self, atomic_attacks_to_return=None, objective_scorer=None, **kwargs):
-        # Default include_default_baseline=False for tests unless explicitly specified
-        kwargs.setdefault("include_default_baseline", False)
+    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Forbidden
 
+    def __init__(self, atomic_attacks_to_return=None, objective_scorer=None, **kwargs):
         # Get strategy_class from kwargs or use default
         strategy_class = kwargs.pop("strategy_class", None) or self.get_strategy_class()
 

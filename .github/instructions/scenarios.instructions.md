@@ -11,11 +11,15 @@ Scenarios orchestrate multi-attack security testing campaigns. Each scenario gro
 All scenarios inherit from `Scenario` (ABC) and must:
 
 1. **Define `VERSION`** as a class constant (increment on breaking changes)
-2. **Implement three abstract methods:**
+2. **Optionally declare `BASELINE_POLICY`** (defaults to `BaselinePolicy.Enabled` — a baseline `PromptSendingAttack` is prepended and callers can opt out per run via `initialize_async(include_baseline=False)`):
+   - `BaselinePolicy.Disabled` — baseline supported but off by default (e.g. `Jailbreak`, where templates dominate the run).
+   - `BaselinePolicy.Forbidden` — baseline is meaningless for this scenario's comparison axis (e.g. `AdversarialBenchmark`, which compares against gold-standard answers). Explicit `include_baseline=True` raises `ValueError`.
+3. **Implement three abstract methods:**
 
 ```python
 class MyScenario(Scenario):
     VERSION: int = 1
+    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Enabled
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
@@ -30,7 +34,7 @@ class MyScenario(Scenario):
         return DatasetConfiguration(dataset_names=["my_dataset"])
 ```
 
-3. **Optionally override `_get_atomic_attacks_async()`** — the base class provides a default
+4. **Optionally override `_get_atomic_attacks_async()`** — the base class provides a default
    that uses the factory/registry pattern (see "AtomicAttack Construction" below).
    Only override if your scenario needs custom attack construction logic.
 
@@ -153,6 +157,8 @@ The default implementation:
 ### When to override `_get_atomic_attacks_async`:
 Only override when the scenario **cannot** use the factory/registry pattern — e.g., scenarios
 with custom composite logic, per-strategy converter stacks, or non-standard attack construction.
+
+Overrides that want baseline support must emit it themselves by calling `self._build_baseline_atomic_attack(seed_groups=...)` with the same seeds used for the strategy attacks and prepending the result. The base implementation emits baseline automatically; passing freshly resolved seeds reintroduces ADO 9012 (baseline-vs-strategy population divergence under `max_dataset_size`).
 
 ### Manual AtomicAttack construction (for overrides):
 

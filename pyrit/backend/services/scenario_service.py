@@ -9,10 +9,13 @@ through the REST API.
 """
 
 from functools import lru_cache
-from typing import Optional
 
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse, RegisteredScenario
+from pyrit.backend.models.scenarios import (
+    ListRegisteredScenariosResponse,
+    RegisteredScenario,
+    ScenarioParameterSummary,
+)
 from pyrit.registry import ScenarioMetadata, ScenarioRegistry
 
 
@@ -35,6 +38,16 @@ def _metadata_to_registered_scenario(metadata: ScenarioMetadata) -> RegisteredSc
         all_strategies=list(metadata.all_strategies),
         default_datasets=list(metadata.default_datasets),
         max_dataset_size=metadata.max_dataset_size,
+        supported_parameters=[
+            ScenarioParameterSummary(
+                name=p.name,
+                description=p.description,
+                default=repr(p.default) if p.default is not None else None,
+                param_type=p.param_type,
+                choices=p.choices,
+            )
+            for p in metadata.supported_parameters
+        ],
     )
 
 
@@ -53,7 +66,7 @@ class ScenarioService:
         self,
         *,
         limit: int = 50,
-        cursor: Optional[str] = None,
+        cursor: str | None = None,
     ) -> ListRegisteredScenariosResponse:
         """
         List all available scenarios with pagination.
@@ -76,7 +89,7 @@ class ScenarioService:
             pagination=PaginationInfo(limit=limit, has_more=has_more, next_cursor=next_cursor, prev_cursor=cursor),
         )
 
-    async def get_scenario_async(self, *, scenario_name: str) -> Optional[RegisteredScenario]:
+    async def get_scenario_async(self, *, scenario_name: str) -> RegisteredScenario | None:
         """
         Get a single scenario by registry name.
 
@@ -96,7 +109,7 @@ class ScenarioService:
     def _paginate(
         *,
         items: list[RegisteredScenario],
-        cursor: Optional[str],
+        cursor: str | None,
         limit: int,
     ) -> tuple[list[RegisteredScenario], bool]:
         """

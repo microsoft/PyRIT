@@ -683,7 +683,6 @@ class TestHarmbenchMetadataInScenario:
         rta = RedTeamAgent(
             adversarial_chat=target,
             attack_scoring_config=AttackScoringConfig(objective_scorer=mock_scorer),
-            include_baseline=False,
         )
 
         # This is the critical call — it loads seed groups from memory
@@ -693,6 +692,7 @@ class TestHarmbenchMetadataInScenario:
             objective_target=target,
             max_concurrency=1,
             scenario_strategies=[FoundryStrategy.Base64],
+            include_baseline=False,
         )
 
         # Verify the scenario got objectives from harmbench

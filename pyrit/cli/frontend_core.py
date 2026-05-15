@@ -147,6 +147,7 @@ class FrontendCore:
         self._operator = config.operator
         self._operation = config.operation
         self._max_concurrent_scenario_runs = config.max_concurrent_scenario_runs
+        self._allow_custom_initializers = config.allow_custom_initializers
 
         # Lazy-loaded registries
         self._scenario_registry: Optional[ScenarioRegistry] = None
@@ -223,6 +224,7 @@ class FrontendCore:
         derived._operator = self._operator
         derived._operation = self._operation
         derived._max_concurrent_scenario_runs = self._max_concurrent_scenario_runs
+        derived._allow_custom_initializers = self._allow_custom_initializers
         derived._scenario_config = self._scenario_config
 
         # Apply overrides or inherit

@@ -422,19 +422,10 @@ class ScenarioRunService:
 
         status = ScenarioRunStatus(scenario_result.scenario_run_state)
 
-        # Build result fields for completed runs
-        strategies_used: list[str] = []
-        total_attacks = 0
-        completed_attacks = 0
-        if status == ScenarioRunStatus.COMPLETED:
-            completed_attacks = sum(
-                1
-                for results in scenario_result.attack_results.values()
-                for ar in results
-                if ar.outcome in (AttackOutcome.SUCCESS, AttackOutcome.FAILURE)
-            )
-            total_attacks = sum(len(results) for results in scenario_result.attack_results.values())
-            strategies_used = scenario_result.get_strategies_used()
+        # Build result fields from DB (always computed so in-progress runs show progress)
+        total_attacks = sum(len(results) for results in scenario_result.attack_results.values())
+        completed_attacks = total_attacks
+        strategies_used = scenario_result.get_strategies_used()
 
         return ScenarioRunSummary(
             scenario_result_id=scenario_result_id,

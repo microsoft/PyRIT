@@ -14,7 +14,6 @@ tokenizer_paths: ["microsoft/Phi-3-mini-4k-instruct"]
 tokenizer_kwargs: [{"use_fast": False}]
 model_paths: ["microsoft/Phi-3-mini-4k-instruct"]
 model_kwargs: [{"low_cpu_mem_usage": True, "use_cache": False}]
-conversation_templates: ["phi-3-mini"]
 devices: ["cuda:0"]
 train_data: ""
 test_data: ""
