@@ -9,12 +9,13 @@ from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 from uuid import uuid4
 
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models.data_type_serializer import data_serializer_factory
 from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptResponseError
+from pyrit.models.score import Score
 
 if TYPE_CHECKING:
-    from pyrit.identifiers.component_identifier import ComponentIdentifier
     from pyrit.models.message import Message
-    from pyrit.models.score import Score
 
 Originator = Literal["attack", "converter", "undefined", "scorer"]
 """Deprecated: The Originator type alias will be removed in a future release."""
@@ -218,8 +219,6 @@ class MessagePiece:
         Note, this method is async due to the blob retrieval. And because of that, we opted
         to take it out of main and setter functions. The disadvantage is that it must be explicitly called.
         """
-        from pyrit.models.data_type_serializer import data_serializer_factory
-
         original_serializer = data_serializer_factory(
             category="prompt-memory-entries",
             data_type=self.original_value_data_type,
@@ -365,9 +364,6 @@ class MessagePiece:
         Returns:
             MessagePiece: Reconstructed instance.
         """
-        from pyrit.identifiers.component_identifier import ComponentIdentifier
-        from pyrit.models.score import Score
-
         return cls(
             id=data.get("id"),
             role=data.get("role", "user"),

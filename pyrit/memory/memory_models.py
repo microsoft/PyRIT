@@ -1001,6 +1001,9 @@ class ScenarioResultEntry(Base):
 
         Args:
             entry (ScenarioResult): The scenario result object to convert into a database entry.
+
+        Raises:
+            ValueError: If ``entry.objective_target_identifier`` is ``None``.
         """
         self.id = entry.id
         self.scenario_name = entry.scenario_identifier.name
