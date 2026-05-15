@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Any, Optional
+from typing import Any
 
 from colorama import Fore, Style
 
@@ -116,7 +116,7 @@ class PrettyScorerPrinter(ScorerPrinterBase):
 
         return "".join(lines)
 
-    def _render_objective_metrics(self, metrics: Optional[Any]) -> str:
+    def _render_objective_metrics(self, metrics: Any | None) -> str:
         """
         Render objective scorer evaluation metrics.
 
@@ -180,7 +180,7 @@ class PrettyScorerPrinter(ScorerPrinterBase):
 
         return "".join(lines)
 
-    def _render_harm_metrics(self, metrics: Optional[Any]) -> str:
+    def _render_harm_metrics(self, metrics: Any | None) -> str:
         """
         Render harm scorer evaluation metrics.
 
@@ -260,20 +260,17 @@ class PrettyScorerPrinter(ScorerPrinterBase):
         Returns:
             str: The rendered scorer information text.
         """
-        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
-
         lines: list[str] = []
         lines.append("\n")
         lines.append(self._format_colored(f"{self._indent}📊 Scorer Information", Style.BRIGHT))
         lines.append(self._format_colored(f"{self._indent * 2}▸ Scorer Identifier", Fore.WHITE))
         lines.append(self._render_scorer_info(scorer_identifier, indent_level=3))
 
-        eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
         if harm_category is not None:
-            metrics = self._get_harm_metrics(eval_hash=eval_hash, harm_category=harm_category)
+            metrics = self._get_harm_metrics(scorer_identifier=scorer_identifier, harm_category=harm_category)
             lines.append(self._render_harm_metrics(metrics))
         else:
-            metrics = self._get_objective_metrics(eval_hash=eval_hash)
+            metrics = self._get_objective_metrics(scorer_identifier=scorer_identifier)
             lines.append(self._render_objective_metrics(metrics))
 
         return "".join(lines)
@@ -302,28 +299,39 @@ class PrettyScorerMemoryPrinter(PrettyScorerPrinter):
         """
         return await super().render_async(scorer_identifier=scorer_identifier, harm_category=harm_category)
 
-    def _get_objective_metrics(self, *, eval_hash: str) -> Any:
+    def _get_objective_metrics(self, *, scorer_identifier: ComponentIdentifier) -> Any:
         """
         Fetch objective scorer evaluation metrics from the registry.
+
+        Args:
+            scorer_identifier (ComponentIdentifier): The scorer identifier.
 
         Returns:
             ObjectiveScorerMetrics or None: The metrics, or None if not found.
         """
+        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
         from pyrit.score.scorer_evaluation.scorer_metrics_io import (
             find_objective_metrics_by_eval_hash,
         )
 
+        eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
         return find_objective_metrics_by_eval_hash(eval_hash=eval_hash)
 
-    def _get_harm_metrics(self, *, eval_hash: str, harm_category: str) -> Any:
+    def _get_harm_metrics(self, *, scorer_identifier: ComponentIdentifier, harm_category: str) -> Any:
         """
         Fetch harm scorer evaluation metrics from the registry.
+
+        Args:
+            scorer_identifier (ComponentIdentifier): The scorer identifier.
+            harm_category (str): The harm category to look up.
 
         Returns:
             HarmScorerMetrics or None: The metrics, or None if not found.
         """
+        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
         from pyrit.score.scorer_evaluation.scorer_metrics_io import (
             find_harm_metrics_by_eval_hash,
         )
 
+        eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
         return find_harm_metrics_by_eval_hash(eval_hash=eval_hash, harm_category=harm_category)

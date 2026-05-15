@@ -276,9 +276,9 @@ def test_render_harm_metrics_optional_fields_none():
 # --- write_async (objective) tests ---
 
 
-@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
 @patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
-async def test_write_async_objective_with_metrics(mock_eval_id_cls, mock_find, capsys):
+@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
+async def test_write_async_objective_with_metrics(mock_find, mock_eval_id_cls, capsys):
     printer = ConsoleScorerPrinter(enable_colors=False)
     identifier = _make_scorer_identifier(class_name="MyScorer")
     metrics = _make_objective_metrics()
@@ -297,9 +297,9 @@ async def test_write_async_objective_with_metrics(mock_eval_id_cls, mock_find, c
     mock_find.assert_called_once_with(eval_hash="abc123")
 
 
-@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
 @patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
-async def test_write_async_objective_no_metrics(mock_eval_id_cls, mock_find, capsys):
+@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
+async def test_write_async_objective_no_metrics(mock_find, mock_eval_id_cls, capsys):
     printer = ConsoleScorerPrinter(enable_colors=False)
     identifier = _make_scorer_identifier()
 
@@ -316,9 +316,9 @@ async def test_write_async_objective_no_metrics(mock_eval_id_cls, mock_find, cap
 # --- write_async (harm) tests ---
 
 
-@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
 @patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
-async def test_write_async_harm_with_metrics(mock_eval_id_cls, mock_find, capsys):
+@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
+async def test_write_async_harm_with_metrics(mock_find, mock_eval_id_cls, capsys):
     printer = ConsoleScorerPrinter(enable_colors=False)
     identifier = _make_scorer_identifier(class_name="HarmScorer")
     metrics = _make_harm_metrics()
@@ -337,9 +337,9 @@ async def test_write_async_harm_with_metrics(mock_eval_id_cls, mock_find, capsys
     mock_find.assert_called_once_with(eval_hash="harm_hash", harm_category="hate_speech")
 
 
-@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
 @patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
-async def test_write_async_harm_no_metrics(mock_eval_id_cls, mock_find, capsys):
+@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
+async def test_write_async_harm_no_metrics(mock_find, mock_eval_id_cls, capsys):
     printer = ConsoleScorerPrinter(enable_colors=False)
     identifier = _make_scorer_identifier()
 

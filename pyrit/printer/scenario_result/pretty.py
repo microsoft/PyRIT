@@ -28,6 +28,7 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         width: int = 100,
         indent_size: int = 2,
         enable_colors: bool = True,
+        scorer_printer: ScorerPrinterBase | None = None,
     ) -> None:
         """
         Initialize the pretty scenario printer.
@@ -37,11 +38,14 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
             width (int): Maximum width for text wrapping. Defaults to 100.
             indent_size (int): Number of spaces for indentation. Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
+            scorer_printer (ScorerPrinterBase | None): Scorer printer for rendering scorer
+                information. Defaults to None; leaf classes should provide a default.
         """
         super().__init__(sink=sink)
         self._width = width
         self._indent = " " * indent_size
         self._enable_colors = enable_colors
+        self._scorer_printer = scorer_printer
 
     def _format_colored(self, text: str, *colors: str) -> str:
         """
@@ -175,6 +179,8 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
 
         scorer_identifier = result.objective_scorer_identifier
         if scorer_identifier:
+            if self._scorer_printer is None:
+                raise ValueError("scorer_printer is required when result has objective_scorer_identifier")
             parts.append(await self._scorer_printer.render_async(scorer_identifier=scorer_identifier))
 
         lines = []
@@ -257,9 +263,10 @@ class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
         super().__init__(sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors)
         from pyrit.printer.scorer.pretty import PrettyScorerMemoryPrinter
 
-        self._scorer_printer = PrettyScorerMemoryPrinter(
+        scorer_printer = PrettyScorerMemoryPrinter(
             sink=self._sink, indent_size=indent_size, enable_colors=enable_colors
         )
+        self._scorer_printer = scorer_printer
 
     async def render_async(self, result: ScenarioResult) -> str:
         """

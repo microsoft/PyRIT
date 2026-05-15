@@ -3,7 +3,7 @@
 
 from abc import abstractmethod
 
-from pyrit.models import AttackOutcome, Message, MessagePiece, Score
+from pyrit.models import AttackOutcome, Message, Score
 from pyrit.printer.base import PrinterBase
 
 
@@ -40,17 +40,6 @@ class AttackResultPrinterBase(PrinterBase):
 
         Returns:
             list[Score]: The scores associated with the given piece IDs.
-        """
-
-    async def _display_image_async(self, piece: MessagePiece) -> None:  # noqa: B027
-        """
-        Display an image from a message piece. No-op by default.
-
-        Framework subclasses can override to use PIL/IPython for rendering.
-        Thin-client subclasses can override to render URLs or base64 data.
-
-        Args:
-            piece (MessagePiece): The message piece that may contain image data.
         """
 
     @staticmethod

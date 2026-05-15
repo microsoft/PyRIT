@@ -14,7 +14,7 @@ def test_scorer_printer_cannot_be_instantiated():
 
 def test_scorer_printer_subclass_must_implement_get_objective_metrics():
     class IncompletePrinter(ScorerPrinter):
-        def _get_harm_metrics(self, *, eval_hash: str, harm_category: str):
+        def _get_harm_metrics(self, *, scorer_identifier: ComponentIdentifier, harm_category: str):
             return None
 
     with pytest.raises(TypeError, match="Can't instantiate abstract class"):
@@ -23,7 +23,7 @@ def test_scorer_printer_subclass_must_implement_get_objective_metrics():
 
 def test_scorer_printer_subclass_must_implement_get_harm_metrics():
     class IncompletePrinter(ScorerPrinter):
-        def _get_objective_metrics(self, *, eval_hash: str):
+        def _get_objective_metrics(self, *, scorer_identifier: ComponentIdentifier):
             return None
 
     with pytest.raises(TypeError, match="Can't instantiate abstract class"):
@@ -32,10 +32,10 @@ def test_scorer_printer_subclass_must_implement_get_harm_metrics():
 
 def test_scorer_printer_subclass_must_implement_write_async():
     class IncompletePrinter(ScorerPrinter):
-        def _get_objective_metrics(self, *, eval_hash: str):
+        def _get_objective_metrics(self, *, scorer_identifier: ComponentIdentifier):
             return None
 
-        def _get_harm_metrics(self, *, eval_hash: str, harm_category: str):
+        def _get_harm_metrics(self, *, scorer_identifier: ComponentIdentifier, harm_category: str):
             return None
 
     with pytest.raises(TypeError, match="Can't instantiate abstract class"):
@@ -44,10 +44,10 @@ def test_scorer_printer_subclass_must_implement_write_async():
 
 def test_scorer_printer_complete_subclass_can_be_instantiated():
     class CompletePrinter(ScorerPrinter):
-        def _get_objective_metrics(self, *, eval_hash: str):
+        def _get_objective_metrics(self, *, scorer_identifier: ComponentIdentifier):
             return None
 
-        def _get_harm_metrics(self, *, eval_hash: str, harm_category: str):
+        def _get_harm_metrics(self, *, scorer_identifier: ComponentIdentifier, harm_category: str):
             return None
 
         async def render_async(
