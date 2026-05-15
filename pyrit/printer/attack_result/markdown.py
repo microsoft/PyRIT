@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import os
 import warnings
 from datetime import datetime, timezone
 
-from pyrit.models import AttackResult, ConversationType, Message, MessagePiece, Score
+from pyrit.models import AttackResult, ConversationType, Message, Score
 from pyrit.printer.attack_result.base import AttackResultPrinterBase
+from pyrit.printer.conversation.markdown import MarkdownConversationPrinter
+from pyrit.printer.score.markdown import MarkdownScorePrinter
 from pyrit.printer.sink import Sink
 
 
@@ -14,11 +15,18 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
     """
     Markdown printer for attack results optimized for Jupyter notebooks.
 
-    Contains all formatting logic. Subclasses implement get_conversation_async
-    and get_scores_async for data fetching.
+    Composes a conversation printer for message rendering and a score printer
+    for inline score display. Subclasses implement data-fetching methods.
     """
 
-    def __init__(self, *, sink: Sink | None = None, display_inline: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        sink: Sink | None = None,
+        display_inline: bool = True,
+        conversation_printer: MarkdownConversationPrinter | None = None,
+        score_printer: MarkdownScorePrinter | None = None,
+    ) -> None:
         """
         Initialize the markdown printer.
 
@@ -26,48 +34,17 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
             sink (Sink | None): Output sink. Defaults to StdoutSink().
             display_inline (bool): Kept for backward compatibility but unused.
                 All output is routed through the sink. Defaults to True.
+            conversation_printer (MarkdownConversationPrinter | None): Conversation printer.
+                Defaults to a new MarkdownConversationPrinter with matching sink.
+            score_printer (MarkdownScorePrinter | None): Score printer.
+                Defaults to a new MarkdownScorePrinter with matching sink.
         """
         super().__init__(sink=sink)
         self._display_inline = display_inline
-
-    def _format_score(self, score: Score, indent: str = "") -> str:
-        """
-        Format a score object as markdown with proper styling.
-
-        Args:
-            score (Score): The score object to format.
-            indent (str): String prefix for indentation. Defaults to "".
-
-        Returns:
-            str: Formatted markdown representation of the score.
-        """
-        lines = []
-
-        score_value = score.get_value()
-        if isinstance(score_value, bool):
-            value_str = str(score_value)
-        elif isinstance(score_value, (int, float)):
-            value_str = f"**{score_value:.2f}**" if isinstance(score_value, float) else f"**{score_value}**"
-        else:
-            value_str = f"**{score_value}**"
-
-        lines.append(f"{indent}- **Score Type:** {score.score_type}")
-        lines.append(f"{indent}- **Value:** {value_str}")
-        category_str = ", ".join(score.score_category) if score.score_category else "N/A"
-        lines.append(f"{indent}- **Category:** {category_str}")
-
-        if score.score_rationale:
-            rationale_lines = score.score_rationale.split("\n")
-            if len(rationale_lines) > 1:
-                lines.append(f"{indent}- **Rationale:**")
-                lines.extend(f"{indent}  {line}" for line in rationale_lines)
-            else:
-                lines.append(f"{indent}- **Rationale:** {score.score_rationale}")
-
-        if score.score_metadata:
-            lines.append(f"{indent}- **Metadata:** `{score.score_metadata}`")
-
-        return "\n".join(lines)
+        self._score_printer = score_printer or MarkdownScorePrinter(sink=sink)
+        self._conversation_printer = conversation_printer or MarkdownConversationPrinter(
+            sink=sink, score_printer=self._score_printer,
+        )
 
     async def render_async(
         self,
@@ -153,8 +130,8 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         warnings.warn(
             "print_conversation_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2
         )
-        markdown_lines = await self._get_conversation_markdown_async(result=result, include_scores=include_scores)
-        await self._write_async("\n".join(markdown_lines))
+        lines = await self._get_conversation_markdown_async(result=result, include_scores=include_scores)
+        await self._write_async("\n".join(lines))
 
     async def print_summary_async(self, result: AttackResult) -> None:
         """Deprecated. Use write_async instead."""
@@ -175,223 +152,16 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         Returns:
             list[str]: Markdown strings for the conversation.
         """
-        markdown_lines: list[str] = []
-
         if not result.conversation_id:
-            markdown_lines.append("*No conversation ID available*\n")
-            return markdown_lines
+            return ["*No conversation ID available*\n"]
 
         messages = await self._get_conversation_async(result.conversation_id)
 
         if not messages:
-            markdown_lines.append(f"*No conversation found for ID: {result.conversation_id}*\n")
-            return markdown_lines
+            return [f"*No conversation found for ID: {result.conversation_id}*\n"]
 
-        turn_number = 0
-
-        for message in messages:
-            if not message.message_pieces:
-                continue
-
-            message_role = message.get_piece().api_role
-
-            if message_role == "system":
-                markdown_lines.extend(self._format_system_message(message))
-            elif message_role == "user":
-                turn_number += 1
-                markdown_lines.extend(await self._format_user_message_async(message=message, turn_number=turn_number))
-            else:
-                markdown_lines.extend(await self._format_assistant_message_async(message=message))
-
-            if include_scores:
-                markdown_lines.extend(await self._format_message_scores_async(message))
-
-        return markdown_lines
-
-    def _format_system_message(self, message: Message) -> list[str]:
-        """
-        Format a system message as markdown.
-
-        Args:
-            message (Message): The system message to format.
-
-        Returns:
-            list[str]: Markdown strings for the system message.
-        """
-        lines = ["\n### System Message\n"]
-        lines.extend(f"{piece.converted_value}\n" for piece in message.message_pieces)
-        return lines
-
-    async def _format_user_message_async(self, *, message: Message, turn_number: int) -> list[str]:
-        """
-        Format a user message as markdown with turn numbering.
-
-        Args:
-            message (Message): The user message to format.
-            turn_number (int): The conversation turn number.
-
-        Returns:
-            list[str]: Markdown strings for the user message.
-        """
-        lines = [f"\n### Turn {turn_number}\n", "#### User\n"]
-
-        for piece in message.message_pieces:
-            lines.extend(await self._format_piece_content_async(piece=piece, show_original=True))
-
-        return lines
-
-    async def _format_assistant_message_async(self, *, message: Message) -> list[str]:
-        """
-        Format an assistant response message as markdown.
-
-        Args:
-            message (Message): The response message to format.
-
-        Returns:
-            list[str]: Markdown strings for the response message.
-        """
-        lines: list[str] = []
-        piece = message.message_pieces[0]
-        role_name = "Assistant (Simulated)" if piece.is_simulated else piece.api_role.capitalize()
-
-        lines.append(f"\n#### {role_name}\n")
-
-        for piece in message.message_pieces:
-            lines.extend(await self._format_piece_content_async(piece=piece, show_original=False))
-
-        return lines
-
-    def _get_audio_mime_type(self, *, audio_path: str) -> str:
-        """
-        Determine the MIME type for an audio file based on its file extension.
-
-        Args:
-            audio_path (str): The path to the audio file.
-
-        Returns:
-            str: The appropriate MIME type for the audio file.
-        """
-        if audio_path.lower().endswith(".wav"):
-            return "audio/wav"
-        if audio_path.lower().endswith(".ogg"):
-            return "audio/ogg"
-        if audio_path.lower().endswith(".m4a"):
-            return "audio/mp4"
-        return "audio/mpeg"
-
-    def _format_image_content(self, *, image_path: str) -> list[str]:
-        """
-        Format image content as markdown.
-
-        Args:
-            image_path (str): The path to the image file.
-
-        Returns:
-            list[str]: Markdown lines for the image.
-        """
-        relative_path = os.path.relpath(image_path)
-        posix_path = relative_path.replace("\\", "/")
-        return [f"![Image]({posix_path})\n"]
-
-    def _format_audio_content(self, *, audio_path: str) -> list[str]:
-        """
-        Format audio content as HTML5 audio player.
-
-        Args:
-            audio_path (str): The path to the audio file.
-
-        Returns:
-            list[str]: Markdown lines for the audio player.
-        """
-        lines: list[str] = []
-        lines.append("<audio controls>")
-
-        audio_type = self._get_audio_mime_type(audio_path=audio_path)
-
-        lines.append(f'<source src="{audio_path}" type="{audio_type}">')
-        lines.append("Your browser does not support the audio element.")
-        lines.append("</audio>\n")
-
-        return lines
-
-    def _format_error_content(self, *, piece: MessagePiece) -> list[str]:
-        """
-        Format error response content with proper styling.
-
-        Args:
-            piece (MessagePiece): The message piece containing the error.
-
-        Returns:
-            list[str]: Markdown lines for the error response.
-        """
-        lines: list[str] = []
-        lines.append("**Error Response:**\n")
-        lines.append(f"*Error Type: {piece.response_error}*\n")
-        lines.append("```json")
-        lines.append(piece.converted_value)
-        lines.append("```\n")
-
-        return lines
-
-    def _format_text_content(self, *, piece: MessagePiece, show_original: bool) -> list[str]:
-        """
-        Format regular text content.
-
-        Args:
-            piece (MessagePiece): The message piece containing the text.
-            show_original (bool): Whether to show original value if different.
-
-        Returns:
-            list[str]: Markdown lines for the text content.
-        """
-        lines: list[str] = []
-
-        if show_original and piece.converted_value != piece.original_value:
-            lines.append("**Original:**\n")
-            lines.append(f"{piece.original_value}\n")
-            lines.append("\n**Converted:**\n")
-
-        lines.append(f"{piece.converted_value}\n")
-
-        return lines
-
-    async def _format_piece_content_async(self, *, piece: MessagePiece, show_original: bool) -> list[str]:
-        """
-        Format a single piece content based on its data type.
-
-        Args:
-            piece (MessagePiece): The message piece to format.
-            show_original (bool): Whether to show original value if different.
-
-        Returns:
-            list[str]: Markdown lines for this piece.
-        """
-        if piece.converted_value_data_type == "image_path":
-            return self._format_image_content(image_path=piece.converted_value)
-        if piece.converted_value_data_type == "audio_path":
-            return self._format_audio_content(audio_path=piece.converted_value)
-        if piece.has_error():
-            return self._format_error_content(piece=piece)
-        return self._format_text_content(piece=piece, show_original=show_original)
-
-    async def _format_message_scores_async(self, message: Message) -> list[str]:
-        """
-        Format scores for all pieces in a message as markdown.
-
-        Args:
-            message (Message): The message containing pieces to format scores for.
-
-        Returns:
-            list[str]: Markdown strings for the scores.
-        """
-        lines: list[str] = []
-        for piece in message.message_pieces:
-            scores = await self._get_scores_async(prompt_ids=[str(piece.id)])
-            if scores:
-                lines.append("\n##### Scores\n")
-                lines.extend(self._format_score(score, indent="") for score in scores)
-                lines.append("")
-        return lines
+        rendered = await self._conversation_printer.render_async(messages, include_scores=include_scores)
+        return [rendered]
 
     async def _get_summary_markdown_async(self, result: AttackResult) -> list[str]:
         """
@@ -432,7 +202,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
 
         if result.last_score:
             markdown_lines.append("\n### Final Score\n")
-            markdown_lines.append(self._format_score(result.last_score))
+            markdown_lines.append(self._score_printer._format_score(result.last_score))
 
         return markdown_lines
 
@@ -484,7 +254,9 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
                 scores = await self._get_scores_async(prompt_ids=[str(piece.id)])
                 if scores:
                     markdown_lines.append("\n**Score:**\n")
-                    markdown_lines.extend(self._format_score(score, indent="") for score in scores)
+                    markdown_lines.extend(
+                        self._score_printer._format_score(score, indent="") for score in scores
+                    )
 
         return markdown_lines
 
@@ -562,9 +334,15 @@ class MarkdownAttackResultMemoryPrinter(MarkdownAttackResultPrinter):
             display_inline (bool): Kept for backward compatibility but unused.
                 All output is routed through the sink. Defaults to True.
         """
-        super().__init__(sink=sink, display_inline=display_inline)
         from pyrit.memory import CentralMemory
+        from pyrit.printer.conversation.markdown import MarkdownConversationMemoryPrinter
 
+        score_printer = MarkdownScorePrinter(sink=sink)
+        conversation_printer = MarkdownConversationMemoryPrinter(sink=sink, score_printer=score_printer)
+        super().__init__(
+            sink=sink, display_inline=display_inline,
+            conversation_printer=conversation_printer, score_printer=score_printer,
+        )
         self._memory = CentralMemory.get_memory_instance()
 
     async def render_async(

@@ -76,21 +76,47 @@ class FileSink(Sink):
             f.write(data)
 
 
-def resolve_sink(to: Path | str | Sink | None) -> Sink:
+class IPythonMarkdownSink(Sink):
     """
-    Resolve a destination argument to a Sink instance.
+    Sink that renders markdown via IPython's ``display(Markdown(...))``.
+
+    Falls back to ``print()`` if IPython is not available (e.g., outside
+    a Jupyter notebook).
+    """
+
+    async def write_async(self, data: str) -> None:
+        """
+        Display data as rendered markdown in IPython, or print to stdout.
+
+        Args:
+            data (str): The markdown text to display.
+        """
+        try:
+            from IPython.display import Markdown, display
+
+            display(Markdown(data))
+        except (ImportError, NameError):
+            print(data, end="")
+
+
+def get_default_sink(default: type[Sink] | None = None) -> Sink:
+    """
+    Return the appropriate default sink for the current environment.
+
+    When ``default`` is None, auto-detects: uses ``IPythonMarkdownSink``
+    inside Jupyter/IPython notebooks, otherwise ``StdoutSink``.
 
     Args:
-        to (Path | str | Sink | None): The destination.
-            None → StdoutSink.
-            Path or str → FileSink.
-            Sink instance → used as-is.
+        default (type[Sink] | None): Sink class to instantiate.
+            None means auto-detect based on environment.
 
     Returns:
-        Sink: The resolved sink.
+        Sink: The default sink instance.
     """
-    if to is None:
-        return StdoutSink()
-    if isinstance(to, Sink):
-        return to
-    return FileSink(path=Path(to))
+    if default is not None:
+        return default()
+    from pyrit.common.notebook_utils import is_in_ipython_session
+
+    if is_in_ipython_session():
+        return IPythonMarkdownSink()
+    return StdoutSink()

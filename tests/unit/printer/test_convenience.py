@@ -1,42 +1,42 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import tempfile
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.printer.helpers import (
     print_attack_result_async,
+    print_conversation_async,
+    print_score_async,
     print_scenario_result_async,
     print_scorer_async,
 )
-from pyrit.printer.sink import FileSink, OutputFormat, StdoutSink, resolve_sink
+from pyrit.printer.sink import IPythonMarkdownSink, OutputFormat, Sink, StdoutSink, get_default_sink
 
 
-# --- _resolve_sink tests ---
+# --- get_default_sink tests ---
 
 
-def test_resolve_sink_none_returns_stdout():
-    sink = resolve_sink(None)
+def test_get_default_sink_no_default_returns_stdout_outside_notebook():
+    sink = get_default_sink()
     assert isinstance(sink, StdoutSink)
 
 
-def test_resolve_sink_path_returns_file_sink():
-    sink = resolve_sink(Path("output.txt"))
-    assert isinstance(sink, FileSink)
+def test_get_default_sink_explicit_default():
+    sink = get_default_sink(IPythonMarkdownSink)
+    assert isinstance(sink, IPythonMarkdownSink)
 
 
-def test_resolve_sink_str_returns_file_sink():
-    sink = resolve_sink("output.txt")
-    assert isinstance(sink, FileSink)
+def test_get_default_sink_explicit_stdout():
+    sink = get_default_sink(StdoutSink)
+    assert isinstance(sink, StdoutSink)
 
 
-def test_resolve_sink_sink_instance_passthrough():
-    original = StdoutSink()
-    sink = resolve_sink(original)
-    assert sink is original
+@patch("pyrit.common.notebook_utils.is_in_ipython_session", return_value=True)
+def test_get_default_sink_auto_detects_notebook(_mock):
+    sink = get_default_sink()
+    assert isinstance(sink, IPythonMarkdownSink)
 
 
 # --- print_attack_result_async tests ---
@@ -52,11 +52,13 @@ async def test_print_attack_result_async_pretty_default(mock_cls):
     await print_attack_result_async(result)
 
     mock_cls.assert_called_once()
+    call_kwargs = mock_cls.call_args[1]
+    assert isinstance(call_kwargs["sink"], StdoutSink)
     mock_printer.write_async.assert_called_once()
 
 
 @patch("pyrit.printer.attack_result.markdown.MarkdownAttackResultMemoryPrinter")
-async def test_print_attack_result_async_markdown(mock_cls):
+async def test_print_attack_result_async_markdown_auto_detects_sink(mock_cls):
     mock_printer = MagicMock()
     mock_printer.write_async = AsyncMock()
     mock_cls.return_value = mock_printer
@@ -65,25 +67,24 @@ async def test_print_attack_result_async_markdown(mock_cls):
     await print_attack_result_async(result, format="markdown")
 
     mock_cls.assert_called_once()
+    call_kwargs = mock_cls.call_args[1]
+    # Outside a notebook, auto-detect falls back to StdoutSink
+    assert isinstance(call_kwargs["sink"], StdoutSink)
     mock_printer.write_async.assert_called_once()
 
 
 @patch("pyrit.printer.attack_result.pretty.PrettyAttackResultMemoryPrinter")
-async def test_print_attack_result_async_to_file(mock_cls):
+async def test_print_attack_result_async_explicit_sink(mock_cls):
     mock_printer = MagicMock()
     mock_printer.write_async = AsyncMock()
     mock_cls.return_value = mock_printer
     result = MagicMock()
+    custom_sink = StdoutSink()
 
-    with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
-        path = Path(f.name)
+    await print_attack_result_async(result, sink=custom_sink)
 
-    try:
-        await print_attack_result_async(result, sink=path)
-        call_kwargs = mock_cls.call_args[1]
-        assert isinstance(call_kwargs["sink"], FileSink)
-    finally:
-        path.unlink(missing_ok=True)
+    call_kwargs = mock_cls.call_args[1]
+    assert call_kwargs["sink"] is custom_sink
 
 
 # --- print_scenario_result_async tests ---
@@ -138,3 +139,63 @@ async def test_print_scorer_async_with_harm_category(mock_cls):
 async def test_print_scorer_async_unsupported_format():
     with pytest.raises(ValueError, match="Unsupported format"):
         await print_scorer_async(scorer_identifier=MagicMock(), format="markdown")
+
+
+# --- print_conversation_async tests ---
+
+
+@patch("pyrit.printer.conversation.pretty.PrettyConversationMemoryPrinter")
+async def test_print_conversation_async_pretty_default(mock_cls):
+    mock_printer = MagicMock()
+    mock_printer.write_async = AsyncMock()
+    mock_cls.return_value = mock_printer
+    messages = [MagicMock()]
+
+    await print_conversation_async(messages)
+
+    mock_cls.assert_called_once()
+    call_kwargs = mock_cls.call_args[1]
+    assert isinstance(call_kwargs["sink"], StdoutSink)
+    mock_printer.write_async.assert_called_once()
+
+
+@patch("pyrit.printer.conversation.pretty.PrettyConversationMemoryPrinter")
+async def test_print_conversation_async_with_scores(mock_cls):
+    mock_printer = MagicMock()
+    mock_printer.write_async = AsyncMock()
+    mock_cls.return_value = mock_printer
+    messages = [MagicMock()]
+
+    await print_conversation_async(messages, include_scores=True)
+
+    mock_printer.write_async.assert_called_once_with(
+        messages, include_scores=True, include_reasoning_trace=False
+    )
+
+
+async def test_print_conversation_async_unsupported_format():
+    with pytest.raises(ValueError, match="Unsupported format"):
+        await print_conversation_async([MagicMock()], format="markdown")
+
+
+# --- print_score_async tests ---
+
+
+@patch("pyrit.printer.score.pretty.PrettyScorePrinter")
+async def test_print_score_async_pretty_default(mock_cls):
+    mock_printer = MagicMock()
+    mock_printer.write_async = AsyncMock()
+    mock_cls.return_value = mock_printer
+    scores = [MagicMock()]
+
+    await print_score_async(scores)
+
+    mock_cls.assert_called_once()
+    call_kwargs = mock_cls.call_args[1]
+    assert isinstance(call_kwargs["sink"], StdoutSink)
+    mock_printer.write_async.assert_called_once_with(scores)
+
+
+async def test_print_score_async_unsupported_format():
+    with pytest.raises(ValueError, match="Unsupported format"):
+        await print_score_async([MagicMock()], format="markdown")

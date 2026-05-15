@@ -1,12 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.printer.sink import FileSink, Sink, StdoutSink
+from pyrit.printer.sink import FileSink, IPythonMarkdownSink, Sink, StdoutSink, get_default_sink
 
 
 def test_sink_is_abstract():
@@ -60,3 +62,50 @@ async def test_file_sink_append_mode():
 def test_file_sink_rejects_invalid_mode():
     with pytest.raises(ValueError, match="mode must be 'w' or 'a'"):
         FileSink(path=Path("test.txt"), mode="wb")
+
+
+# --- IPythonMarkdownSink tests ---
+
+
+async def test_ipython_markdown_sink_fallback_to_print(capsys):
+    """When IPython is not available, falls back to print()."""
+    sink = IPythonMarkdownSink()
+    with patch.dict(sys.modules, {"IPython": None, "IPython.display": None}):
+        await sink.write_async("# Hello")
+    captured = capsys.readouterr()
+    assert "# Hello" in captured.out
+
+
+async def test_ipython_markdown_sink_with_ipython_available():
+    """When IPython is available, uses display(Markdown(...))."""
+    mock_display = MagicMock()
+    mock_markdown_cls = MagicMock()
+
+    ipython_display_module = MagicMock()
+    ipython_display_module.display = mock_display
+    ipython_display_module.Markdown = mock_markdown_cls
+
+    sink = IPythonMarkdownSink()
+    with patch.dict(sys.modules, {"IPython": MagicMock(), "IPython.display": ipython_display_module}):
+        await sink.write_async("**bold**")
+
+    mock_markdown_cls.assert_called_once_with("**bold**")
+    mock_display.assert_called_once()
+
+
+# --- get_default_sink tests ---
+
+
+def test_get_default_sink_no_default_returns_stdout_outside_notebook():
+    result = get_default_sink()
+    assert isinstance(result, StdoutSink)
+
+
+def test_get_default_sink_explicit_ipython():
+    result = get_default_sink(IPythonMarkdownSink)
+    assert isinstance(result, IPythonMarkdownSink)
+
+
+def test_get_default_sink_explicit_stdout():
+    result = get_default_sink(StdoutSink)
+    assert isinstance(result, StdoutSink)

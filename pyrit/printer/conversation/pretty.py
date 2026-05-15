@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import json
+import logging
 import textwrap
 
 from colorama import Fore, Style
@@ -10,6 +11,8 @@ from pyrit.models import Message, MessagePiece, Score
 from pyrit.printer.conversation.base import ConversationPrinterBase
 from pyrit.printer.score.pretty import PrettyScorePrinter
 from pyrit.printer.sink import Sink
+
+logger = logging.getLogger(__name__)
 
 
 class PrettyConversationPrinter(ConversationPrinterBase):
@@ -297,7 +300,33 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
         return list(self._memory.get_prompt_scores(prompt_ids=prompt_ids))
 
     async def _display_image_async(self, piece: MessagePiece) -> None:
-        """Display images using PIL/IPython in notebook environments."""
-        from pyrit.common.display_response import display_image_response
+        """
+        Display an image from a message piece in notebook environments.
 
-        await display_image_response(piece)
+        Uses ``DataTypeSerializer.read_data`` for transparent storage access
+        (local disk or Azure Blob) and ``IPython.display.Image`` for rendering.
+        No-op outside notebook environments.
+
+        Args:
+            piece (MessagePiece): The message piece that may contain image data.
+        """
+        if piece.converted_value_data_type != "image_path" or piece.response_error != "none":
+            return
+
+        from pyrit.common.notebook_utils import is_in_ipython_session
+
+        if not is_in_ipython_session():
+            return
+
+        from pyrit.models.data_type_serializer import ImagePathDataTypeSerializer
+
+        try:
+            serializer = ImagePathDataTypeSerializer(category="", prompt_text=piece.converted_value)
+            image_bytes = await serializer.read_data()
+        except Exception as e:
+            logger.error(f"Failed to read image from {piece.converted_value}: {e}")
+            return
+
+        from IPython.display import Image, display
+
+        display(Image(data=image_bytes))

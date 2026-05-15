@@ -218,16 +218,14 @@ async def test_render_messages_async_empty_list(printer):
     assert "No messages to display" in content
 
 
-@patch("pyrit.common.display_response.display_image_response", new_callable=AsyncMock)
-async def test_render_messages_async_user_message(mock_display, printer, sample_message):
+async def test_render_messages_async_user_message(printer, sample_message):
     content = await printer._conversation_printer.render_async(messages=[sample_message])
     assert "Turn 1" in content
     assert "USER" in content
     assert "Hello world" in content
 
 
-@patch("pyrit.common.display_response.display_image_response", new_callable=AsyncMock)
-async def test_render_messages_async_assistant_message(mock_display, printer):
+async def test_render_messages_async_assistant_message(printer):
     piece = MessagePiece(
         role="assistant",
         original_value="Response",
@@ -239,8 +237,7 @@ async def test_render_messages_async_assistant_message(mock_display, printer):
     assert "Response" in content
 
 
-@patch("pyrit.common.display_response.display_image_response", new_callable=AsyncMock)
-async def test_render_messages_async_converted_differs(mock_display, printer):
+async def test_render_messages_async_converted_differs(printer):
     piece = MessagePiece(
         role="user",
         original_value="Original",
@@ -329,8 +326,7 @@ def test_render_wrapped_text_with_newlines(printer):
     assert "Line four" in result
 
 
-@patch("pyrit.common.display_response.display_image_response", new_callable=AsyncMock)
-async def test_render_messages_async_blocked_without_partial_content(mock_display, printer):
+async def test_render_messages_async_blocked_without_partial_content(printer):
     piece = MessagePiece(
         role="assistant",
         original_value='{"status_code": 200, "message": "content_filter"}',
@@ -345,8 +341,7 @@ async def test_render_messages_async_blocked_without_partial_content(mock_displa
     assert "status_code" not in content
 
 
-@patch("pyrit.common.display_response.display_image_response", new_callable=AsyncMock)
-async def test_render_messages_async_blocked_with_partial_content(mock_display, printer):
+async def test_render_messages_async_blocked_with_partial_content(printer):
     piece = MessagePiece(
         role="assistant",
         original_value='{"status_code": 200, "message": "content_filter"}',
