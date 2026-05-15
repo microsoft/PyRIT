@@ -16,10 +16,19 @@ class ScenarioResultPrinterBase(PrinterBase):
     """
 
     @abstractmethod
-    async def print_summary_async(self, result: ScenarioResult) -> None:
+    async def write_async(self, result: ScenarioResult) -> None:
         """
-        Print a summary of the scenario result with per-strategy breakdown.
+        Render and write a scenario result summary to the configured sink.
 
         Args:
             result (ScenarioResult): The scenario result to summarize.
         """
+
+    async def print_summary_async(self, result: ScenarioResult) -> None:
+        """
+        Deprecated. Use write_async instead.
+
+        Args:
+            result (ScenarioResult): The scenario result to summarize.
+        """
+        await self.write_async(result)

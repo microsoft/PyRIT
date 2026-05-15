@@ -12,9 +12,8 @@ class ScorerPrinterBase(PrinterBase):
     """
     Abstract base class for printing scorer information.
 
-    Subclasses must implement get_objective_metrics and get_harm_metrics
-    for data fetching. Orchestration methods (print_objective_scorer,
-    print_harm_scorer) live in concrete formatting subclasses.
+    Subclasses must implement _get_objective_metrics and _get_harm_metrics
+    for data fetching, and write_async for rendering + writing.
     """
 
     @abstractmethod
@@ -43,20 +42,35 @@ class ScorerPrinterBase(PrinterBase):
         """
 
     @abstractmethod
-    def print_objective_scorer(self, *, scorer_identifier: ComponentIdentifier) -> None:
+    async def write_async(
+        self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None
+    ) -> None:
         """
-        Print objective scorer information including type, nested scorers, and evaluation metrics.
+        Render and write scorer information to the configured sink.
+
+        Auto-detects scorer type: if harm_category is provided, renders harm
+        metrics; otherwise renders objective metrics.
 
         Args:
-            scorer_identifier (ComponentIdentifier): The scorer identifier to print information for.
+            scorer_identifier (ComponentIdentifier): The scorer identifier.
+            harm_category (str | None): The harm category. None for objective scorers.
         """
 
-    @abstractmethod
-    def print_harm_scorer(self, *, scorer_identifier: ComponentIdentifier, harm_category: str) -> None:
+    async def print_objective_scorer(self, *, scorer_identifier: ComponentIdentifier) -> None:
         """
-        Print harm scorer information including type, nested scorers, and evaluation metrics.
+        Deprecated. Use write_async instead.
 
         Args:
-            scorer_identifier (ComponentIdentifier): The scorer identifier to print information for.
-            harm_category (str): The harm category for looking up metrics.
+            scorer_identifier (ComponentIdentifier): The scorer identifier.
         """
+        await self.write_async(scorer_identifier=scorer_identifier)
+
+    async def print_harm_scorer(self, *, scorer_identifier: ComponentIdentifier, harm_category: str) -> None:
+        """
+        Deprecated. Use write_async instead.
+
+        Args:
+            scorer_identifier (ComponentIdentifier): The scorer identifier.
+            harm_category (str): The harm category.
+        """
+        await self.write_async(scorer_identifier=scorer_identifier, harm_category=harm_category)

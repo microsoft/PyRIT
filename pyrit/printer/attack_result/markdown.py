@@ -23,34 +23,11 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
 
         Args:
             sink (Sink | None): Output sink. Defaults to StdoutSink().
-            display_inline (bool): If True, uses IPython.display to render markdown
-                inline in Jupyter notebooks. If False, prints markdown strings.
-                Defaults to True.
+            display_inline (bool): Kept for backward compatibility but unused.
+                All output is routed through the sink. Defaults to True.
         """
         super().__init__(sink=sink)
         self._display_inline = display_inline
-
-    def _render_markdown(self, markdown_lines: list[str]) -> None:
-        """
-        Render the markdown content using appropriate display method.
-
-        Attempts to use IPython.display.Markdown for Jupyter notebook rendering
-        when display_inline is True, falling back to print() if not available.
-
-        Args:
-            markdown_lines (List[str]): List of markdown strings to render.
-        """
-        full_markdown = "\n".join(markdown_lines)
-
-        if self._display_inline:
-            try:
-                from IPython.display import Markdown, display
-
-                display(Markdown(full_markdown))
-            except (ImportError, NameError):
-                print(full_markdown)
-        else:
-            print(full_markdown)
 
     def _format_score(self, score: Score, indent: str = "") -> str:
         """
@@ -91,7 +68,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
 
         return "\n".join(lines)
 
-    async def print_result_async(
+    async def write_async(
         self,
         result: AttackResult,
         *,
@@ -100,16 +77,16 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         include_adversarial_conversation: bool = False,
     ) -> None:
         """
-        Print the complete attack result as formatted markdown.
+        Render and write the complete attack result as markdown to the sink.
 
         Args:
-            result (AttackResult): The attack result to print.
+            result (AttackResult): The attack result to render.
             include_auxiliary_scores (bool): Whether to include auxiliary scores. Defaults to False.
             include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
             include_adversarial_conversation (bool): Whether to include the adversarial conversation.
                 Defaults to False.
         """
-        markdown_lines = []
+        markdown_lines: list[str] = []
 
         outcome_emoji = self._get_outcome_icon(result.outcome)
         markdown_lines.append(f"# {outcome_emoji} Attack Result: {result.outcome.value.upper()}\n")
@@ -148,28 +125,33 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         timestamp_utc = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
         markdown_lines.append(f"*Report generated at {timestamp_utc}*")
 
-        self._render_markdown(markdown_lines)
+        await self._write_async("\n".join(markdown_lines))
+
+    async def print_result_async(
+        self,
+        result: AttackResult,
+        *,
+        include_auxiliary_scores: bool = False,
+        include_pruned_conversations: bool = False,
+        include_adversarial_conversation: bool = False,
+    ) -> None:
+        """Deprecated. Use write_async instead."""
+        await self.write_async(
+            result,
+            include_auxiliary_scores=include_auxiliary_scores,
+            include_pruned_conversations=include_pruned_conversations,
+            include_adversarial_conversation=include_adversarial_conversation,
+        )
 
     async def print_conversation_async(self, result: AttackResult, *, include_scores: bool = False) -> None:
-        """
-        Print only the conversation history as formatted markdown.
-
-        Args:
-            result (AttackResult): The attack result containing the conversation to display.
-            include_scores (bool): Whether to include scores. Defaults to False.
-        """
+        """Deprecated. Use _get_conversation_markdown_async and _write_async instead."""
         markdown_lines = await self._get_conversation_markdown_async(result=result, include_scores=include_scores)
-        self._render_markdown(markdown_lines)
+        await self._write_async("\n".join(markdown_lines))
 
     async def print_summary_async(self, result: AttackResult) -> None:
-        """
-        Print a summary of the attack result as formatted markdown.
-
-        Args:
-            result (AttackResult): The attack result to summarize.
-        """
+        """Deprecated. Use _get_summary_markdown_async and _write_async instead."""
         markdown_lines = await self._get_summary_markdown_async(result)
-        self._render_markdown(markdown_lines)
+        await self._write_async("\n".join(markdown_lines))
 
     async def _get_conversation_markdown_async(
         self, *, result: AttackResult, include_scores: bool = False
@@ -190,7 +172,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
             markdown_lines.append("*No conversation ID available*\n")
             return markdown_lines
 
-        messages = await self.get_conversation_async(result.conversation_id)
+        messages = await self._get_conversation_async(result.conversation_id)
 
         if not messages:
             markdown_lines.append(f"*No conversation found for ID: {result.conversation_id}*\n")
@@ -395,7 +377,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         """
         lines: list[str] = []
         for piece in message.message_pieces:
-            scores = await self.get_scores_async(prompt_ids=[str(piece.id)])
+            scores = await self._get_scores_async(prompt_ids=[str(piece.id)])
             if scores:
                 lines.append("\n##### Scores\n")
                 lines.extend(self._format_score(score, indent="") for score in scores)
@@ -470,7 +452,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
                 label += f" - {ref.description}"
             markdown_lines.append(f"\n{label}\n")
 
-            messages = await self.get_conversation_async(ref.conversation_id)
+            messages = await self._get_conversation_async(ref.conversation_id)
 
             if not messages:
                 markdown_lines.append(f"*No messages found for conversation: `{ref.conversation_id}`*\n")
@@ -490,7 +472,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
                 else:
                     markdown_lines.append(f"> {content}\n")
 
-                scores = await self.get_scores_async(prompt_ids=[str(piece.id)])
+                scores = await self._get_scores_async(prompt_ids=[str(piece.id)])
                 if scores:
                     markdown_lines.append("\n**Score:**\n")
                     markdown_lines.extend(self._format_score(score, indent="") for score in scores)
@@ -526,7 +508,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
             if ref.description:
                 markdown_lines.append(f"*📝 {ref.description}*\n")
 
-            messages = await self.get_conversation_async(ref.conversation_id)
+            messages = await self._get_conversation_async(ref.conversation_id)
 
             if not messages:
                 markdown_lines.append(f"*No messages found for conversation: `{ref.conversation_id}`*\n")
@@ -568,16 +550,15 @@ class MarkdownAttackResultMemoryPrinter(MarkdownAttackResultPrinter):
 
         Args:
             sink (Sink | None): Output sink. Defaults to StdoutSink().
-            display_inline (bool): If True, uses IPython.display to render markdown
-                inline in Jupyter notebooks. If False, prints markdown strings.
-                Defaults to True.
+            display_inline (bool): Kept for backward compatibility but unused.
+                All output is routed through the sink. Defaults to True.
         """
         super().__init__(sink=sink, display_inline=display_inline)
         from pyrit.memory import CentralMemory
 
         self._memory = CentralMemory.get_memory_instance()
 
-    async def get_conversation_async(self, conversation_id: str) -> list[Message]:
+    async def _get_conversation_async(self, conversation_id: str) -> list[Message]:
         """
         Fetch conversation messages from CentralMemory.
 
@@ -586,7 +567,7 @@ class MarkdownAttackResultMemoryPrinter(MarkdownAttackResultPrinter):
         """
         return list(self._memory.get_conversation(conversation_id=conversation_id))
 
-    async def get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
+    async def _get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
         """
         Fetch scores from CentralMemory.
 

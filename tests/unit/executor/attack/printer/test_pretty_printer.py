@@ -98,17 +98,17 @@ def test_init_default_colors_enabled(mock_memory):
     assert p._enable_colors is True
 
 
-def test_print_colored_no_colors(printer, capsys):
-    printer._print_colored("hello")
-    captured = capsys.readouterr()
-    assert "hello" in captured.out
+def test_format_colored_no_colors(printer):
+    result = printer._format_colored("hello")
+    assert "hello" in result
+    assert result.endswith("\n")
 
 
-def test_print_colored_with_colors_disabled(printer, capsys):
+def test_format_colored_with_colors_disabled(printer):
     printer._enable_colors = False
-    printer._print_colored("test text", "SOME_COLOR")
-    captured = capsys.readouterr()
-    assert "test text" in captured.out
+    result = printer._format_colored("test text", "SOME_COLOR")
+    assert "test text" in result
+    assert result.endswith("\n")
 
 
 def test_get_outcome_color_success(printer):
@@ -126,44 +126,39 @@ def test_get_outcome_color_undetermined(printer):
     assert isinstance(color, str)
 
 
-def test_print_header(printer, sample_attack_result, capsys):
-    printer._print_header(sample_attack_result)
-    captured = capsys.readouterr()
-    assert "ATTACK RESULT" in captured.out
-    assert "SUCCESS" in captured.out
+def test_render_header(printer, sample_attack_result):
+    result = printer._render_header(sample_attack_result)
+    assert "ATTACK RESULT" in result
+    assert "SUCCESS" in result
 
 
-def test_print_footer(printer, capsys):
-    printer._print_footer()
-    captured = capsys.readouterr()
-    assert "Report generated at" in captured.out
+def test_render_footer(printer):
+    result = printer._render_footer()
+    assert "Report generated at" in result
 
 
-def test_print_section_header(printer, capsys):
-    printer._print_section_header("Test Section")
-    captured = capsys.readouterr()
-    assert "Test Section" in captured.out
+def test_render_section_header(printer):
+    result = printer._render_section_header("Test Section")
+    assert "Test Section" in result
 
 
-def test_print_metadata(printer, capsys):
+def test_render_metadata(printer):
     metadata = {"key1": "value1", "key2": 42}
-    printer._print_metadata(metadata)
-    captured = capsys.readouterr()
-    assert "key1" in captured.out
-    assert "value1" in captured.out
-    assert "key2" in captured.out
-    assert "42" in captured.out
+    result = printer._render_metadata(metadata)
+    assert "key1" in result
+    assert "value1" in result
+    assert "key2" in result
+    assert "42" in result
 
 
-def test_print_score(printer, sample_score, capsys):
-    printer._print_score(sample_score)
-    captured = capsys.readouterr()
-    assert "MockScorer" in captured.out
-    assert "true_false" in captured.out
-    assert "true" in captured.out
+def test_render_score(printer, sample_score):
+    result = printer._render_score(sample_score)
+    assert "MockScorer" in result
+    assert "true_false" in result
+    assert "true" in result
 
 
-def test_print_score_with_rationale(printer, capsys):
+def test_render_score_with_rationale(printer):
     score = Score(
         score_type="float_scale",
         score_value="0.8",
@@ -174,9 +169,8 @@ def test_print_score_with_rationale(printer, capsys):
         message_piece_id=str(uuid.uuid4()),
         scorer_class_identifier=_mock_scorer_id(),
     )
-    printer._print_score(score)
-    captured = capsys.readouterr()
-    assert "Rationale" in captured.out
+    result = printer._render_score(score)
+    assert "Rationale" in result
 
 
 def test_extract_reasoning_summary_valid_json(printer):
@@ -206,38 +200,34 @@ def test_extract_reasoning_summary_summary_not_list(printer):
     assert result == ""
 
 
-async def test_print_conversation_async_no_conversation_id(printer, capsys):
+async def test_render_conversation_async_no_conversation_id(printer):
     result = AttackResult(objective="test", conversation_id="")
-    await printer.print_conversation_async(result)
-    captured = capsys.readouterr()
-    assert "No conversation ID" in captured.out
+    content = await printer._render_conversation_async(result)
+    assert "No conversation ID" in content
 
 
-async def test_print_conversation_async_no_messages(printer, mock_memory, capsys):
+async def test_render_conversation_async_no_messages(printer, mock_memory):
     mock_memory.get_conversation.return_value = []
     result = AttackResult(objective="test", conversation_id="conv-123")
-    await printer.print_conversation_async(result)
-    captured = capsys.readouterr()
-    assert "No conversation found" in captured.out
+    content = await printer._render_conversation_async(result)
+    assert "No conversation found" in content
 
 
-async def test_print_messages_async_empty_list(printer, capsys):
-    await printer.print_messages_async(messages=[])
-    captured = capsys.readouterr()
-    assert "No messages to display" in captured.out
-
-
-@patch("pyrit.common.display_response.display_image_response", new_callable=AsyncMock)
-async def test_print_messages_async_user_message(mock_display, printer, sample_message, capsys):
-    await printer.print_messages_async(messages=[sample_message])
-    captured = capsys.readouterr()
-    assert "Turn 1" in captured.out
-    assert "USER" in captured.out
-    assert "Hello world" in captured.out
+async def test_render_messages_async_empty_list(printer):
+    content = await printer._render_messages_async(messages=[])
+    assert "No messages to display" in content
 
 
 @patch("pyrit.common.display_response.display_image_response", new_callable=AsyncMock)
-async def test_print_messages_async_assistant_message(mock_display, printer, capsys):
+async def test_render_messages_async_user_message(mock_display, printer, sample_message):
+    content = await printer._render_messages_async(messages=[sample_message])
+    assert "Turn 1" in content
+    assert "USER" in content
+    assert "Hello world" in content
+
+
+@patch("pyrit.common.display_response.display_image_response", new_callable=AsyncMock)
+async def test_render_messages_async_assistant_message(mock_display, printer):
     piece = MessagePiece(
         role="assistant",
         original_value="Response",
@@ -245,13 +235,12 @@ async def test_print_messages_async_assistant_message(mock_display, printer, cap
         converted_value_data_type="text",
     )
     msg = Message(message_pieces=[piece])
-    await printer.print_messages_async(messages=[msg])
-    captured = capsys.readouterr()
-    assert "Response" in captured.out
+    content = await printer._render_messages_async(messages=[msg])
+    assert "Response" in content
 
 
 @patch("pyrit.common.display_response.display_image_response", new_callable=AsyncMock)
-async def test_print_messages_async_converted_differs(mock_display, printer, capsys):
+async def test_render_messages_async_converted_differs(mock_display, printer):
     piece = MessagePiece(
         role="user",
         original_value="Original",
@@ -259,31 +248,29 @@ async def test_print_messages_async_converted_differs(mock_display, printer, cap
         converted_value_data_type="text",
     )
     msg = Message(message_pieces=[piece])
-    await printer.print_messages_async(messages=[msg])
-    captured = capsys.readouterr()
-    assert "Original" in captured.out
-    assert "Converted" in captured.out
+    content = await printer._render_messages_async(messages=[msg])
+    assert "Original" in content
+    assert "Converted" in content
 
 
-async def test_print_summary_async(printer, sample_attack_result, capsys):
-    await printer.print_summary_async(sample_attack_result)
-    captured = capsys.readouterr()
-    assert "Test objective" in captured.out
-    assert "TestAttack" in captured.out
-    assert "test-conv-123" in captured.out
-    assert "SUCCESS" in captured.out
-    assert "Test successful" in captured.out
+async def test_render_summary_async(printer, sample_attack_result):
+    content = await printer._render_summary_async(sample_attack_result)
+    assert "Test objective" in content
+    assert "TestAttack" in content
+    assert "test-conv-123" in content
+    assert "SUCCESS" in content
+    assert "Test successful" in content
 
 
-async def test_print_result_async_basic(printer, sample_attack_result, mock_memory, capsys):
+async def test_write_async_basic(printer, sample_attack_result, mock_memory, capsys):
     mock_memory.get_conversation.return_value = []
-    await printer.print_result_async(sample_attack_result)
+    await printer.write_async(sample_attack_result)
     captured = capsys.readouterr()
     assert "ATTACK RESULT" in captured.out
     assert "Report generated at" in captured.out
 
 
-async def test_print_result_async_with_metadata(printer, mock_memory, capsys):
+async def test_write_async_with_metadata(printer, mock_memory, capsys):
     result = AttackResult(
         objective="test",
         conversation_id="conv-1",
@@ -291,20 +278,19 @@ async def test_print_result_async_with_metadata(printer, mock_memory, capsys):
         metadata={"note": "extra info"},
     )
     mock_memory.get_conversation.return_value = []
-    await printer.print_result_async(result)
+    await printer.write_async(result)
     captured = capsys.readouterr()
     assert "note" in captured.out
     assert "extra info" in captured.out
 
 
-async def test_print_pruned_conversations_no_pruned(printer, capsys):
+async def test_render_pruned_conversations_no_pruned(printer):
     result = AttackResult(objective="test", conversation_id="conv-1")
-    await printer._print_pruned_conversations_async(result)
-    captured = capsys.readouterr()
-    assert captured.out == ""
+    content = await printer._render_pruned_conversations_async(result)
+    assert content == ""
 
 
-async def test_print_pruned_conversations_with_messages(printer, mock_memory, capsys):
+async def test_render_pruned_conversations_with_messages(printer, mock_memory):
     piece = MessagePiece(
         role="assistant",
         original_value="Pruned response",
@@ -320,35 +306,31 @@ async def test_print_pruned_conversations_with_messages(printer, mock_memory, ca
         conversation_id="conv-1",
         related_conversations={ref},
     )
-    await printer._print_pruned_conversations_async(result)
-    captured = capsys.readouterr()
-    assert "PRUNED" in captured.out
-    assert "Pruned response" in captured.out
+    content = await printer._render_pruned_conversations_async(result)
+    assert "PRUNED" in content
+    assert "Pruned response" in content
 
 
-async def test_print_adversarial_conversation_no_refs(printer, capsys):
+async def test_render_adversarial_conversation_no_refs(printer):
     result = AttackResult(objective="test", conversation_id="conv-1")
-    await printer._print_adversarial_conversation_async(result)
-    captured = capsys.readouterr()
-    assert captured.out == ""
+    content = await printer._render_adversarial_conversation_async(result)
+    assert content == ""
 
 
-def test_print_wrapped_text(printer, capsys):
-    printer._print_wrapped_text("Short text", "")
-    captured = capsys.readouterr()
-    assert "Short text" in captured.out
+def test_render_wrapped_text(printer):
+    result = printer._render_wrapped_text("Short text", "")
+    assert "Short text" in result
 
 
-def test_print_wrapped_text_with_newlines(printer, capsys):
-    printer._print_wrapped_text("Line one\nLine two\n\nLine four", "")
-    captured = capsys.readouterr()
-    assert "Line one" in captured.out
-    assert "Line two" in captured.out
-    assert "Line four" in captured.out
+def test_render_wrapped_text_with_newlines(printer):
+    result = printer._render_wrapped_text("Line one\nLine two\n\nLine four", "")
+    assert "Line one" in result
+    assert "Line two" in result
+    assert "Line four" in result
 
 
 @patch("pyrit.common.display_response.display_image_response", new_callable=AsyncMock)
-async def test_print_messages_async_blocked_without_partial_content(mock_display, printer, capsys):
+async def test_render_messages_async_blocked_without_partial_content(mock_display, printer):
     piece = MessagePiece(
         role="assistant",
         original_value='{"status_code": 200, "message": "content_filter"}',
@@ -356,16 +338,15 @@ async def test_print_messages_async_blocked_without_partial_content(mock_display
         response_error="blocked",
     )
     msg = Message(message_pieces=[piece])
-    await printer.print_messages_async(messages=[msg])
-    captured = capsys.readouterr()
-    assert "BLOCKED BY TARGET" in captured.out
-    assert "content filter" in captured.out
+    content = await printer._render_messages_async(messages=[msg])
+    assert "BLOCKED BY TARGET" in content
+    assert "content filter" in content
     # Should NOT print the raw error JSON as the message body
-    assert "status_code" not in captured.out
+    assert "status_code" not in content
 
 
 @patch("pyrit.common.display_response.display_image_response", new_callable=AsyncMock)
-async def test_print_messages_async_blocked_with_partial_content(mock_display, printer, capsys):
+async def test_render_messages_async_blocked_with_partial_content(mock_display, printer):
     piece = MessagePiece(
         role="assistant",
         original_value='{"status_code": 200, "message": "content_filter"}',
@@ -374,9 +355,8 @@ async def test_print_messages_async_blocked_with_partial_content(mock_display, p
         prompt_metadata={"partial_content": "The model started to say something before being cut off"},
     )
     msg = Message(message_pieces=[piece])
-    await printer.print_messages_async(messages=[msg])
-    captured = capsys.readouterr()
-    assert "BLOCKED BY TARGET" in captured.out
-    assert "Partial content" in captured.out
-    assert "before filter triggered" in captured.out
-    assert "The model started to say something before being cut off" in captured.out
+    content = await printer._render_messages_async(messages=[msg])
+    assert "BLOCKED BY TARGET" in content
+    assert "Partial content" in content
+    assert "before filter triggered" in content
+    assert "The model started to say something before being cut off" in content

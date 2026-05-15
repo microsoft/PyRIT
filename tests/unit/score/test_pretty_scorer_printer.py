@@ -88,30 +88,27 @@ def test_init_colors_disabled():
     assert printer._enable_colors is False
 
 
-# --- _print_colored tests ---
+# --- _format_colored tests ---
 
 
-def test_print_colored_with_colors_enabled(capsys):
+def test_format_colored_with_colors_enabled():
     printer = ConsoleScorerPrinter(enable_colors=True)
-    printer._print_colored("hello", Fore.GREEN)
-    captured = capsys.readouterr()
-    assert "hello" in captured.out
-    assert Style.RESET_ALL in captured.out
+    result = printer._format_colored("hello", Fore.GREEN)
+    assert "hello" in result
+    assert Style.RESET_ALL in result
 
 
-def test_print_colored_with_colors_disabled(capsys):
+def test_format_colored_with_colors_disabled():
     printer = ConsoleScorerPrinter(enable_colors=False)
-    printer._print_colored("hello", Fore.GREEN)
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "hello"
-    assert Style.RESET_ALL not in captured.out
+    result = printer._format_colored("hello", Fore.GREEN)
+    assert result.strip() == "hello"
+    assert Style.RESET_ALL not in result
 
 
-def test_print_colored_no_colors_arg(capsys):
+def test_format_colored_no_colors_arg():
     printer = ConsoleScorerPrinter(enable_colors=True)
-    printer._print_colored("plain text")
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "plain text"
+    result = printer._format_colored("plain text")
+    assert result.strip() == "plain text"
 
 
 # --- _get_quality_color tests ---
@@ -153,31 +150,29 @@ def test_quality_color_lower_is_better_middle():
     assert color == Fore.CYAN
 
 
-# --- _print_scorer_info tests ---
+# --- _render_scorer_info tests ---
 
 
-def test_print_scorer_info_basic(capsys):
+def test_render_scorer_info_basic():
     printer = ConsoleScorerPrinter(enable_colors=False)
     identifier = _make_scorer_identifier(class_name="SelfAskScaleScorer")
-    printer._print_scorer_info(identifier, indent_level=2)
-    output = capsys.readouterr().out
+    output = printer._render_scorer_info(identifier, indent_level=2)
     assert "SelfAskScaleScorer" in output
 
 
-def test_print_scorer_info_with_display_params(capsys):
+def test_render_scorer_info_with_display_params():
     printer = ConsoleScorerPrinter(enable_colors=False)
     identifier = _make_scorer_identifier(
         class_name="TestScorer",
         params={"scorer_type": "likert", "score_aggregator": "mean", "hidden_param": "ignore"},
     )
-    printer._print_scorer_info(identifier, indent_level=2)
-    output = capsys.readouterr().out
+    output = printer._render_scorer_info(identifier, indent_level=2)
     assert "scorer_type" in output
     assert "score_aggregator" in output
     assert "hidden_param" not in output
 
 
-def test_print_scorer_info_with_prompt_target_child(capsys):
+def test_render_scorer_info_with_prompt_target_child():
     printer = ConsoleScorerPrinter(enable_colors=False)
     target_id = ComponentIdentifier(
         class_name="OpenAIChatTarget",
@@ -187,13 +182,12 @@ def test_print_scorer_info_with_prompt_target_child(capsys):
     identifier = _make_scorer_identifier(
         children={"prompt_target": target_id},
     )
-    printer._print_scorer_info(identifier, indent_level=2)
-    output = capsys.readouterr().out
+    output = printer._render_scorer_info(identifier, indent_level=2)
     assert "gpt-4" in output
     assert "extra" not in output
 
 
-def test_print_scorer_info_with_sub_scorers(capsys):
+def test_render_scorer_info_with_sub_scorers():
     printer = ConsoleScorerPrinter(enable_colors=False)
     sub1 = _make_scorer_identifier(class_name="SubScorer1")
     sub2 = _make_scorer_identifier(class_name="SubScorer2")
@@ -201,28 +195,25 @@ def test_print_scorer_info_with_sub_scorers(capsys):
         class_name="CompositeScorer",
         children={"sub_scorers": [sub1, sub2]},
     )
-    printer._print_scorer_info(identifier, indent_level=2)
-    output = capsys.readouterr().out
+    output = printer._render_scorer_info(identifier, indent_level=2)
     assert "Composite of 2 scorer(s)" in output
     assert "SubScorer1" in output
     assert "SubScorer2" in output
 
 
-# --- _print_objective_metrics tests ---
+# --- _render_objective_metrics tests ---
 
 
-def test_print_objective_metrics_none(capsys):
+def test_render_objective_metrics_none():
     printer = ConsoleScorerPrinter(enable_colors=False)
-    printer._print_objective_metrics(None)
-    output = capsys.readouterr().out
+    output = printer._render_objective_metrics(None)
     assert "Official evaluation has not been run yet" in output
 
 
-def test_print_objective_metrics_full(capsys):
+def test_render_objective_metrics_full():
     printer = ConsoleScorerPrinter(enable_colors=False)
     metrics = _make_objective_metrics()
-    printer._print_objective_metrics(metrics)
-    output = capsys.readouterr().out
+    output = printer._render_objective_metrics(metrics)
     assert "Accuracy" in output
     assert "F1 Score" in output
     assert "Precision" in output
@@ -230,7 +221,7 @@ def test_print_objective_metrics_full(capsys):
     assert "Average Score Time" in output
 
 
-def test_print_objective_metrics_optional_fields_none(capsys):
+def test_render_objective_metrics_optional_fields_none():
     printer = ConsoleScorerPrinter(enable_colors=False)
     metrics = _make_objective_metrics(
         accuracy_standard_error=None,
@@ -239,8 +230,7 @@ def test_print_objective_metrics_optional_fields_none(capsys):
         recall=None,
         average_score_time_seconds=None,
     )
-    printer._print_objective_metrics(metrics)
-    output = capsys.readouterr().out
+    output = printer._render_objective_metrics(metrics)
     assert "Accuracy" in output
     assert "F1 Score" not in output
     assert "Precision" not in output
@@ -248,28 +238,26 @@ def test_print_objective_metrics_optional_fields_none(capsys):
     assert "Average Score Time" not in output
 
 
-# --- _print_harm_metrics tests ---
+# --- _render_harm_metrics tests ---
 
 
-def test_print_harm_metrics_none(capsys):
+def test_render_harm_metrics_none():
     printer = ConsoleScorerPrinter(enable_colors=False)
-    printer._print_harm_metrics(None)
-    output = capsys.readouterr().out
+    output = printer._render_harm_metrics(None)
     assert "Official evaluation has not been run yet" in output
 
 
-def test_print_harm_metrics_full(capsys):
+def test_render_harm_metrics_full():
     printer = ConsoleScorerPrinter(enable_colors=False)
     metrics = _make_harm_metrics()
-    printer._print_harm_metrics(metrics)
-    output = capsys.readouterr().out
+    output = printer._render_harm_metrics(metrics)
     assert "Mean Absolute Error" in output
     assert "Krippendorff Alpha (Combined)" in output
     assert "Krippendorff Alpha (Model)" in output
     assert "Average Score Time" in output
 
 
-def test_print_harm_metrics_optional_fields_none(capsys):
+def test_render_harm_metrics_optional_fields_none():
     printer = ConsoleScorerPrinter(enable_colors=False)
     metrics = _make_harm_metrics(
         mae_standard_error=None,
@@ -277,8 +265,7 @@ def test_print_harm_metrics_optional_fields_none(capsys):
         krippendorff_alpha_model=None,
         average_score_time_seconds=None,
     )
-    printer._print_harm_metrics(metrics)
-    output = capsys.readouterr().out
+    output = printer._render_harm_metrics(metrics)
     assert "Mean Absolute Error" in output
     assert "MAE Std Error" not in output
     assert "Krippendorff Alpha (Combined)" not in output
@@ -286,12 +273,12 @@ def test_print_harm_metrics_optional_fields_none(capsys):
     assert "Average Score Time" not in output
 
 
-# --- print_objective_scorer tests ---
+# --- write_async (objective) tests ---
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
 @patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
-def test_print_objective_scorer_with_metrics(mock_eval_id_cls, mock_find, capsys):
+async def test_write_async_objective_with_metrics(mock_eval_id_cls, mock_find, capsys):
     printer = ConsoleScorerPrinter(enable_colors=False)
     identifier = _make_scorer_identifier(class_name="MyScorer")
     metrics = _make_objective_metrics()
@@ -301,7 +288,7 @@ def test_print_objective_scorer_with_metrics(mock_eval_id_cls, mock_find, capsys
     mock_eval_id_cls.return_value = mock_eval_instance
     mock_find.return_value = metrics
 
-    printer.print_objective_scorer(scorer_identifier=identifier)
+    await printer.write_async(scorer_identifier=identifier)
     output = capsys.readouterr().out
 
     assert "Scorer Information" in output
@@ -312,7 +299,7 @@ def test_print_objective_scorer_with_metrics(mock_eval_id_cls, mock_find, capsys
 
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
 @patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
-def test_print_objective_scorer_no_metrics(mock_eval_id_cls, mock_find, capsys):
+async def test_write_async_objective_no_metrics(mock_eval_id_cls, mock_find, capsys):
     printer = ConsoleScorerPrinter(enable_colors=False)
     identifier = _make_scorer_identifier()
 
@@ -321,17 +308,17 @@ def test_print_objective_scorer_no_metrics(mock_eval_id_cls, mock_find, capsys):
     mock_eval_id_cls.return_value = mock_eval_instance
     mock_find.return_value = None
 
-    printer.print_objective_scorer(scorer_identifier=identifier)
+    await printer.write_async(scorer_identifier=identifier)
     output = capsys.readouterr().out
     assert "Official evaluation has not been run yet" in output
 
 
-# --- print_harm_scorer tests ---
+# --- write_async (harm) tests ---
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
 @patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
-def test_print_harm_scorer_with_metrics(mock_eval_id_cls, mock_find, capsys):
+async def test_write_async_harm_with_metrics(mock_eval_id_cls, mock_find, capsys):
     printer = ConsoleScorerPrinter(enable_colors=False)
     identifier = _make_scorer_identifier(class_name="HarmScorer")
     metrics = _make_harm_metrics()
@@ -341,7 +328,7 @@ def test_print_harm_scorer_with_metrics(mock_eval_id_cls, mock_find, capsys):
     mock_eval_id_cls.return_value = mock_eval_instance
     mock_find.return_value = metrics
 
-    printer.print_harm_scorer(scorer_identifier=identifier, harm_category="hate_speech")
+    await printer.write_async(scorer_identifier=identifier, harm_category="hate_speech")
     output = capsys.readouterr().out
 
     assert "Scorer Information" in output
@@ -352,7 +339,7 @@ def test_print_harm_scorer_with_metrics(mock_eval_id_cls, mock_find, capsys):
 
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
 @patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
-def test_print_harm_scorer_no_metrics(mock_eval_id_cls, mock_find, capsys):
+async def test_write_async_harm_no_metrics(mock_eval_id_cls, mock_find, capsys):
     printer = ConsoleScorerPrinter(enable_colors=False)
     identifier = _make_scorer_identifier()
 
@@ -361,6 +348,6 @@ def test_print_harm_scorer_no_metrics(mock_eval_id_cls, mock_find, capsys):
     mock_eval_id_cls.return_value = mock_eval_instance
     mock_find.return_value = None
 
-    printer.print_harm_scorer(scorer_identifier=identifier, harm_category="violence")
+    await printer.write_async(scorer_identifier=identifier, harm_category="violence")
     output = capsys.readouterr().out
     assert "Official evaluation has not been run yet" in output

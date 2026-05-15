@@ -14,8 +14,8 @@ class PrettyScorerPrinter(ScorerPrinterBase):
     """
     Pretty printer for scorer information with ANSI-colored formatting.
 
-    Contains all formatting logic. Subclasses implement get_objective_metrics
-    and get_harm_metrics for data fetching.
+    Contains all formatting logic. Subclasses implement _get_objective_metrics
+    and _get_harm_metrics for data fetching.
     """
 
     _SCORER_DISPLAY_PARAMS = frozenset({"scorer_type", "score_aggregator"})
@@ -39,19 +39,21 @@ class PrettyScorerPrinter(ScorerPrinterBase):
         self._indent = " " * indent_size
         self._enable_colors = enable_colors
 
-    def _print_colored(self, text: str, *colors: str) -> None:
+    def _format_colored(self, text: str, *colors: str) -> str:
         """
-        Print text with color formatting if colors are enabled.
+        Format text with color codes if colors are enabled.
 
         Args:
-            text (str): The text to print.
+            text (str): The text to format.
             *colors: Variable number of colorama color constants to apply.
+
+        Returns:
+            str: The formatted line with trailing newline.
         """
         if self._enable_colors and colors:
             color_prefix = "".join(colors)
-            print(f"{color_prefix}{text}{Style.RESET_ALL}")
-        else:
-            print(text)
+            return f"{color_prefix}{text}{Style.RESET_ALL}\n"
+        return f"{text}\n"
 
     def _get_quality_color(
         self, value: float, *, higher_is_better: bool, good_threshold: float, bad_threshold: float
@@ -80,178 +82,198 @@ class PrettyScorerPrinter(ScorerPrinterBase):
             return str(Fore.RED)
         return str(Fore.CYAN)
 
-    def _print_scorer_info(self, scorer_identifier: ComponentIdentifier, *, indent_level: int = 2) -> None:
+    def _render_scorer_info(self, scorer_identifier: ComponentIdentifier, *, indent_level: int = 2) -> str:
         """
-        Print scorer information including nested sub-scorers.
+        Render scorer information including nested sub-scorers.
 
         Args:
             scorer_identifier (ComponentIdentifier): The scorer identifier.
             indent_level (int): Current indentation level.
+
+        Returns:
+            str: The rendered scorer info text.
         """
+        lines: list[str] = []
         indent = self._indent * indent_level
 
-        self._print_colored(f"{indent}• Scorer Type: {scorer_identifier.class_name}", Fore.CYAN)
+        lines.append(self._format_colored(f"{indent}• Scorer Type: {scorer_identifier.class_name}", Fore.CYAN))
 
         for key, value in scorer_identifier.params.items():
             if key in self._SCORER_DISPLAY_PARAMS and value is not None:
-                self._print_colored(f"{indent}• {key}: {value}", Fore.CYAN)
+                lines.append(self._format_colored(f"{indent}• {key}: {value}", Fore.CYAN))
 
         prompt_target = scorer_identifier.get_child("prompt_target")
         if prompt_target:
             for key, value in prompt_target.params.items():
                 if key in self._TARGET_DISPLAY_PARAMS and value is not None:
-                    self._print_colored(f"{indent}• {key}: {value}", Fore.CYAN)
+                    lines.append(self._format_colored(f"{indent}• {key}: {value}", Fore.CYAN))
 
         sub_scorers = scorer_identifier.get_child_list("sub_scorers")
         if sub_scorers:
-            self._print_colored(f"{indent}  └─ Composite of {len(sub_scorers)} scorer(s):", Fore.CYAN)
+            lines.append(self._format_colored(f"{indent}  └─ Composite of {len(sub_scorers)} scorer(s):", Fore.CYAN))
             for sub_scorer_id in sub_scorers:
-                self._print_scorer_info(sub_scorer_id, indent_level=indent_level + 3)
+                lines.append(self._render_scorer_info(sub_scorer_id, indent_level=indent_level + 3))
 
-    def _print_objective_metrics(self, metrics: Optional[Any]) -> None:
+        return "".join(lines)
+
+    def _render_objective_metrics(self, metrics: Optional[Any]) -> str:
         """
-        Print objective scorer evaluation metrics.
+        Render objective scorer evaluation metrics.
 
         Args:
-            metrics: The metrics to print, or None if not available.
+            metrics: The metrics to render, or None if not available.
+
+        Returns:
+            str: The rendered metrics text.
         """
+        lines: list[str] = []
+
         if metrics is None:
-            print()
-            self._print_colored(f"{self._indent * 2}▸ Performance Metrics", Fore.WHITE)
-            self._print_colored(
+            lines.append("\n")
+            lines.append(self._format_colored(f"{self._indent * 2}▸ Performance Metrics", Fore.WHITE))
+            lines.append(self._format_colored(
                 f"{self._indent * 3}Official evaluation has not been run yet for this specific configuration",
                 Fore.YELLOW,
-            )
-            return
+            ))
+            return "".join(lines)
 
-        print()
-        self._print_colored(f"{self._indent * 2}▸ Performance Metrics", Fore.WHITE)
+        lines.append("\n")
+        lines.append(self._format_colored(f"{self._indent * 2}▸ Performance Metrics", Fore.WHITE))
 
         accuracy_color = self._get_quality_color(
             metrics.accuracy, higher_is_better=True, good_threshold=0.9, bad_threshold=0.7
         )
-        self._print_colored(f"{self._indent * 3}• Accuracy: {metrics.accuracy:.2%}", accuracy_color)
+        lines.append(self._format_colored(f"{self._indent * 3}• Accuracy: {metrics.accuracy:.2%}", accuracy_color))
 
         if metrics.accuracy_standard_error is not None:
-            self._print_colored(
+            lines.append(self._format_colored(
                 f"{self._indent * 3}• Accuracy Std Error: ±{metrics.accuracy_standard_error:.4f}", Fore.CYAN
-            )
+            ))
 
         if metrics.f1_score is not None:
             f1_color = self._get_quality_color(
                 metrics.f1_score, higher_is_better=True, good_threshold=0.9, bad_threshold=0.7
             )
-            self._print_colored(f"{self._indent * 3}• F1 Score: {metrics.f1_score:.4f}", f1_color)
+            lines.append(self._format_colored(f"{self._indent * 3}• F1 Score: {metrics.f1_score:.4f}", f1_color))
 
         if metrics.precision is not None:
             precision_color = self._get_quality_color(
                 metrics.precision, higher_is_better=True, good_threshold=0.9, bad_threshold=0.7
             )
-            self._print_colored(f"{self._indent * 3}• Precision: {metrics.precision:.4f}", precision_color)
+            lines.append(self._format_colored(
+                f"{self._indent * 3}• Precision: {metrics.precision:.4f}", precision_color
+            ))
 
         if metrics.recall is not None:
             recall_color = self._get_quality_color(
                 metrics.recall, higher_is_better=True, good_threshold=0.9, bad_threshold=0.7
             )
-            self._print_colored(f"{self._indent * 3}• Recall: {metrics.recall:.4f}", recall_color)
+            lines.append(self._format_colored(f"{self._indent * 3}• Recall: {metrics.recall:.4f}", recall_color))
 
         if metrics.average_score_time_seconds is not None:
             time_color = self._get_quality_color(
                 metrics.average_score_time_seconds, higher_is_better=False, good_threshold=0.5, bad_threshold=3.0
             )
-            self._print_colored(
+            lines.append(self._format_colored(
                 f"{self._indent * 3}• Average Score Time: {metrics.average_score_time_seconds:.2f}s", time_color
-            )
+            ))
 
-    def _print_harm_metrics(self, metrics: Optional[Any]) -> None:
+        return "".join(lines)
+
+    def _render_harm_metrics(self, metrics: Optional[Any]) -> str:
         """
-        Print harm scorer evaluation metrics.
+        Render harm scorer evaluation metrics.
 
         Args:
-            metrics: The metrics to print, or None if not available.
+            metrics: The metrics to render, or None if not available.
+
+        Returns:
+            str: The rendered metrics text.
         """
+        lines: list[str] = []
+
         if metrics is None:
-            print()
-            self._print_colored(f"{self._indent * 2}▸ Performance Metrics", Fore.WHITE)
-            self._print_colored(
+            lines.append("\n")
+            lines.append(self._format_colored(f"{self._indent * 2}▸ Performance Metrics", Fore.WHITE))
+            lines.append(self._format_colored(
                 f"{self._indent * 3}Official evaluation has not been run yet for this specific configuration",
                 Fore.YELLOW,
-            )
-            return
+            ))
+            return "".join(lines)
 
-        print()
-        self._print_colored(f"{self._indent * 2}▸ Performance Metrics", Fore.WHITE)
+        lines.append("\n")
+        lines.append(self._format_colored(f"{self._indent * 2}▸ Performance Metrics", Fore.WHITE))
 
         mae_color = self._get_quality_color(
             metrics.mean_absolute_error, higher_is_better=False, good_threshold=0.1, bad_threshold=0.25
         )
-        self._print_colored(f"{self._indent * 3}• Mean Absolute Error: {metrics.mean_absolute_error:.4f}", mae_color)
+        lines.append(self._format_colored(
+            f"{self._indent * 3}• Mean Absolute Error: {metrics.mean_absolute_error:.4f}", mae_color
+        ))
 
         if metrics.mae_standard_error is not None:
-            self._print_colored(f"{self._indent * 3}• MAE Std Error: ±{metrics.mae_standard_error:.4f}", Fore.CYAN)
+            lines.append(self._format_colored(
+                f"{self._indent * 3}• MAE Std Error: ±{metrics.mae_standard_error:.4f}", Fore.CYAN
+            ))
 
         if metrics.krippendorff_alpha_combined is not None:
             alpha_color = self._get_quality_color(
                 metrics.krippendorff_alpha_combined, higher_is_better=True, good_threshold=0.8, bad_threshold=0.6
             )
-            self._print_colored(
+            lines.append(self._format_colored(
                 f"{self._indent * 3}• Krippendorff Alpha (Combined): {metrics.krippendorff_alpha_combined:.4f}",
                 alpha_color,
-            )
+            ))
 
         if metrics.krippendorff_alpha_model is not None:
             alpha_model_color = self._get_quality_color(
                 metrics.krippendorff_alpha_model, higher_is_better=True, good_threshold=0.8, bad_threshold=0.6
             )
-            self._print_colored(
+            lines.append(self._format_colored(
                 f"{self._indent * 3}• Krippendorff Alpha (Model): {metrics.krippendorff_alpha_model:.4f}",
                 alpha_model_color,
-            )
+            ))
 
         if metrics.average_score_time_seconds is not None:
             time_color = self._get_quality_color(
                 metrics.average_score_time_seconds, higher_is_better=False, good_threshold=1.0, bad_threshold=3.0
             )
-            self._print_colored(
+            lines.append(self._format_colored(
                 f"{self._indent * 3}• Average Score Time: {metrics.average_score_time_seconds:.2f}s", time_color
-            )
+            ))
 
-    def print_objective_scorer(self, *, scorer_identifier: ComponentIdentifier) -> None:
+        return "".join(lines)
+
+    async def write_async(
+        self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None
+    ) -> None:
         """
-        Print objective scorer information including type, nested scorers, and evaluation metrics.
+        Render and write scorer information to the configured sink.
+
+        Auto-detects scorer type: if harm_category is provided, renders harm
+        metrics; otherwise renders objective metrics.
 
         Args:
-            scorer_identifier (ComponentIdentifier): The scorer identifier to print information for.
+            scorer_identifier (ComponentIdentifier): The scorer identifier.
+            harm_category (str | None): The harm category. None for objective scorers.
         """
         from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
 
-        print()
-        self._print_colored(f"{self._indent}📊 Scorer Information", Style.BRIGHT)
-        self._print_colored(f"{self._indent * 2}▸ Scorer Identifier", Fore.WHITE)
-        self._print_scorer_info(scorer_identifier, indent_level=3)
+        lines: list[str] = []
+        lines.append("\n")
+        lines.append(self._format_colored(f"{self._indent}📊 Scorer Information", Style.BRIGHT))
+        lines.append(self._format_colored(f"{self._indent * 2}▸ Scorer Identifier", Fore.WHITE))
+        lines.append(self._render_scorer_info(scorer_identifier, indent_level=3))
 
         eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
-        metrics = self._get_objective_metrics(eval_hash=eval_hash)
-        self._print_objective_metrics(metrics)
+        if harm_category is not None:
+            metrics = self._get_harm_metrics(eval_hash=eval_hash, harm_category=harm_category)
+            lines.append(self._render_harm_metrics(metrics))
+        else:
+            metrics = self._get_objective_metrics(eval_hash=eval_hash)
+            lines.append(self._render_objective_metrics(metrics))
 
-    def print_harm_scorer(self, *, scorer_identifier: ComponentIdentifier, harm_category: str) -> None:
-        """
-        Print harm scorer information including type, nested scorers, and evaluation metrics.
-
-        Args:
-            scorer_identifier (ComponentIdentifier): The scorer identifier to print information for.
-            harm_category (str): The harm category for looking up metrics.
-        """
-        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
-
-        print()
-        self._print_colored(f"{self._indent}📊 Scorer Information", Style.BRIGHT)
-        self._print_colored(f"{self._indent * 2}▸ Scorer Identifier", Fore.WHITE)
-        self._print_scorer_info(scorer_identifier, indent_level=3)
-
-        eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
-        metrics = self._get_harm_metrics(eval_hash=eval_hash, harm_category=harm_category)
-        self._print_harm_metrics(metrics)
+        await self._write_async("".join(lines))
 
 
 class PrettyScorerMemoryPrinter(PrettyScorerPrinter):

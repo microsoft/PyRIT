@@ -7,31 +7,32 @@ from pyrit.printer.base import PrinterBase
 from pyrit.printer.sink import StdoutSink
 
 
-def test_printer_base_has_no_abstract_methods():
-    # PrinterBase is abstract via ABC but has no abstract methods of its own.
-    # Subclasses add their own abstract methods for data fetching.
-    class ConcretePrinter(PrinterBase):
+def test_printer_base_is_abstract():
+    class IncompletePrinter(PrinterBase):
         pass
 
-    printer = ConcretePrinter()
-    assert isinstance(printer, PrinterBase)
+    with pytest.raises(TypeError, match="Can't instantiate abstract class"):
+        IncompletePrinter()  # type: ignore[abstract]
 
 
 def test_printer_base_defaults_to_stdout_sink():
 
     class ConcretePrinter(PrinterBase):
-        pass
+        async def write_async(self) -> None:
+            pass
 
     printer = ConcretePrinter()
     assert isinstance(printer._sink, StdoutSink)
 
 
 def test_printer_base_accepts_custom_sink():
-    from pyrit.printer.sink import FileSink
     from pathlib import Path
 
+    from pyrit.printer.sink import FileSink
+
     class ConcretePrinter(PrinterBase):
-        pass
+        async def write_async(self) -> None:
+            pass
 
     sink = FileSink(path=Path("test.txt"))
     printer = ConcretePrinter(sink=sink)
@@ -41,9 +42,10 @@ def test_printer_base_accepts_custom_sink():
 async def test_printer_base_write_async_delegates_to_sink(capsys):
 
     class ConcretePrinter(PrinterBase):
-        pass
+        async def write_async(self) -> None:
+            await self._write_async("test output")
 
     printer = ConcretePrinter()
-    await printer._write_async(b"test output")
+    await printer.write_async()
     captured = capsys.readouterr()
     assert captured.out == "test output"

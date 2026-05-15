@@ -30,6 +30,18 @@ def test_scorer_printer_subclass_must_implement_get_harm_metrics():
         IncompletePrinter()  # type: ignore[abstract]
 
 
+def test_scorer_printer_subclass_must_implement_write_async():
+    class IncompletePrinter(ScorerPrinter):
+        def _get_objective_metrics(self, *, eval_hash: str):
+            return None
+
+        def _get_harm_metrics(self, *, eval_hash: str, harm_category: str):
+            return None
+
+    with pytest.raises(TypeError, match="Can't instantiate abstract class"):
+        IncompletePrinter()  # type: ignore[abstract]
+
+
 def test_scorer_printer_complete_subclass_can_be_instantiated():
     class CompletePrinter(ScorerPrinter):
         def _get_objective_metrics(self, *, eval_hash: str):
@@ -38,10 +50,9 @@ def test_scorer_printer_complete_subclass_can_be_instantiated():
         def _get_harm_metrics(self, *, eval_hash: str, harm_category: str):
             return None
 
-        def print_objective_scorer(self, *, scorer_identifier: ComponentIdentifier) -> None:
-            pass
-
-        def print_harm_scorer(self, *, scorer_identifier: ComponentIdentifier, harm_category: str) -> None:
+        async def write_async(
+            self, *, scorer_identifier: ComponentIdentifier, harm_category: str | None = None
+        ) -> None:
             pass
 
     printer = CompletePrinter()

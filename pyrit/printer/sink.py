@@ -14,69 +14,60 @@ class Sink(ABC):
     """
 
     @abstractmethod
-    async def write_async(self, data: bytes) -> None:
+    async def write_async(self, data: str) -> None:
         """
         Write rendered output data.
 
         Args:
-            data (bytes): The rendered output to write.
+            data (str): The rendered text output to write.
         """
 
 
 class StdoutSink(Sink):
     """
-    Sink that decodes bytes to str and prints to stdout.
+    Sink that prints text to stdout.
 
     This is the default sink used when no sink is specified.
     """
 
-    def __init__(self, *, encoding: str = "utf-8") -> None:
-        """
-        Initialize the stdout sink.
-
-        Args:
-            encoding (str): Character encoding for decoding bytes. Defaults to "utf-8".
-        """
-        self._encoding = encoding
-
-    async def write_async(self, data: bytes) -> None:
+    async def write_async(self, data: str) -> None:
         """
         Write data to stdout.
 
         Args:
-            data (bytes): The data to print, decoded using the configured encoding.
+            data (str): The text to print.
         """
-        print(data.decode(self._encoding), end="")
+        print(data, end="")
 
 
 class FileSink(Sink):
     """
-    Sink that writes bytes to a file.
+    Sink that writes text to a file.
     """
 
-    def __init__(self, *, path: Path, mode: str = "wb") -> None:
+    def __init__(self, *, path: Path, mode: str = "w") -> None:
         """
         Initialize the file sink.
 
         Args:
             path (Path): The file path to write to.
-            mode (str): The file open mode. Defaults to "wb" (write binary, overwrite).
-                Use "ab" for append mode.
+            mode (str): The file open mode. Defaults to "w" (write, overwrite).
+                Use "a" for append mode.
 
         Raises:
-            ValueError: If mode is not a valid binary write mode.
+            ValueError: If mode is not a valid text write mode.
         """
-        if mode not in ("wb", "ab"):
-            raise ValueError(f"mode must be 'wb' or 'ab', got '{mode}'")
+        if mode not in ("w", "a"):
+            raise ValueError(f"mode must be 'w' or 'a', got '{mode}'")
         self._path = path
         self._mode = mode
 
-    async def write_async(self, data: bytes) -> None:
+    async def write_async(self, data: str) -> None:
         """
         Write data to a file.
 
         Args:
-            data (bytes): The data to write.
+            data (str): The text to write.
         """
-        with open(self._path, self._mode) as f:
+        with open(self._path, self._mode, encoding="utf-8") as f:
             f.write(data)

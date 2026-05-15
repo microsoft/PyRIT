@@ -38,19 +38,53 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         self._indent = " " * indent_size
         self._enable_colors = enable_colors
 
-    def _print_colored(self, text: str, *colors: str) -> None:
+    def _format_colored(self, text: str, *colors: str) -> str:
         """
-        Print text with color formatting if colors are enabled.
+        Format text with color codes if colors are enabled.
 
         Args:
-            text (str): The text to print.
+            text (str): The text to format.
             *colors: Variable number of colorama color constants to apply.
+
+        Returns:
+            str: The formatted line with trailing newline.
         """
         if self._enable_colors and colors:
             color_prefix = "".join(colors)
-            print(f"{color_prefix}{text}{Style.RESET_ALL}")
-        else:
-            print(text)
+            return f"{color_prefix}{text}{Style.RESET_ALL}\n"
+        return f"{text}\n"
+
+    async def write_async(
+        self,
+        result: AttackResult,
+        *,
+        include_auxiliary_scores: bool = False,
+        include_pruned_conversations: bool = False,
+        include_adversarial_conversation: bool = False,
+    ) -> None:
+        """
+        Render and write the complete attack result to the sink.
+
+        Args:
+            result (AttackResult): The attack result to render.
+            include_auxiliary_scores (bool): Whether to include auxiliary scores. Defaults to False.
+            include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
+            include_adversarial_conversation (bool): Whether to include the adversarial conversation.
+                Defaults to False.
+        """
+        lines: list[str] = []
+        lines.append(self._render_header(result))
+        lines.append(await self._render_summary_async(result))
+        lines.append(self._render_section_header("Conversation History with Objective Target"))
+        lines.append(await self._render_conversation_async(result, include_scores=include_auxiliary_scores))
+        if include_pruned_conversations:
+            lines.append(await self._render_pruned_conversations_async(result))
+        if include_adversarial_conversation:
+            lines.append(await self._render_adversarial_conversation_async(result))
+        if result.metadata:
+            lines.append(self._render_metadata(result.metadata))
+        lines.append(self._render_footer())
+        await self._write_async("".join(lines))
 
     async def print_result_async(
         self,
@@ -60,59 +94,159 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         include_pruned_conversations: bool = False,
         include_adversarial_conversation: bool = False,
     ) -> None:
-        """
-        Print the complete attack result to console.
+        """Deprecated. Use write_async instead."""
+        await self.write_async(
+            result,
+            include_auxiliary_scores=include_auxiliary_scores,
+            include_pruned_conversations=include_pruned_conversations,
+            include_adversarial_conversation=include_adversarial_conversation,
+        )
 
-        Args:
-            result (AttackResult): The attack result to print.
-            include_auxiliary_scores (bool): Whether to include auxiliary scores. Defaults to False.
-            include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
-            include_adversarial_conversation (bool): Whether to include the adversarial conversation.
-                Defaults to False.
-        """
-        self._print_header(result)
-        await self.print_summary_async(result)
-
-        self._print_section_header("Conversation History with Objective Target")
-        await self.print_conversation_async(result, include_scores=include_auxiliary_scores)
-
-        if include_pruned_conversations:
-            await self._print_pruned_conversations_async(result)
-
-        if include_adversarial_conversation:
-            await self._print_adversarial_conversation_async(result)
-
-        if result.metadata:
-            self._print_metadata(result.metadata)
-
-        self._print_footer()
-
-    async def print_conversation_async(
+    async def _render_conversation_async(
         self, result: AttackResult, *, include_scores: bool = False, include_reasoning_trace: bool = False
-    ) -> None:
+    ) -> str:
         """
-        Print the conversation history to console.
+        Render the conversation history as a formatted string.
 
         Args:
             result (AttackResult): The attack result containing the conversation_id.
             include_scores (bool): Whether to include scores. Defaults to False.
             include_reasoning_trace (bool): Whether to include model reasoning trace. Defaults to False.
+
+        Returns:
+            str: The rendered conversation text.
         """
         if not result.conversation_id:
-            self._print_colored(f"{self._indent} No conversation ID available", Fore.YELLOW)
-            return
+            return self._format_colored(f"{self._indent} No conversation ID available", Fore.YELLOW)
 
-        messages = await self.get_conversation_async(result.conversation_id)
+        messages = await self._get_conversation_async(result.conversation_id)
 
         if not messages:
-            self._print_colored(f"{self._indent} No conversation found for ID: {result.conversation_id}", Fore.YELLOW)
-            return
+            return self._format_colored(
+                f"{self._indent} No conversation found for ID: {result.conversation_id}", Fore.YELLOW
+            )
 
-        await self.print_messages_async(
+        return await self._render_messages_async(
             messages=messages,
             include_scores=include_scores,
             include_reasoning_trace=include_reasoning_trace,
         )
+
+    async def print_conversation_async(
+        self, result: AttackResult, *, include_scores: bool = False, include_reasoning_trace: bool = False
+    ) -> None:
+        """Deprecated. Use write_async instead."""
+        content = await self._render_conversation_async(
+            result, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
+        )
+        await self._write_async(content)
+
+    async def _render_messages_async(
+        self,
+        messages: list[Message],
+        *,
+        include_scores: bool = False,
+        include_reasoning_trace: bool = False,
+    ) -> str:
+        """
+        Render a list of messages as a formatted string.
+
+        Args:
+            messages (list[Message]): List of Message objects to render.
+            include_scores (bool): Whether to include scores. Defaults to False.
+            include_reasoning_trace (bool): Whether to include model reasoning trace. Defaults to False.
+
+        Returns:
+            str: The rendered messages text.
+        """
+        if not messages:
+            return self._format_colored(f"{self._indent} No messages to display.", Fore.YELLOW)
+
+        lines: list[str] = []
+        image_pieces: list[MessagePiece] = []
+        turn_number = 0
+        for message in messages:
+            if message.api_role == "user":
+                turn_number += 1
+                lines.append("\n")
+                lines.append(self._format_colored("─" * self._width, Fore.BLUE))
+                lines.append(self._format_colored(f"🔹 Turn {turn_number} - USER", Style.BRIGHT, Fore.BLUE))
+                lines.append(self._format_colored("─" * self._width, Fore.BLUE))
+            elif message.api_role == "system":
+                lines.append("\n")
+                lines.append(self._format_colored("─" * self._width, Fore.MAGENTA))
+                lines.append(self._format_colored("🔧 SYSTEM", Style.BRIGHT, Fore.MAGENTA))
+                lines.append(self._format_colored("─" * self._width, Fore.MAGENTA))
+            else:
+                lines.append("\n")
+                lines.append(self._format_colored("─" * self._width, Fore.YELLOW))
+                role_label = "ASSISTANT (SIMULATED)" if message.is_simulated else message.api_role.upper()
+                lines.append(self._format_colored(f"🔸 {role_label}", Style.BRIGHT, Fore.YELLOW))
+                lines.append(self._format_colored("─" * self._width, Fore.YELLOW))
+
+            for piece in message.message_pieces:
+                if piece.original_value_data_type == "reasoning":
+                    if include_reasoning_trace:
+                        summary_text = self._extract_reasoning_summary(piece.original_value)
+                        if summary_text:
+                            lines.append(self._format_colored(
+                                f"{self._indent}💭 Reasoning Summary:", Style.DIM, Fore.CYAN
+                            ))
+                            lines.append(self._render_wrapped_text(summary_text, Fore.CYAN))
+                            lines.append("\n")
+                    continue
+
+                if piece.is_blocked():
+                    lines.append(self._format_colored(
+                        f"{self._indent}🚫 BLOCKED BY TARGET", Style.BRIGHT, Fore.RED
+                    ))
+                    partial_content = piece.prompt_metadata.get("partial_content")
+                    if partial_content:
+                        lines.append(self._format_colored(
+                            f"{self._indent}📝 Partial content (before filter triggered):",
+                            Style.DIM,
+                            Fore.CYAN,
+                        ))
+                        lines.append(self._render_wrapped_text(str(partial_content), Fore.YELLOW))
+                    else:
+                        lines.append(self._format_colored(
+                            f"{self._indent}Content was blocked by the target's content filter.",
+                            Style.DIM,
+                            Fore.RED,
+                        ))
+
+                elif piece.converted_value != piece.original_value:
+                    lines.append(self._format_colored(f"{self._indent} Original:", Fore.CYAN))
+                    lines.append(self._render_wrapped_text(piece.original_value, Fore.WHITE))
+                    lines.append("\n")
+                    lines.append(self._format_colored(f"{self._indent} Converted:", Fore.CYAN))
+                    lines.append(self._render_wrapped_text(piece.converted_value, Fore.WHITE))
+                elif piece.api_role == "user":
+                    lines.append(self._render_wrapped_text(piece.converted_value, Fore.BLUE))
+                elif piece.api_role == "system":
+                    lines.append(self._render_wrapped_text(piece.converted_value, Fore.MAGENTA))
+                else:
+                    lines.append(self._render_wrapped_text(piece.converted_value, Fore.YELLOW))
+
+                image_pieces.append(piece)
+
+                if include_scores:
+                    scores = await self._get_scores_async(prompt_ids=[str(piece.id)])
+                    if scores:
+                        lines.append("\n")
+                        lines.append(self._format_colored(
+                            f"{self._indent}📊 Scores:", Style.DIM, Fore.MAGENTA
+                        ))
+                        for score in scores:
+                            lines.append(self._render_score(score))
+
+        lines.append("\n")
+        lines.append(self._format_colored("─" * self._width, Fore.BLUE))
+
+        for piece in image_pieces:
+            await self._display_image_async(piece)
+
+        return "".join(lines)
 
     async def print_messages_async(
         self,
@@ -121,90 +255,11 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         include_scores: bool = False,
         include_reasoning_trace: bool = False,
     ) -> None:
-        """
-        Print a list of messages to console with enhanced formatting.
-
-        Args:
-            messages (list): List of Message objects to print.
-            include_scores (bool): Whether to include scores. Defaults to False.
-            include_reasoning_trace (bool): Whether to include model reasoning trace. Defaults to False.
-        """
-        if not messages:
-            self._print_colored(f"{self._indent} No messages to display.", Fore.YELLOW)
-            return
-
-        turn_number = 0
-        for message in messages:
-            if message.api_role == "user":
-                turn_number += 1
-                print()
-                self._print_colored("─" * self._width, Fore.BLUE)
-                self._print_colored(f"🔹 Turn {turn_number} - USER", Style.BRIGHT, Fore.BLUE)
-                self._print_colored("─" * self._width, Fore.BLUE)
-            elif message.api_role == "system":
-                print()
-                self._print_colored("─" * self._width, Fore.MAGENTA)
-                self._print_colored("🔧 SYSTEM", Style.BRIGHT, Fore.MAGENTA)
-                self._print_colored("─" * self._width, Fore.MAGENTA)
-            else:
-                print()
-                self._print_colored("─" * self._width, Fore.YELLOW)
-                role_label = "ASSISTANT (SIMULATED)" if message.is_simulated else message.api_role.upper()
-                self._print_colored(f"🔸 {role_label}", Style.BRIGHT, Fore.YELLOW)
-                self._print_colored("─" * self._width, Fore.YELLOW)
-
-            for piece in message.message_pieces:
-                if piece.original_value_data_type == "reasoning":
-                    if include_reasoning_trace:
-                        summary_text = self._extract_reasoning_summary(piece.original_value)
-                        if summary_text:
-                            self._print_colored(f"{self._indent}💭 Reasoning Summary:", Style.DIM, Fore.CYAN)
-                            self._print_wrapped_text(summary_text, Fore.CYAN)
-                            print()
-                    continue
-
-                if piece.is_blocked():
-                    self._print_colored(f"{self._indent}🚫 BLOCKED BY TARGET", Style.BRIGHT, Fore.RED)
-                    partial_content = piece.prompt_metadata.get("partial_content")
-                    if partial_content:
-                        self._print_colored(
-                            f"{self._indent}📝 Partial content (before filter triggered):",
-                            Style.DIM,
-                            Fore.CYAN,
-                        )
-                        self._print_wrapped_text(str(partial_content), Fore.YELLOW)
-                    else:
-                        self._print_colored(
-                            f"{self._indent}Content was blocked by the target's content filter.",
-                            Style.DIM,
-                            Fore.RED,
-                        )
-
-                elif piece.converted_value != piece.original_value:
-                    self._print_colored(f"{self._indent} Original:", Fore.CYAN)
-                    self._print_wrapped_text(piece.original_value, Fore.WHITE)
-                    print()
-                    self._print_colored(f"{self._indent} Converted:", Fore.CYAN)
-                    self._print_wrapped_text(piece.converted_value, Fore.WHITE)
-                elif piece.api_role == "user":
-                    self._print_wrapped_text(piece.converted_value, Fore.BLUE)
-                elif piece.api_role == "system":
-                    self._print_wrapped_text(piece.converted_value, Fore.MAGENTA)
-                else:
-                    self._print_wrapped_text(piece.converted_value, Fore.YELLOW)
-
-                await self.display_image_async(piece)
-
-                if include_scores:
-                    scores = await self.get_scores_async(prompt_ids=[str(piece.id)])
-                    if scores:
-                        print()
-                        self._print_colored(f"{self._indent}📊 Scores:", Style.DIM, Fore.MAGENTA)
-                        for score in scores:
-                            self._print_score(score)
-
-        print()
-        self._print_colored("─" * self._width, Fore.BLUE)
+        """Deprecated. Use write_async instead."""
+        content = await self._render_messages_async(
+            messages=messages, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
+        )
+        await self._write_async(content)
 
     def _extract_reasoning_summary(self, reasoning_value: str) -> str:
         """
@@ -228,116 +283,159 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         parts = [item.get("text", "") for item in summary if isinstance(item, dict) and item.get("text")]
         return "\n".join(parts)
 
-    async def print_summary_async(self, result: AttackResult) -> None:
+    async def _render_summary_async(self, result: AttackResult) -> str:
         """
-        Print a summary of the attack result.
+        Render a summary of the attack result.
 
         Args:
             result (AttackResult): The attack result to summarize.
-        """
-        self._print_section_header("Attack Summary")
 
-        self._print_colored(f"{self._indent}📋 Basic Information", Style.BRIGHT)
-        self._print_colored(f"{self._indent * 2}• Objective: {result.objective}", Fore.CYAN)
+        Returns:
+            str: The rendered summary text.
+        """
+        lines: list[str] = []
+        lines.append(self._render_section_header("Attack Summary"))
+
+        lines.append(self._format_colored(f"{self._indent}📋 Basic Information", Style.BRIGHT))
+        lines.append(self._format_colored(f"{self._indent * 2}• Objective: {result.objective}", Fore.CYAN))
 
         attack_type = "Unknown"
         attack_strategy_id = result.get_attack_strategy_identifier()
         if attack_strategy_id:
             attack_type = attack_strategy_id.class_name
 
-        self._print_colored(f"{self._indent * 2}• Attack Type: {attack_type}", Fore.CYAN)
-        self._print_colored(f"{self._indent * 2}• Conversation ID: {result.conversation_id}", Fore.CYAN)
+        lines.append(self._format_colored(f"{self._indent * 2}• Attack Type: {attack_type}", Fore.CYAN))
+        lines.append(self._format_colored(
+            f"{self._indent * 2}• Conversation ID: {result.conversation_id}", Fore.CYAN
+        ))
 
-        print()
-        self._print_colored(f"{self._indent}⚡ Execution Metrics", Style.BRIGHT)
-        self._print_colored(f"{self._indent * 2}• Turns Executed: {result.executed_turns}", Fore.GREEN)
-        self._print_colored(
+        lines.append("\n")
+        lines.append(self._format_colored(f"{self._indent}⚡ Execution Metrics", Style.BRIGHT))
+        lines.append(self._format_colored(
+            f"{self._indent * 2}• Turns Executed: {result.executed_turns}", Fore.GREEN
+        ))
+        lines.append(self._format_colored(
             f"{self._indent * 2}• Execution Time: {self._format_time(result.execution_time_ms)}", Fore.GREEN
-        )
+        ))
 
-        print()
-        self._print_colored(f"{self._indent}🎯 Outcome", Style.BRIGHT)
+        lines.append("\n")
+        lines.append(self._format_colored(f"{self._indent}🎯 Outcome", Style.BRIGHT))
         outcome_icon = self._get_outcome_icon(result.outcome)
         outcome_color = self._get_outcome_color(result.outcome)
-        self._print_colored(f"{self._indent * 2}• Status: {outcome_icon} {result.outcome.value.upper()}", outcome_color)
+        lines.append(self._format_colored(
+            f"{self._indent * 2}• Status: {outcome_icon} {result.outcome.value.upper()}", outcome_color
+        ))
 
         if result.outcome_reason:
-            self._print_colored(f"{self._indent * 2}• Reason: {result.outcome_reason}", Fore.WHITE)
+            lines.append(self._format_colored(f"{self._indent * 2}• Reason: {result.outcome_reason}", Fore.WHITE))
 
         if result.last_score:
-            print()
-            self._print_colored(f"{self._indent} Final Score", Style.BRIGHT)
-            self._print_score(result.last_score, indent_level=2)
+            lines.append("\n")
+            lines.append(self._format_colored(f"{self._indent} Final Score", Style.BRIGHT))
+            lines.append(self._render_score(result.last_score, indent_level=2))
 
-    def _print_header(self, result: AttackResult) -> None:
+        return "".join(lines)
+
+    async def print_summary_async(self, result: AttackResult) -> None:
+        """Deprecated. Use write_async instead."""
+        content = await self._render_summary_async(result)
+        await self._write_async(content)
+
+    def _render_header(self, result: AttackResult) -> str:
         """
-        Print the header with outcome-based coloring.
+        Render the header with outcome-based coloring.
 
         Args:
             result (AttackResult): The attack result containing the outcome.
+
+        Returns:
+            str: The rendered header text.
         """
         color = self._get_outcome_color(result.outcome)
         icon = self._get_outcome_icon(result.outcome)
 
-        print()
-        self._print_colored("═" * self._width, color)
+        lines: list[str] = []
+        lines.append("\n")
+        lines.append(self._format_colored("═" * self._width, color))
         header_text = f"{icon} ATTACK RESULT: {result.outcome.value.upper()} {icon}"
-        self._print_colored(header_text.center(self._width), Style.BRIGHT, color)
-        self._print_colored("═" * self._width, color)
+        lines.append(self._format_colored(header_text.center(self._width), Style.BRIGHT, color))
+        lines.append(self._format_colored("═" * self._width, color))
+        return "".join(lines)
 
-    def _print_footer(self) -> None:
-        """Print a footer with timestamp."""
-        timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        print()
-        self._print_colored("─" * self._width, Style.DIM, Fore.WHITE)
-        footer_text = f"Report generated at: {timestamp} UTC"
-        self._print_colored(footer_text.center(self._width), Style.DIM, Fore.WHITE)
-
-    def _print_section_header(self, title: str) -> None:
+    def _render_footer(self) -> str:
         """
-        Print a section header with consistent styling.
+        Render a footer with timestamp.
+
+        Returns:
+            str: The rendered footer text.
+        """
+        timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        lines: list[str] = []
+        lines.append("\n")
+        lines.append(self._format_colored("─" * self._width, Style.DIM, Fore.WHITE))
+        footer_text = f"Report generated at: {timestamp} UTC"
+        lines.append(self._format_colored(footer_text.center(self._width), Style.DIM, Fore.WHITE))
+        return "".join(lines)
+
+    def _render_section_header(self, title: str) -> str:
+        """
+        Render a section header with consistent styling.
 
         Args:
             title (str): The title text to display.
-        """
-        print()
-        self._print_colored(f" {title} ", Style.BRIGHT, Back.BLUE, Fore.WHITE)
-        self._print_colored("─" * self._width, Fore.BLUE)
 
-    def _print_metadata(self, metadata: dict[str, Any]) -> None:
+        Returns:
+            str: The rendered section header text.
         """
-        Print metadata in a formatted way.
+        lines: list[str] = []
+        lines.append("\n")
+        lines.append(self._format_colored(f" {title} ", Style.BRIGHT, Back.BLUE, Fore.WHITE))
+        lines.append(self._format_colored("─" * self._width, Fore.BLUE))
+        return "".join(lines)
+
+    def _render_metadata(self, metadata: dict[str, Any]) -> str:
+        """
+        Render metadata in a formatted way.
 
         Args:
             metadata (dict[str, Any]): Dictionary containing metadata key-value pairs.
-        """
-        self._print_section_header("Additional Metadata")
-        for key, value in metadata.items():
-            self._print_colored(f"{self._indent}• {key}: {value}", Fore.CYAN)
 
-    def _print_score(self, score: Score, indent_level: int = 3) -> None:
+        Returns:
+            str: The rendered metadata text.
         """
-        Print a score with proper formatting.
+        lines: list[str] = []
+        lines.append(self._render_section_header("Additional Metadata"))
+        for key, value in metadata.items():
+            lines.append(self._format_colored(f"{self._indent}• {key}: {value}", Fore.CYAN))
+        return "".join(lines)
+
+    def _render_score(self, score: Score, indent_level: int = 3) -> str:
+        """
+        Render a score with proper formatting.
 
         Args:
-            score (Score): Score object to be printed.
+            score (Score): Score object to be rendered.
             indent_level (int): Number of indent units to apply. Defaults to 3.
+
+        Returns:
+            str: The rendered score text.
         """
+        lines: list[str] = []
         indent = self._indent * indent_level
         scorer_name = score.scorer_class_identifier.class_name
-        print(f"{indent}Scorer: {scorer_name}")
-        self._print_colored(f"{indent}• Category: {score.score_category or 'N/A'}", Fore.LIGHTMAGENTA_EX)
-        self._print_colored(f"{indent}• Type: {score.score_type}", Fore.CYAN)
+        lines.append(f"{indent}Scorer: {scorer_name}\n")
+        lines.append(self._format_colored(f"{indent}• Category: {score.score_category or 'N/A'}", Fore.LIGHTMAGENTA_EX))
+        lines.append(self._format_colored(f"{indent}• Type: {score.score_type}", Fore.CYAN))
 
         if score.score_type == "true_false":
             score_color = Fore.GREEN if score.get_value() else Fore.RED
         else:
             score_color = Fore.YELLOW
 
-        self._print_colored(f"{indent}• Value: {score.score_value}", score_color)
+        lines.append(self._format_colored(f"{indent}• Value: {score.score_value}", score_color))
 
         if score.score_rationale:
-            print(f"{indent}• Rationale:")
+            lines.append(f"{indent}• Rationale:\n")
             rationale_wrapper = textwrap.TextWrapper(
                 width=self._width - len(indent) - 2,
                 initial_indent=indent + "  ",
@@ -345,23 +443,29 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
                 break_long_words=False,
                 break_on_hyphens=False,
             )
-            lines = score.score_rationale.split("\n")
-            for line in lines:
+            rationale_lines = score.score_rationale.split("\n")
+            for line in rationale_lines:
                 if line.strip():
                     wrapped_lines = rationale_wrapper.wrap(line)
                     for wrapped_line in wrapped_lines:
-                        self._print_colored(wrapped_line, Fore.WHITE)
+                        lines.append(self._format_colored(wrapped_line, Fore.WHITE))
                 else:
-                    self._print_colored(f"{indent}  ")
+                    lines.append(self._format_colored(f"{indent}  "))
 
-    def _print_wrapped_text(self, text: str, color: str) -> None:
+        return "".join(lines)
+
+    def _render_wrapped_text(self, text: str, color: str) -> str:
         """
-        Print text with proper wrapping and indentation, preserving newlines.
+        Render text with proper wrapping and indentation, preserving newlines.
 
         Args:
-            text (str): The text to print.
+            text (str): The text to render.
             color (str): Colorama color constant to apply.
+
+        Returns:
+            str: The rendered wrapped text.
         """
+        lines: list[str] = []
         text_wrapper = textwrap.TextWrapper(
             width=self._width - len(self._indent),
             initial_indent="",
@@ -372,103 +476,118 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             replace_whitespace=False,
         )
 
-        lines = text.split("\n")
-        for line_num, line in enumerate(lines):
+        text_lines = text.split("\n")
+        for line_num, line in enumerate(text_lines):
             if line.strip():
                 wrapped_lines = text_wrapper.wrap(line)
                 for i, wrapped_line in enumerate(wrapped_lines):
                     if line_num == 0 and i == 0:
-                        self._print_colored(f"{self._indent}{wrapped_line}", color)
+                        lines.append(self._format_colored(f"{self._indent}{wrapped_line}", color))
                     else:
-                        self._print_colored(f"{self._indent * 2}{wrapped_line}", color)
+                        lines.append(self._format_colored(f"{self._indent * 2}{wrapped_line}", color))
             else:
-                self._print_colored(f"{self._indent}", color)
+                lines.append(self._format_colored(f"{self._indent}", color))
 
-    async def _print_pruned_conversations_async(self, result: AttackResult) -> None:
+        return "".join(lines)
+
+    async def _render_pruned_conversations_async(self, result: AttackResult) -> str:
         """
-        Print pruned conversations showing only the last message and score for each.
+        Render pruned conversations showing only the last message and score for each.
 
         Args:
             result (AttackResult): The attack result containing related conversations.
+
+        Returns:
+            str: The rendered pruned conversations text.
         """
         pruned_refs = result.get_conversations_by_type(ConversationType.PRUNED)
 
         if not pruned_refs:
-            return
+            return ""
 
-        self._print_section_header(f"Pruned Conversations ({len(pruned_refs)} total)")
+        lines: list[str] = []
+        lines.append(self._render_section_header(f"Pruned Conversations ({len(pruned_refs)} total)"))
 
         for idx, ref in enumerate(pruned_refs, 1):
-            print()
-            self._print_colored("─" * self._width, Fore.RED)
+            lines.append("\n")
+            lines.append(self._format_colored("─" * self._width, Fore.RED))
             label = f"🗑️ PRUNED #{idx}"
             if ref.description:
                 label += f" - {ref.description}"
-            self._print_colored(label, Style.BRIGHT, Fore.RED)
-            self._print_colored("─" * self._width, Fore.RED)
+            lines.append(self._format_colored(label, Style.BRIGHT, Fore.RED))
+            lines.append(self._format_colored("─" * self._width, Fore.RED))
 
-            messages = await self.get_conversation_async(ref.conversation_id)
+            messages = await self._get_conversation_async(ref.conversation_id)
 
             if not messages:
-                self._print_colored(
+                lines.append(self._format_colored(
                     f"{self._indent}No messages found for conversation: {ref.conversation_id}", Fore.YELLOW
-                )
+                ))
                 continue
 
             last_message = messages[-1]
             role_label = last_message.api_role.upper()
-            self._print_colored(f"{self._indent}Last Message ({role_label}):", Style.BRIGHT, Fore.WHITE)
+            lines.append(self._format_colored(
+                f"{self._indent}Last Message ({role_label}):", Style.BRIGHT, Fore.WHITE
+            ))
 
             for piece in last_message.message_pieces:
-                self._print_wrapped_text(piece.converted_value, Fore.WHITE)
+                lines.append(self._render_wrapped_text(piece.converted_value, Fore.WHITE))
 
-                scores = await self.get_scores_async(prompt_ids=[str(piece.id)])
+                scores = await self._get_scores_async(prompt_ids=[str(piece.id)])
                 if scores:
-                    print()
-                    self._print_colored(f"{self._indent}📊 Score:", Style.DIM, Fore.MAGENTA)
+                    lines.append("\n")
+                    lines.append(self._format_colored(f"{self._indent}📊 Score:", Style.DIM, Fore.MAGENTA))
                     for score in scores:
-                        self._print_score(score)
+                        lines.append(self._render_score(score))
 
-        print()
-        self._print_colored("─" * self._width, Fore.RED)
+        lines.append("\n")
+        lines.append(self._format_colored("─" * self._width, Fore.RED))
+        return "".join(lines)
 
-    async def _print_adversarial_conversation_async(self, result: AttackResult) -> None:
+    async def _render_adversarial_conversation_async(self, result: AttackResult) -> str:
         """
-        Print the adversarial conversation for the best-scoring attack branch.
+        Render the adversarial conversation for the best-scoring attack branch.
 
         Args:
             result (AttackResult): The attack result containing related conversations.
+
+        Returns:
+            str: The rendered adversarial conversation text.
         """
         adversarial_refs = result.get_conversations_by_type(ConversationType.ADVERSARIAL)
 
         if not adversarial_refs:
-            return
+            return ""
 
-        self._print_section_header("Adversarial Conversation (Red Team LLM)")
+        lines: list[str] = []
+        lines.append(self._render_section_header("Adversarial Conversation (Red Team LLM)"))
 
         best_adversarial_id = result.metadata.get("best_adversarial_conversation_id")
         if best_adversarial_id:
             adversarial_refs = [ref for ref in adversarial_refs if ref.conversation_id == best_adversarial_id]
             if adversarial_refs:
-                self._print_colored(
+                lines.append(self._format_colored(
                     f"{self._indent}📌 Showing best-scoring branch's adversarial conversation",
                     Style.DIM,
                     Fore.CYAN,
-                )
+                ))
 
         for ref in adversarial_refs:
             if ref.description:
-                self._print_colored(f"{self._indent}📝 {ref.description}", Style.DIM, Fore.CYAN)
+                lines.append(self._format_colored(f"{self._indent}📝 {ref.description}", Style.DIM, Fore.CYAN))
 
-            messages = await self.get_conversation_async(ref.conversation_id)
+            messages = await self._get_conversation_async(ref.conversation_id)
 
             if not messages:
-                self._print_colored(
+                lines.append(self._format_colored(
                     f"{self._indent}No messages found for conversation: {ref.conversation_id}", Fore.YELLOW
-                )
+                ))
                 continue
 
-            await self.print_messages_async(messages=messages, include_scores=False)
+            lines.append(await self._render_messages_async(messages=messages, include_scores=False))
+
+        return "".join(lines)
 
     def _get_outcome_color(self, outcome: AttackOutcome) -> str:
         """
@@ -488,7 +607,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             }.get(outcome, Fore.WHITE)
         )
 
-    async def display_image_async(self, piece: MessagePiece) -> None:
+    async def _display_image_async(self, piece: MessagePiece) -> None:
         """Display images using PIL/IPython in notebook environments."""
         from pyrit.common.display_response import display_image_response
 
@@ -520,7 +639,7 @@ class PrettyAttackResultMemoryPrinter(PrettyAttackResultPrinter):
 
         self._memory = CentralMemory.get_memory_instance()
 
-    async def get_conversation_async(self, conversation_id: str) -> list[Message]:
+    async def _get_conversation_async(self, conversation_id: str) -> list[Message]:
         """
         Fetch conversation messages from CentralMemory.
 
@@ -529,7 +648,7 @@ class PrettyAttackResultMemoryPrinter(PrettyAttackResultPrinter):
         """
         return list(self._memory.get_conversation(conversation_id=conversation_id))
 
-    async def get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
+    async def _get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
         """
         Fetch scores from CentralMemory.
 

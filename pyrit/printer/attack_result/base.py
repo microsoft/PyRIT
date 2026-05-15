@@ -19,7 +19,7 @@ class AttackResultPrinterBase(PrinterBase):
     """
 
     @abstractmethod
-    async def get_conversation_async(self, conversation_id: str) -> list[Message]:
+    async def _get_conversation_async(self, conversation_id: str) -> list[Message]:
         """
         Fetch conversation messages for a given conversation ID.
 
@@ -31,7 +31,7 @@ class AttackResultPrinterBase(PrinterBase):
         """
 
     @abstractmethod
-    async def get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
+    async def _get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
         """
         Fetch scores for given prompt piece IDs.
 
@@ -42,7 +42,7 @@ class AttackResultPrinterBase(PrinterBase):
             list[Score]: The scores associated with the given piece IDs.
         """
 
-    async def display_image_async(self, piece: MessagePiece) -> None:  # noqa: B027
+    async def _display_image_async(self, piece: MessagePiece) -> None:  # noqa: B027
         """
         Display an image from a message piece. No-op by default.
 

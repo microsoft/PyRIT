@@ -8,12 +8,132 @@ This module provides:
 - **Sink** classes that define where output goes (stdout, file, etc.)
 - **PrinterBase** that all printers inherit from
 - Domain printers for attack results, scenario results, and scorer information
+- **Convenience functions** for one-line printing (e.g., ``print_attack_result_async``)
 
 File names indicate output format (pretty.py = ANSI-colored, markdown.py = Markdown).
 Abstract methods inside each printer determine the data source (memory, REST, fixtures).
-
-Framework users: use the Memory printer classes (e.g., PrettyAttackResultMemoryPrinter)
-which fetch data via CentralMemory.
-
-Thin clients: subclass the base printers and implement abstract data methods via REST calls.
 """
+
+from pathlib import Path
+from typing import Literal
+
+from pyrit.printer.sink import FileSink, Sink, StdoutSink
+
+OutputFormat = Literal["pretty", "markdown"]
+
+
+def _resolve_sink(to: Path | str | Sink | None) -> Sink:
+    """
+    Resolve a destination argument to a Sink instance.
+
+    Args:
+        to (Path | str | Sink | None): The destination.
+            None → StdoutSink.
+            Path or str → FileSink.
+            Sink instance → used as-is.
+
+    Returns:
+        Sink: The resolved sink.
+    """
+    if to is None:
+        return StdoutSink()
+    if isinstance(to, Sink):
+        return to
+    return FileSink(path=Path(to))
+
+
+async def print_attack_result_async(
+    result: "AttackResult",  # noqa: F821
+    *,
+    format: OutputFormat = "pretty",
+    to: Path | str | Sink | None = None,
+    include_auxiliary_scores: bool = False,
+    include_pruned_conversations: bool = False,
+    include_adversarial_conversation: bool = False,
+) -> None:
+    """
+    Print an attack result in the specified format to the specified destination.
+
+    Args:
+        result (AttackResult): The attack result to print.
+        format (OutputFormat): Output format — "pretty" or "markdown". Defaults to "pretty".
+        to (Path | str | Sink | None): Destination — None for stdout, path for file, or Sink instance.
+        include_auxiliary_scores (bool): Whether to include auxiliary scores. Defaults to False.
+        include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
+        include_adversarial_conversation (bool): Whether to include the adversarial conversation.
+            Defaults to False.
+    """
+    sink = _resolve_sink(to)
+
+    if format == "markdown":
+        from pyrit.printer.attack_result.markdown import MarkdownAttackResultMemoryPrinter
+
+        printer = MarkdownAttackResultMemoryPrinter(sink=sink)
+    else:
+        from pyrit.printer.attack_result.pretty import PrettyAttackResultMemoryPrinter
+
+        printer = PrettyAttackResultMemoryPrinter(sink=sink)
+
+    await printer.write_async(
+        result,
+        include_auxiliary_scores=include_auxiliary_scores,
+        include_pruned_conversations=include_pruned_conversations,
+        include_adversarial_conversation=include_adversarial_conversation,
+    )
+
+
+async def print_scenario_result_async(
+    result: "ScenarioResult",  # noqa: F821
+    *,
+    format: OutputFormat = "pretty",
+    to: Path | str | Sink | None = None,
+) -> None:
+    """
+    Print a scenario result in the specified format to the specified destination.
+
+    Args:
+        result (ScenarioResult): The scenario result to print.
+        format (OutputFormat): Output format — "pretty" or "markdown". Defaults to "pretty".
+        to (Path | str | Sink | None): Destination — None for stdout, path for file, or Sink instance.
+    """
+    sink = _resolve_sink(to)
+
+    if format == "pretty":
+        from pyrit.printer.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
+
+        printer = PrettyScenarioResultMemoryPrinter(sink=sink)
+    else:
+        raise ValueError(f"Unsupported format for scenario results: {format!r}. Only 'pretty' is available.")
+
+    await printer.write_async(result)
+
+
+async def print_scorer_async(
+    *,
+    scorer_identifier: "ComponentIdentifier",  # noqa: F821
+    harm_category: str | None = None,
+    format: OutputFormat = "pretty",
+    to: Path | str | Sink | None = None,
+) -> None:
+    """
+    Print scorer information in the specified format to the specified destination.
+
+    Auto-detects scorer type: if harm_category is provided, renders harm
+    metrics; otherwise renders objective metrics.
+
+    Args:
+        scorer_identifier (ComponentIdentifier): The scorer identifier.
+        harm_category (str | None): The harm category. None for objective scorers.
+        format (OutputFormat): Output format — "pretty" or "markdown". Defaults to "pretty".
+        to (Path | str | Sink | None): Destination — None for stdout, path for file, or Sink instance.
+    """
+    sink = _resolve_sink(to)
+
+    if format == "pretty":
+        from pyrit.printer.scorer.pretty import PrettyScorerMemoryPrinter
+
+        printer = PrettyScorerMemoryPrinter(sink=sink)
+    else:
+        raise ValueError(f"Unsupported format for scorer: {format!r}. Only 'pretty' is available.")
+
+    await printer.write_async(scorer_identifier=scorer_identifier, harm_category=harm_category)
