@@ -66,7 +66,7 @@ Evaluate AI responses with true/false, Likert scale, classification, and custom 
 
 ## Getting Started
 1. Install PyRIT and verify installation.\
-For more details and alternative installation methods, see the [Install PyRIT](getting_started/install) page\
+For more details and alternative installation methods, see the [Install PyRIT](getting_started/install) page
 ```bash
 # note: for local installation, python version 3.13 is recommended: https://www.python.org/downloads/latest/python3.13
 pip install pyrit
