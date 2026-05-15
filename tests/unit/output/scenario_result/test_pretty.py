@@ -120,9 +120,7 @@ async def test_write_async_raises_when_scorer_identifier_present_without_scorer_
         (0, [AttackOutcome.FAILURE]),  # <25 GREEN band
     ],
 )
-async def test_write_async_color_bands_for_success_rate(
-    patch_central_database, capsys, expected_rate, attack_outcomes
-):
+async def test_write_async_color_bands_for_success_rate(patch_central_database, capsys, expected_rate, attack_outcomes):
     p = PrettyScenarioResultMemoryPrinter(enable_colors=True)
     result = _scenario_result(attack_results={"s": [_attack_result(outcome=o) for o in attack_outcomes]})
     await p.write_async(result)
