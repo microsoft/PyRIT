@@ -8,8 +8,10 @@ from pyrit.identifiers.atomic_attack_identifier import (
     build_seed_identifier,
 )
 from pyrit.identifiers.class_name_utils import (
+    REGISTRY_NAME_PATTERN,
     class_name_to_snake_case,
     snake_case_to_class_name,
+    validate_registry_name,
 )
 from pyrit.identifiers.component_identifier import ComponentIdentifier, Identifiable, config_hash
 from pyrit.identifiers.evaluation_identifier import (
@@ -31,8 +33,10 @@ __all__ = [
     "compute_eval_hash",
     "EvaluationIdentifier",
     "Identifiable",
+    "REGISTRY_NAME_PATTERN",
     "ScorerEvaluationIdentifier",
     "snake_case_to_class_name",
+    "validate_registry_name",
     "config_hash",
     "IdentifierFilter",
     "IdentifierType",
