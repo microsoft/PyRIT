@@ -236,7 +236,7 @@ class PyRITShell(cmd.Cmd):
             return
 
         from pyrit.cli._cli_args import parse_run_arguments
-        from pyrit.cli._output import print_scenario_run_detail, print_scenario_run_progress, print_scenario_run_summary
+        from pyrit.cli._output import print_scenario_result_async, print_scenario_run_progress, print_scenario_run_summary
 
         # Parse arguments
         try:
@@ -322,7 +322,7 @@ class PyRITShell(cmd.Cmd):
                 detail = asyncio.run(
                     self._api_client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
                 )
-                print_scenario_run_detail(detail=detail)
+                asyncio.run(print_scenario_result_async(result_dict=detail))
             except Exception:
                 print_scenario_run_summary(run=run)
         else:
@@ -356,7 +356,7 @@ class PyRITShell(cmd.Cmd):
         """
         if not self._ensure_client():
             return
-        from pyrit.cli._output import print_scenario_run_detail
+        from pyrit.cli._output import print_scenario_result_async
 
         arg = arg.strip()
         if not arg:
@@ -366,7 +366,7 @@ class PyRITShell(cmd.Cmd):
 
         try:
             detail = asyncio.run(self._api_client.get_scenario_run_results_async(scenario_result_id=arg))
-            print_scenario_run_detail(detail=detail)
+            asyncio.run(print_scenario_result_async(result_dict=detail))
         except Exception as e:
             print(f"Error: {e}")
 

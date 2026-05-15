@@ -183,7 +183,7 @@ class PyRITApiClient:
         Get detailed results for a completed scenario run.
 
         Returns:
-            dict: ``ScenarioRunDetail`` payload.
+            dict: ``ScenarioResult.to_dict()`` payload.
         """
         return await self._get_json(path=f"/api/scenarios/runs/{scenario_result_id}/results")
 

@@ -540,7 +540,7 @@ async def _run_async(*, parsed_args: Namespace) -> int:
             if run.get("status") == "COMPLETED":
                 try:
                     detail = await client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
-                    _output.print_scenario_run_detail(detail=detail)
+                    await _output.print_scenario_result_async(result_dict=detail)
                 except Exception:
                     _output.print_scenario_run_summary(run=run)
             else:

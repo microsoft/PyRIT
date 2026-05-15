@@ -250,45 +250,23 @@ def print_scenario_run_summary(*, run: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Scenario run detail (full results)
+# Scenario run detail (full results via printer module)
 # ---------------------------------------------------------------------------
 
 
-def print_scenario_run_detail(*, detail: dict[str, Any]) -> None:
+async def print_scenario_result_async(*, result_dict: dict[str, Any]) -> None:
     """
-    Print detailed results for a completed scenario run.
+    Print detailed scenario results using the printer module.
 
     Args:
-        detail: ScenarioRunDetail dict from ``GET /api/scenarios/runs/{id}/results``.
+        result_dict: ``ScenarioResult.to_dict()`` payload from the REST API.
     """
-    run = detail.get("run", {})
-    print_scenario_run_summary(run=run)
+    from pyrit.models.scenario_result import ScenarioResult
+    from pyrit.printer.scenario_result.console import ConsoleScenarioPrinterBase
 
-    attacks_groups = detail.get("attacks") or []
-    if not attacks_groups:
-        print("\n  No attack results.")
-        return
-
-    print(f"\n  Attack Results ({len(attacks_groups)} group(s)):")
-    print("  " + "-" * 76)
-    for group in attacks_groups:
-        group_name = group.get("atomic_attack_name", "unknown")
-        success = group.get("success_count", 0)
-        failure = group.get("failure_count", 0)
-        total = group.get("total_count", 0)
-        retries = group.get("total_retries", 0)
-        errors = group.get("error_count", 0)
-
-        _header(f"{group_name} ({total} attacks)")
-        print(f"      Success: {success} | Failure: {failure} | Errors: {errors} | Retries: {retries}")
-
-        for atk in group.get("results") or []:
-            outcome = atk.get("outcome", "?")
-            objective = atk.get("objective", "")[:60]
-            marker = "✓" if outcome == "success" else "✗" if outcome == "failure" else "?"
-            print(f"      {marker} [{outcome}] {objective}")
-
-    print()
+    scenario_result = ScenarioResult.from_dict(result_dict)
+    printer = ConsoleScenarioPrinterBase(scorer_printer=None)
+    await printer.print_summary_async(scenario_result)
 
 
 # ---------------------------------------------------------------------------
