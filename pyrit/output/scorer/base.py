@@ -1,10 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import warnings
 from abc import abstractmethod
 from typing import Any
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.output.base import PrinterBase
 
@@ -65,7 +65,7 @@ class ScorerPrinterBase(PrinterBase):
         Args:
             scorer_identifier (ComponentIdentifier): The scorer identifier.
         """
-        warnings.warn("print_objective_scorer is deprecated, use write_async instead", DeprecationWarning, stacklevel=2)
+        print_deprecation_message(old_item="print_objective_scorer", new_item="write_async", removed_in="2.0")
         await self.write_async(scorer_identifier=scorer_identifier)
 
     async def print_harm_scorer(self, *, scorer_identifier: ComponentIdentifier, harm_category: str) -> None:
@@ -76,5 +76,5 @@ class ScorerPrinterBase(PrinterBase):
             scorer_identifier (ComponentIdentifier): The scorer identifier.
             harm_category (str): The harm category.
         """
-        warnings.warn("print_harm_scorer is deprecated, use write_async instead", DeprecationWarning, stacklevel=2)
+        print_deprecation_message(old_item="print_harm_scorer", new_item="write_async", removed_in="2.0")
         await self.write_async(scorer_identifier=scorer_identifier, harm_category=harm_category)

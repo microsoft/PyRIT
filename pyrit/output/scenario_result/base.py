@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import warnings
 from abc import abstractmethod
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.scenario_result import ScenarioResult
 from pyrit.output.base import PrinterBase
 
@@ -35,5 +35,5 @@ class ScenarioResultPrinterBase(PrinterBase):
         Args:
             result (ScenarioResult): The scenario result to summarize.
         """
-        warnings.warn("print_summary_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2)
+        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="2.0")
         await self.write_async(result)

@@ -2,10 +2,10 @@
 # Licensed under the MIT license.
 
 import textwrap
-import warnings
 
 from colorama import Fore, Style
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import AttackOutcome
 from pyrit.models.scenario_result import ScenarioResult
 from pyrit.output.scenario_result.base import ScenarioResultPrinterBase
@@ -238,7 +238,7 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         Args:
             result (ScenarioResult): The scenario result to summarize.
         """
-        warnings.warn("print_summary_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2)
+        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="2.0")
         await self.write_async(result)
 
 

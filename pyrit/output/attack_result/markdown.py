@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import warnings
 from datetime import datetime, timezone
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import AttackResult, ConversationType, Message, Score
 from pyrit.output.attack_result.base import AttackResultPrinterBase
 from pyrit.output.conversation.markdown import MarkdownConversationPrinter
@@ -118,7 +118,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         include_adversarial_conversation: bool = False,
     ) -> None:
         """Use ``write_async`` instead. This method is deprecated."""
-        warnings.warn("print_result_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2)
+        print_deprecation_message(old_item="print_result_async", new_item="write_async", removed_in="2.0")
         await self.write_async(
             result,
             include_auxiliary_scores=include_auxiliary_scores,
@@ -128,15 +128,13 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
 
     async def print_conversation_async(self, result: AttackResult, *, include_scores: bool = False) -> None:
         """Use ``write_async`` instead. This method is deprecated."""
-        warnings.warn(
-            "print_conversation_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2
-        )
+        print_deprecation_message(old_item="print_conversation_async", new_item="write_async", removed_in="2.0")
         lines = await self._get_conversation_markdown_async(result=result, include_scores=include_scores)
         await self._write_async("\n".join(lines))
 
     async def print_summary_async(self, result: AttackResult) -> None:
         """Use ``write_async`` instead. This method is deprecated."""
-        warnings.warn("print_summary_async is deprecated, use write_async instead", DeprecationWarning, stacklevel=2)
+        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="2.0")
         markdown_lines = await self._get_summary_markdown_async(result)
         await self._write_async("\n".join(markdown_lines))
 

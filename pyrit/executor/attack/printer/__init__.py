@@ -8,35 +8,31 @@ Attack result printers have moved to pyrit.output.attack_result.
 These re-exports will be removed in 0.16.0.
 """
 
-import warnings as _warnings
+from pyrit.common.deprecation import print_deprecation_message
 
 
 def __getattr__(name: str) -> type:  # noqa: N807
-    _deprecated = {
-        "ConsoleAttackResultPrinter": "pyrit.output.attack_result.pretty",
-        "MarkdownAttackResultPrinter": "pyrit.output.attack_result.markdown",
-        "AttackResultPrinter": "pyrit.output.attack_result.base",
-    }
-    if name in _deprecated:
-        new_module = _deprecated[name]
-        _warnings.warn(
-            f"Importing {name} from pyrit.executor.attack.printer is deprecated and will be removed in 0.16.0. "
-            f"Import from {new_module} instead.",
-            DeprecationWarning,
-            stacklevel=2,
+    if name == "ConsoleAttackResultPrinter":
+        from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
+
+        print_deprecation_message(
+            old_item=f"{__name__}.{name}", new_item=PrettyAttackResultMemoryPrinter, removed_in="0.16.0"
         )
-        if name == "ConsoleAttackResultPrinter":
-            from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
+        return PrettyAttackResultMemoryPrinter
+    if name == "AttackResultPrinter":
+        from pyrit.output.attack_result.base import AttackResultPrinterBase
 
-            return PrettyAttackResultMemoryPrinter
-        if name == "AttackResultPrinter":
-            from pyrit.output.attack_result.base import AttackResultPrinterBase
+        print_deprecation_message(
+            old_item=f"{__name__}.{name}", new_item=AttackResultPrinterBase, removed_in="0.16.0"
+        )
+        return AttackResultPrinterBase
+    if name == "MarkdownAttackResultPrinter":
+        from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 
-            return AttackResultPrinterBase
-        if name == "MarkdownAttackResultPrinter":
-            from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
-
-            return MarkdownAttackResultMemoryPrinter
+        print_deprecation_message(
+            old_item=f"{__name__}.{name}", new_item=MarkdownAttackResultMemoryPrinter, removed_in="0.16.0"
+        )
+        return MarkdownAttackResultMemoryPrinter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

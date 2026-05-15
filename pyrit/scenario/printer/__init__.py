@@ -8,30 +8,24 @@ Scenario result printers have moved to pyrit.output.scenario_result.
 These re-exports will be removed in 0.16.0.
 """
 
-import warnings as _warnings
+from pyrit.common.deprecation import print_deprecation_message
 
 
 def __getattr__(name: str) -> type:  # noqa: N807
-    _deprecated = {
-        "ConsoleScenarioResultPrinter": "pyrit.output.scenario_result.pretty",
-        "ScenarioResultPrinter": "pyrit.output.scenario_result.base",
-    }
-    if name in _deprecated:
-        new_module = _deprecated[name]
-        _warnings.warn(
-            f"Importing {name} from pyrit.scenario.printer is deprecated and will be removed in 0.16.0. "
-            f"Import from {new_module} instead.",
-            DeprecationWarning,
-            stacklevel=2,
+    if name == "ConsoleScenarioResultPrinter":
+        from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
+
+        print_deprecation_message(
+            old_item=f"{__name__}.{name}", new_item=PrettyScenarioResultMemoryPrinter, removed_in="0.16.0"
         )
-        if name == "ConsoleScenarioResultPrinter":
-            from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
+        return PrettyScenarioResultMemoryPrinter
+    if name == "ScenarioResultPrinter":
+        from pyrit.output.scenario_result.base import ScenarioResultPrinterBase
 
-            return PrettyScenarioResultMemoryPrinter
-        if name == "ScenarioResultPrinter":
-            from pyrit.output.scenario_result.base import ScenarioResultPrinterBase
-
-            return ScenarioResultPrinterBase
+        print_deprecation_message(
+            old_item=f"{__name__}.{name}", new_item=ScenarioResultPrinterBase, removed_in="0.16.0"
+        )
+        return ScenarioResultPrinterBase
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
