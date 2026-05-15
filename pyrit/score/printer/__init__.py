@@ -22,9 +22,7 @@ def __getattr__(name: str) -> type:  # noqa: N807
     if name == "ScorerPrinter":
         from pyrit.output.scorer.base import ScorerPrinterBase
 
-        print_deprecation_message(
-            old_item=f"{__name__}.{name}", new_item=ScorerPrinterBase, removed_in="0.16.0"
-        )
+        print_deprecation_message(old_item=f"{__name__}.{name}", new_item=ScorerPrinterBase, removed_in="0.16.0")
         return ScorerPrinterBase
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

@@ -22,9 +22,7 @@ def __getattr__(name: str) -> type:  # noqa: N807
     if name == "AttackResultPrinter":
         from pyrit.output.attack_result.base import AttackResultPrinterBase
 
-        print_deprecation_message(
-            old_item=f"{__name__}.{name}", new_item=AttackResultPrinterBase, removed_in="0.16.0"
-        )
+        print_deprecation_message(old_item=f"{__name__}.{name}", new_item=AttackResultPrinterBase, removed_in="0.16.0")
         return AttackResultPrinterBase
     if name == "MarkdownAttackResultPrinter":
         from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
