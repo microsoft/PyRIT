@@ -7,7 +7,7 @@ import pytest
 from colorama import Fore, Style
 
 from pyrit.identifiers import ComponentIdentifier
-from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter as ConsoleScorerPrinter
+from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
 from pyrit.score.scorer_evaluation.scorer_metrics import (
     HarmScorerMetrics,
     ObjectiveScorerMetrics,
@@ -63,28 +63,28 @@ def _make_harm_metrics(**overrides) -> HarmScorerMetrics:
 
 
 def test_init_default_values():
-    printer = ConsoleScorerPrinter()
+    printer = PrettyScorerMemoryPrinter()
     assert printer._indent == "  "
     assert printer._enable_colors is True
 
 
 def test_init_custom_indent():
-    printer = ConsoleScorerPrinter(indent_size=4)
+    printer = PrettyScorerMemoryPrinter(indent_size=4)
     assert printer._indent == "    "
 
 
 def test_init_zero_indent():
-    printer = ConsoleScorerPrinter(indent_size=0)
+    printer = PrettyScorerMemoryPrinter(indent_size=0)
     assert printer._indent == ""
 
 
 def test_init_negative_indent_raises():
     with pytest.raises(ValueError, match="indent_size must be non-negative"):
-        ConsoleScorerPrinter(indent_size=-1)
+        PrettyScorerMemoryPrinter(indent_size=-1)
 
 
 def test_init_colors_disabled():
-    printer = ConsoleScorerPrinter(enable_colors=False)
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
     assert printer._enable_colors is False
 
 
@@ -92,21 +92,21 @@ def test_init_colors_disabled():
 
 
 def test_format_colored_with_colors_enabled():
-    printer = ConsoleScorerPrinter(enable_colors=True)
+    printer = PrettyScorerMemoryPrinter(enable_colors=True)
     result = printer._format_colored("hello", Fore.GREEN)
     assert "hello" in result
     assert Style.RESET_ALL in result
 
 
 def test_format_colored_with_colors_disabled():
-    printer = ConsoleScorerPrinter(enable_colors=False)
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
     result = printer._format_colored("hello", Fore.GREEN)
     assert result.strip() == "hello"
     assert Style.RESET_ALL not in result
 
 
 def test_format_colored_no_colors_arg():
-    printer = ConsoleScorerPrinter(enable_colors=True)
+    printer = PrettyScorerMemoryPrinter(enable_colors=True)
     result = printer._format_colored("plain text")
     assert result.strip() == "plain text"
 
@@ -115,37 +115,37 @@ def test_format_colored_no_colors_arg():
 
 
 def test_quality_color_higher_is_better_good():
-    printer = ConsoleScorerPrinter()
+    printer = PrettyScorerMemoryPrinter()
     color = printer._get_quality_color(0.95, higher_is_better=True, good_threshold=0.9, bad_threshold=0.7)
     assert color == Fore.GREEN
 
 
 def test_quality_color_higher_is_better_bad():
-    printer = ConsoleScorerPrinter()
+    printer = PrettyScorerMemoryPrinter()
     color = printer._get_quality_color(0.5, higher_is_better=True, good_threshold=0.9, bad_threshold=0.7)
     assert color == Fore.RED
 
 
 def test_quality_color_higher_is_better_middle():
-    printer = ConsoleScorerPrinter()
+    printer = PrettyScorerMemoryPrinter()
     color = printer._get_quality_color(0.8, higher_is_better=True, good_threshold=0.9, bad_threshold=0.7)
     assert color == Fore.CYAN
 
 
 def test_quality_color_lower_is_better_good():
-    printer = ConsoleScorerPrinter()
+    printer = PrettyScorerMemoryPrinter()
     color = printer._get_quality_color(0.05, higher_is_better=False, good_threshold=0.1, bad_threshold=0.25)
     assert color == Fore.GREEN
 
 
 def test_quality_color_lower_is_better_bad():
-    printer = ConsoleScorerPrinter()
+    printer = PrettyScorerMemoryPrinter()
     color = printer._get_quality_color(0.3, higher_is_better=False, good_threshold=0.1, bad_threshold=0.25)
     assert color == Fore.RED
 
 
 def test_quality_color_lower_is_better_middle():
-    printer = ConsoleScorerPrinter()
+    printer = PrettyScorerMemoryPrinter()
     color = printer._get_quality_color(0.15, higher_is_better=False, good_threshold=0.1, bad_threshold=0.25)
     assert color == Fore.CYAN
 
@@ -154,14 +154,14 @@ def test_quality_color_lower_is_better_middle():
 
 
 def test_render_scorer_info_basic():
-    printer = ConsoleScorerPrinter(enable_colors=False)
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
     identifier = _make_scorer_identifier(class_name="SelfAskScaleScorer")
     output = printer._render_scorer_info(identifier, indent_level=2)
     assert "SelfAskScaleScorer" in output
 
 
 def test_render_scorer_info_with_display_params():
-    printer = ConsoleScorerPrinter(enable_colors=False)
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
     identifier = _make_scorer_identifier(
         class_name="TestScorer",
         params={"scorer_type": "likert", "score_aggregator": "mean", "hidden_param": "ignore"},
@@ -173,7 +173,7 @@ def test_render_scorer_info_with_display_params():
 
 
 def test_render_scorer_info_with_prompt_target_child():
-    printer = ConsoleScorerPrinter(enable_colors=False)
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
     target_id = ComponentIdentifier(
         class_name="OpenAIChatTarget",
         class_module="pyrit.prompt_target",
@@ -188,7 +188,7 @@ def test_render_scorer_info_with_prompt_target_child():
 
 
 def test_render_scorer_info_with_sub_scorers():
-    printer = ConsoleScorerPrinter(enable_colors=False)
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
     sub1 = _make_scorer_identifier(class_name="SubScorer1")
     sub2 = _make_scorer_identifier(class_name="SubScorer2")
     identifier = _make_scorer_identifier(
@@ -205,13 +205,13 @@ def test_render_scorer_info_with_sub_scorers():
 
 
 def test_render_objective_metrics_none():
-    printer = ConsoleScorerPrinter(enable_colors=False)
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
     output = printer._render_objective_metrics(None)
     assert "Official evaluation has not been run yet" in output
 
 
 def test_render_objective_metrics_full():
-    printer = ConsoleScorerPrinter(enable_colors=False)
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
     metrics = _make_objective_metrics()
     output = printer._render_objective_metrics(metrics)
     assert "Accuracy" in output
@@ -222,7 +222,7 @@ def test_render_objective_metrics_full():
 
 
 def test_render_objective_metrics_optional_fields_none():
-    printer = ConsoleScorerPrinter(enable_colors=False)
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
     metrics = _make_objective_metrics(
         accuracy_standard_error=None,
         f1_score=None,
@@ -242,13 +242,13 @@ def test_render_objective_metrics_optional_fields_none():
 
 
 def test_render_harm_metrics_none():
-    printer = ConsoleScorerPrinter(enable_colors=False)
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
     output = printer._render_harm_metrics(None)
     assert "Official evaluation has not been run yet" in output
 
 
 def test_render_harm_metrics_full():
-    printer = ConsoleScorerPrinter(enable_colors=False)
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
     metrics = _make_harm_metrics()
     output = printer._render_harm_metrics(metrics)
     assert "Mean Absolute Error" in output
@@ -258,7 +258,7 @@ def test_render_harm_metrics_full():
 
 
 def test_render_harm_metrics_optional_fields_none():
-    printer = ConsoleScorerPrinter(enable_colors=False)
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
     metrics = _make_harm_metrics(
         mae_standard_error=None,
         krippendorff_alpha_combined=None,
@@ -279,7 +279,7 @@ def test_render_harm_metrics_optional_fields_none():
 @patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
 async def test_write_async_objective_with_metrics(mock_find, mock_eval_id_cls, capsys):
-    printer = ConsoleScorerPrinter(enable_colors=False)
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
     identifier = _make_scorer_identifier(class_name="MyScorer")
     metrics = _make_objective_metrics()
 
@@ -300,7 +300,7 @@ async def test_write_async_objective_with_metrics(mock_find, mock_eval_id_cls, c
 @patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
 async def test_write_async_objective_no_metrics(mock_find, mock_eval_id_cls, capsys):
-    printer = ConsoleScorerPrinter(enable_colors=False)
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
     identifier = _make_scorer_identifier()
 
     mock_eval_instance = MagicMock()
@@ -319,7 +319,7 @@ async def test_write_async_objective_no_metrics(mock_find, mock_eval_id_cls, cap
 @patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
 async def test_write_async_harm_with_metrics(mock_find, mock_eval_id_cls, capsys):
-    printer = ConsoleScorerPrinter(enable_colors=False)
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
     identifier = _make_scorer_identifier(class_name="HarmScorer")
     metrics = _make_harm_metrics()
 
@@ -340,7 +340,7 @@ async def test_write_async_harm_with_metrics(mock_find, mock_eval_id_cls, capsys
 @patch("pyrit.identifiers.evaluation_identifier.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
 async def test_write_async_harm_no_metrics(mock_find, mock_eval_id_cls, capsys):
-    printer = ConsoleScorerPrinter(enable_colors=False)
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
     identifier = _make_scorer_identifier()
 
     mock_eval_instance = MagicMock()

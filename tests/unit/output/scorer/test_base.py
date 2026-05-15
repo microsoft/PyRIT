@@ -4,16 +4,16 @@
 import pytest
 
 from pyrit.identifiers import ComponentIdentifier
-from pyrit.output.scorer.base import ScorerPrinterBase as ScorerPrinter
+from pyrit.output.scorer.base import ScorerPrinterBase
 
 
 def test_scorer_printer_cannot_be_instantiated():
     with pytest.raises(TypeError, match="Can't instantiate abstract class"):
-        ScorerPrinter()  # type: ignore[abstract]
+        ScorerPrinterBase()  # type: ignore[abstract]
 
 
 def test_scorer_printer_subclass_must_implement_get_objective_metrics():
-    class IncompletePrinter(ScorerPrinter):
+    class IncompletePrinter(ScorerPrinterBase):
         def _get_harm_metrics(self, *, scorer_identifier: ComponentIdentifier, harm_category: str):
             return None
 
@@ -22,7 +22,7 @@ def test_scorer_printer_subclass_must_implement_get_objective_metrics():
 
 
 def test_scorer_printer_subclass_must_implement_get_harm_metrics():
-    class IncompletePrinter(ScorerPrinter):
+    class IncompletePrinter(ScorerPrinterBase):
         def _get_objective_metrics(self, *, scorer_identifier: ComponentIdentifier):
             return None
 
@@ -31,7 +31,7 @@ def test_scorer_printer_subclass_must_implement_get_harm_metrics():
 
 
 def test_scorer_printer_subclass_must_implement_write_async():
-    class IncompletePrinter(ScorerPrinter):
+    class IncompletePrinter(ScorerPrinterBase):
         def _get_objective_metrics(self, *, scorer_identifier: ComponentIdentifier):
             return None
 
@@ -43,7 +43,7 @@ def test_scorer_printer_subclass_must_implement_write_async():
 
 
 def test_scorer_printer_complete_subclass_can_be_instantiated():
-    class CompletePrinter(ScorerPrinter):
+    class CompletePrinter(ScorerPrinterBase):
         def _get_objective_metrics(self, *, scorer_identifier: ComponentIdentifier):
             return None
 
@@ -56,4 +56,4 @@ def test_scorer_printer_complete_subclass_can_be_instantiated():
             return ""
 
     printer = CompletePrinter()
-    assert isinstance(printer, ScorerPrinter)
+    assert isinstance(printer, ScorerPrinterBase)

@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -10,7 +10,7 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, MessagePiece, Score
 from pyrit.models.conversation_reference import ConversationReference
-from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter as ConsoleAttackResultPrinter
+from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 
 
 def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
@@ -29,7 +29,7 @@ def mock_memory():
 
 @pytest.fixture
 def printer(mock_memory):
-    return ConsoleAttackResultPrinter(width=80, indent_size=2, enable_colors=False)
+    return PrettyAttackResultMemoryPrinter(width=80, indent_size=2, enable_colors=False)
 
 
 @pytest.fixture
@@ -87,14 +87,14 @@ def sample_message(sample_message_piece):
 
 
 def test_init_stores_width_and_indent(mock_memory):
-    p = ConsoleAttackResultPrinter(width=120, indent_size=4, enable_colors=False)
+    p = PrettyAttackResultMemoryPrinter(width=120, indent_size=4, enable_colors=False)
     assert p._width == 120
     assert p._indent == "    "
     assert p._enable_colors is False
 
 
 def test_init_default_colors_enabled(mock_memory):
-    p = ConsoleAttackResultPrinter()
+    p = PrettyAttackResultMemoryPrinter()
     assert p._enable_colors is True
 
 

@@ -8,12 +8,11 @@ import pytest
 from pyrit.output.helpers import (
     print_attack_result_async,
     print_conversation_async,
-    print_score_async,
     print_scenario_result_async,
+    print_score_async,
     print_scorer_async,
 )
-from pyrit.output.sink import IPythonMarkdownSink, OutputFormat, Sink, StdoutSink, get_default_sink
-
+from pyrit.output.sink import IPythonMarkdownSink, StdoutSink, get_default_sink
 
 # --- get_default_sink tests ---
 
@@ -168,9 +167,7 @@ async def test_print_conversation_async_with_scores(mock_cls):
 
     await print_conversation_async(messages, include_scores=True)
 
-    mock_printer.write_async.assert_called_once_with(
-        messages, include_scores=True, include_reasoning_trace=False
-    )
+    mock_printer.write_async.assert_called_once_with(messages, include_scores=True, include_reasoning_trace=False)
 
 
 async def test_print_conversation_async_unsupported_format():

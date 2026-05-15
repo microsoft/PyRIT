@@ -11,7 +11,7 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult, Message, MessagePiece, Score
-from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter as MarkdownAttackResultPrinter
+from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 
 
 def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
@@ -33,7 +33,7 @@ def mock_memory():
 
 @pytest.fixture
 def markdown_printer(patch_central_database):
-    return MarkdownAttackResultPrinter(display_inline=False)
+    return MarkdownAttackResultMemoryPrinter(display_inline=False)
 
 
 @pytest.fixture
@@ -102,8 +102,8 @@ def sample_message(sample_message_piece):
 
 
 def test_init(mock_memory):
-    """Test MarkdownAttackResultPrinter initialization."""
-    printer = MarkdownAttackResultPrinter(display_inline=True)
+    """Test MarkdownAttackResultMemoryPrinter initialization."""
+    printer = MarkdownAttackResultMemoryPrinter(display_inline=True)
     assert printer._display_inline is True
     assert printer._memory is mock_memory
 
