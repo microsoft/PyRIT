@@ -213,7 +213,7 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "agent_threat_rules"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the ATR adversarial payload corpus and return as SeedDataset.
 
