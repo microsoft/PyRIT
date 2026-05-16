@@ -40,7 +40,7 @@ class TestHarmfulQADataset:
         loader = _HarmfulQADataset()
 
         with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_harmful_qa_data)):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
             assert len(dataset.seeds) == 2

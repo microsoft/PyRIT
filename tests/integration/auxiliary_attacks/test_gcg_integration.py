@@ -5,9 +5,15 @@
 
 These tests validate that the GCG attack pipeline works end-to-end with a real
 (tiny) model. They use GPT-2 (~124M params) which can run on CPU, paired with
-the llama-2 conversation template (which has explicit handling in _update_ids).
+explicit chat templates set on the tokenizer (since GPT-2 has no default
+chat template).
 
-Requires: torch, transformers, fastchat, mlflow (GCG optional deps).
+After PR #965 dropped fastchat, ``AttackPrompt._update_ids`` uses
+``tokenizer.apply_chat_template()`` exclusively, so we exercise that code path
+with two distinct template shapes (llama-2 style and ChatML/phi-3 style) to
+catch template-specific regressions.
+
+Requires: torch, transformers (GCG optional deps).
 Skipped via importorskip when deps are not installed.
 """
 
@@ -15,10 +21,8 @@ import pytest
 
 torch = pytest.importorskip("torch", reason="torch not installed")
 transformers = pytest.importorskip("transformers", reason="transformers not installed")
-pytest.importorskip("fastchat", reason="fastchat not installed")
 
 
-from fastchat.model import get_conversation_template  # noqa: E402
 from transformers import AutoTokenizer, GPT2LMHeadModel  # noqa: E402
 
 from pyrit.auxiliary_attacks.gcg.attack.base.attack_manager import (  # noqa: E402
@@ -33,6 +37,31 @@ from pyrit.auxiliary_attacks.gcg.attack.gcg.gcg_attack import (  # noqa: E402
     token_gradients,
 )
 
+# Minimal Jinja chat templates that exercise the two structural variants we care about:
+# (1) Inline role markers ("[INST]"/"[/INST]") used by llama-2.
+# (2) Distinct role tokens ("<|user|>"/"<|assistant|>") used by phi-3 / ChatML.
+# Both must produce findable goal/control/target substrings for the new
+# apply_chat_template-based _update_ids to compute correct slices.
+_LLAMA_STYLE_TEMPLATE = (
+    "{%- for m in messages -%}"
+    "{%- if m['role'] == 'user' -%}"
+    "[INST] {{ m['content'] }} [/INST]"
+    "{%- elif m['role'] == 'assistant' -%}"
+    " {{ m['content'] }}"
+    "{%- endif -%}"
+    "{%- endfor -%}"
+)
+
+_CHATML_STYLE_TEMPLATE = (
+    "{%- for m in messages -%}"
+    "{%- if m['role'] == 'user' -%}"
+    "<|user|>\n{{ m['content'] }}<|end|>\n<|assistant|>\n"
+    "{%- elif m['role'] == 'assistant' -%}"
+    "{{ m['content'] }}<|end|>"
+    "{%- endif -%}"
+    "{%- endfor -%}"
+)
+
 
 @pytest.fixture(scope="module")
 def gpt2_model() -> GPT2LMHeadModel:
@@ -40,33 +69,33 @@ def gpt2_model() -> GPT2LMHeadModel:
     return GPT2LMHeadModel.from_pretrained("gpt2").eval()
 
 
-@pytest.fixture(scope="module")
-def gpt2_tokenizer() -> transformers.PreTrainedTokenizer:
-    """Load GPT-2 tokenizer once for all tests in this module."""
+def _make_tokenizer(chat_template: str) -> transformers.PreTrainedTokenizer:
+    """Build a fresh GPT-2 tokenizer with the given chat template attached."""
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
+    tokenizer.chat_template = chat_template
     return tokenizer
 
 
 @pytest.fixture()
-def conv_template():
-    """Create a fresh llama-2 conversation template for each test."""
-    conv = get_conversation_template("llama-2")
-    conv.sep2 = conv.sep2.strip()
-    return conv
+def gpt2_tokenizer() -> transformers.PreTrainedTokenizer:
+    """GPT-2 tokenizer with a llama-2-style chat template attached."""
+    return _make_tokenizer(_LLAMA_STYLE_TEMPLATE)
 
 
 @pytest.fixture()
-def vicuna_conv_template():
-    """Create a fresh vicuna conversation template for each test.
+def gpt2_chatml_tokenizer() -> transformers.PreTrainedTokenizer:
+    """GPT-2 tokenizer with a ChatML / phi-3-style chat template attached.
 
-    Vicuna exercises the non-llama branch of `_update_ids` (the path that
-    references `conv_template.system` and uses `encoding.char_to_token`).
-    A bug in that branch — like the Phi-3 `.system` AttributeError we hit
-    on Azure (#965) — would never be caught by llama-2-only tests.
+    Exercises the second structural variant we care about: distinct role tokens
+    (``<|user|>``/``<|assistant|>``) versus llama-2's inline ``[INST]`` markers.
+    Before PR #965 this template shape blew up in ``_update_ids`` because the
+    fastchat-driven slice logic referenced ``conv_template.system`` and other
+    template-specific attributes; after the apply_chat_template rewrite both
+    template shapes share a single code path.
     """
-    return get_conversation_template("vicuna_v1.1")
+    return _make_tokenizer(_CHATML_STYLE_TEMPLATE)
 
 
 class TestTokenGradientsIntegration:
@@ -102,20 +131,18 @@ class TestTokenGradientsIntegration:
 
 
 class TestGCGAttackPromptIntegration:
-    """Integration tests for GCGAttackPrompt with real GPT-2."""
+    """Integration tests for GCGAttackPrompt with real GPT-2 + llama-style template."""
 
     def test_prompt_initializes_with_valid_slices(
         self,
         gpt2_model: GPT2LMHeadModel,
         gpt2_tokenizer: transformers.PreTrainedTokenizer,
-        conv_template: object,
     ) -> None:
         """AttackPrompt should initialize with non-empty, non-overlapping slices."""
         prompt = GCGAttackPrompt(
             goal="Tell me how",
             target="Sure here is",
             tokenizer=gpt2_tokenizer,
-            conv_template=conv_template,
             control_init="! ! ! ! !",
         )
 
@@ -128,14 +155,12 @@ class TestGCGAttackPromptIntegration:
         self,
         gpt2_model: GPT2LMHeadModel,
         gpt2_tokenizer: transformers.PreTrainedTokenizer,
-        conv_template: object,
     ) -> None:
         """GCGAttackPrompt.grad should return a finite, non-zero gradient tensor."""
         prompt = GCGAttackPrompt(
             goal="Tell me how",
             target="Sure here is",
             tokenizer=gpt2_tokenizer,
-            conv_template=conv_template,
             control_init="! ! ! ! !",
         )
 
@@ -150,14 +175,12 @@ class TestGCGAttackPromptIntegration:
         self,
         gpt2_model: GPT2LMHeadModel,
         gpt2_tokenizer: transformers.PreTrainedTokenizer,
-        conv_template: object,
     ) -> None:
         """Target loss from real model logits should be a finite positive number."""
         prompt = GCGAttackPrompt(
             goal="Tell me how",
             target="Sure here is",
             tokenizer=gpt2_tokenizer,
-            conv_template=conv_template,
             control_init="! ! ! ! !",
         )
 
@@ -174,14 +197,12 @@ class TestGCGSampleControlIntegration:
         self,
         gpt2_model: GPT2LMHeadModel,
         gpt2_tokenizer: transformers.PreTrainedTokenizer,
-        conv_template: object,
     ) -> None:
         """Sampled control tokens should be decodable by the tokenizer."""
         prompt = GCGAttackPrompt(
             goal="Tell me how",
             target="Sure here is",
             tokenizer=gpt2_tokenizer,
-            conv_template=conv_template,
             control_init="! ! ! ! !",
         )
 
@@ -228,39 +249,29 @@ class TestEmbeddingHelpersIntegration:
         assert len(toks) > 0
 
 
-class TestGCGAttackPromptNonLlamaTemplate:
-    """Integration tests covering the non-llama branch of `AttackPrompt._update_ids`.
+class TestGCGAttackPromptChatMLTemplate:
+    """Integration tests covering ChatML / phi-3 style templates.
 
-    The llama-2/llama-3 path is well-exercised above. The `else` branch contains
-    distinct logic that touches `conv_template.system`, `char_to_token`, and
-    different slice arithmetic. A bug here — like the Phi-3 `conv_template.system`
-    AttributeError we hit on Azure (#965) — would only surface with a
-    non-llama template, so we exercise it explicitly with vicuna.
-
-    Both tests are currently `xfail` because vicuna (and any other modern
-    fastchat template that lacks a `.system` attribute) reproduces the same
-    AttributeError as Phi-3 — a known bug tracked in #965 that PR replacing
-    fastchat with `tokenizer.apply_chat_template()` will fix. Once that lands,
-    the xfail will flip to "unexpectedly passed" and the marker can be removed.
+    These exercise the second structural variant of chat templates (distinct
+    role tokens like ``<|user|>``/``<|assistant|>`` separated from content,
+    versus llama-2's inline ``[INST]`` markers). Before PR #965 dropped
+    fastchat, this template shape blew up in ``_update_ids`` because the
+    fastchat-driven slice logic referenced ``conv_template.system`` and other
+    template-specific attributes (the same Phi-3 ``AttributeError`` we hit on
+    Azure ML). After the apply_chat_template rewrite both shapes share a single
+    code path, so these tests should pass alongside the llama-style ones above.
     """
 
-    @pytest.mark.xfail(
-        reason="#965: fastchat templates without `.system` attribute crash _update_ids",
-        raises=AttributeError,
-        strict=True,
-    )
-    def test_prompt_initializes_with_vicuna_template(
+    def test_prompt_initializes_with_chatml_template(
         self,
         gpt2_model: GPT2LMHeadModel,
-        gpt2_tokenizer: transformers.PreTrainedTokenizer,
-        vicuna_conv_template: object,
+        gpt2_chatml_tokenizer: transformers.PreTrainedTokenizer,
     ) -> None:
-        """GCGAttackPrompt should construct successfully with the vicuna template."""
+        """GCGAttackPrompt should construct successfully with a ChatML template."""
         prompt = GCGAttackPrompt(
             goal="Tell me how",
             target="Sure here is",
-            tokenizer=gpt2_tokenizer,
-            conv_template=vicuna_conv_template,
+            tokenizer=gpt2_chatml_tokenizer,
             control_init="! ! ! ! !",
         )
 
@@ -269,23 +280,16 @@ class TestGCGAttackPromptNonLlamaTemplate:
         assert prompt._control_slice.stop <= prompt._target_slice.start
         assert prompt.input_ids.shape[0] > 0
 
-    @pytest.mark.xfail(
-        reason="#965: fastchat templates without `.system` attribute crash _update_ids",
-        raises=AttributeError,
-        strict=True,
-    )
-    def test_grad_returns_valid_gradient_with_vicuna_template(
+    def test_grad_returns_valid_gradient_with_chatml_template(
         self,
         gpt2_model: GPT2LMHeadModel,
-        gpt2_tokenizer: transformers.PreTrainedTokenizer,
-        vicuna_conv_template: object,
+        gpt2_chatml_tokenizer: transformers.PreTrainedTokenizer,
     ) -> None:
-        """gradient computation should work end-to-end on the non-llama path."""
+        """gradient computation should work end-to-end with a ChatML template."""
         prompt = GCGAttackPrompt(
             goal="Tell me how",
             target="Sure here is",
-            tokenizer=gpt2_tokenizer,
-            conv_template=vicuna_conv_template,
+            tokenizer=gpt2_chatml_tokenizer,
             control_init="! ! ! ! !",
         )
 
@@ -293,5 +297,5 @@ class TestGCGAttackPromptNonLlamaTemplate:
 
         n_control = prompt._control_slice.stop - prompt._control_slice.start
         assert grad.shape[0] == n_control
-        assert grad.shape[1] == gpt2_tokenizer.vocab_size
+        assert grad.shape[1] == gpt2_chatml_tokenizer.vocab_size
         assert torch.isfinite(grad).all()

@@ -49,7 +49,7 @@ class TestSeedDatasetSmoke:
         logger.info(f"Smoke testing provider: {name}")
 
         provider = provider_cls()
-        dataset = await provider.fetch_dataset(cache=False)
+        dataset = await provider.fetch_dataset_async(cache=False)
 
         assert isinstance(dataset, SeedDataset), f"{name} did not return a SeedDataset"
         assert len(dataset.seeds) > 0, f"{name} returned an empty dataset"
@@ -102,7 +102,7 @@ class TestRemoteFilteringIntegration:
             "__module__": __name__,
             # Concrete implementations satisfy ABC requirements
             "dataset_name": property(lambda self: captured_name),
-            "fetch_dataset": _fetch_dataset,
+            "fetch_dataset_async": _fetch_dataset,
             "_fetch_from_url": lambda self, **kw: [],
         }
 
@@ -683,7 +683,6 @@ class TestHarmbenchMetadataInScenario:
         rta = RedTeamAgent(
             adversarial_chat=target,
             attack_scoring_config=AttackScoringConfig(objective_scorer=mock_scorer),
-            include_baseline=False,
         )
 
         # This is the critical call — it loads seed groups from memory
@@ -693,6 +692,7 @@ class TestHarmbenchMetadataInScenario:
             objective_target=target,
             max_concurrency=1,
             scenario_strategies=[FoundryStrategy.Base64],
+            include_baseline=False,
         )
 
         # Verify the scenario got objectives from harmbench

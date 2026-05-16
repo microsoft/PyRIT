@@ -107,7 +107,7 @@ class TestVLGuardDataset:
             "_download_dataset_files_async",
             new=AsyncMock(return_value=(mock_vlguard_metadata, image_dir)),
         ):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
             # 2 unsafe examples × 2 prompts each = 4 prompts
@@ -133,7 +133,7 @@ class TestVLGuardDataset:
             "_download_dataset_files_async",
             new=AsyncMock(return_value=(mock_vlguard_metadata, image_dir)),
         ):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 2  # 1 example × 2 prompts
             text_prompts = [p for p in dataset.seeds if p.data_type == "text"]
@@ -153,7 +153,7 @@ class TestVLGuardDataset:
             "_download_dataset_files_async",
             new=AsyncMock(return_value=(mock_vlguard_metadata, image_dir)),
         ):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 2  # 1 example × 2 prompts
             text_prompts = [p for p in dataset.seeds if p.data_type == "text"]
@@ -175,7 +175,7 @@ class TestVLGuardDataset:
             "_download_dataset_files_async",
             new=AsyncMock(return_value=(mock_vlguard_metadata, image_dir)),
         ):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 2  # Only the Privacy example
             text_prompts = [p for p in dataset.seeds if p.data_type == "text"]
@@ -195,7 +195,7 @@ class TestVLGuardDataset:
             "_download_dataset_files_async",
             new=AsyncMock(return_value=(mock_vlguard_metadata, image_dir)),
         ):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             # max_examples=1 → 1 example × 2 prompts = 2 prompts
             assert len(dataset.seeds) == 2
@@ -214,7 +214,7 @@ class TestVLGuardDataset:
             "_download_dataset_files_async",
             new=AsyncMock(return_value=(mock_vlguard_metadata, image_dir)),
         ):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             # Each pair should share a group_id
             text_prompt = dataset.seeds[0]
@@ -239,7 +239,7 @@ class TestVLGuardDataset:
             "_download_dataset_files_async",
             new=AsyncMock(return_value=(mock_vlguard_metadata, image_dir)),
         ):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             # Only 1 example should be included (the one with the existing image)
             assert len(dataset.seeds) == 2
@@ -297,7 +297,7 @@ class TestVLGuardDataset:
             new=AsyncMock(return_value=(metadata, image_dir)),
         ):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
-                await loader.fetch_dataset()
+                await loader.fetch_dataset_async()
 
     async def test_examples_with_missing_image_field_skipped(self, tmp_path):
         """Test that examples with no image field are skipped."""
@@ -319,7 +319,7 @@ class TestVLGuardDataset:
             new=AsyncMock(return_value=(metadata, image_dir)),
         ):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
-                await loader.fetch_dataset()
+                await loader.fetch_dataset_async()
 
     async def test_examples_with_no_extractable_instruction_skipped(self, tmp_path):
         """Test that examples where _extract_instruction returns None are skipped."""
@@ -343,7 +343,7 @@ class TestVLGuardDataset:
             new=AsyncMock(return_value=(metadata, image_dir)),
         ):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
-                await loader.fetch_dataset()
+                await loader.fetch_dataset_async()
 
     async def test_download_dataset_files_uses_cache(self, tmp_path):
         """Test that _download_dataset_files_async returns cached data when available."""

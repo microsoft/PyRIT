@@ -13,7 +13,7 @@ Targets can be:
 """
 
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Any
 
 from pyrit import prompt_target
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
@@ -95,7 +95,7 @@ class TargetService:
         self,
         *,
         limit: int = 50,
-        cursor: Optional[str] = None,
+        cursor: str | None = None,
     ) -> TargetListResponse:
         """
         List all target instances with pagination.
@@ -111,7 +111,7 @@ class TargetService:
             self._build_instance_from_object(target_registry_name=entry.name, target_obj=entry.instance)
             for entry in self._registry.get_all_instances()
         ]
-        page, has_more = self._paginate(items, cursor, limit)
+        page, has_more = self._paginate(items=items, cursor=cursor, limit=limit)
         next_cursor = page[-1].target_registry_name if has_more and page else None
         return TargetListResponse(
             items=page,
@@ -119,7 +119,7 @@ class TargetService:
         )
 
     @staticmethod
-    def _paginate(items: list[TargetInstance], cursor: Optional[str], limit: int) -> tuple[list[TargetInstance], bool]:
+    def _paginate(*, items: list[TargetInstance], cursor: str | None, limit: int) -> tuple[list[TargetInstance], bool]:
         """
         Apply cursor-based pagination.
 
@@ -137,7 +137,7 @@ class TargetService:
         has_more = len(items) > start_idx + limit
         return page, has_more
 
-    async def get_target_async(self, *, target_registry_name: str) -> Optional[TargetInstance]:
+    async def get_target_async(self, *, target_registry_name: str) -> TargetInstance | None:
         """
         Get a target instance by registry name.
 
@@ -149,7 +149,7 @@ class TargetService:
             return None
         return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=obj)
 
-    def get_target_object(self, *, target_registry_name: str) -> Optional[Any]:
+    def get_target_object(self, *, target_registry_name: str) -> Any | None:
         """
         Get the actual target object for use in attacks.
 

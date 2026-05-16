@@ -40,7 +40,7 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "sosbench"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch SOSBench dataset and return as SeedDataset.
 

@@ -65,7 +65,7 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "mlcommons_ailuminate"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch AILuminate dataset and return as SeedDataset.
 

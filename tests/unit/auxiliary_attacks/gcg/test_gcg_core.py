@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -226,8 +227,14 @@ class TestSampleControl:
         assert (result >= 0).all()
         assert (result < vocab_size).all()
 
-    def test_each_candidate_differs_in_one_position(self) -> None:
-        """Each candidate should differ from the original in exactly one position."""
+    def test_each_candidate_differs_in_at_most_one_position(self) -> None:
+        """Each candidate replaces exactly one position with a token sampled from top-k.
+
+        The replacement token is drawn uniformly from top-k, so it may equal the
+        original token at that position (giving diffs == 0). The function only
+        guarantees that *at most* one position differs from the original; asserting
+        exactly one would make the test flaky against the underlying randomness.
+        """
         n_control = 10
         vocab_size = 50
         batch_size = 8
@@ -239,8 +246,7 @@ class TestSampleControl:
 
         for i in range(batch_size):
             diffs = (result[i] != original_toks.to(result.device)).sum().item()
-            # Each candidate changes exactly 1 position
-            assert diffs == 1, f"Candidate {i} differs in {diffs} positions, expected 1"
+            assert diffs <= 1, f"Candidate {i} differs in {diffs} positions, expected at most 1"
 
     def test_non_ascii_filtering(self) -> None:
         """When allow_non_ascii=False, the newly sampled token should not be non-ASCII.
@@ -368,7 +374,7 @@ class TestApplyTargetAugmentation:
 class TestCreateAttack:
     """Tests for GreedyCoordinateGradientAdversarialSuffixgenerator_cls._create_attack."""
 
-    def test_transfer_true_creates_progressive(self) -> None:
+    def test_transfer_true_creates_progressive(self, tmp_path: Path) -> None:
         train_mod = pytest.importorskip(
             "pyrit.auxiliary_attacks.gcg.experiments.train",
             reason="GCG train module not available",
@@ -380,7 +386,7 @@ class TestCreateAttack:
             progressive_models=True,
             progressive_goals=True,
             control_init="! ! !",
-            result_prefix="test",
+            result_prefix=str(tmp_path / "test"),
             gbda_deterministic=True,
             learning_rate=0.01,
             batch_size=512,
@@ -390,7 +396,7 @@ class TestCreateAttack:
         mock_worker = MagicMock()
         mock_worker.model.name_or_path = "test-model"
         mock_worker.tokenizer.name_or_path = "test-tokenizer"
-        mock_worker.conv_template.name = "test-template"
+        mock_worker.tokenizer.chat_template = "{{ messages[0]['content'] }}"
 
         managers = {
             "AP": MagicMock(),
@@ -410,7 +416,7 @@ class TestCreateAttack:
         )
         assert isinstance(attack, ProgressiveMultiPromptAttack)
 
-    def test_transfer_false_creates_individual(self) -> None:
+    def test_transfer_false_creates_individual(self, tmp_path: Path) -> None:
         train_mod = pytest.importorskip(
             "pyrit.auxiliary_attacks.gcg.experiments.train",
             reason="GCG train module not available",
@@ -420,7 +426,7 @@ class TestCreateAttack:
         params = generator_cls._build_params(
             transfer=False,
             control_init="! ! !",
-            result_prefix="test",
+            result_prefix=str(tmp_path / "test"),
             gbda_deterministic=True,
             learning_rate=0.01,
             batch_size=512,
@@ -430,7 +436,7 @@ class TestCreateAttack:
         mock_worker = MagicMock()
         mock_worker.model.name_or_path = "test-model"
         mock_worker.tokenizer.name_or_path = "test-tokenizer"
-        mock_worker.conv_template.name = "test-template"
+        mock_worker.tokenizer.chat_template = "{{ messages[0]['content'] }}"
 
         managers = {
             "AP": MagicMock(),
@@ -484,7 +490,6 @@ class TestPromptManagerInit:
                 goals=["goal1", "goal2"],
                 targets=["target1"],
                 tokenizer=MagicMock(),
-                conv_template=MagicMock(),
                 managers={"AP": MagicMock()},
             )
 
@@ -494,7 +499,6 @@ class TestPromptManagerInit:
                 goals=[],
                 targets=[],
                 tokenizer=MagicMock(),
-                conv_template=MagicMock(),
                 managers={"AP": MagicMock()},
             )
 
@@ -506,11 +510,11 @@ class TestEvaluateAttackInit:
         mock_worker1 = MagicMock()
         mock_worker1.model.name_or_path = "m1"
         mock_worker1.tokenizer.name_or_path = "t1"
-        mock_worker1.conv_template.name = "c1"
+        mock_worker1.tokenizer.chat_template = "{{ messages[0]['content'] }}"
         mock_worker2 = MagicMock()
         mock_worker2.model.name_or_path = "m2"
         mock_worker2.tokenizer.name_or_path = "t2"
-        mock_worker2.conv_template.name = "c2"
+        mock_worker2.tokenizer.chat_template = "{{ messages[0]['content'] }}"
 
         with pytest.raises(ValueError, match="exactly 1 worker"):
             EvaluateAttack(
@@ -519,3 +523,149 @@ class TestEvaluateAttackInit:
                 workers=[mock_worker1, mock_worker2],
                 managers={"AP": MagicMock(), "PM": MagicMock(), "MPA": MagicMock()},
             )
+
+
+class TestUpdateIdsErrorPaths:
+    """Tests covering the error / fallback paths in AttackPrompt._update_ids."""
+
+    def test_raises_when_substring_not_in_rendered_prompt(self) -> None:
+        """If the chat template strips/transforms goal/control/target so they don't appear
+        verbatim in the rendered prompt, _update_ids must raise a clear ValueError."""
+        tokenizer = MagicMock()
+        # Chat template that drops the user content entirely — goal/control won't appear in prompt
+        tokenizer.apply_chat_template.return_value = "[INST] [/INST] hello"
+        # tokenizer(...) returns an encoding-like object
+        encoding = MagicMock()
+        encoding.input_ids = [1, 2, 3, 4]
+        encoding.char_to_token.return_value = 1
+        tokenizer.return_value = encoding
+
+        with pytest.raises(ValueError, match="Could not locate goal/control/target"):
+            AttackPrompt(
+                goal="this-goal-is-missing",
+                target="this-target-is-missing",
+                tokenizer=tokenizer,
+                control_init="this-control-is-missing",
+            )
+
+    def test_start_tok_walks_forward_when_initial_position_has_no_token(self) -> None:
+        """char_to_token returns None for the start position (e.g., whitespace squashed
+        into the previous token); start_tok must walk forward to the next mappable
+        character. Slices should still be valid."""
+        # Use a fully mocked tokenizer so we can deterministically force char_to_token
+        # to return None at specific positions, otherwise real tokenizers usually map
+        # every byte and never trigger the fallback.
+        prompt_text = "USER hello !! ASSISTANT world"
+        toks = list(range(15))
+
+        def char_to_token(pos: int) -> int | None:
+            # Positions of "h" and "w" both return None; the next char does map. This
+            # exercises the cur += 1 walk-forward branch in start_tok.
+            char = prompt_text[pos] if 0 <= pos < len(prompt_text) else ""
+            if char in ("h", "w"):
+                return None
+            # Map remaining positions in a way that preserves slice ordering
+            return min(pos // 2, len(toks) - 1)
+
+        encoding = MagicMock()
+        encoding.input_ids = toks
+        encoding.char_to_token.side_effect = char_to_token
+
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.return_value = prompt_text
+        tokenizer.return_value = encoding
+
+        # Construction must succeed even though char_to_token returns None at goal/target
+        # start positions ("h" / "w").
+        prompt = AttackPrompt(
+            goal="hello",
+            target="world",
+            tokenizer=tokenizer,
+            control_init="!!",
+        )
+        assert isinstance(prompt._goal_slice.start, int)
+        assert isinstance(prompt._target_slice.start, int)
+
+    def test_start_tok_returns_len_toks_when_no_position_maps(self) -> None:
+        """If char_to_token returns None for every position from char_pos to end-of-prompt,
+        start_tok must return len(toks) as a safe fallback (line 211)."""
+        prompt_text = "USER hello !! ASSISTANT world tail"
+        toks = list(range(20))
+
+        def char_to_token(pos: int) -> int | None:
+            char = prompt_text[pos] if 0 <= pos < len(prompt_text) else ""
+            # "tail" sits at end and never maps to a token (forces start_tok to exhaust
+            # the loop and hit `return len(toks)`); other content maps normally.
+            tail_start = prompt_text.find("tail")
+            if pos >= tail_start:
+                return None
+            return min(pos // 2, len(toks) - 1)
+
+        encoding = MagicMock()
+        encoding.input_ids = toks
+        encoding.char_to_token.side_effect = char_to_token
+
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.return_value = prompt_text
+        tokenizer.return_value = encoding
+
+        # "tail" as the target — its start position and every position after it returns
+        # None, so start_tok exits the while loop and returns len(toks).
+        prompt = AttackPrompt(
+            goal="hello",
+            target="tail",
+            tokenizer=tokenizer,
+            control_init="!!",
+        )
+        assert prompt._target_slice.start == len(toks)
+
+    def test_end_tok_returns_len_toks_when_target_is_at_prompt_end(self) -> None:
+        """If the target sits at the very end of the rendered prompt,
+        char_to_token(end_pos) returns None — end_tok must clamp to len(toks)."""
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.chat_template = (
+            "{%- for m in messages -%}"
+            "{%- if m['role'] == 'user' -%}"
+            "[INST] {{ m['content'] }} [/INST]"
+            "{%- elif m['role'] == 'assistant' -%}"
+            " {{ m['content'] }}"
+            "{%- endif -%}"
+            "{%- endfor -%}"
+        )
+
+        prompt = AttackPrompt(
+            goal="hello",
+            target="world",  # this sits at end of rendered prompt with no trailing tokens
+            tokenizer=tokenizer,
+            control_init="! ! !",
+        )
+        # _target_slice.stop should be len(toks), not None or NoneType arithmetic
+        assert isinstance(prompt._target_slice.stop, int)
+        assert prompt._target_slice.stop > prompt._target_slice.start
+
+
+class TestGetWorkersChatTemplateValidation:
+    """Tests for the chat-template precondition in get_workers."""
+
+    def test_raises_when_tokenizer_has_no_chat_template(self) -> None:
+        """Models without a chat_template cannot be used with apply_chat_template-based
+        GCG; get_workers should raise a clear ValueError pointing to the cause."""
+        from unittest.mock import patch
+
+        get_workers = attack_manager_mod.get_workers
+
+        params = MagicMock()
+        params.tokenizer_paths = ["fake/no-chat-template-model"]
+        params.token = ""
+        params.tokenizer_kwargs = [{}]
+
+        bare_tokenizer = MagicMock()
+        bare_tokenizer.chat_template = None
+        bare_tokenizer.pad_token = "<pad>"
+
+        with patch.object(attack_manager_mod.AutoTokenizer, "from_pretrained", return_value=bare_tokenizer):
+            with pytest.raises(ValueError, match="no chat_template configured"):
+                get_workers(params)

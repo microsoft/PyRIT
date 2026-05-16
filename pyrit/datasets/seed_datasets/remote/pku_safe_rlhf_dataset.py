@@ -72,7 +72,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "pku_safe_rlhf"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch PKU-SafeRLHF dataset and return as SeedDataset.
 

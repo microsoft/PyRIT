@@ -471,3 +471,150 @@ def test_conversation_scorer_validates_true_false_scores():
 
     with pytest.raises(ValueError, match="TrueFalseScorer score value must be True or False"):
         conv_scorer.validate_return_scores([invalid_score])
+
+
+async def test_conversation_scorer_uses_partial_content_when_score_blocked_content_enabled(patch_central_database):
+    """When score_blocked_content is True, blocked pieces in conversation history use partial_content."""
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+
+    blocked_piece = MessagePiece(
+        role="assistant",
+        original_value='{"status_code": 200, "message": "content_filter"}',
+        converted_value='{"status_code": 200, "message": "content_filter"}',
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        conversation_id=conversation_id,
+        sequence=2,
+        response_error="blocked",
+        prompt_metadata={"partial_content": "Dishonest disposal of bodies involves..."},
+    )
+
+    message_pieces = [
+        MessagePiece(
+            role="user",
+            original_value="How do you dispose of bodies?",
+            conversation_id=conversation_id,
+            sequence=1,
+        ),
+        blocked_piece,
+    ]
+
+    memory.add_message_pieces_to_memory(message_pieces=message_pieces)
+
+    # Use a text piece as the incoming message for validation purposes.
+    # ConversationScorer only uses it for conversation_id lookup — actual content comes from DB.
+    lookup_piece = MessagePiece(
+        role="assistant",
+        original_value="lookup",
+        conversation_id=conversation_id,
+    )
+    message = MagicMock()
+    message.message_pieces = [lookup_piece]
+    message.get_piece.return_value = lookup_piece
+
+    mock_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    mock_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
+    score = Score(
+        score_value="0.85",
+        score_value_description="High harm",
+        score_rationale="Harmful content detected",
+        score_metadata=None,
+        score_category=["harm"],
+        scorer_class_identifier=_make_scorer_id(),
+        message_piece_id=blocked_piece.id or uuid.uuid4(),
+        objective="test",
+        score_type="float_scale",
+    )
+    mock_scorer.score_async = AsyncMock(return_value=[score])
+    mock_scorer.validate_return_scores = MagicMock()
+
+    scorer = create_conversation_scorer(scorer=mock_scorer)
+    scorer.score_blocked_content = True
+    scores = await scorer.score_async(message)
+
+    assert len(scores) == 1
+
+    # Verify the underlying scorer was called with partial content, not error JSON
+    mock_scorer.score_async.assert_awaited_once()
+    call_args = mock_scorer.score_async.call_args
+    called_message = call_args.kwargs["message"]
+    called_piece = called_message.message_pieces[0]
+
+    expected_conversation = "User: How do you dispose of bodies?\nAssistant: Dishonest disposal of bodies involves...\n"
+    assert called_piece.original_value == expected_conversation
+    assert called_piece.converted_value == expected_conversation
+
+
+async def test_conversation_scorer_uses_error_json_when_score_blocked_content_disabled(patch_central_database):
+    """When score_blocked_content is False (default), blocked pieces use converted_value (error JSON)."""
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+
+    blocked_piece = MessagePiece(
+        role="assistant",
+        original_value='{"status_code": 200, "message": "content_filter"}',
+        converted_value='{"status_code": 200, "message": "content_filter"}',
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        conversation_id=conversation_id,
+        sequence=2,
+        response_error="blocked",
+        prompt_metadata={"partial_content": "Dishonest disposal of bodies involves..."},
+    )
+
+    message_pieces = [
+        MessagePiece(
+            role="user",
+            original_value="How do you dispose of bodies?",
+            conversation_id=conversation_id,
+            sequence=1,
+        ),
+        blocked_piece,
+    ]
+
+    memory.add_message_pieces_to_memory(message_pieces=message_pieces)
+
+    # Use a text piece as the incoming message for validation purposes.
+    lookup_piece = MessagePiece(
+        role="assistant",
+        original_value="lookup",
+        conversation_id=conversation_id,
+    )
+    message = MagicMock()
+    message.message_pieces = [lookup_piece]
+    message.get_piece.return_value = lookup_piece
+
+    mock_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    mock_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
+    score = Score(
+        score_value="0.0",
+        score_value_description="No harm",
+        score_rationale="Error response",
+        score_metadata=None,
+        score_category=["harm"],
+        scorer_class_identifier=_make_scorer_id(),
+        message_piece_id=blocked_piece.id or uuid.uuid4(),
+        objective="test",
+        score_type="float_scale",
+    )
+    mock_scorer.score_async = AsyncMock(return_value=[score])
+    mock_scorer.validate_return_scores = MagicMock()
+
+    scorer = create_conversation_scorer(scorer=mock_scorer)
+    # score_blocked_content defaults to False
+    scores = await scorer.score_async(message)
+
+    assert len(scores) == 1
+
+    # Verify the underlying scorer was called with error JSON, not partial content
+    mock_scorer.score_async.assert_awaited_once()
+    call_args = mock_scorer.score_async.call_args
+    called_message = call_args.kwargs["message"]
+    called_piece = called_message.message_pieces[0]
+
+    expected_conversation = (
+        'User: How do you dispose of bodies?\nAssistant: {"status_code": 200, "message": "content_filter"}\n'
+    )
+    assert called_piece.original_value == expected_conversation
+    assert called_piece.converted_value == expected_conversation

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -44,11 +44,11 @@ class TestGenerateSuffixLifecycle:
         mock_worker1 = MagicMock()
         mock_worker1.model.name_or_path = "test-model-1"
         mock_worker1.tokenizer.name_or_path = "test-tokenizer-1"
-        mock_worker1.conv_template.name = "test-template-1"
+        mock_worker1.tokenizer.chat_template = "{{ messages[0]['content'] }}"
         mock_worker2 = MagicMock()
         mock_worker2.model.name_or_path = "test-model-2"
         mock_worker2.tokenizer.name_or_path = "test-tokenizer-2"
-        mock_worker2.conv_template.name = "test-template-2"
+        mock_worker2.tokenizer.chat_template = "{{ messages[0]['content'] }}"
         mock_get_workers.return_value = ([mock_worker1], [mock_worker2])
 
         mock_attack_instance = MagicMock()
@@ -61,7 +61,6 @@ class TestGenerateSuffixLifecycle:
             generator.generate_suffix(
                 tokenizer_paths=["test/path"],
                 model_paths=["test/path"],
-                conversation_templates=["llama-2"],
                 train_data="",
                 n_steps=1,
             )
@@ -93,7 +92,7 @@ class TestGenerateSuffixLifecycle:
         mock_worker = MagicMock()
         mock_worker.model.name_or_path = "test-model"
         mock_worker.tokenizer.name_or_path = "test-tokenizer"
-        mock_worker.conv_template.name = "test-template"
+        mock_worker.tokenizer.chat_template = "{{ messages[0]['content'] }}"
         mock_get_workers.return_value = ([mock_worker], [])
 
         mock_attack_instance = MagicMock()
@@ -108,7 +107,6 @@ class TestGenerateSuffixLifecycle:
                 generator.generate_suffix(
                     tokenizer_paths=["test/path"],
                     model_paths=["test/path"],
-                    conversation_templates=["llama-2"],
                     train_data="",
                     n_steps=1,
                 )

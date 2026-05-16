@@ -19,5 +19,4 @@ WORKDIR /app
 # Install PyRIT with GCG extras to get all dependencies
 COPY pyproject.toml MANIFEST.in README.md LICENSE /app/
 COPY pyrit/ /app/pyrit/
-RUN uv pip install -e ".[gcg]" && \
-    uv pip install "fschat @ git+https://github.com/lm-sys/FastChat.git@2c68a13bfe10b86f40e3eefc3fcfacb32c00b02a"
+RUN uv pip install -e ".[gcg]"

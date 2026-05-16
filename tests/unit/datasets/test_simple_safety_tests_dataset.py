@@ -38,7 +38,7 @@ class TestSimpleSafetyTestsDataset:
         loader = _SimpleSafetyTestsDataset()
 
         with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_simple_safety_tests_data)):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
             assert len(dataset.seeds) == 2

@@ -18,6 +18,16 @@ from pyrit.backend.models.attacks import AttackSummary
 from pyrit.backend.models.common import PaginationInfo
 
 
+class ScenarioParameterSummary(BaseModel):
+    """Summary of a scenario-declared parameter."""
+
+    name: str = Field(..., description="Parameter name (e.g., 'max_turns')")
+    description: str = Field(..., description="Human-readable description of the parameter")
+    default: str | None = Field(None, description="Default value as a display string, or None if required")
+    param_type: str = Field(..., description="Type of the parameter as a display string (e.g., 'int', 'str')")
+    choices: str | None = Field(None, description="Allowed values as a display string, or None if unconstrained")
+
+
 class RegisteredScenario(BaseModel):
     """Summary of a registered scenario."""
 
@@ -31,6 +41,9 @@ class RegisteredScenario(BaseModel):
     all_strategies: list[str] = Field(..., description="All available concrete strategy names")
     default_datasets: list[str] = Field(..., description="Default dataset names used by the scenario")
     max_dataset_size: Optional[int] = Field(None, description="Maximum items per dataset (None means unlimited)")
+    supported_parameters: list[ScenarioParameterSummary] = Field(
+        default_factory=list, description="Scenario-declared custom parameters"
+    )
 
 
 class ListRegisteredScenariosResponse(BaseModel):
@@ -100,8 +113,8 @@ class ScenarioRunSummary(BaseModel):
     error: str | None = Field(None, description="Error message if status is FAILED")
     error_type: str | None = Field(None, description="Exception class name if status is FAILED")
     strategies_used: list[str] = Field(default_factory=list, description="Strategy names that were executed")
-    total_attacks: int = Field(0, ge=0, description="Total number of atomic attacks")
-    completed_attacks: int = Field(0, ge=0, description="Number of attacks that completed")
+    total_attacks: int = Field(0, ge=0, description="Total number of attack results persisted for this run")
+    completed_attacks: int = Field(0, ge=0, description="Number of attacks that reached a terminal outcome")
     objective_achieved_rate: int = Field(0, ge=0, le=100, description="Success rate as percentage (0-100)")
     labels: dict[str, str] = Field(default_factory=dict, description="Labels attached to this run")
     completed_at: datetime | None = Field(None, description="When the scenario finished")

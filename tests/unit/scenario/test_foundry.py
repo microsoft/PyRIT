@@ -522,7 +522,6 @@ class TestFoundryProperties:
         with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-                include_baseline=False,
             )
 
             # Before initialize_async, composites should be empty
@@ -532,6 +531,7 @@ class TestFoundryProperties:
                 objective_target=mock_objective_target,
                 scenario_strategies=strategies,
                 dataset_config=mock_dataset_config,
+                include_baseline=False,
             )
 
             # After initialize_async, composites should be set
@@ -578,12 +578,12 @@ class TestFoundryProperties:
         with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-                include_baseline=False,
             )
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
                 scenario_strategies=[composite],
                 dataset_config=mock_dataset_config,
+                include_baseline=False,
             )
 
         assert len(scenario._scenario_composites) == 1
@@ -601,12 +601,12 @@ class TestFoundryProperties:
         with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-                include_baseline=False,
             )
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
                 scenario_strategies=[composite, FoundryStrategy.ROT13],
                 dataset_config=mock_dataset_config,
+                include_baseline=False,
             )
 
         assert len(scenario._scenario_composites) == 2
@@ -624,12 +624,12 @@ class TestFoundryProperties:
         with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-                include_baseline=False,
             )
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
                 scenario_strategies=[legacy],  # type: ignore[arg-type]
                 dataset_config=mock_dataset_config,
+                include_baseline=False,
             )
 
         assert len(scenario._scenario_composites) == 1
@@ -647,12 +647,12 @@ class TestFoundryProperties:
         with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-                include_baseline=False,
             )
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
                 scenario_strategies=[legacy],  # type: ignore[arg-type]
                 dataset_config=mock_dataset_config,
+                include_baseline=False,
             )
 
         result = scenario._scenario_composites[0]
@@ -669,14 +669,47 @@ class TestFoundryProperties:
         with patch.object(RedTeamAgent, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = RedTeamAgent(
                 attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-                include_baseline=False,
             )
             await scenario.initialize_async(
                 objective_target=mock_objective_target,
                 scenario_strategies=[legacy],  # type: ignore[arg-type]
                 dataset_config=mock_dataset_config,
+                include_baseline=False,
             )
 
         result = scenario._scenario_composites[0]
         assert result.attack is None
         assert set(result.converters) == {FoundryStrategy.Base64, FoundryStrategy.ROT13}
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+class TestRedTeamAgentBaselineUniformity:
+    """ADO 9012 regression: baseline shares objectives with strategies under max_dataset_size."""
+
+    async def test_one_resolution_call_baseline_matches_strategies(self, mock_objective_target, mock_objective_scorer):
+        from pyrit.models import SeedGroup, SeedObjective
+
+        seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
+        config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+
+        first_sample = seed_groups[:3]
+        second_sample = seed_groups[5:8]
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.random.sample",
+            side_effect=[first_sample, second_sample],
+        ) as mock_sample:
+            scenario = RedTeamAgent(
+                attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+            )
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                scenario_strategies=[FoundryStrategy.Base64],
+                dataset_config=config,
+                include_baseline=True,
+            )
+
+        assert mock_sample.call_count == 1
+        assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
+        baseline_objs = set(scenario._atomic_attacks[0].objectives)
+        for attack in scenario._atomic_attacks[1:]:
+            assert set(attack.objectives) == baseline_objs
