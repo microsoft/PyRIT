@@ -23,9 +23,11 @@ project:
     - rule: tex-renders
       severity: ignore
 
-    # External docs that require auth — always 401/403 from CI workers and
-    # public link checkers. The URLs themselves are correct; they just can't
-    # be verified without credentials.
+    # External APIs that require auth — always return 401/403 from CI workers
+    # and public link checkers. The URLs themselves are correct; they just
+    # can't be verified without credentials. Every other broken URL in the
+    # tree has been fixed (see PR #1745); only add to this list when a URL
+    # is genuinely unverifiable, not just inconvenient to update.
     - rule: link-resolves
       severity: ignore
       keys:
@@ -34,36 +36,6 @@ project:
         - "http://api.openai.com"
         - "http://api.openai.com/**"
         - "https://cognitiveservices.azure.com/**"
-
-    # Intentional placeholder URLs that are not meant to resolve:
-    # - pyrit.shared.foo is a fake example endpoint in the style guide.
-    # - account.blob.core.windows.net/container/... is a generic Azure
-    #   Blob Storage URL shape used in pyrit.models docstrings.
-    # - PyRIT/releases/vx.y.z/... are template placeholders in
-    #   contributing/10_release_process.md (operators substitute the
-    #   real version at release time).
-    - rule: link-resolves
-      severity: ignore
-      keys:
-        - "http://pyrit.shared.foo"
-        - "https://account.blob.core.windows.net/**"
-        - "https://raw.githubusercontent.com/microsoft/PyRIT/releases/vx.y.z/**"
-        - "https://github.com/microsoft/PyRIT/tree/releases/vx.y.z/**"
-
-    # Stale URLs in historical blog posts and one current memory doc.
-    # Blog posts are append-only / immutable historical content; the linked
-    # files were deleted (pdf_converter.ipynb) or moved (older
-    # microsoft.github.io/PyRIT/* paths from before the v2 site
-    # restructure). The dbeaver URL is real link rot — DBeaver
-    # reorganized their docs, the replacement isn't a clean 1:1.
-    # TODO(follow-up): clean these up editorially and tighten this
-    # suppression list.
-    - rule: link-resolves
-      severity: ignore
-      keys:
-        - "https://github.com/microsoft/PyRIT/blob/main/doc/code/converters/pdf_converter.ipynb"
-        - "https://microsoft.github.io/PyRIT/**"
-        - "https://dbeaver.com/docs/guides/sql_editors/sqlite.html"
   toc:
     - file: index.md
     - file: getting_started/README.md
