@@ -246,6 +246,7 @@ test.describe("Target Config ↔ Chat Navigation", () => {
 
     // Start in chat — no-target-banner should be visible
     await page.goto("/");
+    await page.getByTitle("Chat").click();
     await expect(page.getByTestId("no-target-banner")).toBeVisible();
 
     // Go to config, set a target

@@ -297,6 +297,7 @@ test.describe("Multiple Messages", () => {
 test.describe("Chat without target", () => {
   test("should disable input when no target is active", async ({ page }) => {
     await page.goto("/");
+    await page.getByTitle("Chat").click();
 
     // The no-target-banner should be visible because no target is active
     await expect(page.getByTestId("no-target-banner")).toBeVisible();
