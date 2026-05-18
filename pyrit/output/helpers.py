@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Convenience functions for one-line printing of attack results, scenario results, and scorer info.
+"""
+Convenience functions for one-line printing of attack results, scenario results, and scorer info.
 
 Printer classes are imported at module load, but the heavy ``CentralMemory`` dependency is
 deferred inside each ``*MemoryPrinter`` constructor, so importing this module (or
