@@ -147,7 +147,6 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
             PyritException: If the temperature or top_p values are out of bounds.
             ValueError: If the temperature is not between 0 and 2 (inclusive).
             ValueError: If the top_p is not between 0 and 1 (inclusive).
-            ValueError: If both `max_output_tokens` and `max_tokens` are provided.
             RateLimitException: If the target is rate-limited.
             httpx.HTTPStatusError: If the request fails with a 400 Bad Request or 429 Too Many Requests error.
             json.JSONDecodeError: If the response from the target is not valid JSON.
