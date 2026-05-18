@@ -66,13 +66,13 @@ attack_result = await attack.execute_async(objective=objective)  # type: ignore
 # %% [markdown]
 # ## Printing Attack Results
 #
-# The `print_attack_result_async` convenience function handles format selection
+# The `output_attack_async` convenience function handles format selection
 # and sink routing. By default it uses "pretty" format with ANSI colors to stdout.
 
 # %%
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 
-await print_attack_result_async(attack_result)
+await output_attack_async(attack_result)
 
 # %% [markdown]
 # ### Markdown Format
@@ -81,32 +81,32 @@ await print_attack_result_async(attack_result)
 # `IPythonMarkdownSink` is auto-detected and renders rich markdown.
 
 # %%
-await print_attack_result_async(attack_result, format="markdown")
+await output_attack_async(attack_result, format="markdown")
 
 # %% [markdown]
 # ## Printing Conversations Directly
 #
 # If you have a list of `Message` objects, you can render them without an
-# `AttackResult` wrapper using `print_conversation_async`.
+# `AttackResult` wrapper using `output_conversation_async`.
 
 # %%
-from pyrit.output import print_conversation_async
+from pyrit.output import output_conversation_async
 
 # get the conversation from memory using the conversation id from the attack result
 conversation = memory.get_conversation(conversation_id=attack_result.conversation_id)
 
 # print the conversation using the print conversation helper
-await print_conversation_async(messages=conversation)  # type: ignore
+await output_conversation_async(messages=conversation)  # type: ignore
 
 # %% [markdown]
 # ## Printing Scores
 #
-# Use `print_score_async` to render a list of `Score` objects.
+# Use `output_score_async` to render a list of `Score` objects.
 
 # %%
-from pyrit.output import print_score_async
+from pyrit.output import output_score_async
 
-await print_score_async([attack_result.last_score])
+await output_score_async([attack_result.last_score])
 
 # %% [markdown]
 # ## Sinks — Redirecting Output
@@ -127,7 +127,7 @@ with tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w") as f:
     output_path = Path(f.name)
 
 file_sink = FileSink(path=output_path, mode="w")
-await print_attack_result_async(attack_result, sink=file_sink)
+await output_attack_async(attack_result, sink=file_sink)
 
 # Read back and display the first few lines
 content = output_path.read_text(encoding="utf-8")
@@ -215,7 +215,7 @@ await conversation_printer.write_async(conversation)  # type: ignore
 # pyrit/output/
 # ├── base.py                    # PrinterBase — render_async (abstract) + write_async (concrete)
 # ├── sink.py                    # Sink, StdoutSink, FileSink, IPythonMarkdownSink
-# ├── helpers.py                 # Convenience functions (print_attack_result_async, etc.)
+# ├── helpers.py                 # Convenience functions (output_attack_async, etc.)
 # ├── attack_result/             # Attack result printing — composes conversation + score printers
 # ├── conversation/              # Conversation/message rendering
 # ├── score/                     # Individual Score object rendering
@@ -246,11 +246,11 @@ await conversation_printer.write_async(conversation)  # type: ignore
 #
 # | Function | Domain | Formats |
 # |----------|--------|---------|
-# | `print_attack_result_async` | Attack results | `pretty`, `markdown` |
-# | `print_scenario_result_async` | Scenario results | `pretty` |
-# | `print_scorer_async` | Scorer info/metrics | `pretty` |
-# | `print_conversation_async` | Conversation history | `pretty` |
-# | `print_score_async` | Score list | `pretty` |
+# | `output_attack_async` | Attack results | `pretty`, `markdown` |
+# | `output_scenario_async` | Scenario results | `pretty` |
+# | `output_scorer_async` | Scorer info/metrics | `pretty` |
+# | `output_conversation_async` | Conversation history | `pretty` |
+# | `output_score_async` | Score list | `pretty` |
 #
 # All accept `format=` and `sink=` keyword arguments with sensible defaults.
 

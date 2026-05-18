@@ -25,7 +25,7 @@
 # %%
 import pandas as pd
 
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_converter import get_converter_modalities
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -126,7 +126,7 @@ attack = PromptSendingAttack(
 
 result = await attack.execute_async(objective=objective)  # type: ignore
 
-await print_attack_result_async(result)
+await output_attack_async(result)
 
 # %% [markdown]
 # ## Response Converters
@@ -186,4 +186,4 @@ attack = PromptSendingAttack(
 result = await attack.execute_async(objective=objective)  # type: ignore
 
 # Print the conversation showing both original and converted values
-await print_attack_result_async(result)
+await output_attack_async(result)

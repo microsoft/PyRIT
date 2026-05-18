@@ -28,7 +28,7 @@
 # %%
 from pathlib import Path
 
-from pyrit.output import print_scenario_result_async
+from pyrit.output import output_scenario_async
 from pyrit.registry import TargetRegistry
 from pyrit.scenario.scenarios.foundry import FoundryStrategy, RedTeamAgent
 from pyrit.setup import initialize_from_config_async
@@ -118,7 +118,7 @@ await baseline_scenario.initialize_async(  # type: ignore
     dataset_config=dataset_config,
 )
 baseline_result = await baseline_scenario.run_async()  # type: ignore
-await print_scenario_result_async(baseline_result)
+await output_scenario_async(baseline_result)
 
 # %% [markdown]
 # To disable the automatic baseline entirely (e.g., when you only want attack strategies with no
@@ -158,4 +158,4 @@ await custom_scenario.initialize_async(  # type: ignore
     dataset_config=dataset_config,
 )
 custom_result = await custom_scenario.run_async()  # type: ignore
-await print_scenario_result_async(custom_result)
+await output_scenario_async(custom_result)

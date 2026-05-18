@@ -62,7 +62,7 @@ if names:
 # Scorer metadata includes the scorer type and identifier for tracking.
 
 # %%
-from pyrit.output import print_scorer_async
+from pyrit.output import output_scorer_async
 
 # Get metadata for all registered scorers
 metadata = registry.list_metadata()
@@ -71,7 +71,7 @@ for item in metadata:
     print(f"  Class: {item.class_name}")
     print(f"  Type: {item.params.get('scorer_type', 'unknown')}")
 
-    await print_scorer_async(scorer_identifier=item)
+    await output_scorer_async(scorer_identifier=item)
 
 # %% [markdown]
 # ## Filtering

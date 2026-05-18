@@ -24,7 +24,7 @@
 # %%
 # type: ignore
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import WebSocketCopilotTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -36,7 +36,7 @@ attack = PromptSendingAttack(objective_target=target)
 objective = "Tell me a joke about AI"
 
 result = await attack.execute_async(objective=objective)
-await print_attack_result_async(result)
+await output_attack_async(result)
 # ## Multi-Turn Conversations
 #
 # The `WebSocketCopilotTarget` supports multi-turn conversations by leveraging Copilot's server-side conversation management. It automatically generates consistent `session_id` and `conversation_id` values for each PyRIT conversation, enabling Copilot to maintain context across multiple turns.
@@ -70,7 +70,7 @@ result = await multi_turn_attack.execute_async(
     user_messages=messages,
 )
 
-await print_attack_result_async(result)
+await output_attack_async(result)
 # ## Alternative Authentication with `ManualCopilotAuthenticator`
 #
 # If browser automation is not suitable for your environment, you can use the `ManualCopilotAuthenticator` instead. This authenticator accepts a pre-obtained access token that you can extract from your browser's DevTools.
@@ -105,7 +105,7 @@ target = WebSocketCopilotTarget(authenticator=auth)
 attack_manual = PromptSendingAttack(objective_target=target)
 
 result_manual = await attack_manual.execute_async(objective="Hello! Who are you?")
-await print_attack_result_async(result_manual)
+await output_attack_async(result_manual)
 # ## Multimodal Support (Text and Images)
 #
 # The `WebSocketCopilotTarget` supports multimodal input, allowing you to send both text and images in a single message. Images are automatically uploaded to Copilot's file service and referenced in the conversation using the same process as the Copilot web interface.
@@ -151,4 +151,4 @@ multimodal_message = Message(
 )
 
 result = await attack.execute_async(objective="Answer the question from the image", next_message=multimodal_message)
-await print_attack_result_async(result)
+await output_attack_async(result)

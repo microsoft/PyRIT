@@ -65,7 +65,7 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     RTASystemPromptPaths,
 )
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import AzureMLChatTarget, OpenAIChatTarget
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -100,7 +100,7 @@ red_teaming_attack = RedTeamingAttack(
 
 # passed-in memory labels are combined with global memory labels
 result = await red_teaming_attack.execute_async(objective=objective, memory_labels={"harm_category": "illegal"})  # type: ignore
-await print_attack_result_async(result)
+await output_attack_async(result)
 
 # %% [markdown]
 # ## Setting System Prompt of Objective Target
@@ -179,7 +179,7 @@ result = await red_teaming_attack.execute_async(  # type: ignore
     prepended_conversation=prepended_conversation,
 )
 
-await print_attack_result_async(result)
+await output_attack_async(result)
 
 # %% [markdown]
 # ## Parallel Example using Converters
@@ -226,7 +226,7 @@ for objective in objectives:
         memory_labels={"harm_category": "illegal"},
     )
 
-    await print_attack_result_async(result)
+    await output_attack_async(result)
 
 # How to call AttackExecutor's method if not changing the attack configuration for each objective
 """
@@ -292,22 +292,22 @@ red_teaming_attack = RedTeamingAttack(
 )
 
 result = await red_teaming_attack.execute_async(objective=objective, memory_labels={"harm_category": "illegal"})  # type: ignore
-await print_attack_result_async().print_result_async(  # type: ignore
+await output_attack_async().print_result_async(  # type: ignore
     result=result, include_adversarial_conversation=True
 )
 
 # %% [markdown]
 # ## Displaying Results with Better Formatting
 #
-# While `print_attack_result_async` works well for console output, Jupyter notebooks can display rich content more effectively.
-# The `print_attack_result_async (format="markdown")` provides enhanced formatting capabilities, including proper inline display of generated images
-# and better visual organization of attack results. Note that for documentation builds, `print_attack_result_async` is preferred
+# While `output_attack_async` works well for console output, Jupyter notebooks can display rich content more effectively.
+# The `output_attack_async (format="markdown")` provides enhanced formatting capabilities, including proper inline display of generated images
+# and better visual organization of attack results. Note that for documentation builds, `output_attack_async` is preferred
 # to avoid broken image references when notebook outputs are committed.
 
 # %%
-# Note: print_attack_result_async (format="markdown") displays images inline using markdown, which looks great in notebooks.
-# However, for documentation builds, use print_attack_result_async to avoid broken image references.
-await print_attack_result_async(result, include_auxiliary_scores=True)
+# Note: output_attack_async (format="markdown") displays images inline using markdown, which looks great in notebooks.
+# However, for documentation builds, use output_attack_async to avoid broken image references.
+await output_attack_async(result, include_auxiliary_scores=True)
 
 # %% [markdown]
 # ## Other Multi-Turn Attacks

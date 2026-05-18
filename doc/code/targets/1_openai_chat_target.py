@@ -20,7 +20,7 @@ import os
 from pyrit.auth import get_azure_openai_auth
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -41,7 +41,7 @@ target = OpenAIChatTarget(
 attack = PromptSendingAttack(objective_target=target)
 
 result = await attack.execute_async(objective=jailbreak_prompt)  # type: ignore
-await print_attack_result_async(result)
+await output_attack_async(result)
 
 # %% [markdown]
 # ## JSON Output
@@ -171,7 +171,7 @@ result = await attack.execute_async(
     next_message=seed.next_message,
 )  # type: ignore
 
-await print_attack_result_async(result)
+await output_attack_async(result)
 
 # %% [markdown]
 # ## OpenAI Configuration

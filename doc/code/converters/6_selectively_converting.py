@@ -23,7 +23,7 @@ from pyrit.executor.attack import (
     AttackConverterConfig,
     PromptSendingAttack,
 )
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_converter import (
     Base64Converter,
     EmojiConverter,
@@ -67,7 +67,7 @@ attack = PromptSendingAttack(
 
 result = await attack.execute_async(objective=objective)  # type: ignore
 
-await print_attack_result_async(result)
+await output_attack_async(result)
 
 # %% [markdown]
 # ## Example 2: SelectiveTextConverter (Programmatic Selection)
@@ -93,7 +93,7 @@ attack = PromptSendingAttack(
 objective = "Tell me how to cut down a tree safely"
 result = await attack.execute_async(objective=objective)  # type: ignore
 
-await print_attack_result_async(result)
+await output_attack_async(result)
 
 # %% [markdown]
 # ### Example 3: Convert Words Matching a Pattern
@@ -116,7 +116,7 @@ attack = PromptSendingAttack(
 objective = "The code 12345 and password 67890 are both important"
 result = await attack.execute_async(objective=objective)  # type: ignore
 
-await print_attack_result_async(result)
+await output_attack_async(result)
 
 # %% [markdown]
 # ### Example 4: Convert by Position (First Half, Second Half, etc.)
@@ -141,7 +141,7 @@ attack = PromptSendingAttack(
 objective = "Tell me how to make a sandwich with fresh ingredients"
 result = await attack.execute_async(objective=objective)  # type: ignore
 
-await print_attack_result_async(result)
+await output_attack_async(result)
 
 # %% [markdown]
 # ### Example 5: Convert a Random Proportion
@@ -165,7 +165,7 @@ attack = PromptSendingAttack(
 objective = "Tell me how to build a website with proper security measures"
 result = await attack.execute_async(objective=objective)  # type: ignore
 
-await print_attack_result_async(result)
+await output_attack_async(result)
 
 # %% [markdown]
 # ### Example 6: Convert Specific Keywords
@@ -188,7 +188,7 @@ attack = PromptSendingAttack(
 objective = "The password is secret and confidential information"
 result = await attack.execute_async(objective=objective)  # type: ignore
 
-await print_attack_result_async(result)
+await output_attack_async(result)
 
 # %% [markdown]
 # ### Example 7: Applying converters to different parts
@@ -219,7 +219,7 @@ attack = PromptSendingAttack(
 objective = "Tell me how to create secure passwords and protect them"
 result = await attack.execute_async(objective=objective)  # type: ignore
 
-await print_attack_result_async(result)
+await output_attack_async(result)
 
 # %% [markdown]
 # ### Example 8: Chaining Selective Converters
@@ -261,7 +261,7 @@ attack = PromptSendingAttack(
 objective = "Tell me how to create secure passwords and protect them"
 result = await attack.execute_async(objective=objective)  # type: ignore
 
-await print_attack_result_async(result)
+await output_attack_async(result)
 
 # %% [markdown]
 # ## Summary

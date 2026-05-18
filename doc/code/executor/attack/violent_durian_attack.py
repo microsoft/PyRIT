@@ -27,7 +27,7 @@ from pyrit.executor.attack import (
     AttackScoringConfig,
     RedTeamingAttack,
 )
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import SelfAskTrueFalseScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -127,4 +127,4 @@ attack = RedTeamingAttack(
 )
 
 result = await attack.execute_async(objective=conversation_objective)  # type: ignore
-await print_attack_result_async(result)
+await output_attack_async(result)

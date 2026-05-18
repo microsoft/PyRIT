@@ -1,4 +1,4 @@
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 
 # ---
 # jupyter:
@@ -73,7 +73,7 @@ context: SingleTurnAttackContext = SingleTurnAttackContext(
 
 attack = PromptSendingAttack(objective_target=target)
 result = await attack.execute_with_context_async(context=context)  # type: ignore
-await print_attack_result_async(result)
+await output_attack_async(result)
 await target.cleanup_target()  # type: ignore
 
 # %% [markdown]
@@ -98,7 +98,7 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 )
 
 for result in results:
-    await print_attack_result_async(result)
+    await output_attack_async(result)
 
 # %% [markdown]
 # ## MULTITURN:
@@ -148,4 +148,4 @@ red_teaming_attack = RedTeamingAttack(
 
 # passed-in memory labels are combined with global memory labels
 result = await red_teaming_attack.execute_async(objective=objective, memory_labels={"harm_category": "illegal"})  # type: ignore
-await print_attack_result_async(result)
+await output_attack_async(result)

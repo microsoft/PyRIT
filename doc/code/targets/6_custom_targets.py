@@ -47,7 +47,7 @@ from pyrit.executor.attack import (
     AttackScoringConfig,
     RedTeamingAttack,
 )
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import GandalfLevel, GandalfTarget, OpenAIChatTarget
 from pyrit.score import GandalfScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -89,4 +89,4 @@ red_teaming_attack = RedTeamingAttack(
 
 # Once the agents are set up, we can start the conversation.
 result = await red_teaming_attack.execute_async(objective=attack_strategy)  # type: ignore
-await print_attack_result_async(result)
+await output_attack_async(result)

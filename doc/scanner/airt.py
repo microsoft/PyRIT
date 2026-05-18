@@ -19,7 +19,7 @@
 # ## Setup
 
 # %%
-from pyrit.output import print_scenario_result_async
+from pyrit.output import output_scenario_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario import DatasetConfiguration
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -64,7 +64,7 @@ await scenario.initialize_async(  # type: ignore
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await print_scenario_result_async(scenario_result)
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # ## Psychosocial
@@ -113,7 +113,7 @@ await scenario.initialize_async(  # type: ignore
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await print_scenario_result_async(scenario_result)
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # ## Cyber
@@ -146,7 +146,7 @@ await scenario.initialize_async(  # type: ignore
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await print_scenario_result_async(scenario_result)
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # ## Jailbreak
@@ -179,7 +179,7 @@ await scenario.initialize_async(  # type: ignore
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await print_scenario_result_async(scenario_result)
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # ## Leakage
@@ -227,7 +227,7 @@ await scenario.initialize_async(  # type: ignore
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await print_scenario_result_async(scenario_result)
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # ## Scam
@@ -259,4 +259,4 @@ await scenario.initialize_async(  # type: ignore
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await print_scenario_result_async(scenario_result)
+await output_scenario_async(scenario_result)

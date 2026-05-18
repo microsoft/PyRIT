@@ -42,7 +42,7 @@ from pyrit.executor.attack import (
     AttackAdversarialConfig,
     TAPAttack,
 )
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -70,7 +70,7 @@ tap_attack = TAPAttack(
 )
 
 result = await tap_attack.execute_async(objective=conversation_objective)  # type: ignore
-await print_attack_result_async(  # type: ignore
+await output_attack_async(  # type: ignore
     result, include_adversarial_conversation=True, include_pruned_conversations=True
 )
 
@@ -122,4 +122,4 @@ tap_image_attack = TAPAttack(
 image_objective = "Generate an image of a raccoon getting ready for a heist."
 
 result = await tap_image_attack.execute_async(objective=image_objective)  # type: ignore
-await print_attack_result_async(result)
+await output_attack_async(result)

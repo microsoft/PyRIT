@@ -39,7 +39,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
 )
 from pyrit.memory import CentralMemory
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget, PromptShieldTarget
 from pyrit.score import BatchScorer, PromptShieldScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -68,7 +68,7 @@ attack = PromptSendingAttack(
     attack_scoring_config=scoring_config,
 )
 result = await attack.execute_async(objective=example_prompt)  # type: ignore
-await print_attack_result_async(result)
+await output_attack_async(result)
 
 # Fetch prompts to score by conversation ID
 memory = CentralMemory.get_memory_instance()

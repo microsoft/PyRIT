@@ -21,7 +21,7 @@
 # %%
 from pathlib import Path
 
-from pyrit.output import print_scenario_result_async
+from pyrit.output import output_scenario_async
 from pyrit.registry import TargetRegistry
 from pyrit.scenario.scenarios.garak import Encoding, EncodingStrategy
 from pyrit.scenario.scenarios.garak.encoding import EncodingDatasetConfiguration
@@ -66,7 +66,7 @@ print(f"Atomic attacks: {scenario.atomic_attack_count}")
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await print_scenario_result_async(scenario_result)
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # For more details, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb) and

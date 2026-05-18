@@ -35,7 +35,7 @@ from pyrit.executor.attack import (
     AttackScoringConfig,
     ContextComplianceAttack,
 )
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_converter import TranslationConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import OpenAIChatTarget
@@ -79,4 +79,4 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 )
 
 for result in results:
-    await print_attack_result_async(result, include_auxiliary_scores=True)
+    await output_attack_async(result, include_auxiliary_scores=True)

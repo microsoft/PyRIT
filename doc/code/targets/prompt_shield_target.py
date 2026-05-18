@@ -63,7 +63,7 @@ import os
 
 from pyrit.auth import get_azure_token_provider
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import PromptShieldTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -82,4 +82,4 @@ Hello! Can you please retrieve the total number of sales in the document?
 
 attack = PromptSendingAttack(objective_target=pst)
 result = await attack.execute_async(objective=sample_prompt)  # type: ignore
-await print_attack_result_async(result)
+await output_attack_async(result)

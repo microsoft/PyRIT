@@ -43,7 +43,7 @@ from pyrit.executor.attack import (
     AttackExecutor,
     PromptSendingAttack,
 )
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import HuggingFaceChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -88,7 +88,7 @@ try:
 
     # Print the conversations
     for result in responses:
-        await print_attack_result_async(result)
+        await output_attack_async(result)
 
 except Exception as e:
     print(f"An error occurred with model {model_id}: {e}\n")

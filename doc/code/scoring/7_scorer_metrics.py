@@ -182,7 +182,7 @@ else:
 # Use `get_all_objective_metrics()` or `get_all_harm_metrics()` to load evaluation results. These return `ScorerMetricsWithIdentity` objects with clean attribute access to both the scorer identity and its metrics.
 
 # %%
-from pyrit.output import print_scorer_async
+from pyrit.output import output_scorer_async
 from pyrit.score import get_all_objective_metrics
 
 # Load all objective scorer metrics - returns ScorerMetricsWithIdentity[ObjectiveScorerMetrics]
@@ -196,7 +196,7 @@ sorted_by_f1 = sorted(all_scorers, key=lambda x: x.metrics.f1_score, reverse=Tru
 print("Top 5 configurations by F1 Score:")
 print("-" * 80)
 for _i, entry in enumerate(sorted_by_f1[:5], 1):
-    await print_scorer_async(scorer_identifier=entry.scorer_identifier)
+    await output_scorer_async(scorer_identifier=entry.scorer_identifier)
 
 # Show best by each metric
 print("\n" + "=" * 80)
@@ -214,7 +214,7 @@ print(
 # Similarly, you can look at the best harm scorers for a given category:
 
 # %%
-from pyrit.output import print_scorer_async
+from pyrit.output import output_scorer_async
 from pyrit.score import get_all_harm_metrics
 
 # Load all harm scorer metrics for a specific category
@@ -228,7 +228,7 @@ sorted_by_mae = sorted(all_harm_scorers, key=lambda x: x.metrics.mean_absolute_e
 print("Top configurations by Mean Absolute Error:")
 print("-" * 80)
 for _i, e in enumerate(sorted_by_mae[:5], 1):
-    await print_scorer_async(scorer_identifier=e.scorer_identifier, harm_category="violence")
+    await output_scorer_async(scorer_identifier=e.scorer_identifier, harm_category="violence")
 
 # %% [markdown]
 # ## Creating Scorer Metrics

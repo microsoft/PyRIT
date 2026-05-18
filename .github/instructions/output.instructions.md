@@ -58,8 +58,8 @@ Pass `sink=` to redirect output. Pass sub-printers only to override defaults.
 Every new domain printer **must** have a corresponding convenience function added to `helpers.py`. This is the primary entry point most callers use.
 
 ```python
-from pyrit.output.helpers import print_attack_result_async
-await print_attack_result_async(result, format="pretty")
+from pyrit.output.helpers import output_attack_async
+await output_attack_async(result, format="pretty")
 ```
 
 `helpers.py` resolves `format` → printer class, `sink` → Sink, and calls `write_async`.

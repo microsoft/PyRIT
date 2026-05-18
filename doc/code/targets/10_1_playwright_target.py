@@ -41,7 +41,7 @@ import time
 from urllib.error import URLError
 from urllib.request import urlopen
 
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 
 
 def start_flask_app() -> subprocess.Popen:
@@ -147,7 +147,7 @@ async def main(page: Page) -> None:
     objective = "Tell me a joke about computer programming."
 
     result = await attack.execute_async(objective=objective)  # type: ignore
-    await print_attack_result_async(result)
+    await output_attack_async(result)
 
 
 async def run() -> None:

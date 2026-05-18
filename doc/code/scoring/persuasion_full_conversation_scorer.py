@@ -30,7 +30,7 @@ from pyrit.executor.attack import (
 )
 from pyrit.memory import CentralMemory
 from pyrit.models import Message, MessagePiece, SeedPrompt
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import LikertScalePaths, SubStringScorer, create_conversation_scorer
 from pyrit.score.float_scale.self_ask_likert_scorer import SelfAskLikertScorer
@@ -96,7 +96,7 @@ result = await red_teaming_attack.execute_async(  # type: ignore
     memory_labels={"harm_category": "illegal"},
 )
 
-await print_attack_result_async(result)
+await output_attack_async(result)
 
 # Retrieve the completed conversation and hand to ConversationScorer
 memory = CentralMemory.get_memory_instance()

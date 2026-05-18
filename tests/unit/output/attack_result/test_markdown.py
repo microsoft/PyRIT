@@ -378,9 +378,9 @@ async def test_print_result_async_emits_deprecation_warning(printer, attack_resu
     assert "Attack Result: SUCCESS" in capsys.readouterr().out
 
 
-async def test_print_conversation_async_emits_deprecation_warning(printer, attack_result, capsys):
-    with pytest.warns(DeprecationWarning, match="print_conversation_async"):
-        await printer.print_conversation_async(attack_result)
+async def test_output_conversation_async_emits_deprecation_warning(printer, attack_result, capsys):
+    with pytest.warns(DeprecationWarning, match="output_conversation_async"):
+        await printer.output_conversation_async(attack_result)
     assert "*No conversation found for ID: conv-main*" in capsys.readouterr().out
 
 

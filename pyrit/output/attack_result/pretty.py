@@ -158,11 +158,11 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             include_reasoning_trace=include_reasoning_trace,
         )
 
-    async def print_conversation_async(
+    async def output_conversation_async(
         self, result: AttackResult, *, include_scores: bool = False, include_reasoning_trace: bool = False
     ) -> None:
         """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_conversation_async", new_item="write_async", removed_in="2.0")
+        print_deprecation_message(old_item="output_conversation_async", new_item="write_async", removed_in="2.0")
         content = await self._render_conversation_async(
             result, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
         )

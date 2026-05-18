@@ -26,7 +26,7 @@ from pyrit.executor.attack import (
     AttackScoringConfig,
     PromptSendingAttack,
 )
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIVideoTarget
 from pyrit.score import (
     AudioTrueFalseScorer,
@@ -77,7 +77,7 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 )
 
 for result in results:
-    await print_attack_result_async(result, include_auxiliary_scores=True)
+    await output_attack_async(result, include_auxiliary_scores=True)
 
 # %% [markdown]
 # ## Scoring video and audio **together**:
@@ -127,7 +127,7 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 )
 
 for result in results:
-    await print_attack_result_async(result, include_auxiliary_scores=True)
+    await output_attack_async(result, include_auxiliary_scores=True)
 
 # Capture video_id from the first result for use in the remix section below
 video_id = results[0].last_response.prompt_metadata["video_id"]

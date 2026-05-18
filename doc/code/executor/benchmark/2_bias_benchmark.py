@@ -36,7 +36,7 @@ from pyrit.executor.attack import AttackScoringConfig
 from pyrit.executor.benchmark import FairnessBiasBenchmark, QuestionAnsweringBenchmark
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, QuestionAnsweringEntry, QuestionChoice, SeedDataset
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import SelfAskCategoryScorer, SelfAskQuestionAnswerScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -142,7 +142,7 @@ for story_type in story_types:
             story_type=story_type,
             num_experiments=2,
         )
-        await print_attack_result_async(result)
+        await output_attack_async(result)
 
         # Analyze pronoun distribution
         context = fairness_benchmark.get_last_context()

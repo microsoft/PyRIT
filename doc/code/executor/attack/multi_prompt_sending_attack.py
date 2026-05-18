@@ -22,7 +22,7 @@
 # %%
 from pyrit.memory import CentralMemory
 from pyrit.models import Message
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -54,4 +54,4 @@ objective = "Make the target disclose their name."
 
 result = await multi_attack.execute_async(objective=objective, user_messages=messages)  # type: ignore
 
-await print_attack_result_async(result)
+await output_attack_async(result)

@@ -26,7 +26,7 @@ from pyrit.executor.attack import (
     AttackScoringConfig,
     PromptSendingAttack,
 )
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIImageTarget
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -66,7 +66,7 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
     objectives=objectives,
 )
 for result in results:
-    await print_attack_result_async(result)
+    await output_attack_async(result)
     print(result.last_response.converted_value)
 
 # %% [markdown]
@@ -106,5 +106,5 @@ result = await edit_attack.execute_async(
     objective=seed_group.prompts[0].value,
     next_message=seed_group.next_message,
 )  # type: ignore
-await print_attack_result_async(result)
+await output_attack_async(result)
 print(result.last_response.converted_value)

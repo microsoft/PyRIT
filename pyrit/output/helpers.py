@@ -9,7 +9,7 @@ from pyrit.models.scenario_result import ScenarioResult
 from pyrit.output.sink import OutputFormat, Sink, StdoutSink, get_default_sink
 
 
-async def print_attack_result_async(
+async def output_attack_async(
     result: AttackResult,
     *,
     format: OutputFormat = "pretty",  # noqa: A002
@@ -48,7 +48,7 @@ async def print_attack_result_async(
     )
 
 
-async def print_scenario_result_async(
+async def output_scenario_async(
     result: ScenarioResult,
     *,
     format: OutputFormat = "pretty",  # noqa: A002
@@ -75,7 +75,7 @@ async def print_scenario_result_async(
     await printer.write_async(result)
 
 
-async def print_scorer_async(
+async def output_scorer_async(
     *,
     scorer_identifier: ComponentIdentifier,
     harm_category: str | None = None,
@@ -107,7 +107,7 @@ async def print_scorer_async(
     await printer.write_async(scorer_identifier=scorer_identifier, harm_category=harm_category)
 
 
-async def print_conversation_async(
+async def output_conversation_async(
     messages: list[Message],
     *,
     format: OutputFormat = "pretty",  # noqa: A002
@@ -143,7 +143,7 @@ async def print_conversation_async(
     )
 
 
-async def print_score_async(
+async def output_score_async(
     scores: list[Score],
     *,
     format: OutputFormat = "pretty",  # noqa: A002

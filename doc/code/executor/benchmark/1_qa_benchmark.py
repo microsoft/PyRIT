@@ -19,7 +19,7 @@ from pyrit.models import (
     QuestionAnsweringEntry,
     QuestionChoice,
 )
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import SelfAskQuestionAnswerScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -49,7 +49,7 @@ question = QuestionAnsweringEntry(
 )
 
 result = await benchmark.execute_async(question_answering_entry=question)  # type: ignore
-await print_attack_result_async(result)
+await output_attack_async(result)
 
 # %%
 # Fetch WMDP dataset for Q/A Model Testing; this is big and can take a minute
@@ -62,7 +62,7 @@ results = []
 for question in wmdp_ds.questions[:3]:
     result = await benchmark.execute_async(question_answering_entry=question)  # type: ignore
     results.append(result)
-    await print_attack_result_async(result)
+    await output_attack_async(result)
 
 # %% [markdown]
 # You can run custom analysis on the benchmarking results. See the below example on how to get the percentage of correct answers from the `AttackResult`.

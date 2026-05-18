@@ -1,4 +1,4 @@
-from pyrit.output import print_attack_result_async
+from pyrit.output import output_attack_async
 
 # ---
 # jupyter:
@@ -190,7 +190,7 @@ attack = PromptSendingAttack(
 results = await AttackExecutor().execute_attack_async(attack=attack, objectives=objectives)  # type: ignore
 
 for result in results:
-    await print_attack_result_async(result)
+    await output_attack_async(result)
 
 # %% [markdown]
 # ### Using your own Initializers
