@@ -134,13 +134,17 @@ async def test_hf_initialization(patch_central_database, mock_download_specific_
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
 async def test_hf_initialization_with_necessary_files(patch_central_database, mock_download_specific_files_async):
-    hf_chat = HuggingFaceChatTarget(
-        model_id="test_model", use_cuda=False, necessary_files=["config.json", "tokenizer.json"]
-    )
-    await hf_chat.load_model_and_tokenizer()
-    mock_download_specific_files_async.assert_awaited_once()
-    args = mock_download_specific_files_async.await_args.args
-    assert args[1] == ["config.json", "tokenizer.json"]
+    HuggingFaceChatTarget.disable_cache()
+    try:
+        hf_chat = HuggingFaceChatTarget(
+            model_id="test_model_necessary_files", use_cuda=False, necessary_files=["config.json", "tokenizer.json"]
+        )
+        await hf_chat.load_model_and_tokenizer()
+        mock_download_specific_files_async.assert_awaited_once()
+        args = mock_download_specific_files_async.await_args.args
+        assert args[1] == ["config.json", "tokenizer.json"]
+    finally:
+        HuggingFaceChatTarget.enable_cache()
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
