@@ -54,10 +54,15 @@ class RealtimeTargetResult:
         audio_bytes: Raw PCM16 audio returned by the assistant. May be partial if the
             turn was interrupted.
         transcripts: Transcript deltas captured during the turn.
+        interrupted: True if the turn was cut short by server VAD detecting new user
+            speech during the assistant's response. Always False on the atomic
+            ``send_audio_async`` / ``send_text_async`` paths; populated in the
+            streaming-session path when a barge-in is detected.
     """
 
     audio_bytes: bytes = b""
     transcripts: list[str] = field(default_factory=list)
+    interrupted: bool = False
 
     def flatten_transcripts(self) -> str:
         """Return all transcript deltas concatenated into a single string."""

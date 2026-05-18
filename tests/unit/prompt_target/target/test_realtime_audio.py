@@ -26,6 +26,20 @@ async def test_realtime_turn_state_defaults():
     assert state.last_response_id is None
 
 
+def test_realtime_target_result_interrupted_defaults_false():
+    """RealtimeTargetResult must default interrupted=False so atomic callers see no change."""
+    result = RealtimeTargetResult()
+    assert result.interrupted is False
+    assert result.audio_bytes == b""
+    assert result.transcripts == []
+
+
+def test_realtime_target_result_carries_interrupted_when_set():
+    """The interrupted flag round-trips through construction."""
+    result = RealtimeTargetResult(audio_bytes=b"partial", transcripts=["hi"], interrupted=True)
+    assert result.interrupted is True
+
+
 class _RecordingDispatcher(_RealtimeEventDispatcher):
     """Minimal concrete dispatcher for testing the generic base class behavior."""
 

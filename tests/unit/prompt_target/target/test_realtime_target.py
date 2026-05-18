@@ -73,6 +73,58 @@ async def test_send_prompt_async(target):
     await target.cleanup_target()
 
 
+async def test_send_prompt_async_propagates_interrupted_to_metadata(target):
+    """When a turn result carries interrupted=True, both response pieces' metadata must reflect it."""
+    target.connect = AsyncMock(return_value=AsyncMock())
+    target.send_config = AsyncMock()
+    interrupted_result = RealtimeTargetResult(audio_bytes=b"partial", transcripts=["hi"], interrupted=True)
+    target.send_text_async = AsyncMock(return_value=("partial.wav", interrupted_result))
+
+    message_piece = MessagePiece(
+        original_value="Hello",
+        original_value_data_type="text",
+        converted_value="Hello",
+        converted_value_data_type="text",
+        role="user",
+        conversation_id="test_conv",
+    )
+    message = Message(message_pieces=[message_piece])
+
+    response = await target.send_prompt_async(message=message)
+
+    text_piece, audio_piece = response[0].message_pieces
+    assert text_piece.prompt_metadata.get("interrupted") is True
+    assert audio_piece.prompt_metadata.get("interrupted") is True
+
+    await target.cleanup_target()
+
+
+async def test_send_prompt_async_omits_interrupted_metadata_when_not_set(target):
+    """A non-interrupted result must not write an interrupted key to MessagePiece metadata."""
+    target.connect = AsyncMock(return_value=AsyncMock())
+    target.send_config = AsyncMock()
+    normal_result = RealtimeTargetResult(audio_bytes=b"full", transcripts=["hi"])
+    target.send_text_async = AsyncMock(return_value=("full.wav", normal_result))
+
+    message_piece = MessagePiece(
+        original_value="Hello",
+        original_value_data_type="text",
+        converted_value="Hello",
+        converted_value_data_type="text",
+        role="user",
+        conversation_id="test_conv",
+    )
+    message = Message(message_pieces=[message_piece])
+
+    response = await target.send_prompt_async(message=message)
+
+    text_piece, audio_piece = response[0].message_pieces
+    assert "interrupted" not in text_piece.prompt_metadata
+    assert "interrupted" not in audio_piece.prompt_metadata
+
+    await target.cleanup_target()
+
+
 async def test_get_system_prompt_from_conversation_with_system_message(target):
     """Test that system prompt is extracted from conversation history when present."""
 

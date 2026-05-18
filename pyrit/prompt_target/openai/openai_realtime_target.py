@@ -401,6 +401,10 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
             request=request, response_text_pieces=[output_audio_path], response_type="audio_path"
         ).message_pieces[0]
 
+        if result.interrupted:
+            text_response_piece.prompt_metadata["interrupted"] = True
+            audio_response_piece.prompt_metadata["interrupted"] = True
+
         response_entry = Message(message_pieces=[text_response_piece, audio_response_piece])
         return [response_entry]
 
