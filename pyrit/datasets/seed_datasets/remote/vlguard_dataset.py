@@ -218,7 +218,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 description=f"Image component of VLGuard multimodal prompt ({self.subset.value}).",
                 source=self.source,
                 prompt_group_id=group_id,
-                sequence=1,
+                sequence=0,
                 metadata={
                     "category": category,
                     "subcategory": subcategory,

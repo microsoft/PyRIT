@@ -93,7 +93,7 @@ class TestVLSUMultimodalDataset:
 
             # Verify sequence order
             assert text_prompt.sequence == 0
-            assert image_prompt.sequence == 1
+            assert image_prompt.sequence == 0
 
             # Verify text prompt
             assert text_prompt.value == "Text that becomes unsafe with image"
