@@ -26,7 +26,8 @@ from pyrit.setup.initializers import LoadDefaultDatasets
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[LoadDefaultDatasets()])  # type: ignore
 
-# Pass any number of adversarial PromptChatTargets as a list; AdversarialBenchmark
+# Pass any number of adversarial PromptTarget instances (with chat-target
+# capabilities — multi-turn and editable history) as a list; AdversarialBenchmark
 # infers a label for each from its identifier and runs every benchmark-friendly
 # attack technique against the objective target with each adversarial model.
 adversarial_model = OpenAIChatTarget()
