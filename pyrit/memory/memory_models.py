@@ -1013,8 +1013,12 @@ class ScenarioResultEntry(Base):
         self.pyrit_version = entry.scenario_identifier.pyrit_version
         self.scenario_init_data = entry.scenario_identifier.init_data
         # Convert ComponentIdentifier to dict for JSON storage
-        self.objective_target_identifier = entry.objective_target_identifier.to_dict(
-            max_value_length=MAX_IDENTIFIER_VALUE_LENGTH
+        self.objective_target_identifier = (
+            entry.objective_target_identifier.to_dict(
+                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+            )
+            if entry.objective_target_identifier
+            else None
         )
         # Ensure eval_hash is set before truncation so it survives the DB round-trip.
         if entry.objective_scorer_identifier and entry.objective_scorer_identifier.eval_hash is None:
@@ -1103,7 +1107,7 @@ class ScenarioResultEntry(Base):
             scenario_identifier=scenario_identifier,
             objective_target_identifier=target_identifier,
             attack_results=attack_results,
-            objective_scorer_identifier=scorer_identifier,  # type: ignore[ty:invalid-argument-type]
+            objective_scorer_identifier=scorer_identifier,
             scenario_run_state=self.scenario_run_state,
             labels=self.labels,
             creation_time=self.timestamp,
