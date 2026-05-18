@@ -8,7 +8,7 @@ from typing import Any
 
 from colorama import Back, Fore, Style
 
-from pyrit.common.display_response import display_image_response
+from pyrit.common.display_response import display_image_response_async
 from pyrit.executor.attack.printer.attack_result_printer import AttackResultPrinter
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult, ConversationType, Score
@@ -245,7 +245,7 @@ class ConsoleAttackResultPrinter(AttackResultPrinter):
                     self._print_wrapped_text(piece.converted_value, Fore.YELLOW)
 
                 # Display images if present
-                await display_image_response(piece)
+                await display_image_response_async(piece)
 
                 # Print scores with better formatting (only if scores are requested)
                 if include_scores:

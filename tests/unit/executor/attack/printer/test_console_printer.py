@@ -227,7 +227,7 @@ async def test_print_messages_async_empty_list(printer, capsys):
     assert "No messages to display" in captured.out
 
 
-@patch("pyrit.executor.attack.printer.console_printer.display_image_response", new_callable=AsyncMock)
+@patch("pyrit.executor.attack.printer.console_printer.display_image_response_async", new_callable=AsyncMock)
 async def test_print_messages_async_user_message(mock_display, printer, sample_message, capsys):
     await printer.print_messages_async(messages=[sample_message])
     captured = capsys.readouterr()
@@ -236,7 +236,7 @@ async def test_print_messages_async_user_message(mock_display, printer, sample_m
     assert "Hello world" in captured.out
 
 
-@patch("pyrit.executor.attack.printer.console_printer.display_image_response", new_callable=AsyncMock)
+@patch("pyrit.executor.attack.printer.console_printer.display_image_response_async", new_callable=AsyncMock)
 async def test_print_messages_async_assistant_message(mock_display, printer, capsys):
     piece = MessagePiece(
         role="assistant",
@@ -250,7 +250,7 @@ async def test_print_messages_async_assistant_message(mock_display, printer, cap
     assert "Response" in captured.out
 
 
-@patch("pyrit.executor.attack.printer.console_printer.display_image_response", new_callable=AsyncMock)
+@patch("pyrit.executor.attack.printer.console_printer.display_image_response_async", new_callable=AsyncMock)
 async def test_print_messages_async_converted_differs(mock_display, printer, capsys):
     piece = MessagePiece(
         role="user",
@@ -347,7 +347,7 @@ def test_print_wrapped_text_with_newlines(printer, capsys):
     assert "Line four" in captured.out
 
 
-@patch("pyrit.executor.attack.printer.console_printer.display_image_response", new_callable=AsyncMock)
+@patch("pyrit.executor.attack.printer.console_printer.display_image_response_async", new_callable=AsyncMock)
 async def test_print_messages_async_blocked_without_partial_content(mock_display, printer, capsys):
     piece = MessagePiece(
         role="assistant",
@@ -364,7 +364,7 @@ async def test_print_messages_async_blocked_without_partial_content(mock_display
     assert "status_code" not in captured.out
 
 
-@patch("pyrit.executor.attack.printer.console_printer.display_image_response", new_callable=AsyncMock)
+@patch("pyrit.executor.attack.printer.console_printer.display_image_response_async", new_callable=AsyncMock)
 async def test_print_messages_async_blocked_with_partial_content(mock_display, printer, capsys):
     piece = MessagePiece(
         role="assistant",

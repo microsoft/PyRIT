@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 # Import functions to test from local application files
-from pyrit.common.download_hf_model import download_specific_files
+from pyrit.common.download_hf_model import download_specific_files, download_specific_files_async
 
 # Define constants for testing
 MODEL_ID = "microsoft/Phi-3-mini-4k-instruct"
@@ -32,9 +32,17 @@ def setup_environment():
         yield token
 
 
-async def test_download_specific_files(setup_environment):
+async def test_download_specific_files_async(setup_environment):
     """Test downloading specific files"""
     token = setup_environment  # Get the token from the fixture
 
-    with patch("os.makedirs"), patch("pyrit.common.download_hf_model.download_files"):
-        await download_specific_files(MODEL_ID, FILE_PATTERNS, token, Path(""))
+    with patch("os.makedirs"), patch("pyrit.common.download_hf_model.download_files_async"):
+        await download_specific_files_async(MODEL_ID, FILE_PATTERNS, token, Path(""))
+
+
+async def test_deprecated_alias_emits_warning_and_delegates(setup_environment):
+    token = setup_environment
+
+    with patch("os.makedirs"), patch("pyrit.common.download_hf_model.download_files_async"):
+        with pytest.warns(DeprecationWarning, match="download_specific_files"):
+            await download_specific_files(MODEL_ID, FILE_PATTERNS, token, Path(""))
