@@ -172,6 +172,7 @@ project:
           children:
             - file: code/registry/1_class_registry.ipynb
             - file: code/registry/2_instance_registry.ipynb
+        - file: code/output/0_output.ipynb
     - file: api/index.md
       children:
         - file: api/pyrit_analytics.md

@@ -18,8 +18,8 @@
 # The adversarial benchmarking scenario (`AdversarialBenchmark`) compares the effectiveness of different adversarial models in successfully executing attacks against a target model.
 
 # %%
+from pyrit.output import output_scenario_async
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
 from pyrit.scenario.scenarios.benchmark import AdversarialBenchmark
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import LoadDefaultDatasets
@@ -43,6 +43,4 @@ baseline_result = await benchmark_scenario.run_async()  # type: ignore
 # up where this run left off (constructor args must match the original run).
 print(f"Scenario result id: {baseline_result.id}")
 
-printer = ConsoleScenarioResultPrinter()
-
-await printer.print_summary_async(baseline_result)  # type: ignore
+await output_scenario_async(baseline_result)

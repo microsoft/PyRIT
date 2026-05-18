@@ -2,22 +2,19 @@
 # Licensed under the MIT license.
 
 """
-Deprecated: Import from pyrit.printer.attack_result.markdown instead.
+Deprecated: Import from pyrit.output.attack_result.markdown instead.
 This re-export will be removed in 0.16.0.
 """
 
-import warnings as _warnings
+from pyrit.common.deprecation import print_deprecation_message
 
 
 def __getattr__(name: str) -> type:  # noqa: N807
     if name == "MarkdownAttackResultPrinter":
-        _warnings.warn(
-            "Importing MarkdownAttackResultPrinter from pyrit.executor.attack.printer.markdown_printer is deprecated "
-            "and will be removed in 0.16.0. Import from pyrit.printer.attack_result.markdown instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        from pyrit.printer.attack_result.markdown import MarkdownAttackMemoryPrinter
+        from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 
-        return MarkdownAttackMemoryPrinter
+        print_deprecation_message(
+            old_item=f"{__name__}.{name}", new_item=MarkdownAttackResultMemoryPrinter, removed_in="0.16.0"
+        )
+        return MarkdownAttackResultMemoryPrinter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

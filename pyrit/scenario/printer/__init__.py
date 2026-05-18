@@ -2,36 +2,30 @@
 # Licensed under the MIT license.
 
 """
-Deprecated: Import from pyrit.printer instead.
+Deprecated: Import from pyrit.output instead.
 
-Scenario result printers have moved to pyrit.printer.scenario_result.
+Scenario result printers have moved to pyrit.output.scenario_result.
 These re-exports will be removed in 0.16.0.
 """
 
-import warnings as _warnings
+from pyrit.common.deprecation import print_deprecation_message
 
 
 def __getattr__(name: str) -> type:  # noqa: N807
-    _deprecated = {
-        "ConsoleScenarioResultPrinter": "pyrit.printer.scenario_result.console",
-        "ScenarioResultPrinter": "pyrit.printer.scenario_result.base",
-    }
-    if name in _deprecated:
-        new_module = _deprecated[name]
-        _warnings.warn(
-            f"Importing {name} from pyrit.scenario.printer is deprecated and will be removed in 0.16.0. "
-            f"Import from {new_module} instead.",
-            DeprecationWarning,
-            stacklevel=2,
+    if name == "ConsoleScenarioResultPrinter":
+        from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
+
+        print_deprecation_message(
+            old_item=f"{__name__}.{name}", new_item=PrettyScenarioResultMemoryPrinter, removed_in="0.16.0"
         )
-        if name == "ConsoleScenarioResultPrinter":
-            from pyrit.printer.scenario_result.console import ConsoleScenarioMemoryPrinter
+        return PrettyScenarioResultMemoryPrinter
+    if name == "ScenarioResultPrinter":
+        from pyrit.output.scenario_result.base import ScenarioResultPrinterBase
 
-            return ConsoleScenarioMemoryPrinter
-        if name == "ScenarioResultPrinter":
-            from pyrit.printer.scenario_result.base import ScenarioResultPrinterBase
-
-            return ScenarioResultPrinterBase
+        print_deprecation_message(
+            old_item=f"{__name__}.{name}", new_item=ScenarioResultPrinterBase, removed_in="0.16.0"
+        )
+        return ScenarioResultPrinterBase
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

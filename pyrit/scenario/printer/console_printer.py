@@ -2,22 +2,19 @@
 # Licensed under the MIT license.
 
 """
-Deprecated: Import from pyrit.printer.scenario_result.console instead.
+Deprecated: Import from pyrit.output.scenario_result.pretty instead.
 This re-export will be removed in 0.16.0.
 """
 
-import warnings as _warnings
+from pyrit.common.deprecation import print_deprecation_message
 
 
 def __getattr__(name: str) -> type:  # noqa: N807
     if name == "ConsoleScenarioResultPrinter":
-        _warnings.warn(
-            "Importing ConsoleScenarioResultPrinter from pyrit.scenario.printer.console_printer is deprecated "
-            "and will be removed in 0.16.0. Import from pyrit.printer.scenario_result.console instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        from pyrit.printer.scenario_result.console import ConsoleScenarioMemoryPrinter
+        from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 
-        return ConsoleScenarioMemoryPrinter
+        print_deprecation_message(
+            old_item=f"{__name__}.{name}", new_item=PrettyScenarioResultMemoryPrinter, removed_in="0.16.0"
+        )
+        return PrettyScenarioResultMemoryPrinter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

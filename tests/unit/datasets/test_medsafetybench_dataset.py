@@ -21,7 +21,7 @@ async def test_fetch_dataset_generated_subset(mock_medsafety_data):
     loader = _MedSafetyBenchDataset(subset_name="generated")
 
     with patch.object(loader, "_fetch_from_url", return_value=mock_medsafety_data):
-        dataset = await loader.fetch_dataset()
+        dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)
     assert len(dataset.seeds) == 2 * len(loader.sources)
@@ -36,7 +36,7 @@ async def test_fetch_dataset_missing_keys_raises():
 
     with patch.object(loader, "_fetch_from_url", return_value=bad_data):
         with pytest.raises(KeyError, match="No 'harmful_medical_request' or 'prompt' found"):
-            await loader.fetch_dataset()
+            await loader.fetch_dataset_async()
 
 
 def test_dataset_name():

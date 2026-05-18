@@ -263,23 +263,23 @@ def print_scenario_run_summary(*, run: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Scenario run detail (full results via printer module)
+# Scenario run detail (full results via output module)
 # ---------------------------------------------------------------------------
 
 
 async def print_scenario_result_async(*, result_dict: dict[str, Any]) -> None:
     """
-    Print detailed scenario results using the printer module.
+    Print detailed scenario results using the output module.
 
     Args:
         result_dict: ``ScenarioResult.to_dict()`` payload from the REST API.
     """
     from pyrit.models.scenario_result import ScenarioResult
-    from pyrit.printer.scenario_result.console import ConsoleScenarioPrinterBase
+    from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 
     scenario_result = ScenarioResult.from_dict(result_dict)
-    printer = ConsoleScenarioPrinterBase(scorer_printer=None)
-    await printer.print_summary_async(scenario_result)
+    printer = PrettyScenarioResultMemoryPrinter()
+    await printer.write_async(scenario_result)
 
 
 # ---------------------------------------------------------------------------

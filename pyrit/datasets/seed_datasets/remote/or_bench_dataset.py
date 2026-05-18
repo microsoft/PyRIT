@@ -39,7 +39,7 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
         """
         self.split = split
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch OR-Bench dataset from HuggingFace and return as SeedDataset.
 
