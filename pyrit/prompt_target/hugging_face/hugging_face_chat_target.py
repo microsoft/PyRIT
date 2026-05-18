@@ -77,7 +77,6 @@ class HuggingFaceChatTarget(PromptTarget):
         attn_implementation: str | None = None,
         max_requests_per_minute: int | None = None,
         custom_configuration: TargetConfiguration | None = None,
-        custom_capabilities: TargetCapabilities | None = None,
     ) -> None:
         """
         Initialize the HuggingFaceChatTarget.
@@ -109,8 +108,6 @@ class HuggingFaceChatTarget(PromptTarget):
             max_requests_per_minute (int | None): The maximum number of requests per minute. Defaults to None.
             custom_configuration (TargetConfiguration | None): Override the default configuration for this target
                 instance. Defaults to None.
-            custom_capabilities (TargetCapabilities | None): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
 
         Raises:
             ValueError: If neither or both of `model_id` and `model_path` are provided.
@@ -122,7 +119,6 @@ class HuggingFaceChatTarget(PromptTarget):
             max_requests_per_minute=max_requests_per_minute,
             model_name=model_name,
             custom_configuration=custom_configuration,
-            custom_capabilities=custom_capabilities,
         )
 
         if not model_id and not model_path:

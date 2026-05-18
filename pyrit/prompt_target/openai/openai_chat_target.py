@@ -26,7 +26,7 @@ from pyrit.models import (
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration, resolve_configuration_compat
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
 from pyrit.prompt_target.openai.openai_chat_audio_config import OpenAIChatAudioConfig
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
@@ -94,7 +94,6 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
         audio_response_config: Optional[OpenAIChatAudioConfig] = None,
         extra_body_parameters: Optional[dict[str, Any]] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -140,8 +139,6 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
                 that support it (e.g., gpt-4o-audio-preview). When provided, enables audio modality in responses.
             extra_body_parameters (dict, Optional): Additional parameters to be included in the request body.
             custom_configuration (TargetConfiguration, Optional): Override the default target configuration.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
@@ -157,15 +154,10 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             Exception: If the request fails for any other reason.
         """
         # Resolve configuration:
-        # 1. Resolve deprecated custom_capabilities into custom_configuration.
-        # 2. Explicit custom_configuration always wins.
-        # 3. If is_json_supported was explicitly set to False (deprecated), apply that override.
-        # 4. Otherwise, pass None so the parent can resolve via get_default_configuration(underlying_model),
+        # 1. Explicit custom_configuration always wins.
+        # 2. If is_json_supported was explicitly set to False (deprecated), apply that override.
+        # 3. Otherwise, pass None so the parent can resolve via get_default_configuration(underlying_model),
         #    which checks _KNOWN_CAPABILITIES (e.g., gpt-4o gets image input support).
-        custom_configuration = resolve_configuration_compat(
-            custom_configuration=custom_configuration,
-            custom_capabilities=custom_capabilities,
-        )
         if custom_configuration is not None:
             effective_configuration: TargetConfiguration | None = custom_configuration
         elif not is_json_supported:
@@ -174,7 +166,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             )
         else:
             effective_configuration = None
-        super().__init__(custom_configuration=effective_configuration, custom_capabilities=None, **kwargs)
+        super().__init__(custom_configuration=effective_configuration, **kwargs)
 
         # Validate temperature and top_p
         validate_temperature(temperature)

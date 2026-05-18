@@ -88,23 +88,6 @@ class TestPyRITShell:
         with pytest.raises(RuntimeError, match="Initialization failed"):
             shell._ensure_initialized()
 
-    def test_deprecated_context_param_emits_warning(self, mock_fc):
-        """Test that passing context= emits a DeprecationWarning and uses the provided context."""
-        ctx, _ = mock_fc
-
-        with pytest.warns(DeprecationWarning, match="context"):
-            shell = pyrit_shell.PyRITShell(context=ctx)
-        shell._init_thread.join(timeout=5)
-
-        assert shell.context is ctx
-
-    def test_context_with_kwargs_raises_value_error(self, mock_fc):
-        """Test that passing both context and FrontendCore kwargs raises ValueError."""
-        ctx, _ = mock_fc
-
-        with pytest.raises(ValueError, match="Cannot pass 'context' together with"):
-            pyrit_shell.PyRITShell(context=ctx, database="InMemory")
-
     def test_prompt_and_intro(self, shell):
         """Test shell prompt is set and cmdloop wires play_animation to intro."""
         s, ctx, _ = shell
