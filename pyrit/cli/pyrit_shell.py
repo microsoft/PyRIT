@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import cmd
+import contextlib
 import logging
 import sys
 from pathlib import Path
@@ -69,7 +70,12 @@ class PyRITShell(cmd.Cmd):
         self._launcher: Any = None  # ServerLauncher (lazy)
 
     def _resolve_base_url(self) -> str:
-        """Determine the server base URL."""
+        """
+        Determine the server base URL.
+
+        Returns:
+            str: The configured base URL, falling back to the built-in default.
+        """
         from pyrit.cli._config_reader import DEFAULT_SERVER_URL, read_server_url
 
         if self._server_url:
@@ -78,7 +84,10 @@ class PyRITShell(cmd.Cmd):
 
     def _ensure_client(self) -> bool:
         """
-        Ensure the API client is connected. Returns True if ready, False otherwise.
+        Ensure the API client is connected.
+
+        Returns:
+            bool: ``True`` if the client is ready, ``False`` otherwise.
         """
         if self._api_client is not None:
             return True
@@ -196,9 +205,7 @@ class PyRITShell(cmd.Cmd):
                 return
             try:
                 content = script_path.read_text()
-                asyncio.run(
-                    self._api_client.register_initializer_async(name=script_path.stem, script_content=content)
-                )
+                asyncio.run(self._api_client.register_initializer_async(name=script_path.stem, script_content=content))
                 print(f"Registered initializer '{script_path.stem}' from {script_path}")
             except ServerNotAvailableError as exc:
                 print(f"Error: {exc}")
@@ -236,7 +243,11 @@ class PyRITShell(cmd.Cmd):
             return
 
         from pyrit.cli._cli_args import parse_run_arguments
-        from pyrit.cli._output import print_scenario_result_async, print_scenario_run_progress, print_scenario_run_summary
+        from pyrit.cli._output import (
+            print_scenario_result_async,
+            print_scenario_run_progress,
+            print_scenario_run_summary,
+        )
 
         # Parse arguments
         try:
@@ -425,10 +436,8 @@ class PyRITShell(cmd.Cmd):
 
         # Close the API client since the server is gone
         if self._api_client is not None:
-            try:
+            with contextlib.suppress(Exception):
                 asyncio.run(self._api_client.close_async())
-            except Exception:
-                pass
             self._api_client = None
         self._launcher = None
 
@@ -446,12 +455,15 @@ class PyRITShell(cmd.Cmd):
             super().do_help(normalized_arg)
 
     def do_exit(self, arg: str) -> bool:
-        """Exit the shell."""
+        """
+        Exit the shell.
+
+        Returns:
+            bool: Always ``True`` to signal the ``cmd`` loop to terminate.
+        """
         if self._api_client is not None:
-            try:
+            with contextlib.suppress(Exception):
                 asyncio.run(self._api_client.close_async())
-            except Exception:
-                pass
         print("\nGoodbye!")
         return True
 
@@ -467,7 +479,12 @@ class PyRITShell(cmd.Cmd):
     do_EOF = do_exit  # noqa: N815
 
     def emptyline(self) -> bool:
-        """Don't repeat last command on empty line."""
+        """
+        Don't repeat last command on empty line.
+
+        Returns:
+            bool: Always ``False`` so the ``cmd`` loop does not exit.
+        """
         return False
 
     def default(self, line: str) -> None:

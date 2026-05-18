@@ -258,6 +258,9 @@ class ConfigurationLoader(YamlLoadable):
         Normalize the optional ``server`` block to a ``ServerConfig``.
 
         Accepts ``None`` (no server configured) or ``{"url": "..."}`` form.
+
+        Raises:
+            ValueError: If ``server`` is not ``None`` or a dict, or if ``url`` is not a string.
         """
         if self.server is None:
             self._server_config: Optional[ServerConfig] = None

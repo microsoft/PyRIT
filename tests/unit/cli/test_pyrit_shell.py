@@ -196,4 +196,3 @@ class TestShellMain:
 
             result = pyrit_shell.main()
             assert result == 0
-

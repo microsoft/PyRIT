@@ -46,7 +46,9 @@ def _stop_server_on_port(*, port: int) -> bool:
             # netstat to find PID listening on the port
             result = subprocess.run(
                 ["netstat", "-ano", "-p", "TCP"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             for line in result.stdout.splitlines():
                 if f":{port}" in line and "LISTENING" in line:
@@ -57,7 +59,9 @@ def _stop_server_on_port(*, port: int) -> bool:
             # lsof to find PID on Unix
             result = subprocess.run(
                 ["lsof", "-ti", f":{port}"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             for pid_str in result.stdout.strip().splitlines():
                 os.kill(int(pid_str), signal.SIGTERM)
@@ -65,6 +69,7 @@ def _stop_server_on_port(*, port: int) -> bool:
     except Exception:
         pass
     return False
+
 
 _DESCRIPTION = """PyRIT Scanner - Run AI security scenarios from the command line.
 
@@ -329,6 +334,297 @@ async def _resolve_server_url_async(*, parsed_args: Namespace) -> str | None:
     return None
 
 
+def _is_command_specified(*, parsed_args: Namespace) -> bool:
+    """
+    Return True if the user supplied any actionable command flag (besides
+    ``--start-server`` / ``--stop-server``).
+
+    Returns:
+        bool: ``True`` if at least one actionable command flag was provided.
+    """
+    return bool(
+        parsed_args.list_scenarios
+        or parsed_args.list_initializers
+        or parsed_args.list_targets
+        or parsed_args.add_initializer
+        or parsed_args.scenario_name
+    )
+
+
+def _resolve_configured_server_url(*, parsed_args: Namespace) -> str:
+    """
+    Resolve the effective server URL (without probing).
+
+    Returns:
+        str: The configured server URL, falling back to the built-in default.
+    """
+    from pyrit.cli._config_reader import DEFAULT_SERVER_URL, read_server_url
+
+    return parsed_args.server_url or read_server_url(config_file=parsed_args.config_file) or DEFAULT_SERVER_URL
+
+
+async def _handle_stop_server_async(*, parsed_args: Namespace) -> int:
+    """
+    Handle ``--stop-server``: probe, then terminate the listening process.
+
+    Returns:
+        int: Exit code (always ``0``).
+    """
+    from urllib.parse import urlparse
+
+    from pyrit.cli._server_launcher import ServerLauncher
+
+    base_url = _resolve_configured_server_url(parsed_args=parsed_args)
+    if not await ServerLauncher.probe_health_async(base_url=base_url):
+        print(f"No server running at {base_url}.")
+        return 0
+
+    port = urlparse(base_url).port or 8000
+    if _stop_server_on_port(port=port):
+        print(f"Server on port {port} stopped.")
+    else:
+        print(f"Server at {base_url} is running but could not identify the process.")
+        print(f"Find and kill it manually: look for a process listening on port {port}.")
+    return 0
+
+
+async def _handle_list_commands_async(*, client: Any, parsed_args: Namespace) -> int | None:
+    """
+    Dispatch ``--list-*`` flags.
+
+    Returns:
+        int | None: Exit code if a flag was handled, else ``None``.
+    """
+    from pyrit.cli import _output
+
+    if parsed_args.list_scenarios:
+        resp = await client.list_scenarios_async()
+        _output.print_scenario_list(items=resp.get("items", []))
+        return 0
+    if parsed_args.list_initializers:
+        resp = await client.list_initializers_async()
+        _output.print_initializer_list(items=resp.get("items", []))
+        return 0
+    if parsed_args.list_targets:
+        resp = await client.list_targets_async()
+        _output.print_target_list(items=resp.get("items", []))
+        return 0
+    return None
+
+
+async def _handle_add_initializer_async(*, client: Any, parsed_args: Namespace) -> int:
+    """
+    Handle ``--add-initializer``: upload one or more scripts to the server.
+
+    Returns:
+        int: Exit code (``0`` on success, ``1`` on failure).
+    """
+    from pyrit.cli.api_client import ServerNotAvailableError
+
+    for script_path_str in parsed_args.add_initializer:
+        script_path = Path(script_path_str).resolve()
+        if not script_path.exists():
+            print(f"Error: File not found: {script_path}")
+            return 1
+        try:
+            script_content = script_path.read_text()
+            await client.register_initializer_async(
+                name=script_path.stem,
+                script_content=script_content,
+            )
+            print(f"Registered initializer '{script_path.stem}' from {script_path}")
+        except ServerNotAvailableError as exc:
+            print(f"Error: {exc}")
+            return 1
+    return 0
+
+
+def _reparse_with_scenario_params(
+    *, parsed_args: Namespace, supported_params: list[dict[str, Any]]
+) -> Namespace | None:
+    """
+    Re-parse ``sys.argv`` with scenario-declared flags added to the base parser.
+
+    Returns:
+        Namespace | None: The re-parsed Namespace, or ``None`` on argparse ``SystemExit``.
+    """
+    if not supported_params:
+        return parsed_args
+    pass2_parser = _build_base_parser(add_help=True)
+    _add_scenario_params_from_api(parser=pass2_parser, params=supported_params)
+    try:
+        return pass2_parser.parse_args(sys.argv[1:] if len(sys.argv) > 1 else [])
+    except SystemExit:
+        return None
+
+
+def _build_run_request(*, parsed_args: Namespace, scenario_name: str) -> dict[str, Any]:
+    """
+    Build the ``RunScenarioRequest`` dict from parsed CLI args.
+
+    Returns:
+        dict[str, Any]: The request payload to send to ``POST /api/scenarios/runs``.
+    """
+    from pyrit.cli._cli_args import parse_memory_labels
+
+    request: dict[str, Any] = {
+        "scenario_name": scenario_name,
+        "target_name": parsed_args.target or "",
+    }
+
+    if parsed_args.initializers:
+        init_names: list[str] = []
+        init_args: dict[str, dict[str, Any]] = {}
+        for entry in parsed_args.initializers:
+            if isinstance(entry, str):
+                init_names.append(entry)
+            elif isinstance(entry, dict):
+                name = entry["name"]
+                init_names.append(name)
+                if entry.get("args"):
+                    init_args[name] = entry["args"]
+        request["initializers"] = init_names
+        if init_args:
+            request["initializer_args"] = init_args
+
+    if parsed_args.scenario_strategies:
+        request["strategies"] = parsed_args.scenario_strategies
+    if parsed_args.max_concurrency is not None:
+        request["max_concurrency"] = parsed_args.max_concurrency
+    if parsed_args.max_retries is not None:
+        request["max_retries"] = parsed_args.max_retries
+    if parsed_args.dataset_names:
+        request["dataset_names"] = parsed_args.dataset_names
+    if parsed_args.max_dataset_size is not None:
+        request["max_dataset_size"] = parsed_args.max_dataset_size
+    if parsed_args.memory_labels:
+        request["labels"] = parse_memory_labels(json_string=parsed_args.memory_labels)
+
+    scenario_params = _extract_scenario_args(parsed=parsed_args)
+    if scenario_params:
+        request["scenario_params"] = scenario_params
+
+    return request
+
+
+async def _poll_until_terminal_async(
+    *,
+    client: Any,
+    scenario_result_id: str,
+    total_strategies: int,
+) -> dict[str, Any]:
+    """
+    Poll the server until the run reaches a terminal status.
+
+    Returns:
+        dict[str, Any]: The final run dict.
+    """
+    from pyrit.cli import _output
+
+    while True:
+        run = await client.get_scenario_run_async(scenario_result_id=scenario_result_id)
+        status = run.get("status", "UNKNOWN")
+        _output.print_scenario_run_progress(run=run, total_strategies=total_strategies)
+        if status in _TERMINAL_STATUSES:
+            return run
+        await asyncio.sleep(0.5)
+
+
+async def _run_scenario_async(
+    *,
+    client: Any,
+    parsed_args: Namespace,
+    scenario_meta: dict[str, Any],
+) -> int:
+    """
+    Start a scenario run, poll for completion, and print results.
+
+    Returns:
+        int: Exit code (``0`` if the run completed successfully, ``1`` otherwise).
+    """
+    from pyrit.cli import _output
+
+    scenario_name = parsed_args.scenario_name
+    request = _build_run_request(parsed_args=parsed_args, scenario_name=scenario_name)
+
+    total_strategies = len(request.get("strategies") or scenario_meta.get("all_strategies") or [])
+    print(f"\nRunning scenario: {scenario_name}")
+    sys.stdout.flush()
+
+    try:
+        run = await client.start_scenario_run_async(request=request)
+    except Exception as exc:
+        print(f"Error starting scenario: {exc}")
+        return 1
+
+    scenario_result_id = run.get("scenario_result_id", "")
+
+    try:
+        run = await _poll_until_terminal_async(
+            client=client,
+            scenario_result_id=scenario_result_id,
+            total_strategies=total_strategies,
+        )
+    except KeyboardInterrupt:
+        print("\n\nCancelling scenario run...")
+        try:
+            await client.cancel_scenario_run_async(scenario_result_id=scenario_result_id)
+            print("Scenario run cancelled.")
+        except Exception:
+            print("Warning: could not cancel scenario run on server.")
+        return 1
+
+    if run.get("status") == "COMPLETED":
+        try:
+            detail = await client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
+            await _output.print_scenario_result_async(result_dict=detail)
+        except Exception:
+            _output.print_scenario_run_summary(run=run)
+    else:
+        _output.print_scenario_run_summary(run=run)
+
+    return 0 if run.get("status") == "COMPLETED" else 1
+
+
+async def _dispatch_with_client_async(*, client: Any, parsed_args: Namespace) -> int:
+    """
+    Dispatch list/add-initializer/scenario-run commands once a client is open.
+
+    Returns:
+        int: Exit code from the dispatched command.
+    """
+    list_result = await _handle_list_commands_async(client=client, parsed_args=parsed_args)
+    if list_result is not None:
+        return list_result
+
+    if parsed_args.add_initializer:
+        return await _handle_add_initializer_async(client=client, parsed_args=parsed_args)
+
+    scenario_name = parsed_args.scenario_name
+    if not scenario_name:
+        print("Error: No scenario specified. Provide one positionally or use --list-scenarios.")
+        return 1
+
+    scenario_meta = await client.get_scenario_async(scenario_name=scenario_name)
+    if scenario_meta is None:
+        print(f"Error: Scenario '{scenario_name}' not found on server.")
+        resp = await client.list_scenarios_async()
+        names = [s.get("scenario_name", "") for s in resp.get("items", [])]
+        if names:
+            print(f"Available scenarios: {', '.join(names)}")
+        return 1
+
+    reparsed = _reparse_with_scenario_params(
+        parsed_args=parsed_args,
+        supported_params=scenario_meta.get("supported_parameters") or [],
+    )
+    if reparsed is None:
+        return 1
+    parsed_args = reparsed
+
+    return await _run_scenario_async(client=client, parsed_args=parsed_args, scenario_meta=scenario_meta)
+
+
 async def _run_async(*, parsed_args: Namespace) -> int:
     """
     Core async logic for pyrit_scan.
@@ -336,54 +632,19 @@ async def _run_async(*, parsed_args: Namespace) -> int:
     Returns:
         int: Exit code (0 for success, 1 for error).
     """
-    import json
-
     from pyrit.cli import _output
-    from pyrit.cli._cli_args import parse_memory_labels
     from pyrit.cli.api_client import PyRITApiClient, ServerNotAvailableError
 
-    # --stop-server: find and kill the server process listening on the target port
     if parsed_args.stop_server:
-        from pyrit.cli._config_reader import DEFAULT_SERVER_URL, read_server_url
-        from pyrit.cli._server_launcher import ServerLauncher
+        return await _handle_stop_server_async(parsed_args=parsed_args)
 
-        base_url = parsed_args.server_url or read_server_url(config_file=parsed_args.config_file) or DEFAULT_SERVER_URL
-        if not await ServerLauncher.probe_health_async(base_url=base_url):
-            print(f"No server running at {base_url}.")
-            return 0
-
-        # Extract port from URL and find the process
-        from urllib.parse import urlparse
-
-        port = urlparse(base_url).port or 8000
-        stopped = _stop_server_on_port(port=port)
-        if stopped:
-            print(f"Server on port {port} stopped.")
-        else:
-            print(f"Server at {base_url} is running but could not identify the process.")
-            print(f"Find and kill it manually: look for a process listening on port {port}.")
-        return 0
-
-    # Determine if we need a server at all
-    needs_server = (
-        parsed_args.start_server
-        or parsed_args.list_scenarios
-        or parsed_args.list_initializers
-        or parsed_args.list_targets
-        or parsed_args.add_initializer
-        or parsed_args.scenario_name
-    )
-
-    if not needs_server:
+    if not (parsed_args.start_server or _is_command_specified(parsed_args=parsed_args)):
         _build_base_parser().print_help()
         return 0
 
-    # Resolve server URL
     base_url_result = await _resolve_server_url_async(parsed_args=parsed_args)
     if base_url_result is None:
-        from pyrit.cli._config_reader import DEFAULT_SERVER_URL, read_server_url
-
-        attempted = parsed_args.server_url or read_server_url(config_file=parsed_args.config_file) or DEFAULT_SERVER_URL
+        attempted = _resolve_configured_server_url(parsed_args=parsed_args)
         _output.print_error_with_hint(
             message=f"Server not available at {attempted}",
             hint="Use '--start-server' to launch a local backend, or pass '--server-url <url>'.",
@@ -391,164 +652,13 @@ async def _run_async(*, parsed_args: Namespace) -> int:
         return 1
 
     # --start-server with no other command: just confirm and exit
-    if not (
-        parsed_args.list_scenarios
-        or parsed_args.list_initializers
-        or parsed_args.list_targets
-        or parsed_args.add_initializer
-        or parsed_args.scenario_name
-    ):
+    if not _is_command_specified(parsed_args=parsed_args):
         print(f"Server is running at {base_url_result}")
         return 0
 
     try:
         async with PyRITApiClient(base_url=base_url_result) as client:
-            # --- List commands ---
-            if parsed_args.list_scenarios:
-                resp = await client.list_scenarios_async()
-                _output.print_scenario_list(items=resp.get("items", []))
-                return 0
-
-            if parsed_args.list_initializers:
-                resp = await client.list_initializers_async()
-                _output.print_initializer_list(items=resp.get("items", []))
-                return 0
-
-            if parsed_args.list_targets:
-                resp = await client.list_targets_async()
-                _output.print_target_list(items=resp.get("items", []))
-                return 0
-
-            # --- Add initializer (standalone command) ---
-            if parsed_args.add_initializer:
-                for script_path_str in parsed_args.add_initializer:
-                    script_path = Path(script_path_str).resolve()
-                    if not script_path.exists():
-                        print(f"Error: File not found: {script_path}")
-                        return 1
-                    try:
-                        script_content = script_path.read_text()
-                        result = await client.register_initializer_async(
-                            name=script_path.stem, script_content=script_content,
-                        )
-                        print(f"Registered initializer '{script_path.stem}' from {script_path}")
-                    except ServerNotAvailableError as exc:
-                        print(f"Error: {exc}")
-                        return 1
-                return 0
-
-            # --- Scenario run ---
-            scenario_name = parsed_args.scenario_name
-            if not scenario_name:
-                print("Error: No scenario specified. Provide one positionally or use --list-scenarios.")
-                return 1
-
-            # Fetch scenario metadata for scenario-specific flags (two-pass parse)
-            scenario_meta = await client.get_scenario_async(scenario_name=scenario_name)
-            if scenario_meta is None:
-                print(f"Error: Scenario '{scenario_name}' not found on server.")
-                resp = await client.list_scenarios_async()
-                names = [s.get("scenario_name", "") for s in resp.get("items", [])]
-                if names:
-                    print(f"Available scenarios: {', '.join(names)}")
-                return 1
-
-            # Re-parse with scenario-specific flags if the scenario has declared params
-            supported_params = scenario_meta.get("supported_parameters") or []
-            if supported_params:
-                pass2_parser = _build_base_parser(add_help=True)
-                _add_scenario_params_from_api(parser=pass2_parser, params=supported_params)
-                try:
-                    parsed_args = pass2_parser.parse_args(sys.argv[1:] if len(sys.argv) > 1 else [])
-                except SystemExit:
-                    return 1
-
-            # Build the RunScenarioRequest dict
-            request: dict[str, Any] = {
-                "scenario_name": scenario_name,
-                "target_name": parsed_args.target or "",
-            }
-
-            # Map --initializers to request format
-            if parsed_args.initializers:
-                init_names: list[str] = []
-                init_args: dict[str, dict[str, Any]] = {}
-                for entry in parsed_args.initializers:
-                    if isinstance(entry, str):
-                        init_names.append(entry)
-                    elif isinstance(entry, dict):
-                        name = entry["name"]
-                        init_names.append(name)
-                        if entry.get("args"):
-                            init_args[name] = entry["args"]
-                request["initializers"] = init_names
-                if init_args:
-                    request["initializer_args"] = init_args
-
-            if parsed_args.scenario_strategies:
-                request["strategies"] = parsed_args.scenario_strategies
-            if parsed_args.max_concurrency is not None:
-                request["max_concurrency"] = parsed_args.max_concurrency
-            if parsed_args.max_retries is not None:
-                request["max_retries"] = parsed_args.max_retries
-            if parsed_args.dataset_names:
-                request["dataset_names"] = parsed_args.dataset_names
-            if parsed_args.max_dataset_size is not None:
-                request["max_dataset_size"] = parsed_args.max_dataset_size
-            if parsed_args.memory_labels:
-                request["labels"] = parse_memory_labels(json_string=parsed_args.memory_labels)
-
-            # Scenario-declared parameters
-            scenario_params = _extract_scenario_args(parsed=parsed_args)
-            if scenario_params:
-                request["scenario_params"] = scenario_params
-
-            # Start the run
-            total_strategies = len(request.get("strategies") or scenario_meta.get("all_strategies") or [])
-            print(f"\nRunning scenario: {scenario_name}")
-            sys.stdout.flush()
-
-            try:
-                run = await client.start_scenario_run_async(request=request)
-            except Exception as exc:
-                print(f"Error starting scenario: {exc}")
-                return 1
-
-            scenario_result_id = run.get("scenario_result_id", "")
-
-            # Poll for completion
-            try:
-                while True:
-                    run = await client.get_scenario_run_async(scenario_result_id=scenario_result_id)
-                    status = run.get("status", "UNKNOWN")
-
-                    _output.print_scenario_run_progress(run=run, total_strategies=total_strategies)
-
-                    if status in _TERMINAL_STATUSES:
-                        break
-
-                    await asyncio.sleep(1.5)
-            except KeyboardInterrupt:
-                print("\n\nCancelling scenario run...")
-                try:
-                    await client.cancel_scenario_run_async(scenario_result_id=scenario_result_id)
-                    print("Scenario run cancelled.")
-                except Exception:
-                    print("Warning: could not cancel scenario run on server.")
-                return 1
-
-            # Print results
-            if run.get("status") == "COMPLETED":
-                try:
-                    detail = await client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
-                    await _output.print_scenario_result_async(result_dict=detail)
-                except Exception:
-                    _output.print_scenario_run_summary(run=run)
-            else:
-                _output.print_scenario_run_summary(run=run)
-
-            return 0 if run.get("status") == "COMPLETED" else 1
-
+            return await _dispatch_with_client_async(client=client, parsed_args=parsed_args)
     except ServerNotAvailableError as exc:
         _output.print_error_with_hint(
             message=str(exc),

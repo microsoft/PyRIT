@@ -7,7 +7,7 @@ Unit tests for the pyrit_scan CLI module (thin REST client).
 
 import logging
 from argparse import Namespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -64,11 +64,24 @@ class TestParseArgs:
         assert args.memory_labels == '{"key":"value"}'
 
     def test_parse_args_complex_command(self):
-        args = pyrit_scan.parse_args([
-            "encoding_scenario", "--log-level", "INFO", "--initializers", "openai_target",
-            "--strategies", "base64", "rot13", "--max-concurrency", "10",
-            "--max-retries", "5", "--memory-labels", '{"env":"test"}',
-        ])
+        args = pyrit_scan.parse_args(
+            [
+                "encoding_scenario",
+                "--log-level",
+                "INFO",
+                "--initializers",
+                "openai_target",
+                "--strategies",
+                "base64",
+                "rot13",
+                "--max-concurrency",
+                "10",
+                "--max-retries",
+                "5",
+                "--memory-labels",
+                '{"env":"test"}',
+            ]
+        )
         assert args.scenario_name == "encoding_scenario"
         assert args.log_level == logging.INFO
         assert args.initializers == ["openai_target"]
@@ -126,9 +139,7 @@ class TestExtractScenarioArgs:
     """Tests for the namespaced-dest extraction helper."""
 
     def test_no_scenario_keys_returns_empty(self):
-        result = pyrit_scan._extract_scenario_args(
-            parsed=Namespace(scenario_name="x", config_file=None, log_level=20)
-        )
+        result = pyrit_scan._extract_scenario_args(parsed=Namespace(scenario_name="x", config_file=None, log_level=20))
         assert result == {}
 
     def test_scenario_keys_extracted_with_prefix_stripped(self):

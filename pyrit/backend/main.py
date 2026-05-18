@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     from pyrit.registry import InitializerRegistry
     from pyrit.setup import initialize_pyrit_async
-    from pyrit.setup.configuration_loader import ConfigurationLoader, _MEMORY_DB_TYPE_MAP
+    from pyrit.setup.configuration_loader import _MEMORY_DB_TYPE_MAP, ConfigurationLoader
 
     config_file_env = os.getenv("PYRIT_CONFIG_FILE")
     config_file = Path(config_file_env) if config_file_env else None

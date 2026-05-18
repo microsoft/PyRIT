@@ -372,7 +372,6 @@ class TestInitializerServiceUnregister:
                 await service.unregister_initializer_async(initializer_name="simple")
 
 
-
 # ============================================================================
 # POST / DELETE Route Tests
 # ============================================================================
@@ -395,7 +394,6 @@ class TestRegisterInitializerRoute:
             "/api/initializers", json={"name": bad_name, "script_content": _SAMPLE_SCRIPT}
         )
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-
 
     def test_post_returns_201_with_registered_initializer(
         self, client_with_custom_initializers_enabled: TestClient

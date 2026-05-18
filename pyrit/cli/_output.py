@@ -40,7 +40,12 @@ def _header(text: str) -> None:
 
 
 def _wrap(*, text: str, indent: str, width: int = 78) -> str:
-    """Word-wrap *text* with the given *indent*."""
+    """
+    Word-wrap *text* with the given *indent*.
+
+    Returns:
+        str: The wrapped text with newline separators.
+    """
     words = text.split()
     lines: list[str] = []
     current = ""
@@ -206,11 +211,14 @@ def print_scenario_run_progress(*, run: dict[str, Any], total_strategies: int = 
     completed = run.get("completed_attacks", 0)
     rate = run.get("objective_achieved_rate", 0)
     strategies_done = len(run.get("strategies_used") or [])
+    # Strategies the user passed may be aggregates that expand on the server
+    # (e.g. `single_turn` -> N concrete strategies). Trust whichever count is larger.
+    effective_total = max(total_strategies, strategies_done)
 
     parts: list[str] = []
 
-    if total_strategies > 0:
-        parts.append(f"strategies: {strategies_done}/{total_strategies}")
+    if effective_total > 0:
+        parts.append(f"strategies: {strategies_done}/{effective_total}")
     elif strategies_done > 0:
         parts.append(f"strategies: {strategies_done}")
 

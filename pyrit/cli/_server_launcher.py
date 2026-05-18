@@ -15,7 +15,10 @@ import logging
 import os
 import subprocess
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _logger = logging.getLogger(__name__)
 
@@ -124,7 +127,7 @@ class ServerLauncher:
         _logger.info("Backend PID: %d", self._pid)
 
         # Wait for health, checking if the process crashed
-        for elapsed in range(startup_timeout):
+        for _elapsed in range(startup_timeout):
             await asyncio.sleep(1)
 
             exit_code = self._process.poll()

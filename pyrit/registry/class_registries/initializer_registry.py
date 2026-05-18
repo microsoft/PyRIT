@@ -250,7 +250,6 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
 
         validate_registry_name(name)
 
-
         if name in self._class_entries:
             raise ValueError(f"Initializer '{name}' is already registered. Unregister it first to replace it.")
 

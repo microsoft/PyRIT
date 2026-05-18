@@ -35,16 +35,29 @@ class PyRITApiClient:
     """
 
     def __init__(self, *, base_url: str) -> None:
+        """
+        Initialize the API client.
+
+        Args:
+            base_url (str): Base URL of the PyRIT backend (e.g., ``"http://localhost:8000"``).
+        """
         self._base_url = base_url.rstrip("/")
         self._client: Any = None  # httpx.AsyncClient (typed Any to avoid top-level import)
 
     async def __aenter__(self) -> PyRITApiClient:
+        """
+        Open the underlying ``httpx.AsyncClient``.
+
+        Returns:
+            PyRITApiClient: ``self``, with the HTTP client opened.
+        """
         import httpx
 
         self._client = httpx.AsyncClient(base_url=self._base_url, timeout=60.0)
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Close the underlying HTTP client."""
         await self.close_async()
 
     # ------------------------------------------------------------------
@@ -89,6 +102,9 @@ class PyRITApiClient:
 
         Returns:
             dict | None: ``RegisteredScenario`` payload, or ``None`` if 404.
+
+        Raises:
+            httpx.HTTPStatusError: For non-404 HTTP error responses.
         """
         import httpx
 
@@ -223,7 +239,15 @@ class PyRITApiClient:
     # ------------------------------------------------------------------
 
     def _get_client(self) -> Any:
-        """Return the ``httpx.AsyncClient``, raising if not opened."""
+        """
+        Return the ``httpx.AsyncClient``, raising if not opened.
+
+        Returns:
+            Any: The opened ``httpx.AsyncClient`` instance.
+
+        Raises:
+            ServerNotAvailableError: If the client has not been opened via ``__aenter__``.
+        """
         if self._client is None:
             raise ServerNotAvailableError(
                 f"API client is not connected to {self._base_url}. "
@@ -234,6 +258,9 @@ class PyRITApiClient:
     async def _get_json(self, *, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         GET a JSON endpoint and return the parsed response.
+
+        Returns:
+            dict[str, Any]: The parsed JSON response body.
 
         Raises:
             ServerNotAvailableError: On connection failure.
