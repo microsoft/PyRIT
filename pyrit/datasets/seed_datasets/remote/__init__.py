@@ -63,6 +63,9 @@ from pyrit.datasets.seed_datasets.remote.medsafetybench_dataset import (
 from pyrit.datasets.seed_datasets.remote.mlcommons_ailuminate_dataset import (
     _MLCommonsAILuminateDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.msts_dataset import (
+    _MSTSDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.multilingual_vulnerability_dataset import (  # noqa: F401
     _MultilingualVulnerabilityDataset,
 )
@@ -150,6 +153,7 @@ __all__ = [
     "_LLMLatentAdversarialTrainingDataset",
     "_MedSafetyBenchDataset",
     "_MLCommonsAILuminateDataset",
+    "_MSTSDataset",
     "_MultilingualVulnerabilityDataset",
     "_ORBench80KDataset",
     "_ORBenchHardDataset",
