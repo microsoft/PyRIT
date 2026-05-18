@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig
+from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
 from pyrit.registry import AttackTechniqueRegistry, AttackTechniqueSpec
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -18,7 +19,7 @@ from pyrit.scenario.core.scenario import BaselinePolicy, Scenario
 from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 
 if TYPE_CHECKING:
-    from pyrit.prompt_target import PromptChatTarget
+    from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
     from pyrit.score import TrueFalseScorer
 
@@ -79,7 +80,7 @@ class AdversarialBenchmark(Scenario):
     def __init__(
         self,
         *,
-        adversarial_models: list[PromptChatTarget],
+        adversarial_models: list[PromptTarget],
         objective_scorer: TrueFalseScorer | None = None,
         scenario_result_id: str | None = None,
     ) -> None:
@@ -87,7 +88,11 @@ class AdversarialBenchmark(Scenario):
         Initialize the AdversarialBenchmark scenario.
 
         Args:
-            adversarial_models: A non-empty list of ``PromptChatTarget`` instances.
+            adversarial_models: A non-empty list of ``PromptTarget`` instances
+                that each satisfy :data:`CHAT_TARGET_REQUIREMENTS` (multi-turn
+                with editable history).  Individual techniques selected at
+                run time may impose stricter capability requirements which are
+                enforced when their attack instances are constructed.
                 Labels are inferred from each target's identifier (preferring
                 ``underlying_model_name`` over ``model_name`` over the class
                 name).  Identical targets are silently deduped and distinct
@@ -99,13 +104,24 @@ class AdversarialBenchmark(Scenario):
                 result to resume.
 
         Raises:
-            ValueError: If ``adversarial_models`` is empty or not a list.
+            ValueError: If ``adversarial_models`` is empty, not a list, or
+                contains a target that does not satisfy
+                :data:`CHAT_TARGET_REQUIREMENTS`.
         """
         if not adversarial_models:
-            raise ValueError("adversarial_models must be a non-empty list of PromptChatTarget instances.")
+            raise ValueError("adversarial_models must be a non-empty list of PromptTarget instances.")
 
         if not isinstance(adversarial_models, list):
-            raise ValueError("adversarial_models must be a list of PromptChatTarget instances.")
+            raise ValueError("adversarial_models must be a list of PromptTarget instances.")
+
+        for target in adversarial_models:
+            try:
+                CHAT_TARGET_REQUIREMENTS.validate(target=target)
+            except ValueError as exc:
+                raise ValueError(
+                    f"adversarial_models entry {type(target).__name__} does not satisfy "
+                    f"the chat-target capability requirements: {exc}"
+                ) from exc
 
         # Infer labels, then wrap each bare target in a default AttackAdversarialConfig
         # so it can be passed to factory.create() as an override.
@@ -184,8 +200,8 @@ class AdversarialBenchmark(Scenario):
     @staticmethod
     def _infer_labels(
         *,
-        items: list[PromptChatTarget],
-    ) -> dict[str, PromptChatTarget]:
+        items: list[PromptTarget],
+    ) -> dict[str, PromptTarget]:
         """
         Infer user-facing labels for a list of adversarial targets.
 
@@ -195,14 +211,14 @@ class AdversarialBenchmark(Scenario):
         and a ``logger.warning`` so the situation isn't silent.
 
         Args:
-            items: List of ``PromptChatTarget`` instances.
+            items: List of ``PromptTarget`` instances.
 
         Returns:
-            dict[str, PromptChatTarget]: Mapping from inferred label to the
+            dict[str, PromptTarget]: Mapping from inferred label to the
                 original target.  Targets are wrapped in an
                 ``AttackAdversarialConfig`` by ``__init__`` after this call.
         """
-        result: dict[str, PromptChatTarget] = {}
+        result: dict[str, PromptTarget] = {}
         seen_keys: dict[str, str | None] = {}
 
         for target in items:

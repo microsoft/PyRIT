@@ -21,8 +21,8 @@
 # %%
 from pathlib import Path
 
+from pyrit.output import output_scenario_async
 from pyrit.registry import TargetRegistry
-from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
 from pyrit.scenario.scenarios.garak import Encoding, EncodingStrategy
 from pyrit.scenario.scenarios.garak.encoding import EncodingDatasetConfiguration
 from pyrit.setup import initialize_from_config_async
@@ -30,8 +30,6 @@ from pyrit.setup import initialize_from_config_async
 await initialize_from_config_async(config_path=Path("pyrit_conf.yaml"))  # type: ignore
 
 objective_target = TargetRegistry.get_registry_singleton().get_instance_by_name("openai_chat")
-printer = ConsoleScenarioResultPrinter()
-
 # %% [markdown]
 # ## Encoding
 #
@@ -68,7 +66,7 @@ print(f"Atomic attacks: {scenario.atomic_attack_count}")
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await printer.print_summary_async(scenario_result)  # type: ignore
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # For more details, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb) and

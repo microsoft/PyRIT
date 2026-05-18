@@ -9,6 +9,8 @@ including harm detection, objective completion, and content classification.
 import importlib
 from typing import TYPE_CHECKING
 
+from pyrit.output.scorer.base import ScorerPrinterBase as ScorerPrinter
+from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter as ConsoleScorerPrinter
 from pyrit.score.batch_scorer import BatchScorer
 from pyrit.score.conversation_scorer import ConversationScorer, create_conversation_scorer
 from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
@@ -23,7 +25,6 @@ from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, Plagiari
 from pyrit.score.float_scale.self_ask_general_float_scale_scorer import SelfAskGeneralFloatScaleScorer
 from pyrit.score.float_scale.self_ask_likert_scorer import LikertScaleEvalFiles, LikertScalePaths, SelfAskLikertScorer
 from pyrit.score.float_scale.self_ask_scale_scorer import SelfAskScaleScorer
-from pyrit.score.printer import ConsoleScorerPrinter, ScorerPrinter
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_evaluation.metrics_type import MetricsType, RegistryUpdateBehavior
 from pyrit.score.scorer_evaluation.scorer_metrics import (
