@@ -89,6 +89,7 @@ from pyrit.datasets.seed_datasets.remote.salad_bench_dataset import (
     _SaladBenchDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.sgxstest_dataset import (
+    SGXSTestLabel,
     _SGXSTestDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.simple_safety_tests_dataset import (
@@ -130,6 +131,7 @@ from pyrit.datasets.seed_datasets.remote.xstest_dataset import (
 __all__ = [
     "PromptIntelCategory",
     "PromptIntelSeverity",
+    "SGXSTestLabel",
     "VLGuardCategory",
     "VLGuardSubcategory",
     "VLGuardSubset",

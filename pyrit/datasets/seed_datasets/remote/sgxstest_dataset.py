@@ -3,6 +3,7 @@
 
 import logging
 import os
+from enum import Enum
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -10,6 +11,20 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
 from pyrit.models import SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
+
+
+class SGXSTestLabel(Enum):
+    """
+    Filter for which subset of SGXSTest prompts to load.
+
+    UNSAFE: Only the 100 unsafe (truly-harmful) prompts.
+    SAFE:   Only the 100 safe prompts (the over-refusal targets).
+    ALL:    Both, all 200 prompts.
+    """
+
+    UNSAFE = "unsafe"
+    SAFE = "safe"
+    ALL = "all"
 
 
 class _SGXSTestDataset(_RemoteDatasetLoader):
@@ -21,6 +36,9 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
     the 10 hazard categories of XSTest (Röttger et al. 2023): homonym, figurative language,
     safe targets, safe contexts, definitions, real discrimination / nonsense group, nonsense
     discrimination / real group, historical events, privacy (public), and privacy (fiction).
+
+    By default only the unsafe half is loaded, matching the typical red-teaming use case.
+    Pass ``label=SGXSTestLabel.SAFE`` or ``label=SGXSTestLabel.ALL`` to change this.
 
     References:
         - https://huggingface.co/datasets/walledai/SGXSTest
@@ -55,6 +73,7 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
     def __init__(
         self,
         *,
+        label: SGXSTestLabel = SGXSTestLabel.UNSAFE,
         split: str = "train",
         token: str | None = None,
     ) -> None:
@@ -62,10 +81,20 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
         Initialize the SGXSTest dataset loader.
 
         Args:
-            split: Dataset split to load. Defaults to "train".
+            label: Which subset of prompts to load. Defaults to ``SGXSTestLabel.UNSAFE``
+                (the truly-harmful prompts). Use ``SGXSTestLabel.SAFE`` for the
+                over-refusal targets or ``SGXSTestLabel.ALL`` for the full 200-prompt set.
+            split: Dataset split to load. Defaults to "train" (the only split currently
+                published by the upstream dataset).
             token: Hugging Face authentication token. If not provided, reads from
                 the HUGGINGFACE_TOKEN env var.
+
+        Raises:
+            ValueError: If ``label`` is not an SGXSTestLabel member.
         """
+        self._validate_enum(value=label, enum_cls=SGXSTestLabel, label="label")
+
+        self.label = label
         self.split = split
         self.token = token if token is not None else os.environ.get("HUGGINGFACE_TOKEN")
 
@@ -82,11 +111,14 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
             cache: Whether to cache the fetched dataset. Defaults to True.
 
         Returns:
-            SeedDataset: A SeedDataset containing the SGXSTest prompts. Each SeedPrompt's
-            ``metadata`` dict contains ``label`` ("safe" or "unsafe") and ``category``
-            (one of the 10 hazard categories), enabling filtering after load.
+            SeedDataset: A SeedDataset containing the SGXSTest prompts filtered by
+            ``self.label``. Each SeedPrompt's ``metadata`` dict contains ``label``
+            ("safe" or "unsafe") and ``category`` (one of the 10 hazard categories).
+
+        Raises:
+            ValueError: If the dataset is empty after filtering.
         """
-        logger.info(f"Loading SGXSTest dataset from {self.HF_DATASET_NAME}")
+        logger.info(f"Loading SGXSTest dataset from {self.HF_DATASET_NAME} (label={self.label.value})")
 
         data = await self._fetch_from_huggingface(
             dataset_name=self.HF_DATASET_NAME,
@@ -133,7 +165,14 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
                 },
             )
             for item in data
+            if self.label == SGXSTestLabel.ALL or item.get("label") == self.label.value
         ]
+
+        if not seed_prompts:
+            raise ValueError(
+                f"SeedDataset is empty after filtering by label={self.label.value!r}. "
+                f"Expected one of: 'safe', 'unsafe'."
+            )
 
         logger.info(f"Successfully loaded {len(seed_prompts)} prompts from SGXSTest dataset")
 
