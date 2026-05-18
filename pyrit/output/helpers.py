@@ -1,11 +1,22 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Convenience functions for one-line printing of attack results, scenario results, and scorer info."""
+"""Convenience functions for one-line printing of attack results, scenario results, and scorer info.
+
+Printer classes are imported at module load, but the heavy ``CentralMemory`` dependency is
+deferred inside each ``*MemoryPrinter`` constructor, so importing this module (or
+``pyrit.output``) does not pull in the memory stack until a memory-backed printer is instantiated.
+"""
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import AttackResult, Message, Score
 from pyrit.models.scenario_result import ScenarioResult
+from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
+from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
+from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter
+from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
+from pyrit.output.score.pretty import PrettyScorePrinter
+from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
 from pyrit.output.sink import OutputFormat, Sink, StdoutSink, get_default_sink
 
 
@@ -32,12 +43,8 @@ async def output_attack_async(
             Defaults to False.
     """
     if format == "markdown":
-        from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
-
         printer = MarkdownAttackResultMemoryPrinter(sink=sink or get_default_sink())
     else:
-        from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
-
         printer = PrettyAttackResultMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
 
     await printer.write_async(
@@ -65,13 +72,10 @@ async def output_scenario_async(
     Raises:
         ValueError: If ``format`` is not a supported value.
     """
-    if format == "pretty":
-        from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
-
-        printer = PrettyScenarioResultMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
-    else:
+    if format != "pretty":
         raise ValueError(f"Unsupported format for scenario results: {format!r}. Only 'pretty' is available.")
 
+    printer = PrettyScenarioResultMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
     await printer.write_async(result)
 
 
@@ -97,13 +101,10 @@ async def output_scorer_async(
     Raises:
         ValueError: If ``format`` is not a supported value.
     """
-    if format == "pretty":
-        from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
-
-        printer = PrettyScorerMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
-    else:
+    if format != "pretty":
         raise ValueError(f"Unsupported format for scorer: {format!r}. Only 'pretty' is available.")
 
+    printer = PrettyScorerMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
     await printer.write_async(scorer_identifier=scorer_identifier, harm_category=harm_category)
 
 
@@ -129,13 +130,10 @@ async def output_conversation_async(
     Raises:
         ValueError: If ``format`` is not a supported value.
     """
-    if format == "pretty":
-        from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter
-
-        printer = PrettyConversationMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
-    else:
+    if format != "pretty":
         raise ValueError(f"Unsupported format for conversation: {format!r}. Only 'pretty' is available.")
 
+    printer = PrettyConversationMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
     await printer.write_async(
         messages,
         include_scores=include_scores,
@@ -160,11 +158,8 @@ async def output_score_async(
     Raises:
         ValueError: If ``format`` is not a supported value.
     """
-    if format == "pretty":
-        from pyrit.output.score.pretty import PrettyScorePrinter
-
-        printer = PrettyScorePrinter(sink=sink or get_default_sink(StdoutSink))
-    else:
+    if format != "pretty":
         raise ValueError(f"Unsupported format for scores: {format!r}. Only 'pretty' is available.")
 
+    printer = PrettyScorePrinter(sink=sink or get_default_sink(StdoutSink))
     await printer.write_async(scores)
