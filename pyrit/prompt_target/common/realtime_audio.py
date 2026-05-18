@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -101,6 +102,22 @@ class _RealtimeTurnState:
     interrupted: bool = False
 
 
+@dataclass(frozen=True)
+class _CommittedEvent:
+    """
+    Event-shaped payload passed to ``on_user_audio_committed`` callbacks.
+
+    Attributes:
+        item_id: Server-assigned id of the conversation item that was committed.
+            Used to delete the raw item before replaying converted audio.
+        audio_start_ms: Optional audio start timestamp from the underlying server
+            event, when reported by the provider. May be useful for analytics.
+    """
+
+    item_id: str
+    audio_start_ms: int | None = None
+
+
 class _RealtimeEventDispatcher(ABC):
     """
     Owns a realtime connection's event stream and routes events to the active turn.
@@ -115,15 +132,26 @@ class _RealtimeEventDispatcher(ABC):
     only its routing and cancel logic.
     """
 
-    def __init__(self, *, connection: Any) -> None:
+    def __init__(
+        self,
+        *,
+        connection: Any,
+        on_user_audio_committed: Callable[[_CommittedEvent], Coroutine[Any, Any, None]] | None = None,
+    ) -> None:
         """
         Args:
             connection: An open realtime connection exposing an async iterator
                 of server events. The dispatcher owns reading from it.
+            on_user_audio_committed: Optional callback fired when the server
+                commits a user audio buffer (e.g. server VAD finalizing a turn).
+                Invoked as a background task so converter work in the callback
+                does not block the dispatch loop. Default None disables it.
         """
         self._connection = connection
+        self._on_user_audio_committed = on_user_audio_committed
         self._current_turn: _RealtimeTurnState | None = None
         self._task: asyncio.Task[None] | None = None
+        self._callback_tasks: set[asyncio.Task[None]] = set()
 
     async def start(self) -> None:
         """Start the background dispatch task. Idempotent."""
@@ -131,12 +159,21 @@ class _RealtimeEventDispatcher(ABC):
             self._task = asyncio.create_task(self._dispatch_loop())
 
     async def stop(self) -> None:
-        """Cancel the background dispatch task and release the reference."""
+        """
+        Cancel the background dispatch task and release the reference.
+
+        In-flight callback tasks are awaited (with exception suppression) so
+        their resources release cleanly before the connection is torn down.
+        """
         if self._task is not None:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._task
             self._task = None
+        if self._callback_tasks:
+            pending = list(self._callback_tasks)
+            self._callback_tasks.clear()
+            await asyncio.gather(*pending, return_exceptions=True)
 
     def register_turn(self, state: _RealtimeTurnState) -> None:
         """
@@ -157,19 +194,24 @@ class _RealtimeEventDispatcher(ABC):
         """
         Consume events from the connection and route each to the active turn.
 
+        The router is called for every event with the current turn (which may
+        be None during the gap between turns). Concrete routers are expected to
+        handle ``state is None`` for input-side events that need no turn state
+        and return early on output-side events when no turn is registered.
+
         Raises:
             asyncio.CancelledError: Propagated when ``stop()`` cancels the task.
         """
         try:
             async for event in self._connection:
                 turn = self._current_turn
-                if turn is None or turn.completion.done():
-                    continue
+                if turn is not None and turn.completion.done():
+                    turn = None
                 try:
                     await self._route_event(event=event, state=turn)
                 except Exception as e:
                     logger.exception(f"Realtime event router raised: {e}")
-                    if not turn.completion.done():
+                    if turn is not None and not turn.completion.done():
                         turn.completion.set_exception(e)
         except asyncio.CancelledError:
             raise
@@ -179,25 +221,40 @@ class _RealtimeEventDispatcher(ABC):
             if turn is not None and not turn.completion.done():
                 turn.completion.set_exception(e)
 
-    @abstractmethod
-    async def _route_event(self, *, event: Any, state: _RealtimeTurnState) -> None:
+    def _fire_committed_callback(self, event: _CommittedEvent) -> None:
         """
-        Update ``state`` based on a single provider-specific event.
+        Schedule the ``on_user_audio_committed`` callback as a background task.
+
+        Tracks the resulting task so ``stop()`` can wait for it to finish.
+        """
+        if self._on_user_audio_committed is None:
+            return
+        task = asyncio.create_task(self._on_user_audio_committed(event))
+        self._callback_tasks.add(task)
+        task.add_done_callback(self._callback_tasks.discard)
+
+    @abstractmethod
+    async def _route_event(self, *, event: Any, state: _RealtimeTurnState | None) -> None:
+        """
+        Route a single provider-specific event.
 
         Concrete implementations:
-        - Set ``state.is_responding`` / ``state.last_response_id`` / ``state.current_item_id``
-          as the relevant lifecycle events arrive.
-        - Append delivered audio and transcript deltas to ``state``.
-        - On normal completion, resolve ``state.completion`` with a
-          ``RealtimeTargetResult`` snapshotted from ``state``.
-        - On server-side speech-started while ``state.is_responding``, call
-          ``self._cancel(state=state)`` then resolve ``state.completion`` with
-          ``interrupted=True`` and the partial audio.
-        - On error events, resolve ``state.completion`` via ``set_exception``.
+        - When the event is output-side (response lifecycle, audio/transcript
+          deltas, etc.) and ``state`` is non-None, mutate ``state`` and resolve
+          ``state.completion`` at end-of-turn or on interruption.
+        - When ``state`` is None (no active turn) or
+          ``state.completion.done()``, output-side events should be dropped.
+        - When the event is input-side (e.g. ``input_audio_buffer.committed``),
+          fire any subscribed callback via ``self._fire_committed_callback(...)``.
+          These callbacks may run regardless of ``state``.
+        - On error events, resolve ``state.completion`` via ``set_exception``
+          when a turn is active.
 
         Args:
             event: A single provider-specific event from the connection iterator.
-            state (_RealtimeTurnState): The currently-active turn.
+            state (_RealtimeTurnState | None): The currently-active turn, or None
+                if no turn is registered (e.g. between turns in a streaming
+                session).
         """
 
     @abstractmethod

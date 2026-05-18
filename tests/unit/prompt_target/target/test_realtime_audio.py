@@ -3,12 +3,13 @@
 
 import asyncio
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from pyrit.prompt_target.common.realtime_audio import (
     RealtimeTargetResult,
+    _CommittedEvent,
     _RealtimeEventDispatcher,
     _RealtimeTurnState,
 )
@@ -48,10 +49,10 @@ class _RecordingDispatcher(_RealtimeEventDispatcher):
         self.routed_events: list[Any] = []
         self.cancel_calls: int = 0
 
-    async def _route_event(self, *, event: Any, state: _RealtimeTurnState) -> None:
+    async def _route_event(self, *, event: Any, state: _RealtimeTurnState | None) -> None:
         self.routed_events.append(event)
         # End the turn on a sentinel event so tests can drain the loop.
-        if getattr(event, "_finish", False):
+        if state is not None and getattr(event, "_finish", False):
             state.completion.set_result(RealtimeTargetResult())
 
     async def _cancel(self, *, state: _RealtimeTurnState) -> None:
@@ -132,24 +133,26 @@ async def test_dispatcher_loop_routes_events_to_active_turn():
     assert dispatcher.routed_events == [other, finish]
 
 
-async def test_dispatcher_loop_skips_events_when_no_active_turn():
-    """Events arriving with no current turn (or a completed one) are dropped quietly."""
+async def test_dispatcher_loop_routes_events_with_no_turn_as_state_none():
+    """When no turn is registered, events still reach _route_event so input callbacks can fire; state is None."""
     finish = _sentinel_event(finish=True)
-    dispatcher = _RecordingDispatcher(connection=_ScriptedConnection([_sentinel_event(), finish]))
+    other = _sentinel_event()
+    dispatcher = _RecordingDispatcher(connection=_ScriptedConnection([other, finish]))
 
     # No register_turn called.
     await dispatcher.start()
     await asyncio.sleep(0.05)
     await dispatcher.stop()
 
-    assert dispatcher.routed_events == []
+    # Both events were routed but no turn was completed (state was None, sentinel branch skipped).
+    assert dispatcher.routed_events == [other, finish]
 
 
 async def test_dispatcher_loop_sets_exception_on_router_failure():
     """A router exception must propagate to the active turn's completion future."""
 
     class _ExplodingDispatcher(_RecordingDispatcher):
-        async def _route_event(self, *, event: Any, state: _RealtimeTurnState) -> None:
+        async def _route_event(self, *, event: Any, state: _RealtimeTurnState | None) -> None:
             raise ValueError("router boom")
 
     event = _sentinel_event()
@@ -161,3 +164,43 @@ async def test_dispatcher_loop_sets_exception_on_router_failure():
     with pytest.raises(ValueError, match="router boom"):
         await asyncio.wait_for(state.completion, timeout=1.0)
     await dispatcher.stop()
+
+
+async def test_dispatcher_fires_committed_callback_as_background_task():
+    """The on_user_audio_committed callback must be invoked and awaited via background tasks."""
+
+    received: list[Any] = []
+    blocked = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_callback(event):
+        received.append(event)
+        blocked.set()
+        # Block until the test releases us; this proves the dispatch loop did not wait.
+        await release.wait()
+
+    class _CallbackDispatcher(_RealtimeEventDispatcher):
+        async def _route_event(self, *, event, state):
+            # Synthesize a committed callback fire on every event for the test.
+            self._fire_committed_callback(event)
+
+        async def _cancel(self, *, state):  # pragma: no cover - not exercised here
+            return
+
+    fake_event_1 = MagicMock(spec=_CommittedEvent)
+    fake_event_2 = MagicMock(spec=_CommittedEvent)
+    dispatcher = _CallbackDispatcher(
+        connection=_ScriptedConnection([fake_event_1, fake_event_2]),
+        on_user_audio_committed=slow_callback,
+    )
+
+    await dispatcher.start()
+    # Both events should reach the slow callback even though the first is "blocked" awaiting release.
+    await asyncio.wait_for(blocked.wait(), timeout=1.0)
+    # Give the loop a tick to process the second event despite the first callback still running.
+    await asyncio.sleep(0.05)
+    release.set()
+    await dispatcher.stop()
+
+    # Both events fired the callback; the loop did not serialize behind the slow first call.
+    assert len(received) == 2

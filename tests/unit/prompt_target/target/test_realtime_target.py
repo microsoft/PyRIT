@@ -3,6 +3,7 @@
 
 import asyncio
 import base64
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -777,6 +778,7 @@ async def test_route_event_speech_started_while_responding_cancels_and_resolves_
     )
     result = state.completion.result()
     assert result.audio_bytes == b"\xbb" * 2400
+    assert result.interrupted is True
     assert state.interrupted is True
 
 
@@ -817,3 +819,40 @@ async def test_route_event_speech_started_without_responding_is_noop():
     connection.conversation.item.truncate.assert_not_awaited()
     assert not state.completion.done()
     assert state.interrupted is False
+
+
+async def test_route_event_committed_event_fires_user_audio_callback():
+    """input_audio_buffer.committed must fire the registered on_user_audio_committed callback."""
+    connection = AsyncMock()
+    received: list[Any] = []
+
+    async def on_committed(event):
+        received.append(event)
+
+    dispatcher = _OpenAIRealtimeDispatcher(connection=connection, on_user_audio_committed=on_committed)
+
+    await dispatcher._route_event(
+        event=_scripted_event("input_audio_buffer.committed", item_id="raw_item_42", audio_start_ms=1234),
+        state=None,
+    )
+    # Background callback task may not have run yet; yield until it does.
+    for _ in range(20):
+        if received:
+            break
+        await asyncio.sleep(0.01)
+
+    assert len(received) == 1
+    assert received[0].item_id == "raw_item_42"
+    assert received[0].audio_start_ms == 1234
+
+
+async def test_route_event_committed_event_without_callback_is_noop():
+    """A committed event with no callback configured must be ignored quietly."""
+    connection = AsyncMock()
+    dispatcher = _OpenAIRealtimeDispatcher(connection=connection)  # no callback
+
+    # Must not raise.
+    await dispatcher._route_event(
+        event=_scripted_event("input_audio_buffer.committed", item_id="raw_item_99"),
+        state=None,
+    )

@@ -24,6 +24,7 @@ from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.realtime_audio import (
     RealtimeTargetResult,
     ServerVadConfig,
+    _CommittedEvent,
     _RealtimeEventDispatcher,
     _RealtimeTurnState,
 )
@@ -865,12 +866,27 @@ class _OpenAIRealtimeDispatcher(_RealtimeEventDispatcher):
     ``response.cancel`` plus ``conversation.item.truncate`` when interrupted.
     """
 
-    async def _route_event(self, *, event: Any, state: _RealtimeTurnState) -> None:
-        """Update state and resolve completion based on OpenAI Realtime events."""
-        if state.completion.done():
+    async def _route_event(self, *, event: Any, state: _RealtimeTurnState | None) -> None:
+        """Route an OpenAI Realtime event to the active turn or to an input-side callback."""
+        event_type = getattr(event, "type", "")
+
+        # Input-side events fire callbacks regardless of whether a turn is registered.
+        if event_type == "input_audio_buffer.committed":
+            item_id = getattr(event, "item_id", None)
+            if item_id is None:
+                return
+            self._fire_committed_callback(
+                _CommittedEvent(
+                    item_id=item_id,
+                    audio_start_ms=getattr(event, "audio_start_ms", None),
+                )
+            )
+            # Fall through: also include the bookkeeping below (none currently uses committed).
             return
 
-        event_type = getattr(event, "type", "")
+        # Remaining events are output-side and mutate per-turn state; drop if no turn.
+        if state is None or state.completion.done():
+            return
 
         if event_type == "response.created":
             state.is_responding = True
@@ -919,6 +935,7 @@ class _OpenAIRealtimeDispatcher(_RealtimeEventDispatcher):
                 RealtimeTargetResult(
                     audio_bytes=bytes(state.delivered_audio),
                     transcripts=list(state.delivered_transcripts),
+                    interrupted=True,
                 )
             )
             return
