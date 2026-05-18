@@ -145,7 +145,9 @@ test.describe("Visual Consistency", () => {
   test("should render without layout shifts", async ({ page }) => {
     await page.goto("/");
 
-    // Wait for initial render
+    // Wait for initial render then navigate to chat to measure the chat ribbon
+    await expect(page.getByTitle("Chat")).toBeVisible();
+    await page.getByTitle("Chat").click();
     await expect(page.getByText("PyRIT Attack")).toBeVisible();
 
     // Take measurements
