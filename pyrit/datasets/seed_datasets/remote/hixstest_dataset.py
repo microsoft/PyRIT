@@ -3,6 +3,7 @@
 
 import logging
 import os
+from enum import Enum
 from typing import Optional
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
@@ -11,6 +12,19 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
 from pyrit.models import SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
+
+
+class HiXSTestLanguage(Enum):
+    """
+    Language to use as the primary ``value`` of each HiXSTest SeedPrompt.
+
+    HINDI: Use the original Hindi prompt (the dataset's intended evaluation).
+    ENGLISH: Use the provided English translation. Useful for sanity-checking
+        the corresponding English semantics or for English-only pipelines.
+    """
+
+    HINDI = "hi"
+    ENGLISH = "en"
 
 
 class _HiXSTestDataset(_RemoteDatasetLoader):
@@ -23,10 +37,15 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
     not warranted in Hindi cultural context).
 
     Each example contains:
-        - prompt: the prompt text in Hindi (the primary value used by the SeedPrompt)
+        - prompt: the prompt text in Hindi
         - english_prompt: English translation of the prompt
         - label: "safe" or "unsafe"
-        - category: the type of exaggerated-safety pattern being tested (e.g. "homonyms")
+        - category: the polysemous Hindi trigger word being tested (e.g. "मारना")
+
+    By default the Hindi prompt is used as the ``SeedPrompt.value``. Pass
+    ``language=HiXSTestLanguage.ENGLISH`` to use the English translation instead.
+    Both the Hindi and English texts are always preserved in ``metadata`` as
+    ``hindi_prompt`` and ``english_prompt``.
 
     Note: This is a gated dataset on HuggingFace. You must accept the terms at
     https://huggingface.co/datasets/walledai/HiXSTest before use, and provide a
@@ -49,6 +68,7 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
     def __init__(
         self,
         *,
+        language: HiXSTestLanguage = HiXSTestLanguage.HINDI,
         split: str = "train",
         token: Optional[str] = None,
     ) -> None:
@@ -56,10 +76,18 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
         Initialize the HiXSTest dataset loader.
 
         Args:
+            language: Which language to use as the primary ``SeedPrompt.value``.
+                Defaults to ``HiXSTestLanguage.HINDI`` (the dataset's intended language).
+                Pass ``HiXSTestLanguage.ENGLISH`` to use the English translation instead.
             split: Dataset split to load. Defaults to "train" (the only split).
             token: Hugging Face authentication token. If not provided, reads from the
                 ``HUGGINGFACE_TOKEN`` environment variable.
+
+        Raises:
+            ValueError: If ``language`` is not a ``HiXSTestLanguage`` instance.
         """
+        self._validate_enum(language, HiXSTestLanguage, "language")
+        self.language = language
         self.split = split
         self.token = token if token is not None else os.environ.get("HUGGINGFACE_TOKEN")
 
@@ -76,11 +104,13 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
             cache: Whether to cache the fetched dataset. Defaults to True.
 
         Returns:
-            SeedDataset: A SeedDataset containing the HiXSTest prompts. The Hindi
-                prompt is stored as the ``value``; the English translation, label,
-                and category are stored in ``metadata``.
+            SeedDataset: A SeedDataset containing the HiXSTest prompts. The
+                ``SeedPrompt.value`` is the Hindi prompt by default, or the English
+                translation when ``language=HiXSTestLanguage.ENGLISH``. Both texts
+                are always stored in ``metadata`` as ``hindi_prompt`` and
+                ``english_prompt`` alongside ``label`` and ``category``.
         """
-        logger.info(f"Loading HiXSTest dataset from {self.HF_DATASET_NAME}")
+        logger.info(f"Loading HiXSTest dataset from {self.HF_DATASET_NAME} (language={self.language.value})")
 
         data = await self._fetch_from_huggingface(
             dataset_name=self.HF_DATASET_NAME,
@@ -115,7 +145,7 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
 
         seed_prompts = [
             SeedPrompt(
-                value=item["prompt"],
+                value=self._select_value(item),
                 data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=[item["category"]] if item.get("category") else [],
@@ -124,10 +154,11 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
                 authors=authors,
                 groups=groups,
                 metadata={
+                    "hindi_prompt": item.get("prompt", ""),
                     "english_prompt": item.get("english_prompt", ""),
                     "label": item.get("label", ""),
                     "category": item.get("category", ""),
-                    "language": "hi",
+                    "language": self.language.value,
                 },
             )
             for item in data
@@ -136,3 +167,9 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
         logger.info(f"Successfully loaded {len(seed_prompts)} prompts from HiXSTest dataset")
 
         return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)
+
+    def _select_value(self, item: dict) -> str:
+        """Return the prompt text to use as ``SeedPrompt.value`` based on ``self.language``."""
+        if self.language is HiXSTestLanguage.ENGLISH:
+            return item.get("english_prompt", "")
+        return item.get("prompt", "")
