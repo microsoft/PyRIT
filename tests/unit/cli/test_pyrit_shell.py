@@ -486,7 +486,7 @@ class TestPyRITShell:
         assert "No scenario runs in history" in captured.out
 
     @patch("pyrit.cli.pyrit_shell.asyncio.run")
-    @patch("pyrit.scenario.printer.console_printer.ConsoleScenarioResultPrinter")
+    @patch("pyrit.output.scenario_result.pretty.PrettyScenarioResultMemoryPrinter")
     def test_do_print_scenario_all(
         self,
         mock_printer_class: MagicMock,
@@ -512,7 +512,7 @@ class TestPyRITShell:
         assert mock_asyncio_run.call_count == 2
 
     @patch("pyrit.cli.pyrit_shell.asyncio.run")
-    @patch("pyrit.scenario.printer.console_printer.ConsoleScenarioResultPrinter")
+    @patch("pyrit.output.scenario_result.pretty.PrettyScenarioResultMemoryPrinter")
     def test_do_print_scenario_specific(
         self,
         mock_printer_class: MagicMock,
