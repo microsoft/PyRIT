@@ -25,7 +25,7 @@ ty:
 docs-build:
 	uv run python build_scripts/pydoc2json.py pyrit --submodules -o doc/_api/pyrit_all.json
 	uv run python build_scripts/gen_api_md.py
-	cd doc && uv run jupyter-book build --all --html
+	cd doc && uv run jupyter-book build --all --html --strict
 	uv run ./build_scripts/generate_rss.py
 
 # Build the full documentation site including the PDF export.
@@ -36,7 +36,7 @@ docs-build:
 docs-build-all:
 	uv run python build_scripts/pydoc2json.py pyrit --submodules -o doc/_api/pyrit_all.json
 	uv run python build_scripts/gen_api_md.py
-	cd doc && uv run jupyter-book build --all --html --pdf
+	cd doc && uv run jupyter-book build --all --html --pdf --strict
 	uv run ./build_scripts/generate_rss.py
 
 # Regenerate only the API reference pages (without building the full site)
