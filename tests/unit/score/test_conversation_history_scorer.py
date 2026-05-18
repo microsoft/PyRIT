@@ -618,3 +618,62 @@ async def test_conversation_scorer_uses_error_json_when_score_blocked_content_di
     )
     assert called_piece.original_value == expected_conversation
     assert called_piece.converted_value == expected_conversation
+
+
+async def test_conversation_scorer_blocked_input_message_does_not_raise(patch_central_database):
+    """A blocked input message no longer raises ValueError after validator relaxation.
+
+    Previously the default validator used enforce_all_pieces_valid=True, which made any
+    blocked input message fail with 'Message piece ... with data type error is not supported.'
+    The relaxed validator (enforce_all_pieces_valid=False) lets ConversationScorer proceed,
+    look up the conversation in memory, and call the underlying scorer.
+    """
+    from pyrit.models import Message
+
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+
+    user_piece = MessagePiece(
+        role="user",
+        original_value="Hello",
+        conversation_id=conversation_id,
+        sequence=1,
+    )
+    blocked_assistant_piece = MessagePiece(
+        role="assistant",
+        original_value='{"status_code": 200, "message": "content_filter"}',
+        converted_value='{"status_code": 200, "message": "content_filter"}',
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        conversation_id=conversation_id,
+        sequence=2,
+        response_error="blocked",
+    )
+    memory.add_message_pieces_to_memory(message_pieces=[user_piece, blocked_assistant_piece])
+
+    # The incoming message itself is the blocked one — previously this would raise.
+    blocked_message = Message(message_pieces=[blocked_assistant_piece])
+
+    mock_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    mock_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
+    score = Score(
+        score_value="0.0",
+        score_value_description="No harm",
+        score_rationale="Error response",
+        score_metadata=None,
+        score_category=["harm"],
+        scorer_class_identifier=_make_scorer_id(),
+        message_piece_id=blocked_assistant_piece.id or uuid.uuid4(),
+        objective="test",
+        score_type="float_scale",
+    )
+    mock_scorer.score_async = AsyncMock(return_value=[score])
+    mock_scorer.validate_return_scores = MagicMock()
+
+    scorer = create_conversation_scorer(scorer=mock_scorer)
+
+    # Must not raise — previously raised ValueError on the blocked piece.
+    scores = await scorer.score_async(blocked_message)
+
+    assert len(scores) == 1
+    mock_scorer.score_async.assert_awaited_once()

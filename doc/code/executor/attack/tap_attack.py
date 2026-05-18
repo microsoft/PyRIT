@@ -83,9 +83,10 @@ await output_attack_async(  # type: ignore
 # 1. **System Prompt**: Use `TAPSystemPromptPaths.IMAGE_GENERATION` to provide
 #    an adversarial system prompt tailored for image generation models.
 # 2. **Error Handling**: Image generation targets frequently return "blocked"
-#    responses due to content filters. TAP's `error_score_map` (default:
-#    `{"blocked": 0.0}`) automatically assigns a score of 0.0 to these responses
-#    instead of failing the branch, preventing premature pruning of all branches.
+#    responses due to content filters. PyRIT's default scorers (TrueFalseScorer
+#    and FloatScaleScorer) automatically return `False` / `0.0` for blocked
+#    responses, so blocked branches receive a score of `0.0` instead of failing
+#    the branch — preventing premature pruning of all branches.
 # 3. **Scoring**: The default TAP scorer automatically detects the target's output
 #    modalities. For image targets, it configures the scorer to accept `image_path`
 #    responses. The adversarial chat target (used for scoring) should be a multimodal

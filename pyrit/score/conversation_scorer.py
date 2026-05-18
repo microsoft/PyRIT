@@ -30,7 +30,7 @@ class ConversationScorer(Scorer, ABC):
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"],
-        enforce_all_pieces_valid=True,
+        enforce_all_pieces_valid=False,
     )
 
     async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:

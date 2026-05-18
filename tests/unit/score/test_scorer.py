@@ -1435,6 +1435,137 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         assert "blocked" in scores[0].score_value_description.lower()
 
 
+class TestFloatScaleScorerEmptyScoreListRationale:
+    """Tests for FloatScaleScorer's unified no-pieces fallback that returns Score(0.0).
+
+    Mirrors TestTrueFalseScorerEmptyScoreListRationale. When no supported pieces remain
+    after validator filtering, FloatScaleScorer returns a single Score with value 0.0
+    and a rationale distinguishing blocked / error / filtered cases.
+    """
+
+    @pytest.fixture
+    def no_valid_pieces_validator(self):
+        """Validator that doesn't raise on no valid pieces and only supports text."""
+        return ScorerPromptValidator(
+            supported_data_types=["text"],
+            enforce_all_pieces_valid=False,
+            raise_on_no_valid_pieces=False,
+        )
+
+    @pytest.fixture
+    def float_scale_scorer_returns_empty(self, no_valid_pieces_validator):
+        """Create a FloatScaleScorer whose _score_piece_async would return empty,
+        but in practice the validator filters all pieces so it's never invoked."""
+        from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+
+        class _TestFloatScaleScorer(FloatScaleScorer):
+            def __init__(self, validator):
+                super().__init__(validator=validator)
+
+            def _build_identifier(self) -> ComponentIdentifier:
+                return self._create_identifier()
+
+            async def _score_piece_async(
+                self, message_piece: MessagePiece, *, objective: Optional[str] = None
+            ) -> list[Score]:
+                return []
+
+        return _TestFloatScaleScorer(validator=no_valid_pieces_validator)
+
+    async def test_blocked_response_returns_zero_with_blocked_rationale(
+        self, float_scale_scorer_returns_empty, patch_central_database
+    ):
+        """A blocked response yields Score(0.0) with a rationale mentioning 'blocked'."""
+        blocked_piece = MessagePiece(
+            role="assistant",
+            original_value="",
+            converted_value="",
+            converted_value_data_type="error",
+            id="blocked-piece-id",
+            conversation_id="test-convo",
+            response_error="blocked",
+        )
+        response = Message(message_pieces=[blocked_piece])
+
+        scores = await float_scale_scorer_returns_empty.score_async(response)
+
+        assert len(scores) == 1
+        assert scores[0].score_type == "float_scale"
+        assert scores[0].get_value() == 0.0
+        assert "blocked" in scores[0].score_rationale.lower()
+        assert "blocked" in scores[0].score_value_description.lower()
+
+    async def test_other_error_response_returns_zero_with_error_rationale(
+        self, float_scale_scorer_returns_empty, patch_central_database
+    ):
+        """A non-blocked error response yields Score(0.0) mentioning the error type."""
+        error_piece = MessagePiece(
+            role="assistant",
+            original_value="",
+            converted_value="",
+            converted_value_data_type="error",
+            id="error-piece-id",
+            conversation_id="test-convo",
+            response_error="unknown",
+        )
+        response = Message(message_pieces=[error_piece])
+
+        scores = await float_scale_scorer_returns_empty.score_async(response)
+
+        assert len(scores) == 1
+        assert scores[0].get_value() == 0.0
+        assert "error" in scores[0].score_rationale.lower()
+        assert "unknown" in scores[0].score_rationale
+
+    async def test_filtered_pieces_return_zero_with_generic_rationale(
+        self, float_scale_scorer_returns_empty, patch_central_database
+    ):
+        """When pieces are filtered for non-error reasons, the fallback still returns 0.0."""
+        normal_piece = MessagePiece(
+            role="assistant",
+            original_value="some text",
+            converted_value="some text",
+            converted_value_data_type="text",
+            id="normal-piece-id",
+            conversation_id="test-convo",
+            response_error="none",
+        )
+        response = Message(message_pieces=[normal_piece])
+
+        scores = await float_scale_scorer_returns_empty.score_async(response)
+
+        assert len(scores) == 1
+        assert scores[0].get_value() == 0.0
+        assert "filter" in scores[0].score_rationale.lower()
+        assert "blocked" not in scores[0].score_rationale.lower()
+
+    async def test_text_only_scorer_filters_blocked_via_validator(
+        self, float_scale_scorer_returns_empty, patch_central_database
+    ):
+        """A text-only FloatScaleScorer never invokes _score_piece_async for blocked pieces;
+        the unified fallback returns 0.0 directly."""
+        blocked_piece = MessagePiece(
+            role="assistant",
+            original_value="",
+            converted_value="error-json-blob",
+            converted_value_data_type="error",
+            id="blocked-piece-id",
+            conversation_id="test-convo",
+            response_error="blocked",
+        )
+        response = Message(message_pieces=[blocked_piece])
+
+        # _score_piece_async should not be called because validator filters the error piece
+        with patch.object(
+            float_scale_scorer_returns_empty, "_score_piece_async", new_callable=AsyncMock
+        ) as mock_score_piece:
+            scores = await float_scale_scorer_returns_empty.score_async(response)
+
+        mock_score_piece.assert_not_called()
+        assert len(scores) == 1
+        assert scores[0].get_value() == 0.0
+
+
 async def test_score_value_with_llm_skips_reasoning_piece(good_json):
     """Test that _score_value_with_llm extracts JSON from the text piece, not a reasoning piece."""
     chat_target = MagicMock(PromptTarget)
