@@ -159,7 +159,9 @@ export default function Home({
                 Labels (especially <strong>operator</strong> and <strong>operation</strong>) are stored on
                 every attack so you can find them later. Update the placeholders before you run anything real.
               </Text>
-              <LabelsBar labels={labels} onLabelsChange={onLabelsChange} />
+              <div className={styles.labelsRow}>
+                <LabelsBar labels={labels} onLabelsChange={onLabelsChange} />
+              </div>
             </div>
           </section>
 
