@@ -7,7 +7,6 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.17.2
 # ---
-
 # %% [markdown]
 # # 4. OpenAI Video Target
 #
@@ -17,19 +16,17 @@
 # - **Text+Image-to-video**: Use an image as the first frame of the generated video.
 #
 # Note that the video scorer requires `opencv`, which is not a default PyRIT dependency. You need to install it manually or using `pip install pyrit[opencv]`.
-
 # %% [markdown]
 # ## Text-to-Video
 #
 # This example shows the simplest mode: generating video from text prompts, with scoring.
-
 # %%
 from pyrit.executor.attack import (
     AttackExecutor,
     AttackScoringConfig,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIVideoTarget
 from pyrit.score import (
     AudioTrueFalseScorer,
@@ -80,7 +77,7 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 )
 
 for result in results:
-    await ConsoleAttackResultPrinter().print_result_async(result=result, include_auxiliary_scores=True)  # type: ignore
+    await output_attack_async(result, include_auxiliary_scores=True)
 
 # %% [markdown]
 # ## Scoring video and audio **together**:
@@ -130,7 +127,7 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 )
 
 for result in results:
-    await ConsoleAttackResultPrinter().print_result_async(result=result, include_auxiliary_scores=True)  # type: ignore
+    await output_attack_async(result, include_auxiliary_scores=True)
 
 # Capture video_id from the first result for use in the remix section below
 video_id = results[0].last_response.prompt_metadata["video_id"]

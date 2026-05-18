@@ -39,6 +39,17 @@ docs-build-all:
 	cd doc && uv run jupyter-book build --all --html --pdf --strict
 	uv run ./build_scripts/generate_rss.py
 
+# Build the full documentation site including the PDF export.
+# Mirrors the ReadTheDocs build (.readthedocs.yaml) so CI catches PDF-only issues
+# such as missing images that the HTML-only build silently ignores.
+# Requires xelatex / latexmk on PATH (texlive-xetex + texlive-fonts-recommended +
+# texlive-plain-generic + latexmk on Ubuntu).
+docs-build-all:
+	uv run python build_scripts/pydoc2json.py pyrit --submodules -o doc/_api/pyrit_all.json
+	uv run python build_scripts/gen_api_md.py
+	cd doc && uv run jupyter-book build --all --html --pdf
+	uv run ./build_scripts/generate_rss.py
+
 # Regenerate only the API reference pages (without building the full site)
 docs-api:
 	uv run python build_scripts/pydoc2json.py pyrit --submodules -o doc/_api/pyrit_all.json
