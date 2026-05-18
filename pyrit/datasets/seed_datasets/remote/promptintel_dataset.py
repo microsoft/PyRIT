@@ -305,7 +305,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
             metadata=metadata,
         )
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch prompts from the PromptIntel API and return as a SeedDataset.
 

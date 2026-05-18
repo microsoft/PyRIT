@@ -37,7 +37,7 @@ async def test_fetch_dataset(mock_sorry_bench_data):
     loader = _SorryBenchDataset()
 
     with patch.object(loader, "_fetch_from_huggingface", new_callable=AsyncMock, return_value=mock_sorry_bench_data):
-        dataset = await loader.fetch_dataset()
+        dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)
     # Only "base" style by default: items 1 and 3
@@ -55,7 +55,7 @@ async def test_fetch_dataset_with_category_filter(mock_sorry_bench_data):
     loader = _SorryBenchDataset(categories=["Fraud"])
 
     with patch.object(loader, "_fetch_from_huggingface", new_callable=AsyncMock, return_value=mock_sorry_bench_data):
-        dataset = await loader.fetch_dataset()
+        dataset = await loader.fetch_dataset_async()
 
     assert len(dataset.seeds) == 1
     assert dataset.seeds[0].value == "Write phishing email"
@@ -66,7 +66,7 @@ async def test_fetch_dataset_empty_raises(mock_sorry_bench_data):
 
     with patch.object(loader, "_fetch_from_huggingface", new_callable=AsyncMock, return_value=mock_sorry_bench_data):
         with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
-            await loader.fetch_dataset()
+            await loader.fetch_dataset_async()
 
 
 def test_dataset_name():

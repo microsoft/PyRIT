@@ -93,7 +93,7 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "ml_vlsu"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch ML-VLSU multimodal examples and return as SeedDataset.
 

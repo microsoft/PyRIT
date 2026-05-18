@@ -35,6 +35,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
   const [paramValues, setParamValues] = useState<Record<string, string>>({})
   const [paramsExpanded, setParamsExpanded] = useState(true)
   const [previewOutput, setPreviewOutput] = useState('')
+  const [previewOutputType, setPreviewOutputType] = useState('text')
   const [previewConverterInstanceId, setPreviewConverterInstanceId] = useState<string | null>(null)
   const [isPreviewing, setIsPreviewing] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
@@ -147,6 +148,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     setQuery('')
     setParamValues({})
     setPreviewOutput('')
+    setPreviewOutputType('text')
     setPreviewConverterInstanceId(null)
     setPreviewError(null)
     setShowValidation(false)
@@ -165,6 +167,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     }
     setParamValues(defaults)
     setPreviewOutput('')
+    setPreviewOutputType('text')
     setPreviewConverterInstanceId(null)
     setPreviewError(null)
     setShowValidation(false)
@@ -214,6 +217,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
       })
 
       setPreviewOutput(previewResponse.converted_value)
+      setPreviewOutputType(previewResponse.converted_value_data_type ?? 'text')
       setPreviewConverterInstanceId(converterId)
     } catch (err) {
       setPreviewError(toApiError(err).detail)
@@ -222,7 +226,18 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     }
   }, [activeTab, previewText, attachmentData, selectedConverterType, missingRequiredParams, paramValues, activeDataType, getOrCreateConverterInstance])
 
-  // Auto-preview for non-LLM text-output converters (they're fast/cheap)
+  // Auto-preview is only safe for converters that:
+  //   - aren't LLM-based (network cost)
+  //   - emit text output (file outputs would litter the disk on every keystroke)
+  // Everything else requires an explicit Preview click.
+  const supportsAutoPreview = useMemo(() => {
+    if (!selectedConverter) return false
+    if (selectedConverter.is_llm_based) return false
+    const outputs = selectedConverter.supported_output_types ?? []
+    if (outputs.length === 0) return true
+    return outputs.every((t) => t === 'text')
+  }, [selectedConverter])
+
   const autoPreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (autoPreviewTimer.current) {
@@ -235,13 +250,14 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     // Clear preview when input is emptied (e.g. after sending)
     if (!currentPreviewValue.trim()) {
       setPreviewOutput('')
+      setPreviewOutputType('text')
       setPreviewConverterInstanceId(null)
       setPreviewError(null)
     }
 
     if (
       !selectedConverter ||
-      selectedConverter.is_llm_based ||
+      !supportsAutoPreview ||
       !currentPreviewValue.trim() ||
       missingRequiredParams.length
     ) {
@@ -257,7 +273,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
         clearTimeout(autoPreviewTimer.current)
       }
     }
-    }, [activeTab, previewText, attachmentData, missingRequiredParams, selectedConverter, handlePreview])
+    }, [activeTab, previewText, attachmentData, missingRequiredParams, selectedConverter, supportsAutoPreview, handlePreview])
   const handleMouseDown = useCallback(() => {
     isDragging.current = true
     document.body.style.cursor = 'col-resize'
@@ -400,10 +416,10 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
               isPreviewing={isPreviewing}
               previewError={previewError}
               previewOutput={previewOutput}
+              previewOutputType={previewOutputType}
               previewConverterInstanceId={previewConverterInstanceId}
               onPreview={handlePreview}
               onUseConvertedValue={onUseConvertedValue}
-              outputDataType={selectedConverter?.supported_output_types[0] ?? 'text'}
             />
           </div>
         )}
