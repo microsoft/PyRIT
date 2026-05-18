@@ -18,9 +18,9 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
 
     SGXSTest contains 100 manually-curated safe/unsafe prompt pairs (200 prompts total) that
     test exaggerated-safety behavior of LLMs in a Singaporean cultural context. It adapts
-    the 10 hazard categories of XSTest (Röttger et al. 2023) — including homonyms, figurative
-    language, safe targets, safe contexts, definitions, discrimination, nonsense discrimination,
-    historical events, and privacy.
+    the 10 hazard categories of XSTest (Röttger et al. 2023): homonym, figurative language,
+    safe targets, safe contexts, definitions, real discrimination / nonsense group, nonsense
+    discrimination / real group, historical events, privacy (public), and privacy (fiction).
 
     References:
         - https://huggingface.co/datasets/walledai/SGXSTest
@@ -37,15 +37,16 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
 
     # Metadata
     harm_categories: list[str] = [
-        "homonyms",
-        "figurative language",
-        "safe targets",
-        "safe contexts",
         "definitions",
-        "discrimination",
-        "nonsense discrimination",
+        "figurative language",
         "historical events",
-        "privacy",
+        "homonym",
+        "nonsense discrimination, real group",
+        "privacy (fiction)",
+        "privacy (public)",
+        "real discrimination, nonsense group",
+        "safe contexts",
+        "safe targets",
     ]
     modalities: list[str] = ["text"]
     size: str = "medium"  # 200 prompts
