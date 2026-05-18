@@ -88,6 +88,9 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
 from pyrit.datasets.seed_datasets.remote.salad_bench_dataset import (
     _SaladBenchDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.sgxstest_dataset import (
+    _SGXSTestDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.simple_safety_tests_dataset import (
     _SimpleSafetyTestsDataset,
 )  # noqa: F401
@@ -158,6 +161,7 @@ __all__ = [
     "_PromptIntelDataset",
     "_RedTeamSocialBiasDataset",
     "_RemoteDatasetLoader",
+    "_SGXSTestDataset",
     "_SaladBenchDataset",
     "_SimpleSafetyTestsDataset",
     "_SOSBenchDataset",
