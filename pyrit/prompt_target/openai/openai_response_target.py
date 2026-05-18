@@ -131,10 +131,6 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
             reasoning_summary (Literal["auto", "concise", "detailed"], Optional): Controls
                 whether a summary of the model's reasoning is included in the response.
                 Defaults to None (no summary).
-            is_json_supported (bool, Optional): If True, the target will support formatting responses as JSON by
-                setting the response_format header. Official OpenAI models all support this, but if you are using
-                this target with different models, is_json_supported should be set correctly to avoid issues when
-                using adversarial infrastructure (e.g. Crescendo scorers will set this flag).
             extra_body_parameters (dict, Optional): Additional parameters to be included in the request body.
             fail_on_missing_function: if True, raise when a function_call references
                 an unknown function or does not output a function; if False, return a structured error so we can

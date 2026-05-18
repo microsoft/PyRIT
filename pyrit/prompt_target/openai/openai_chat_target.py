@@ -5,7 +5,6 @@ import base64
 import json
 import logging
 from collections.abc import MutableSequence
-from dataclasses import replace
 from typing import Any, Optional
 
 from pyrit.common.data_url_converter import convert_local_image_to_data_url
@@ -90,7 +89,6 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
         presence_penalty: Optional[float] = None,
         seed: Optional[int] = None,
         n: Optional[int] = None,
-        is_json_supported: bool = True,
         audio_response_config: Optional[OpenAIChatAudioConfig] = None,
         extra_body_parameters: Optional[dict[str, Any]] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
@@ -130,11 +128,6 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             seed (int, Optional): If specified, openAI will make a best effort to sample deterministically,
                 such that repeated requests with the same seed and parameters should return the same result.
             n (int, Optional): The number of completions to generate for each prompt.
-            is_json_supported (bool, Optional): If True, the target will support formatting responses as JSON by
-                setting the response_format header. Official OpenAI models all support this, but if you are using
-                this target with different models, is_json_supported should be set correctly to avoid issues when
-                using adversarial infrastructure (e.g. Crescendo scorers will set this flag).
-                This value is now deprecated in favor of `custom_configuration`.
             audio_response_config (OpenAIChatAudioConfig, Optional): Configuration for audio output from models
                 that support it (e.g., gpt-4o-audio-preview). When provided, enables audio modality in responses.
             extra_body_parameters (dict, Optional): Additional parameters to be included in the request body.
@@ -153,20 +146,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             json.JSONDecodeError: If the response from the target is not valid JSON.
             Exception: If the request fails for any other reason.
         """
-        # Resolve configuration:
-        # 1. Explicit custom_configuration always wins.
-        # 2. If is_json_supported was explicitly set to False (deprecated), apply that override.
-        # 3. Otherwise, pass None so the parent can resolve via get_default_configuration(underlying_model),
-        #    which checks _KNOWN_CAPABILITIES (e.g., gpt-4o gets image input support).
-        if custom_configuration is not None:
-            effective_configuration: TargetConfiguration | None = custom_configuration
-        elif not is_json_supported:
-            effective_configuration = TargetConfiguration(
-                capabilities=replace(type(self)._DEFAULT_CONFIGURATION.capabilities, supports_json_output=False)
-            )
-        else:
-            effective_configuration = None
-        super().__init__(custom_configuration=effective_configuration, **kwargs)
+        super().__init__(custom_configuration=custom_configuration, **kwargs)
 
         # Validate temperature and top_p
         validate_temperature(temperature)
