@@ -141,7 +141,7 @@ def _find_pids_on_port(port):
 def stop_servers():
     """Stop all running servers"""
     print("🛑 Stopping servers...")
-    backend_pids = find_pids_by_pattern("pyrit.cli.pyrit_backend")
+    backend_pids = find_pids_by_pattern("pyrit.backend.pyrit_backend")
     frontend_pids = find_pids_by_pattern("node.*vite")
     # Also find any parent dev.py processes (detached wrappers)
     wrapper_pids = find_pids_by_pattern("frontend/dev.py")
@@ -178,7 +178,7 @@ def start_backend(*, config_file: str | None = None, initializers: list[str] | N
     cmd = [
         sys.executable,
         "-m",
-        "pyrit.cli.pyrit_backend",
+        "pyrit.backend.pyrit_backend",
         "--host",
         "localhost",
         "--port",
@@ -456,7 +456,7 @@ def main():
         elif command == "backend":
             print("🚀 Starting backend only...")
             # Kill stale backend processes
-            stale = find_pids_by_pattern("pyrit.cli.pyrit_backend")
+            stale = find_pids_by_pattern("pyrit.backend.pyrit_backend")
             if stale:
                 print(f"   Killing stale backend PIDs: {stale}")
                 kill_pids(stale)

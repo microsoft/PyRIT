@@ -48,6 +48,34 @@ class TestLifespan:
 
             mock_warning.assert_called_once()
 
+    async def test_lifespan_populates_default_labels_from_operator_and_operation(self) -> None:
+        """Test that operator and operation are exposed as default_labels."""
+        fake_config = ConfigurationLoader(operator="alice", operation="op-42")
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            async with lifespan(app):
+                pass
+
+            assert app.state.default_labels == {"operator": "alice", "operation": "op-42"}
+
+    async def test_lifespan_reads_config_file_env_var(self) -> None:
+        """Test that PYRIT_CONFIG_FILE is forwarded to ConfigurationLoader.load_with_overrides."""
+        fake_config = ConfigurationLoader()
+        with (
+            patch.dict(os.environ, {"PYRIT_CONFIG_FILE": "/tmp/foo.yaml"}, clear=False),
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config) as load_mock,
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            async with lifespan(app):
+                pass
+
+            call_kwargs = load_mock.call_args.kwargs
+            assert str(call_kwargs["config_file"]).endswith("foo.yaml")
+
 
 class TestSetupFrontend:
     """Tests for the setup_frontend function."""

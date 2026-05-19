@@ -177,11 +177,11 @@ project:
       children:
         - file: api/pyrit_analytics.md
         - file: api/pyrit_auth.md
-        - file: api/pyrit_cli_frontend_core.md
-        - file: api/pyrit_cli_pyrit_backend.md
+        - file: api/pyrit_cli_api_client.md
         - file: api/pyrit_cli_pyrit_scan.md
         - file: api/pyrit_cli_pyrit_shell.md
         - file: api/pyrit_common.md
+        - file: api/pyrit_common_cli_helpers.md
         - file: api/pyrit_datasets.md
         - file: api/pyrit_embedding.md
         - file: api/pyrit_exceptions.md

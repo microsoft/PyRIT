@@ -75,7 +75,7 @@ elif [ "$PYRIT_MODE" = "gui" ]; then
         BACKEND_ARGS="$BACKEND_ARGS --initializers $PYRIT_INITIALIZER"
     fi
 
-    exec python -m pyrit.cli.pyrit_backend $BACKEND_ARGS
+    exec python -m pyrit.backend.pyrit_backend $BACKEND_ARGS
 else
     echo "ERROR: Invalid PYRIT_MODE '$PYRIT_MODE'. Must be 'jupyter' or 'gui'"
     exit 1

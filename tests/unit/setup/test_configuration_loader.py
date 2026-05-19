@@ -11,6 +11,7 @@ from pyrit.setup.configuration_loader import (
     ConfigurationLoader,
     InitializerConfig,
     ScenarioConfig,
+    ServerConfig,
     initialize_from_config_async,
 )
 
@@ -623,3 +624,27 @@ class TestScenarioConfig:
             assert config._scenario_config == ScenarioConfig(name="scam", args={"max_turns": 10})
         finally:
             config_path.unlink()
+
+
+class TestNormalizeServer:
+    """Tests for ConfigurationLoader._normalize_server."""
+
+    def test_server_none_yields_no_server_config(self):
+        config = ConfigurationLoader(server=None)
+        assert config.server_config is None
+
+    def test_server_dict_with_url_normalizes(self):
+        config = ConfigurationLoader(server={"url": "http://remote:9000/"})
+        assert config.server_config == ServerConfig(url="http://remote:9000")
+
+    def test_server_dict_without_url_uses_default(self):
+        config = ConfigurationLoader(server={})
+        assert config.server_config == ServerConfig(url="http://localhost:8000")
+
+    def test_server_url_non_string_raises(self):
+        with pytest.raises(ValueError, match="Server 'url' must be a string"):
+            ConfigurationLoader(server={"url": 12345})
+
+    def test_server_non_dict_raises(self):
+        with pytest.raises(ValueError, match="Server entry must be a dict"):
+            ConfigurationLoader(server="http://oops:8000")  # type: ignore[arg-type]

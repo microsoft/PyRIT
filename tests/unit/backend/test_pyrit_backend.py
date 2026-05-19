@@ -60,3 +60,27 @@ class TestMain:
     def test_main_invalid_args(self) -> None:
         result = pyrit_backend.main(args=["--invalid-flag"])
         assert result == 2
+
+    @patch("uvicorn.run", side_effect=KeyboardInterrupt())
+    def test_main_keyboard_interrupt_returns_zero(self, mock_run: MagicMock, capsys) -> None:
+        result = pyrit_backend.main(args=[])
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Backend stopped" in captured.out
+
+    @patch("uvicorn.run", side_effect=RuntimeError("boom"))
+    def test_main_unexpected_exception_returns_one(self, mock_run: MagicMock, capsys) -> None:
+        result = pyrit_backend.main(args=[])
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "boom" in captured.out
+
+    @patch("uvicorn.run")
+    def test_main_forwards_log_level(self, mock_run: MagicMock) -> None:
+        pyrit_backend.main(args=["--log-level", "DEBUG"])
+        assert mock_run.call_args.kwargs["log_level"] == "debug"
+
+    @patch("uvicorn.run")
+    def test_main_forwards_reload_flag(self, mock_run: MagicMock) -> None:
+        pyrit_backend.main(args=["--reload"])
+        assert mock_run.call_args.kwargs["reload"] is True
