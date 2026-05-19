@@ -287,18 +287,16 @@ class Message:
         """
         Convert the message to a dictionary representation including all piece details.
 
-        Serializes each piece individually via MessagePiece.to_dict(). This is the format
-        expected by from_dict().
+        Serializes each piece individually via MessagePiece.to_dict(). All message-level
+        attributes (role, conversation_id, sequence, is_simulated) are derived from the
+        pieces themselves, so only 'pieces' is included. This is the format expected by
+        from_dict().
 
         Returns:
-            dict[str, object]: Dictionary with 'role', 'is_simulated', 'conversation_id',
-                'sequence', and 'pieces' (list of MessagePiece.to_dict() dicts).
+            dict[str, object]: Dictionary with a single 'pieces' key containing a list
+                of MessagePiece.to_dict() dicts.
         """
         return {
-            "role": self.api_role,
-            "is_simulated": self.is_simulated,
-            "conversation_id": self.conversation_id,
-            "sequence": self.sequence,
             "pieces": [piece.to_dict() for piece in self.message_pieces],
         }
 

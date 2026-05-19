@@ -314,7 +314,7 @@ class MessagePiece:
 
         """
         return {
-            "id": str(self.id),
+            "id": str(self.id) if self.id is not None else None,
             "role": self._role,
             "conversation_id": self.conversation_id,
             "sequence": self.sequence,
@@ -336,7 +336,7 @@ class MessagePiece:
             "converted_value_sha256": self.converted_value_sha256,
             "response_error": self.response_error,
             "originator": self.originator,
-            "original_prompt_id": str(self.original_prompt_id),
+            "original_prompt_id": str(self.original_prompt_id) if self.original_prompt_id is not None else None,
             "scores": [score.to_dict() for score in self.scores],
         }
 

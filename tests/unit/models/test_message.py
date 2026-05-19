@@ -226,11 +226,9 @@ def test_message_to_dict() -> None:
     message = Message.from_prompt(prompt="Hello world", role="user")
     result = message.to_dict()
 
-    assert result["role"] == "user"
-    assert result["is_simulated"] is False
-    assert "conversation_id" in result
-    assert "sequence" in result
+    assert set(result.keys()) == {"pieces"}
     assert len(result["pieces"]) == 1
+    assert result["pieces"][0]["role"] == "user"
     assert result["pieces"][0]["converted_value"] == "Hello world"
     assert result["pieces"][0]["converted_value_data_type"] == "text"
 
