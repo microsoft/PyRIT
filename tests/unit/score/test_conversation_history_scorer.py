@@ -9,7 +9,7 @@ import pytest
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
-from pyrit.models import MessagePiece, Score
+from pyrit.models import Message, MessagePiece, Score
 from pyrit.score import (
     Scorer,
     SelfAskGeneralFloatScaleScorer,
@@ -628,8 +628,6 @@ async def test_conversation_scorer_blocked_input_message_does_not_raise(patch_ce
     The relaxed validator (enforce_all_pieces_valid=False) lets ConversationScorer proceed,
     look up the conversation in memory, and call the underlying scorer.
     """
-    from pyrit.models import Message
-
     memory = CentralMemory.get_memory_instance()
     conversation_id = str(uuid.uuid4())
 

@@ -2,14 +2,17 @@
 # Licensed under the MIT license.
 
 import uuid
+from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import Score
+from pyrit.models import Message, MessagePiece, Score
 from pyrit.score import FloatScaleThresholdScorer
+from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
 def create_mock_float_scorer(score_value: float):
@@ -227,11 +230,6 @@ async def test_float_scale_threshold_scorer_with_real_float_scorer_on_blocked(pa
     handles blocked responses itself, so wrappers like FloatScaleThresholdScorer don't need
     any special blocked-handling logic.
     """
-    from typing import Optional
-
-    from pyrit.models import Message, MessagePiece
-    from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
-    from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
     class _RealFloatScaleScorer(FloatScaleScorer):
         def __init__(self):
