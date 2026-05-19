@@ -2,13 +2,12 @@
 # Licensed under the MIT license.
 
 """
-Typed attribution metadata used to link a persisted ``AttackResult`` to an
-upstream orchestrator (e.g. a ``Scenario``).
+Typed attribution metadata used to link a persisted ``AttackResult`` to the
+``Scenario`` that produced it.
 
-The attribution lives in the ``executor`` layer so the executor never imports
-from ``scenario``. ``Scenario`` is one producer; future orchestrators may
-produce attribution too. The attack persistence path (the default attack event
-handler) is the consumer.
+Lives in the ``executor`` layer (rather than ``scenario``) so the attack
+persistence path — the consumer — does not introduce a dependency on
+``pyrit.scenario``.
 """
 
 from __future__ import annotations
@@ -17,11 +16,11 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
-class ExecutionAttribution:
+class ScenarioExecutionAttribution:
     """
-    Attribution metadata produced by an upstream orchestrator and consumed by
-    the attack persistence path to record linkage on the resulting
-    ``AttackResultEntry``.
+    Scenario-linkage metadata stamped onto an ``AttackContext`` by the
+    ``AttackExecutor`` and copied onto the resulting ``AttackResult`` by the
+    attack persistence path so the row carries the scenario FK + scenario_data.
 
     Attributes:
         scenario_result_id (str): The ID of the scenario result that produced

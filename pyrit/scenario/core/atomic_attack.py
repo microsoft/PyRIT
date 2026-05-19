@@ -17,9 +17,10 @@ import logging
 import warnings
 from typing import TYPE_CHECKING, Any, Optional
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
-from pyrit.executor.attack.core.execution_attribution import ExecutionAttribution
+from pyrit.executor.attack.core.scenario_execution_attribution import ScenarioExecutionAttribution
 from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
 from pyrit.memory import CentralMemory
@@ -176,12 +177,10 @@ class AtomicAttack:
         Args:
             remaining_objectives (List[str]): List of objectives that still need to be executed.
         """
-        warnings.warn(
-            "filter_seed_groups_by_objectives is deprecated; use filter_seed_groups_by_indices "
-            "for index-stable resume. Duplicate objective text can collapse otherwise-distinct "
-            "seed groups.",
-            DeprecationWarning,
-            stacklevel=2,
+        print_deprecation_message(
+            old_item="AtomicAttack.filter_seed_groups_by_objectives",
+            new_item="AtomicAttack.filter_seed_groups_by_indices",
+            removed_in="0.16.0",
         )
         remaining_set = set(remaining_objectives)
         kept: list[tuple[int, SeedAttackGroup]] = [
@@ -282,8 +281,8 @@ class AtomicAttack:
                 name = self.atomic_attack_name
                 original_indices = list(self._original_indices)
 
-                def attribution_factory(input_index: int) -> ExecutionAttribution:
-                    return ExecutionAttribution(
+                def attribution_factory(input_index: int) -> ScenarioExecutionAttribution:
+                    return ScenarioExecutionAttribution(
                         scenario_result_id=scenario_id,
                         atomic_attack_name=name,
                         objective_index=original_indices[input_index],

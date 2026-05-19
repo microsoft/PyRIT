@@ -831,8 +831,8 @@ class AttackResultEntry(Base):
         )
         self.total_retries = entry.total_retries
 
-        # Scenario linkage (set by the attack persistence path when an
-        # ExecutionAttribution is present on the AttackContext; otherwise None)
+        # Scenario linkage (set by the attack persistence path when a
+        # ScenarioExecutionAttribution is present on the AttackContext; otherwise None)
         self.scenario_result_id = uuid.UUID(entry.scenario_result_id) if entry.scenario_result_id else None
         self.scenario_data = entry.scenario_data
 

@@ -338,7 +338,7 @@ class TestExecuteAttackFromSeedGroupsAsync:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAttributionFactoryPropagation:
-    """Tests for ExecutionAttribution propagation through the AttackExecutor.
+    """Tests for ScenarioExecutionAttribution propagation through the AttackExecutor.
 
     The executor stamps ``context._attribution = attribution_factory(input_index)``
     on each per-task context. The input_index must be the seed group's original
@@ -347,14 +347,14 @@ class TestAttributionFactoryPropagation:
     """
 
     async def test_attribution_factory_sets_per_task_attribution_in_order(self):
-        from pyrit.executor.attack.core.execution_attribution import ExecutionAttribution
+        from pyrit.executor.attack.core.scenario_execution_attribution import ScenarioExecutionAttribution
 
         attack = create_mock_attack()
         seen_indices: list[int] = []
 
         async def capture(context):
             # Read the attribution stamped by the executor BEFORE the task runs.
-            attr = getattr(context, "_attribution", None)
+            attr = context._attribution
             assert attr is not None
             seen_indices.append(attr.objective_index)
             return create_attack_result(context.params.objective)
@@ -363,8 +363,8 @@ class TestAttributionFactoryPropagation:
 
         seed_groups = [create_seed_group(f"obj-{i}") for i in range(4)]
 
-        def factory(idx: int) -> ExecutionAttribution:
-            return ExecutionAttribution(
+        def factory(idx: int) -> ScenarioExecutionAttribution:
+            return ScenarioExecutionAttribution(
                 scenario_result_id="sid",
                 atomic_attack_name="atomic",
                 objective_index=idx,
@@ -387,13 +387,13 @@ class TestAttributionFactoryPropagation:
         regardless of completion order. Out-of-order completion must not produce
         stamped indices that point at the wrong seed group.
         """
-        from pyrit.executor.attack.core.execution_attribution import ExecutionAttribution
+        from pyrit.executor.attack.core.scenario_execution_attribution import ScenarioExecutionAttribution
 
         attack = create_mock_attack()
         seen: dict[str, int] = {}
 
         async def out_of_order(context):
-            attr = getattr(context, "_attribution", None)
+            attr = context._attribution
             assert attr is not None
             # Reverse-delay the tasks so completion order is the inverse of input
             # order. The stamped index must still match the seed group.
@@ -405,8 +405,8 @@ class TestAttributionFactoryPropagation:
 
         seed_groups = [create_seed_group(f"obj-{i}") for i in range(6)]
 
-        def factory(idx: int) -> ExecutionAttribution:
-            return ExecutionAttribution(
+        def factory(idx: int) -> ScenarioExecutionAttribution:
+            return ScenarioExecutionAttribution(
                 scenario_result_id="sid",
                 atomic_attack_name="atomic",
                 objective_index=idx,
@@ -428,7 +428,7 @@ class TestAttributionFactoryPropagation:
         attack = create_mock_attack()
 
         async def capture(context):
-            attr = getattr(context, "_attribution", None)
+            attr = context._attribution
             assert attr is None
             return create_attack_result(context.params.objective)
 

@@ -36,7 +36,7 @@ from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-    from pyrit.executor.attack.core.execution_attribution import ExecutionAttribution
+    from pyrit.executor.attack.core.scenario_execution_attribution import ScenarioExecutionAttribution
     from pyrit.prompt_target import PromptTarget
 
 AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
@@ -71,15 +71,12 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     _prepended_conversation_override: Optional[list[Message]] = None
     _memory_labels_override: Optional[dict[str, str]] = None
 
-    # Set by the ON_ERROR handler to link error AttackResults to ScenarioResults
-    _error_attack_result_id: str | None = None
-
     # Optional attribution from an upstream orchestrator (e.g. Scenario). When
     # set, the persistence path stamps scenario_result_id + scenario_data onto
     # the resulting AttackResult so it can be located later for hydration and
     # resume. Set by AttackExecutor per-task before scheduling. Stays None for
     # ad-hoc/direct attack execution outside any scenario.
-    _attribution: Optional[ExecutionAttribution] = None
+    _attribution: Optional[ScenarioExecutionAttribution] = None
 
     # Convenience properties that delegate to params or overrides
     @property
@@ -245,12 +242,12 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
     def _stamp_attribution(
         *,
         context: AttackStrategyContextT,
-        result: AttackStrategyResultT,
+        result: AttackResult,
     ) -> None:
         """
         Copy scenario attribution from the AttackContext onto the AttackResult.
 
-        Reads ``context._attribution`` (an ``ExecutionAttribution`` set by the
+        Reads ``context._attribution`` (a ``ScenarioExecutionAttribution`` set by the
         AttackExecutor when running inside a Scenario). When present, writes
         ``scenario_result_id`` and a fixed-schema ``scenario_data`` dict onto
         the result so they round-trip into ``AttackResultEntry``.
@@ -259,7 +256,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             context: The per-task AttackContext.
             result: The AttackResult that is about to be persisted.
         """
-        attribution = getattr(context, "_attribution", None)
+        attribution = context._attribution
         if attribution is None:
             return
         result.scenario_result_id = attribution.scenario_result_id
@@ -307,9 +304,6 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         if not error or not context:
             return
 
-        # Clear any stale ID from a previous execution
-        context._error_attack_result_id = None
-
         # Collect retry events (visible via inherited ContextVar copy)
         collector = get_retry_collector()
         retry_events = collector.events if collector else []
@@ -336,14 +330,10 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             error_result.execution_time_ms = int((end_time - context.start_time) * 1000)
 
         # Stamp scenario attribution onto the error result so it is locatable
-        # via the scenario FK on resume (rather than via the previous
-        # error_attack_result_ids_json manifest).
+        # via the scenario FK on resume.
         self._stamp_attribution(context=context, result=error_result)
 
-        # Persist first, then set the ID on the context so scenario-level code
-        # only sees the reference if the write succeeded.
         self._memory.add_attack_results_to_memory(attack_results=[error_result])
-        context._error_attack_result_id = error_result.attack_result_id
 
         self._logger.error(f"Attack failed with {type(error).__name__}: {error}")
 

@@ -1965,40 +1965,6 @@ class MemoryInterface(abc.ABC):
             entries=[ScenarioResultEntry(entry=scenario_result) for scenario_result in scenario_results]
         )
 
-    def add_attack_results_to_scenario(
-        self,
-        *,
-        scenario_result_id: str,
-        atomic_attack_name: str,
-        attack_results: Sequence[AttackResult],
-    ) -> bool:
-        """
-        No-op shim retained for backward compatibility.
-
-        Scenario→AttackResult linkage is now stamped per-result by the attack
-        persistence path (via ``ExecutionAttribution`` on the
-        ``AttackContext``). This method is kept for one release for external
-        callers; it will be removed.
-
-        Args:
-            scenario_result_id (str): The ID of the scenario result (ignored).
-            atomic_attack_name (str): The atomic attack name (ignored).
-            attack_results (Sequence[AttackResult]): The attack results (ignored).
-
-        Returns:
-            bool: Always True (no-op success).
-        """
-        print_deprecation_message(
-            old_item="memory.add_attack_results_to_scenario(...)",
-            new_item=(
-                "Scenario→AttackResult linkage is stamped per-result by the attack persistence path. "
-                "Setting Scenario._scenario_result_id on each AtomicAttack is sufficient; no explicit "
-                "post-run bulk-write is needed."
-            ),
-            removed_in="0.16.0",
-        )
-        return True
-
     def update_scenario_run_state(
         self,
         *,
@@ -2094,6 +2060,57 @@ class MemoryInterface(abc.ABC):
         if scenario_result_ids is not None and len(scenario_result_ids) == 0:
             return []
 
+        conditions = self._build_scenario_result_query_conditions(
+            scenario_name=scenario_name,
+            scenario_version=scenario_version,
+            pyrit_version=pyrit_version,
+            added_after=added_after,
+            added_before=added_before,
+            labels=labels,
+            objective_target_endpoint=objective_target_endpoint,
+            objective_target_model_name=objective_target_model_name,
+            identifier_filters=identifier_filters,
+        )
+
+        try:
+            entries = self._query_scenario_result_entries(
+                scenario_result_ids=scenario_result_ids,
+                conditions=conditions,
+                limit=limit,
+            )
+
+            attack_results_by_scenario = self._hydrate_scenario_attack_results(entries=entries)
+
+            scenario_results: list[ScenarioResult] = []
+            for entry in entries:
+                scenario_result = entry.get_scenario_result()
+                scenario_result.attack_results = attack_results_by_scenario.get(entry.id, {})
+                scenario_results.append(scenario_result)
+
+            return scenario_results
+        except Exception as e:
+            logger.exception(f"Failed to retrieve scenario results with error {e}")
+            raise
+
+    def _build_scenario_result_query_conditions(
+        self,
+        *,
+        scenario_name: str | None,
+        scenario_version: int | None,
+        pyrit_version: str | None,
+        added_after: datetime | None,
+        added_before: datetime | None,
+        labels: dict[str, str] | None,
+        objective_target_endpoint: str | None,
+        objective_target_model_name: str | None,
+        identifier_filters: Sequence[IdentifierFilter] | None,
+    ) -> "list[ColumnElement[bool]]":
+        """
+        Build the WHERE conditions for ``get_scenario_results``.
+
+        Returns:
+            list[ColumnElement[bool]]: SQLAlchemy WHERE clauses derived from the supplied filters.
+        """
         conditions: list[ColumnElement[bool]] = []
 
         if scenario_name:
@@ -2147,111 +2164,96 @@ class MemoryInterface(abc.ABC):
                 )
             )
 
-        try:
-            order_by_clause = ScenarioResultEntry.completion_time.desc()
+        return conditions
 
-            # Handle scenario_result_ids with batched queries if needed
-            if scenario_result_ids:
-                entries = self._execute_batched_query(
-                    ScenarioResultEntry,
-                    batch_column=ScenarioResultEntry.id,
-                    batch_values=list(scenario_result_ids),
-                    other_conditions=conditions,
-                    order_by=order_by_clause,
-                    limit=limit,
+    def _query_scenario_result_entries(
+        self,
+        *,
+        scenario_result_ids: Sequence[str] | None,
+        conditions: "list[ColumnElement[bool]]",
+        limit: int | None,
+    ) -> Sequence[ScenarioResultEntry]:
+        """
+        Run the (possibly batched) ScenarioResultEntry query.
+
+        Returns:
+            Sequence[ScenarioResultEntry]: The matching rows ordered by completion_time descending.
+        """
+        order_by_clause = ScenarioResultEntry.completion_time.desc()
+
+        if scenario_result_ids:
+            return self._execute_batched_query(
+                ScenarioResultEntry,
+                batch_column=ScenarioResultEntry.id,
+                batch_values=list(scenario_result_ids),
+                other_conditions=conditions,
+                order_by=order_by_clause,
+                limit=limit,
+            )
+
+        return self._query_entries(
+            ScenarioResultEntry,
+            conditions=and_(*conditions) if conditions else None,
+            order_by=order_by_clause,
+            limit=limit,
+        )
+
+    def _hydrate_scenario_attack_results(
+        self,
+        *,
+        entries: Sequence[ScenarioResultEntry],
+    ) -> dict[uuid.UUID, dict[str, list[AttackResult]]]:
+        """
+        Fetch every ``AttackResult`` linked to the given scenarios via the
+        ``AttackResultEntry.scenario_result_id`` FK in a single batched query,
+        then group by scenario + ``atomic_attack_name`` and sort each group by
+        ``scenario_data["objective_index"]``.
+
+        FK linkage is the sole source of truth — set at write-time by the
+        attack persistence path when a ``ScenarioExecutionAttribution`` is on
+        the context. Rows without a valid ``scenario_data`` payload are skipped
+        (and logged) rather than guessed at.
+
+        Returns:
+            dict[uuid.UUID, dict[str, list[AttackResult]]]: Mapping of
+            ``scenario_result_id`` → ``atomic_attack_name`` → ordered list of
+            ``AttackResult`` objects. Scenarios with no linked rows map to ``{}``.
+        """
+        if not entries:
+            return {}
+
+        scenario_ids = [entry.id for entry in entries]
+        attack_rows = self._execute_batched_query(
+            AttackResultEntry,
+            batch_column=AttackResultEntry.scenario_result_id,
+            batch_values=scenario_ids,
+        )
+
+        grouped: dict[uuid.UUID, dict[str, list[tuple[int, AttackResult]]]] = {entry.id: {} for entry in entries}
+
+        for row in attack_rows:
+            scenario_id = row.scenario_result_id
+            if scenario_id is None or scenario_id not in grouped:
+                continue
+
+            data = row.scenario_data or {}
+            name = data.get("atomic_attack_name")
+            if not name:
+                logger.debug(
+                    f"Skipping AttackResultEntry {row.id} during hydration: scenario_data missing atomic_attack_name"
                 )
-            else:
-                entries = self._query_entries(
-                    ScenarioResultEntry,
-                    conditions=and_(*conditions) if conditions else None,
-                    order_by=order_by_clause,
-                    limit=limit,
-                )
+                continue
 
-            # Convert entries to ScenarioResults and populate attack_results.
-            #
-            # Hydration strategy:
-            #   1. Pull AttackResultEntry rows for this scenario via the new
-            #      scenario_result_id FK (the post-redesign source of truth).
-            #   2. Fall back to the legacy manifest path for any conversation_id
-            #      present in attack_results_json but NOT in the FK result set.
-            #      This handles partial-migration / pre-FK data.
-            #   3. Group by atomic_attack_name (from scenario_data for FK rows,
-            #      from manifest keys for legacy rows) and sort each group by
-            #      scenario_data["objective_index"] when available.
-            scenario_results = []
-            for entry in entries:
-                scenario_result = entry.get_scenario_result()
-                scenario_id_str = str(entry.id)
+            objective_index = data.get("objective_index")
+            sort_key = objective_index if isinstance(objective_index, int) else 0
+            grouped[scenario_id].setdefault(name, []).append((sort_key, row.get_attack_result()))
 
-                # FK-linked rows (preferred source).
-                fk_rows = self._query_entries(
-                    AttackResultEntry,
-                    conditions=AttackResultEntry.scenario_result_id == entry.id,
-                )
-                fk_results: list[AttackResult] = [row.get_attack_result() for row in fk_rows]
-                fk_attack_result_ids = {r.attack_result_id for r in fk_results}
-
-                # Legacy manifest path — only fill in conversation_ids not
-                # already covered by the FK path.
-                manifest_map = entry.get_conversation_ids_by_attack_name()
-                manifest_missing_ids: list[str] = []
-                for conv_ids in manifest_map.values():
-                    manifest_missing_ids.extend(conv_ids)
-
-                legacy_results_by_conv: dict[str, AttackResult] = {}
-                if manifest_missing_ids:
-                    legacy_rows = self._execute_batched_query(
-                        AttackResultEntry,
-                        batch_column=AttackResultEntry.conversation_id,
-                        batch_values=manifest_missing_ids,
-                    )
-                    for row in legacy_rows:
-                        result = row.get_attack_result()
-                        if result.attack_result_id in fk_attack_result_ids:
-                            continue  # already represented by the FK path
-                        legacy_results_by_conv[row.conversation_id] = result
-
-                # Group: FK rows by scenario_data["atomic_attack_name"], legacy
-                # rows by manifest key. Sort each group by objective_index when
-                # available (FK rows) and append legacy entries after, preserving
-                # manifest order.
-                grouped: dict[str, list[tuple[int, AttackResult]]] = {}
-                for r in fk_results:
-                    name = (r.scenario_data or {}).get("atomic_attack_name")
-                    if not name:
-                        continue
-                    idx = (r.scenario_data or {}).get("objective_index")
-                    sort_key = idx if isinstance(idx, int) else len(grouped.setdefault(name, []))
-                    grouped.setdefault(name, []).append((sort_key, r))
-
-                legacy_count = 0
-                for attack_name, conv_ids in manifest_map.items():
-                    legacy_bucket = grouped.setdefault(attack_name, [])
-                    base_offset = len(legacy_bucket)
-                    for offset, cid in enumerate(conv_ids):
-                        legacy_result = legacy_results_by_conv.get(cid)
-                        if legacy_result is None:
-                            continue
-                        legacy_bucket.append((base_offset + offset, legacy_result))
-                        legacy_count += 1
-
-                if legacy_count or fk_results:
-                    logger.debug(
-                        f"Hydrated scenario {scenario_id_str}: "
-                        f"{len(fk_results)} via FK, {legacy_count} via legacy manifest fallback"
-                    )
-
-                scenario_result.attack_results = {
-                    name: [r for _, r in sorted(bucket, key=lambda kv: kv[0])] for name, bucket in grouped.items()
-                }
-
-                scenario_results.append(scenario_result)
-
-            return scenario_results
-        except Exception as e:
-            logger.exception(f"Failed to retrieve scenario results with error {e}")
-            raise
+        return {
+            scenario_id: {
+                name: [ar for _, ar in sorted(bucket, key=lambda kv: kv[0])] for name, bucket in name_buckets.items()
+            }
+            for scenario_id, name_buckets in grouped.items()
+        }
 
     def print_schema(self) -> None:
         """

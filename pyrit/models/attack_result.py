@@ -108,7 +108,7 @@ class AttackResult(StrategyResult):
     total_retries: int = 0
 
     # Scenario linkage (infrastructure-managed). Set by the attack persistence
-    # path when an ExecutionAttribution is present on the AttackContext. User
+    # path when a ScenarioExecutionAttribution is present on the AttackContext. User
     # code should not set these directly; ad-hoc AttackResults created outside
     # a Scenario leave both fields as None and the corresponding DB columns
     # remain NULL.

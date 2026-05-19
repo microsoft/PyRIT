@@ -24,7 +24,7 @@ from pyrit.executor.attack.core.attack_strategy import (
     AttackStrategyContextT,
     AttackStrategyResultT,
 )
-from pyrit.executor.attack.core.execution_attribution import ExecutionAttribution
+from pyrit.executor.attack.core.scenario_execution_attribution import ScenarioExecutionAttribution
 from pyrit.models import SeedAttackGroup
 
 if TYPE_CHECKING:
@@ -143,7 +143,7 @@ class AttackExecutor:
         objective_scorer: Optional["TrueFalseScorer"] = None,
         field_overrides: Optional[Sequence[dict[str, Any]]] = None,
         return_partial_on_failure: bool = False,
-        attribution_factory: Optional[Callable[[int], ExecutionAttribution]] = None,
+        attribution_factory: Optional[Callable[[int], ScenarioExecutionAttribution]] = None,
         **broadcast_fields: Any,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
@@ -167,7 +167,7 @@ class AttackExecutor:
                 objectives fail. If False (default), raises the first exception.
             attribution_factory: Optional callable that maps an input index (the
                 seed group's original index, parallel-safe and deterministic) to
-                an ``ExecutionAttribution``. When provided, each per-task
+                a ``ScenarioExecutionAttribution``. When provided, each per-task
                 ``AttackContext`` is stamped with the attribution so the
                 resulting ``AttackResultEntry`` row carries the scenario FK +
                 scenario_data. When ``None``, no attribution is applied.
@@ -223,7 +223,7 @@ class AttackExecutor:
         objectives: Sequence[str],
         field_overrides: Optional[Sequence[dict[str, Any]]] = None,
         return_partial_on_failure: bool = False,
-        attribution_factory: Optional[Callable[[int], ExecutionAttribution]] = None,
+        attribution_factory: Optional[Callable[[int], ScenarioExecutionAttribution]] = None,
         **broadcast_fields: Any,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
@@ -239,7 +239,7 @@ class AttackExecutor:
             return_partial_on_failure: If True, returns partial results when some
                 objectives fail. If False (default), raises the first exception.
             attribution_factory: Optional callable mapping each input index to
-                an ExecutionAttribution. When provided, the per-task context is
+                a ScenarioExecutionAttribution. When provided, the per-task context is
                 stamped with the attribution so the persistence path can record
                 scenario linkage.
             **broadcast_fields: Fields applied to all objectives (e.g., memory_labels).
@@ -291,7 +291,7 @@ class AttackExecutor:
         attack: AttackStrategy[AttackStrategyContextT, AttackStrategyResultT],
         params_list: Sequence[AttackParameters],
         return_partial_on_failure: bool = False,
-        attribution_factory: Optional[Callable[[int], ExecutionAttribution]] = None,
+        attribution_factory: Optional[Callable[[int], ScenarioExecutionAttribution]] = None,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
         Execute attacks in parallel with a list of pre-built parameters.
@@ -304,7 +304,7 @@ class AttackExecutor:
             params_list: List of AttackParameters, one per execution.
             return_partial_on_failure: If True, returns partial results on failure.
             attribution_factory: Optional callable mapping each input index to
-                an ExecutionAttribution. When provided, the per-task context is
+                a ScenarioExecutionAttribution. When provided, the per-task context is
                 stamped with the attribution so the persistence path can record
                 scenario linkage.
 

@@ -613,14 +613,14 @@ class TestDefaultAttackStrategyEventHandler:
     async def test_on_post_execute_stamps_scenario_attribution_when_present(
         self, sample_attack_context, sample_attack_result, mock_memory
     ):
-        """When the context carries an ExecutionAttribution, the persisted
+        """When the context carries a ScenarioExecutionAttribution, the persisted
         AttackResult must have scenario_result_id + scenario_data populated."""
-        from pyrit.executor.attack.core.execution_attribution import ExecutionAttribution
+        from pyrit.executor.attack.core.scenario_execution_attribution import ScenarioExecutionAttribution
 
         with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
             handler = _DefaultAttackStrategyEventHandler()
             sample_attack_context.start_time = 100.0
-            sample_attack_context._attribution = ExecutionAttribution(
+            sample_attack_context._attribution = ScenarioExecutionAttribution(
                 scenario_result_id="scenario-1",
                 atomic_attack_name="atomic_a",
                 objective_index=3,
@@ -666,12 +666,12 @@ class TestDefaultAttackStrategyEventHandler:
     async def test_on_error_stamps_scenario_attribution_when_present(self, sample_attack_context, mock_memory):
         """Error AttackResults must also carry the scenario FK so error lookups
         via get_attack_results(scenario_result_id=..., outcome=ERROR) work."""
-        from pyrit.executor.attack.core.execution_attribution import ExecutionAttribution
+        from pyrit.executor.attack.core.scenario_execution_attribution import ScenarioExecutionAttribution
 
         with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
             handler = _DefaultAttackStrategyEventHandler()
             sample_attack_context.start_time = 100.0
-            sample_attack_context._attribution = ExecutionAttribution(
+            sample_attack_context._attribution = ScenarioExecutionAttribution(
                 scenario_result_id="scenario-err",
                 atomic_attack_name="atomic_err",
                 objective_index=7,

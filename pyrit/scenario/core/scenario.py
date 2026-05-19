@@ -8,7 +8,6 @@ This module provides the Scenario class that orchestrates the execution of multi
 AtomicAttack instances sequentially, enabling comprehensive security testing campaigns.
 """
 
-import asyncio
 import copy
 import json
 import logging
@@ -218,14 +217,9 @@ class Scenario(ABC):
         self._memory = CentralMemory.get_memory_instance()
         self._atomic_attacks: list[AtomicAttack] = []
         self._scenario_result_id: Optional[str] = str(scenario_result_id) if scenario_result_id else None
-        self._result_lock = asyncio.Lock()
 
         # Store prepared strategies for use in _get_atomic_attacks_async
         self._scenario_strategies: list[ScenarioStrategy] = []
-
-        # Store original objectives for each atomic attack (before any mutations)
-        # Key: atomic_attack_name, Value: tuple of original objectives
-        self._original_objectives_map: dict[str, tuple[str, ...]] = {}
 
         # Maps atomic_attack_name → display_group for user-facing aggregation
         self._display_group_map: dict[str, str] = {}
@@ -713,11 +707,6 @@ class Scenario(ABC):
                 f"Duplicate names will be collapsed in result aggregation and resume tracking. "
                 f"Each AtomicAttack within a scenario should have a unique name."
             )
-
-        # Store original objectives for each atomic attack (before any mutations during execution)
-        self._original_objectives_map = {
-            atomic_attack.atomic_attack_name: tuple(atomic_attack.objectives) for atomic_attack in self._atomic_attacks
-        }
 
         # Snapshot params onto the identifier before the resume branch so the identifier
         # is fully populated regardless of which branch we take. Deep-copy avoids sharing
@@ -1215,7 +1204,7 @@ class Scenario(ABC):
 
                         # Error AttackResults are linked to this scenario via the
                         # scenario_result_id FK on AttackResultEntry (stamped by
-                        # the attack event handler when an ExecutionAttribution
+                        # the attack event handler when a ScenarioExecutionAttribution
                         # is on the context). The previous per-scenario error_id
                         # manifest is no longer needed.
 
