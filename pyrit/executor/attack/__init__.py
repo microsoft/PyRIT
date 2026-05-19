@@ -52,6 +52,7 @@ from pyrit.executor.attack.single_turn import (
     SingleTurnAttackStrategy,
     SkeletonKeyAttack,
 )
+from pyrit.executor.attack.streaming import BargeInAttack, BargeInAttackContext
 
 __all__ = [
     "AttackStrategy",
@@ -93,6 +94,8 @@ __all__ = [
     "ConversationState",
     "AttackExecutor",
     "AttackExecutorResult",
+    "BargeInAttack",
+    "BargeInAttackContext",
     "PrependedConversationConfig",
     "generate_simulated_conversation_async",
 ]

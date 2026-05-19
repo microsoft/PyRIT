@@ -6,6 +6,7 @@ import base64
 import logging
 import re
 import wave
+from collections.abc import Callable, Coroutine
 from typing import Any, Literal, Optional
 
 from openai import AsyncOpenAI
@@ -58,6 +59,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
             supports_editable_history=True,
             supports_multi_message_pieces=True,
             supports_system_prompt=True,
+            supports_streaming_barge_in=True,
             input_modalities=frozenset(
                 {
                     frozenset(["text"]),
@@ -560,6 +562,98 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
             item_id: Server-assigned item id to delete.
         """
         await connection.conversation.item.delete(item_id=item_id)
+
+    async def subscribe_events_async(
+        self,
+        *,
+        connection: Any,
+        on_user_audio_committed: (
+            Callable[[_CommittedEvent], Coroutine[Any, Any, None]] | None
+        ) = None,
+    ) -> _RealtimeEventDispatcher:
+        """
+        Start consuming events from the connection and route them via the OpenAI dispatcher.
+
+        Streaming-style callers (``BargeInAttack``) use this to receive normalized
+        events (``user_audio_committed``). The returned dispatcher exposes
+        ``stop()`` to tear down the background task and drain in-flight callback
+        tasks, and a ``failure`` property that callers can poll between operations
+        to detect a dead dispatch loop (e.g. websocket closed). Callers should
+        call ``stop()`` before closing the connection.
+
+        Args:
+            connection: Active Realtime API connection from ``self.connect()``.
+            on_user_audio_committed: Async callback fired when server VAD finalizes
+                a user audio buffer. Called as a background task.
+
+        Returns:
+            The started dispatcher. Pass it to ``request_response_async`` for turn
+            futures, poll ``failure`` for dispatch-loop errors, and call ``stop()``
+            to tear it down.
+        """
+        dispatcher = _OpenAIRealtimeDispatcher(
+            connection=connection,
+            on_user_audio_committed=on_user_audio_committed,
+        )
+        await dispatcher.start()
+        return dispatcher
+
+    async def request_response_async(
+        self,
+        *,
+        connection: Any,
+        dispatcher: _RealtimeEventDispatcher,
+    ) -> asyncio.Future[RealtimeTargetResult]:
+        """
+        Trigger ``response.create`` and return a future that resolves when the turn ends.
+
+        Constructs a fresh ``_RealtimeTurnState``, binds it to the dispatcher as the
+        active turn, then sends ``response.create``. The dispatcher resolves the
+        returned future via ``response.done`` (with ``interrupted=False``) or via
+        the barge-in cancel path (with ``interrupted=True``).
+
+        Args:
+            connection: Active Realtime API connection.
+            dispatcher: Subscription handle previously returned by
+                ``subscribe_events_async``. Must not have another turn pending.
+
+        Returns:
+            Future resolved with the assembled ``RealtimeTargetResult`` when this
+            turn ends (normally or via barge-in).
+
+        Raises:
+            RuntimeError: If another turn is already pending on the dispatcher.
+        """
+        state = _RealtimeTurnState(completion=asyncio.get_running_loop().create_future())
+        dispatcher.register_turn(state)
+        await connection.response.create()
+        return state.completion
+
+    async def send_streaming_session_config_async(self, *, connection: Any, system_prompt: str) -> None:
+        """
+        Configure the realtime session for streaming use: server VAD with manual response creation.
+
+        Emits the same session config as the atomic path except ``turn_detection.create_response``
+        is forced to False so the streaming attack can swap the raw user audio item for converted
+        audio before triggering ``response.create``.
+
+        Args:
+            connection: Active Realtime API connection.
+            system_prompt: System prompt for the realtime session.
+
+        Raises:
+            ValueError: If the target was constructed without server VAD.
+        """
+        if self._server_vad is None:
+            raise ValueError(
+                "send_streaming_session_config_async requires server VAD; "
+                "construct RealtimeTarget(server_vad=True) or pass a ServerVadConfig."
+            )
+        config = self._set_system_prompt_and_config_vars(system_prompt=system_prompt)
+        turn_detection = config.get("audio", {}).get("input", {}).get("turn_detection")
+        if turn_detection is not None:
+            turn_detection["create_response"] = False
+        await connection.session.update(session=config)
 
     async def _stream_pcm_async(
         self,

@@ -204,3 +204,31 @@ async def test_dispatcher_fires_committed_callback_as_background_task():
 
     # Both events fired the callback; the loop did not serialize behind the slow first call.
     assert len(received) == 2
+
+
+async def test_dispatcher_records_failure_on_iterator_crash():
+    """When the connection iterator raises, the dispatcher's failure property captures the exception."""
+
+    class _NoopDispatcher(_RealtimeEventDispatcher):
+        async def _route_event(self, *, event, state):  # pragma: no cover - never called
+            return
+
+        async def _cancel(self, *, state):  # pragma: no cover
+            return
+
+    class _ExplodingConnection:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise RuntimeError("iterator died")
+
+    dispatcher = _NoopDispatcher(connection=_ExplodingConnection())
+    await dispatcher.start()
+    for _ in range(50):
+        if dispatcher.failure is not None:
+            break
+        await asyncio.sleep(0.01)
+    await dispatcher.stop()
+
+    assert isinstance(dispatcher.failure, RuntimeError) and str(dispatcher.failure) == "iterator died"

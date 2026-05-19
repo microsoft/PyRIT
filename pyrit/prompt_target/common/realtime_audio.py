@@ -152,6 +152,18 @@ class _RealtimeEventDispatcher(ABC):
         self._current_turn: _RealtimeTurnState | None = None
         self._task: asyncio.Task[None] | None = None
         self._callback_tasks: set[asyncio.Task[None]] = set()
+        self._failure: BaseException | None = None
+
+    @property
+    def failure(self) -> BaseException | None:
+        """
+        The exception that killed the dispatch loop, or None if it is still healthy.
+
+        Set when the outer event iterator raises. Callers (e.g. ``BargeInAttack``)
+        poll this between operations to detect a dead connection without needing a
+        callback. Once set, ``stop()`` should be called and the attack torn down.
+        """
+        return self._failure
 
     async def start(self) -> None:
         """Start the background dispatch task. Idempotent."""
@@ -217,6 +229,7 @@ class _RealtimeEventDispatcher(ABC):
             raise
         except Exception as e:
             logger.exception(f"Realtime dispatch loop crashed: {e}")
+            self._failure = e
             turn = self._current_turn
             if turn is not None and not turn.completion.done():
                 turn.completion.set_exception(e)

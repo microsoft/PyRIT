@@ -11,7 +11,11 @@ import pytest
 from pyrit.exceptions.exception_classes import ServerErrorException
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import RealtimeTarget, ServerVadConfig
-from pyrit.prompt_target.common.realtime_audio import RealtimeTargetResult, _RealtimeTurnState
+from pyrit.prompt_target.common.realtime_audio import (
+    RealtimeTargetResult,
+    _CommittedEvent,
+    _RealtimeTurnState,
+)
 from pyrit.prompt_target.openai.openai_realtime_target import _OpenAIRealtimeDispatcher
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
@@ -909,3 +913,105 @@ async def test_route_event_committed_event_without_callback_is_noop():
         event=_scripted_event("input_audio_buffer.committed", item_id="raw_item_99"),
         state=None,
     )
+
+
+# Placeholder for R2 tests
+
+
+# ---- subscribe_events_async + request_response_async (R2) ------------------------------------
+
+
+async def test_subscribe_events_async_returns_started_dispatcher(target):
+    """Subscription handle must be a started dispatcher; closing tears the task down."""
+    events = [_scripted_event("input_audio_buffer.committed", item_id="i_1")]
+
+    async def event_iter():
+        for e in events:
+            yield e
+        # Keep the iterator alive briefly so the dispatch task can run.
+        await asyncio.sleep(0.01)
+
+    connection = MagicMock()
+    connection.__aiter__ = lambda self_: event_iter()
+
+    received: list[_CommittedEvent] = []
+
+    async def on_committed(event):
+        received.append(event)
+
+    dispatcher = await target.subscribe_events_async(
+        connection=connection, on_user_audio_committed=on_committed
+    )
+    try:
+        # Yield until the dispatch loop processes the scripted event.
+        for _ in range(20):
+            if received:
+                break
+            await asyncio.sleep(0.01)
+        assert len(received) == 1 and received[0].item_id == "i_1"
+    finally:
+        await dispatcher.stop()
+
+
+async def test_subscribe_events_async_records_loop_failure_on_dispatcher(target):
+    """A dispatcher loop crash must be reachable via the dispatcher's ``failure`` property."""
+
+    async def boom_iter():
+        raise RuntimeError("loop kaboom")
+        yield  # pragma: no cover  # makes it a generator
+
+    connection = MagicMock()
+    connection.__aiter__ = lambda self_: boom_iter()
+
+    dispatcher = await target.subscribe_events_async(connection=connection)
+    try:
+        for _ in range(50):
+            if dispatcher.failure is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert isinstance(dispatcher.failure, RuntimeError)
+    finally:
+        await dispatcher.stop()
+
+
+async def test_request_response_async_registers_turn_and_sends_response_create(target):
+    """request_response_async must register a fresh turn and call response.create."""
+    connection = AsyncMock()
+    dispatcher = MagicMock()
+    dispatcher.register_turn = MagicMock()
+
+    future = await target.request_response_async(connection=connection, dispatcher=dispatcher)
+
+    dispatcher.register_turn.assert_called_once()
+    registered_state = dispatcher.register_turn.call_args.args[0]
+    assert isinstance(registered_state, _RealtimeTurnState)
+    assert registered_state.completion is future
+    connection.response.create.assert_awaited_once_with()
+
+
+async def test_request_response_async_future_resolves_with_dispatcher_result(target):
+    """The future returned by request_response_async resolves when the turn ends."""
+    connection = AsyncMock()
+    dispatcher = MagicMock()
+    expected_result = RealtimeTargetResult(audio_bytes=b"\xaa" * 96, transcripts=["ok"])
+
+    def _register(state):
+        state.completion.set_result(expected_result)
+
+    dispatcher.register_turn = MagicMock(side_effect=_register)
+
+    future = await target.request_response_async(connection=connection, dispatcher=dispatcher)
+    result = await future
+    assert result is expected_result
+
+
+async def test_request_response_async_propagates_register_turn_failure(target):
+    """If another turn is already pending, register_turn raises and request_response_async surfaces it."""
+    connection = AsyncMock()
+    dispatcher = MagicMock()
+    dispatcher.register_turn = MagicMock(side_effect=RuntimeError("turn already pending"))
+
+    with pytest.raises(RuntimeError, match="turn already pending"):
+        await target.request_response_async(connection=connection, dispatcher=dispatcher)
+
+    connection.response.create.assert_not_called()

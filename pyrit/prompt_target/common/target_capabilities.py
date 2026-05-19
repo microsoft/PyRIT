@@ -24,6 +24,7 @@ class CapabilityName(str, Enum):
     JSON_OUTPUT = "supports_json_output"
     EDITABLE_HISTORY = "supports_editable_history"
     SYSTEM_PROMPT = "supports_system_prompt"
+    STREAMING_BARGE_IN = "supports_streaming_barge_in"
 
 
 class UnsupportedCapabilityBehavior(str, Enum):
@@ -137,6 +138,13 @@ class TargetCapabilities:
 
     # Whether the target natively supports system prompts.
     supports_system_prompt: bool = False
+
+    # Whether the target supports the streaming barge-in API: pushing user audio chunks
+    # via ``push_audio_chunk_async``, subscribing to user-audio-committed events via
+    # ``subscribe_events_async``, swapping committed items via
+    # ``delete_conversation_item_async`` + ``insert_user_audio_async``, and triggering
+    # responses via ``request_response_async``. Required by ``BargeInAttack``.
+    supports_streaming_barge_in: bool = False
 
     # The input modalities supported by the target (e.g., "text", "image").
     input_modalities: frozenset[frozenset[PromptDataType]] = frozenset({frozenset(["text"])})
