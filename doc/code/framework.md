@@ -50,6 +50,11 @@ Run standardized evaluation scenarios at scale across harm categories.
 Register and discover targets, scorers, and converters via class and instance registries.
 ::::
 
+::::{card} 🖨️ Output
+:link: ./output/0_output
+Render attack results, scenario results, conversations, and scores to terminal, files, or Jupyter.
+::::
+
 :::::
 
 ---

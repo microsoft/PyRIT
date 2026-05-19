@@ -7,7 +7,6 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 # ---
-
 # %% [markdown]
 # # Violent Durian Attack (Multi-Turn) - optional
 #
@@ -26,9 +25,9 @@ from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackScoringConfig,
-    ConsoleAttackResultPrinter,
     RedTeamingAttack,
 )
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import SelfAskTrueFalseScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -128,4 +127,4 @@ attack = RedTeamingAttack(
 )
 
 result = await attack.execute_async(objective=conversation_objective)  # type: ignore
-await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
+await output_attack_async(result)

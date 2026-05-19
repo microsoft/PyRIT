@@ -69,7 +69,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
     Each pair consists of a rendered comic image (template with goal text overlaid in
     the bounding box) and a text prompt asking the model to complete the comic.
 
-    Reference: [@yu2025comicjailbreak]
+    Reference: [@tan2026comicjailbreak]
     Paper: https://arxiv.org/abs/2603.21697
     Repository: https://github.com/Social-AI-Studio/ComicJailbreak
     """

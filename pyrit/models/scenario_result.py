@@ -61,7 +61,7 @@ class ScenarioResult:
         scenario_identifier: ScenarioIdentifier,
         objective_target_identifier: "ComponentIdentifier",
         attack_results: dict[str, list[AttackResult]],
-        objective_scorer_identifier: "ComponentIdentifier",
+        objective_scorer_identifier: "ComponentIdentifier | None",
         scenario_run_state: ScenarioRunState = "CREATED",
         labels: dict[str, str] | None = None,
         creation_time: datetime | None = None,
@@ -80,7 +80,8 @@ class ScenarioResult:
             scenario_identifier (ScenarioIdentifier): Identifier for the executed scenario.
             objective_target_identifier (ComponentIdentifier): Target identifier.
             attack_results (dict[str, List[AttackResult]]): Results grouped by atomic attack name.
-            objective_scorer_identifier (ComponentIdentifier): Objective scorer identifier.
+            objective_scorer_identifier (ComponentIdentifier | None): Objective scorer identifier,
+                or None if the scenario has no objective scorer.
             scenario_run_state (ScenarioRunState): Current scenario run state.
             labels (Optional[dict[str, str]]): Optional labels.
             creation_time (datetime | None): When the scenario result was created.
