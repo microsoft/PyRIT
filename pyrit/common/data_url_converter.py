@@ -54,7 +54,7 @@ async def convert_local_image_to_data_url(image_path: str) -> str:
     """
     print_deprecation_message(
         old_item="pyrit.common.data_url_converter.convert_local_image_to_data_url",
-        new_item=convert_local_image_to_data_url_async,
-        removed_in="v0.16.0",
+        new_item="pyrit.common.data_url_converter.convert_local_image_to_data_url_async",
+        removed_in="0.16.0",
     )
     return await convert_local_image_to_data_url_async(image_path)

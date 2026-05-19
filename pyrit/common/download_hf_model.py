@@ -132,8 +132,8 @@ async def download_specific_files(model_id: str, file_patterns: list[str] | None
     """Delegate to :func:`download_specific_files_async` (deprecated alias)."""
     print_deprecation_message(
         old_item="pyrit.common.download_hf_model.download_specific_files",
-        new_item=download_specific_files_async,
-        removed_in="v0.16.0",
+        new_item="pyrit.common.download_hf_model.download_specific_files_async",
+        removed_in="0.16.0",
     )
     await download_specific_files_async(model_id, file_patterns, token, cache_dir)
 
@@ -147,8 +147,8 @@ async def download_chunk(url: str, headers: dict[str, str], start: int, end: int
     """
     print_deprecation_message(
         old_item="pyrit.common.download_hf_model.download_chunk",
-        new_item=download_chunk_async,
-        removed_in="v0.16.0",
+        new_item="pyrit.common.download_hf_model.download_chunk_async",
+        removed_in="0.16.0",
     )
     return await download_chunk_async(url, headers, start, end, client)
 
@@ -157,8 +157,8 @@ async def download_file(url: str, token: str, download_dir: Path, num_splits: in
     """Delegate to :func:`download_file_async` (deprecated alias)."""
     print_deprecation_message(
         old_item="pyrit.common.download_hf_model.download_file",
-        new_item=download_file_async,
-        removed_in="v0.16.0",
+        new_item="pyrit.common.download_hf_model.download_file_async",
+        removed_in="0.16.0",
     )
     await download_file_async(url, token, download_dir, num_splits)
 
@@ -169,7 +169,7 @@ async def download_files(
     """Delegate to :func:`download_files_async` (deprecated alias)."""
     print_deprecation_message(
         old_item="pyrit.common.download_hf_model.download_files",
-        new_item=download_files_async,
-        removed_in="v0.16.0",
+        new_item="pyrit.common.download_hf_model.download_files_async",
+        removed_in="0.16.0",
     )
     await download_files_async(urls, token, download_dir, num_splits, parallel_downloads)
