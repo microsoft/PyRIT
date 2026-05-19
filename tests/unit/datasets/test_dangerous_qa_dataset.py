@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -114,3 +115,94 @@ class TestDangerousQADataset:
         with patch.object(loader, "_load_raw_questions", return_value=["question", 42]):
             with pytest.raises(ValueError, match="list of strings"):
                 loader._fetch_questions(cache=False)
+
+    def test_load_raw_questions_public_url_returns_payload(self, mock_dangerous_qa_data):
+        """Test that a successful HTTP fetch returns the parsed JSON list."""
+        loader = _DangerousQADataset()
+
+        mock_response = type(
+            "MockResponse",
+            (),
+            {"status_code": 200, "json": lambda self: mock_dangerous_qa_data},
+        )()
+
+        with patch(
+            "pyrit.datasets.seed_datasets.remote.dangerous_qa_dataset.requests.get",
+            return_value=mock_response,
+        ):
+            result = loader._load_raw_questions()
+
+        assert result == mock_dangerous_qa_data
+
+    def test_load_raw_questions_file_source(self, tmp_path, mock_dangerous_qa_data):
+        """Test that source_type='file' reads questions from a local JSON file."""
+        source_file = tmp_path / "toxic_outs.json"
+        source_file.write_text(json.dumps(mock_dangerous_qa_data), encoding="utf-8")
+
+        loader = _DangerousQADataset(source=str(source_file), source_type="file")
+        result = loader._load_raw_questions()
+
+        assert result == mock_dangerous_qa_data
+
+    def test_fetch_questions_no_cache_returns_raw(self, mock_dangerous_qa_data, tmp_path):
+        """Test that cache=False fetches fresh and does not write to disk."""
+        loader = _DangerousQADataset()
+
+        with (
+            patch(
+                "pyrit.datasets.seed_datasets.remote.dangerous_qa_dataset.DB_DATA_PATH",
+                tmp_path,
+            ),
+            patch.object(loader, "_load_raw_questions", return_value=mock_dangerous_qa_data),
+        ):
+            result = loader._fetch_questions(cache=False)
+
+        assert result == mock_dangerous_qa_data
+        # cache directory must remain empty when cache=False
+        cache_dir = tmp_path / "seed-prompt-entries"
+        assert not cache_dir.exists() or not any(cache_dir.iterdir())
+
+    def test_fetch_questions_writes_cache_on_miss(self, mock_dangerous_qa_data, tmp_path):
+        """Test that cache=True writes a wrapped-dict cache file when none exists."""
+        loader = _DangerousQADataset()
+
+        with (
+            patch(
+                "pyrit.datasets.seed_datasets.remote.dangerous_qa_dataset.DB_DATA_PATH",
+                tmp_path,
+            ),
+            patch.object(loader, "_load_raw_questions", return_value=mock_dangerous_qa_data),
+        ):
+            result = loader._fetch_questions(cache=True)
+
+        assert result == mock_dangerous_qa_data
+
+        cache_file = (
+            tmp_path / "seed-prompt-entries" / loader._get_cache_file_name(source=loader.source, file_type="json")
+        )
+        assert cache_file.exists()
+        with cache_file.open("r", encoding="utf-8") as f:
+            cached = json.load(f)
+        assert cached == [{"question": q} for q in mock_dangerous_qa_data]
+
+    def test_fetch_questions_reads_from_cache_on_hit(self, mock_dangerous_qa_data, tmp_path):
+        """Test that cache=True returns cached questions without re-fetching."""
+        loader = _DangerousQADataset()
+
+        cache_dir = tmp_path / "seed-prompt-entries"
+        cache_dir.mkdir(parents=True)
+        cache_file = cache_dir / loader._get_cache_file_name(source=loader.source, file_type="json")
+        with cache_file.open("w", encoding="utf-8") as f:
+            json.dump([{"question": q} for q in mock_dangerous_qa_data], f)
+
+        with (
+            patch(
+                "pyrit.datasets.seed_datasets.remote.dangerous_qa_dataset.DB_DATA_PATH",
+                tmp_path,
+            ),
+            patch.object(loader, "_load_raw_questions") as mock_load,
+        ):
+            result = loader._fetch_questions(cache=True)
+
+        assert result == mock_dangerous_qa_data
+        mock_load.assert_not_called()
