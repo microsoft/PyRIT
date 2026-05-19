@@ -282,7 +282,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
                   }}
                 >
                   <Radio value="api_key" label="API Key" />
-                  <Radio value="entra" label="Microsoft Entra ID (DefaultAzureCredential)" />
+                  <Radio value="entra" label="Microsoft Entra Authentication" />
                 </RadioGroup>
               </Field>
 
