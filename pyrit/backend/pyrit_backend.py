@@ -19,7 +19,7 @@ from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
 from typing import Optional
 
-from pyrit.cli._cli_args import ARG_HELP, validate_log_level_argparse
+from pyrit.common.cli_helpers import CONFIG_FILE_HELP, validate_log_level_argparse
 
 
 def parse_args(*, args: Optional[list[str]] = None) -> Namespace:
@@ -69,7 +69,7 @@ Examples:
     parser.add_argument(
         "--config-file",
         type=Path,
-        help=ARG_HELP["config_file"],
+        help=CONFIG_FILE_HELP,
     )
 
     parser.add_argument(

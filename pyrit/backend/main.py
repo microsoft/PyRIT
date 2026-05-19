@@ -94,6 +94,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if config.allow_custom_initializers:
         logger.warning("Custom initializer registration is ENABLED (allow_custom_initializers: true).")
 
+    # Mount the bundled frontend (or print a dev/missing-frontend notice).
+    # Done here rather than at module load so test imports of `pyrit.backend.main`
+    # don't emit noise and don't perform filesystem side effects.
+    setup_frontend()
+
     yield
 
 
@@ -167,7 +172,3 @@ def setup_frontend() -> None:
         print("   The frontend must be built and included in the package.")
         print("   Run: python build_scripts/prepare_package.py")
         print("   API endpoints will still work but the UI won't be available.")
-
-
-# Set up frontend at module load time (needed when running via uvicorn)
-setup_frontend()

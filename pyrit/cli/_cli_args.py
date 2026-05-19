@@ -23,6 +23,11 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, get_origin
 
+from pyrit.common.cli_helpers import (
+    CONFIG_FILE_HELP,
+    validate_log_level,
+    validate_log_level_argparse,
+)
 from pyrit.common.parameter import Parameter, coerce_value
 
 if TYPE_CHECKING:
@@ -60,27 +65,6 @@ def validate_database(*, database: str) -> str:
     if database not in valid_databases:
         raise ValueError(f"Invalid database type: {database}. Must be one of: {', '.join(valid_databases)}")
     return database
-
-
-def validate_log_level(*, log_level: str) -> int:
-    """
-    Validate log level and convert to logging constant.
-
-    Args:
-        log_level: Log level string (case-insensitive).
-
-    Returns:
-        Validated log level as logging constant (e.g., logging.WARNING).
-
-    Raises:
-        ValueError: If log level is invalid.
-    """
-    valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-    level_upper = log_level.upper()
-    if level_upper not in valid_levels:
-        raise ValueError(f"Invalid log level: {log_level}. Must be one of: {', '.join(valid_levels)}")
-    level_value: int = getattr(logging, level_upper)
-    return level_value
 
 
 def validate_integer(value: str, *, name: str = "value", min_value: Optional[int] = None) -> int:
@@ -226,7 +210,6 @@ def resolve_env_files(*, env_file_paths: list[str]) -> list[Path]:
 # apply the min_value parameter while still allowing the decorator to work correctly.
 # ---------------------------------------------------------------------------
 validate_database_argparse = _argparse_validator(validate_database)
-validate_log_level_argparse = _argparse_validator(validate_log_level)
 positive_int = _argparse_validator(lambda v: validate_integer(v, min_value=1))
 non_negative_int = _argparse_validator(lambda v: validate_integer(v, min_value=0))
 resolve_env_files_argparse = _argparse_validator(resolve_env_files)
@@ -270,11 +253,7 @@ def parse_memory_labels(json_string: str) -> dict[str, str]:
 # Shared argument help text
 # ---------------------------------------------------------------------------
 ARG_HELP = {
-    "config_file": (
-        "Path to a YAML configuration file. Allows specifying database, initializers (with args), "
-        "initialization scripts, and env files. CLI arguments override config file values. "
-        "If not specified, ~/.pyrit/.pyrit_conf is loaded if it exists."
-    ),
+    "config_file": CONFIG_FILE_HELP,
     "initializers": (
         "Built-in initializer names to run before the scenario. "
         "Supports optional params with name:key=val syntax "
