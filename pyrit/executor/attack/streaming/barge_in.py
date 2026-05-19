@@ -19,9 +19,10 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, cast
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.executor.attack.core.attack_config import AttackConverterConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
 from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
@@ -29,6 +30,7 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
 )
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
@@ -44,6 +46,8 @@ if TYPE_CHECKING:
     from pyrit.prompt_target.openai.openai_realtime_target import RealtimeTarget
 
 logger = logging.getLogger(__name__)
+
+_REALTIME_SAMPLE_RATE_HZ = 24000
 
 
 @dataclass
@@ -88,6 +92,8 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         self,
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
+        attack_converter_config: Optional[AttackConverterConfig] = None,
+        prompt_normalizer: Optional[PromptNormalizer] = None,
         params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
     ) -> None:
         """
@@ -98,6 +104,13 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
                 in its capabilities (validated by ``TARGET_REQUIREMENTS``); the
                 server-VAD configuration check happens lazily when the streaming
                 session config is sent.
+            attack_converter_config: Converter configurations applied to each
+                committed user turn via ``PromptNormalizer.convert_audio_async``.
+                ``request_converters`` runs on the raw user audio post-commit;
+                ``response_converters`` is currently unused (streaming responses
+                are surfaced raw to the caller). Defaults to no converters.
+            prompt_normalizer: Optional normalizer override. Defaults to a fresh
+                ``PromptNormalizer`` instance.
             params_type: Attack parameter dataclass type. Defaults to
                 ``AttackParameters``.
         """
@@ -107,6 +120,10 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             params_type=params_type,
             logger=logger,
         )
+        attack_converter_config = attack_converter_config or AttackConverterConfig()
+        self._request_converters = attack_converter_config.request_converters
+        self._response_converters = attack_converter_config.response_converters
+        self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
 
     def _validate_context(self, *, context: BargeInAttackContext[Any]) -> None:
         """
@@ -149,20 +166,50 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         assert context.audio_chunks is not None  # validated upstream
 
         connection = await target.connect(conversation_id=context.conversation_id)
+        raw_buffer = bytearray()
+        turn_lock = asyncio.Lock()
         last_result: RealtimeTargetResult | None = None
         executed_turns = 0
 
         async def on_committed(event: _CommittedEvent) -> None:
-            """On each user turn commit, manually fire response.create and record the result."""
+            """Convert-on-commit dance: snapshot raw audio → run converters → swap → request response."""
             nonlocal last_result, executed_turns
             try:
-                turn_future = await target.request_response_async(
-                    connection=connection, dispatcher=dispatcher
-                )
-                last_result = await turn_future
-                executed_turns += 1
+                async with turn_lock:
+                    snapshot = bytes(raw_buffer)
+                    raw_buffer.clear()
+
+                    try:
+                        converted_pcm, _identifiers = await self._prompt_normalizer.convert_audio_async(
+                            pcm_bytes=snapshot,
+                            sample_rate=_REALTIME_SAMPLE_RATE_HZ,
+                            converter_configurations=self._request_converters,
+                        )
+                    except Exception:
+                        logger.exception("Audio converters failed; dropping turn.")
+                        return
+
+                    using_converted_audio = bool(self._request_converters) and converted_pcm != snapshot
+                    # Without converters, let the server's already-committed raw item drive the
+                    # response. With converters, replace the raw item before triggering response.
+                    if using_converted_audio:
+                        try:
+                            await target.delete_conversation_item_async(
+                                connection=connection, item_id=event.item_id
+                            )
+                        except Exception as e:
+                            logger.warning(f"conversation.item.delete failed for {event.item_id}: {e}")
+                        await target.insert_user_audio_async(
+                            connection=connection, pcm_bytes=converted_pcm
+                        )
+
+                    turn_future = await target.request_response_async(
+                        connection=connection, dispatcher=dispatcher
+                    )
+                    last_result = await turn_future
+                    executed_turns += 1
             except Exception:
-                logger.exception("BargeInAttack turn failed while awaiting response.")
+                logger.exception("BargeInAttack turn failed in convert-on-commit handler.")
 
         dispatcher: _RealtimeEventDispatcher = await target.subscribe_events_async(
             connection=connection,
@@ -175,6 +222,8 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             )
 
             async for chunk in context.audio_chunks:
+                if chunk:
+                    raw_buffer.extend(chunk)
                 await target.push_audio_chunk_async(connection=connection, pcm_bytes=chunk)
 
             # Give server VAD time to commit the buffer and the dispatcher to drain.
