@@ -285,18 +285,30 @@ class Message:
 
     def to_dict(self) -> dict[str, object]:
         """
-        Convert the message to a dictionary representation including all piece details.
+        Convert the message to a dictionary representation.
 
-        Serializes each piece individually via MessagePiece.to_dict(). All message-level
-        attributes (role, conversation_id, sequence, is_simulated) are derived from the
-        pieces themselves, so only 'pieces' is included. This is the format expected by
-        from_dict().
+        Includes the original top-level fields ('role', 'converted_value', 'conversation_id',
+        'sequence', 'converted_value_data_type') for backward compatibility, plus a 'pieces'
+        list containing each MessagePiece.to_dict() — the latter is the source of truth used
+        by from_dict().
 
         Returns:
-            dict[str, object]: Dictionary with a single 'pieces' key containing a list
-                of MessagePiece.to_dict() dicts.
+            dict[str, object]: Dictionary with 'role', 'converted_value', 'conversation_id',
+                'sequence', 'converted_value_data_type', and 'pieces' keys.
         """
+        if len(self.message_pieces) == 1:
+            converted_value: str | list[str] = self.message_pieces[0].converted_value
+            converted_value_data_type: str | list[str] = self.message_pieces[0].converted_value_data_type
+        else:
+            converted_value = [piece.converted_value for piece in self.message_pieces]
+            converted_value_data_type = [piece.converted_value_data_type for piece in self.message_pieces]
+
         return {
+            "role": self.api_role,
+            "converted_value": converted_value,
+            "conversation_id": self.conversation_id,
+            "sequence": self.sequence,
+            "converted_value_data_type": converted_value_data_type,
             "pieces": [piece.to_dict() for piece in self.message_pieces],
         }
 
