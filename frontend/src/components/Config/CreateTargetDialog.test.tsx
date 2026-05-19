@@ -497,4 +497,152 @@ describe("CreateTargetDialog", () => {
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
+
+  it("should hide the API Key field and omit api_key/include auth_mode when Entra is selected", async () => {
+    const onCreated = jest.fn();
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "openai_chat_entra",
+      target_type: "OpenAIChatTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onCreated={onCreated} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, {
+      target: { value: "https://my-resource.openai.azure.com/" },
+    });
+
+    // API Key field is visible by default.
+    expect(
+      screen.getByPlaceholderText("API key (stored in memory only)")
+    ).toBeInTheDocument();
+
+    // Select Entra radio.
+    await user.click(
+      screen.getByRole("radio", {
+        name: /Microsoft Entra ID/,
+      })
+    );
+
+    // API Key field is hidden in Entra mode.
+    expect(
+      screen.queryByPlaceholderText("API key (stored in memory only)")
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIChatTarget",
+        params: {
+          endpoint: "https://my-resource.openai.azure.com/",
+        },
+        auth_mode: "entra",
+      });
+      expect(onCreated).toHaveBeenCalled();
+    });
+  });
+
+  it("should clear a previously-typed API key when switching to Entra", async () => {
+    const onCreated = jest.fn();
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "openai_chat_entra",
+      target_type: "OpenAIChatTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onCreated={onCreated} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, {
+      target: { value: "https://my-resource.openai.azure.com/" },
+    });
+
+    // Type a key, then switch to Entra.
+    fireEvent.change(
+      screen.getByPlaceholderText("API key (stored in memory only)"),
+      { target: { value: "sk-typed-before-switch" } }
+    );
+
+    await user.click(
+      screen.getByRole("radio", { name: /Microsoft Entra ID/ })
+    );
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      const call = mockedTargetsApi.createTarget.mock.calls[0][0];
+      expect(call.auth_mode).toBe("entra");
+      expect(call.params).not.toHaveProperty("api_key");
+    });
+  });
+
+  it("should warn the user when Entra is selected for a non-Azure OpenAI endpoint", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, { target: { value: "https://api.openai.com/" } });
+
+    await user.click(
+      screen.getByRole("radio", { name: /Microsoft Entra ID/ })
+    );
+
+    expect(
+      screen.getByText(/Microsoft Entra ID authentication is only supported for Azure endpoints/)
+    ).toBeInTheDocument();
+  });
+
+  it("should NOT warn when Entra is selected for a recognized Azure endpoint", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, {
+      target: { value: "https://my-resource.openai.azure.com/" },
+    });
+
+    await user.click(
+      screen.getByRole("radio", { name: /Microsoft Entra ID/ })
+    );
+
+    expect(
+      screen.queryByText(/only supported for Azure endpoints/)
+    ).not.toBeInTheDocument();
+  });
 });

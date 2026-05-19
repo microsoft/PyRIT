@@ -306,6 +306,177 @@ class TestCreateTarget:
         assert result.underlying_model_name == "gpt-4o"
 
 
+class TestCreateTargetEntraAuth:
+    """Tests for TargetService.create_target_async with auth_mode='entra'."""
+
+    async def test_create_openai_target_with_entra_injects_token_provider(self, sqlite_instance) -> None:
+        """OpenAI Entra path: api_key is replaced with the async token provider callable."""
+
+        async def sentinel_provider() -> str:
+            return "test-token"
+
+        with patch(
+            "pyrit.backend.services.target_service.get_azure_openai_auth",
+            return_value=sentinel_provider,
+        ) as mock_get_auth:
+            service = TargetService()
+
+            request = CreateTargetRequest(
+                type="OpenAIChatTarget",
+                params={
+                    "endpoint": "https://test.openai.azure.com/",
+                    "model_name": "gpt-4o",
+                },
+                auth_mode="entra",
+            )
+
+            result = await service.create_target_async(request=request)
+
+            mock_get_auth.assert_called_once_with("https://test.openai.azure.com/")
+            target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
+            assert target_obj is not None
+            # OpenAI target preserves async callables verbatim through ensure_async_token_provider.
+            assert target_obj._api_key is sentinel_provider  # type: ignore[attr-defined]
+
+    async def test_create_openai_target_with_entra_drops_user_api_key(self, sqlite_instance) -> None:
+        """Any api_key supplied alongside auth_mode='entra' must be discarded."""
+
+        async def sentinel_provider() -> str:
+            return "test-token"
+
+        with patch(
+            "pyrit.backend.services.target_service.get_azure_openai_auth",
+            return_value=sentinel_provider,
+        ):
+            service = TargetService()
+
+            request = CreateTargetRequest(
+                type="OpenAIChatTarget",
+                params={
+                    "endpoint": "https://test.openai.azure.com/",
+                    "model_name": "gpt-4o",
+                    "api_key": "should-be-ignored",
+                },
+                auth_mode="entra",
+            )
+
+            result = await service.create_target_async(request=request)
+
+            target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
+            assert target_obj is not None
+            assert target_obj._api_key is sentinel_provider  # type: ignore[attr-defined]
+            # The literal "should-be-ignored" string must never appear.
+            assert target_obj._api_key != "should-be-ignored"  # type: ignore[attr-defined]
+
+    async def test_create_openai_target_with_entra_does_not_mutate_request_params(self, sqlite_instance) -> None:
+        """The CreateTargetRequest.params object must remain unchanged after creation."""
+
+        async def sentinel_provider() -> str:
+            return "test-token"
+
+        with patch(
+            "pyrit.backend.services.target_service.get_azure_openai_auth",
+            return_value=sentinel_provider,
+        ):
+            service = TargetService()
+
+            original_params = {
+                "endpoint": "https://test.openai.azure.com/",
+                "model_name": "gpt-4o",
+                "api_key": "original-key",
+            }
+            request = CreateTargetRequest(
+                type="OpenAIChatTarget",
+                params=dict(original_params),
+                auth_mode="entra",
+            )
+
+            await service.create_target_async(request=request)
+
+            # The caller's request.params must be unchanged after the call.
+            assert request.params == original_params
+
+    async def test_create_openai_target_with_entra_non_azure_endpoint_raises(self, sqlite_instance) -> None:
+        """Entra ID requires a known Azure OpenAI / AI Foundry hostname suffix."""
+        service = TargetService()
+
+        request = CreateTargetRequest(
+            type="OpenAIChatTarget",
+            params={"endpoint": "https://api.openai.com/"},
+            auth_mode="entra",
+        )
+
+        with pytest.raises(ValueError, match="Azure endpoint"):
+            await service.create_target_async(request=request)
+
+    async def test_create_openai_target_with_entra_substring_lookalike_endpoint_raises(self, sqlite_instance) -> None:
+        """Substring 'azure' in the hostname must not be enough to pass Entra validation."""
+        service = TargetService()
+
+        request = CreateTargetRequest(
+            type="OpenAIChatTarget",
+            # Hostname contains 'azure' but does NOT end with an approved suffix.
+            params={"endpoint": "https://evil-azure.example.com/"},
+            auth_mode="entra",
+        )
+
+        with pytest.raises(ValueError, match="Azure endpoint"):
+            await service.create_target_async(request=request)
+
+    async def test_create_openai_target_with_entra_missing_endpoint_raises(self, sqlite_instance) -> None:
+        """Entra ID for OpenAI must reject a missing endpoint with a clear error."""
+        service = TargetService()
+
+        request = CreateTargetRequest(
+            type="OpenAIChatTarget",
+            params={},
+            auth_mode="entra",
+        )
+
+        with pytest.raises(ValueError, match="endpoint"):
+            await service.create_target_async(request=request)
+
+    async def test_create_azureml_target_with_entra_injects_token_provider(self, sqlite_instance) -> None:
+        """AzureML Entra path: api_key is replaced with the ML scope token provider."""
+
+        async def sentinel_provider() -> str:
+            return "aml-token"
+
+        with patch(
+            "pyrit.backend.services.target_service.get_azure_async_token_provider",
+            return_value=sentinel_provider,
+        ) as mock_get_provider:
+            service = TargetService()
+
+            request = CreateTargetRequest(
+                type="AzureMLChatTarget",
+                params={"endpoint": "https://my-aml.region.inference.ml.azure.com/score"},
+                auth_mode="entra",
+            )
+
+            result = await service.create_target_async(request=request)
+
+            mock_get_provider.assert_called_once_with("https://ml.azure.com/.default")
+            target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
+            assert target_obj is not None
+            # AzureMLChatTarget stores the provider on _api_key_provider; static _api_key is cleared.
+            assert target_obj._api_key_provider is sentinel_provider  # type: ignore[attr-defined]
+            assert target_obj._api_key == ""  # type: ignore[attr-defined]
+
+    async def test_create_target_entra_unsupported_type_raises(self, sqlite_instance) -> None:
+        """Entra ID is only supported for OpenAI-family and AzureMLChatTarget."""
+        service = TargetService()
+
+        request = CreateTargetRequest(
+            type="TextTarget",
+            params={},
+            auth_mode="entra",
+        )
+
+        with pytest.raises(ValueError, match="does not support Entra"):
+            await service.create_target_async(request=request)
+
+
 class TestTargetServiceSingleton:
     """Tests for get_target_service singleton function."""
 

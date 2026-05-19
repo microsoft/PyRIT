@@ -12,10 +12,13 @@ Targets can be:
 - Retrieved from registry (pre-registered at startup or created earlier)
 """
 
+import logging
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urlparse
 
 from pyrit import prompt_target
+from pyrit.auth import get_azure_async_token_provider, get_azure_openai_auth
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.targets import (
@@ -24,7 +27,43 @@ from pyrit.backend.models.targets import (
     TargetListResponse,
 )
 from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target.azure_ml_chat_target import AzureMLChatTarget
+from pyrit.prompt_target.openai.openai_target import OpenAITarget
 from pyrit.registry.object_registries import TargetRegistry
+
+logger = logging.getLogger(__name__)
+
+# Scope for Azure Machine Learning managed online endpoints.
+_AZURE_ML_SCOPE = "https://ml.azure.com/.default"
+
+# Recognised Azure OpenAI / AI Foundry hostname suffixes. Used for strict
+# endpoint validation when Entra ID auth is requested, so a bearer token is
+# only ever issued for a known Microsoft-operated endpoint.
+_AZURE_OPENAI_HOSTNAME_SUFFIXES = (
+    ".openai.azure.com",
+    ".ai.azure.com",
+    ".services.ai.azure.com",
+    ".cognitiveservices.azure.com",
+)
+
+
+def _is_azure_openai_endpoint(endpoint: str) -> bool:
+    """
+    Return True if ``endpoint`` resolves to a known Azure OpenAI / AI Foundry host.
+
+    Strict hostname-suffix check (not a substring search) so a bearer token is
+    never issued for an attacker-controlled endpoint whose URL merely contains
+    the word "azure".
+
+    Args:
+        endpoint (str): The endpoint URL to validate.
+
+    Returns:
+        bool: True if the endpoint's hostname ends with a recognised Azure OpenAI /
+        AI Foundry suffix; False otherwise (including for malformed URLs).
+    """
+    hostname = (urlparse(endpoint).hostname or "").lower()
+    return any(hostname.endswith(suffix) for suffix in _AZURE_OPENAI_HOSTNAME_SUFFIXES)
 
 
 def _build_target_class_registry() -> dict[str, type]:
@@ -165,23 +204,83 @@ class TargetService:
         Instantiates the target with the given type and params,
         then registers it in the registry under its registry name.
 
+        When ``request.auth_mode == "entra"``, an Azure token-provider callable is
+        injected as ``api_key`` before instantiation. Any ``api_key`` value in the
+        original ``params`` is discarded in that case. Entra ID is supported for
+        OpenAI-family targets (against Azure endpoints) and ``AzureMLChatTarget``.
+
         Args:
-            request: The create target request with type and params.
+            request: The create target request with type, params, and auth_mode.
 
         Returns:
             TargetInstance with the new target's details.
 
         Raises:
-            ValueError: If the target type is not found.
+            ValueError: If the target type is not found, or if Entra ID is requested
+                for an unsupported target type, or if Entra ID is requested for an
+                OpenAI target against a non-Azure endpoint.
         """
-        # Instantiate from request params and register (uses unique_name as key by default)
         target_class = self._get_target_class(target_type=request.type)
-        target_obj = target_class(**request.params)
+
+        # Build a fresh params dict so we never mutate the incoming Pydantic model.
+        params: dict[str, Any] = dict(request.params)
+
+        if request.auth_mode == "entra":
+            params = self._apply_entra_auth(target_class=target_class, target_type=request.type, params=params)
+
+        target_obj = target_class(**params)
         self._registry.register_instance(target_obj)
 
-        # Build response from the registered instance
         target_registry_name = target_obj.get_identifier().unique_name
         return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
+
+    @staticmethod
+    def _apply_entra_auth(*, target_class: type, target_type: str, params: dict[str, Any]) -> dict[str, Any]:
+        """
+        Replace any ``api_key`` in ``params`` with an Entra ID token provider for
+        the given target class.
+
+        Args:
+            target_class (type): The target class being instantiated. Used to select the
+                correct token-provider scope.
+            target_type (str): The user-facing target type name (used only in error messages).
+            params (dict[str, Any]): The target constructor parameters from the request.
+                This dict is not mutated.
+
+        Returns:
+            dict[str, Any]: A new params dict with ``api_key`` replaced by an async
+            token-provider callable suitable for the target class.
+
+        Raises:
+            ValueError: If the target type does not support Entra ID, or if an
+                OpenAI target is given a non-Azure endpoint.
+        """
+        new_params = dict(params)
+        if "api_key" in new_params:
+            # User error: api_key isn't used in Entra mode. Don't log the value.
+            logger.debug("Discarding 'api_key' from params because auth_mode='entra'.")
+            new_params.pop("api_key", None)
+
+        if issubclass(target_class, OpenAITarget):
+            endpoint = new_params.get("endpoint")
+            if not isinstance(endpoint, str) or not endpoint:
+                raise ValueError("Entra ID authentication requires an 'endpoint' in params.")
+            if not _is_azure_openai_endpoint(endpoint):
+                raise ValueError(
+                    "Entra ID authentication requires an Azure endpoint "
+                    f"(*.openai.azure.com or *.ai.azure.com). Got: {endpoint}"
+                )
+            new_params["api_key"] = get_azure_openai_auth(endpoint)
+            return new_params
+
+        if issubclass(target_class, AzureMLChatTarget):
+            new_params["api_key"] = get_azure_async_token_provider(_AZURE_ML_SCOPE)
+            return new_params
+
+        raise ValueError(
+            f"Target type '{target_type}' does not support Entra ID authentication. "
+            "Supported types are OpenAI-family targets and AzureMLChatTarget."
+        )
 
 
 @lru_cache(maxsize=1)

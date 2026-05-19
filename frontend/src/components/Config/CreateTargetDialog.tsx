@@ -9,6 +9,8 @@ import {
   Button,
   Input,
   Label,
+  Radio,
+  RadioGroup,
   Select,
   Switch,
   Text,
@@ -32,6 +34,26 @@ const TARGET_TYPE_CONFIG: Record<string, 'openai' | 'azureml'> = {
 
 const SUPPORTED_TARGET_TYPES = Object.keys(TARGET_TYPE_CONFIG)
 
+type AuthMode = 'api_key' | 'entra'
+
+// Mirrors the backend's strict hostname-suffix check (target_service.py).
+// Used to warn the user before they submit; the backend remains the source of truth.
+const AZURE_OPENAI_HOSTNAME_SUFFIXES = [
+  '.openai.azure.com',
+  '.ai.azure.com',
+  '.services.ai.azure.com',
+  '.cognitiveservices.azure.com',
+]
+
+function isAzureOpenAiEndpoint(endpoint: string): boolean {
+  try {
+    const host = new URL(endpoint).hostname.toLowerCase()
+    return AZURE_OPENAI_HOSTNAME_SUFFIXES.some((s) => host.endsWith(s))
+  } catch {
+    return false
+  }
+}
+
 interface CreateTargetDialogProps {
   open: boolean
   onClose: () => void
@@ -45,6 +67,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
   const [modelName, setModelName] = useState('')
   const [hasDifferentUnderlying, setHasDifferentUnderlying] = useState(false)
   const [underlyingModel, setUnderlyingModel] = useState('')
+  const [authMode, setAuthMode] = useState<AuthMode>('api_key')
   const [apiKey, setApiKey] = useState('')
   const [maxNewTokens, setMaxNewTokens] = useState('400')
   const [temperature, setTemperature] = useState('1.0')
@@ -54,7 +77,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
   const [error, setError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<{ targetType?: string; endpoint?: string }>({})
 
-  const isAzureML = TARGET_TYPE_CONFIG[targetType] === 'azureml'
+  const targetKind = TARGET_TYPE_CONFIG[targetType]
+  const isAzureML = targetKind === 'azureml'
+  const isOpenAi = targetKind === 'openai'
+  const isEntra = authMode === 'entra'
+  const showNonAzureEntraWarning = isEntra && isOpenAi && endpoint !== '' && !isAzureOpenAiEndpoint(endpoint)
 
   const resetForm = () => {
     setTargetType('')
@@ -62,6 +89,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
     setModelName('')
     setHasDifferentUnderlying(false)
     setUnderlyingModel('')
+    setAuthMode('api_key')
     setApiKey('')
     setMaxNewTokens('400')
     setTemperature('1.0')
@@ -94,7 +122,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
         endpoint,
       }
       if (modelName) params.model_name = modelName
-      if (apiKey) params.api_key = apiKey
+      if (!isEntra && apiKey) params.api_key = apiKey
 
       if (hasDifferentUnderlying && underlyingModel) params.underlying_model = underlyingModel
 
@@ -112,6 +140,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
       await targetsApi.createTarget({
         type: targetType,
         params,
+        ...(isEntra ? { auth_mode: 'entra' as const } : {}),
       })
       resetForm()
       onCreated()
@@ -243,14 +272,39 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
                 </>
               )}
 
-              <Field label="API Key">
-                <Input
-                  type="password"
-                  placeholder="API key (stored in memory only)"
-                  value={apiKey}
-                  onChange={(_, data) => setApiKey(data.value)}
-                />
+              <Field label="Authentication">
+                <RadioGroup
+                  value={authMode}
+                  onChange={(_, data) => {
+                    const next = data.value as AuthMode
+                    setAuthMode(next)
+                    if (next === 'entra') setApiKey('')
+                  }}
+                >
+                  <Radio value="api_key" label="API Key" />
+                  <Radio value="entra" label="Microsoft Entra ID (DefaultAzureCredential)" />
+                </RadioGroup>
               </Field>
+
+              {showNonAzureEntraWarning && (
+                <MessageBar intent="warning">
+                  <MessageBarBody>
+                    Microsoft Entra ID authentication is only supported for Azure endpoints
+                    (*.openai.azure.com or *.ai.azure.com). This request will be rejected by the server.
+                  </MessageBarBody>
+                </MessageBar>
+              )}
+
+              {!isEntra && (
+                <Field label="API Key">
+                  <Input
+                    type="password"
+                    placeholder="API key (stored in memory only)"
+                    value={apiKey}
+                    onChange={(_, data) => setApiKey(data.value)}
+                  />
+                </Field>
+              )}
 
               <Label size="small" style={{ color: tokens.colorNeutralForeground3 }}>
                 Targets can also be auto-populated by adding an initializer (e.g. <code>airt</code>) to your{' '}
