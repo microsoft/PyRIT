@@ -28,7 +28,7 @@ from pyrit.common.parameter import coerce_value, validate_param_type
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
-from pyrit.models import AttackResult, SeedAttackGroup
+from pyrit.models import AttackOutcome, AttackResult, SeedAttackGroup
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
@@ -699,6 +699,21 @@ class Scenario(ABC):
                 seed_groups = self._dataset_config.get_all_seed_attack_groups()
             self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=seed_groups))
 
+        # Enforce atomic_attack_name uniqueness. Duplicate names cause result
+        # aggregation maps keyed by name to silently collapse rows, and
+        # FK-based resume cannot distinguish them. Some existing scenarios
+        # (e.g. Encoding) construct multiple AtomicAttacks with the same name
+        # for different converter configs, so this is a warning for now; in a
+        # future release it will become an error.
+        names = [aa.atomic_attack_name for aa in self._atomic_attacks]
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        if duplicates:
+            logger.warning(
+                f"Scenario '{self._name}' has duplicate atomic_attack_name values: {duplicates}. "
+                f"Duplicate names will be collapsed in result aggregation and resume tracking. "
+                f"Each AtomicAttack within a scenario should have a unique name."
+            )
+
         # Store original objectives for each atomic attack (before any mutations during execution)
         self._original_objectives_map = {
             atomic_attack.atomic_attack_name: tuple(atomic_attack.objectives) for atomic_attack in self._atomic_attacks
@@ -847,45 +862,52 @@ class Scenario(ABC):
             f"(ID: {self._scenario_result_id}, state: {stored_result.scenario_run_state})"
         )
 
-    def _get_completed_objectives_for_attack(self, *, atomic_attack_name: str) -> set[str]:
+    def _get_completed_objective_indices_for_attack(self, *, atomic_attack_name: str) -> set[int]:
         """
-        Get the set of objectives that have already been completed for a specific atomic attack.
+        Get the set of objective_index values that have already been completed
+        (non-error) for a specific atomic attack inside this scenario.
+
+        Queries AttackResultEntry rows directly by ``scenario_result_id`` —
+        which is stamped at write-time by the attack persistence path — so
+        results from an interrupted run are visible even though the
+        ``ScenarioResult.attack_results`` aggregate may not yet reflect them.
 
         Args:
-            atomic_attack_name (str): The name of the atomic attack to check.
+            atomic_attack_name (str): The atomic attack name to scope to.
 
         Returns:
-            Set[str]: Set of objective strings that have been completed.
+            Set[int]: Original objective_index values that completed without error.
         """
         if not self._scenario_result_id:
             return set()
 
-        completed_objectives: set[str] = set()
-
+        completed_indices: set[int] = set()
         try:
-            # Retrieve the scenario result from memory
-            scenario_results = self._memory.get_scenario_results(scenario_result_ids=[self._scenario_result_id])
-
-            if scenario_results:
-                scenario_result = scenario_results[0]
-                # Get completed objectives for this atomic attack name
-                if atomic_attack_name in scenario_result.attack_results:
-                    completed_objectives = {
-                        result.objective for result in scenario_result.attack_results[atomic_attack_name]
-                    }
+            rows = self._memory.get_attack_results(scenario_result_id=self._scenario_result_id)
+            for row in rows:
+                if row.outcome == AttackOutcome.ERROR:
+                    continue
+                if row.scenario_data is None:
+                    continue
+                if row.scenario_data.get("atomic_attack_name") != atomic_attack_name:
+                    continue
+                objective_index = row.scenario_data.get("objective_index")
+                if isinstance(objective_index, int):
+                    completed_indices.add(objective_index)
         except Exception as e:
             logger.warning(
-                f"Failed to retrieve completed objectives for atomic attack '{atomic_attack_name}': {str(e)}"
+                f"Failed to retrieve completed objective indices for atomic attack '{atomic_attack_name}': {str(e)}"
             )
 
-        return completed_objectives
+        return completed_indices
 
     async def _get_remaining_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
         Get the list of atomic attacks that still have objectives to complete.
 
-        This method filters out atomic attacks where all objectives have been completed,
-        and updates the objectives list for atomic attacks that are partially complete.
+        Uses ``objective_index`` (the original position of each seed group in the
+        atomic attack) for resume rather than objective text, so duplicate
+        objective text in two distinct seed groups doesn't collapse on resume.
 
         Returns:
             List[AtomicAttack]: List of atomic attacks with uncompleted objectives.
@@ -897,63 +919,28 @@ class Scenario(ABC):
         remaining_attacks: list[AtomicAttack] = []
 
         for atomic_attack in self._atomic_attacks:
-            # Get completed objectives for this atomic attack name
-            completed_objectives = self._get_completed_objectives_for_attack(
+            completed_indices = self._get_completed_objective_indices_for_attack(
                 atomic_attack_name=atomic_attack.atomic_attack_name
             )
 
-            # Get ORIGINAL objectives (before any mutations) from stored map
-            original_objectives = self._original_objectives_map.get(atomic_attack.atomic_attack_name, ())
-
-            # Calculate remaining objectives
-            remaining_objectives = [obj for obj in original_objectives if obj not in completed_objectives]
-
-            if remaining_objectives:
-                # If there are remaining objectives, update the atomic attack
-                if len(remaining_objectives) < len(original_objectives):
+            if completed_indices:
+                original_count = len(atomic_attack.seed_groups)
+                atomic_attack.filter_seed_groups_by_indices(completed_indices=completed_indices)
+                remaining_count = len(atomic_attack.seed_groups)
+                if remaining_count == 0:
+                    logger.info(
+                        f"Atomic attack '{atomic_attack.atomic_attack_name}' has all objectives completed, skipping"
+                    )
+                    continue
+                if remaining_count < original_count:
                     logger.info(
                         f"Atomic attack '{atomic_attack.atomic_attack_name}' has "
-                        f"{len(remaining_objectives)}/{len(original_objectives)} objectives remaining"
+                        f"{remaining_count}/{original_count} objectives remaining"
                     )
-                # Update the objectives for this atomic attack to only include remaining ones
-                atomic_attack.filter_seed_groups_by_objectives(remaining_objectives=remaining_objectives)
 
-                remaining_attacks.append(atomic_attack)
-            else:
-                logger.info(
-                    f"Atomic attack '{atomic_attack.atomic_attack_name}' has all objectives completed, skipping"
-                )
+            remaining_attacks.append(atomic_attack)
 
         return remaining_attacks
-
-    async def _update_scenario_result_async(
-        self, *, atomic_attack_name: str, attack_results: list[AttackResult]
-    ) -> None:
-        """
-        Update the scenario result in memory with new attack results (thread-safe).
-
-        This method is thread-safe and can be called from parallel executions.
-
-        Args:
-            atomic_attack_name (str): The name of the atomic attack.
-            attack_results (List[AttackResult]): The list of new attack results to add.
-        """
-        if not self._scenario_result_id:
-            logger.warning("Cannot update scenario result: no scenario result ID available")
-            return
-
-        async with self._result_lock:
-            success = self._memory.add_attack_results_to_scenario(
-                scenario_result_id=self._scenario_result_id,
-                atomic_attack_name=atomic_attack_name,
-                attack_results=attack_results,
-            )
-
-            if not success:
-                logger.error(
-                    f"Failed to update scenario result with {len(attack_results)} results "
-                    f"for atomic attack '{atomic_attack_name}'"
-                )
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
@@ -1191,6 +1178,12 @@ class Scenario(ABC):
                 ),
                 start=completed_count + 1,
             ):
+                # Stamp the scenario id onto the atomic attack so each persisted
+                # AttackResult carries the FK linkage. This is what enables
+                # mid-run interruption recovery (results are visible without the
+                # post-atomic-attack bulk manifest write).
+                atomic_attack._scenario_result_id = scenario_result_id
+
                 logger.info(
                     f"Executing atomic attack {i}/{len(self._atomic_attacks)} "
                     f"('{atomic_attack.atomic_attack_name}') in scenario '{self._name}'"
@@ -1202,12 +1195,8 @@ class Scenario(ABC):
                         return_partial_on_failure=True,
                     )
 
-                    # Always save completed results, even if some objectives didn't complete
-                    if atomic_results.completed_results:
-                        await self._update_scenario_result_async(
-                            atomic_attack_name=atomic_attack.atomic_attack_name,
-                            attack_results=atomic_results.completed_results,
-                        )
+                    # Per-result scenario linkage is now stamped by the attack
+                    # event handler at write time; no post-atomic bulk update.
 
                     # Check if there were any incomplete objectives
                     if atomic_results.has_incomplete:
@@ -1224,19 +1213,11 @@ class Scenario(ABC):
                         for obj, exc in atomic_results.incomplete_objectives:
                             logger.error(f"  Incomplete objective '{obj[:50]}...': {str(exc)}")
 
-                        # Collect error attack result IDs from the exceptions
-                        error_ids = []
-                        for _, exc in atomic_results.incomplete_objectives:
-                            error_id = getattr(exc, "error_attack_result_id", None)
-                            if error_id:
-                                error_ids.append(error_id)
-
-                        # Link error attack results to the scenario result
-                        if error_ids:
-                            self._memory.update_scenario_error_attacks(
-                                scenario_result_id=scenario_result_id,
-                                error_attack_result_ids=error_ids,
-                            )
+                        # Error AttackResults are linked to this scenario via the
+                        # scenario_result_id FK on AttackResultEntry (stamped by
+                        # the attack event handler when an ExecutionAttribution
+                        # is on the context). The previous per-scenario error_id
+                        # manifest is no longer needed.
 
                         # Mark scenario as failed
                         error_msg = (

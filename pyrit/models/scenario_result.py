@@ -69,7 +69,6 @@ class ScenarioResult:
         number_tries: int = 0,
         id: uuid.UUID | None = None,  # noqa: A002
         display_group_map: dict[str, str] | None = None,
-        error_attack_result_ids: list[str] | None = None,
         error_message: str | None = None,
         error_type: str | None = None,
     ) -> None:
@@ -91,9 +90,6 @@ class ScenarioResult:
             display_group_map (Optional[dict[str, str]]): Optional mapping of
                 atomic_attack_name → display group label. Used by the console
                 printer to aggregate results for user-facing output.
-            error_attack_result_ids (Optional[list[str]]): IDs of AttackResults that
-                contain error information. Used for quick error lookup without scanning
-                all attack results.
             error_message (Optional[str]): Scenario-level error message when the run fails.
             error_type (Optional[str]): Exception class name when the run fails.
 
@@ -112,7 +108,6 @@ class ScenarioResult:
         self.completion_time = completion_time if completion_time is not None else datetime.now(timezone.utc)
         self.number_tries = number_tries
         self._display_group_map = display_group_map or {}
-        self.error_attack_result_ids = error_attack_result_ids or []
         self.error_message = error_message
         self.error_type = error_type
 

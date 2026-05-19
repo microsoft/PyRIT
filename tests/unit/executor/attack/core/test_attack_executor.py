@@ -337,6 +337,112 @@ class TestExecuteAttackFromSeedGroupsAsync:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+class TestAttributionFactoryPropagation:
+    """Tests for ExecutionAttribution propagation through the AttackExecutor.
+
+    The executor stamps ``context._attribution = attribution_factory(input_index)``
+    on each per-task context. The input_index must be the seed group's original
+    position so attribution is deterministic and parallel-safe — never derived
+    from completion order.
+    """
+
+    async def test_attribution_factory_sets_per_task_attribution_in_order(self):
+        from pyrit.executor.attack.core.execution_attribution import ExecutionAttribution
+
+        attack = create_mock_attack()
+        seen_indices: list[int] = []
+
+        async def capture(context):
+            # Read the attribution stamped by the executor BEFORE the task runs.
+            attr = getattr(context, "_attribution", None)
+            assert attr is not None
+            seen_indices.append(attr.objective_index)
+            return create_attack_result(context.params.objective)
+
+        attack.execute_with_context_async = AsyncMock(side_effect=capture)
+
+        seed_groups = [create_seed_group(f"obj-{i}") for i in range(4)]
+
+        def factory(idx: int) -> ExecutionAttribution:
+            return ExecutionAttribution(
+                scenario_result_id="sid",
+                atomic_attack_name="atomic",
+                objective_index=idx,
+            )
+
+        executor = AttackExecutor(max_concurrency=1)
+        result = await executor.execute_attack_from_seed_groups_async(
+            attack=attack,
+            seed_groups=seed_groups,
+            attribution_factory=factory,
+        )
+
+        # Each per-task context saw a distinct, contiguous objective_index — the
+        # seed group's original input position.
+        assert sorted(seen_indices) == [0, 1, 2, 3]
+        assert len(result.completed_results) == 4
+
+    async def test_attribution_factory_parallel_safe_with_high_concurrency(self):
+        """At max_concurrency > 1, each task still receives its own objective_index
+        regardless of completion order. Out-of-order completion must not produce
+        stamped indices that point at the wrong seed group.
+        """
+        from pyrit.executor.attack.core.execution_attribution import ExecutionAttribution
+
+        attack = create_mock_attack()
+        seen: dict[str, int] = {}
+
+        async def out_of_order(context):
+            attr = getattr(context, "_attribution", None)
+            assert attr is not None
+            # Reverse-delay the tasks so completion order is the inverse of input
+            # order. The stamped index must still match the seed group.
+            await asyncio.sleep(0.005 * (10 - attr.objective_index))
+            seen[context.params.objective] = attr.objective_index
+            return create_attack_result(context.params.objective)
+
+        attack.execute_with_context_async = AsyncMock(side_effect=out_of_order)
+
+        seed_groups = [create_seed_group(f"obj-{i}") for i in range(6)]
+
+        def factory(idx: int) -> ExecutionAttribution:
+            return ExecutionAttribution(
+                scenario_result_id="sid",
+                atomic_attack_name="atomic",
+                objective_index=idx,
+            )
+
+        executor = AttackExecutor(max_concurrency=6)
+        await executor.execute_attack_from_seed_groups_async(
+            attack=attack,
+            seed_groups=seed_groups,
+            attribution_factory=factory,
+        )
+
+        # Each objective is stamped with its OWN input index, regardless of
+        # completion order.
+        for i in range(6):
+            assert seen[f"obj-{i}"] == i
+
+    async def test_no_attribution_factory_leaves_context_attribution_none(self):
+        attack = create_mock_attack()
+
+        async def capture(context):
+            attr = getattr(context, "_attribution", None)
+            assert attr is None
+            return create_attack_result(context.params.objective)
+
+        attack.execute_with_context_async = AsyncMock(side_effect=capture)
+
+        seed_groups = [create_seed_group("obj-0"), create_seed_group("obj-1")]
+        executor = AttackExecutor(max_concurrency=2)
+        await executor.execute_attack_from_seed_groups_async(
+            attack=attack,
+            seed_groups=seed_groups,
+        )
+
+
+@pytest.mark.usefixtures("patch_central_database")
 class TestPartialFailureHandling:
     """Tests for partial failure handling."""
 

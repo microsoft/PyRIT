@@ -745,6 +745,18 @@ class AttackResultEntry(Base):
     retry_events_json: Mapped[Optional[str]] = mapped_column(Unicode, nullable=True)
     total_retries = mapped_column(INTEGER, nullable=True, default=0)
 
+    # Scenario linkage (set when the AttackResult is produced inside a Scenario).
+    # scenario_result_id is an indexed FK so per-scenario hydration and resume
+    # queries are direct lookups (no JSON manifest required, no orphaning if a
+    # scenario is interrupted mid-AtomicAttack).
+    # scenario_data is a documented-fixed-schema JSON blob with two keys:
+    # atomic_attack_name (str) and objective_index (int). When the AttackResult
+    # is created outside a Scenario both fields remain NULL.
+    scenario_result_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        CustomUUID, ForeignKey("ScenarioResultEntries.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    scenario_data: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
     last_response: Mapped[Optional["PromptMemoryEntry"]] = relationship(
         "PromptMemoryEntry",
         foreign_keys=[last_response_id],
@@ -818,6 +830,11 @@ class AttackResultEntry(Base):
             json.dumps([evt.to_dict() for evt in entry.retry_events]) if entry.retry_events else None
         )
         self.total_retries = entry.total_retries
+
+        # Scenario linkage (set by the attack persistence path when an
+        # ExecutionAttribution is present on the AttackContext; otherwise None)
+        self.scenario_result_id = uuid.UUID(entry.scenario_result_id) if entry.scenario_result_id else None
+        self.scenario_data = entry.scenario_data
 
     @staticmethod
     def _get_id_as_uuid(obj: Any) -> Optional[uuid.UUID]:
@@ -931,6 +948,8 @@ class AttackResultEntry(Base):
             error_traceback=self.error_traceback,
             retry_events=retry_events,
             total_retries=self.total_retries or 0,
+            scenario_result_id=str(self.scenario_result_id) if self.scenario_result_id else None,
+            scenario_data=self.scenario_data,
         )
 
 
@@ -992,9 +1011,6 @@ class ScenarioResultEntry(Base):
     completion_time = mapped_column(DateTime, nullable=False)
     timestamp = mapped_column(DateTime, nullable=False)
 
-    # Pointer to failed attack result(s) — avoids scanning all attacks for error info
-    error_attack_result_ids_json: Mapped[Optional[str]] = mapped_column(Unicode, nullable=True)
-
     # Scenario-level error info (persisted so it survives process restarts)
     error_message: Mapped[Optional[str]] = mapped_column(Unicode, nullable=True)
     error_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -1048,11 +1064,6 @@ class ScenarioResultEntry(Base):
         # Serialize display_group_map if present
         self.display_group_map_json = json.dumps(entry._display_group_map) if entry._display_group_map else None
 
-        # Serialize error_attack_result_ids if present
-        self.error_attack_result_ids_json = (
-            json.dumps(entry.error_attack_result_ids) if entry.error_attack_result_ids else None
-        )
-
         self.error_message = entry.error_message
         self.error_type = entry.error_type
 
@@ -1097,11 +1108,6 @@ class ScenarioResultEntry(Base):
         if self.display_group_map_json:
             display_group_map = json.loads(self.display_group_map_json)
 
-        # Deserialize error_attack_result_ids if stored
-        error_attack_result_ids: list[str] | None = None
-        if self.error_attack_result_ids_json:
-            error_attack_result_ids = json.loads(self.error_attack_result_ids_json)
-
         return ScenarioResult(
             id=self.id,
             scenario_identifier=scenario_identifier,
@@ -1114,7 +1120,6 @@ class ScenarioResultEntry(Base):
             number_tries=self.number_tries,
             completion_time=self.completion_time,
             display_group_map=display_group_map,
-            error_attack_result_ids=error_attack_result_ids,
             error_message=self.error_message,
             error_type=self.error_type,
         )

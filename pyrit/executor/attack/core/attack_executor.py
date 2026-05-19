@@ -8,7 +8,7 @@ This is the new, cleaner design that leverages the params_type architecture.
 """
 
 import asyncio
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
@@ -24,6 +24,7 @@ from pyrit.executor.attack.core.attack_strategy import (
     AttackStrategyContextT,
     AttackStrategyResultT,
 )
+from pyrit.executor.attack.core.execution_attribution import ExecutionAttribution
 from pyrit.models import SeedAttackGroup
 
 if TYPE_CHECKING:
@@ -142,6 +143,7 @@ class AttackExecutor:
         objective_scorer: Optional["TrueFalseScorer"] = None,
         field_overrides: Optional[Sequence[dict[str, Any]]] = None,
         return_partial_on_failure: bool = False,
+        attribution_factory: Optional[Callable[[int], ExecutionAttribution]] = None,
         **broadcast_fields: Any,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
@@ -163,6 +165,12 @@ class AttackExecutor:
                 from_seed_group() as overrides.
             return_partial_on_failure: If True, returns partial results when some
                 objectives fail. If False (default), raises the first exception.
+            attribution_factory: Optional callable that maps an input index (the
+                seed group's original index, parallel-safe and deterministic) to
+                an ``ExecutionAttribution``. When provided, each per-task
+                ``AttackContext`` is stamped with the attribution so the
+                resulting ``AttackResultEntry`` row carries the scenario FK +
+                scenario_data. When ``None``, no attribution is applied.
             **broadcast_fields: Fields applied to all seed groups (e.g., memory_labels).
                 Per-seed-group field_overrides take precedence.
 
@@ -205,6 +213,7 @@ class AttackExecutor:
             attack=attack,
             params_list=params_list,
             return_partial_on_failure=return_partial_on_failure,
+            attribution_factory=attribution_factory,
         )
 
     async def execute_attack_async(
@@ -214,6 +223,7 @@ class AttackExecutor:
         objectives: Sequence[str],
         field_overrides: Optional[Sequence[dict[str, Any]]] = None,
         return_partial_on_failure: bool = False,
+        attribution_factory: Optional[Callable[[int], ExecutionAttribution]] = None,
         **broadcast_fields: Any,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
@@ -228,6 +238,10 @@ class AttackExecutor:
                 must match the length of objectives.
             return_partial_on_failure: If True, returns partial results when some
                 objectives fail. If False (default), raises the first exception.
+            attribution_factory: Optional callable mapping each input index to
+                an ExecutionAttribution. When provided, the per-task context is
+                stamped with the attribution so the persistence path can record
+                scenario linkage.
             **broadcast_fields: Fields applied to all objectives (e.g., memory_labels).
                 Per-objective field_overrides take precedence.
 
@@ -268,6 +282,7 @@ class AttackExecutor:
             attack=attack,
             params_list=params_list,
             return_partial_on_failure=return_partial_on_failure,
+            attribution_factory=attribution_factory,
         )
 
     async def _execute_with_params_list_async(
@@ -276,6 +291,7 @@ class AttackExecutor:
         attack: AttackStrategy[AttackStrategyContextT, AttackStrategyResultT],
         params_list: Sequence[AttackParameters],
         return_partial_on_failure: bool = False,
+        attribution_factory: Optional[Callable[[int], ExecutionAttribution]] = None,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
         Execute attacks in parallel with a list of pre-built parameters.
@@ -287,19 +303,28 @@ class AttackExecutor:
             attack: The attack strategy to execute.
             params_list: List of AttackParameters, one per execution.
             return_partial_on_failure: If True, returns partial results on failure.
+            attribution_factory: Optional callable mapping each input index to
+                an ExecutionAttribution. When provided, the per-task context is
+                stamped with the attribution so the persistence path can record
+                scenario linkage.
 
         Returns:
             AttackExecutorResult with completed results and any incomplete objectives.
         """
         semaphore = asyncio.Semaphore(self._max_concurrency)
 
-        async def run_one(params: AttackParameters) -> AttackStrategyResultT:
+        async def run_one(index: int, params: AttackParameters) -> AttackStrategyResultT:
             async with semaphore:
-                # Create context with params
+                # Create context with params and stamp attribution (if any). The
+                # input index is the seed group's original position and is
+                # deterministic and parallel-safe — assigned BEFORE the task
+                # runs, not from completion order.
                 context = attack._context_type(params=params)
+                if attribution_factory is not None:
+                    context._attribution = attribution_factory(index)
                 return await attack.execute_with_context_async(context=context)
 
-        tasks = [run_one(p) for p in params_list]
+        tasks = [run_one(i, p) for i, p in enumerate(params_list)]
         results_or_exceptions = await asyncio.gather(*tasks, return_exceptions=True)
 
         return self._process_execution_results(

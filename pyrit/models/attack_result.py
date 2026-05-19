@@ -107,6 +107,14 @@ class AttackResult(StrategyResult):
     retry_events: list[RetryEvent] = field(default_factory=list)
     total_retries: int = 0
 
+    # Scenario linkage (infrastructure-managed). Set by the attack persistence
+    # path when an ExecutionAttribution is present on the AttackContext. User
+    # code should not set these directly; ad-hoc AttackResults created outside
+    # a Scenario leave both fields as None and the corresponding DB columns
+    # remain NULL.
+    scenario_result_id: str | None = None
+    scenario_data: dict[str, Any] | None = None
+
     @property
     def attack_identifier(self) -> Optional[ComponentIdentifier]:
         """

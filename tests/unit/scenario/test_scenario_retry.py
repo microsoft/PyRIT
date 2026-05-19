@@ -40,8 +40,20 @@ def mock_objective_scorer():
 
 
 # Helper functions
-def save_attack_results_to_memory(attack_results):
-    """Helper function to save attack results to memory (mimics what real attacks do)."""
+def save_attack_results_to_memory(attack_results, *, atomic_attack=None):
+    """Helper function to save attack results to memory.
+
+    When ``atomic_attack`` is provided, stamps ``scenario_result_id`` and
+    ``scenario_data`` onto each result (mirrors the real attack persistence
+    path so FK-based hydration sees the rows).
+    """
+    if atomic_attack is not None:
+        sid = getattr(atomic_attack, "_scenario_result_id", None)
+        name = getattr(atomic_attack, "atomic_attack_name", None)
+        if sid and name:
+            for i, r in enumerate(attack_results):
+                r.scenario_result_id = sid
+                r.scenario_data = {"atomic_attack_name": name, "objective_index": i}
     memory = CentralMemory.get_memory_instance()
     memory.add_attack_results_to_memory(attack_results=attack_results)
 
@@ -86,19 +98,21 @@ def create_attack_results_list(count: int, start_index: int = 1) -> list[AttackR
     return [create_attack_result(i) for i in range(start_index, start_index + count)]
 
 
-def create_mock_run_async(attack_results):
-    """Create a mock run_async that saves results to memory before returning.
+def create_mock_run_async(attack_results, *, atomic_attack=None):
+    """Create a mock run_async that stamps + saves results to memory before returning.
 
     Args:
         attack_results: List of AttackResult objects to return
+        atomic_attack: Optional AtomicAttack mock. When provided, results are
+            stamped with scenario_result_id and scenario_data so FK-based
+            hydration finds them.
 
     Returns:
         AsyncMock configured to return the results
     """
 
     async def mock_run_async(*args, **kwargs):
-        # Save results to memory (mimics what real attacks do)
-        save_attack_results_to_memory(attack_results)
+        save_attack_results_to_memory(attack_results, atomic_attack=atomic_attack)
         return AttackExecutorResult(completed_results=attack_results, incomplete_objectives=[])
 
     return AsyncMock(side_effect=mock_run_async)
@@ -124,10 +138,37 @@ def create_mock_atomic_attack(name: str, objectives: list[str], run_async_mock: 
     attack.atomic_attack_name = name
     attack.display_group = name
     attack._attack = mock_attack_strategy
-    type(attack).objectives = PropertyMock(return_value=objectives)
+    attack._scenario_result_id = None
 
-    # Configure filter_seed_groups_by_objectives - needed for scenario retry filtering
-    attack.filter_seed_groups_by_objectives = MagicMock()
+    # Track objectives + their original indices so the new index-based filtering
+    # mirrors the new resume path. The legacy text-based filter is wired too
+    # to support callers that still exercise it.
+    current_objectives = {"value": list(objectives)}
+    current_indices = {"value": list(range(len(objectives)))}
+    type(attack).objectives = PropertyMock(side_effect=lambda: current_objectives["value"])
+    type(attack).seed_groups = PropertyMock(side_effect=lambda: current_objectives["value"])
+
+    def filter_objectives(*, remaining_objectives):
+        remaining_set = set(remaining_objectives)
+        kept = [
+            (idx, obj)
+            for idx, obj in zip(current_indices["value"], current_objectives["value"], strict=True)
+            if obj in remaining_set
+        ]
+        current_indices["value"] = [i for i, _ in kept]
+        current_objectives["value"] = [o for _, o in kept]
+
+    def filter_indices(*, completed_indices):
+        kept = [
+            (idx, obj)
+            for idx, obj in zip(current_indices["value"], current_objectives["value"], strict=True)
+            if idx not in completed_indices
+        ]
+        current_indices["value"] = [i for i, _ in kept]
+        current_objectives["value"] = [o for _, o in kept]
+
+    attack.filter_seed_groups_by_objectives = MagicMock(side_effect=filter_objectives)
+    attack.filter_seed_groups_by_indices = MagicMock(side_effect=filter_indices)
 
     if run_async_mock:
         attack.run_async = run_async_mock
@@ -214,7 +255,7 @@ class TestScenarioRetry:
         """Test that scenario doesn't retry when execution succeeds."""
         # Configure successful execution
         for i, run in enumerate(mock_atomic_attacks):
-            run.run_async = create_mock_run_async([sample_attack_results[i]])
+            run.run_async = create_mock_run_async([sample_attack_results[i]], atomic_attack=run)
 
         scenario = ConcreteScenario(
             name="Test Scenario",
@@ -247,11 +288,13 @@ class TestScenarioRetry:
                 raise Exception("Test failure")
             # Retry succeeds
             results = [sample_attack_results[0]]
-            save_attack_results_to_memory(results)
+            save_attack_results_to_memory(results, atomic_attack=mock_atomic_attacks[0])
             return AttackExecutorResult(completed_results=results, incomplete_objectives=[])
 
         mock_atomic_attacks[0].run_async = mock_run_with_retry
-        mock_atomic_attacks[1].run_async = create_mock_run_async([sample_attack_results[1]])
+        mock_atomic_attacks[1].run_async = create_mock_run_async(
+            [sample_attack_results[1]], atomic_attack=mock_atomic_attacks[1]
+        )
 
         scenario = ConcreteScenario(
             name="Test Scenario",
@@ -326,11 +369,13 @@ class TestScenarioRetry:
                 raise Exception("Test failure")
             # Third attempt succeeds
             results = [sample_attack_results[0]]
-            save_attack_results_to_memory(results)
+            save_attack_results_to_memory(results, atomic_attack=mock_atomic_attacks[0])
             return AttackExecutorResult(completed_results=results, incomplete_objectives=[])
 
         mock_atomic_attacks[0].run_async = mock_run_with_multiple_retries
-        mock_atomic_attacks[1].run_async = create_mock_run_async([sample_attack_results[1]])
+        mock_atomic_attacks[1].run_async = create_mock_run_async(
+            [sample_attack_results[1]], atomic_attack=mock_atomic_attacks[1]
+        )
 
         scenario = ConcreteScenario(
             name="Test Scenario",
@@ -360,11 +405,13 @@ class TestScenarioRetry:
                 raise ValueError("First failure")
             # Retry succeeds
             results = [sample_attack_results[0]]
-            save_attack_results_to_memory(results)
+            save_attack_results_to_memory(results, atomic_attack=mock_atomic_attacks[0])
             return AttackExecutorResult(completed_results=results, incomplete_objectives=[])
 
         mock_atomic_attacks[0].run_async = mock_run_with_logged_failure
-        mock_atomic_attacks[1].run_async = create_mock_run_async([sample_attack_results[1]])
+        mock_atomic_attacks[1].run_async = create_mock_run_async(
+            [sample_attack_results[1]], atomic_attack=mock_atomic_attacks[1]
+        )
 
         scenario = ConcreteScenario(
             name="Test Scenario",
@@ -407,12 +454,12 @@ class TestScenarioResumption:
                 # First attempt: complete 2 objectives, then fail
                 executed_objectives.extend(["obj1", "obj2"])
                 results = [create_attack_result(i, objective=f"obj{i}") for i in [1, 2]]
-                save_attack_results_to_memory(results)
+                save_attack_results_to_memory(results, atomic_attack=atomic_attack)
                 raise Exception("Failed after 2 objectives")
             # Retry: should only execute remaining objectives (obj3, obj4)
             executed_objectives.extend(["obj3", "obj4"])
             results = [create_attack_result(i, objective=f"obj{i}") for i in [3, 4]]
-            save_attack_results_to_memory(results)
+            save_attack_results_to_memory(results, atomic_attack=atomic_attack)
             return AttackExecutorResult(completed_results=results, incomplete_objectives=[])
 
         atomic_attack.run_async = mock_run_with_partial_completion
@@ -448,7 +495,7 @@ class TestScenarioResumption:
         async def mock_run_attack1(*args, **kwargs):
             call_count["attack_1"] += 1
             results = [create_attack_result(1, objective="objective1")]
-            save_attack_results_to_memory(results)
+            save_attack_results_to_memory(results, atomic_attack=attack1)
             return AttackExecutorResult(completed_results=results, incomplete_objectives=[])
 
         # Attack 2: Succeeds on first attempt, should not be retried
@@ -456,7 +503,7 @@ class TestScenarioResumption:
             call_count["attack_2"] += 1
             if call_count["attack_2"] == 1:
                 results = [create_attack_result(2, objective="objective2")]
-                save_attack_results_to_memory(results)
+                save_attack_results_to_memory(results, atomic_attack=attack2)
                 return AttackExecutorResult(completed_results=results, incomplete_objectives=[])
             raise AssertionError("Attack 2 should not be retried after completion")
 
@@ -466,7 +513,7 @@ class TestScenarioResumption:
             if call_count["attack_3"] == 1:
                 raise Exception("Attack 3 failed on first attempt")
             results = [create_attack_result(3, objective="objective3")]
-            save_attack_results_to_memory(results)
+            save_attack_results_to_memory(results, atomic_attack=attack3)
             return AttackExecutorResult(completed_results=results, incomplete_objectives=[])
 
         attack1.run_async = mock_run_attack1
@@ -509,7 +556,7 @@ class TestScenarioResumption:
         async def mock_run_attack1(*args, **kwargs):
             call_count["attack_1"] += 1
             results = [create_attack_result(1, objective="objective1")]
-            save_attack_results_to_memory(results)
+            save_attack_results_to_memory(results, atomic_attack=attacks[0])
             return AttackExecutorResult(completed_results=results, incomplete_objectives=[])
 
         # Attack 2: Fails on first attempt, succeeds on retry
@@ -518,21 +565,21 @@ class TestScenarioResumption:
             if call_count["attack_2"] == 1:
                 raise Exception("Attack 2 failed")
             results = [create_attack_result(2, objective="objective2")]
-            save_attack_results_to_memory(results)
+            save_attack_results_to_memory(results, atomic_attack=attacks[1])
             return AttackExecutorResult(completed_results=results, incomplete_objectives=[])
 
         # Attack 3: Only called on retry (after attack 2 succeeds)
         async def mock_run_attack3(*args, **kwargs):
             call_count["attack_3"] += 1
             results = [create_attack_result(3, objective="objective3")]
-            save_attack_results_to_memory(results)
+            save_attack_results_to_memory(results, atomic_attack=attacks[2])
             return AttackExecutorResult(completed_results=results, incomplete_objectives=[])
 
         # Attack 4: Only called on retry
         async def mock_run_attack4(*args, **kwargs):
             call_count["attack_4"] += 1
             results = [create_attack_result(4, objective="objective4")]
-            save_attack_results_to_memory(results)
+            save_attack_results_to_memory(results, atomic_attack=attacks[3])
             return AttackExecutorResult(completed_results=results, incomplete_objectives=[])
 
         attacks[0].run_async = mock_run_attack1
@@ -564,3 +611,158 @@ class TestScenarioResumption:
         assert call_count["attack_4"] == 1
         # All four attacks should be in results
         assert len(result.attack_results) == 4
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestScenarioFKResumeRegression:
+    """Regression tests for the FK-based scenario linkage resume path.
+
+    The bug being regression-tested: when a Scenario is interrupted mid-
+    AtomicAttack (Ctrl-C, OOM, crash), AttackResults already persisted to the
+    DB used to be invisible to the scenario because the scenario→attack-result
+    link only lived in a JSON manifest written after the whole AtomicAttack
+    returned. On resume, those objectives were re-executed (wasted compute).
+
+    After the refactor, ``scenario_result_id`` is stamped on each
+    ``AttackResultEntry`` at write time, so resume reads them directly and
+    skips the already-done work even when the manifest was never updated.
+    """
+
+    async def test_resume_skips_objectives_persisted_before_interruption(self, mock_objective_target):
+        """Simulate Ctrl-C after some objectives in an atomic attack persisted
+        results but before the manifest was bulk-written. On resume, only the
+        missing objectives are re-executed."""
+        atomic_attack = create_mock_atomic_attack("partial", ["o1", "o2", "o3", "o4"])
+
+        async def first_run(*args, **kwargs):
+            partials = [
+                create_attack_result(0, conversation_id="c1", objective="o1"),
+                create_attack_result(1, conversation_id="c2", objective="o2"),
+            ]
+            save_attack_results_to_memory(partials, atomic_attack=atomic_attack)
+            raise Exception("simulated crash after partial persistence")
+
+        atomic_attack.run_async = first_run
+
+        scenario = ConcreteScenario(
+            name="Interrupted Scenario",
+            version=1,
+            atomic_attacks_to_return=[atomic_attack],
+        )
+        await scenario.initialize_async(objective_target=mock_objective_target, max_retries=0)
+
+        with pytest.raises(Exception, match="simulated crash"):
+            await scenario.run_async()
+
+        scenario_result_id = scenario._scenario_result_id
+        assert scenario_result_id is not None
+
+        # === Resume by scenario_result_id ===
+        atomic_attack_resume = create_mock_atomic_attack("partial", ["o1", "o2", "o3", "o4"])
+        executed: list[str] = []
+
+        async def second_run(*args, **kwargs):
+            executed.extend(atomic_attack_resume.objectives)
+            results = [
+                create_attack_result(i, conversation_id=f"c{i + 1}", objective=obj)
+                for i, obj in enumerate(atomic_attack_resume.objectives, start=2)
+            ]
+            save_attack_results_to_memory(results, atomic_attack=atomic_attack_resume)
+            return AttackExecutorResult(completed_results=results, incomplete_objectives=[])
+
+        atomic_attack_resume.run_async = second_run
+
+        scenario_resumed = ConcreteScenario(
+            name="Interrupted Scenario",
+            version=1,
+            atomic_attacks_to_return=[atomic_attack_resume],
+            scenario_result_id=scenario_result_id,
+        )
+        await scenario_resumed.initialize_async(objective_target=mock_objective_target, max_retries=0)
+        await scenario_resumed.run_async()
+
+        # Resume executed only the missing objectives — the core fix.
+        assert executed == ["o3", "o4"]
+
+    async def test_duplicate_objective_text_does_not_collapse_on_resume(self, mock_objective_target):
+        """Two seed groups with the SAME objective text are distinct slots —
+        resume must treat them as separate (index-based) rather than collapse
+        them by text."""
+        atomic_attack = create_mock_atomic_attack("dup_attack", ["dup-obj", "dup-obj"])
+
+        async def first(*args, **kwargs):
+            partials = [create_attack_result(0, conversation_id="dup-c0", objective="dup-obj")]
+            save_attack_results_to_memory(partials, atomic_attack=atomic_attack)
+            raise Exception("crash mid-attack")
+
+        atomic_attack.run_async = first
+
+        scenario = ConcreteScenario(
+            name="Dup Scenario",
+            version=1,
+            atomic_attacks_to_return=[atomic_attack],
+        )
+        await scenario.initialize_async(objective_target=mock_objective_target, max_retries=0)
+
+        with pytest.raises(Exception, match="crash mid-attack"):
+            await scenario.run_async()
+
+        scenario_result_id = scenario._scenario_result_id
+        assert scenario_result_id is not None
+
+        # === Resume ===
+        atomic_attack_resume = create_mock_atomic_attack("dup_attack", ["dup-obj", "dup-obj"])
+        executed: list[str] = []
+
+        async def second(*args, **kwargs):
+            executed.extend(atomic_attack_resume.objectives)
+            results = [
+                create_attack_result(i, conversation_id=f"dup-c-resume-{i}", objective=obj)
+                for i, obj in enumerate(atomic_attack_resume.objectives, start=1)
+            ]
+            save_attack_results_to_memory(results, atomic_attack=atomic_attack_resume)
+            return AttackExecutorResult(completed_results=results, incomplete_objectives=[])
+
+        atomic_attack_resume.run_async = second
+
+        scenario_resumed = ConcreteScenario(
+            name="Dup Scenario",
+            version=1,
+            atomic_attacks_to_return=[atomic_attack_resume],
+            scenario_result_id=scenario_result_id,
+        )
+        await scenario_resumed.initialize_async(objective_target=mock_objective_target, max_retries=0)
+        await scenario_resumed.run_async()
+
+        # Resume executed exactly ONE "dup-obj" — the missing index — even
+        # though the text matched the already-done seed group. Index-based
+        # resume is what makes this work; the deprecated text-based filter
+        # would have collapsed both seed groups.
+        assert executed == ["dup-obj"]
+
+    async def test_duplicate_atomic_attack_name_warns_but_does_not_raise(self, mock_objective_target, caplog):
+        """Duplicate atomic_attack_name within a scenario degrades resume to
+        collapse-by-name. The validator logs a WARNING but does not raise —
+        some existing scenarios (Encoding, Jailbreak) intentionally use
+        duplicate names for different converter configs."""
+        dup1 = create_mock_atomic_attack("dup_name", ["objA"])
+        dup2 = create_mock_atomic_attack("dup_name", ["objB"])
+
+        async def noop_run(*args, **kwargs):
+            return AttackExecutorResult(completed_results=[], incomplete_objectives=[])
+
+        dup1.run_async = noop_run
+        dup2.run_async = noop_run
+
+        scenario = ConcreteScenario(
+            name="Dup Name Scenario",
+            version=1,
+            atomic_attacks_to_return=[dup1, dup2],
+        )
+
+        with caplog.at_level("WARNING"):
+            await scenario.initialize_async(objective_target=mock_objective_target)
+
+        assert any("duplicate atomic_attack_name" in record.message for record in caplog.records), (
+            "Expected a duplicate-name warning"
+        )

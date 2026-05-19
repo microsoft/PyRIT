@@ -610,6 +610,92 @@ class TestDefaultAttackStrategyEventHandler:
             f"Attack is in '{StrategyEvent.ON_PRE_VALIDATE.value}' stage for {event_handler.__class__.__name__}"
         )
 
+    async def test_on_post_execute_stamps_scenario_attribution_when_present(
+        self, sample_attack_context, sample_attack_result, mock_memory
+    ):
+        """When the context carries an ExecutionAttribution, the persisted
+        AttackResult must have scenario_result_id + scenario_data populated."""
+        from pyrit.executor.attack.core.execution_attribution import ExecutionAttribution
+
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+            sample_attack_context.start_time = 100.0
+            sample_attack_context._attribution = ExecutionAttribution(
+                scenario_result_id="scenario-1",
+                atomic_attack_name="atomic_a",
+                objective_index=3,
+            )
+
+            event_data = StrategyEventData(
+                event=StrategyEvent.ON_POST_EXECUTE,
+                strategy_name="TestStrategy",
+                strategy_id="test-id",
+                context=sample_attack_context,
+                result=sample_attack_result,
+            )
+            await handler.on_event(event_data)
+
+        assert sample_attack_result.scenario_result_id == "scenario-1"
+        assert sample_attack_result.scenario_data == {
+            "atomic_attack_name": "atomic_a",
+            "objective_index": 3,
+        }
+
+    async def test_on_post_execute_no_attribution_leaves_fields_none(
+        self, sample_attack_context, sample_attack_result, mock_memory
+    ):
+        """Outside a Scenario, _attribution is None and the FK + scenario_data
+        fields on the persisted AttackResult must stay None."""
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+            sample_attack_context.start_time = 100.0
+            # _attribution defaults to None — no scenario stamping should happen.
+
+            event_data = StrategyEventData(
+                event=StrategyEvent.ON_POST_EXECUTE,
+                strategy_name="TestStrategy",
+                strategy_id="test-id",
+                context=sample_attack_context,
+                result=sample_attack_result,
+            )
+            await handler.on_event(event_data)
+
+        assert sample_attack_result.scenario_result_id is None
+        assert sample_attack_result.scenario_data is None
+
+    async def test_on_error_stamps_scenario_attribution_when_present(self, sample_attack_context, mock_memory):
+        """Error AttackResults must also carry the scenario FK so error lookups
+        via get_attack_results(scenario_result_id=..., outcome=ERROR) work."""
+        from pyrit.executor.attack.core.execution_attribution import ExecutionAttribution
+
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+            sample_attack_context.start_time = 100.0
+            sample_attack_context._attribution = ExecutionAttribution(
+                scenario_result_id="scenario-err",
+                atomic_attack_name="atomic_err",
+                objective_index=7,
+            )
+
+            event_data = StrategyEventData(
+                event=StrategyEvent.ON_ERROR,
+                strategy_name="TestStrategy",
+                strategy_id="test-id",
+                context=sample_attack_context,
+                error=RuntimeError("boom"),
+            )
+            await handler.on_event(event_data)
+
+        # The error AttackResult was persisted; inspect what was sent to memory.
+        call = mock_memory.add_attack_results_to_memory.call_args
+        persisted = call.kwargs["attack_results"][0]
+        assert persisted.outcome == AttackOutcome.ERROR
+        assert persisted.scenario_result_id == "scenario-err"
+        assert persisted.scenario_data == {
+            "atomic_attack_name": "atomic_err",
+            "objective_index": 7,
+        }
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAttackStrategyIntegration:

@@ -35,8 +35,20 @@ def mock_objective_target():
     return target
 
 
-def save_attack_results_to_memory(attack_results):
-    """Helper function to save attack results to memory."""
+def save_attack_results_to_memory(attack_results, *, atomic_attack=None):
+    """
+    Helper function to save attack results to memory. When ``atomic_attack`` is
+    provided, also stamps ``scenario_result_id`` and ``scenario_data`` on each
+    result the same way the real attack persistence path does — so FK-based
+    hydration in ``get_scenario_results`` finds them.
+    """
+    if atomic_attack is not None:
+        sid = getattr(atomic_attack, "_scenario_result_id", None)
+        name = getattr(atomic_attack, "atomic_attack_name", None)
+        if sid and name:
+            for i, r in enumerate(attack_results):
+                r.scenario_result_id = sid
+                r.scenario_data = {"atomic_attack_name": name, "objective_index": i}
     memory = CentralMemory.get_memory_instance()
     memory.add_attack_results_to_memory(attack_results=attack_results)
 
@@ -44,7 +56,8 @@ def save_attack_results_to_memory(attack_results):
 def create_mock_atomic_attack(name: str, objectives: list[str]) -> MagicMock:
     """Create a mock AtomicAttack with required attributes for baseline creation.
 
-    The mock tracks its objectives and properly updates when filter_seed_groups_by_objectives is called.
+    The mock tracks its objectives and properly updates when
+    filter_seed_groups_by_objectives OR filter_seed_groups_by_indices is called.
     """
     mock_attack_strategy = MagicMock()
     mock_attack_strategy.get_objective_target.return_value = MagicMock()
@@ -54,19 +67,38 @@ def create_mock_atomic_attack(name: str, objectives: list[str]) -> MagicMock:
     attack.atomic_attack_name = name
     attack.display_group = name
     attack._attack = mock_attack_strategy
+    attack._scenario_result_id = None
 
-    # Track current objectives in a mutable container so it can be updated
+    # Track current objectives and their original indices in mutable containers.
+    original_objectives = list(objectives)
     current_objectives = {"value": list(objectives)}
+    current_indices = {"value": list(range(len(objectives)))}
 
-    # Configure objectives property to return current objectives
     type(attack).objectives = PropertyMock(side_effect=lambda: current_objectives["value"])
+    type(attack).seed_groups = PropertyMock(side_effect=lambda: current_objectives["value"])
 
-    # Configure filter_seed_groups_by_objectives to update the tracked objectives
     def filter_objectives(*, remaining_objectives):
         remaining_set = set(remaining_objectives)
-        current_objectives["value"] = [obj for obj in current_objectives["value"] if obj in remaining_set]
+        kept = [
+            (idx, obj)
+            for idx, obj in zip(current_indices["value"], current_objectives["value"], strict=True)
+            if obj in remaining_set
+        ]
+        current_indices["value"] = [i for i, _ in kept]
+        current_objectives["value"] = [o for _, o in kept]
+
+    def filter_indices(*, completed_indices):
+        kept = [
+            (idx, obj)
+            for idx, obj in zip(current_indices["value"], current_objectives["value"], strict=True)
+            if idx not in completed_indices
+        ]
+        current_indices["value"] = [i for i, _ in kept]
+        current_objectives["value"] = [o for _, o in kept]
 
     attack.filter_seed_groups_by_objectives = MagicMock(side_effect=filter_objectives)
+    attack.filter_seed_groups_by_indices = MagicMock(side_effect=filter_indices)
+    attack._original_objectives = original_objectives
 
     return attack
 
@@ -142,7 +174,7 @@ class TestScenarioPartialAttackCompletion:
                 incomplete = [("obj3", ValueError("Failed to complete obj3"))]
 
                 # Save completed results to memory
-                save_attack_results_to_memory(completed)
+                save_attack_results_to_memory(completed, atomic_attack=atomic_attack)
 
                 return AttackExecutorResult(completed_results=completed, incomplete_objectives=incomplete)
             # Retry: complete the remaining objective
@@ -154,7 +186,7 @@ class TestScenarioPartialAttackCompletion:
                     executed_turns=1,
                 )
             ]
-            save_attack_results_to_memory(completed)
+            save_attack_results_to_memory(completed, atomic_attack=atomic_attack)
             return AttackExecutorResult(completed_results=completed, incomplete_objectives=[])
 
         atomic_attack.run_async = mock_run
@@ -200,7 +232,7 @@ class TestScenarioPartialAttackCompletion:
             incomplete = [("obj3", RuntimeError("Failed obj3")), ("obj4", RuntimeError("Failed obj4"))]
 
             # Save completed results to memory
-            save_attack_results_to_memory(completed)
+            save_attack_results_to_memory(completed, atomic_attack=atomic_attack)
 
             return AttackExecutorResult(completed_results=completed, incomplete_objectives=incomplete)
 
@@ -257,7 +289,7 @@ class TestScenarioPartialAttackCompletion:
                 ]
                 incomplete = [("obj4", Exception("Failed obj4")), ("obj5", Exception("Failed obj5"))]
 
-                save_attack_results_to_memory(completed)
+                save_attack_results_to_memory(completed, atomic_attack=atomic_attack)
 
                 return AttackExecutorResult(completed_results=completed, incomplete_objectives=incomplete)
             # Retry: complete remaining objectives
@@ -271,7 +303,7 @@ class TestScenarioPartialAttackCompletion:
                 for i in [4, 5]
             ]
 
-            save_attack_results_to_memory(completed)
+            save_attack_results_to_memory(completed, atomic_attack=atomic_attack)
 
             return AttackExecutorResult(completed_results=completed, incomplete_objectives=[])
 
@@ -313,10 +345,12 @@ class TestScenarioPartialAttackCompletion:
         attack3 = create_mock_atomic_attack("attack_3", ["a3_obj1"])
 
         call_counts = {"attack_1": 0, "attack_2": 0, "attack_3": 0}
+        attacks_by_name = {"attack_1": attack1, "attack_2": attack2, "attack_3": attack3}
 
         async def make_mock_run(attack_name, objectives):
             async def mock_run(*args, **kwargs):
                 call_counts[attack_name] += 1
+                this_attack = attacks_by_name[attack_name]
 
                 if attack_name == "attack_2" and call_counts[attack_name] == 1:
                     # Attack 2 fails partially on first attempt
@@ -330,7 +364,7 @@ class TestScenarioPartialAttackCompletion:
                     ]
                     incomplete = [("a2_obj2", Exception("Failed a2_obj2")), ("a2_obj3", Exception("Failed a2_obj3"))]
 
-                    save_attack_results_to_memory(completed)
+                    save_attack_results_to_memory(completed, atomic_attack=this_attack)
 
                     return AttackExecutorResult(completed_results=completed, incomplete_objectives=incomplete)
                 # All other attempts succeed fully
@@ -341,12 +375,10 @@ class TestScenarioPartialAttackCompletion:
                         outcome=AttackOutcome.SUCCESS,
                         executed_turns=1,
                     )
-                    for obj in (
-                        attack1 if attack_name == "attack_1" else (attack2 if attack_name == "attack_2" else attack3)
-                    ).objectives
+                    for obj in this_attack.objectives
                 ]
 
-                save_attack_results_to_memory(completed)
+                save_attack_results_to_memory(completed, atomic_attack=this_attack)
 
                 return AttackExecutorResult(completed_results=completed, incomplete_objectives=[])
 

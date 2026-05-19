@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
+from pyrit.executor.attack.core.execution_attribution import ExecutionAttribution
 from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
 from pyrit.memory import CentralMemory
@@ -117,10 +118,20 @@ class AtomicAttack:
             sg.validate()
 
         self._seed_groups = seed_groups
+        # Original positions for each currently-active seed group. Used to map a
+        # per-task input index (from the executor) back to the stable
+        # objective_index stored in AttackResultEntry.scenario_data. Resume
+        # filtering preserves the original indices so newly-persisted results
+        # don't collide with already-persisted ones.
+        self._original_indices: list[int] = list(range(len(seed_groups)))
         self._adversarial_chat = adversarial_chat
         self._objective_scorer = objective_scorer
         self._memory_labels = memory_labels or {}
         self._attack_execute_params = attack_execute_params
+        # Set by Scenario._execute_scenario_async before run_async. When set,
+        # each persisted AttackResult is linked to this scenario via the FK on
+        # AttackResultEntry.
+        self._scenario_result_id: str | None = None
 
         logger.info(
             f"Initialized atomic attack with {len(self._seed_groups)} seed groups, "
@@ -156,15 +167,55 @@ class AtomicAttack:
         """
         Filter seed groups to only those with objectives in the remaining list.
 
-        This is used for scenario resumption to skip already completed objectives.
+        Deprecated — prefer ``filter_seed_groups_by_indices``. Filtering by
+        objective text collapses two distinct seed groups that happen to share
+        the same objective text (common when seed groups are programmatically
+        generated or when a baseline is paired with its strategy variants).
+        Index-based filtering is the stable identity for resume.
 
         Args:
             remaining_objectives (List[str]): List of objectives that still need to be executed.
         """
+        warnings.warn(
+            "filter_seed_groups_by_objectives is deprecated; use filter_seed_groups_by_indices "
+            "for index-stable resume. Duplicate objective text can collapse otherwise-distinct "
+            "seed groups.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         remaining_set = set(remaining_objectives)
-        self._seed_groups = [
-            sg for sg in self._seed_groups if sg.objective is not None and sg.objective.value in remaining_set
+        kept: list[tuple[int, SeedAttackGroup]] = [
+            (orig_idx, sg)
+            for orig_idx, sg in zip(self._original_indices, self._seed_groups, strict=True)
+            if sg.objective is not None and sg.objective.value in remaining_set
         ]
+        self._original_indices = [idx for idx, _ in kept]
+        self._seed_groups = [sg for _, sg in kept]
+
+    def filter_seed_groups_by_indices(self, *, completed_indices: set[int]) -> None:
+        """
+        Filter out seed groups whose original index is in ``completed_indices``.
+
+        This is the stable-identity replacement for
+        ``filter_seed_groups_by_objectives``. Each seed group's original index
+        (its position when the ``AtomicAttack`` was first constructed) is
+        tracked across filtering, so the executor can later map each per-task
+        input index back to the original index when stamping
+        ``scenario_data["objective_index"]``. This prevents newly-persisted
+        results from colliding with already-persisted ones on resume.
+
+        Args:
+            completed_indices (set[int]): Original indices that have already
+                been executed (typically retrieved from
+                ``Scenario._get_completed_objectives_for_attack``).
+        """
+        kept: list[tuple[int, SeedAttackGroup]] = [
+            (orig_idx, sg)
+            for orig_idx, sg in zip(self._original_indices, self._seed_groups, strict=True)
+            if orig_idx not in completed_indices
+        ]
+        self._original_indices = [idx for idx, _ in kept]
+        self._seed_groups = [sg for _, sg in kept]
 
     async def run_async(
         self,
@@ -220,6 +271,24 @@ class AtomicAttack:
             else:
                 execution_seed_groups = self._seed_groups
 
+            # Build an attribution factory when this atomic attack is being
+            # executed inside a Scenario. The factory maps each per-task input
+            # index (position in the currently-active seed_groups list) back to
+            # the original objective_index so resume can locate already-done
+            # work and newly-persisted results don't collide with old ones.
+            attribution_factory = None
+            if self._scenario_result_id is not None:
+                scenario_id = self._scenario_result_id
+                name = self.atomic_attack_name
+                original_indices = list(self._original_indices)
+
+                def attribution_factory(input_index: int) -> ExecutionAttribution:
+                    return ExecutionAttribution(
+                        scenario_result_id=scenario_id,
+                        atomic_attack_name=name,
+                        objective_index=original_indices[input_index],
+                    )
+
             results = await executor.execute_attack_from_seed_groups_async(
                 attack=technique.attack,
                 seed_groups=execution_seed_groups,
@@ -227,6 +296,7 @@ class AtomicAttack:
                 objective_scorer=self._objective_scorer,
                 memory_labels=self._memory_labels,
                 return_partial_on_failure=return_partial_on_failure,
+                attribution_factory=attribution_factory,
                 **self._attack_execute_params,
             )
 
