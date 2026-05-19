@@ -489,6 +489,78 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         connection = self._get_connection(conversation_id=conversation_id)
         await connection.response.create()
 
+    async def push_audio_chunk_async(self, *, connection: Any, pcm_bytes: bytes) -> None:
+        """
+        Append a single PCM16 mono @ 24 kHz audio chunk to the server's input buffer.
+
+        Used by streaming-style callers (e.g. ``BargeInAttack``) that source chunks
+        from an iterator and want to control commit timing externally. Server VAD,
+        when enabled on the session, decides when to commit and fire response logic.
+        Empty buffers are accepted as no-ops.
+
+        Args:
+            connection: Active Realtime API connection from ``self.connect()``.
+            pcm_bytes: Raw PCM16 mono audio for this chunk.
+        """
+        if not pcm_bytes:
+            return
+        audio_b64 = base64.b64encode(pcm_bytes).decode("ascii")
+        await connection.input_audio_buffer.append(audio=audio_b64)
+
+    async def insert_user_audio_async(self, *, connection: Any, pcm_bytes: bytes) -> None:
+        """
+        Insert a user message containing the given PCM16 mono @ 24 kHz audio into the conversation.
+
+        Use for the convert-on-commit dance — after deleting the server's raw user item,
+        the attack inserts the converted audio via this method before manually triggering
+        ``response.create``.
+
+        Args:
+            connection: Active Realtime API connection.
+            pcm_bytes: Converted PCM16 mono audio.
+        """
+        audio_b64 = base64.b64encode(pcm_bytes).decode("ascii")
+        await connection.conversation.item.create(
+            item={
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_audio", "audio": audio_b64}],
+            }
+        )
+
+    async def insert_user_text_async(self, *, connection: Any, text: str) -> None:
+        """
+        Insert a user message containing the given text into the conversation.
+
+        Lets streaming attacks mix text turns into an otherwise audio-driven session.
+        The caller is responsible for triggering ``response.create`` after insertion.
+
+        Args:
+            connection: Active Realtime API connection.
+            text: User-side text content.
+        """
+        await connection.conversation.item.create(
+            item={
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": text}],
+            }
+        )
+
+    async def delete_conversation_item_async(self, *, connection: Any, item_id: str) -> None:
+        """
+        Delete a conversation item by id (e.g. the server's raw user audio item).
+
+        Used during convert-on-commit to remove the raw audio item before replacing
+        it with a converted one. Errors are propagated; callers that want best-effort
+        deletion should wrap with ``contextlib.suppress``.
+
+        Args:
+            connection: Active Realtime API connection.
+            item_id: Server-assigned item id to delete.
+        """
+        await connection.conversation.item.delete(item_id=item_id)
+
     async def _stream_pcm_async(
         self,
         *,

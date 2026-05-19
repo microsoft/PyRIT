@@ -642,6 +642,59 @@ async def test_stream_pcm_appends_base64_encoded_chunks(target):
     assert base64.b64decode(second_audio) == b"\xbb" * 4800
 
 
+# ---- Wire primitives for streaming attacks ---------------------------------------------------
+
+
+async def test_push_audio_chunk_async_base64_encodes_and_appends(target):
+    connection = _make_mock_connection()
+    pcm = b"\x33" * 480
+
+    await target.push_audio_chunk_async(connection=connection, pcm_bytes=pcm)
+
+    connection.input_audio_buffer.append.assert_awaited_once()
+    audio_b64 = connection.input_audio_buffer.append.call_args.kwargs["audio"]
+    assert base64.b64decode(audio_b64) == pcm
+
+
+async def test_push_audio_chunk_async_empty_is_noop(target):
+    connection = _make_mock_connection()
+    await target.push_audio_chunk_async(connection=connection, pcm_bytes=b"")
+    connection.input_audio_buffer.append.assert_not_called()
+
+
+async def test_insert_user_audio_async_creates_input_audio_item(target):
+    connection = AsyncMock()
+    pcm = b"\x44" * 480
+
+    await target.insert_user_audio_async(connection=connection, pcm_bytes=pcm)
+
+    connection.conversation.item.create.assert_awaited_once()
+    item = connection.conversation.item.create.call_args.kwargs["item"]
+    assert item["type"] == "message"
+    assert item["role"] == "user"
+    assert item["content"][0]["type"] == "input_audio"
+    assert base64.b64decode(item["content"][0]["audio"]) == pcm
+
+
+async def test_insert_user_text_async_creates_input_text_item(target):
+    connection = AsyncMock()
+
+    await target.insert_user_text_async(connection=connection, text="hello model")
+
+    connection.conversation.item.create.assert_awaited_once()
+    item = connection.conversation.item.create.call_args.kwargs["item"]
+    assert item["role"] == "user"
+    assert item["content"][0] == {"type": "input_text", "text": "hello model"}
+
+
+async def test_delete_conversation_item_async_forwards_item_id(target):
+    connection = AsyncMock()
+
+    await target.delete_conversation_item_async(connection=connection, item_id="raw_item_99")
+
+    connection.conversation.item.delete.assert_awaited_once_with(item_id="raw_item_99")
+
+
 def _turn_state(*, response_id: str | None = "resp_abc", item_id: str | None = "item_xyz") -> _RealtimeTurnState:
     """Build a turn state with the named ids preset; completion future is unused by cancel tests."""
     return _RealtimeTurnState(
