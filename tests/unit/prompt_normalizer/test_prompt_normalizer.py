@@ -635,10 +635,16 @@ async def test_add_prepended_conversation_to_memory(mock_memory_instance):
 # Placeholder for convert_audio_async tests
 
 
-def _make_audio_converter(transformer, *, output_sample_rate=24000):
+from pyrit.identifiers import ComponentIdentifier
+from pyrit.prompt_normalizer import PromptConverterConfiguration
+
+
+def _make_audio_converter(transformer, *, output_sample_rate=24000, identifier_name="MockAudioConverter"):
     """Mock audio converter whose convert_tokens_async runs transformer(pcm) and emits a new WAV path."""
     converter = MagicMock()
-    converter.get_identifier = MagicMock(return_value=MagicMock())
+    converter.get_identifier = MagicMock(
+        return_value=ComponentIdentifier(class_name=identifier_name, class_module="tests.unit.mocks"),
+    )
 
     async def _convert(*, prompt, input_type, start_token=None, end_token=None):
         assert input_type == "audio_path"

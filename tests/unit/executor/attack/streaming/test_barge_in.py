@@ -16,6 +16,7 @@ import pytest
 
 from pyrit.executor.attack import BargeInAttack, BargeInAttackContext
 from pyrit.executor.attack.core import AttackConverterConfig, AttackParameters
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import AttackOutcome
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import RealtimeTarget
@@ -230,10 +231,12 @@ async def test_send_streaming_session_config_async_requires_server_vad(sqlite_in
 # ---- Convert-on-commit dance (R4b) ----------------------------------------------------------
 
 
-def _make_audio_converter(transformer):
+def _make_audio_converter(transformer, *, identifier_name: str = "MockAudioConverter"):
     """Mock audio converter whose convert_tokens_async runs transformer(pcm) and emits a new WAV path."""
     converter = MagicMock()
-    converter.get_identifier = MagicMock(return_value=MagicMock())
+    converter.get_identifier = MagicMock(
+        return_value=ComponentIdentifier(class_name=identifier_name, class_module="tests.unit.mocks"),
+    )
 
     async def _convert(*, prompt, input_type, start_token=None, end_token=None):
         assert input_type == "audio_path"
@@ -445,3 +448,180 @@ async def test_perform_async_uses_injected_normalizer(vad_target):
     # Converted audio (returned by mock) should reach insert_user_audio_async.
     vad_target.insert_user_audio_async.assert_awaited_once()
     assert vad_target.insert_user_audio_async.call_args.kwargs["pcm_bytes"] == b"\xff" * 96
+
+
+# Placeholder for R4c tests
+
+
+# ---- Per-turn persistence to CentralMemory (R4c) --------------------------------------------
+
+
+async def _drive_one_audio_turn(
+    attack,
+    vad_target,
+    *,
+    raw_chunk: bytes,
+    item_id: str,
+    turn_result: RealtimeTargetResult,
+):
+    """Helper that runs a single audio-driven turn end-to-end against a mocked target."""
+    connection = _mock_connection()
+    vad_target.connect = AsyncMock(return_value=connection)
+    vad_target.send_streaming_session_config_async = AsyncMock()
+    vad_target.push_audio_chunk_async = AsyncMock()
+    vad_target.delete_conversation_item_async = AsyncMock()
+    vad_target.insert_user_audio_async = AsyncMock()
+
+    captured: dict[str, Any] = {}
+
+    async def fake_subscribe(*, connection, on_user_audio_committed):
+        captured["on_committed"] = on_user_audio_committed
+        return AsyncMock()
+
+    vad_target.subscribe_events_async = AsyncMock(side_effect=fake_subscribe)
+    fut: asyncio.Future[RealtimeTargetResult] = asyncio.get_event_loop().create_future()
+    fut.set_result(turn_result)
+    vad_target.request_response_async = AsyncMock(return_value=fut)
+
+    async def chunks_then_commit() -> AsyncIterator[bytes]:
+        yield raw_chunk
+        await captured["on_committed"](_CommittedEvent(item_id=item_id))
+
+    ctx = BargeInAttackContext(
+        params=AttackParameters(objective="obj"),
+        audio_chunks=chunks_then_commit(),
+    )
+    with patch.object(attack, "_POST_STREAM_SETTLE_SECONDS", 0):
+        return await attack._perform_async(context=ctx)
+
+
+async def test_persists_user_and_assistant_messages_per_turn(vad_target):
+    """A successful turn writes 1 user piece + 2 assistant pieces sharing the conversation id."""
+    attack = BargeInAttack(objective_target=vad_target)
+    add_calls: list[Any] = []
+    vad_target._memory = MagicMock()
+    vad_target._memory.add_message_to_memory = MagicMock(side_effect=lambda **kw: add_calls.append(kw["request"]))
+
+    result = await _drive_one_audio_turn(
+        attack,
+        vad_target,
+        raw_chunk=b"\x00" * 96,
+        item_id="raw_1",
+        turn_result=RealtimeTargetResult(audio_bytes=b"\xaa" * 96, transcripts=["hello"]),
+    )
+
+    assert len(add_calls) == 2
+    user_msg, assistant_msg = add_calls
+    assert len(user_msg.message_pieces) == 1
+    assert user_msg.message_pieces[0].converted_value_data_type == "audio_path"
+    assert user_msg.message_pieces[0].conversation_id == result.conversation_id
+    assert len(assistant_msg.message_pieces) == 2
+    piece_types = sorted(p.converted_value_data_type for p in assistant_msg.message_pieces)
+    assert piece_types == ["audio_path", "text"]
+    text_piece = next(p for p in assistant_msg.message_pieces if p.converted_value_data_type == "text")
+    assert text_piece.converted_value == "hello"
+
+
+async def test_persists_interrupted_metadata_on_assistant_pieces(vad_target):
+    """Interrupted turns mark both assistant pieces with prompt_metadata['interrupted'] = True."""
+    attack = BargeInAttack(objective_target=vad_target)
+    add_calls: list[Any] = []
+    vad_target._memory = MagicMock()
+    vad_target._memory.add_message_to_memory = MagicMock(side_effect=lambda **kw: add_calls.append(kw["request"]))
+
+    await _drive_one_audio_turn(
+        attack,
+        vad_target,
+        raw_chunk=b"\x00" * 96,
+        item_id="raw_int",
+        turn_result=RealtimeTargetResult(
+            audio_bytes=b"\xbb" * 96, transcripts=["partial"], interrupted=True
+        ),
+    )
+
+    assistant_msg = add_calls[1]
+    for piece in assistant_msg.message_pieces:
+        assert piece.prompt_metadata.get("interrupted") is True
+
+
+async def test_persists_converter_identifiers_on_user_piece(vad_target):
+    """Converter identifiers reported by convert_audio_async must land on the user piece."""
+    bump = _make_audio_converter(
+        lambda pcm: bytes((b + 1) & 0xFF for b in pcm),
+        identifier_name="BumpConverter",
+    )
+    attack = BargeInAttack(
+        objective_target=vad_target,
+        attack_converter_config=AttackConverterConfig(
+            request_converters=PromptConverterConfiguration.from_converters(converters=[bump]),
+        ),
+    )
+    add_calls: list[Any] = []
+    vad_target._memory = MagicMock()
+    vad_target._memory.add_message_to_memory = MagicMock(side_effect=lambda **kw: add_calls.append(kw["request"]))
+
+    await _drive_one_audio_turn(
+        attack,
+        vad_target,
+        raw_chunk=b"\x05" * 96,
+        item_id="raw_c",
+        turn_result=RealtimeTargetResult(audio_bytes=b"", transcripts=[]),
+    )
+
+    user_msg = add_calls[0]
+    identifiers = user_msg.message_pieces[0].converter_identifiers
+    assert len(identifiers) == 1
+    assert identifiers[0].class_name == "BumpConverter"
+
+
+async def test_persists_converted_audio_when_converters_changed_bytes(vad_target):
+    """The user piece's audio_path must point at the converted PCM, not the raw snapshot."""
+    bump = _make_audio_converter(lambda pcm: bytes((b + 1) & 0xFF for b in pcm))
+    attack = BargeInAttack(
+        objective_target=vad_target,
+        attack_converter_config=AttackConverterConfig(
+            request_converters=PromptConverterConfiguration.from_converters(converters=[bump]),
+        ),
+    )
+    saved_calls: list[bytes] = []
+
+    async def fake_save_audio(audio_bytes, **_):
+        saved_calls.append(audio_bytes)
+        return f"/tmp/audio_{len(saved_calls)}.wav"
+
+    vad_target.save_audio = AsyncMock(side_effect=fake_save_audio)
+    vad_target._memory = MagicMock()
+    vad_target._memory.add_message_to_memory = MagicMock()
+
+    raw = b"\x05" * 96
+    await _drive_one_audio_turn(
+        attack,
+        vad_target,
+        raw_chunk=raw,
+        item_id="raw_x",
+        turn_result=RealtimeTargetResult(audio_bytes=b"\xff" * 96, transcripts=[]),
+    )
+
+    # save_audio called twice per turn: first for user audio (must be CONVERTED), then assistant audio.
+    assert len(saved_calls) == 2
+    assert saved_calls[0] == bytes((b + 1) & 0xFF for b in raw)
+    assert saved_calls[1] == b"\xff" * 96
+
+
+async def test_attack_result_last_response_is_final_assistant_text_piece(vad_target):
+    """AttackResult.last_response must point at the last assistant message's first piece (text)."""
+    attack = BargeInAttack(objective_target=vad_target)
+    vad_target._memory = MagicMock()
+    vad_target._memory.add_message_to_memory = MagicMock()
+
+    result = await _drive_one_audio_turn(
+        attack,
+        vad_target,
+        raw_chunk=b"\x00" * 96,
+        item_id="raw_lr",
+        turn_result=RealtimeTargetResult(audio_bytes=b"\xaa" * 96, transcripts=["final answer"]),
+    )
+
+    assert result.last_response is not None
+    assert result.last_response.converted_value_data_type == "text"
+    assert result.last_response.converted_value == "final answer"
