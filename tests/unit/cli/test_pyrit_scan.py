@@ -623,3 +623,75 @@ class TestMainExtraPaths:
         result = pyrit_scan.main(["--add-initializer", str(script)])
         assert result == 1
         assert "disabled" in capsys.readouterr().out
+
+
+class TestScenarioParamFlow:
+    """Regression tests for scenario-declared parameters flowing through the CLI."""
+
+    @staticmethod
+    def _build_mock_client(supported_params=None, status="COMPLETED"):
+        from unittest.mock import AsyncMock
+
+        client = AsyncMock()
+        client.list_scenarios_async.return_value = {"items": [{"scenario_name": "foo"}]}
+        client.get_scenario_async.return_value = {
+            "scenario_name": "foo",
+            "supported_parameters": supported_params or [],
+        }
+        client.start_scenario_run_async.return_value = {"scenario_result_id": "rid", "status": "CREATED"}
+        client.get_scenario_run_async.return_value = {"scenario_result_id": "rid", "status": status}
+        client.get_scenario_run_results_async.return_value = {"items": []}
+        client.close_async = AsyncMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        return client
+
+    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch("pyrit.cli.api_client.PyRITApiClient")
+    @patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock)
+    @patch("pyrit.cli._output.print_scenario_run_progress")
+    def test_scenario_declared_flag_is_forwarded(self, _mock_prog, _mock_print, mock_client_class, _mock_probe):
+        client = self._build_mock_client(supported_params=[{"name": "max_turns", "description": "..."}])
+        mock_client_class.return_value = client
+
+        result = pyrit_scan.main(["foo", "--target", "t", "--max-turns", "7"])
+
+        assert result == 0
+        sent_request = client.start_scenario_run_async.call_args.kwargs["request"]
+        assert sent_request["scenario_params"] == {"max_turns": "7"}
+
+    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch("pyrit.cli.api_client.PyRITApiClient")
+    @patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock)
+    @patch("pyrit.cli._output.print_scenario_run_progress")
+    def test_unknown_flag_after_valid_scenario_errors(
+        self, _mock_prog, _mock_print, mock_client_class, _mock_probe
+    ):
+        client = self._build_mock_client(supported_params=[{"name": "max_turns", "description": "..."}])
+        mock_client_class.return_value = client
+
+        result = pyrit_scan.main(["foo", "--target", "t", "--max-turns", "7", "--unknown-flag"])
+
+        assert result == 1
+        client.start_scenario_run_async.assert_not_called()
+
+    @patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new_callable=AsyncMock, return_value=True)
+    @patch("pyrit.cli.api_client.PyRITApiClient")
+    @patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock)
+    @patch("pyrit.cli._output.print_scenario_run_progress")
+    def test_no_scenario_params_passes_through_cleanly(self, _mock_prog, _mock_print, mock_client_class, _mock_probe):
+        client = self._build_mock_client(supported_params=[])
+        mock_client_class.return_value = client
+
+        result = pyrit_scan.main(["foo", "--target", "t"])
+
+        assert result == 0
+        sent_request = client.start_scenario_run_async.call_args.kwargs["request"]
+        assert "scenario_params" not in sent_request
+
+    def test_parse_args_tolerates_scenario_specific_flags(self):
+        # Pass 1 must not error on scenario-declared flags (they're recognized in pass 2).
+        parsed = pyrit_scan.parse_args(["foo", "--target", "t", "--max-turns", "7"])
+        assert parsed.scenario_name == "foo"
+        assert parsed.target == "t"
+        assert parsed._unknown_args == ["--max-turns", "7"]

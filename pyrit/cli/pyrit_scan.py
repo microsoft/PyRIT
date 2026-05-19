@@ -283,8 +283,14 @@ def _extract_scenario_args(*, parsed: Namespace) -> dict[str, Any]:
 
 def parse_args(args: Optional[list[str]] = None) -> Namespace:
     """
-    Parse command-line arguments (pass 1 only — scenario-specific flags
-    are added via a second parse after fetching scenario metadata from server).
+    Parse command-line arguments (pass 1 — tolerant of scenario-declared flags).
+
+    Pass 1 uses ``parse_known_args`` so scenario-specific flags (e.g.
+    ``--max-turns 7``) don't cause an error before we've had a chance to
+    fetch the scenario's declared parameters from the server. The unknown
+    leftovers are stashed on the returned Namespace as ``_unknown_args``
+    so :func:`_reparse_with_scenario_params` can detect truly unknown flags
+    when no scenario was specified.
 
     Args:
         args: Argument list (``sys.argv[1:]`` when None).
@@ -293,7 +299,10 @@ def parse_args(args: Optional[list[str]] = None) -> Namespace:
         Namespace: Parsed command-line arguments.
     """
     parser = _build_base_parser(add_help=True)
-    return parser.parse_args(args)
+    parsed, unknown = parser.parse_known_args(args)
+    parsed._unknown_args = unknown
+    parsed._raw_args = list(args) if args is not None else list(sys.argv[1:])
+    return parsed
 
 
 async def _resolve_server_url_async(*, parsed_args: Namespace) -> str | None:
@@ -443,17 +452,32 @@ def _reparse_with_scenario_params(
     *, parsed_args: Namespace, supported_params: list[dict[str, Any]]
 ) -> Namespace | None:
     """
-    Re-parse ``sys.argv`` with scenario-declared flags added to the base parser.
+    Re-parse the original args with scenario-declared flags added to the base parser.
+
+    The original argument list is read from ``parsed_args._raw_args`` (populated
+    by :func:`parse_args`). If no scenario-declared parameters are supplied but
+    pass 1 left unknown args behind, surface the error now via strict re-parse.
 
     Returns:
         Namespace | None: The re-parsed Namespace, or ``None`` on argparse ``SystemExit``.
     """
+    raw_args: list[str] = getattr(parsed_args, "_raw_args", sys.argv[1:] if len(sys.argv) > 1 else [])
+
     if not supported_params:
-        return parsed_args
+        unknown = getattr(parsed_args, "_unknown_args", None)
+        if not unknown:
+            return parsed_args
+        # Re-parse strictly so argparse prints the standard "unrecognized arguments" error
+        strict_parser = _build_base_parser(add_help=True)
+        try:
+            return strict_parser.parse_args(raw_args)
+        except SystemExit:
+            return None
+
     pass2_parser = _build_base_parser(add_help=True)
     _add_scenario_params_from_api(parser=pass2_parser, params=supported_params)
     try:
-        return pass2_parser.parse_args(sys.argv[1:] if len(sys.argv) > 1 else [])
+        return pass2_parser.parse_args(raw_args)
     except SystemExit:
         return None
 
@@ -681,6 +705,16 @@ def main(args: Optional[list[str]] = None) -> int:
         parsed_args = parse_args(args)
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1
+
+    # If there are leftover unknown flags AND no scenario was specified,
+    # there's no chance for pass 2 to recognize them - fail loudly now.
+    unknown = getattr(parsed_args, "_unknown_args", [])
+    if unknown and not parsed_args.scenario_name:
+        strict_parser = _build_base_parser(add_help=True)
+        try:
+            strict_parser.parse_args(parsed_args._raw_args)
+        except SystemExit as e:
+            return e.code if isinstance(e.code, int) else 1
 
     logging.basicConfig(level=parsed_args.log_level)
 

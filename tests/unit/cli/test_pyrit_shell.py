@@ -21,6 +21,8 @@ def mock_api_client():
     client.list_initializers_async.return_value = {"items": [], "pagination": {"total": 0}}
     client.list_targets_async.return_value = {"items": [], "pagination": {"total": 0}}
     client.list_scenario_runs_async.return_value = {"items": []}
+    # Default: scenario fetch returns no declared params (back-compat for older tests)
+    client.get_scenario_async.return_value = {"scenario_name": "foo", "supported_parameters": []}
     client.close_async = AsyncMock()
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=None)
@@ -607,3 +609,49 @@ class TestServerManagement:
         client.close_async = AsyncMock(side_effect=RuntimeError("ignored"))
         s.do_stop_server("")
         assert s._api_client is None
+
+
+class TestShellScenarioParamFlow:
+    """Regression tests: shell.do_run must forward scenario-declared parameters."""
+
+    def test_run_passes_scenario_declared_params(self, shell):
+        s, client = shell
+        client.get_scenario_async.return_value = {
+            "scenario_name": "foo",
+            "supported_parameters": [{"name": "max_turns", "description": "..."}],
+        }
+        client.start_scenario_run_async = AsyncMock(return_value={"scenario_result_id": "rid", "status": "CREATED"})
+        client.get_scenario_run_async = AsyncMock(return_value={"scenario_result_id": "rid", "status": "COMPLETED"})
+        client.get_scenario_run_results_async = AsyncMock(return_value={"items": []})
+
+        with (
+            patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock),
+            patch("pyrit.cli._output.print_scenario_run_progress"),
+            patch("time.sleep"),
+        ):
+            s.do_run("foo --target t --max-turns 7")
+
+        sent_request = client.start_scenario_run_async.call_args.kwargs["request"]
+        assert sent_request["scenario_params"] == {"max_turns": "7"}
+
+    def test_run_metadata_fetch_failure_aborts(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_async = AsyncMock(side_effect=RuntimeError("net down"))
+        s.do_run("foo --target t")
+        assert "Error fetching scenario metadata" in capsys.readouterr().out
+
+    def test_run_unknown_scenario_aborts(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_async.return_value = None
+        s.do_run("foo --target t")
+        assert "not found on server" in capsys.readouterr().out
+
+    def test_run_unknown_flag_for_scenario_with_declared_params_errors(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_async.return_value = {
+            "scenario_name": "foo",
+            "supported_parameters": [{"name": "max_turns", "description": "..."}],
+        }
+        s.do_run("foo --target t --not-a-real-flag x")
+        captured = capsys.readouterr().out
+        assert "Unknown argument" in captured or "Error" in captured

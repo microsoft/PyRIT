@@ -242,16 +242,40 @@ class PyRITShell(cmd.Cmd):
             print("Usage: run <scenario_name> --target <name> [options]")
             return
 
-        from pyrit.cli._cli_args import parse_run_arguments
+        from pyrit.cli._cli_args import extract_scenario_args, parse_run_arguments
         from pyrit.cli._output import (
             print_scenario_result_async,
             print_scenario_run_progress,
             print_scenario_run_summary,
         )
+        from pyrit.common.parameter import Parameter
+
+        # Fetch scenario metadata so the parser recognizes scenario-declared flags.
+        scenario_name_token = line.split(maxsplit=1)[0]
+        declared_params: list[Parameter] | None = None
+        try:
+            scenario_meta = asyncio.run(self._api_client.get_scenario_async(scenario_name=scenario_name_token))
+        except Exception as exc:
+            print(f"Error fetching scenario metadata: {exc}")
+            return
+        if scenario_meta is None:
+            print(f"Error: Scenario '{scenario_name_token}' not found on server.")
+            return
+        supported = scenario_meta.get("supported_parameters") or []
+        if supported:
+            declared_params = [
+                Parameter(
+                    name=p["name"],
+                    description=p.get("description", ""),
+                    param_type=str,
+                    default=p.get("default"),
+                )
+                for p in supported
+            ]
 
         # Parse arguments
         try:
-            args = parse_run_arguments(args_string=line, declared_params=None)
+            args = parse_run_arguments(args_string=line, declared_params=declared_params)
         except ValueError as e:
             print(f"Error: {e}")
             return
@@ -293,6 +317,10 @@ class PyRITShell(cmd.Cmd):
             request["max_dataset_size"] = args["max_dataset_size"]
         if args.get("memory_labels"):
             request["labels"] = args["memory_labels"]
+
+        scenario_params = extract_scenario_args(parsed=args)
+        if scenario_params:
+            request["scenario_params"] = scenario_params
 
         # Start run
         total_strategies = len(request.get("strategies") or [])
