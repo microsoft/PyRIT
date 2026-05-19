@@ -240,7 +240,7 @@ class AttackResult(StrategyResult):
             "execution_time_ms": self.execution_time_ms,
             "outcome": self.outcome.value,
             "outcome_reason": self.outcome_reason,
-            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "timestamp": self.timestamp.isoformat(),
             "related_conversations": sorted(
                 [ref.to_dict() for ref in self.related_conversations],
                 key=lambda r: r["conversation_id"],

@@ -268,3 +268,35 @@ def test_scenario_result_to_dict_from_dict_roundtrip():
     )
     roundtripped = ScenarioResult.from_dict(original.to_dict())
     assert original.to_dict() == roundtripped.to_dict()
+
+
+def test_scenario_identifier_from_dict_missing_pyrit_version_yields_unknown():
+    """from_dict should preserve 'unknown' rather than fabricating the current version when missing."""
+    data = {
+        "name": "Legacy",
+        "description": "loaded from older payload",
+        "scenario_version": 1,
+        "init_data": None,
+        # pyrit_version intentionally absent
+    }
+    identifier = ScenarioIdentifier.from_dict(data)
+    assert identifier.pyrit_version == "unknown"
+
+
+def test_scenario_result_from_dict_preserves_missing_completion_time():
+    """An in-progress scenario serialized without completion_time should round-trip with completion_time=None."""
+    scenario_id = ScenarioIdentifier(name="Test", scenario_version=1, pyrit_version="0.14.0")
+    target_id = ComponentIdentifier(class_name="OpenAIChatTarget", class_module="pyrit.prompt_target")
+
+    original = ScenarioResult(
+        scenario_identifier=scenario_id,
+        objective_target_identifier=target_id,
+        objective_scorer_identifier=None,
+        attack_results={},
+        scenario_run_state="IN_PROGRESS",
+    )
+    original.completion_time = None  # type: ignore[ty:invalid-assignment]
+
+    roundtripped = ScenarioResult.from_dict(original.to_dict())
+    assert roundtripped.completion_time is None
+    assert roundtripped.scenario_run_state == "IN_PROGRESS"

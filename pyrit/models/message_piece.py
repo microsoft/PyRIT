@@ -370,7 +370,7 @@ class MessagePiece:
             conversation_id=data.get("conversation_id"),
             sequence=data.get("sequence", -1),
             timestamp=(datetime.fromisoformat(str(data["timestamp"])) if data.get("timestamp") else None),
-            labels=data.get("labels"),
+            labels=data.get("labels") or None,
             targeted_harm_categories=data.get("targeted_harm_categories"),
             prompt_metadata=data.get("prompt_metadata"),
             converter_identifiers=(

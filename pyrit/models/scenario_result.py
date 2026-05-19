@@ -79,7 +79,7 @@ class ScenarioIdentifier:
             description=data.get("description", ""),
             scenario_version=data.get("scenario_version", 1),
             init_data=data.get("init_data"),
-            pyrit_version=data.get("pyrit_version"),
+            pyrit_version=data.get("pyrit_version") or "unknown",
         )
 
 
@@ -339,7 +339,7 @@ class ScenarioResult:
         """
         from pyrit.identifiers.component_identifier import ComponentIdentifier
 
-        return cls(
+        result = cls(
             id=uuid.UUID(data["id"]) if data.get("id") else None,
             scenario_identifier=ScenarioIdentifier.from_dict(data["scenario_identifier"]),
             objective_target_identifier=(
@@ -366,3 +366,8 @@ class ScenarioResult:
             error_message=data.get("error_message"),
             error_type=data.get("error_type"),
         )
+        # Preserve missing completion_time: __init__ defaults it to now(), but a
+        # still-running scenario shouldn't be marked as completed-at-load-time.
+        if not data.get("completion_time"):
+            result.completion_time = None  # type: ignore[ty:invalid-assignment]
+        return result
