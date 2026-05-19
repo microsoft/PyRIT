@@ -31,7 +31,6 @@ class OpenAICompletionTarget(OpenAITarget):
         frequency_penalty: Optional[float] = None,
         n: Optional[int] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -67,16 +66,12 @@ class OpenAICompletionTarget(OpenAITarget):
             n (int, Optional): How many completions to generate for each prompt.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
             *args: Variable length argument list passed to the parent class.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
         """
-        super().__init__(
-            *args, custom_configuration=custom_configuration, custom_capabilities=custom_capabilities, **kwargs
-        )
+        super().__init__(*args, custom_configuration=custom_configuration, **kwargs)
 
         self._max_tokens = max_tokens
         self._temperature = temperature

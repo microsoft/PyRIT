@@ -50,7 +50,6 @@ class HTTPXAPITarget(HTTPTarget):
         callback_function: Callable[..., Any] | None = None,
         max_requests_per_minute: Optional[int] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
         **httpx_client_kwargs: Any,
     ) -> None:
         """
@@ -71,8 +70,6 @@ class HTTPXAPITarget(HTTPTarget):
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for this target
             instance.
             Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
             **httpx_client_kwargs: Additional keyword arguments to pass to the httpx.AsyncClient constructor.
 
         Raises:
@@ -86,7 +83,6 @@ class HTTPXAPITarget(HTTPTarget):
             callback_function=callback_function,
             max_requests_per_minute=max_requests_per_minute,
             custom_configuration=custom_configuration,
-            custom_capabilities=custom_capabilities,
             **httpx_client_kwargs,
         )
 
