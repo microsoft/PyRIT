@@ -246,53 +246,53 @@ silent: true
 class TestConfigurationLoaderResolvers:
     """Tests for ConfigurationLoader path resolution methods."""
 
-    def test_resolve_initialization_scripts_none_returns_none(self):
+    def testresolve_initialization_scripts_none_returns_none(self):
         """Test that None (default) returns None to signal 'use defaults'."""
         config = ConfigurationLoader()
-        assert config._resolve_initialization_scripts() is None
+        assert config.resolve_initialization_scripts() is None
 
-    def test_resolve_initialization_scripts_empty_list_returns_empty_list(self):
+    def testresolve_initialization_scripts_empty_list_returns_empty_list(self):
         """Test that explicit empty list [] returns empty list to signal 'load nothing'."""
         config = ConfigurationLoader(initialization_scripts=[])
-        resolved = config._resolve_initialization_scripts()
+        resolved = config.resolve_initialization_scripts()
         assert resolved is not None
         assert resolved == []
 
-    def test_resolve_initialization_scripts_absolute_path(self):
+    def testresolve_initialization_scripts_absolute_path(self):
         """Test resolving absolute script paths."""
         config = ConfigurationLoader(initialization_scripts=["/absolute/path/script.py"])
-        resolved = config._resolve_initialization_scripts()
+        resolved = config.resolve_initialization_scripts()
         assert resolved is not None
         assert len(resolved) == 1
         # Check path ends with expected components (Windows adds drive letter to Unix-style paths)
         assert resolved[0].parts[-3:] == ("absolute", "path", "script.py")
 
-    def test_resolve_initialization_scripts_relative_path(self):
+    def testresolve_initialization_scripts_relative_path(self):
         """Test resolving relative script paths (converted to absolute)."""
         config = ConfigurationLoader(initialization_scripts=["relative/script.py"])
-        resolved = config._resolve_initialization_scripts()
+        resolved = config.resolve_initialization_scripts()
         assert resolved is not None
         assert len(resolved) == 1
         assert resolved[0].is_absolute()
         # Check path ends with expected components (works on both Unix and Windows)
         assert resolved[0].parts[-2:] == ("relative", "script.py")
 
-    def test_resolve_env_files_none_returns_none(self):
+    def testresolve_env_files_none_returns_none(self):
         """Test that None (default) returns None to signal 'use defaults'."""
         config = ConfigurationLoader()
-        assert config._resolve_env_files() is None
+        assert config.resolve_env_files() is None
 
-    def test_resolve_env_files_empty_list_returns_empty_list(self):
+    def testresolve_env_files_empty_list_returns_empty_list(self):
         """Test that explicit empty list [] returns empty list to signal 'load nothing'."""
         config = ConfigurationLoader(env_files=[])
-        resolved = config._resolve_env_files()
+        resolved = config.resolve_env_files()
         assert resolved is not None
         assert resolved == []
 
-    def test_resolve_env_files_absolute_path(self):
+    def testresolve_env_files_absolute_path(self):
         """Test resolving absolute env file paths."""
         config = ConfigurationLoader(env_files=["/path/to/.env"])
-        resolved = config._resolve_env_files()
+        resolved = config.resolve_env_files()
         assert resolved is not None
         assert len(resolved) == 1
         # Check path ends with expected components (Windows adds drive letter to Unix-style paths)

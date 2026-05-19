@@ -443,7 +443,7 @@ class ConfigurationLoader(YamlLoadable):
         """
         return DEFAULT_CONFIG_PATH
 
-    def _resolve_initializers(self) -> Sequence["PyRITInitializer"]:
+    def resolve_initializers(self) -> Sequence["PyRITInitializer"]:
         """
         Resolve initializer names to PyRITInitializer instances.
 
@@ -456,6 +456,8 @@ class ConfigurationLoader(YamlLoadable):
         Raises:
             ValueError: If an initializer name is not found in the registry.
         """
+        import logging
+
         from pyrit.registry import InitializerRegistry
 
         if not self._initializer_configs:
@@ -463,6 +465,8 @@ class ConfigurationLoader(YamlLoadable):
 
         registry = InitializerRegistry()
         resolved: list[PyRITInitializer] = []
+
+        logging.getLogger(__name__).info("Running %d initializer(s)...", len(self._initializer_configs))
 
         for config in self._initializer_configs:
             initializer_class = registry.get_class(config.name)
@@ -483,7 +487,7 @@ class ConfigurationLoader(YamlLoadable):
 
         return resolved
 
-    def _resolve_initialization_scripts(self) -> Optional[Sequence[pathlib.Path]]:
+    def resolve_initialization_scripts(self) -> Optional[Sequence[pathlib.Path]]:
         """
         Resolve initialization script paths.
 
@@ -508,7 +512,7 @@ class ConfigurationLoader(YamlLoadable):
 
         return resolved
 
-    def _resolve_env_files(self) -> Optional[Sequence[pathlib.Path]]:
+    def resolve_env_files(self) -> Optional[Sequence[pathlib.Path]]:
         """
         Resolve environment file paths.
 
@@ -543,9 +547,9 @@ class ConfigurationLoader(YamlLoadable):
         Raises:
             ValueError: If configuration is invalid or initializers cannot be resolved.
         """
-        resolved_initializers = self._resolve_initializers()
-        resolved_scripts = self._resolve_initialization_scripts()
-        resolved_env_files = self._resolve_env_files()
+        resolved_initializers = self.resolve_initializers()
+        resolved_scripts = self.resolve_initialization_scripts()
+        resolved_env_files = self.resolve_env_files()
 
         # Map snake_case memory_db_type to internal constant
         internal_memory_db_type = _MEMORY_DB_TYPE_MAP[self.memory_db_type]
