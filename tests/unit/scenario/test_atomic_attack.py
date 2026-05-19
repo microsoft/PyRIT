@@ -980,3 +980,200 @@ class TestEnrichAtomicAttackIdentifiers:
                 await atomic.run_async()
 
         mock_memory.update_attack_result_by_id.assert_not_called()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAtomicAttackFilterSeedGroupsByIndices:
+    """Tests for ``filter_seed_groups_by_indices`` — the stable-identity filter
+    that powers resume."""
+
+    def test_filters_out_completed_indices(self, mock_attack, sample_seed_groups):
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="test",
+        )
+
+        atomic.filter_seed_groups_by_indices(completed_indices={0, 2})
+
+        assert atomic.seed_groups == [sample_seed_groups[1]]
+        assert atomic._original_indices == [1]
+
+    def test_empty_completed_indices_is_noop(self, mock_attack, sample_seed_groups):
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="test",
+        )
+
+        atomic.filter_seed_groups_by_indices(completed_indices=set())
+
+        assert atomic.seed_groups == sample_seed_groups
+        assert atomic._original_indices == [0, 1, 2]
+
+    def test_all_indices_completed_clears_seed_groups(self, mock_attack, sample_seed_groups):
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="test",
+        )
+
+        atomic.filter_seed_groups_by_indices(completed_indices={0, 1, 2})
+
+        assert atomic.seed_groups == []
+        assert atomic._original_indices == []
+
+    def test_filter_preserves_original_indices_across_successive_calls(self, mock_attack, sample_seed_groups):
+        """After two successive filters, ``_original_indices`` must still reference
+        the *initial* construction positions, not the post-filter positions."""
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="test",
+        )
+
+        atomic.filter_seed_groups_by_indices(completed_indices={0})
+        assert atomic._original_indices == [1, 2]
+
+        atomic.filter_seed_groups_by_indices(completed_indices={1})
+        # Index 1 (original position) must be dropped; index 2 (original) remains.
+        assert atomic._original_indices == [2]
+        assert atomic.seed_groups == [sample_seed_groups[2]]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAtomicAttackFilterSeedGroupsByObjectives:
+    """Tests for the deprecated ``filter_seed_groups_by_objectives`` path —
+    still covered so we know the deprecation warning fires and the legacy
+    semantics keep working until ``removed_in=0.16.0``."""
+
+    def test_emits_deprecation_warning(self, mock_attack, sample_seed_groups):
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="test",
+        )
+
+        with pytest.warns(DeprecationWarning, match="filter_seed_groups_by_objectives"):
+            atomic.filter_seed_groups_by_objectives(remaining_objectives=["objective2"])
+
+        assert [sg.objective.value for sg in atomic.seed_groups] == ["objective2"]
+        # The kept seed group was at original position 1.
+        assert atomic._original_indices == [1]
+
+    def test_drops_all_when_no_objectives_match(self, mock_attack, sample_seed_groups):
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="test",
+        )
+
+        with pytest.warns(DeprecationWarning):
+            atomic.filter_seed_groups_by_objectives(remaining_objectives=["nope"])
+
+        assert atomic.seed_groups == []
+        assert atomic._original_indices == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAtomicAttackAttributionFactory:
+    """Tests for the ``attribution_factory`` closure built in ``run_async`` —
+    the bridge that lets the AttackExecutor stamp each per-task input index
+    back onto its *original* objective_index when persisting attack results."""
+
+    async def test_no_factory_passed_when_scenario_result_id_unset(
+        self, mock_attack, sample_seed_groups, sample_attack_results
+    ):
+        """Outside a Scenario, ``_scenario_result_id`` is None and the
+        executor must receive ``attribution_factory=None``."""
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="test",
+        )
+        assert atomic._scenario_result_id is None
+
+        with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = wrap_results(sample_attack_results)
+            await atomic.run_async()
+
+        assert mock_exec.call_args.kwargs["attribution_factory"] is None
+
+    async def test_factory_built_when_scenario_result_id_set(
+        self, mock_attack, sample_seed_groups, sample_attack_results
+    ):
+        """When the Scenario stamps ``_scenario_result_id`` onto the atomic
+        attack, ``run_async`` must build and pass a factory."""
+        from pyrit.executor.attack.core.scenario_execution_attribution import ScenarioExecutionAttribution
+
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="MyAtomicAttack",
+        )
+        atomic._scenario_result_id = "00000000-0000-0000-0000-000000000abc"
+
+        with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = wrap_results(sample_attack_results)
+            await atomic.run_async()
+
+        factory = mock_exec.call_args.kwargs["attribution_factory"]
+        assert factory is not None
+
+        # input_index 0 → original_indices[0] == 0
+        attribution = factory(0)
+        assert isinstance(attribution, ScenarioExecutionAttribution)
+        assert attribution.scenario_result_id == "00000000-0000-0000-0000-000000000abc"
+        assert attribution.atomic_attack_name == "MyAtomicAttack"
+        assert attribution.objective_index == 0
+
+        # input_index 2 → original_indices[2] == 2
+        assert factory(2).objective_index == 2
+
+    async def test_factory_maps_input_index_to_original_index_after_filtering(
+        self, mock_attack, sample_seed_groups, sample_attack_results
+    ):
+        """The whole point of the factory: after filtering out a completed
+        seed group, the per-task input index 0 must still map back to the
+        *original* objective_index of the surviving seed group, not 0."""
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="ResumeAttack",
+        )
+        atomic._scenario_result_id = "scenario-1"
+        # Simulate resume: original positions 0 and 1 are done; only position 2 remains.
+        atomic.filter_seed_groups_by_indices(completed_indices={0, 1})
+
+        with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = wrap_results(sample_attack_results[:1])
+            await atomic.run_async()
+
+        factory = mock_exec.call_args.kwargs["attribution_factory"]
+        assert factory is not None
+        # input_index 0 (only remaining task) → original index 2.
+        assert factory(0).objective_index == 2
+
+    async def test_factory_captures_indices_by_value_not_reference(
+        self, mock_attack, sample_seed_groups, sample_attack_results
+    ):
+        """The closure must snapshot ``_original_indices`` at build time so
+        mutating the AtomicAttack after ``run_async`` started doesn't poison
+        in-flight attributions."""
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="test",
+        )
+        atomic._scenario_result_id = "scenario-1"
+
+        with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = wrap_results(sample_attack_results)
+            await atomic.run_async()
+
+        factory = mock_exec.call_args.kwargs["attribution_factory"]
+        # Mutate after run_async has captured the snapshot.
+        atomic._original_indices = [999, 999, 999]
+
+        # Factory still returns the snapshotted original indices.
+        assert [factory(i).objective_index for i in range(3)] == [0, 1, 2]
