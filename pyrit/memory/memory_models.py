@@ -723,8 +723,8 @@ class AttackResultEntry(Base):
         String, nullable=False, default="undetermined"
     )
     outcome_reason = mapped_column(String, nullable=True)
-    attack_metadata: Mapped[dict[str, str | int | float | bool]] = mapped_column(JSON, nullable=True)
-    labels: Mapped[dict[str, str]] = mapped_column(JSON, nullable=True)
+    attack_metadata: Mapped[dict[str, str | int | float | bool] | None] = mapped_column(JSON, nullable=True)
+    labels: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     pruned_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     adversarial_chat_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     timestamp = mapped_column(DateTime, nullable=False)

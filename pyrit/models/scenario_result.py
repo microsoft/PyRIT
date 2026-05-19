@@ -58,7 +58,7 @@ class ScenarioIdentifier:
         return {
             "name": self.name,
             "description": self.description,
-            "version": self.version,
+            "scenario_version": self.version,
             "pyrit_version": self.pyrit_version,
             "init_data": self.init_data,
         }
@@ -77,7 +77,7 @@ class ScenarioIdentifier:
         return cls(
             name=data["name"],
             description=data.get("description", ""),
-            scenario_version=data.get("version", 1),
+            scenario_version=data.get("scenario_version", 1),
             init_data=data.get("init_data"),
             pyrit_version=data.get("pyrit_version"),
         )

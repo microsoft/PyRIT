@@ -215,7 +215,11 @@ class Score:
             score_category=data.get("score_category"),
             score_rationale=data["score_rationale"],
             score_metadata=data.get("score_metadata"),
-            scorer_class_identifier=ComponentIdentifier.from_dict(data["scorer_class_identifier"]),
+            scorer_class_identifier=(  # type: ignore[ty:invalid-argument-type]
+                ComponentIdentifier.from_dict(data["scorer_class_identifier"])
+                if data.get("scorer_class_identifier")
+                else None
+            ),
             message_piece_id=data["message_piece_id"],
             timestamp=datetime.fromisoformat(data["timestamp"]) if data.get("timestamp") else None,
             objective=data.get("objective"),
