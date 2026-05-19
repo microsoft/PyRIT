@@ -98,17 +98,23 @@ class TestPyRITShell:
         captured = capsys.readouterr()
         assert "Specify a scenario name" in captured.out
 
-    def test_do_scenario_history_empty(self, shell, capsys):
+    def test_do_scenario_history_default_limit(self, shell):
         s, client = shell
         client.list_scenario_runs_async.return_value = {"items": []}
         s.do_scenario_history("")
-        client.list_scenario_runs_async.assert_awaited_once()
+        client.list_scenario_runs_async.assert_awaited_once_with(limit=10)
 
-    def test_do_scenario_history_rejects_args(self, shell, capsys):
+    def test_do_scenario_history_accepts_numeric_limit(self, shell):
+        s, client = shell
+        client.list_scenario_runs_async.return_value = {"items": []}
+        s.do_scenario_history("3")
+        client.list_scenario_runs_async.assert_awaited_once_with(limit=3)
+
+    def test_do_scenario_history_rejects_non_integer(self, shell, capsys):
         s, _ = shell
         s.do_scenario_history("extra")
         captured = capsys.readouterr()
-        assert "does not accept arguments" in captured.out
+        assert "Usage: scenario-history" in captured.out
 
     def test_do_print_scenario_no_args(self, shell, capsys):
         s, _ = shell
@@ -147,7 +153,7 @@ class TestPyRITShell:
 
     def test_do_stop_server_no_launcher(self, shell, capsys):
         s, _ = shell
-        with patch("pyrit.cli.pyrit_scan._stop_server_on_port", return_value=False):
+        with patch("pyrit.cli._server_launcher.stop_server_on_port", return_value=False):
             s.do_stop_server("")
         captured = capsys.readouterr()
         assert "No server found" in captured.out
@@ -426,7 +432,10 @@ class TestDoRun:
     def test_run_keyboard_interrupt_cancels(self, shell, capsys):
         s, client = shell
         client.start_scenario_run_async = AsyncMock(return_value=self._run_payload())
-        client.get_scenario_run_async = AsyncMock(side_effect=KeyboardInterrupt)
+        # Use MagicMock so KeyboardInterrupt raises synchronously on call —
+        # this simulates Ctrl+C arriving between polling iterations, matching
+        # how signals are delivered to the shell's main thread in production.
+        client.get_scenario_run_async = MagicMock(side_effect=KeyboardInterrupt)
         client.cancel_scenario_run_async = AsyncMock(return_value=None)
         with (
             patch(
@@ -443,7 +452,7 @@ class TestDoRun:
     def test_run_keyboard_interrupt_cancel_fails_warns(self, shell, capsys):
         s, client = shell
         client.start_scenario_run_async = AsyncMock(return_value=self._run_payload())
-        client.get_scenario_run_async = AsyncMock(side_effect=KeyboardInterrupt)
+        client.get_scenario_run_async = MagicMock(side_effect=KeyboardInterrupt)
         client.cancel_scenario_run_async = AsyncMock(side_effect=RuntimeError("offline"))
         with (
             patch(
@@ -598,7 +607,7 @@ class TestServerManagement:
     def test_stop_server_by_port_success(self, shell, capsys):
         s, _ = shell
         s._base_url = "http://localhost:8000"
-        with patch("pyrit.cli.pyrit_scan._stop_server_on_port", return_value=True):
+        with patch("pyrit.cli._server_launcher.stop_server_on_port", return_value=True):
             s.do_stop_server("")
         assert "stopped" in capsys.readouterr().out
 
@@ -655,3 +664,62 @@ class TestShellScenarioParamFlow:
         s.do_run("foo --target t --not-a-real-flag x")
         captured = capsys.readouterr().out
         assert "Unknown argument" in captured or "Error" in captured
+
+    def test_run_fat_fingered_flag_with_no_scenario_params_errors(self, shell, capsys):
+        """Even when the scenario declares no params, unknown flags must error (no silent no-op)."""
+        s, client = shell
+        client.get_scenario_async.return_value = {"scenario_name": "foo", "supported_parameters": []}
+        s.do_run("foo --target t --initialization-scripts /nope.py")
+        captured = capsys.readouterr().out
+        assert "Unknown argument: --initialization-scripts" in captured
+        client.start_scenario_run_async.assert_not_called()
+
+    def test_run_fat_fingered_log_level_flag_errors(self, shell, capsys):
+        """--log-level was a stale shell-only flag; passing it must now error."""
+        s, client = shell
+        client.get_scenario_async.return_value = {"scenario_name": "foo", "supported_parameters": []}
+        s.do_run("foo --target t --log-level DEBUG")
+        captured = capsys.readouterr().out
+        assert "Unknown argument: --log-level" in captured
+        client.start_scenario_run_async.assert_not_called()
+
+
+class TestScenarioParamCoercionInShell:
+    """Shell-side regression tests for typed scenario params from the catalog."""
+
+    def test_shell_list_param_collects_multiple_values(self, shell):
+        s, client = shell
+        client.get_scenario_async.return_value = {
+            "scenario_name": "foo",
+            "supported_parameters": [
+                {"name": "items", "description": "list field", "param_type": "list[str]", "is_list": True}
+            ],
+        }
+        client.start_scenario_run_async = AsyncMock(return_value={"scenario_result_id": "rid", "status": "CREATED"})
+        client.get_scenario_run_async = AsyncMock(return_value={"scenario_result_id": "rid", "status": "COMPLETED"})
+        client.get_scenario_run_results_async = AsyncMock(return_value={"items": []})
+
+        with (
+            patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock),
+            patch("pyrit.cli._output.print_scenario_run_progress"),
+            patch("time.sleep"),
+        ):
+            s.do_run("foo --target t --items a b c")
+
+        sent = client.start_scenario_run_async.call_args.kwargs["request"]
+        assert sent["scenario_params"] == {"items": ["a", "b", "c"]}
+
+    def test_shell_choices_rejected_before_request(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_async.return_value = {
+            "scenario_name": "foo",
+            "supported_parameters": [
+                {"name": "mode", "description": "...", "param_type": "str", "choices": ["fast", "slow"]}
+            ],
+        }
+        s.do_run("foo --target t --mode warp")
+        out = capsys.readouterr().out
+        # Parameter.coerce_value raises ValueError on out-of-choice values;
+        # do_run surfaces these as "Error: ...".
+        assert "Error" in out
+        client.start_scenario_run_async.assert_not_called()

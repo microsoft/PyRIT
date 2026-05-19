@@ -6,7 +6,6 @@ Unit tests for the pyrit_scan CLI module (thin REST client).
 """
 
 import logging
-import sys
 from argparse import Namespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -318,35 +317,43 @@ class TestMain:
 
 
 class TestStopServerOnPort:
-    """Tests for _stop_server_on_port helper."""
+    """Tests for stop_server_on_port helper (now lives in _server_launcher)."""
 
     @patch("sys.platform", "win32")
     @patch("subprocess.run")
     @patch("os.kill")
     def test_stop_on_windows_finds_pid_via_netstat(self, mock_kill, mock_run):
+        from pyrit.cli import _server_launcher
+
         mock_run.return_value = MagicMock(
             stdout="  TCP    0.0.0.0:8000           0.0.0.0:0              LISTENING       1234\n",
         )
-        assert pyrit_scan._stop_server_on_port(port=8000) is True
+        assert _server_launcher.stop_server_on_port(port=8000) is True
         mock_kill.assert_called_once()
 
     @patch("sys.platform", "linux")
     @patch("subprocess.run")
     @patch("os.kill")
     def test_stop_on_unix_finds_pid_via_lsof(self, mock_kill, mock_run):
+        from pyrit.cli import _server_launcher
+
         mock_run.return_value = MagicMock(stdout="5678\n")
-        assert pyrit_scan._stop_server_on_port(port=8000) is True
+        assert _server_launcher.stop_server_on_port(port=8000) is True
         mock_kill.assert_called_once_with(5678, pytest.importorskip("signal").SIGTERM)
 
     @patch("subprocess.run", side_effect=OSError("nope"))
     def test_stop_swallows_errors_and_returns_false(self, _mock_run):
-        assert pyrit_scan._stop_server_on_port(port=8000) is False
+        from pyrit.cli import _server_launcher
+
+        assert _server_launcher.stop_server_on_port(port=8000) is False
 
     @patch("sys.platform", "linux")
     @patch("subprocess.run")
     def test_stop_returns_false_when_no_pid_found(self, mock_run):
+        from pyrit.cli import _server_launcher
+
         mock_run.return_value = MagicMock(stdout="")
-        assert pyrit_scan._stop_server_on_port(port=8000) is False
+        assert _server_launcher.stop_server_on_port(port=8000) is False
 
 
 class TestAddScenarioParamsFromApi:
@@ -364,8 +371,8 @@ class TestAddScenarioParamsFromApi:
             ],
         )
         parsed = parser.parse_args(["--max-turns", "5", "--mode", "fast"])
-        assert getattr(parsed, "scenario__max_turns") == "5"
-        assert getattr(parsed, "scenario__mode") == "fast"
+        assert parsed.scenario__max_turns == "5"
+        assert parsed.scenario__mode == "fast"
 
     def test_skips_params_that_collide_with_existing_flags(self):
         from argparse import ArgumentParser
@@ -478,10 +485,7 @@ class TestResolveServerUrl:
                 new=AsyncMock(return_value="http://localhost:8000"),
             ),
         ):
-            assert (
-                await pyrit_scan._resolve_server_url_async(parsed_args=parsed)
-                == "http://localhost:8000"
-            )
+            assert await pyrit_scan._resolve_server_url_async(parsed_args=parsed) == "http://localhost:8000"
 
     async def test_returns_none_when_start_server_raises(self, capsys):
         parsed = Namespace(server_url=None, start_server=True, config_file=None)
@@ -498,6 +502,102 @@ class TestResolveServerUrl:
         ):
             assert await pyrit_scan._resolve_server_url_async(parsed_args=parsed) is None
         assert "nope" in capsys.readouterr().out
+
+    async def test_resolution_order_cli_beats_config_beats_default(self):
+        """CLI flag > config-file value > built-in default."""
+        # 1) CLI flag wins even when config has a different value.
+        parsed = Namespace(server_url="http://cli:1111", start_server=False, config_file=None)
+        with (
+            patch(
+                "pyrit.cli._config_reader.read_server_url",
+                return_value="http://cfg:2222",
+            ),
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new=AsyncMock(return_value=True),
+            ),
+        ):
+            assert await pyrit_scan._resolve_server_url_async(parsed_args=parsed) == "http://cli:1111"
+
+        # 2) Config wins when CLI omitted.
+        parsed = Namespace(server_url=None, start_server=False, config_file=None)
+        with (
+            patch(
+                "pyrit.cli._config_reader.read_server_url",
+                return_value="http://cfg:2222",
+            ),
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new=AsyncMock(return_value=True),
+            ),
+        ):
+            assert await pyrit_scan._resolve_server_url_async(parsed_args=parsed) == "http://cfg:2222"
+
+        # 3) Built-in default when neither CLI nor config provide a URL.
+        from pyrit.cli._config_reader import DEFAULT_SERVER_URL
+
+        parsed = Namespace(server_url=None, start_server=False, config_file=None)
+        with (
+            patch("pyrit.cli._config_reader.read_server_url", return_value=None),
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new=AsyncMock(return_value=True),
+            ),
+        ):
+            assert await pyrit_scan._resolve_server_url_async(parsed_args=parsed) == DEFAULT_SERVER_URL
+
+
+class TestScenarioParamCoercion:
+    """Regression tests for client-side coercion of typed scenario-declared params."""
+
+    def test_list_param_uses_nargs_plus(self):
+        from argparse import ArgumentParser
+
+        parser = ArgumentParser()
+        pyrit_scan._add_scenario_params_from_api(
+            parser=parser,
+            params=[{"name": "items", "description": "...", "param_type": "list[str]", "is_list": True}],
+        )
+        parsed = parser.parse_args(["--items", "a", "b", "c"])
+        assert parsed.scenario__items == ["a", "b", "c"]
+
+    def test_int_param_is_coerced(self):
+        from argparse import ArgumentParser
+
+        parser = ArgumentParser()
+        pyrit_scan._add_scenario_params_from_api(
+            parser=parser,
+            params=[{"name": "max_turns", "description": "...", "param_type": "int"}],
+        )
+        parsed = parser.parse_args(["--max-turns", "7"])
+        assert parsed.scenario__max_turns == 7
+
+    def test_int_param_invalid_value_rejected_client_side(self, capsys):
+        from argparse import ArgumentParser
+
+        parser = ArgumentParser()
+        pyrit_scan._add_scenario_params_from_api(
+            parser=parser,
+            params=[{"name": "max_turns", "description": "...", "param_type": "int"}],
+        )
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--max-turns", "not-an-int"])
+        assert "invalid value" in capsys.readouterr().err
+
+    def test_choices_validated_client_side(self, capsys):
+        from argparse import ArgumentParser
+
+        parser = ArgumentParser()
+        pyrit_scan._add_scenario_params_from_api(
+            parser=parser,
+            params=[{"name": "mode", "description": "...", "param_type": "str", "choices": ["fast", "slow"]}],
+        )
+        parsed = parser.parse_args(["--mode", "fast"])
+        assert parsed.scenario__mode == "fast"
+
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--mode", "warp"])
+        assert "invalid choice" in capsys.readouterr().err
 
 
 class TestMainExtraPaths:
@@ -564,7 +664,7 @@ class TestMainExtraPaths:
         new_callable=AsyncMock,
         return_value=True,
     )
-    @patch("pyrit.cli.pyrit_scan._stop_server_on_port", return_value=True)
+    @patch("pyrit.cli._server_launcher.stop_server_on_port", return_value=True)
     def test_main_stop_server_kills_process_and_returns_zero(self, _stop_mock, _mock_probe, capsys):
         result = pyrit_scan.main(["--stop-server"])
         assert result == 0
@@ -575,7 +675,7 @@ class TestMainExtraPaths:
         new_callable=AsyncMock,
         return_value=True,
     )
-    @patch("pyrit.cli.pyrit_scan._stop_server_on_port", return_value=False)
+    @patch("pyrit.cli._server_launcher.stop_server_on_port", return_value=False)
     def test_main_stop_server_when_process_cannot_be_identified(self, _stop_mock, _mock_probe, capsys):
         result = pyrit_scan.main(["--stop-server"])
         assert result == 0
@@ -664,9 +764,7 @@ class TestScenarioParamFlow:
     @patch("pyrit.cli.api_client.PyRITApiClient")
     @patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock)
     @patch("pyrit.cli._output.print_scenario_run_progress")
-    def test_unknown_flag_after_valid_scenario_errors(
-        self, _mock_prog, _mock_print, mock_client_class, _mock_probe
-    ):
+    def test_unknown_flag_after_valid_scenario_errors(self, _mock_prog, _mock_print, mock_client_class, _mock_probe):
         client = self._build_mock_client(supported_params=[{"name": "max_turns", "description": "..."}])
         mock_client_class.return_value = client
 

@@ -4,6 +4,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from pyrit.backend import pyrit_backend
 
 
@@ -84,3 +86,26 @@ class TestMain:
     def test_main_forwards_reload_flag(self, mock_run: MagicMock) -> None:
         pyrit_backend.main(args=["--reload"])
         assert mock_run.call_args.kwargs["reload"] is True
+
+
+class TestParseArgsDoesNotAcceptLegacyFlags:
+    """
+    Regression: the thin backend only takes --host/--port/--config-file/--log-level/--reload.
+    Legacy --database and --initializers must be rejected so callers (docker/start.sh,
+    frontend/dev.py) cannot silently regress to passing them.
+    """
+
+    def test_database_flag_rejected(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            pyrit_backend.parse_args(args=["--database", "SQLite"])
+        assert exc_info.value.code != 0
+
+    def test_initializers_flag_rejected(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            pyrit_backend.parse_args(args=["--initializers", "target"])
+        assert exc_info.value.code != 0
+
+    def test_initialization_scripts_flag_rejected(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            pyrit_backend.parse_args(args=["--initialization-scripts", "./x.py"])
+        assert exc_info.value.code != 0

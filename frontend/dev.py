@@ -163,6 +163,10 @@ def start_backend(*, config_file: str | None = None, initializers: list[str] | N
     Configuration (initializers, database, env files) is read automatically
     from ~/.pyrit/.pyrit_conf by the pyrit_backend CLI via ConfigurationLoader,
     unless overridden with *config_file*.
+
+    When *initializers* is supplied without a *config_file*, a tiny temporary
+    runtime config is written to forward those names — ``pyrit_backend`` only
+    accepts ``--config-file`` now (no ``--initializers`` flag).
     """
     print("🚀 Starting backend on port 8000...")
 
@@ -186,12 +190,24 @@ def start_backend(*, config_file: str | None = None, initializers: list[str] | N
         "--log-level",
         "info",
     ]
-    if config_file:
-        cmd.extend(["--config-file", config_file])
 
-    # Add initializers if specified
-    if initializers:
-        cmd.extend(["--initializers"] + initializers)
+    # Resolve config-file: explicit wins; otherwise synthesize one from initializers.
+    effective_config_file = config_file
+    if effective_config_file is None and initializers:
+        import tempfile
+
+        synthesized = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", prefix="pyrit_dev_", delete=False
+        )
+        synthesized.write("initializers:\n")
+        for name in initializers:
+            synthesized.write(f"  - {name}\n")
+        synthesized.close()
+        effective_config_file = synthesized.name
+        print(f"   Wrote initializer overrides to {effective_config_file}")
+
+    if effective_config_file:
+        cmd.extend(["--config-file", effective_config_file])
 
     # Pipe stdout/stderr so dev.py controls output ordering
     return subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

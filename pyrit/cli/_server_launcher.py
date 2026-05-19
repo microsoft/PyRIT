@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import subprocess
 import sys
 from typing import TYPE_CHECKING
@@ -21,6 +22,89 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Port-based process termination
+# ---------------------------------------------------------------------------
+
+
+def _find_pid_on_port_windows(*, port: int) -> int | None:
+    """
+    Find the PID listening on *port* on Windows via ``netstat``.
+
+    Args:
+        port: TCP port to look up.
+
+    Returns:
+        int | None: The PID, or ``None`` if no listener was found.
+    """
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano", "-p", "TCP"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in result.stdout.splitlines():
+        if f":{port}" in line and "LISTENING" in line:
+            try:
+                return int(line.strip().split()[-1])
+            except (ValueError, IndexError):
+                continue
+    return None
+
+
+def _find_pid_on_port_unix(*, port: int) -> int | None:
+    """
+    Find the first PID listening on *port* on Unix via ``lsof``.
+
+    Args:
+        port: TCP port to look up.
+
+    Returns:
+        int | None: The PID, or ``None`` if no listener was found.
+    """
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for pid_str in result.stdout.strip().splitlines():
+        try:
+            return int(pid_str)
+        except ValueError:
+            continue
+    return None
+
+
+def stop_server_on_port(*, port: int) -> bool:
+    """
+    Find and terminate the process listening on *port*.
+
+    Args:
+        port: TCP port to look up.
+
+    Returns:
+        bool: ``True`` if a process was found and signalled, ``False`` otherwise.
+    """
+    if sys.platform == "win32":
+        pid = _find_pid_on_port_windows(port=port)
+    else:
+        pid = _find_pid_on_port_unix(port=port)
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+        return True
+    except OSError:
+        return False
 
 
 class ServerLauncher:

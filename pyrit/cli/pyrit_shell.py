@@ -15,10 +15,16 @@ import cmd
 import contextlib
 import logging
 import sys
+import threading
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
 from pyrit.cli import _banner as banner
+
+if TYPE_CHECKING:
+    from collections.abc import Coroutine
+
+_T = TypeVar("_T")
 
 
 class PyRITShell(cmd.Cmd):
@@ -30,7 +36,7 @@ class PyRITShell(cmd.Cmd):
         list-initializers          - List all available initializers
         list-targets               - List all available targets
         run <scenario> [opts]      - Run a scenario with optional parameters
-        scenario-history           - List previous scenario runs
+        scenario-history [N]       - List the last N (default 10) scenario runs
         print-scenario [id]        - Print detailed results for a scenario run
         start-server               - Start a local backend server
         stop-server                - Stop the owned backend server
@@ -69,6 +75,34 @@ class PyRITShell(cmd.Cmd):
         self._base_url: str | None = None
         self._launcher: Any = None  # ServerLauncher (lazy)
 
+        # Persistent event loop running on a background thread. All async
+        # calls (health probe, REST methods, scenario polling) are scheduled
+        # here so the shared httpx.AsyncClient stays in a single loop.
+        self._loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(target=self._loop.run_forever, name="pyrit-shell-loop", daemon=True)
+        self._loop_thread.start()
+
+    def _run_async(self, coro: Coroutine[Any, Any, _T]) -> _T:
+        """
+        Run a coroutine on the shell's persistent loop and return its result.
+
+        Args:
+            coro: Coroutine to schedule on the background loop.
+
+        Returns:
+            The coroutine's result.
+        """
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result()
+
+    def _shutdown_loop(self) -> None:
+        """Stop the background event loop and join the thread."""
+        if not self._loop.is_closed():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._loop_thread.join(timeout=5)
+            with contextlib.suppress(Exception):
+                self._loop.close()
+
     def _resolve_base_url(self) -> str:
         """
         Determine the server base URL.
@@ -97,12 +131,12 @@ class PyRITShell(cmd.Cmd):
         # Check health
         from pyrit.cli._server_launcher import ServerLauncher
 
-        healthy = asyncio.run(ServerLauncher.probe_health_async(base_url=base_url))
+        healthy = self._run_async(ServerLauncher.probe_health_async(base_url=base_url))
 
         if not healthy and self._start_server:
             self._launcher = ServerLauncher()
             try:
-                base_url = asyncio.run(self._launcher.start_async(config_file=self._config_file))
+                base_url = self._run_async(self._launcher.start_async(config_file=self._config_file))
                 healthy = True
             except RuntimeError as exc:
                 print(f"Error starting server: {exc}")
@@ -121,7 +155,7 @@ class PyRITShell(cmd.Cmd):
 
         self._base_url = base_url
         self._api_client = PyRITApiClient(base_url=base_url)
-        asyncio.run(self._api_client.__aenter__())
+        self._run_async(self._api_client.__aenter__())
         self._start_server = False  # only auto-start once
         return True
 
@@ -151,7 +185,7 @@ class PyRITShell(cmd.Cmd):
         from pyrit.cli import _output
 
         try:
-            resp = asyncio.run(self._api_client.list_scenarios_async())
+            resp = self._run_async(self._api_client.list_scenarios_async())
             _output.print_scenario_list(items=resp.get("items", []))
         except Exception as e:
             print(f"Error listing scenarios: {e}")
@@ -166,19 +200,22 @@ class PyRITShell(cmd.Cmd):
         from pyrit.cli import _output
 
         try:
-            resp = asyncio.run(self._api_client.list_initializers_async())
+            resp = self._run_async(self._api_client.list_initializers_async())
             _output.print_initializer_list(items=resp.get("items", []))
         except Exception as e:
             print(f"Error listing initializers: {e}")
 
     def do_list_targets(self, arg: str) -> None:
         """List all available targets."""
+        if arg.strip():
+            print(f"Error: list-targets does not accept arguments, got: {arg.strip()}")
+            return
         if not self._ensure_client():
             return
         from pyrit.cli import _output
 
         try:
-            resp = asyncio.run(self._api_client.list_targets_async())
+            resp = self._run_async(self._api_client.list_targets_async())
             _output.print_target_list(items=resp.get("items", []))
         except Exception as e:
             print(f"Error listing targets: {e}")
@@ -205,7 +242,9 @@ class PyRITShell(cmd.Cmd):
                 return
             try:
                 content = script_path.read_text()
-                asyncio.run(self._api_client.register_initializer_async(name=script_path.stem, script_content=content))
+                self._run_async(
+                    self._api_client.register_initializer_async(name=script_path.stem, script_content=content)
+                )
                 print(f"Registered initializer '{script_path.stem}' from {script_path}")
             except ServerNotAvailableError as exc:
                 print(f"Error: {exc}")
@@ -227,12 +266,19 @@ class PyRITShell(cmd.Cmd):
 
         Options:
             --target <name>                 Target name (required)
-            --initializers <name> ...       Initializer names
-            --initialization-scripts <...>  Custom Python scripts
+            --initializers <name> ...       Initializer names (supports name:key=val syntax)
             --strategies, -s <s1> <s2> ...  Strategy names
             --max-concurrency <N>           Maximum concurrent operations
             --max-retries <N>               Maximum retry attempts
             --memory-labels <JSON>          JSON string of labels
+            --dataset-names <name> ...      Override default dataset names
+            --max-dataset-size <N>          Maximum items per dataset
+            --<scenario-flag> <value>       Scenario-declared parameters (see list-scenarios)
+
+        Notes:
+            Database, env files, and initialization scripts are configured on
+            the backend via its config file. Use `add-initializer` to register
+            custom initializers on the running server.
         """
         if not self._ensure_client():
             return
@@ -242,36 +288,24 @@ class PyRITShell(cmd.Cmd):
             print("Usage: run <scenario_name> --target <name> [options]")
             return
 
-        from pyrit.cli._cli_args import extract_scenario_args, parse_run_arguments
+        from pyrit.cli._cli_args import build_parameters_from_api, extract_scenario_args, parse_run_arguments
         from pyrit.cli._output import (
             print_scenario_result_async,
             print_scenario_run_progress,
             print_scenario_run_summary,
         )
-        from pyrit.common.parameter import Parameter
 
         # Fetch scenario metadata so the parser recognizes scenario-declared flags.
         scenario_name_token = line.split(maxsplit=1)[0]
-        declared_params: list[Parameter] | None = None
         try:
-            scenario_meta = asyncio.run(self._api_client.get_scenario_async(scenario_name=scenario_name_token))
+            scenario_meta = self._run_async(self._api_client.get_scenario_async(scenario_name=scenario_name_token))
         except Exception as exc:
             print(f"Error fetching scenario metadata: {exc}")
             return
         if scenario_meta is None:
             print(f"Error: Scenario '{scenario_name_token}' not found on server.")
             return
-        supported = scenario_meta.get("supported_parameters") or []
-        if supported:
-            declared_params = [
-                Parameter(
-                    name=p["name"],
-                    description=p.get("description", ""),
-                    param_type=str,
-                    default=p.get("default"),
-                )
-                for p in supported
-            ]
+        declared_params = build_parameters_from_api(api_params=scenario_meta.get("supported_parameters") or [])
 
         # Parse arguments
         try:
@@ -328,7 +362,7 @@ class PyRITShell(cmd.Cmd):
         sys.stdout.flush()
 
         try:
-            run = asyncio.run(self._api_client.start_scenario_run_async(request=request))
+            run = self._run_async(self._api_client.start_scenario_run_async(request=request))
         except Exception as exc:
             print(f"Error starting scenario: {exc}")
             return
@@ -336,20 +370,20 @@ class PyRITShell(cmd.Cmd):
         scenario_result_id = run.get("scenario_result_id", "")
 
         # Poll for completion
+        import time
+
         try:
             while True:
-                run = asyncio.run(self._api_client.get_scenario_run_async(scenario_result_id=scenario_result_id))
+                run = self._run_async(self._api_client.get_scenario_run_async(scenario_result_id=scenario_result_id))
                 status = run.get("status", "UNKNOWN")
                 print_scenario_run_progress(run=run, total_strategies=total_strategies)
                 if status in self._TERMINAL_STATUSES:
                     break
-                import time
-
-                time.sleep(1.5)
+                time.sleep(0.5)
         except KeyboardInterrupt:
             print("\n\nCancelling scenario run...")
             try:
-                asyncio.run(self._api_client.cancel_scenario_run_async(scenario_result_id=scenario_result_id))
+                self._run_async(self._api_client.cancel_scenario_run_async(scenario_result_id=scenario_result_id))
                 print("Scenario run cancelled.")
             except Exception:
                 print("Warning: could not cancel scenario run.")
@@ -359,10 +393,10 @@ class PyRITShell(cmd.Cmd):
         # Print results
         if run.get("status") == "COMPLETED":
             try:
-                detail = asyncio.run(
+                detail = self._run_async(
                     self._api_client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
                 )
-                asyncio.run(print_scenario_result_async(result_dict=detail))
+                self._run_async(print_scenario_result_async(result_dict=detail))
             except Exception:
                 print_scenario_run_summary(run=run)
         else:
@@ -373,16 +407,29 @@ class PyRITShell(cmd.Cmd):
     # ------------------------------------------------------------------
 
     def do_scenario_history(self, arg: str) -> None:
-        """Display history of scenario runs from the server."""
-        if arg.strip():
-            print(f"Error: scenario-history does not accept arguments, got: {arg.strip()}")
-            return
+        """
+        Display history of scenario runs from the server (most recent first).
+
+        Usage:
+            scenario-history          Show the last 10 runs
+            scenario-history <N>      Show the last N runs
+        """
+        arg = arg.strip()
+        limit = 10
+        if arg:
+            try:
+                limit = int(arg)
+            except ValueError:
+                limit = 0
+            if limit < 1:
+                print(f"Usage: scenario-history [N]. Got non-positive-integer argument: {arg!r}")
+                return
         if not self._ensure_client():
             return
         from pyrit.cli._output import print_scenario_runs_list
 
         try:
-            resp = asyncio.run(self._api_client.list_scenario_runs_async())
+            resp = self._run_async(self._api_client.list_scenario_runs_async(limit=limit))
             print_scenario_runs_list(runs=resp.get("items", []))
         except Exception as e:
             print(f"Error: {e}")
@@ -405,8 +452,8 @@ class PyRITShell(cmd.Cmd):
             return
 
         try:
-            detail = asyncio.run(self._api_client.get_scenario_run_results_async(scenario_result_id=arg))
-            asyncio.run(print_scenario_result_async(result_dict=detail))
+            detail = self._run_async(self._api_client.get_scenario_run_results_async(scenario_result_id=arg))
+            self._run_async(print_scenario_result_async(result_dict=detail))
         except Exception as e:
             print(f"Error: {e}")
 
@@ -416,35 +463,41 @@ class PyRITShell(cmd.Cmd):
 
     def do_start_server(self, arg: str) -> None:
         """Start a local pyrit_backend server."""
+        if arg.strip():
+            print(f"Error: start-server does not accept arguments, got: {arg.strip()}")
+            return
         from pyrit.cli._server_launcher import ServerLauncher
         from pyrit.cli.api_client import PyRITApiClient
 
         base_url = self._resolve_base_url()
 
         # Check if already running
-        if asyncio.run(ServerLauncher.probe_health_async(base_url=base_url)):
+        if self._run_async(ServerLauncher.probe_health_async(base_url=base_url)):
             print(f"Server already running at {base_url}")
             if self._api_client is None:
                 self._base_url = base_url
                 self._api_client = PyRITApiClient(base_url=base_url)
-                asyncio.run(self._api_client.__aenter__())
+                self._run_async(self._api_client.__aenter__())
             return
 
         self._launcher = ServerLauncher()
         try:
-            new_url = asyncio.run(self._launcher.start_async(config_file=self._config_file))
+            new_url = self._run_async(self._launcher.start_async(config_file=self._config_file))
             self._base_url = new_url
             # Create new client for the started server
             if self._api_client is not None:
-                asyncio.run(self._api_client.close_async())
+                self._run_async(self._api_client.close_async())
             self._api_client = PyRITApiClient(base_url=new_url)
-            asyncio.run(self._api_client.__aenter__())
+            self._run_async(self._api_client.__aenter__())
         except RuntimeError as exc:
             print(f"Error: {exc}")
 
     def do_stop_server(self, arg: str) -> None:
         """Stop the backend server."""
-        from pyrit.cli.pyrit_scan import _stop_server_on_port
+        if arg.strip():
+            print(f"Error: stop-server does not accept arguments, got: {arg.strip()}")
+            return
+        from pyrit.cli._server_launcher import stop_server_on_port
 
         # If we own the launcher, use it directly
         if self._launcher is not None:
@@ -456,7 +509,7 @@ class PyRITShell(cmd.Cmd):
 
             base_url = self._base_url or self._resolve_base_url()
             port = urlparse(base_url).port or 8000
-            if _stop_server_on_port(port=port):
+            if stop_server_on_port(port=port):
                 print(f"Server on port {port} stopped.")
             else:
                 print(f"No server found on port {port}.")
@@ -465,7 +518,7 @@ class PyRITShell(cmd.Cmd):
         # Close the API client since the server is gone
         if self._api_client is not None:
             with contextlib.suppress(Exception):
-                asyncio.run(self._api_client.close_async())
+                self._run_async(self._api_client.close_async())
             self._api_client = None
         self._launcher = None
 
@@ -491,7 +544,9 @@ class PyRITShell(cmd.Cmd):
         """
         if self._api_client is not None:
             with contextlib.suppress(Exception):
-                asyncio.run(self._api_client.close_async())
+                self._run_async(self._api_client.close_async())
+            self._api_client = None
+        self._shutdown_loop()
         print("\nGoodbye!")
         return True
 
@@ -581,6 +636,11 @@ def main() -> int:
     args = parser.parse_args()
 
     logging.basicConfig(level=getattr(logging, args.log_level))
+
+    # Surface a deprecation if the layered config has blocks the CLI ignores.
+    from pyrit.cli._config_reader import warn_on_client_ignored_blocks
+
+    warn_on_client_ignored_blocks(config_file=args.config_file)
 
     # Play banner immediately
     prev_disable = logging.root.manager.disable

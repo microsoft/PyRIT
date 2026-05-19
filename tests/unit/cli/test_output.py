@@ -7,10 +7,7 @@ Unit tests for pyrit.cli._output formatting helpers.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from pyrit.cli import _output
-
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -98,7 +95,7 @@ def test_print_scenario_list_full(capsys):
                     "name": "mode",
                     "default": None,
                     "param_type": "str",
-                    "choices": "[a, b]",
+                    "choices": ["a", "b"],
                     "description": "Mode.",
                 },
             ],
@@ -332,6 +329,57 @@ async def test_print_scenario_result_async_uses_pretty_printer():
     from_dict_mock.assert_called_once_with(result_dict)
     printer_cls.assert_called_once_with()
     fake_printer.write_async.assert_awaited_once_with(fake_scenario)
+
+
+async def test_print_scenario_result_async_roundtrip_with_real_payload():
+    """
+    Integration smoke test: a real ScenarioResult.to_dict() payload must flow
+    through ScenarioResult.from_dict() inside print_scenario_result_async
+    without raising. Locks the REST contract used by the CLI thin client.
+    """
+    from datetime import datetime, timezone
+
+    from pyrit.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models import AttackOutcome, AttackResult
+    from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
+
+    identifier = ScenarioIdentifier(name="test.scenario", description="A test")
+    target_identifier = ComponentIdentifier.from_dict(
+        {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}
+    )
+    attack = AttackResult(
+        conversation_id="conv-1",
+        objective="extract data",
+        outcome=AttackOutcome.SUCCESS,
+        executed_turns=2,
+        execution_time_ms=150,
+        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    )
+    original = ScenarioResult(
+        scenario_identifier=identifier,
+        objective_target_identifier=target_identifier,
+        objective_scorer_identifier=None,
+        attack_results={"strat_a": [attack]},
+        scenario_run_state="COMPLETED",
+    )
+    payload = original.to_dict()
+
+    # Drive print_scenario_result_async through the real from_dict path; only
+    # stub the printer to keep the test fast.
+    fake_printer = MagicMock()
+    fake_printer.write_async = AsyncMock()
+    with patch(
+        "pyrit.output.scenario_result.pretty.PrettyScenarioResultMemoryPrinter",
+        return_value=fake_printer,
+    ):
+        await _output.print_scenario_result_async(result_dict=payload)
+
+    fake_printer.write_async.assert_awaited_once()
+    reconstructed = fake_printer.write_async.await_args.args[0]
+    assert isinstance(reconstructed, ScenarioResult)
+    assert reconstructed.scenario_identifier.name == "test.scenario"
+    assert list(reconstructed.attack_results.keys()) == ["strat_a"]
+    assert reconstructed.attack_results["strat_a"][0].outcome == AttackOutcome.SUCCESS
 
 
 # ---------------------------------------------------------------------------

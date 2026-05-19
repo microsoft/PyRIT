@@ -24,7 +24,8 @@ class ScenarioParameterSummary(BaseModel):
     description: str = Field(..., description="Human-readable description of the parameter")
     default: str | None = Field(None, description="Default value as a display string, or None if required")
     param_type: str = Field(..., description="Type of the parameter as a display string (e.g., 'int', 'str')")
-    choices: str | None = Field(None, description="Allowed values as a display string, or None if unconstrained")
+    choices: list[str] | None = Field(None, description="Allowed values as strings, or None if unconstrained")
+    is_list: bool = Field(False, description="True when the parameter accepts a list of values (e.g., list[str])")
 
 
 class RegisteredScenario(BaseModel):

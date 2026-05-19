@@ -5,14 +5,12 @@
 Unit tests for pyrit.cli._server_launcher.ServerLauncher.
 """
 
-import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.cli._server_launcher import ServerLauncher
-
 
 # ---------------------------------------------------------------------------
 # probe_health_async

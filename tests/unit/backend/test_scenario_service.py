@@ -368,7 +368,7 @@ class TestScenarioServiceSupportedParameters:
                     description="Execution mode",
                     default="fast",
                     param_type="str",
-                    choices="'fast', 'slow'",
+                    choices=["fast", "slow"],
                 ),
             ),
         )
@@ -389,12 +389,14 @@ class TestScenarioServiceSupportedParameters:
             assert params[0].default == "5"
             assert params[0].param_type == "int"
             assert params[0].choices is None
+            assert params[0].is_list is False
 
             assert params[1].name == "mode"
             assert params[1].description == "Execution mode"
             assert params[1].default == "'fast'"
             assert params[1].param_type == "str"
-            assert params[1].choices == "'fast', 'slow'"
+            assert params[1].choices == ["fast", "slow"]
+            assert params[1].is_list is False
 
     async def test_scenario_with_no_parameters_has_empty_list(self) -> None:
         """Test that scenarios without parameters have empty supported_parameters."""

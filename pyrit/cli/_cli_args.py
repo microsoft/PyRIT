@@ -413,12 +413,10 @@ _TARGET_ARG = _ArgSpec(
 
 _RUN_ARG_SPECS: list[_ArgSpec] = [
     _INITIALIZERS_ARG,
-    _INIT_SCRIPTS_ARG,
     _STRATEGIES_ARG,
     _MAX_CONCURRENCY_ARG,
     _MAX_RETRIES_ARG,
     _MEMORY_LABELS_ARG,
-    _LOG_LEVEL_ARG,
     _DATASET_NAMES_ARG,
     _MAX_DATASET_SIZE_ARG,
     _TARGET_ARG,
@@ -575,13 +573,14 @@ def _arg_spec_from_parameter(*, param: Parameter) -> _ArgSpec:
     """
     multi = get_origin(param.param_type) is list
     parser: Callable[[str], Any] | None
-    if param.param_type is None or param.param_type is str:
-        parser = None
-    elif multi:
+    if multi:
         # Per-element coercion; v1 only ships list[str].
         parser = str
+    elif param.param_type is None or (param.param_type is str and param.choices is None):
+        # No coercion needed and no choices to enforce.
+        parser = None
     else:
-
+        # Coerce + validate (handles ints/floats/bools AND str-with-choices).
         def parser(raw: str) -> Any:
             return coerce_value(param=param, raw_value=raw)
 
@@ -642,6 +641,45 @@ def extract_scenario_args(*, parsed: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Shared argparse builder
 # ---------------------------------------------------------------------------
+
+
+def build_parameters_from_api(*, api_params: list[dict[str, Any]]) -> Optional[list[Parameter]]:
+    """
+    Build ``Parameter`` objects from a scenario catalog's ``supported_parameters``.
+
+    Maps the display ``param_type`` string ("int", "float", "bool", "str",
+    "list[...]", "any") back to a concrete ``param_type`` so the shell parser
+    can apply per-element coercion and treat list params as ``multi_value``.
+
+    Args:
+        api_params: List of parameter dicts from ``GET /api/scenarios/catalog/{name}``.
+
+    Returns:
+        Optional[list[Parameter]]: Parameter list when ``api_params`` is non-empty, else ``None``.
+    """
+    if not api_params:
+        return None
+    type_map: dict[str, Any] = {"int": int, "float": float, "bool": bool, "str": str}
+    parameters: list[Parameter] = []
+    for p in api_params:
+        type_display = p.get("param_type", "")
+        if p.get("is_list"):
+            element_type = type_map.get(type_display.removeprefix("list[").rstrip("]"), str)
+            resolved_type: Any = list[element_type]  # type: ignore[valid-type]
+        else:
+            resolved_type = type_map.get(type_display)
+        raw_choices = p.get("choices")
+        choices: Optional[tuple[Any, ...]] = tuple(raw_choices) if raw_choices else None
+        parameters.append(
+            Parameter(
+                name=p["name"],
+                description=p.get("description", ""),
+                param_type=resolved_type,
+                default=p.get("default"),
+                choices=choices,
+            )
+        )
+    return parameters
 
 
 def add_common_arguments(parser: argparse.ArgumentParser) -> None:

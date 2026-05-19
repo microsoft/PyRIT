@@ -5,10 +5,7 @@
 Unit tests for pyrit.cli._config_reader.
 """
 
-from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 from pyrit.cli import _config_reader
 from pyrit.cli._config_reader import DEFAULT_SERVER_URL, read_server_url

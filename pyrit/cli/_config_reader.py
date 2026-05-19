@@ -22,6 +22,11 @@ _DEFAULT_CONFIG_FILE = _DEFAULT_CONFIG_DIR / ".pyrit_conf"
 
 DEFAULT_SERVER_URL = "http://localhost:8000"
 
+# Top-level config blocks the thin CLI does not read (server picks them up).
+# Surfacing them here lets us warn users whose configs still drive scenario
+# selection or scenario args from disk.
+_CLIENT_IGNORED_BLOCKS = ("scenario",)
+
 
 def read_server_url(*, config_file: Path | None = None) -> str | None:
     """
@@ -49,6 +54,40 @@ def read_server_url(*, config_file: Path | None = None) -> str | None:
     for p in paths:
         url = _extract_server_url(path=p, yaml_module=yaml) or url
     return url
+
+
+def warn_on_client_ignored_blocks(*, config_file: Path | None = None) -> None:
+    """
+    Emit a one-line deprecation notice if the layered config contains blocks
+    the thin CLI ignores (e.g. ``scenario:``). The server still honors these.
+
+    Args:
+        config_file: Optional overlay path; the default ``~/.pyrit/.pyrit_conf``
+            is always checked when present.
+    """
+    import yaml
+
+    paths: list[Path] = []
+    if _DEFAULT_CONFIG_FILE.exists():
+        paths.append(_DEFAULT_CONFIG_FILE)
+    if config_file is not None and config_file.exists():
+        paths.append(config_file)
+
+    for p in paths:
+        try:
+            with open(p) as fh:
+                data = yaml.safe_load(fh)
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        for block in _CLIENT_IGNORED_BLOCKS:
+            if block in data:
+                print(
+                    f"Deprecation: '{block}:' block in {p} is ignored by the CLI "
+                    f"(pass the scenario name positionally instead). "
+                    f"The backend server still reads this block."
+                )
 
 
 def _extract_server_url(*, path: Path, yaml_module: Any) -> str | None:

@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import os
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
@@ -29,46 +28,6 @@ from pyrit.cli._cli_args import (
 )
 
 _TERMINAL_STATUSES = {"COMPLETED", "FAILED", "CANCELLED"}
-
-
-def _stop_server_on_port(*, port: int) -> bool:
-    """
-    Find and terminate the process listening on *port*.
-
-    Returns:
-        bool: True if a process was found and killed.
-    """
-    import signal
-    import subprocess
-
-    try:
-        if sys.platform == "win32":
-            # netstat to find PID listening on the port
-            result = subprocess.run(
-                ["netstat", "-ano", "-p", "TCP"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            for line in result.stdout.splitlines():
-                if f":{port}" in line and "LISTENING" in line:
-                    pid = int(line.strip().split()[-1])
-                    os.kill(pid, signal.SIGTERM)
-                    return True
-        else:
-            # lsof to find PID on Unix
-            result = subprocess.run(
-                ["lsof", "-ti", f":{port}"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            for pid_str in result.stdout.strip().splitlines():
-                os.kill(int(pid_str), signal.SIGTERM)
-                return True
-    except Exception:
-        pass
-    return False
 
 
 _DESCRIPTION = """PyRIT Scanner - Run AI security scenarios from the command line.
@@ -241,6 +200,55 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
 _SCENARIO_DEST_PREFIX = "scenario__"
 
 
+_SCALAR_TYPE_COERCERS: dict[str, Any] = {
+    "int": int,
+    "float": float,
+    "bool": lambda v: str(v).strip().lower() in ("1", "true", "yes", "y", "on"),
+    "str": str,
+}
+
+
+def _scenario_param_kwargs(*, param: dict[str, Any]) -> dict[str, Any]:
+    """
+    Build argparse ``add_argument`` kwargs for a scenario-declared parameter dict.
+
+    Uses ``param_type``, ``is_list`` and ``choices`` from the catalog payload
+    so list params accept ``nargs='+'`` and scalar params get client-side
+    type coercion and choice validation.
+
+    Args:
+        param: Single entry from ``RegisteredScenario.supported_parameters``.
+
+    Returns:
+        dict[str, Any]: kwargs ready to pass to ``ArgumentParser.add_argument``.
+    """
+    kwargs: dict[str, Any] = {
+        "dest": f"{_SCENARIO_DEST_PREFIX}{param.get('name', '')}",
+        "default": argparse.SUPPRESS,
+        "help": param.get("description", ""),
+    }
+    if param.get("is_list"):
+        kwargs["nargs"] = "+"
+    else:
+        coercer = _SCALAR_TYPE_COERCERS.get(param.get("param_type", ""))
+        if coercer is not None and coercer is not str:
+            param_name = param.get("name", "")
+
+            def _typed(raw: str) -> Any:
+                try:
+                    return coercer(raw)
+                except (ValueError, TypeError) as exc:
+                    raise argparse.ArgumentTypeError(
+                        f"--{param_name.replace('_', '-')}: invalid value {raw!r} ({exc})"
+                    ) from exc
+
+            kwargs["type"] = _typed
+    choices = param.get("choices")
+    if choices:
+        kwargs["choices"] = list(choices)
+    return kwargs
+
+
 def _add_scenario_params_from_api(*, parser: ArgumentParser, params: list[dict[str, Any]]) -> None:
     """
     Add scenario-declared parameters (from the API response) as CLI flags.
@@ -255,12 +263,7 @@ def _add_scenario_params_from_api(*, parser: ArgumentParser, params: list[dict[s
         flag = f"--{name.replace('_', '-')}"
         if flag in seen_flags:
             continue
-        kwargs: dict[str, Any] = {
-            "dest": f"{_SCENARIO_DEST_PREFIX}{name}",
-            "default": argparse.SUPPRESS,
-            "help": p.get("description", ""),
-        }
-        parser.add_argument(flag, **kwargs)
+        parser.add_argument(flag, **_scenario_param_kwargs(param=p))
         seen_flags.add(flag)
 
 
@@ -381,7 +384,7 @@ async def _handle_stop_server_async(*, parsed_args: Namespace) -> int:
     """
     from urllib.parse import urlparse
 
-    from pyrit.cli._server_launcher import ServerLauncher
+    from pyrit.cli._server_launcher import ServerLauncher, stop_server_on_port
 
     base_url = _resolve_configured_server_url(parsed_args=parsed_args)
     if not await ServerLauncher.probe_health_async(base_url=base_url):
@@ -389,7 +392,7 @@ async def _handle_stop_server_async(*, parsed_args: Namespace) -> int:
         return 0
 
     port = urlparse(base_url).port or 8000
-    if _stop_server_on_port(port=port):
+    if stop_server_on_port(port=port):
         print(f"Server on port {port} stopped.")
     else:
         print(f"Server at {base_url} is running but could not identify the process.")
@@ -717,6 +720,12 @@ def main(args: Optional[list[str]] = None) -> int:
             return e.code if isinstance(e.code, int) else 1
 
     logging.basicConfig(level=parsed_args.log_level)
+
+    # Surface a one-line deprecation when the layered config contains blocks
+    # the thin CLI no longer reads (e.g. `scenario:`). The server still honors them.
+    from pyrit.cli._config_reader import warn_on_client_ignored_blocks
+
+    warn_on_client_ignored_blocks(config_file=parsed_args.config_file)
 
     return asyncio.run(_run_async(parsed_args=parsed_args))
 
