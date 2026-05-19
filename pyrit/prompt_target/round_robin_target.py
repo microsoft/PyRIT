@@ -1,0 +1,242 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+import itertools
+import logging
+from dataclasses import fields
+from typing import Any
+
+from pyrit.identifiers import TARGET_BEHAVIORAL_PARAM_FALLBACKS, TARGET_BEHAVIORAL_PARAMS, ComponentIdentifier
+from pyrit.models import Message
+from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+
+logger = logging.getLogger(__name__)
+
+
+class RoundRobinTarget(PromptTarget):
+    """
+    A prompt target that distributes requests across multiple inner targets
+    using weighted round-robin selection.
+
+    All inner targets must be the same concrete class and must support
+    multi-turn conversations with editable history. The round-robin target's
+    capabilities are the intersection (lower bound) of all inner targets'
+    capabilities.
+
+    Requests are distributed per-call, not per-conversation. Because all inner
+    targets support editable history, conversation history is reconstructed from
+    shared memory on each request regardless of which target handled prior turns.
+
+    Note: switching targets mid-conversation defeats provider-side prompt
+    caching (e.g., OpenAI prefix caching). This is a cost/latency trade-off,
+    not a correctness issue.
+
+    Memory entries are stamped with the round-robin's own identifier (not the
+    inner target's). The inner target that handled each specific request is
+    recorded in ``prompt_metadata["inner_target_identifier"]`` for traceability.
+    The eval hash (used for scorer evaluation grouping) unwraps through the
+    round-robin to the inner target's behavioral params, so scoring results
+    are comparable whether a round-robin or direct target is used.
+
+    Not thread-safe. Safe for concurrent use within a single asyncio event loop
+    (all mutable state is modified in synchronous code blocks).
+    """
+
+    def __init__(
+        self,
+        *,
+        targets: list[PromptTarget],
+        weights: list[int] | None = None,
+    ) -> None:
+        """
+        Initialize the RoundRobinTarget.
+
+        Args:
+            targets: Inner targets to round-robin across. Must all be the same
+                concrete class, contain at least 2 entries, and support both
+                multi-turn and editable history capabilities.
+            weights: Optional relative integer weights for each target. When
+                provided, must be the same length as ``targets`` with all values
+                > 0. For example, ``weights=[2, 1]`` sends roughly twice as many
+                requests to the first target. Defaults to equal weight.
+
+        Raises:
+            ValueError: If fewer than 2 targets are provided, targets are
+                different classes, weights length doesn't match, weights contain
+                non-positive values, targets lack required capabilities, or
+                capability intersection yields empty modalities.
+        """
+        if len(targets) < 2:
+            raise ValueError(f"RoundRobinTarget requires at least 2 targets, got {len(targets)}.")
+
+        first_type = type(targets[0])
+        for i, t in enumerate(targets[1:], start=1):
+            if type(t) is not first_type:
+                raise ValueError(
+                    f"All targets must be the same concrete class. "
+                    f"Target 0 is {first_type.__name__}, target {i} is {type(t).__name__}."
+                )
+
+        weights = weights or [1] * len(targets)
+        if len(weights) != len(targets):
+            raise ValueError(f"weights length ({len(weights)}) must match targets length ({len(targets)}).")
+        if any(w <= 0 for w in weights):
+            raise ValueError("All weights must be positive integers.")
+
+        intersected = _intersect_capabilities([t.capabilities for t in targets])
+
+        super().__init__(
+            custom_configuration=TargetConfiguration(capabilities=intersected),
+        )
+
+        # Validate that the intersected capabilities meet chat target requirements
+        # (multi-turn + editable history).
+        from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS
+
+        CHAT_TARGET_REQUIREMENTS.validate(target=self)
+
+        # Ensure that for LLM scoring evaluation purposes, the inner targets have the equivalent behavioral params
+        _validate_behavioral_consistency(targets)
+
+        self._targets = targets
+        self._weights = weights
+
+        # Build rotation sequence from weights.
+        # e.g. weights=[2, 1] -> rotation=[0, 0, 1] -> cycles: 0, 0, 1, 0, 0, 1, ...
+        self._rotation: list[int] = list(itertools.chain.from_iterable([i] * w for i, w in enumerate(weights)))
+
+        self._counter: int = 0
+
+    def _next_target(self) -> PromptTarget:
+        """
+        Return the next inner target in the weighted rotation.
+
+        Returns:
+            PromptTarget: The next inner target.
+        """
+        idx = self._rotation[self._counter % len(self._rotation)]
+        self._counter += 1
+        return self._targets[idx]
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        """
+        Select the next inner target and delegate the send.
+
+        The hash of the inner target that handled the request is recorded in
+        ``prompt_metadata["inner_target_identifier"]`` on each response piece
+        for traceability.
+
+        Args:
+            normalized_conversation: The normalized conversation from the pipeline.
+
+        Returns:
+            list[Message]: Response messages from the inner target.
+        """
+        inner_target = self._next_target()
+        responses = await inner_target._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+
+        inner_id_hash = inner_target.get_identifier().hash
+        if inner_id_hash is not None:
+            for response in responses:
+                for piece in response.message_pieces:
+                    piece.prompt_metadata["inner_target_identifier"] = inner_id_hash
+
+        return responses
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier for this round-robin target.
+
+        Includes the weights as a behavioral parameter and all inner target
+        identifiers as children.
+
+        Returns:
+            ComponentIdentifier: The identifier for this target.
+        """
+        return self._create_identifier(
+            params={"weights": self._weights},
+            children={"targets": [t.get_identifier() for t in self._targets]},
+        )
+
+
+def _intersect_capabilities(caps: list[TargetCapabilities]) -> TargetCapabilities:
+    """
+    Compute the intersection (lower bound) of multiple TargetCapabilities.
+
+    Boolean fields are AND-ed. Modality frozensets are intersected.
+
+    Args:
+        caps: List of TargetCapabilities to intersect.
+
+    Returns:
+        TargetCapabilities: The intersected capabilities.
+
+    Raises:
+        ValueError: If the intersection of input or output modalities is empty.
+    """
+    _capability_flags = [f.name for f in fields(TargetCapabilities) if f.type == "bool" or f.type is bool]
+
+    kwargs: dict[str, Any] = {}
+    for field_name in _capability_flags:
+        kwargs[field_name] = all(getattr(c, field_name) for c in caps)
+
+    input_intersection = caps[0].input_modalities
+    output_intersection = caps[0].output_modalities
+    for c in caps[1:]:
+        input_intersection = input_intersection & c.input_modalities
+        output_intersection = output_intersection & c.output_modalities
+
+    if not input_intersection:
+        raise ValueError(
+            "The intersection of input modalities across all targets is empty. "
+            "The targets have no common input modalities."
+        )
+    if not output_intersection:
+        raise ValueError(
+            "The intersection of output modalities across all targets is empty. "
+            "The targets have no common output modalities."
+        )
+
+    kwargs["input_modalities"] = input_intersection
+    kwargs["output_modalities"] = output_intersection
+
+    return TargetCapabilities(**kwargs)
+
+
+def _validate_behavioral_consistency(targets: list[PromptTarget]) -> None:
+    """
+    Validate that all inner targets have the same behavioral parameters.
+
+    Checks the params that affect model output quality (underlying_model_name,
+    temperature, top_p). These must be identical across targets because the
+    round-robin distributes requests arbitrarily — inconsistent behavioral
+    params would make scores non-comparable.
+
+    Args:
+        targets: The inner targets to validate.
+
+    Raises:
+        ValueError: If any behavioral param differs across targets.
+    """
+    first_id = targets[0].get_identifier()
+
+    def _resolve_param(identifier: ComponentIdentifier, param: str) -> Any:
+        value = identifier.params.get(param)
+        if (value is None or value == "") and param in TARGET_BEHAVIORAL_PARAM_FALLBACKS:
+            value = identifier.params.get(TARGET_BEHAVIORAL_PARAM_FALLBACKS[param])
+        return value
+
+    reference = {p: _resolve_param(first_id, p) for p in TARGET_BEHAVIORAL_PARAMS}
+
+    for i, t in enumerate(targets[1:], start=1):
+        t_id = t.get_identifier()
+        for param in TARGET_BEHAVIORAL_PARAMS:
+            actual = _resolve_param(t_id, param)
+            if actual != reference[param]:
+                raise ValueError(
+                    f"Behavioral parameter '{param}' differs across targets: "
+                    f"target 0 has {reference[param]!r}, target {i} has {actual!r}. "
+                    f"All inner targets must have the same behavioral configuration."
+                )

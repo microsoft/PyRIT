@@ -25,6 +25,10 @@ from typing import Any, ClassVar, Optional
 
 from pyrit.identifiers.component_identifier import ComponentIdentifier, config_hash
 
+# Behavioral params that define model output quality for scoring.
+TARGET_BEHAVIORAL_PARAMS: frozenset[str] = frozenset({"underlying_model_name", "temperature", "top_p"})
+TARGET_BEHAVIORAL_PARAM_FALLBACKS: dict[str, str] = {"underlying_model_name": "model_name"}
+
 
 @dataclass(frozen=True)
 class ChildEvalRule:
@@ -45,12 +49,18 @@ class ChildEvalRule:
       missing), the fallback key's value from the component's raw params
       is used instead. This keeps fallback logic in the eval layer without
       changing full component hashes.  ``None`` means no fallbacks.
+    * ``unwrap_child`` — if set, and the child being processed has a
+      sub-child with this name, substitute the first item of that sub-child
+      list before applying param filtering. This allows wrapper targets
+      (e.g., ``RoundRobinTarget``) to be "seen through" so the eval hash
+      matches the unwrapped inner target. ``None`` means no unwrapping.
     """
 
     exclude: bool = False
     included_params: Optional[frozenset[str]] = None
     included_item_values: Optional[dict[str, Any]] = field(default=None)
     param_fallbacks: Optional[dict[str, str]] = field(default=None)
+    unwrap_child: Optional[str] = field(default=None)
 
 
 def _build_eval_dict(
@@ -114,6 +124,19 @@ def _build_eval_dict(
                 continue
 
             child_list = identifier.get_child_list(name)
+
+            # Unwrap: if the rule specifies a sub-child name and the child has
+            # that sub-child, substitute the first item. This lets wrapper
+            # targets (e.g., RoundRobinTarget) be "seen through".
+            if rule and rule.unwrap_child:
+                unwrapped: list[ComponentIdentifier] = []
+                for c in child_list:
+                    inner = c.get_child_list(rule.unwrap_child)
+                    if inner:
+                        unwrapped.append(inner[0])
+                    else:
+                        unwrapped.append(c)
+                child_list = unwrapped
 
             # Filter list items by param-value match (e.g., only is_general_technique=True seeds)
             if rule and rule.included_item_values:
@@ -238,8 +261,9 @@ class ScorerEvaluationIdentifier(EvaluationIdentifier):
 
     CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]] = {
         "prompt_target": ChildEvalRule(
-            included_params=frozenset({"underlying_model_name", "temperature", "top_p"}),
-            param_fallbacks={"underlying_model_name": "model_name"},
+            included_params=TARGET_BEHAVIORAL_PARAMS,
+            param_fallbacks=TARGET_BEHAVIORAL_PARAM_FALLBACKS,
+            unwrap_child="targets",
         ),
     }
 
@@ -266,6 +290,7 @@ class AtomicAttackEvaluationIdentifier(EvaluationIdentifier):
     CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]] = {
         "objective_target": ChildEvalRule(
             included_params=frozenset({"temperature"}),
+            unwrap_child="targets",
         ),
         "adversarial_chat": ChildEvalRule(
             included_params=frozenset({"underlying_model_name", "temperature", "top_p"}),
