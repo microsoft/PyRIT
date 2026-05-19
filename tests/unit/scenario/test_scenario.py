@@ -3,6 +3,7 @@
 
 """Tests for the scenarios.Scenario class."""
 
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
@@ -12,7 +13,7 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult
 from pyrit.scenario import DatasetConfiguration, ScenarioIdentifier, ScenarioResult
-from pyrit.scenario.core import AtomicAttack, Scenario, ScenarioStrategy
+from pyrit.scenario.core import AtomicAttack, BaselinePolicy, Scenario, ScenarioStrategy
 from pyrit.score import Scorer
 
 # Reusable test scorer identifier
@@ -97,10 +98,11 @@ def sample_attack_results():
 class ConcreteScenario(Scenario):
     """Concrete implementation of Scenario for testing."""
 
-    def __init__(self, atomic_attacks_to_return=None, **kwargs):
-        # Default include_default_baseline=False for tests unless explicitly specified
-        kwargs.setdefault("include_default_baseline", False)
+    # Tests using this fixture should default to no baseline; set the class policy to Forbidden
+    # so we don't have to thread include_baseline=False through every initialize_async call.
+    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Forbidden
 
+    def __init__(self, atomic_attacks_to_return=None, **kwargs):
         # Add required strategy_class if not provided
 
         class TestStrategy(ScenarioStrategy):
@@ -700,7 +702,23 @@ class ConcreteScenarioWithTrueFalseScorer(Scenario):
         return DatasetConfiguration()
 
     async def _get_atomic_attacks_async(self):
-        return self._atomic_attacks_to_return
+        atomic_attacks = list(self._atomic_attacks_to_return)
+        if self._include_baseline:
+            groups_by_dataset = self._dataset_config.get_seed_attack_groups()
+            all_seed_groups = [g for groups in groups_by_dataset.values() for g in groups]
+            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=all_seed_groups))
+        return atomic_attacks
+
+
+class _LegacyOverrideScenario(ConcreteScenarioWithTrueFalseScorer):
+    """Override that does NOT emit baseline — exercises the deprecation rescue path.
+
+    Real user scenarios written before the structural fix may follow this pattern;
+    the rescue path warns and injects baseline so they keep working until 0.16.0.
+    """
+
+    async def _get_atomic_attacks_async(self):
+        return list(self._atomic_attacks_to_return)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -711,19 +729,20 @@ class TestScenarioBaselineOnlyExecution:
         """Test that baseline is included when include_baseline=True, regardless of strategies."""
         from pyrit.models import SeedAttackGroup, SeedObjective
 
-        # Create a scenario with include_default_baseline=True and TrueFalseScorer
+        # Create a scenario with TrueFalseScorer; baseline is included by default
         scenario = ConcreteScenarioWithTrueFalseScorer(
             name="Baseline Only Test",
             version=1,
-            include_default_baseline=True,
         )
 
         # Create a mock dataset config with seed groups
         mock_dataset_config = MagicMock(spec=DatasetConfiguration)
-        mock_dataset_config.get_all_seed_attack_groups.return_value = [
-            SeedAttackGroup(seeds=[SeedObjective(value="test objective 1")]),
-            SeedAttackGroup(seeds=[SeedObjective(value="test objective 2")]),
-        ]
+        mock_dataset_config.get_seed_attack_groups.return_value = {
+            "default": [
+                SeedAttackGroup(seeds=[SeedObjective(value="test objective 1")]),
+                SeedAttackGroup(seeds=[SeedObjective(value="test objective 2")]),
+            ]
+        }
 
         # Initialize with None (default strategy) — [] also works, both expand defaults
         await scenario.initialize_async(
@@ -740,18 +759,17 @@ class TestScenarioBaselineOnlyExecution:
         """Test that baseline-only scenario can run successfully."""
         from pyrit.models import SeedAttackGroup, SeedObjective
 
-        # Create a scenario with include_default_baseline=True and TrueFalseScorer
+        # Create a scenario with TrueFalseScorer; baseline is included by default
         scenario = ConcreteScenarioWithTrueFalseScorer(
             name="Baseline Only Test",
             version=1,
-            include_default_baseline=True,
         )
 
         # Create a mock dataset config with seed groups
         mock_dataset_config = MagicMock(spec=DatasetConfiguration)
-        mock_dataset_config.get_all_seed_attack_groups.return_value = [
-            SeedAttackGroup(seeds=[SeedObjective(value="test objective 1")]),
-        ]
+        mock_dataset_config.get_seed_attack_groups.return_value = {
+            "default": [SeedAttackGroup(seeds=[SeedObjective(value="test objective 1")])]
+        }
 
         # Initialize with None — [] also expands defaults now, both are equivalent
         await scenario.initialize_async(
@@ -776,7 +794,6 @@ class TestScenarioBaselineOnlyExecution:
         scenario = ConcreteScenario(
             name="No Baseline Test",
             version=1,
-            include_default_baseline=False,  # No baseline
         )
 
         mock_dataset_config = MagicMock(spec=DatasetConfiguration)
@@ -799,7 +816,6 @@ class TestScenarioBaselineOnlyExecution:
         scenario = ConcreteScenarioWithTrueFalseScorer(
             name="Baseline Seeds Test",
             version=1,
-            include_default_baseline=True,
         )
 
         # Create specific seed groups to verify they're used
@@ -810,7 +826,7 @@ class TestScenarioBaselineOnlyExecution:
         ]
 
         mock_dataset_config = MagicMock(spec=DatasetConfiguration)
-        mock_dataset_config.get_all_seed_attack_groups.return_value = expected_seeds
+        mock_dataset_config.get_seed_attack_groups.return_value = {"default": expected_seeds}
 
         await scenario.initialize_async(
             objective_target=mock_objective_target,
@@ -890,6 +906,159 @@ async def test_execute_scenario_raises_when_scenario_result_id_is_none():
 
     with pytest.raises(ValueError, match="self._scenario_result_id is not initialized"):
         await scenario._execute_scenario_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestScenarioBaselineUniformObjectives:
+    """ADO 9012 regression: baseline and strategy share objectives under max_dataset_size.
+
+    The structural fix collapses to a single seed-group resolution call per scenario
+    run. Both the strategy atomic attacks and the baseline use the same sampled
+    population, so ``random.sample`` runs once and the two groups match.
+    """
+
+    async def test_baseline_objectives_match_atomic_attacks_under_max_dataset_size(
+        self,
+        mock_objective_target,
+    ):
+        from pyrit.models import SeedGroup, SeedObjective
+        from pyrit.scenario.core.attack_technique import AttackTechnique
+
+        seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
+        config = DatasetConfiguration(seed_groups=seed_groups, max_dataset_size=3)
+
+        class StrategyScenario(ConcreteScenarioWithTrueFalseScorer):
+            async def _get_atomic_attacks_async(self):
+                groups_by_dataset = self._dataset_config.get_seed_attack_groups()
+                all_seed_groups = [g for groups in groups_by_dataset.values() for g in groups]
+                atomic_attacks = [
+                    AtomicAttack(
+                        atomic_attack_name="strategy",
+                        attack_technique=AttackTechnique(attack=MagicMock()),
+                        seed_groups=all_seed_groups,
+                    )
+                ]
+                if self._include_baseline:
+                    atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=all_seed_groups))
+                return atomic_attacks
+
+        # Two distinct samples wired up. A buggy implementation with a second
+        # resolution call would consume both; the structural fix consumes one.
+        first_sample = seed_groups[:3]
+        second_sample = seed_groups[5:8]
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.random.sample",
+            side_effect=[first_sample, second_sample],
+        ) as mock_sample:
+            scenario = StrategyScenario(name="ADO 9012 regression", version=1)
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                scenario_strategies=None,
+                dataset_config=config,
+            )
+
+        assert mock_sample.call_count == 1
+
+        baseline, strategy = scenario._atomic_attacks
+        assert baseline.atomic_attack_name == "baseline"
+        assert strategy.atomic_attack_name == "strategy"
+        assert set(baseline.objectives) == set(strategy.objectives)
+        assert len(baseline.objectives) == 3
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestBuildBaselineAtomicAttack:
+    """Unit tests for Scenario._build_baseline_atomic_attack."""
+
+    def _seed_groups(self):
+        from pyrit.models import SeedAttackGroup, SeedObjective
+
+        return [SeedAttackGroup(seeds=[SeedObjective(value="x")])]
+
+    def test_returns_baseline_atomic_attack(self, mock_objective_target):
+        from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
+
+        seed_groups = self._seed_groups()
+        scenario = ConcreteScenarioWithTrueFalseScorer(name="T", version=1)
+        scenario._objective_target = mock_objective_target
+
+        atomic = scenario._build_baseline_atomic_attack(seed_groups=seed_groups)
+
+        assert atomic.atomic_attack_name == "baseline"
+        assert atomic.seed_groups == seed_groups
+        assert isinstance(atomic.attack_technique.attack, PromptSendingAttack)
+
+    def test_raises_when_target_is_none(self):
+        scenario = ConcreteScenarioWithTrueFalseScorer(name="T", version=1)
+        # _objective_target is None pre-initialize_async
+
+        with pytest.raises(ValueError, match="Objective target is required"):
+            scenario._build_baseline_atomic_attack(seed_groups=self._seed_groups())
+
+    def test_raises_when_scorer_is_none(self, mock_objective_target):
+        scenario = ConcreteScenarioWithTrueFalseScorer(name="T", version=1)
+        scenario._objective_target = mock_objective_target
+        scenario._objective_scorer = None  # type: ignore[assignment]
+
+        with pytest.raises(ValueError, match="Objective scorer is required"):
+            scenario._build_baseline_atomic_attack(seed_groups=self._seed_groups())
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestBaselineEmissionDeprecationRescue:
+    """Deprecation rescue (removed in 0.16.0): overrides that don't emit baseline get a
+    DeprecationWarning + auto-injected baseline so they keep working during the migration."""
+
+    @staticmethod
+    def _dataset_config():
+        from pyrit.models import SeedGroup, SeedObjective
+
+        return DatasetConfiguration(
+            seed_groups=[SeedGroup(seeds=[SeedObjective(value="x")])],
+        )
+
+    async def test_rescue_emits_warning_and_injects_baseline(self, mock_objective_target):
+        import warnings
+
+        scenario = _LegacyOverrideScenario(name="LegacyOverride", version=1)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                dataset_config=self._dataset_config(),
+                include_baseline=True,
+            )
+
+        deprecations = [
+            w
+            for w in caught
+            if issubclass(w.category, DeprecationWarning) and "_get_atomic_attacks_async" in str(w.message)
+        ]
+        assert len(deprecations) == 1, "rescue should emit exactly one DeprecationWarning naming the method"
+        assert "0.16.0" in str(deprecations[0].message)
+        assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
+
+    async def test_well_behaved_override_does_not_trigger_rescue(self, mock_objective_target):
+        import warnings
+
+        scenario = ConcreteScenarioWithTrueFalseScorer(name="GoodCitizen", version=1)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                dataset_config=self._dataset_config(),
+                include_baseline=True,
+            )
+
+        rescue_warnings = [
+            w
+            for w in caught
+            if issubclass(w.category, DeprecationWarning) and "_get_atomic_attacks_async" in str(w.message)
+        ]
+        assert not rescue_warnings, "well-behaved override should not trigger the rescue path"
+        assert scenario._atomic_attacks[0].atomic_attack_name == "baseline"
 
 
 @pytest.mark.usefixtures("patch_central_database")

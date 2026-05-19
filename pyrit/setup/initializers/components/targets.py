@@ -167,6 +167,15 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         model_var="AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2",
         underlying_model_var="AZURE_OPENAI_GPT4O_UNSAFE_CHAT_UNDERLYING_MODEL2",
     ),
+    TargetConfig(
+        registry_name="mai_target",
+        target_class=OpenAIChatTarget,
+        endpoint_var="MAI_CHAT_ENDPOINT",
+        key_var="MAI_CHAT_KEY",
+        model_var="MAI_CHAT_MODEL",
+        underlying_model_var="MAI_CHAT_UNDERLYING_MODEL",
+        extra_kwargs={"httpx_client_kwargs": {"default_query": {"api-version": "2024-05-01-preview"}}},
+    ),
     # ============================================
     # Adversarial Chat Target (for scenario attack techniques)
     # ============================================

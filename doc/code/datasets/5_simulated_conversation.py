@@ -37,8 +37,8 @@ from pathlib import Path
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import generate_simulated_conversation_async
-from pyrit.executor.attack.printer import ConsoleAttackResultPrinter
 from pyrit.models import SeedGroup
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import SelfAskRefusalScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -74,9 +74,8 @@ print(f"Generated {len(simulated_conversation_prompts)} messages")
 simulated_conversation = SeedGroup(seeds=simulated_conversation_prompts)
 
 # View the conversation prefix (N-1 turns)
-await ConsoleAttackResultPrinter().print_messages_async(  # type: ignore
-    messages=simulated_conversation.prepended_conversation,
-)
+# Note: print_messages_async was deprecated. Using output_attack_async instead.
+# For direct message printing, use: from pyrit.output import output_conversation_async
 
 print(f"\nPrepended conversation messages: {len(simulated_conversation.prepended_conversation)}")
 print(
@@ -111,7 +110,7 @@ new_result = await new_attack.execute_async(  # type: ignore
     next_message=simulated_conversation.next_message,
 )
 
-await ConsoleAttackResultPrinter().print_result_async(result=new_result)  # type: ignore
+await output_attack_async(new_result)
 
 # %% [markdown]
 # > **Note:** If the Crescendo result shows `backtrack_count: 0` even on failure, this is expected.

@@ -1001,9 +1001,6 @@ class ScenarioResultEntry(Base):
 
         Args:
             entry (ScenarioResult): The scenario result object to convert into a database entry.
-
-        Raises:
-            ValueError: If ``entry.objective_target_identifier`` is ``None``.
         """
         self.id = entry.id
         self.scenario_name = entry.scenario_identifier.name
@@ -1012,10 +1009,12 @@ class ScenarioResultEntry(Base):
         self.pyrit_version = entry.scenario_identifier.pyrit_version
         self.scenario_init_data = entry.scenario_identifier.init_data
         # Convert ComponentIdentifier to dict for JSON storage
-        if entry.objective_target_identifier is None:
-            raise ValueError("ScenarioResult.objective_target_identifier is required for database storage")
-        self.objective_target_identifier = entry.objective_target_identifier.to_dict(
-            max_value_length=MAX_IDENTIFIER_VALUE_LENGTH
+        self.objective_target_identifier = (
+            entry.objective_target_identifier.to_dict(
+                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+            )
+            if entry.objective_target_identifier
+            else None
         )
         # Ensure eval_hash is set before truncation so it survives the DB round-trip.
         if entry.objective_scorer_identifier and entry.objective_scorer_identifier.eval_hash is None:

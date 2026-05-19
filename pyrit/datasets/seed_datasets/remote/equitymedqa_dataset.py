@@ -112,7 +112,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "equitymedqa"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch EquityMedQA dataset and return as SeedDataset.
 

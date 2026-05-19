@@ -39,9 +39,9 @@ from pyrit.cli._cli_args import validate_database_argparse as validate_database_
 from pyrit.cli._cli_args import validate_integer as validate_integer
 from pyrit.cli._cli_args import validate_log_level as validate_log_level
 from pyrit.cli._cli_args import validate_log_level_argparse as validate_log_level_argparse
+from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter as ConsoleScenarioResultPrinter
 from pyrit.registry import InitializerRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import DatasetConfiguration
-from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
 from pyrit.setup import ConfigurationLoader, initialize_pyrit_async
 from pyrit.setup.configuration_loader import _MEMORY_DB_TYPE_MAP
 
@@ -147,6 +147,7 @@ class FrontendCore:
         self._operator = config.operator
         self._operation = config.operation
         self._max_concurrent_scenario_runs = config.max_concurrent_scenario_runs
+        self._allow_custom_initializers = config.allow_custom_initializers
 
         # Lazy-loaded registries
         self._scenario_registry: Optional[ScenarioRegistry] = None
@@ -223,6 +224,7 @@ class FrontendCore:
         derived._operator = self._operator
         derived._operation = self._operation
         derived._max_concurrent_scenario_runs = self._max_concurrent_scenario_runs
+        derived._allow_custom_initializers = self._allow_custom_initializers
         derived._scenario_config = self._scenario_config
 
         # Apply overrides or inherit

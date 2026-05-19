@@ -28,16 +28,14 @@
 # %%
 from pathlib import Path
 
+from pyrit.output import output_scenario_async
 from pyrit.registry import TargetRegistry
-from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
 from pyrit.scenario.scenarios.foundry import FoundryStrategy, RedTeamAgent
 from pyrit.setup import initialize_from_config_async
 
 await initialize_from_config_async(config_path=Path("../../scanner/pyrit_conf.yaml"))  # type: ignore
 
 objective_target = TargetRegistry.get_registry_singleton().get_instance_by_name("openai_chat")
-printer = ConsoleScenarioResultPrinter()
-
 # %% [markdown]
 # ## Dataset Configuration
 #
@@ -105,8 +103,8 @@ scenario_strategies = [
 # ## Baseline Execution
 #
 # The baseline sends each objective directly to the target without any converters or multi-turn
-# strategies. It is included automatically when `include_baseline=True` (the default). This is
-# useful for:
+# strategies. It is included automatically when `initialize_async` is called with
+# `include_baseline=True` (the default for scenarios that support a baseline). This is useful for:
 #
 # - **Measuring default defenses** — how does the target respond to unmodified harmful prompts?
 # - **Establishing comparison points** — compare baseline refusal rates against attack-enhanced runs
@@ -120,17 +118,18 @@ await baseline_scenario.initialize_async(  # type: ignore
     dataset_config=dataset_config,
 )
 baseline_result = await baseline_scenario.run_async()  # type: ignore
-await printer.print_summary_async(baseline_result)  # type: ignore
+await output_scenario_async(baseline_result)
 
 # %% [markdown]
 # To disable the automatic baseline entirely (e.g., when you only want attack strategies with no
-# comparison), set `include_baseline=False` in the constructor:
+# comparison), pass `include_baseline=False` to `initialize_async`:
 #
 # ```python
-# scenario = RedTeamAgent(include_baseline=False)
+# scenario = RedTeamAgent()
 # await scenario.initialize_async(
 #     objective_target=objective_target,
 #     scenario_strategies=[FoundryStrategy.Base64],
+#     include_baseline=False,
 # )
 # ```
 
@@ -160,4 +159,4 @@ await custom_scenario.initialize_async(  # type: ignore
     dataset_config=dataset_config,
 )
 custom_result = await custom_scenario.run_async()  # type: ignore
-await printer.print_summary_async(custom_result)  # type: ignore
+await output_scenario_async(custom_result)

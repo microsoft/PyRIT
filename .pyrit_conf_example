@@ -117,6 +117,20 @@ operation: op_trash_panda
 # Applies only to the pyrit_backend server.
 max_concurrent_scenario_runs: 3
 
+# Custom Initializer Registration (REST API)
+# -------------------------------------------
+# When true, the REST API accepts POST /api/initializers to register custom
+# initializer scripts and DELETE /api/initializers/{name} to remove custom
+# initializers.
+#
+# ⚠️  WARNING: Enabling this allows arbitrary Python code execution on the
+# server via the REST API. Only enable on trusted networks.
+# The pyrit_backend default host is localhost, which limits exposure.
+# If you bind to 0.0.0.0, ensure you are on a trusted network.
+#
+# Default: false
+allow_custom_initializers: false
+
 # Silent Mode
 # -----------
 # If true, suppresses print statements during initialization.

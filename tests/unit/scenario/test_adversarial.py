@@ -20,10 +20,9 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core import AtomicAttack
+from pyrit.scenario.core import AtomicAttack, BaselinePolicy
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark
@@ -59,17 +58,32 @@ def _mock_id(name: str, *, params: dict | None = None) -> ComponentIdentifier:
     return ComponentIdentifier(class_name=name, class_module="test", params=params or {})
 
 
+_CHAT_TARGET_CONFIGURATION = TargetConfiguration(
+    capabilities=TargetCapabilities(
+        supports_multi_turn=True,
+        supports_multi_message_pieces=True,
+        supports_system_prompt=True,
+        supports_editable_history=True,
+    ),
+)
+
+
 def _make_adversarial_target(name: str, *, params: dict | None = None) -> MagicMock:
-    """Create a mock PromptChatTarget with a given model name and optional identifier params.
+    """Create a mock adversarial PromptTarget with a given model name and optional identifier params.
 
     By default, ``model_name`` is stamped into the identifier params so the
     inferred label produced by ``_infer_labels`` matches ``name``.  Pass an
     explicit ``params`` dict to override (e.g. to omit the key for collision
     testing or to add ``underlying_model_name`` / ``endpoint``).
+
+    The mock exposes a real ``TargetConfiguration`` declaring multi-turn and
+    editable history so the target satisfies ``CHAT_TARGET_REQUIREMENTS`` at
+    construction time.
     """
-    mock = MagicMock(spec=PromptChatTarget)
+    mock = MagicMock(spec=PromptTarget)
     mock._model_name = name
     mock.get_identifier.return_value = _mock_id(name, params=params if params is not None else {"model_name": name})
+    mock.configuration = _CHAT_TARGET_CONFIGURATION
     return mock
 
 
@@ -168,8 +182,22 @@ class TestBenchmarkTypes:
 
     def test_unsupported_type_adversarial_models_raises(self):
         """Passing a non-list type must raise ValueError."""
-        with pytest.raises(ValueError, match="non-empty list|list of PromptChatTarget"):
+        with pytest.raises(ValueError, match="non-empty list|list of PromptTarget"):
             AdversarialBenchmark(adversarial_models="not-a-list")  # type: ignore[arg-type]
+
+    def test_adversarial_model_missing_chat_capabilities_raises(self):
+        """A target that does not satisfy CHAT_TARGET_REQUIREMENTS must be rejected at construction."""
+        non_chat_target = MagicMock(spec=PromptTarget)
+        non_chat_target.get_identifier.return_value = _mock_id("NonChatTarget")
+        non_chat_target.configuration = TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=False,
+                supports_editable_history=False,
+            ),
+        )
+
+        with pytest.raises(ValueError, match="chat-target capability requirements"):
+            AdversarialBenchmark(adversarial_models=[non_chat_target])
 
     def test_version_is_1(self):
         assert AdversarialBenchmark.VERSION == 1
@@ -428,19 +456,42 @@ class TestBenchmarkRuntime:
         for a in attacks:
             assert len(a.objectives) > 0
 
-    @pytest.mark.asyncio
     async def test_baseline_excluded(self, mock_objective_target, single_adversarial_model):
         """AdversarialBenchmark must opt out of the parent's default baseline.
 
-        Verifies both the configuration toggle (``_include_baseline is False``) and
-        the observable property (no atomic attack is named ``"baseline"``).
+        Verifies both the class-level capability flag and the observable property
+        (no atomic attack is named ``"baseline"``).
         """
-        scenario, attacks = await self._init_and_get_attacks(
+        scenario, _ = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             adversarial_models=single_adversarial_model,
         )
-        assert scenario._include_baseline is False
-        assert not any(a.atomic_attack_name == "baseline" for a in attacks)
+        assert type(scenario).BASELINE_POLICY is BaselinePolicy.Forbidden
+        assert not any(a.atomic_attack_name == "baseline" for a in scenario._atomic_attacks)
+
+    async def test_baseline_explicit_true_raises(self, mock_objective_target, single_adversarial_model):
+        """Explicitly passing include_baseline=True to a forbidden scenario raises ValueError."""
+        scenario = AdversarialBenchmark(adversarial_models=single_adversarial_model)
+        with pytest.raises(ValueError, match="does not support a default baseline"):
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                include_baseline=True,
+            )
+
+    async def test_baseline_explicit_false_succeeds(self, mock_objective_target, single_adversarial_model):
+        """Explicit include_baseline=False on a forbidden scenario is accepted (matches the default)."""
+        groups = {"harmbench": _make_seed_groups("harmbench")}
+        with (
+            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
+            patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer,
+        ):
+            mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
+            scenario = AdversarialBenchmark(adversarial_models=single_adversarial_model)
+            await scenario.initialize_async(
+                objective_target=mock_objective_target,
+                include_baseline=False,
+            )
+        assert not any(a.atomic_attack_name == "baseline" for a in scenario._atomic_attacks)
 
 
 # ===========================================================================

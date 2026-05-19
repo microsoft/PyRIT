@@ -76,7 +76,6 @@
 #    - `version`: Integer version number
 #    - `strategy_class`: The strategy enum class for this scenario
 #    - `objective_scorer_identifier`: Identifier dict for the scoring mechanism (optional)
-#    - `include_default_baseline`: Whether to include a baseline attack (default: True)
 #    - `scenario_result_id`: Optional ID to resume an existing scenario (optional)
 #
 # 5. **Initialization**: Call `await scenario.initialize_async()` to populate atomic attacks:
@@ -85,6 +84,8 @@
 #    - `max_concurrency`: Number of concurrent operations (default: 1)
 #    - `max_retries`: Number of retry attempts on failure (default: 0)
 #    - `memory_labels`: Optional labels for tracking (optional)
+#    - `include_baseline`: Whether to prepend a baseline attack (defaults to the scenario type's
+#      `BASELINE_POLICY`; most scenarios default it on, `Jailbreak` defaults it off)
 #
 # ### Example Structure
 #
@@ -174,11 +175,22 @@ await print_scenarios_list_async(context=FrontendCore())  # type: ignore
 #
 # Every scenario can optionally include a **baseline attack** — a `PromptSendingAttack` that sends
 # each objective directly to the target without any converters or multi-turn techniques. This is
-# controlled by the `include_default_baseline` parameter (default: `True` for most scenarios).
+# controlled by the `include_baseline` parameter on `initialize_async`; when omitted, each
+# scenario falls back to its own `BASELINE_POLICY` class attribute (most scenarios default
+# it on; `Jailbreak` defaults it off). See
+# [Common Scenario Parameters](./1_common_scenario_parameters.ipynb) for a worked example.
 #
-# To run *only* the baseline (no attack strategies), create a `RedTeamAgent` with
-# `include_baseline=True` (the default) and pass `scenario_strategies=None`. See
-# [Common Scenario Parameters](./1_common_scenario_parameters.ipynb) for a working example.
+# Custom scenarios should choose their `BASELINE_POLICY` based on whether an unmodified
+# prompt is a meaningful comparator for the scenario's strategies:
+#
+# - **`Enabled`** — the baseline is prepended by default and the caller can opt out. Use when an
+#   unmodified-prompt run is a meaningful comparison point (most scenarios).
+# - **`Disabled`** — the baseline is supported but omitted by default; the caller must opt in. Use
+#   when the scenario is already dominated by a large set of templates/strategies that already
+#   exercise the unmodified surface (e.g., `Jailbreak`).
+# - **`Forbidden`** — the baseline is unavailable and passing `include_baseline=True` raises. Use
+#   when the scenario's semantics make a single-shot unmodified prompt meaningless as a comparator
+#   (e.g., benchmarks comparing across adversarial models, or multi-turn-only scenarios).
 
 # %% [markdown]
 #

@@ -133,6 +133,7 @@ class ConfigurationLoader(YamlLoadable):
     operation: Optional[str] = None
     scenario: Optional[Union[str, dict[str, Any]]] = None
     max_concurrent_scenario_runs: int = 3
+    allow_custom_initializers: bool = False
     extensions: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

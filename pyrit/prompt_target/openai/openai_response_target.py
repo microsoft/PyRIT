@@ -101,7 +101,6 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
         extra_body_parameters: Optional[dict[str, Any]] = None,
         fail_on_missing_function: bool = False,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -132,10 +131,6 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
             reasoning_summary (Literal["auto", "concise", "detailed"], Optional): Controls
                 whether a summary of the model's reasoning is included in the response.
                 Defaults to None (no summary).
-            is_json_supported (bool, Optional): If True, the target will support formatting responses as JSON by
-                setting the response_format header. Official OpenAI models all support this, but if you are using
-                this target with different models, is_json_supported should be set correctly to avoid issues when
-                using adversarial infrastructure (e.g. Crescendo scorers will set this flag).
             extra_body_parameters (dict, Optional): Additional parameters to be included in the request body.
             fail_on_missing_function: if True, raise when a function_call references
                 an unknown function or does not output a function; if False, return a structured error so we can
@@ -143,8 +138,6 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
                 (e.g., pick another tool or ask for clarification).
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
              httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
@@ -154,13 +147,12 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
             PyritException: If the temperature or top_p values are out of bounds.
             ValueError: If the temperature is not between 0 and 2 (inclusive).
             ValueError: If the top_p is not between 0 and 1 (inclusive).
-            ValueError: If both `max_output_tokens` and `max_tokens` are provided.
             RateLimitException: If the target is rate-limited.
             httpx.HTTPStatusError: If the request fails with a 400 Bad Request or 429 Too Many Requests error.
             json.JSONDecodeError: If the response from the target is not valid JSON.
             Exception: If the request fails for any other reason.
         """
-        super().__init__(custom_configuration=custom_configuration, custom_capabilities=custom_capabilities, **kwargs)
+        super().__init__(custom_configuration=custom_configuration, **kwargs)
 
         # Validate temperature and top_p
         validate_temperature(temperature)
