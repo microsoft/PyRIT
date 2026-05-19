@@ -25,8 +25,7 @@ class PyRITApiClient:
     """
     Lightweight async REST client for the PyRIT backend.
 
-    All public methods return plain ``dict`` / ``list[dict]`` objects
-    (deserialized JSON).  No Pydantic models or heavy pyrit imports.
+    No heavy pyrit imports.
 
     Use as an async context manager::
 

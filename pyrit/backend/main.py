@@ -30,6 +30,7 @@ from pyrit.backend.routes import (
     targets,
     version,
 )
+from pyrit.setup.configuration_loader import ConfigurationLoader
 
 # Check for development mode from environment variable
 DEV_MODE = os.getenv("PYRIT_DEV_MODE", "false").lower() == "true"
@@ -47,8 +48,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     2. ``~/.pyrit/.pyrit_conf`` (if it exists)
     3. Built-in defaults (SQLite, no initializers)
     """
-    from pyrit.setup.configuration_loader import ConfigurationLoader
-
     config_file_env = os.getenv("PYRIT_CONFIG_FILE")
     config_file = Path(config_file_env) if config_file_env else None
 
