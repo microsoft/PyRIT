@@ -42,7 +42,7 @@ class _XSTestDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "xstest"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch XSTest dataset and return as SeedDataset.
 

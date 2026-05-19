@@ -20,8 +20,7 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core import AtomicAttack, BaselinePolicy
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
@@ -59,17 +58,32 @@ def _mock_id(name: str, *, params: dict | None = None) -> ComponentIdentifier:
     return ComponentIdentifier(class_name=name, class_module="test", params=params or {})
 
 
+_CHAT_TARGET_CONFIGURATION = TargetConfiguration(
+    capabilities=TargetCapabilities(
+        supports_multi_turn=True,
+        supports_multi_message_pieces=True,
+        supports_system_prompt=True,
+        supports_editable_history=True,
+    ),
+)
+
+
 def _make_adversarial_target(name: str, *, params: dict | None = None) -> MagicMock:
-    """Create a mock PromptChatTarget with a given model name and optional identifier params.
+    """Create a mock adversarial PromptTarget with a given model name and optional identifier params.
 
     By default, ``model_name`` is stamped into the identifier params so the
     inferred label produced by ``_infer_labels`` matches ``name``.  Pass an
     explicit ``params`` dict to override (e.g. to omit the key for collision
     testing or to add ``underlying_model_name`` / ``endpoint``).
+
+    The mock exposes a real ``TargetConfiguration`` declaring multi-turn and
+    editable history so the target satisfies ``CHAT_TARGET_REQUIREMENTS`` at
+    construction time.
     """
-    mock = MagicMock(spec=PromptChatTarget)
+    mock = MagicMock(spec=PromptTarget)
     mock._model_name = name
     mock.get_identifier.return_value = _mock_id(name, params=params if params is not None else {"model_name": name})
+    mock.configuration = _CHAT_TARGET_CONFIGURATION
     return mock
 
 
@@ -168,8 +182,22 @@ class TestBenchmarkTypes:
 
     def test_unsupported_type_adversarial_models_raises(self):
         """Passing a non-list type must raise ValueError."""
-        with pytest.raises(ValueError, match="non-empty list|list of PromptChatTarget"):
+        with pytest.raises(ValueError, match="non-empty list|list of PromptTarget"):
             AdversarialBenchmark(adversarial_models="not-a-list")  # type: ignore[arg-type]
+
+    def test_adversarial_model_missing_chat_capabilities_raises(self):
+        """A target that does not satisfy CHAT_TARGET_REQUIREMENTS must be rejected at construction."""
+        non_chat_target = MagicMock(spec=PromptTarget)
+        non_chat_target.get_identifier.return_value = _mock_id("NonChatTarget")
+        non_chat_target.configuration = TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=False,
+                supports_editable_history=False,
+            ),
+        )
+
+        with pytest.raises(ValueError, match="chat-target capability requirements"):
+            AdversarialBenchmark(adversarial_models=[non_chat_target])
 
     def test_version_is_1(self):
         assert AdversarialBenchmark.VERSION == 1

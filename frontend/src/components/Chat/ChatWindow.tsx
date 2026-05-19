@@ -11,7 +11,7 @@ import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
 import ConverterPanel from './ConverterPanel'
 import type { PieceConversion } from './converterTypes'
-import { PIECE_TYPE_TO_DATA_TYPE } from './converterTypes'
+import { PIECE_TYPE_TO_DATA_TYPE, basenameFromValue, buildMediaUrl, dataTypeToAttachmentKind, isPathDataType } from './converterTypes'
 import LabelsBar from '../Labels/LabelsBar'
 import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi } from '../../services/api'
@@ -80,6 +80,31 @@ export default function ChatWindow({
     setAttachmentTypes(types)
     setAttachmentData(data)
   }, [])
+
+  // Auto-clear stale conversions when their original input no longer matches.
+  // For text: the typed text differs from the captured originalValue.
+  // For media: the uploaded base64 changed (or was removed).
+  useEffect(() => {
+    setPieceConversions((prev) => {
+      const entries = Object.entries(prev)
+      if (entries.length === 0) return prev
+      let changed = false
+      const next: Record<string, PieceConversion> = {}
+      for (const [key, conv] of entries) {
+        if (key === 'text') {
+          if (conv.originalValue !== chatInputText) {
+            changed = true
+            continue
+          }
+        } else if (attachmentData[key] !== conv.originalValue) {
+          changed = true
+          continue
+        }
+        next[key] = conv
+      }
+      return changed ? next : prev
+    })
+  }, [chatInputText, attachmentData])
 
   // Auto-open conversation sidebar when loading a historical attack with multiple conversations
   useEffect(() => {
@@ -176,23 +201,38 @@ export default function ChatWindow({
     // Capture all piece conversions upfront before any async work or state clears
     const conversions = { ...pieceConversions }
     const textConversion = conversions['text']
+    const isTextTextConversion = textConversion?.convertedDataType === 'text'
+    const isTextFileConversion = Boolean(textConversion) && !isTextTextConversion
 
     // Track which conversation this send belongs to (may be updated after attack creation)
     let sendConvId = activeConversationId || '__pending__'
     // Mark synchronously so the useEffect guard sees it immediately
     sendingConvIdsRef.current.add(sendConvId)
 
-    // When a text converter is active, show a preview locally
-    const hasTextConversion = textConversion != null && convertedValue != null
-    const displayContent = hasTextConversion ? convertedValue : originalValue
+    // When a text→text converter is active, show the converted text as the bubble's
+    // primary content. When a text→file converter is active, keep the typed text
+    // as content and synthesize a file attachment so the bubble shows both.
+    const displayContent = isTextTextConversion && convertedValue != null ? convertedValue : originalValue
+    const optimisticAttachments: MessageAttachment[] = [...attachments]
+    if (isTextFileConversion && textConversion) {
+      const url = buildMediaUrl(textConversion.convertedValue)
+      const kind = dataTypeToAttachmentKind(textConversion.convertedDataType)
+      optimisticAttachments.push({
+        type: kind,
+        name: basenameFromValue(textConversion.convertedValue, `output.${kind}`),
+        url,
+        mimeType: 'application/octet-stream',
+        size: 0,
+      })
+    }
 
     // Add user message with attachments for display
     const userMessage: Message = {
       role: 'user',
       content: displayContent,
       timestamp: new Date().toISOString(),
-      attachments: attachments.length > 0 ? attachments : undefined,
-      originalContent: hasTextConversion ? originalValue : undefined,
+      attachments: optimisticAttachments.length > 0 ? optimisticAttachments : undefined,
+      originalContent: isTextTextConversion ? originalValue : undefined,
     }
     setMessages(prev => [...prev, userMessage])
 
@@ -584,7 +624,7 @@ export default function ChatWindow({
           isConverterPanelOpen={isConverterPanelOpen}
           onInputChange={setChatInputText}
           onAttachmentsChange={handleAttachmentsChange}
-          convertedValue={pieceConversions['text']?.convertedValue ?? null}
+          convertedValue={pieceConversions['text']?.convertedDataType === 'text' ? (pieceConversions['text']?.convertedValue ?? null) : null}
           originalValue={pieceConversions['text']?.originalValue ?? null}
           onClearConversion={() => setPieceConversions((prev) => { const next = { ...prev }; delete next['text']; return next })}
           onConvertedValueChange={(val) => setPieceConversions((prev) => {
@@ -592,10 +632,21 @@ export default function ChatWindow({
             if (!existing) return prev
             return { ...prev, text: { ...existing, convertedValue: val } }
           })}
-          converterOutputDataTypes={Object.values(pieceConversions).map((c) => c.outputDataType)}
+          convertedFileChip={(() => {
+            const tc = pieceConversions['text']
+            if (!tc || tc.convertedDataType === 'text') return null
+            if (!isPathDataType(tc.convertedDataType)) return null
+            return {
+              name: basenameFromValue(tc.convertedValue, 'output'),
+              url: buildMediaUrl(tc.convertedValue),
+              iconKind: dataTypeToAttachmentKind(tc.convertedDataType),
+            }
+          })()}
+          onClearConvertedFileChip={() => setPieceConversions((prev) => { const next = { ...prev }; delete next['text']; return next })}
+          converterOutputDataTypes={Object.values(pieceConversions).map((c) => c.convertedDataType)}
           mediaConversions={Object.entries(pieceConversions)
             .filter(([k]) => k !== 'text')
-            .map(([k, v]) => ({ pieceType: k, convertedValue: v.convertedValue }))}
+            .map(([k, v]) => ({ pieceType: k, convertedValue: v.convertedValue, convertedDataType: v.convertedDataType }))}
           onClearMediaConversion={(pieceType) => setPieceConversions((prev) => {
             const next = { ...prev }
             delete next[pieceType]

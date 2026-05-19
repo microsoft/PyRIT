@@ -1,3 +1,5 @@
+from pyrit.output import output_attack_async
+
 # ---
 # jupyter:
 #   jupytext:
@@ -7,17 +9,14 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 # ---
-
 # %% [markdown]
 # # Realtime Target - optional
 #
 # This notebooks shows how to interact with the Realtime Target to send text or audio prompts and receive back an audio output and the text transcript of that audio.
 #
 # Note: because this target needs an active websocket connection for multiturn conversations, it does not have a "conversation_history" that you can backtrack and alter, so not all attacks will work with this target (ie Crescendo will not work)
-
 # %% [markdown]
 # ## Target Initialization
-
 # %%
 from pyrit.prompt_target import RealtimeTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -45,7 +44,6 @@ from pathlib import Path
 from pyrit.executor.attack import (
     AttackExecutor,
     AttackParameters,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
     SingleTurnAttackContext,
 )
@@ -75,7 +73,7 @@ context: SingleTurnAttackContext = SingleTurnAttackContext(
 
 attack = PromptSendingAttack(objective_target=target)
 result = await attack.execute_with_context_async(context=context)  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await output_attack_async(result)
 await target.cleanup_target()  # type: ignore
 
 # %% [markdown]
@@ -86,7 +84,6 @@ await target.cleanup_target()  # type: ignore
 # %%
 from pyrit.executor.attack import (
     AttackExecutor,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 
@@ -101,7 +98,7 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 )
 
 for result in results:
-    await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+    await output_attack_async(result)
 
 # %% [markdown]
 # ## MULTITURN:
@@ -112,7 +109,6 @@ import logging
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackScoringConfig,
-    ConsoleAttackResultPrinter,
     RedTeamingAttack,
     RTASystemPromptPaths,
 )
@@ -152,4 +148,4 @@ red_teaming_attack = RedTeamingAttack(
 
 # passed-in memory labels are combined with global memory labels
 result = await red_teaming_attack.execute_async(objective=objective, memory_labels={"harm_category": "illegal"})  # type: ignore
-await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
+await output_attack_async(result)

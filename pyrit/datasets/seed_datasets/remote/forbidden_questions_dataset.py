@@ -46,7 +46,7 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "forbidden_questions"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Forbidden Questions dataset and return as SeedDataset.
 

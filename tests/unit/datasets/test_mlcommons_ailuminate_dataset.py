@@ -21,7 +21,7 @@ async def test_fetch_dataset(mock_ailuminate_data):
     loader = _MLCommonsAILuminateDataset()
 
     with patch.object(loader, "_fetch_from_url", return_value=mock_ailuminate_data):
-        dataset = await loader.fetch_dataset()
+        dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)
     assert len(dataset.seeds) == 2

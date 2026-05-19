@@ -119,7 +119,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "visual_leak_bench"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch VisualLeakBench examples and return as SeedDataset.
 

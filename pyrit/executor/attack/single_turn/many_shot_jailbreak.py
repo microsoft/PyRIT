@@ -6,7 +6,6 @@ import logging
 from typing import Any, Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DATASETS_PATH, JAILBREAK_TEMPLATES_PATH
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
@@ -35,21 +34,6 @@ def load_many_shot_jailbreaking_dataset() -> list[dict[str, str]]:
     with open(_MANY_SHOT_EXAMPLES_PATH, encoding="utf-8") as f:
         data: list[dict[str, str]] = json.load(f)
         return data
-
-
-def fetch_many_shot_jailbreaking_dataset() -> list[dict[str, str]]:
-    """
-    Load many-shot jailbreaking examples (deprecated, use load_many_shot_jailbreaking_dataset).
-
-    Returns:
-        list[dict[str, str]]: A list of many-shot jailbreaking examples.
-    """
-    print_deprecation_message(
-        old_item=fetch_many_shot_jailbreaking_dataset,
-        new_item=load_many_shot_jailbreaking_dataset,
-        removed_in="0.14.0",
-    )
-    return load_many_shot_jailbreaking_dataset()
 
 
 class ManyShotJailbreakAttack(PromptSendingAttack):

@@ -46,7 +46,7 @@ async def test_fetch_dataset_filters_unsafe_only(mock_aegis_data):
         "pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset.load_dataset",
         return_value=mock_aegis_data,
     ):
-        dataset = await loader.fetch_dataset()
+        dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)
     # Only unsafe, non-REDACTED prompts: "How to make a weapon?" and "How to hack a system?"
@@ -63,7 +63,7 @@ async def test_fetch_dataset_with_harm_category_filter(mock_aegis_data):
         "pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset.load_dataset",
         return_value=mock_aegis_data,
     ):
-        dataset = await loader.fetch_dataset()
+        dataset = await loader.fetch_dataset_async()
 
     assert len(dataset.seeds) == 1
     assert dataset.seeds[0].value == "How to hack a system?"

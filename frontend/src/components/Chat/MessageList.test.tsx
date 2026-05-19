@@ -542,6 +542,36 @@ describe("MessageList", () => {
     expect(screen.queryByTestId("download-btn-0-0")).not.toBeInTheDocument();
   });
 
+  it("should show Open link for file attachments with a url", () => {
+    const fileMessages: Message[] = [
+      {
+        role: "user",
+        content: "make a pdf please",
+        timestamp: new Date().toISOString(),
+        attachments: [
+          {
+            type: "file",
+            name: "result.pdf",
+            url: "/api/media?path=%2Ftmp%2Fresult.pdf",
+            mimeType: "application/pdf",
+            size: 0,
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList messages={fileMessages} />
+      </TestWrapper>
+    );
+
+    const openLink = screen.getByTestId("attachment-open-0-0");
+    expect(openLink).toHaveAttribute("href", "/api/media?path=%2Ftmp%2Fresult.pdf");
+    expect(openLink).toHaveAttribute("target", "_blank");
+    expect(openLink).toHaveAttribute("rel", expect.stringContaining("noopener"));
+  });
+
   // -----------------------------------------------------------------------
   // "Use in new conversation" button
   // -----------------------------------------------------------------------

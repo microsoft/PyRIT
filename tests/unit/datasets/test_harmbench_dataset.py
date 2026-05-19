@@ -21,7 +21,7 @@ async def test_fetch_dataset(mock_harmbench_data):
     loader = _HarmBenchDataset()
 
     with patch.object(loader, "_fetch_from_url", return_value=mock_harmbench_data):
-        dataset = await loader.fetch_dataset()
+        dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)
     assert len(dataset.seeds) == 2
@@ -36,7 +36,7 @@ async def test_fetch_dataset_missing_keys_raises():
 
     with patch.object(loader, "_fetch_from_url", return_value=bad_data):
         with pytest.raises(ValueError, match="Missing keys"):
-            await loader.fetch_dataset()
+            await loader.fetch_dataset_async()
 
 
 def test_dataset_name():

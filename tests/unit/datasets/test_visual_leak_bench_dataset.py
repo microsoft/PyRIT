@@ -97,7 +97,7 @@ class TestVisualLeakBenchDataset:
             patch.object(loader, "_fetch_from_url", return_value=mock_data),
             patch.object(loader, "_fetch_and_save_image_async", return_value="/fake/ocr.png"),
         ):
-            dataset = await loader.fetch_dataset(cache=False)
+            dataset = await loader.fetch_dataset_async(cache=False)
 
         assert isinstance(dataset, SeedDataset)
         assert len(dataset.seeds) == 2
@@ -120,7 +120,7 @@ class TestVisualLeakBenchDataset:
             patch.object(loader, "_fetch_from_url", return_value=mock_data),
             patch.object(loader, "_fetch_and_save_image_async", return_value="/fake/pii.png"),
         ):
-            dataset = await loader.fetch_dataset(cache=False)
+            dataset = await loader.fetch_dataset_async(cache=False)
 
         assert len(dataset.seeds) == 2
         text_prompt = next(s for s in dataset.seeds if s.data_type == "text")
@@ -135,7 +135,7 @@ class TestVisualLeakBenchDataset:
             patch.object(loader, "_fetch_from_url", return_value=mock_data),
             patch.object(loader, "_fetch_and_save_image_async", return_value="/fake/img.png"),
         ):
-            dataset = await loader.fetch_dataset(cache=False)
+            dataset = await loader.fetch_dataset_async(cache=False)
 
         for seed in dataset.seeds:
             assert seed.harm_categories == ["ocr_injection"]
@@ -149,7 +149,7 @@ class TestVisualLeakBenchDataset:
             patch.object(loader, "_fetch_from_url", return_value=mock_data),
             patch.object(loader, "_fetch_and_save_image_async", return_value="/fake/img.png"),
         ):
-            dataset = await loader.fetch_dataset(cache=False)
+            dataset = await loader.fetch_dataset_async(cache=False)
 
         for seed in dataset.seeds:
             assert "pii_leakage" in seed.harm_categories
@@ -164,7 +164,7 @@ class TestVisualLeakBenchDataset:
             patch.object(loader, "_fetch_from_url", return_value=mock_data),
             patch.object(loader, "_fetch_and_save_image_async", return_value="/fake/img.png"),
         ):
-            dataset = await loader.fetch_dataset(cache=False)
+            dataset = await loader.fetch_dataset_async(cache=False)
 
         assert len(dataset.seeds) == 2
         for seed in dataset.seeds:
@@ -179,7 +179,7 @@ class TestVisualLeakBenchDataset:
             patch.object(loader, "_fetch_from_url", return_value=mock_data),
             patch.object(loader, "_fetch_and_save_image_async", return_value="/fake/img.png"),
         ):
-            dataset = await loader.fetch_dataset(cache=False)
+            dataset = await loader.fetch_dataset_async(cache=False)
 
         assert len(dataset.seeds) == 2
         for seed in dataset.seeds:
@@ -197,7 +197,7 @@ class TestVisualLeakBenchDataset:
             patch.object(loader, "_fetch_from_url", return_value=mock_data),
             patch.object(loader, "_fetch_and_save_image_async", return_value="/fake/img.png"),
         ):
-            dataset = await loader.fetch_dataset(cache=False)
+            dataset = await loader.fetch_dataset_async(cache=False)
 
         assert len(dataset.seeds) == 2
         for seed in dataset.seeds:
@@ -212,7 +212,7 @@ class TestVisualLeakBenchDataset:
             patch.object(loader, "_fetch_from_url", return_value=mock_data),
             patch.object(loader, "_fetch_and_save_image_async", return_value="/fake/img.png"),
         ):
-            dataset = await loader.fetch_dataset(cache=False)
+            dataset = await loader.fetch_dataset_async(cache=False)
 
         # OCR example passes through; SSN PII example is filtered out
         assert len(dataset.seeds) == 2
@@ -232,7 +232,7 @@ class TestVisualLeakBenchDataset:
             patch.object(loader, "_fetch_from_url", return_value=mock_data),
             patch.object(loader, "_fetch_and_save_image_async", return_value="/fake/img.png"),
         ):
-            dataset = await loader.fetch_dataset(cache=False)
+            dataset = await loader.fetch_dataset_async(cache=False)
 
         # max_examples=2 → at most 4 prompts (2 pairs)
         assert len(dataset.seeds) <= 4
@@ -248,7 +248,7 @@ class TestVisualLeakBenchDataset:
         ):
             # SeedDataset raises because the loader produces zero prompts
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
-                await loader.fetch_dataset(cache=False)
+                await loader.fetch_dataset_async(cache=False)
 
     async def test_failed_image_skipped_but_others_succeed(self):
         """Test that a failed image is skipped while other examples continue."""
@@ -270,7 +270,7 @@ class TestVisualLeakBenchDataset:
             patch.object(loader, "_fetch_from_url", return_value=mock_data),
             patch.object(loader, "_fetch_and_save_image_async", side_effect=fail_first_call),
         ):
-            dataset = await loader.fetch_dataset(cache=False)
+            dataset = await loader.fetch_dataset_async(cache=False)
 
         # Only the second example (which succeeded) should be in the dataset
         assert len(dataset.seeds) == 2
@@ -282,7 +282,7 @@ class TestVisualLeakBenchDataset:
 
         with patch.object(loader, "_fetch_from_url", return_value=mock_data):
             with pytest.raises(ValueError, match="Missing keys in example"):
-                await loader.fetch_dataset(cache=False)
+                await loader.fetch_dataset_async(cache=False)
 
     async def test_prompts_share_group_id_and_dataset_name(self):
         """Test that both prompts in a pair share group_id and dataset_name."""
@@ -293,7 +293,7 @@ class TestVisualLeakBenchDataset:
             patch.object(loader, "_fetch_from_url", return_value=mock_data),
             patch.object(loader, "_fetch_and_save_image_async", return_value="/fake/img.png"),
         ):
-            dataset = await loader.fetch_dataset(cache=False)
+            dataset = await loader.fetch_dataset_async(cache=False)
 
         assert len(dataset.seeds) == 2
         image_p = next(s for s in dataset.seeds if s.data_type == "image_path")
@@ -312,7 +312,7 @@ class TestVisualLeakBenchDataset:
             patch.object(loader, "_fetch_from_url", return_value=mock_data),
             patch.object(loader, "_fetch_and_save_image_async", return_value="/fake/img.png"),
         ):
-            dataset = await loader.fetch_dataset(cache=False)
+            dataset = await loader.fetch_dataset_async(cache=False)
 
         for seed in dataset.seeds:
             assert seed.metadata["category"] == "PII Leakage"
