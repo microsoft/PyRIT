@@ -25,18 +25,16 @@ class TrueFalseScorer(Scorer):
     whether the response meets a specific criterion. Multiple pieces in a request response
     are aggregated using a TrueFalseAggregatorFunc function (default: TrueFalseScoreAggregator.OR).
 
-    Default error / blocked behavior
-    --------------------------------
+    **Default error / blocked behavior**
+
     When no supported pieces remain after validator filtering (e.g. the response is
     blocked, has another error type, or no piece matches the scorer's supported data
-    types), ``_score_async`` returns a single ``Score(False)`` whose rationale
-    distinguishes blocked / error / filtered cases. This mirrors
-    :class:`~pyrit.score.float_scale.float_scale_scorer.FloatScaleScorer`'s ``0.0``
-    default so that downstream consumers (attack strategies, threshold wrappers) get a
-    consistent, "attack did not succeed" value without each call site needing
-    special-cased error handling. Subclasses that need different semantics (e.g.
-    :class:`~pyrit.score.true_false.self_ask_refusal_scorer.SelfAskRefusalScorer`, which
-    returns ``True`` on blocked) should override ``_score_piece_async`` and accept the
+    types), `_score_async` returns a single `Score(False)` whose rationale distinguishes
+    blocked / error / filtered cases. This mirrors `FloatScaleScorer`'s `0.0` default so
+    that downstream consumers (attack strategies, threshold wrappers) get a consistent,
+    "attack did not succeed" value without each call site needing special-cased error
+    handling. Subclasses that need different semantics (e.g. `SelfAskRefusalScorer`,
+    which returns `True` on blocked) should override `_score_piece_async` and accept the
     error data type in their validator.
     """
 

@@ -23,17 +23,16 @@ class FloatScaleScorer(Scorer):
     to which a response exhibits certain characteristics. Each piece in a request response
     is scored independently, returning one score per piece.
 
-    Default error / blocked behavior
-    --------------------------------
+    **Default error / blocked behavior**
+
     When no supported pieces remain after validator filtering (e.g. the response is
     blocked, has another error type, or no piece matches the scorer's supported data
-    types), ``_score_async`` returns a single ``Score`` with value ``0.0``. The rationale
-    distinguishes blocked / error / filtered cases. This mirrors
-    :class:`~pyrit.score.true_false.true_false_scorer.TrueFalseScorer`'s ``False`` default
-    so that downstream consumers (attack strategies, threshold wrappers) get a consistent,
-    "attack did not succeed" value without each call site needing special-cased error
-    handling. Subclasses that need different semantics (e.g. a refusal-style
-    "blocked = True") should override ``_score_piece_async`` or ``_score_async``.
+    types), `_score_async` returns a single `Score` with value `0.0`. The rationale
+    distinguishes blocked / error / filtered cases. This mirrors `TrueFalseScorer`'s
+    `False` default so that downstream consumers (attack strategies, threshold wrappers)
+    get a consistent, "attack did not succeed" value without each call site needing
+    special-cased error handling. Subclasses that need different semantics (e.g. a
+    refusal-style "blocked = True") should override `_score_piece_async` or `_score_async`.
     """
 
     def __init__(self, *, validator: ScorerPromptValidator, chat_target: Optional[PromptTarget] = None) -> None:
