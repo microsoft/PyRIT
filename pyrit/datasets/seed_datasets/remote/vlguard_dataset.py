@@ -140,7 +140,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
         Fetch VLGuard multimodal examples and return as SeedDataset.
 
         Downloads the test split metadata and images from HuggingFace, then creates
-        multimodal prompts (text + image pairs linked by prompt_group_id) based on
+        multimodal prompts (text + image pairs linked by prompt_group_id and sequence=0) based on
         the selected subset.
 
         Args:
