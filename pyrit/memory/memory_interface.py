@@ -2019,7 +2019,7 @@ class MemoryInterface(abc.ABC):
         Replace the ``scenario_metadata`` JSON blob on an existing scenario result.
 
         Used by the scenario layer to persist first-run state (e.g.
-        ``sampled_objective_hashes``) that resume needs to replay. Performs a
+        ``objective_hashes``) that resume needs to replay. Performs a
         targeted UPDATE so it doesn't clobber other columns.
 
         Args:

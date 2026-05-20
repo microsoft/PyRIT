@@ -77,18 +77,24 @@ def mock_atomic_attacks():
     run1.atomic_attack_name = "attack_run_1"
     run1.display_group = "attack_run_1"
     run1._attack = mock_attack
+    run1._scenario_result_id = None
+    run1.set_scenario_result_id = MagicMock(side_effect=lambda sid: setattr(run1, "_scenario_result_id", sid))
     type(run1).objectives = PropertyMock(return_value=["objective1"])
 
     run2 = MagicMock(spec=AtomicAttack)
     run2.atomic_attack_name = "attack_run_2"
     run2.display_group = "attack_run_2"
     run2._attack = mock_attack
+    run2._scenario_result_id = None
+    run2.set_scenario_result_id = MagicMock(side_effect=lambda sid: setattr(run2, "_scenario_result_id", sid))
     type(run2).objectives = PropertyMock(return_value=["objective2"])
 
     run3 = MagicMock(spec=AtomicAttack)
     run3.atomic_attack_name = "attack_run_3"
     run3.display_group = "attack_run_3"
     run3._attack = mock_attack
+    run3._scenario_result_id = None
+    run3.set_scenario_result_id = MagicMock(side_effect=lambda sid: setattr(run3, "_scenario_result_id", sid))
     type(run3).objectives = PropertyMock(return_value=["objective3"])
 
     return [run1, run2, run3]
@@ -533,6 +539,10 @@ class TestScenarioProperties:
         single_run_mock.atomic_attack_name = "attack_1"
         single_run_mock.display_group = "attack_1"
         single_run_mock._attack = mock_attack
+        single_run_mock._scenario_result_id = None
+        single_run_mock.set_scenario_result_id = MagicMock(
+            side_effect=lambda sid: setattr(single_run_mock, "_scenario_result_id", sid)
+        )
         type(single_run_mock).objectives = PropertyMock(return_value=["obj1"])
         single_run = [single_run_mock]
 
@@ -550,6 +560,11 @@ class TestScenarioProperties:
             run.atomic_attack_name = f"attack_{i}"
             run.display_group = f"attack_{i}"
             run._attack = mock_attack
+            run._scenario_result_id = None
+            # Capture run by default arg to avoid late-binding in the closure.
+            run.set_scenario_result_id = MagicMock(
+                side_effect=lambda sid, _run=run: setattr(_run, "_scenario_result_id", sid)
+            )
             type(run).objectives = PropertyMock(return_value=[f"obj{i}"])
             many_runs.append(run)
 

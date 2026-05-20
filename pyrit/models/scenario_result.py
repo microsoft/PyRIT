@@ -134,7 +134,7 @@ class ScenarioResult:
                 errored during the scenario run. Defaults to an empty list.
             metadata (Optional[dict[str, Any]]): Free-form JSON metadata persisted
                 with the scenario result. Currently used to record
-                ``sampled_objective_hashes`` — the objective ``sha256`` set chosen
+                ``objective_hashes`` — the objective ``sha256`` set chosen
                 on the first run, replayed on resume so a fresh
                 ``random.sample`` can't silently change which objectives the
                 scenario operates on. Keys are not part of any public contract

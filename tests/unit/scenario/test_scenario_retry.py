@@ -140,6 +140,11 @@ def create_mock_atomic_attack(name: str, objectives: list[str], run_async_mock: 
     attack._attack = mock_attack_strategy
     attack._scenario_result_id = None
 
+    def _set_scenario_result_id(scenario_result_id):
+        attack._scenario_result_id = scenario_result_id
+
+    attack.set_scenario_result_id = MagicMock(side_effect=_set_scenario_result_id)
+
     # Track objectives + objective-hash mapping so the hash-based filter
     # behaves correctly in resume tests.
     from pyrit.common.utils import to_sha256
@@ -148,10 +153,10 @@ def create_mock_atomic_attack(name: str, objectives: list[str], run_async_mock: 
     type(attack).objectives = PropertyMock(side_effect=lambda: current_objectives["value"])
     type(attack).seed_groups = PropertyMock(side_effect=lambda: current_objectives["value"])
 
-    def filter_completed_hashes(*, completed_hashes):
-        current_objectives["value"] = [o for o in current_objectives["value"] if to_sha256(o) not in completed_hashes]
+    def drop_hashes(*, hashes):
+        current_objectives["value"] = [o for o in current_objectives["value"] if to_sha256(o) not in hashes]
 
-    attack.filter_seed_groups_by_completed_hashes = MagicMock(side_effect=filter_completed_hashes)
+    attack.drop_seed_groups_with_hashes = MagicMock(side_effect=drop_hashes)
 
     if run_async_mock:
         attack.run_async = run_async_mock
@@ -689,11 +694,11 @@ class TestScenarioForeignKeyResumeRegression:
                 atomic_attack_name="dup_attack",
             )
 
-    async def test_duplicate_atomic_attack_name_warns_but_does_not_raise(self, mock_objective_target, caplog):
-        """Duplicate atomic_attack_name within a scenario degrades resume to
-        collapse-by-name. The validator logs a WARNING but does not raise —
-        some existing scenarios (Encoding, Jailbreak) intentionally use
-        duplicate names for different converter configs."""
+    async def test_duplicate_atomic_attack_name_does_not_warn(self, mock_objective_target, caplog):
+        """Duplicate ``atomic_attack_name`` is supported: resume disambiguates
+        rows by ``(parent_collection, parent_eval_hash)``, so two atomic
+        attacks sharing a name with different techniques don't cross-pollinate
+        their completed-hash sets. No warning is emitted."""
         dup1 = create_mock_atomic_attack("dup_name", ["objA"])
         dup2 = create_mock_atomic_attack("dup_name", ["objB"])
 
@@ -712,6 +717,6 @@ class TestScenarioForeignKeyResumeRegression:
         with caplog.at_level("WARNING"):
             await scenario.initialize_async(objective_target=mock_objective_target)
 
-        assert any("duplicate atomic_attack_name" in record.message for record in caplog.records), (
-            "Expected a duplicate-name warning"
+        assert not any("duplicate atomic_attack_name" in record.message for record in caplog.records), (
+            "Duplicate atomic_attack_name should be supported without warning"
         )

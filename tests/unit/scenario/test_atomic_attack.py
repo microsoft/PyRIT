@@ -984,7 +984,7 @@ class TestEnrichAtomicAttackIdentifiers:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAtomicAttackFilterSeedGroupsByCompletedHashes:
-    """Tests for ``filter_seed_groups_by_completed_hashes`` — the hash-based
+    """Tests for ``drop_seed_groups_with_hashes`` — the hash-based
     resume filter."""
 
     def test_filters_out_completed_hashes(self, mock_attack, sample_seed_groups):
@@ -996,7 +996,7 @@ class TestAtomicAttackFilterSeedGroupsByCompletedHashes:
             atomic_attack_name="test",
         )
         completed = {to_sha256("objective1"), to_sha256("objective3")}
-        atomic.filter_seed_groups_by_completed_hashes(completed_hashes=completed)
+        atomic.drop_seed_groups_with_hashes(hashes=completed)
 
         assert atomic.seed_groups == [sample_seed_groups[1]]
 
@@ -1007,7 +1007,7 @@ class TestAtomicAttackFilterSeedGroupsByCompletedHashes:
             atomic_attack_name="test",
         )
 
-        atomic.filter_seed_groups_by_completed_hashes(completed_hashes=set())
+        atomic.drop_seed_groups_with_hashes(hashes=set())
 
         assert atomic.seed_groups == sample_seed_groups
 
@@ -1020,9 +1020,7 @@ class TestAtomicAttackFilterSeedGroupsByCompletedHashes:
             atomic_attack_name="test",
         )
 
-        atomic.filter_seed_groups_by_completed_hashes(
-            completed_hashes={to_sha256(f"objective{i}") for i in range(1, 4)}
-        )
+        atomic.drop_seed_groups_with_hashes(hashes={to_sha256(f"objective{i}") for i in range(1, 4)})
 
         assert atomic.seed_groups == []
 
@@ -1039,7 +1037,7 @@ class TestAtomicAttackFilterSeedGroupsByCompletedHashes:
         # Simulate a re-sample by reversing the internal list.
         atomic._seed_groups = list(reversed(atomic._seed_groups))
 
-        atomic.filter_seed_groups_by_completed_hashes(completed_hashes={to_sha256("objective1")})
+        atomic.drop_seed_groups_with_hashes(hashes={to_sha256("objective1")})
         kept_objectives = [sg.objective.value for sg in atomic.seed_groups]
         assert "objective1" not in kept_objectives
         assert set(kept_objectives) == {"objective2", "objective3"}
@@ -1047,7 +1045,7 @@ class TestAtomicAttackFilterSeedGroupsByCompletedHashes:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAtomicAttackRestrictSeedGroupsToHashes:
-    """Tests for ``restrict_seed_groups_to_hashes`` — the keep-set inverse used
+    """Tests for ``keep_seed_groups_with_hashes`` — the keep-set inverse used
     on resume to replay the originally-sampled subset."""
 
     def test_keeps_only_listed_hashes(self, mock_attack, sample_seed_groups):
@@ -1059,7 +1057,7 @@ class TestAtomicAttackRestrictSeedGroupsToHashes:
             atomic_attack_name="test",
         )
         keep = {to_sha256("objective1"), to_sha256("objective3")}
-        retained = atomic.restrict_seed_groups_to_hashes(keep_hashes=keep)
+        retained = atomic.keep_seed_groups_with_hashes(hashes=keep)
 
         assert {sg.objective.value for sg in atomic.seed_groups} == {"objective1", "objective3"}
         assert retained == keep
@@ -1073,7 +1071,7 @@ class TestAtomicAttackRestrictSeedGroupsToHashes:
             atomic_attack_name="test",
         )
         keep = {to_sha256("objective1"), to_sha256("not-in-dataset")}
-        retained = atomic.restrict_seed_groups_to_hashes(keep_hashes=keep)
+        retained = atomic.keep_seed_groups_with_hashes(hashes=keep)
 
         assert {sg.objective.value for sg in atomic.seed_groups} == {"objective1"}
         assert retained == {to_sha256("objective1")}

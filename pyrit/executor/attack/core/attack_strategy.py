@@ -261,9 +261,12 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         if attribution is None:
             return
         result.attribution_parent_id = attribution.parent_id
-        result.attribution_data = {
+        attribution_data: dict[str, Any] = {
             "parent_collection": attribution.parent_collection,
         }
+        if attribution.parent_eval_hash is not None:
+            attribution_data["parent_eval_hash"] = attribution.parent_eval_hash
+        result.attribution_data = attribution_data
 
     def _log_attack_outcome(self, result: AttackResult) -> None:
         """

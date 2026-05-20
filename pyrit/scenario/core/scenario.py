@@ -694,21 +694,6 @@ class Scenario(ABC):
                 seed_groups = self._dataset_config.get_all_seed_attack_groups()
             self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=seed_groups))
 
-        # Enforce atomic_attack_name uniqueness. Duplicate names cause result
-        # aggregation maps keyed by name to silently collapse rows, and
-        # foreign-key-based resume cannot distinguish them. Some existing
-        # scenarios (e.g. Encoding) construct multiple AtomicAttacks with the
-        # same name for different converter configs, so this is a warning for
-        # now; in a future release it will become an error.
-        names = [aa.atomic_attack_name for aa in self._atomic_attacks]
-        duplicates = sorted({name for name in names if names.count(name) > 1})
-        if duplicates:
-            logger.warning(
-                f"Scenario '{self._name}' has duplicate atomic_attack_name values: {duplicates}. "
-                f"Duplicate names will be collapsed in result aggregation and resume tracking. "
-                f"Each AtomicAttack within a scenario should have a unique name."
-            )
-
         # Snapshot params onto the identifier before the resume branch so the identifier
         # is fully populated regardless of which branch we take. Deep-copy avoids sharing
         # mutable state with self.params.
@@ -729,7 +714,7 @@ class Scenario(ABC):
                 )
 
             self._validate_stored_scenario(stored_result=existing_results[0])
-            self._apply_persisted_sample(stored_result=existing_results[0])
+            self._apply_persisted_objectives(stored_result=existing_results[0])
             return  # Valid resume - skip creating new scenario result
 
         # Build display group mapping from atomic attacks
@@ -763,7 +748,7 @@ class Scenario(ABC):
         unseeded ``random.sample`` and the chosen subset would silently change
         on the next run (e.g. a resume). To make resume reliable, snapshot the
         chosen objective hashes here so the next ``_setup_scenario_async`` can
-        replay them via ``restrict_seed_groups_to_hashes``.
+        replay them via ``keep_seed_groups_with_hashes``.
 
         When ``max_dataset_size`` is not set, the sample equals the dataset and
         nothing needs pinning; the dict is empty.
@@ -784,15 +769,15 @@ class Scenario(ABC):
                 if sha not in seen:
                     seen.add(sha)
                     hashes.append(sha)
-        metadata["sampled_objective_hashes"] = hashes
+        metadata["objective_hashes"] = hashes
         return metadata
 
-    def _apply_persisted_sample(self, *, stored_result: ScenarioResult) -> None:
+    def _apply_persisted_objectives(self, *, stored_result: ScenarioResult) -> None:
         """
         On resume, replay the originally-sampled objective subset.
 
         When the first run used ``max_dataset_size``, the chosen subset was
-        recorded in ``ScenarioResult.metadata["sampled_objective_hashes"]``.
+        recorded in ``ScenarioResult.metadata["objective_hashes"]``.
         Restrict each atomic attack's freshly-resolved seed_groups to that set
         so a fresh ``random.sample`` draw on resume can't silently shift which
         objectives the scenario operates on. If any persisted hash is no longer
@@ -807,16 +792,16 @@ class Scenario(ABC):
                 currently-resolved dataset.
         """
         metadata = stored_result.metadata or {}
-        persisted = metadata.get("sampled_objective_hashes")
+        persisted = metadata.get("objective_hashes")
         if not persisted:
             return
 
-        keep_hashes: set[str] = set(persisted)
+        persisted_hashes: set[str] = set(persisted)
         retained: set[str] = set()
         for aa in self._atomic_attacks:
-            retained |= aa.restrict_seed_groups_to_hashes(keep_hashes=keep_hashes)
+            retained |= aa.keep_seed_groups_with_hashes(hashes=persisted_hashes)
 
-        missing = keep_hashes - retained
+        missing = persisted_hashes - retained
         if missing:
             sample = sorted(missing)[:3]
             raise ValueError(
@@ -925,7 +910,7 @@ class Scenario(ABC):
             f"(ID: {self._scenario_result_id}, state: {stored_result.scenario_run_state})"
         )
 
-    def _get_completed_objective_hashes_for_attack(self, *, atomic_attack_name: str) -> set[str]:
+    def _get_completed_objective_hashes_for_attack(self, *, atomic_attack: AtomicAttack) -> set[str]:
         """
         Return the set of ``objective_sha256`` values already completed (non-error)
         for a specific atomic attack inside this scenario.
@@ -937,14 +922,25 @@ class Scenario(ABC):
         Identity is content-derived (``to_sha256(objective)``), so it stays
         stable even if ``get_seed_groups()`` reorders or resamples between runs.
 
+        Rows are matched on ``(parent_collection, parent_eval_hash)`` so that
+        two ``AtomicAttack`` instances sharing a name but using different
+        techniques (e.g. base64 vs hex encoders) never cross-pollinate their
+        completed-hash sets on resume. Rows persisted before
+        ``parent_eval_hash`` was introduced (or by callers that don't supply
+        one) match name-only as a backward-compatible fallback.
+
         Args:
-            atomic_attack_name (str): The atomic attack name to scope to.
+            atomic_attack (AtomicAttack): The live atomic attack whose
+                ``atomic_attack_name`` and technique identifier scope the query.
 
         Returns:
             set[str]: ``objective_sha256`` hex strings for completed-without-error rows.
         """
         if not self._scenario_result_id:
             return set()
+
+        atomic_attack_name = atomic_attack.atomic_attack_name
+        expected_eval_hash = atomic_attack.technique_eval_hash
 
         completed_hashes: set[str] = set()
         try:
@@ -955,6 +951,9 @@ class Scenario(ABC):
                 if row.attribution_data is None:
                     continue
                 if row.attribution_data.get("parent_collection") != atomic_attack_name:
+                    continue
+                row_eval_hash = row.attribution_data.get("parent_eval_hash")
+                if row_eval_hash is not None and row_eval_hash != expected_eval_hash:
                     continue
                 if row.objective:
                     completed_hashes.add(to_sha256(row.objective))
@@ -985,13 +984,11 @@ class Scenario(ABC):
         remaining_attacks: list[AtomicAttack] = []
 
         for atomic_attack in self._atomic_attacks:
-            completed_hashes = self._get_completed_objective_hashes_for_attack(
-                atomic_attack_name=atomic_attack.atomic_attack_name
-            )
+            completed_hashes = self._get_completed_objective_hashes_for_attack(atomic_attack=atomic_attack)
 
             if completed_hashes:
                 original_count = len(atomic_attack.seed_groups)
-                atomic_attack.filter_seed_groups_by_completed_hashes(completed_hashes=completed_hashes)
+                atomic_attack.drop_seed_groups_with_hashes(hashes=completed_hashes)
                 remaining_count = len(atomic_attack.seed_groups)
                 if remaining_count == 0:
                     logger.info(
@@ -1248,7 +1245,7 @@ class Scenario(ABC):
                 # AttackResult carries the attribution_parent_id linkage. This
                 # is what enables mid-run interruption recovery (results are
                 # visible without the post-atomic-attack bulk manifest write).
-                atomic_attack._scenario_result_id = scenario_result_id
+                atomic_attack.set_scenario_result_id(scenario_result_id)
 
                 logger.info(
                     f"Executing atomic attack {i}/{len(self._atomic_attacks)} "

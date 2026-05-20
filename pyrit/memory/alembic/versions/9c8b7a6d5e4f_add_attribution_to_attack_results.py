@@ -65,7 +65,7 @@ def upgrade() -> None:
 
     # ScenarioResultEntries: drop the not-yet-released error_attack_result_ids_json,
     # and add scenario_metadata for free-form scenario-level JSON state (e.g.
-    # the persisted sampled_objective_hashes used for resume).
+    # the persisted objective_hashes used for resume).
     # Error AttackResults are now linkable via the new attribution_parent_id
     # foreign key; the per-scenario manifest column is no longer used.
     # Wrapped in a batch op for SQLite.

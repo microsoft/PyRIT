@@ -1013,7 +1013,7 @@ class ScenarioResultEntry(Base):
     error_type: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Free-form JSON metadata stamped by the scenario. Currently used to record
-    # ``sampled_objective_hashes`` — the objective sha256 set chosen on the
+    # ``objective_hashes`` — the objective sha256 set chosen on the
     # first run, replayed on resume so a fresh ``random.sample`` can't
     # silently change which objectives the scenario operates on. Column is
     # named ``scenario_metadata`` because SQLAlchemy's ``DeclarativeBase``
