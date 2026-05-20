@@ -140,23 +140,17 @@ def create_mock_atomic_attack(name: str, objectives: list[str], run_async_mock: 
     attack._attack = mock_attack_strategy
     attack._scenario_result_id = None
 
-    # Track objectives + objective-hash mapping so the new hash-based filter
-    # behaves correctly in resume tests. The legacy text-based filter is wired
-    # too to support callers that still exercise it.
+    # Track objectives + objective-hash mapping so the hash-based filter
+    # behaves correctly in resume tests.
     from pyrit.common.utils import to_sha256
 
     current_objectives = {"value": list(objectives)}
     type(attack).objectives = PropertyMock(side_effect=lambda: current_objectives["value"])
     type(attack).seed_groups = PropertyMock(side_effect=lambda: current_objectives["value"])
 
-    def filter_objectives(*, remaining_objectives):
-        remaining_set = set(remaining_objectives)
-        current_objectives["value"] = [o for o in current_objectives["value"] if o in remaining_set]
-
     def filter_completed_hashes(*, completed_hashes):
         current_objectives["value"] = [o for o in current_objectives["value"] if to_sha256(o) not in completed_hashes]
 
-    attack.filter_seed_groups_by_objectives = MagicMock(side_effect=filter_objectives)
     attack.filter_seed_groups_by_completed_hashes = MagicMock(side_effect=filter_completed_hashes)
 
     if run_async_mock:

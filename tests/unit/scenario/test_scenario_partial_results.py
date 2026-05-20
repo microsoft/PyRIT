@@ -58,7 +58,7 @@ def create_mock_atomic_attack(name: str, objectives: list[str]) -> MagicMock:
     """Create a mock AtomicAttack with required attributes for baseline creation.
 
     The mock tracks its objectives and properly updates when
-    filter_seed_groups_by_objectives OR filter_seed_groups_by_completed_hashes is called.
+    filter_seed_groups_by_completed_hashes is called.
     """
     from pyrit.common.utils import to_sha256
 
@@ -78,14 +78,9 @@ def create_mock_atomic_attack(name: str, objectives: list[str]) -> MagicMock:
     type(attack).objectives = PropertyMock(side_effect=lambda: current_objectives["value"])
     type(attack).seed_groups = PropertyMock(side_effect=lambda: current_objectives["value"])
 
-    def filter_objectives(*, remaining_objectives):
-        remaining_set = set(remaining_objectives)
-        current_objectives["value"] = [o for o in current_objectives["value"] if o in remaining_set]
-
     def filter_completed_hashes(*, completed_hashes):
         current_objectives["value"] = [o for o in current_objectives["value"] if to_sha256(o) not in completed_hashes]
 
-    attack.filter_seed_groups_by_objectives = MagicMock(side_effect=filter_objectives)
     attack.filter_seed_groups_by_completed_hashes = MagicMock(side_effect=filter_completed_hashes)
     attack._original_objectives = original_objectives
 

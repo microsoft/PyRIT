@@ -141,10 +141,15 @@ class AtomicAttack:
         Within a single ``AtomicAttack`` (one ``atomic_attack_name``, one
         technique), the objective text identifies a unit of work. Duplicates
         would mean two indistinguishable rows on the write side, which makes
-        resume reconciliation ambiguous — the new hash-based resume key
-        treats a set of hashes as already-done, with no way to distinguish
-        which of two duplicate rows is "the one" that is still outstanding.
-        Loud failure here beats silent resume corruption later.
+        resume reconciliation ambiguous — the hash-based resume key treats a
+        set of hashes as already-done, with no way to distinguish which of two
+        duplicate rows is "the one" that is still outstanding. Loud failure
+        here beats silent resume corruption later.
+
+        The hash is currently derived from objective text only. A future
+        iteration may hash the full ``SeedGroup`` (minus technique-specific
+        fields) so two seed groups that share an objective string but differ
+        in other inputs can coexist in one atomic attack.
 
         Raises:
             ValueError: If two seed groups share the same ``objective_sha256``.
@@ -185,28 +190,6 @@ class AtomicAttack:
             List[SeedAttackGroup]: A copy of the seed groups list.
         """
         return list(self._seed_groups)
-
-    def filter_seed_groups_by_objectives(self, *, remaining_objectives: list[str]) -> None:
-        """
-        Filter seed groups to only those with objectives in the remaining list.
-
-        Deprecated — prefer ``filter_seed_groups_by_completed_hashes``. Filtering
-        by objective text collapses two distinct seed groups that happen to share
-        the same objective text. Hash-based filtering aligns with the
-        ``objective_sha256`` resume key written to ``AttackResultEntry``.
-
-        Args:
-            remaining_objectives (List[str]): List of objectives that still need to be executed.
-        """
-        print_deprecation_message(
-            old_item="AtomicAttack.filter_seed_groups_by_objectives",
-            new_item="AtomicAttack.filter_seed_groups_by_completed_hashes",
-            removed_in="0.16.0",
-        )
-        remaining_set = set(remaining_objectives)
-        self._seed_groups = [
-            sg for sg in self._seed_groups if sg.objective is not None and sg.objective.value in remaining_set
-        ]
 
     def filter_seed_groups_by_completed_hashes(self, *, completed_hashes: set[str]) -> None:
         """

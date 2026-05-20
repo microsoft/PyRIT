@@ -2107,7 +2107,7 @@ class MemoryInterface(abc.ABC):
                 limit=limit,
             )
 
-            attack_results_by_scenario = self._hydrate_scenario_attack_results(entries=entries)
+            attack_results_by_scenario = self._get_attack_results_by_scenario(entries=entries)
 
             scenario_results: list[ScenarioResult] = []
             for entry in entries:
@@ -2226,7 +2226,7 @@ class MemoryInterface(abc.ABC):
             limit=limit,
         )
 
-    def _hydrate_scenario_attack_results(
+    def _get_attack_results_by_scenario(
         self,
         *,
         entries: Sequence[ScenarioResultEntry],
@@ -2269,7 +2269,8 @@ class MemoryInterface(abc.ABC):
             name = data.get("parent_collection")
             if not name:
                 logger.debug(
-                    f"Skipping AttackResultEntry {row.id} during hydration: attribution_data missing parent_collection"
+                    f"Skipping AttackResultEntry {row.id} during scenario load: "
+                    "attribution_data missing parent_collection"
                 )
                 continue
 

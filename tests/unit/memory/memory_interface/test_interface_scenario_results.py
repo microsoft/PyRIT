@@ -684,7 +684,7 @@ def _make_attack_result_for_scenario(
     )
 
 
-def test_get_scenario_results_hydrates_via_foreign_key(sqlite_instance: MemoryInterface):
+def test_get_scenario_results_loads_attack_results_via_foreign_key(sqlite_instance: MemoryInterface):
     """When AttackResultEntry rows carry the attribution_parent_id foreign key,
     hydration picks them up directly — without needing the legacy
     attack_results_json manifest. This is the path that makes mid-AtomicAttack

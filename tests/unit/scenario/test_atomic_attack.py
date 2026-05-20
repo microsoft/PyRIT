@@ -1080,35 +1080,6 @@ class TestAtomicAttackRestrictSeedGroupsToHashes:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestAtomicAttackFilterSeedGroupsByObjectives:
-    """Deprecated path — verifies the warning fires and legacy semantics work."""
-
-    def test_emits_deprecation_warning(self, mock_attack, sample_seed_groups):
-        atomic = AtomicAttack(
-            attack_technique=AttackTechnique(attack=mock_attack),
-            seed_groups=sample_seed_groups,
-            atomic_attack_name="test",
-        )
-
-        with pytest.warns(DeprecationWarning, match="filter_seed_groups_by_objectives"):
-            atomic.filter_seed_groups_by_objectives(remaining_objectives=["objective2"])
-
-        assert [sg.objective.value for sg in atomic.seed_groups] == ["objective2"]
-
-    def test_drops_all_when_no_objectives_match(self, mock_attack, sample_seed_groups):
-        atomic = AtomicAttack(
-            attack_technique=AttackTechnique(attack=mock_attack),
-            seed_groups=sample_seed_groups,
-            atomic_attack_name="test",
-        )
-
-        with pytest.warns(DeprecationWarning):
-            atomic.filter_seed_groups_by_objectives(remaining_objectives=["nope"])
-
-        assert atomic.seed_groups == []
-
-
-@pytest.mark.usefixtures("patch_central_database")
 class TestAtomicAttackDuplicateObjectiveValidation:
     """``AtomicAttack.__init__`` enforces objective-hash uniqueness within a
     single atomic attack so resume can use the hash as a stable identity."""
