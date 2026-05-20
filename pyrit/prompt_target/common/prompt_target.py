@@ -3,7 +3,6 @@
 
 import abc
 import logging
-import warnings
 from typing import Any, Union, final
 
 from pyrit.common.deprecation import print_deprecation_message
@@ -12,7 +11,7 @@ from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, MessagePiece
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration, resolve_configuration_compat
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 logger = logging.getLogger(__name__)
 
@@ -44,24 +43,6 @@ class PromptTarget(Identifiable):
     # constructor parameter, which takes precedence over the class-level value.
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        """
-        Auto-promote the deprecated ``_DEFAULT_CAPABILITIES`` class attribute.
-
-        If a subclass defines ``_DEFAULT_CAPABILITIES`` directly, this hook wraps it
-        in a ``TargetConfiguration`` and assigns it to ``_DEFAULT_CONFIGURATION``,
-        emitting a ``DeprecationWarning`` to guide migration.
-        """
-        super().__init_subclass__(**kwargs)
-        if "_DEFAULT_CAPABILITIES" in cls.__dict__:
-            warnings.warn(
-                f"{cls.__name__}._DEFAULT_CAPABILITIES is deprecated and will be removed in v0.14.0. "
-                "Use _DEFAULT_CONFIGURATION = TargetConfiguration(capabilities=...) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            cls._DEFAULT_CONFIGURATION = TargetConfiguration(capabilities=cls.__dict__["_DEFAULT_CAPABILITIES"])
-
     def __init__(
         self,
         verbose: bool = False,
@@ -70,7 +51,6 @@ class PromptTarget(Identifiable):
         model_name: str = "",
         underlying_model: str | None = None,
         custom_configuration: TargetConfiguration | None = None,
-        custom_capabilities: TargetCapabilities | None = None,
     ) -> None:
         """
         Initialize the PromptTarget.
@@ -88,13 +68,7 @@ class PromptTarget(Identifiable):
                 for this target instance. Useful for targets whose capabilities depend on deployment
                 configuration (e.g., Playwright, HTTP). If None, uses the class-level
                 ``_DEFAULT_CONFIGURATION``. Defaults to None.
-            custom_capabilities (TargetCapabilities | None): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
         """
-        custom_configuration = resolve_configuration_compat(
-            custom_configuration=custom_configuration,
-            custom_capabilities=custom_capabilities,
-        )
         self._memory = CentralMemory.get_memory_instance()
         self._verbose = verbose
         self._max_requests_per_minute = max_requests_per_minute
@@ -453,25 +427,6 @@ class PromptTarget(Identifiable):
                 cls.__name__,
             )
         return cls._DEFAULT_CONFIGURATION
-
-    @classmethod
-    def get_default_capabilities(cls, underlying_model: str | None = None) -> TargetCapabilities:
-        """
-        Return the default capabilities for the given model.
-
-        **Deprecated.** Use :meth:`get_default_configuration` instead.
-        Will be removed in v0.14.0.
-
-        Returns:
-            TargetCapabilities: The capabilities for the given model or class default.
-        """
-        warnings.warn(
-            "get_default_capabilities() is deprecated and will be removed in v0.14.0. "
-            "Use get_default_configuration() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return cls.get_default_configuration(underlying_model).capabilities
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

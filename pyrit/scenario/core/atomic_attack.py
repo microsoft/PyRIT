@@ -14,7 +14,6 @@ have a common interface for scenarios.
 """
 
 import logging
-import warnings
 from typing import TYPE_CHECKING, Any, Optional
 
 from pyrit.common.deprecation import print_deprecation_message
@@ -77,8 +76,8 @@ class AtomicAttack:
                 to ``atomic_attack_name``.
             attack_technique: An AttackTechnique bundling the attack strategy and optional
                 technique seeds. Preferred over the deprecated ``attack`` parameter.
-            attack: Deprecated. The configured attack strategy to execute. Use
-                ``attack_technique`` instead.
+            attack: **Deprecated.** Will be removed in v0.16.0. The configured attack
+                strategy to execute. Use ``attack_technique`` instead.
             seed_groups: List of seed attack groups. Each seed group must
                 have an objective set.
             adversarial_chat: Optional chat target for generating
@@ -102,10 +101,10 @@ class AtomicAttack:
         if attack_technique is not None:
             self._attack_technique = attack_technique
         elif attack is not None:
-            warnings.warn(
-                "The 'attack' parameter is deprecated. Use 'attack_technique=AttackTechnique(attack=...)' instead.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="AtomicAttack(attack=...)",
+                new_item="AtomicAttack(attack_technique=AttackTechnique(attack=...))",
+                removed_in="0.16.0",
             )
             self._attack_technique = AttackTechnique(attack=attack)
         else:
