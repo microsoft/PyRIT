@@ -695,10 +695,10 @@ class Scenario(ABC):
 
         # Enforce atomic_attack_name uniqueness. Duplicate names cause result
         # aggregation maps keyed by name to silently collapse rows, and
-        # FK-based resume cannot distinguish them. Some existing scenarios
-        # (e.g. Encoding) construct multiple AtomicAttacks with the same name
-        # for different converter configs, so this is a warning for now; in a
-        # future release it will become an error.
+        # foreign-key-based resume cannot distinguish them. Some existing
+        # scenarios (e.g. Encoding) construct multiple AtomicAttacks with the
+        # same name for different converter configs, so this is a warning for
+        # now; in a future release it will become an error.
         names = [aa.atomic_attack_name for aa in self._atomic_attacks]
         duplicates = sorted({name for name in names if names.count(name) > 1})
         if duplicates:
@@ -856,7 +856,7 @@ class Scenario(ABC):
         Get the set of objective_index values that have already been completed
         (non-error) for a specific atomic attack inside this scenario.
 
-        Queries AttackResultEntry rows directly by ``scenario_result_id`` —
+        Queries AttackResultEntry rows directly by ``attribution_parent_id`` —
         which is stamped at write-time by the attack persistence path — so
         results from an interrupted run are visible even though the
         ``ScenarioResult.attack_results`` aggregate may not yet reflect them.
@@ -876,13 +876,13 @@ class Scenario(ABC):
             for row in rows:
                 if row.outcome == AttackOutcome.ERROR:
                     continue
-                if row.scenario_data is None:
+                if row.attribution_data is None:
                     continue
-                if row.scenario_data.get("atomic_attack_name") != atomic_attack_name:
+                if row.attribution_data.get("parent_collection") != atomic_attack_name:
                     continue
-                objective_index = row.scenario_data.get("objective_index")
-                if isinstance(objective_index, int):
-                    completed_indices.add(objective_index)
+                position = row.attribution_data.get("position")
+                if isinstance(position, int):
+                    completed_indices.add(position)
         except Exception as e:
             logger.warning(
                 f"Failed to retrieve completed objective indices for atomic attack '{atomic_attack_name}': {str(e)}"
@@ -1168,9 +1168,9 @@ class Scenario(ABC):
                 start=completed_count + 1,
             ):
                 # Stamp the scenario id onto the atomic attack so each persisted
-                # AttackResult carries the FK linkage. This is what enables
-                # mid-run interruption recovery (results are visible without the
-                # post-atomic-attack bulk manifest write).
+                # AttackResult carries the attribution_parent_id linkage. This
+                # is what enables mid-run interruption recovery (results are
+                # visible without the post-atomic-attack bulk manifest write).
                 atomic_attack._scenario_result_id = scenario_result_id
 
                 logger.info(
@@ -1203,10 +1203,11 @@ class Scenario(ABC):
                             logger.error(f"  Incomplete objective '{obj[:50]}...': {str(exc)}")
 
                         # Error AttackResults are linked to this scenario via the
-                        # scenario_result_id FK on AttackResultEntry (stamped by
-                        # the attack event handler when a ScenarioExecutionAttribution
-                        # is on the context). The previous per-scenario error_id
-                        # manifest is no longer needed.
+                        # attribution_parent_id foreign key on AttackResultEntry
+                        # (stamped by the attack event handler when an
+                        # AttackResultAttribution is on the context). The
+                        # previous per-scenario error_id manifest is no longer
+                        # needed.
 
                         # Mark scenario as failed
                         error_msg = (

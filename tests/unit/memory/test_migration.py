@@ -206,7 +206,7 @@ def test_migration_downgrade_creates_proper_structure():
 
 
 # =============================================================================
-# Backfill tests for the scenario_result_id FK migration
+# Backfill tests for the attribution_parent_id foreign key migration
 # =============================================================================
 
 
@@ -252,8 +252,9 @@ def _config_for(connection):
 
 
 def test_backfill_links_attack_results_via_conversation_id():
-    """Upgrading from the pre-FK revision backfills scenario_result_id +
-    scenario_data on AttackResultEntries by matching conversation_id."""
+    """Upgrading from the pre-foreign-key revision backfills
+    attribution_parent_id + attribution_data on AttackResultEntries by
+    matching conversation_id."""
     import json
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -283,32 +284,33 @@ def test_backfill_links_attack_results_via_conversation_id():
 
                 rows = connection.execute(
                     text(
-                        "SELECT conversation_id, scenario_result_id, scenario_data "
+                        "SELECT conversation_id, attribution_parent_id, attribution_data "
                         'FROM "AttackResultEntries" ORDER BY conversation_id'
                     )
                 ).fetchall()
 
             results_by_conv = {r[0]: (r[1], r[2]) for r in rows}
 
-            # All three rows now point at the scenario via the new FK.
+            # All three rows now point at the scenario via the new foreign key.
             for conv in ("conv-a-0", "conv-a-1", "conv-b-0"):
                 assert results_by_conv[conv][0] == sid, f"{conv} should be backfilled"
 
-            # scenario_data carries atomic_attack_name and the 0-based manifest index.
+            # attribution_data carries parent_collection (the atomic attack name)
+            # and the 0-based manifest position.
             sd_a0 = json.loads(results_by_conv["conv-a-0"][1])
             sd_a1 = json.loads(results_by_conv["conv-a-1"][1])
             sd_b0 = json.loads(results_by_conv["conv-b-0"][1])
 
-            assert sd_a0 == {"atomic_attack_name": "a", "objective_index": 0}
-            assert sd_a1 == {"atomic_attack_name": "a", "objective_index": 1}
-            assert sd_b0 == {"atomic_attack_name": "b", "objective_index": 0}
+            assert sd_a0 == {"parent_collection": "a", "position": 0}
+            assert sd_a1 == {"parent_collection": "a", "position": 1}
+            assert sd_b0 == {"parent_collection": "b", "position": 0}
         finally:
             engine.dispose()
 
 
 def test_backfill_is_idempotent_and_does_not_clobber_existing_linkage():
-    """The backfill is safe to re-run: rows that already carry a
-    ``scenario_result_id`` are not overwritten (the WHERE IS NULL guard). We
+    """The backfill is safe to re-run: rows that already carry an
+    ``attribution_parent_id`` are not overwritten (the WHERE IS NULL guard). We
     verify by upgrading, manually retargeting a row, then downgrading +
     re-upgrading and asserting the manual retarget survives."""
     import json
@@ -330,30 +332,31 @@ def test_backfill_is_idempotent_and_does_not_clobber_existing_linkage():
                 )
                 command.upgrade(config, _SCENARIO_LINKAGE_REV)
 
-                # Manually retarget the row to a DIFFERENT scenario_result_id —
+                # Manually retarget the row to a DIFFERENT attribution_parent_id —
                 # simulate code that already linked it post-upgrade.
                 connection.execute(
-                    text('UPDATE "AttackResultEntries" SET scenario_result_id = :sid WHERE conversation_id = :conv'),
+                    text('UPDATE "AttackResultEntries" SET attribution_parent_id = :sid WHERE conversation_id = :conv'),
                     {"sid": sid_manual, "conv": "conv-shared"},
                 )
 
                 # Downgrade then re-upgrade to re-run the backfill.
                 command.downgrade(config, _PREV_REV)
 
-                # After downgrade the FK column is gone, but the manifest still
-                # references conv-shared. On re-upgrade, the backfill should
-                # NOT clobber sid_manual because the column was just re-added
-                # as NULL — actually downgrade DROPS the column data, so on
-                # re-upgrade the row will start at NULL and get linked again.
-                # The test we want is: re-running the backfill while a row
-                # already has a non-NULL FK does not overwrite it. We exercise
-                # that with a fresh second upgrade-then-no-op-re-upgrade.
+                # After downgrade the foreign key column is gone, but the
+                # manifest still references conv-shared. On re-upgrade, the
+                # backfill should NOT clobber sid_manual because the column was
+                # just re-added as NULL — actually downgrade DROPS the column
+                # data, so on re-upgrade the row will start at NULL and get
+                # linked again. The test we want is: re-running the backfill
+                # while a row already has a non-NULL foreign key does not
+                # overwrite it. We exercise that with a fresh second
+                # upgrade-then-no-op-re-upgrade.
                 command.upgrade(config, _SCENARIO_LINKAGE_REV)
 
                 # First upgrade after downgrade re-links it to sid_old (the
                 # manifest source). Now manually retarget again.
                 connection.execute(
-                    text('UPDATE "AttackResultEntries" SET scenario_result_id = :sid WHERE conversation_id = :conv'),
+                    text('UPDATE "AttackResultEntries" SET attribution_parent_id = :sid WHERE conversation_id = :conv'),
                     {"sid": sid_manual, "conv": "conv-shared"},
                 )
 
@@ -398,14 +401,14 @@ def test_backfill_is_idempotent_and_does_not_clobber_existing_linkage():
                 _original_get_bind = _op_mod.get_bind
                 _op_mod.get_bind = lambda: connection
                 try:
-                    mig._backfill_scenario_linkage()
+                    mig._backfill_attribution_linkage()
                 finally:
                     _op_mod.get_bind = _original_get_bind
 
                 # The row's manual retarget MUST survive — the IS NULL guard
                 # prevents the backfill from overwriting it.
                 row = connection.execute(
-                    text('SELECT scenario_result_id FROM "AttackResultEntries" WHERE conversation_id = :conv'),
+                    text('SELECT attribution_parent_id FROM "AttackResultEntries" WHERE conversation_id = :conv'),
                     {"conv": "conv-shared"},
                 ).scalar_one()
                 assert row == sid_manual
@@ -445,14 +448,14 @@ def test_migration_downgrade_restores_dropped_column():
                 command.upgrade(config, _SCENARIO_LINKAGE_REV)
 
                 attack_cols_up = {c["name"] for c in inspect(connection).get_columns("AttackResultEntries")}
-                assert "scenario_result_id" in attack_cols_up
-                assert "scenario_data" in attack_cols_up
+                assert "attribution_parent_id" in attack_cols_up
+                assert "attribution_data" in attack_cols_up
 
                 command.downgrade(config, _PREV_REV)
 
                 attack_cols_down = {c["name"] for c in inspect(connection).get_columns("AttackResultEntries")}
-                assert "scenario_result_id" not in attack_cols_down
-                assert "scenario_data" not in attack_cols_down
+                assert "attribution_parent_id" not in attack_cols_down
+                assert "attribution_data" not in attack_cols_down
 
                 scenario_cols = {c["name"] for c in inspect(connection).get_columns("ScenarioResultEntries")}
                 assert "error_attack_result_ids_json" in scenario_cols

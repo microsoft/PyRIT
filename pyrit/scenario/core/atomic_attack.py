@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
-from pyrit.executor.attack.core.scenario_execution_attribution import ScenarioExecutionAttribution
+from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
 from pyrit.memory import CentralMemory
@@ -120,18 +120,18 @@ class AtomicAttack:
 
         self._seed_groups = seed_groups
         # Original positions for each currently-active seed group. Used to map a
-        # per-task input index (from the executor) back to the stable
-        # objective_index stored in AttackResultEntry.scenario_data. Resume
-        # filtering preserves the original indices so newly-persisted results
-        # don't collide with already-persisted ones.
+        # per-task input index (from the executor) back to the stable position
+        # stored in AttackResultEntry.attribution_data. Resume filtering
+        # preserves the original indices so newly-persisted results don't
+        # collide with already-persisted ones.
         self._original_indices: list[int] = list(range(len(seed_groups)))
         self._adversarial_chat = adversarial_chat
         self._objective_scorer = objective_scorer
         self._memory_labels = memory_labels or {}
         self._attack_execute_params = attack_execute_params
         # Set by Scenario._execute_scenario_async before run_async. When set,
-        # each persisted AttackResult is linked to this scenario via the FK on
-        # AttackResultEntry.
+        # each persisted AttackResult is linked to this scenario via the
+        # attribution_parent_id foreign key on AttackResultEntry.
         self._scenario_result_id: str | None = None
 
         logger.info(
@@ -200,7 +200,7 @@ class AtomicAttack:
         (its position when the ``AtomicAttack`` was first constructed) is
         tracked across filtering, so the executor can later map each per-task
         input index back to the original index when stamping
-        ``scenario_data["objective_index"]``. This prevents newly-persisted
+        ``attribution_data["position"]``. This prevents newly-persisted
         results from colliding with already-persisted ones on resume.
 
         Args:
@@ -273,19 +273,22 @@ class AtomicAttack:
             # Build an attribution factory when this atomic attack is being
             # executed inside a Scenario. The factory maps each per-task input
             # index (position in the currently-active seed_groups list) back to
-            # the original objective_index so resume can locate already-done
-            # work and newly-persisted results don't collide with old ones.
+            # the original position so resume can locate already-done work and
+            # newly-persisted results don't collide with old ones. The Scenario
+            # uses parent_collection for the atomic attack name and position
+            # for the original seed-group index; the attack layer treats both
+            # as opaque strings/ints.
             attribution_factory = None
             if self._scenario_result_id is not None:
                 scenario_id = self._scenario_result_id
                 name = self.atomic_attack_name
                 original_indices = list(self._original_indices)
 
-                def attribution_factory(input_index: int) -> ScenarioExecutionAttribution:
-                    return ScenarioExecutionAttribution(
-                        scenario_result_id=scenario_id,
-                        atomic_attack_name=name,
-                        objective_index=original_indices[input_index],
+                def attribution_factory(input_index: int) -> AttackResultAttribution:
+                    return AttackResultAttribution(
+                        parent_id=scenario_id,
+                        parent_collection=name,
+                        position=original_indices[input_index],
                     )
 
             results = await executor.execute_attack_from_seed_groups_async(

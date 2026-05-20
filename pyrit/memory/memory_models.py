@@ -745,17 +745,18 @@ class AttackResultEntry(Base):
     retry_events_json: Mapped[Optional[str]] = mapped_column(Unicode, nullable=True)
     total_retries = mapped_column(INTEGER, nullable=True, default=0)
 
-    # Scenario linkage (set when the AttackResult is produced inside a Scenario).
-    # scenario_result_id is an indexed FK so per-scenario hydration and resume
-    # queries are direct lookups (no JSON manifest required, no orphaning if a
-    # scenario is interrupted mid-AtomicAttack).
-    # scenario_data is a documented-fixed-schema JSON blob with two keys:
-    # atomic_attack_name (str) and objective_index (int). When the AttackResult
-    # is created outside a Scenario both fields remain NULL.
-    scenario_result_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    # Attribution / parent linkage (set when the AttackResult is produced
+    # inside an orchestrator that supplies an AttackResultAttribution, e.g. a
+    # Scenario). attribution_parent_id is an indexed foreign key so per-parent
+    # hydration and resume queries are direct lookups (no JSON manifest
+    # required, no orphaning if the orchestrator is interrupted mid-run).
+    # attribution_data is a documented-fixed-schema JSON blob with two keys:
+    # parent_collection (str) and position (int). When the AttackResult is
+    # created outside an orchestrator both fields remain NULL.
+    attribution_parent_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         CustomUUID, ForeignKey("ScenarioResultEntries.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    scenario_data: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    attribution_data: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
     last_response: Mapped[Optional["PromptMemoryEntry"]] = relationship(
         "PromptMemoryEntry",
@@ -831,10 +832,10 @@ class AttackResultEntry(Base):
         )
         self.total_retries = entry.total_retries
 
-        # Scenario linkage (set by the attack persistence path when a
-        # ScenarioExecutionAttribution is present on the AttackContext; otherwise None)
-        self.scenario_result_id = uuid.UUID(entry.scenario_result_id) if entry.scenario_result_id else None
-        self.scenario_data = entry.scenario_data
+        # Attribution / parent linkage (set by the attack persistence path when
+        # an AttackResultAttribution is present on the AttackContext; otherwise None)
+        self.attribution_parent_id = uuid.UUID(entry.attribution_parent_id) if entry.attribution_parent_id else None
+        self.attribution_data = entry.attribution_data
 
     @staticmethod
     def _get_id_as_uuid(obj: Any) -> Optional[uuid.UUID]:
@@ -948,8 +949,8 @@ class AttackResultEntry(Base):
             error_traceback=self.error_traceback,
             retry_events=retry_events,
             total_retries=self.total_retries or 0,
-            scenario_result_id=str(self.scenario_result_id) if self.scenario_result_id else None,
-            scenario_data=self.scenario_data,
+            attribution_parent_id=str(self.attribution_parent_id) if self.attribution_parent_id else None,
+            attribution_data=self.attribution_data,
         )
 
 

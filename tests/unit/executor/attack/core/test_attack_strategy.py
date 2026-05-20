@@ -613,17 +613,17 @@ class TestDefaultAttackStrategyEventHandler:
     async def test_on_post_execute_stamps_scenario_attribution_when_present(
         self, sample_attack_context, sample_attack_result, mock_memory
     ):
-        """When the context carries a ScenarioExecutionAttribution, the persisted
-        AttackResult must have scenario_result_id + scenario_data populated."""
-        from pyrit.executor.attack.core.scenario_execution_attribution import ScenarioExecutionAttribution
+        """When the context carries an AttackResultAttribution, the persisted
+        AttackResult must have attribution_parent_id + attribution_data populated."""
+        from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 
         with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
             handler = _DefaultAttackStrategyEventHandler()
             sample_attack_context.start_time = 100.0
-            sample_attack_context._attribution = ScenarioExecutionAttribution(
-                scenario_result_id="scenario-1",
-                atomic_attack_name="atomic_a",
-                objective_index=3,
+            sample_attack_context._attribution = AttackResultAttribution(
+                parent_id="scenario-1",
+                parent_collection="atomic_a",
+                position=3,
             )
 
             event_data = StrategyEventData(
@@ -635,17 +635,17 @@ class TestDefaultAttackStrategyEventHandler:
             )
             await handler.on_event(event_data)
 
-        assert sample_attack_result.scenario_result_id == "scenario-1"
-        assert sample_attack_result.scenario_data == {
-            "atomic_attack_name": "atomic_a",
-            "objective_index": 3,
+        assert sample_attack_result.attribution_parent_id == "scenario-1"
+        assert sample_attack_result.attribution_data == {
+            "parent_collection": "atomic_a",
+            "position": 3,
         }
 
     async def test_on_post_execute_no_attribution_leaves_fields_none(
         self, sample_attack_context, sample_attack_result, mock_memory
     ):
-        """Outside a Scenario, _attribution is None and the FK + scenario_data
-        fields on the persisted AttackResult must stay None."""
+        """Outside a Scenario, _attribution is None and the attribution fields
+        on the persisted AttackResult must stay None."""
         with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
             handler = _DefaultAttackStrategyEventHandler()
             sample_attack_context.start_time = 100.0
@@ -660,21 +660,21 @@ class TestDefaultAttackStrategyEventHandler:
             )
             await handler.on_event(event_data)
 
-        assert sample_attack_result.scenario_result_id is None
-        assert sample_attack_result.scenario_data is None
+        assert sample_attack_result.attribution_parent_id is None
+        assert sample_attack_result.attribution_data is None
 
     async def test_on_error_stamps_scenario_attribution_when_present(self, sample_attack_context, mock_memory):
-        """Error AttackResults must also carry the scenario FK so error lookups
-        via get_attack_results(scenario_result_id=..., outcome=ERROR) work."""
-        from pyrit.executor.attack.core.scenario_execution_attribution import ScenarioExecutionAttribution
+        """Error AttackResults must also carry the attribution foreign key so
+        error lookups via get_attack_results(scenario_result_id=..., outcome=ERROR) work."""
+        from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 
         with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
             handler = _DefaultAttackStrategyEventHandler()
             sample_attack_context.start_time = 100.0
-            sample_attack_context._attribution = ScenarioExecutionAttribution(
-                scenario_result_id="scenario-err",
-                atomic_attack_name="atomic_err",
-                objective_index=7,
+            sample_attack_context._attribution = AttackResultAttribution(
+                parent_id="scenario-err",
+                parent_collection="atomic_err",
+                position=7,
             )
 
             event_data = StrategyEventData(
@@ -690,10 +690,10 @@ class TestDefaultAttackStrategyEventHandler:
         call = mock_memory.add_attack_results_to_memory.call_args
         persisted = call.kwargs["attack_results"][0]
         assert persisted.outcome == AttackOutcome.ERROR
-        assert persisted.scenario_result_id == "scenario-err"
-        assert persisted.scenario_data == {
-            "atomic_attack_name": "atomic_err",
-            "objective_index": 7,
+        assert persisted.attribution_parent_id == "scenario-err"
+        assert persisted.attribution_data == {
+            "parent_collection": "atomic_err",
+            "position": 7,
         }
 
 

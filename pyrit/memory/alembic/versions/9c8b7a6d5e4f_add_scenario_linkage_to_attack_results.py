@@ -2,9 +2,9 @@
 # Licensed under the MIT license.
 
 """
-Add scenario_result_id FK + scenario_data JSON to AttackResultEntries; drop
-ScenarioResultEntries.error_attack_result_ids_json; backfill linkage from the
-existing attack_results_json manifest.
+Add attribution_parent_id (foreign key) + attribution_data (JSON) to
+AttackResultEntries; drop ScenarioResultEntries.error_attack_result_ids_json;
+backfill the linkage from the existing attack_results_json manifest.
 
 Revision ID: 9c8b7a6d5e4f
 Revises: 7a1b2c3d4e5f
@@ -35,41 +35,43 @@ logger = logging.getLogger(__name__)
 
 def upgrade() -> None:
     """Apply this schema upgrade."""
-    # AttackResultEntries: scenario linkage columns.
+    # AttackResultEntries: attribution / parent linkage columns.
     op.add_column(
         "AttackResultEntries",
-        sa.Column("scenario_result_id", CustomUUID(), nullable=True),
+        sa.Column("attribution_parent_id", CustomUUID(), nullable=True),
     )
     op.add_column(
         "AttackResultEntries",
-        sa.Column("scenario_data", sa.JSON(), nullable=True),
+        sa.Column("attribution_data", sa.JSON(), nullable=True),
     )
     op.create_index(
-        "ix_AttackResultEntries_scenario_result_id",
+        "ix_AttackResultEntries_attribution_parent_id",
         "AttackResultEntries",
-        ["scenario_result_id"],
+        ["attribution_parent_id"],
     )
 
-    # FK with ON DELETE SET NULL: deleting a scenario nulls the FK on its
-    # AttackResults; scenario_data is retained as historical provenance.
-    # Use a batch operation for SQLite portability (no plain ALTER TABLE ADD FK).
+    # Foreign key with ON DELETE SET NULL: deleting a scenario nulls the
+    # attribution_parent_id on its AttackResults; attribution_data is retained
+    # as historical provenance. Use a batch operation for SQLite portability
+    # (no plain ALTER TABLE ADD CONSTRAINT for foreign keys on SQLite).
     with op.batch_alter_table("AttackResultEntries") as batch_op:
         batch_op.create_foreign_key(
-            "fk_attack_results_scenario",
+            "fk_attack_results_attribution_parent",
             "ScenarioResultEntries",
-            ["scenario_result_id"],
+            ["attribution_parent_id"],
             ["id"],
             ondelete="SET NULL",
         )
 
     # ScenarioResultEntries: drop the not-yet-released error_attack_result_ids_json.
-    # Error AttackResults are now linkable via the new FK; the per-scenario
-    # manifest column is no longer used. Wrapped in a batch op for SQLite.
+    # Error AttackResults are now linkable via the new attribution_parent_id
+    # foreign key; the per-scenario manifest column is no longer used.
+    # Wrapped in a batch op for SQLite.
     with op.batch_alter_table("ScenarioResultEntries") as batch_op:
         batch_op.drop_column("error_attack_result_ids_json")
 
-    # Backfill scenario linkage from the existing attack_results_json manifest.
-    _backfill_scenario_linkage()
+    # Backfill attribution linkage from the existing attack_results_json manifest.
+    _backfill_attribution_linkage()
 
 
 def downgrade() -> None:
@@ -80,21 +82,22 @@ def downgrade() -> None:
         sa.Column("error_attack_result_ids_json", sa.Unicode(), nullable=True),
     )
 
-    # Drop FK + columns from AttackResultEntries.
+    # Drop foreign key + columns from AttackResultEntries.
     with op.batch_alter_table("AttackResultEntries") as batch_op:
-        batch_op.drop_constraint("fk_attack_results_scenario", type_="foreignkey")
+        batch_op.drop_constraint("fk_attack_results_attribution_parent", type_="foreignkey")
 
-    op.drop_index("ix_AttackResultEntries_scenario_result_id", table_name="AttackResultEntries")
-    op.drop_column("AttackResultEntries", "scenario_data")
-    op.drop_column("AttackResultEntries", "scenario_result_id")
+    op.drop_index("ix_AttackResultEntries_attribution_parent_id", table_name="AttackResultEntries")
+    op.drop_column("AttackResultEntries", "attribution_data")
+    op.drop_column("AttackResultEntries", "attribution_parent_id")
 
 
-def _backfill_scenario_linkage() -> None:
+def _backfill_attribution_linkage() -> None:
     """
     Walk every ScenarioResultEntry and copy its attack_results_json manifest
-    into the new FK + scenario_data columns on AttackResultEntries.
+    into the new attribution_parent_id + attribution_data columns on
+    AttackResultEntries.
 
-    Idempotent: the ``WHERE scenario_result_id IS NULL`` guard prevents
+    Idempotent: the ``WHERE attribution_parent_id IS NULL`` guard prevents
     clobbering rows that were already linked (e.g. by a re-run of the
     migration, or by code that ran after the schema change but before this
     backfill). ``conversation_id`` is logically unique per AttackResult but is
@@ -107,8 +110,8 @@ def _backfill_scenario_linkage() -> None:
 
     update_stmt = sa.text(
         'UPDATE "AttackResultEntries" '
-        "SET scenario_result_id = :sid, scenario_data = :sdata "
-        "WHERE conversation_id = :cid AND scenario_result_id IS NULL"
+        "SET attribution_parent_id = :sid, attribution_data = :sdata "
+        "WHERE conversation_id = :cid AND attribution_parent_id IS NULL"
     )
 
     total_updates = 0
@@ -135,7 +138,7 @@ def _backfill_scenario_linkage() -> None:
                 match_count = bind.execute(
                     sa.text(
                         'SELECT COUNT(*) FROM "AttackResultEntries" '
-                        "WHERE conversation_id = :cid AND scenario_result_id IS NULL"
+                        "WHERE conversation_id = :cid AND attribution_parent_id IS NULL"
                     ),
                     {"cid": conversation_id},
                 ).scalar()
@@ -147,14 +150,12 @@ def _backfill_scenario_linkage() -> None:
                         f"All matching rows will be linked to scenario {scenario_id}."
                     )
 
-                scenario_data = json.dumps(
-                    {"atomic_attack_name": atomic_attack_name, "objective_index": objective_index}
-                )
+                attribution_data = json.dumps({"parent_collection": atomic_attack_name, "position": objective_index})
                 result = bind.execute(
                     update_stmt,
                     {
                         "sid": str(scenario_id),
-                        "sdata": scenario_data,
+                        "sdata": attribution_data,
                         "cid": conversation_id,
                     },
                 )
@@ -162,6 +163,6 @@ def _backfill_scenario_linkage() -> None:
 
     if total_updates or duplicate_warnings:
         logger.info(
-            f"Scenario linkage backfill: linked {total_updates} AttackResultEntries row(s); "
+            f"Attribution linkage backfill: linked {total_updates} AttackResultEntries row(s); "
             f"{duplicate_warnings} duplicate-conversation_id warning(s)."
         )

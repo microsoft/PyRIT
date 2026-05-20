@@ -43,17 +43,17 @@ def mock_objective_scorer():
 def save_attack_results_to_memory(attack_results, *, atomic_attack=None):
     """Helper function to save attack results to memory.
 
-    When ``atomic_attack`` is provided, stamps ``scenario_result_id`` and
-    ``scenario_data`` onto each result (mirrors the real attack persistence
-    path so FK-based hydration sees the rows).
+    When ``atomic_attack`` is provided, stamps ``attribution_parent_id`` and
+    ``attribution_data`` onto each result (mirrors the real attack persistence
+    path so foreign-key-based hydration sees the rows).
     """
     if atomic_attack is not None:
         sid = getattr(atomic_attack, "_scenario_result_id", None)
         name = getattr(atomic_attack, "atomic_attack_name", None)
         if sid and name:
             for i, r in enumerate(attack_results):
-                r.scenario_result_id = sid
-                r.scenario_data = {"atomic_attack_name": name, "objective_index": i}
+                r.attribution_parent_id = sid
+                r.attribution_data = {"parent_collection": name, "position": i}
     memory = CentralMemory.get_memory_instance()
     memory.add_attack_results_to_memory(attack_results=attack_results)
 
@@ -104,8 +104,8 @@ def create_mock_run_async(attack_results, *, atomic_attack=None):
     Args:
         attack_results: List of AttackResult objects to return
         atomic_attack: Optional AtomicAttack mock. When provided, results are
-            stamped with scenario_result_id and scenario_data so FK-based
-            hydration finds them.
+            stamped with attribution_parent_id and attribution_data so
+            foreign-key-based hydration finds them.
 
     Returns:
         AsyncMock configured to return the results
@@ -614,8 +614,8 @@ class TestScenarioResumption:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestScenarioFKResumeRegression:
-    """Regression tests for the FK-based scenario linkage resume path.
+class TestScenarioForeignKeyResumeRegression:
+    """Regression tests for the foreign-key-based scenario linkage resume path.
 
     The bug being regression-tested: when a Scenario is interrupted mid-
     AtomicAttack (Ctrl-C, OOM, crash), AttackResults already persisted to the
@@ -623,7 +623,7 @@ class TestScenarioFKResumeRegression:
     link only lived in a JSON manifest written after the whole AtomicAttack
     returned. On resume, those objectives were re-executed (wasted compute).
 
-    After the refactor, ``scenario_result_id`` is stamped on each
+    After the refactor, ``attribution_parent_id`` is stamped on each
     ``AttackResultEntry`` at write time, so resume reads them directly and
     skips the already-done work even when the manifest was never updated.
     """

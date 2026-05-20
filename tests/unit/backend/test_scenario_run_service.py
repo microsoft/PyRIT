@@ -303,9 +303,10 @@ class TestScenarioRunServiceGetRun:
     def test_get_run_falls_back_to_persisted_error(self, mock_memory) -> None:
         """Test that get_run extracts error from persisted error AttackResult when no active task.
 
-        After the FK-based scenario linkage refactor, error AttackResults are
-        located via ``get_attack_results(scenario_result_id=..., outcome=ERROR)``
-        rather than via a per-scenario error_attack_result_ids manifest.
+        After the foreign-key-based scenario linkage refactor, error
+        AttackResults are located via
+        ``get_attack_results(scenario_result_id=..., outcome=ERROR)`` rather
+        than via a per-scenario error_attack_result_ids manifest.
         """
         db_result = _make_db_scenario_result(result_id="sr-fail", run_state="FAILED")
 

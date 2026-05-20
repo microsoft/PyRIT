@@ -31,19 +31,19 @@ def save_attack_results_to_memory(attack_results):
 
 def _stamp_scenario_linkage(*, attack_results, atomic_attack):
     """
-    Stamp scenario_result_id + scenario_data on each AttackResult the same way
-    the real attack persistence path does. Mirrors what
+    Stamp attribution_parent_id + attribution_data on each AttackResult the
+    same way the real attack persistence path does. Mirrors what
     ``_DefaultAttackStrategyEventHandler._stamp_attribution`` does at runtime
     so test fixtures that mock out the executor still produce DB rows the new
-    FK-based hydration can find.
+    foreign-key-based hydration can find.
     """
     sid = getattr(atomic_attack, "_scenario_result_id", None)
     name = getattr(atomic_attack, "atomic_attack_name", None)
     if not sid or not name:
         return
     for i, r in enumerate(attack_results):
-        r.scenario_result_id = sid
-        r.scenario_data = {"atomic_attack_name": name, "objective_index": i}
+        r.attribution_parent_id = sid
+        r.attribution_data = {"parent_collection": name, "position": i}
 
 
 def create_mock_run_async(attack_results, *, atomic_attack=None):
@@ -52,8 +52,8 @@ def create_mock_run_async(attack_results, *, atomic_attack=None):
 
     Pass ``atomic_attack`` (the AtomicAttack MagicMock) so the helper can copy
     its ``_scenario_result_id`` (set by ``Scenario._execute_scenario_async``)
-    and ``atomic_attack_name`` onto each result. Without those the FK-based
-    hydration in ``get_scenario_results`` won't see the rows.
+    and ``atomic_attack_name`` onto each result. Without those the foreign-key-
+    based hydration in ``get_scenario_results`` won't see the rows.
     """
 
     async def mock_run_async(*args, **kwargs):

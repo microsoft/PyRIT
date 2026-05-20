@@ -1079,7 +1079,7 @@ class TestAtomicAttackFilterSeedGroupsByObjectives:
 class TestAtomicAttackAttributionFactory:
     """Tests for the ``attribution_factory`` closure built in ``run_async`` —
     the bridge that lets the AttackExecutor stamp each per-task input index
-    back onto its *original* objective_index when persisting attack results."""
+    back onto its *original* position when persisting attack results."""
 
     async def test_no_factory_passed_when_scenario_result_id_unset(
         self, mock_attack, sample_seed_groups, sample_attack_results
@@ -1104,7 +1104,7 @@ class TestAtomicAttackAttributionFactory:
     ):
         """When the Scenario stamps ``_scenario_result_id`` onto the atomic
         attack, ``run_async`` must build and pass a factory."""
-        from pyrit.executor.attack.core.scenario_execution_attribution import ScenarioExecutionAttribution
+        from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 
         atomic = AtomicAttack(
             attack_technique=AttackTechnique(attack=mock_attack),
@@ -1122,20 +1122,20 @@ class TestAtomicAttackAttributionFactory:
 
         # input_index 0 → original_indices[0] == 0
         attribution = factory(0)
-        assert isinstance(attribution, ScenarioExecutionAttribution)
-        assert attribution.scenario_result_id == "00000000-0000-0000-0000-000000000abc"
-        assert attribution.atomic_attack_name == "MyAtomicAttack"
-        assert attribution.objective_index == 0
+        assert isinstance(attribution, AttackResultAttribution)
+        assert attribution.parent_id == "00000000-0000-0000-0000-000000000abc"
+        assert attribution.parent_collection == "MyAtomicAttack"
+        assert attribution.position == 0
 
         # input_index 2 → original_indices[2] == 2
-        assert factory(2).objective_index == 2
+        assert factory(2).position == 2
 
     async def test_factory_maps_input_index_to_original_index_after_filtering(
         self, mock_attack, sample_seed_groups, sample_attack_results
     ):
         """The whole point of the factory: after filtering out a completed
         seed group, the per-task input index 0 must still map back to the
-        *original* objective_index of the surviving seed group, not 0."""
+        *original* position of the surviving seed group, not 0."""
         atomic = AtomicAttack(
             attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
@@ -1152,7 +1152,7 @@ class TestAtomicAttackAttributionFactory:
         factory = mock_exec.call_args.kwargs["attribution_factory"]
         assert factory is not None
         # input_index 0 (only remaining task) → original index 2.
-        assert factory(0).objective_index == 2
+        assert factory(0).position == 2
 
     async def test_factory_captures_indices_by_value_not_reference(
         self, mock_attack, sample_seed_groups, sample_attack_results
@@ -1176,4 +1176,4 @@ class TestAtomicAttackAttributionFactory:
         atomic._original_indices = [999, 999, 999]
 
         # Factory still returns the snapshotted original indices.
-        assert [factory(i).objective_index for i in range(3)] == [0, 1, 2]
+        assert [factory(i).position for i in range(3)] == [0, 1, 2]

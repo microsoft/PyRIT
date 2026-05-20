@@ -657,7 +657,8 @@ def test_combined_filters(sqlite_instance: MemoryInterface):
 
 
 # =============================================================================
-# Scenario linkage (FK + scenario_data on AttackResultEntry) hydration tests
+# Scenario linkage (attribution_parent_id foreign key + attribution_data on
+# AttackResultEntry) hydration tests
 # =============================================================================
 
 
@@ -670,24 +671,24 @@ def _make_attack_result_for_scenario(
     outcome=AttackOutcome.SUCCESS,
 ):
     """Build an AttackResult pre-stamped with scenario linkage (mirrors what
-    the event handler does when a ScenarioExecutionAttribution is on the context)."""
+    the event handler does when an AttackResultAttribution is on the context)."""
     return AttackResult(
         conversation_id=conversation_id or f"conv-{atomic_attack_name}-{objective_index}",
         objective=f"objective-{atomic_attack_name}-{objective_index}",
         outcome=outcome,
         executed_turns=1,
-        scenario_result_id=str(scenario_result_id),
-        scenario_data={"atomic_attack_name": atomic_attack_name, "objective_index": objective_index},
+        attribution_parent_id=str(scenario_result_id),
+        attribution_data={"parent_collection": atomic_attack_name, "position": objective_index},
     )
 
 
-def test_get_scenario_results_hydrates_via_fk(sqlite_instance: MemoryInterface):
-    """When AttackResultEntry rows carry the scenario_result_id FK, hydration
-    picks them up directly — without needing the legacy attack_results_json
-    manifest. This is the path that makes mid-AtomicAttack interruption-recovery
-    work."""
+def test_get_scenario_results_hydrates_via_foreign_key(sqlite_instance: MemoryInterface):
+    """When AttackResultEntry rows carry the attribution_parent_id foreign key,
+    hydration picks them up directly — without needing the legacy
+    attack_results_json manifest. This is the path that makes mid-AtomicAttack
+    interruption-recovery work."""
     scenario_result = create_scenario_result(
-        name="FK-only Scenario",
+        name="ForeignKey-only Scenario",
         attack_results={},  # manifest intentionally empty
     )
     sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
@@ -735,15 +736,16 @@ def test_get_attack_results_filters_by_scenario_result_id(sqlite_instance: Memor
     assert [r.conversation_id for r in only_errors] == [err.conversation_id]
 
 
-def test_delete_scenario_sets_attack_result_fk_to_null(sqlite_instance: MemoryInterface):
-    """ON DELETE SET NULL: deleting the parent ScenarioResultEntry nulls the FK
-    on its linked AttackResultEntries but the AttackResultEntries survive
-    (scenario_data is retained as historical provenance).
+def test_delete_scenario_sets_attack_result_foreign_key_to_null(sqlite_instance: MemoryInterface):
+    """ON DELETE SET NULL: deleting the parent ScenarioResultEntry nulls the
+    attribution_parent_id foreign key on its linked AttackResultEntries but
+    the AttackResultEntries survive (attribution_data is retained as
+    historical provenance).
 
     Note: SQLite does not enforce foreign keys by default; this test enables
     them on the session for the duration of the delete to verify the
     ON DELETE SET NULL clause works. Production deployments using SQL Server
-    enforce FKs by default.
+    enforce foreign keys by default.
     """
     from contextlib import closing
 
@@ -758,18 +760,18 @@ def test_delete_scenario_sets_attack_result_fk_to_null(sqlite_instance: MemoryIn
     ar = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="a", objective_index=0)
     sqlite_instance.add_attack_results_to_memory(attack_results=[ar])
 
-    # Enable FKs for the delete and verify the SET NULL clause fires.
+    # Enable foreign keys for the delete and verify the SET NULL clause fires.
     with closing(sqlite_instance.get_session()) as session:
         session.execute(_sql_text("PRAGMA foreign_keys = ON"))
         session.query(ScenarioResultEntry).filter_by(id=sid).delete()
         session.commit()
 
-    # The AttackResult survives, but its FK is now NULL. scenario_data is
-    # retained as historical provenance.
+    # The AttackResult survives, but its foreign key is now NULL.
+    # attribution_data is retained as historical provenance.
     with closing(sqlite_instance.get_session()) as session:
         entry = session.query(AttackResultEntry).filter_by(conversation_id=ar.conversation_id).one()
-        assert entry.scenario_result_id is None
-        assert entry.scenario_data == {"atomic_attack_name": "a", "objective_index": 0}
+        assert entry.attribution_parent_id is None
+        assert entry.attribution_data == {"parent_collection": "a", "position": 0}
 
 
 def test_update_scenario_run_state_targeted_update_preserves_manifest(sqlite_instance: MemoryInterface):

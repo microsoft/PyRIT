@@ -36,7 +36,7 @@ from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-    from pyrit.executor.attack.core.scenario_execution_attribution import ScenarioExecutionAttribution
+    from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
     from pyrit.prompt_target import PromptTarget
 
 AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
@@ -72,11 +72,11 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     _memory_labels_override: Optional[dict[str, str]] = None
 
     # Optional attribution from an upstream orchestrator (e.g. Scenario). When
-    # set, the persistence path stamps scenario_result_id + scenario_data onto
-    # the resulting AttackResult so it can be located later for hydration and
-    # resume. Set by AttackExecutor per-task before scheduling. Stays None for
-    # ad-hoc/direct attack execution outside any scenario.
-    _attribution: Optional[ScenarioExecutionAttribution] = None
+    # set, the persistence path stamps attribution_parent_id + attribution_data
+    # onto the resulting AttackResult so it can be located later for hydration
+    # and resume. Set by AttackExecutor per-task before scheduling. Stays None
+    # for ad-hoc/direct attack execution outside any orchestrator.
+    _attribution: Optional[AttackResultAttribution] = None
 
     # Convenience properties that delegate to params or overrides
     @property
@@ -228,9 +228,9 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             event_data.result.retry_events = collector.events
             event_data.result.total_retries = len(collector.events)
 
-        # Stamp scenario attribution onto the result before persistence so the
-        # AttackResultEntry row carries the FK + scenario_data. Outside scenarios
-        # _attribution is None and both fields stay None.
+        # Stamp attribution onto the result before persistence so the
+        # AttackResultEntry row records its lineage. Outside an orchestrator
+        # _attribution is None and both attribution fields stay None.
         self._stamp_attribution(context=event_data.context, result=event_data.result)
 
         self._logger.debug(f"Attack execution completed in {execution_time_ms}ms")
@@ -245,12 +245,13 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         result: AttackResult,
     ) -> None:
         """
-        Copy scenario attribution from the AttackContext onto the AttackResult.
+        Copy attribution from the AttackContext onto the AttackResult.
 
-        Reads ``context._attribution`` (a ``ScenarioExecutionAttribution`` set by the
-        AttackExecutor when running inside a Scenario). When present, writes
-        ``scenario_result_id`` and a fixed-schema ``scenario_data`` dict onto
-        the result so they round-trip into ``AttackResultEntry``.
+        Reads ``context._attribution`` (an ``AttackResultAttribution`` set by
+        the AttackExecutor when an upstream orchestrator supplied a factory).
+        When present, writes ``attribution_parent_id`` and a fixed-schema
+        ``attribution_data`` dict onto the result so they round-trip into
+        ``AttackResultEntry``.
 
         Args:
             context: The per-task AttackContext.
@@ -259,10 +260,10 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         attribution = context._attribution
         if attribution is None:
             return
-        result.scenario_result_id = attribution.scenario_result_id
-        result.scenario_data = {
-            "atomic_attack_name": attribution.atomic_attack_name,
-            "objective_index": attribution.objective_index,
+        result.attribution_parent_id = attribution.parent_id
+        result.attribution_data = {
+            "parent_collection": attribution.parent_collection,
+            "position": attribution.position,
         }
 
     def _log_attack_outcome(self, result: AttackResult) -> None:
@@ -329,8 +330,8 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         if context.start_time:
             error_result.execution_time_ms = int((end_time - context.start_time) * 1000)
 
-        # Stamp scenario attribution onto the error result so it is locatable
-        # via the scenario FK on resume.
+        # Stamp attribution onto the error result so it is locatable via the
+        # attribution_parent_id foreign key on resume.
         self._stamp_attribution(context=context, result=error_result)
 
         self._memory.add_attack_results_to_memory(attack_results=[error_result])

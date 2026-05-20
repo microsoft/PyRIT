@@ -338,7 +338,7 @@ class TestExecuteAttackFromSeedGroupsAsync:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAttributionFactoryPropagation:
-    """Tests for ScenarioExecutionAttribution propagation through the AttackExecutor.
+    """Tests for AttackResultAttribution propagation through the AttackExecutor.
 
     The executor stamps ``context._attribution = attribution_factory(input_index)``
     on each per-task context. The input_index must be the seed group's original
@@ -347,7 +347,7 @@ class TestAttributionFactoryPropagation:
     """
 
     async def test_attribution_factory_sets_per_task_attribution_in_order(self):
-        from pyrit.executor.attack.core.scenario_execution_attribution import ScenarioExecutionAttribution
+        from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 
         attack = create_mock_attack()
         seen_indices: list[int] = []
@@ -356,18 +356,18 @@ class TestAttributionFactoryPropagation:
             # Read the attribution stamped by the executor BEFORE the task runs.
             attr = context._attribution
             assert attr is not None
-            seen_indices.append(attr.objective_index)
+            seen_indices.append(attr.position)
             return create_attack_result(context.params.objective)
 
         attack.execute_with_context_async = AsyncMock(side_effect=capture)
 
         seed_groups = [create_seed_group(f"obj-{i}") for i in range(4)]
 
-        def factory(idx: int) -> ScenarioExecutionAttribution:
-            return ScenarioExecutionAttribution(
-                scenario_result_id="sid",
-                atomic_attack_name="atomic",
-                objective_index=idx,
+        def factory(idx: int) -> AttackResultAttribution:
+            return AttackResultAttribution(
+                parent_id="sid",
+                parent_collection="atomic",
+                position=idx,
             )
 
         executor = AttackExecutor(max_concurrency=1)
@@ -377,17 +377,17 @@ class TestAttributionFactoryPropagation:
             attribution_factory=factory,
         )
 
-        # Each per-task context saw a distinct, contiguous objective_index — the
+        # Each per-task context saw a distinct, contiguous position — the
         # seed group's original input position.
         assert sorted(seen_indices) == [0, 1, 2, 3]
         assert len(result.completed_results) == 4
 
     async def test_attribution_factory_parallel_safe_with_high_concurrency(self):
-        """At max_concurrency > 1, each task still receives its own objective_index
+        """At max_concurrency > 1, each task still receives its own position
         regardless of completion order. Out-of-order completion must not produce
-        stamped indices that point at the wrong seed group.
+        stamped positions that point at the wrong seed group.
         """
-        from pyrit.executor.attack.core.scenario_execution_attribution import ScenarioExecutionAttribution
+        from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 
         attack = create_mock_attack()
         seen: dict[str, int] = {}
@@ -396,20 +396,20 @@ class TestAttributionFactoryPropagation:
             attr = context._attribution
             assert attr is not None
             # Reverse-delay the tasks so completion order is the inverse of input
-            # order. The stamped index must still match the seed group.
-            await asyncio.sleep(0.005 * (10 - attr.objective_index))
-            seen[context.params.objective] = attr.objective_index
+            # order. The stamped position must still match the seed group.
+            await asyncio.sleep(0.005 * (10 - attr.position))
+            seen[context.params.objective] = attr.position
             return create_attack_result(context.params.objective)
 
         attack.execute_with_context_async = AsyncMock(side_effect=out_of_order)
 
         seed_groups = [create_seed_group(f"obj-{i}") for i in range(6)]
 
-        def factory(idx: int) -> ScenarioExecutionAttribution:
-            return ScenarioExecutionAttribution(
-                scenario_result_id="sid",
-                atomic_attack_name="atomic",
-                objective_index=idx,
+        def factory(idx: int) -> AttackResultAttribution:
+            return AttackResultAttribution(
+                parent_id="sid",
+                parent_collection="atomic",
+                position=idx,
             )
 
         executor = AttackExecutor(max_concurrency=6)

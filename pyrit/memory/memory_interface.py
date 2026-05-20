@@ -1752,9 +1752,9 @@ class MemoryInterface(abc.ABC):
                 A sequence of IdentifierFilter objects that allows filtering by various attack identifier
                 JSON properties. Defaults to None.
             scenario_result_id (Optional[str], optional): Filter to attack results linked to a
-                specific scenario via the ``AttackResultEntry.scenario_result_id`` FK. Combined
-                with ``outcome=AttackOutcome.ERROR`` this is the replacement for the removed
-                per-scenario error_attack_result_ids manifest. Defaults to None.
+                specific scenario via the ``AttackResultEntry.attribution_parent_id`` foreign key.
+                Combined with ``outcome=AttackOutcome.ERROR`` this is the replacement for the
+                removed per-scenario error_attack_result_ids manifest. Defaults to None.
 
         Returns:
             Sequence[AttackResult]: A list of AttackResult objects that match the specified filters.
@@ -1789,7 +1789,7 @@ class MemoryInterface(abc.ABC):
         if outcome:
             conditions.append(AttackResultEntry.outcome == outcome)
         if scenario_result_id:
-            conditions.append(AttackResultEntry.scenario_result_id == uuid.UUID(scenario_result_id))
+            conditions.append(AttackResultEntry.attribution_parent_id == uuid.UUID(scenario_result_id))
 
         if attack_classes:
             # Case-insensitive to mirror converter_classes; forgives casing drift in
@@ -2205,14 +2205,15 @@ class MemoryInterface(abc.ABC):
     ) -> dict[uuid.UUID, dict[str, list[AttackResult]]]:
         """
         Fetch every ``AttackResult`` linked to the given scenarios via the
-        ``AttackResultEntry.scenario_result_id`` FK in a single batched query,
-        then group by scenario + ``atomic_attack_name`` and sort each group by
-        ``scenario_data["objective_index"]``.
+        ``AttackResultEntry.attribution_parent_id`` foreign key in a single
+        batched query, then group by scenario + ``parent_collection`` (which
+        the scenario layer uses for the atomic attack name) and sort each
+        group by ``attribution_data["position"]``.
 
-        FK linkage is the sole source of truth — set at write-time by the
-        attack persistence path when a ``ScenarioExecutionAttribution`` is on
-        the context. Rows without a valid ``scenario_data`` payload are skipped
-        (and logged) rather than guessed at.
+        Foreign-key linkage is the sole source of truth — set at write-time by
+        the attack persistence path when an ``AttackResultAttribution`` is on
+        the context. Rows without a valid ``attribution_data`` payload are
+        skipped (and logged) rather than guessed at.
 
         Returns:
             dict[uuid.UUID, dict[str, list[AttackResult]]]: Mapping of
@@ -2225,27 +2226,27 @@ class MemoryInterface(abc.ABC):
         scenario_ids = [entry.id for entry in entries]
         attack_rows = self._execute_batched_query(
             AttackResultEntry,
-            batch_column=AttackResultEntry.scenario_result_id,
+            batch_column=AttackResultEntry.attribution_parent_id,
             batch_values=scenario_ids,
         )
 
         grouped: dict[uuid.UUID, dict[str, list[tuple[int, AttackResult]]]] = {entry.id: {} for entry in entries}
 
         for row in attack_rows:
-            scenario_id = row.scenario_result_id
+            scenario_id = row.attribution_parent_id
             if scenario_id is None or scenario_id not in grouped:
                 continue
 
-            data = row.scenario_data or {}
-            name = data.get("atomic_attack_name")
+            data = row.attribution_data or {}
+            name = data.get("parent_collection")
             if not name:
                 logger.debug(
-                    f"Skipping AttackResultEntry {row.id} during hydration: scenario_data missing atomic_attack_name"
+                    f"Skipping AttackResultEntry {row.id} during hydration: attribution_data missing parent_collection"
                 )
                 continue
 
-            objective_index = data.get("objective_index")
-            sort_key = objective_index if isinstance(objective_index, int) else 0
+            position = data.get("position")
+            sort_key = position if isinstance(position, int) else 0
             grouped[scenario_id].setdefault(name, []).append((sort_key, row.get_attack_result()))
 
         return {

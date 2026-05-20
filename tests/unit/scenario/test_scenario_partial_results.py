@@ -38,8 +38,9 @@ def mock_objective_target():
 def save_attack_results_to_memory(attack_results, *, atomic_attack=None):
     """
     Helper function to save attack results to memory. When ``atomic_attack`` is
-    provided, also stamps ``scenario_result_id`` and ``scenario_data`` on each
-    result the same way the real attack persistence path does — so FK-based
+    provided, also stamps ``attribution_parent_id`` and ``attribution_data`` on
+    each result the same way the real attack persistence path does — so
+    foreign-key-based
     hydration in ``get_scenario_results`` finds them.
     """
     if atomic_attack is not None:
@@ -47,8 +48,8 @@ def save_attack_results_to_memory(attack_results, *, atomic_attack=None):
         name = getattr(atomic_attack, "atomic_attack_name", None)
         if sid and name:
             for i, r in enumerate(attack_results):
-                r.scenario_result_id = sid
-                r.scenario_data = {"atomic_attack_name": name, "objective_index": i}
+                r.attribution_parent_id = sid
+                r.attribution_data = {"parent_collection": name, "position": i}
     memory = CentralMemory.get_memory_instance()
     memory.add_attack_results_to_memory(attack_results=attack_results)
 
