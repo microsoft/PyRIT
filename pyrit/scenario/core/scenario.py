@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class BaselinePolicy(Enum):
+class BaselineAttackPolicy(Enum):
     """
     Declares how a scenario type treats the default baseline atomic attack.
 
@@ -145,7 +145,7 @@ class Scenario(ABC):
     #: ``initialize_async`` and overridable per run via ``include_baseline`` for the
     #: ``Enabled`` and ``Disabled`` states; ``Forbidden`` is a hard constraint and a
     #: caller-supplied ``include_baseline=True`` raises ``ValueError``.
-    BASELINE_ATTACK_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Enabled
+    BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
 
     @classmethod
     def _get_additional_scoring_questions(cls) -> Sequence[Path]:
@@ -657,7 +657,7 @@ class Scenario(ABC):
         # scenario type never silently inherits a True default; explicit-True on a forbidden
         # type is a hard error rather than a silent ignore. For the Enabled / Disabled states,
         # a None runtime value defers to the policy.
-        if self.BASELINE_ATTACK_POLICY is BaselinePolicy.Forbidden:
+        if self.BASELINE_ATTACK_POLICY is BaselineAttackPolicy.Forbidden:
             if include_baseline is True:
                 raise ValueError(
                     f"{type(self).__name__} does not support a default baseline "
@@ -665,7 +665,7 @@ class Scenario(ABC):
                 )
             include_baseline = False
         elif include_baseline is None:
-            include_baseline = self.BASELINE_ATTACK_POLICY is BaselinePolicy.Enabled
+            include_baseline = self.BASELINE_ATTACK_POLICY is BaselineAttackPolicy.Enabled
 
         self._include_baseline = include_baseline
 

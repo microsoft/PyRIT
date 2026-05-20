@@ -16,7 +16,7 @@ import pytest
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.scenario import DatasetConfiguration
-from pyrit.scenario.core import BaselinePolicy, Scenario, ScenarioStrategy
+from pyrit.scenario.core import BaselineAttackPolicy, Scenario, ScenarioStrategy
 from pyrit.score import TrueFalseScorer
 
 _TEST_SCORER_ID = ComponentIdentifier(class_name="MockScorer", class_module="tests.unit.scenarios")
@@ -34,7 +34,7 @@ class _LegacyStrategy(ScenarioStrategy):
 class _LegacyScenario(Scenario):
     """Minimal Scenario stand-in for exercising the deprecated baseline kwargs."""
 
-    BASELINE_ATTACK_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Enabled
+    BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
 
     def __init__(self, **kwargs):
         kwargs.setdefault("strategy_class", _LegacyStrategy)
