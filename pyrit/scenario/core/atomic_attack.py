@@ -160,8 +160,7 @@ class AtomicAttack:
         would mean two indistinguishable rows on the write side, which makes
         resume reconciliation ambiguous — the hash-based resume key treats a
         set of hashes as already-done, with no way to distinguish which of two
-        duplicate rows is "the one" that is still outstanding. Loud failure
-        here beats silent resume corruption later.
+        duplicate rows is "the one" that is still outstanding.
 
         The hash is currently derived from objective text only. A future
         iteration may hash the full ``SeedGroup`` (minus technique-specific
@@ -244,6 +243,28 @@ class AtomicAttack:
         """
         self._seed_groups = [
             sg for sg in self._seed_groups if sg.objective is None or to_sha256(sg.objective.value) not in hashes
+        ]
+
+    def filter_seed_groups_by_objectives(self, *, remaining_objectives: list[str]) -> None:
+        """
+        Filter seed groups to only those with objectives in the remaining list.
+
+        .. deprecated::
+            Use ``drop_seed_groups_with_hashes`` (or ``keep_seed_groups_with_hashes``)
+            which keys on content-addressed ``objective_sha256`` instead of
+            objective text. Scheduled for removal in 0.16.0.
+
+        Args:
+            remaining_objectives (List[str]): List of objectives that still need to be executed.
+        """
+        print_deprecation_message(
+            old_item="AtomicAttack.filter_seed_groups_by_objectives(remaining_objectives=...)",
+            new_item="AtomicAttack.keep_seed_groups_with_hashes(hashes=...)",
+            removed_in="0.16.0",
+        )
+        remaining_set = set(remaining_objectives)
+        self._seed_groups = [
+            sg for sg in self._seed_groups if sg.objective is not None and sg.objective.value in remaining_set
         ]
 
     def keep_seed_groups_with_hashes(self, *, hashes: set[str]) -> set[str]:
