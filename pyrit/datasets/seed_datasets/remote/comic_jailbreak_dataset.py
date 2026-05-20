@@ -69,7 +69,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
     Each pair consists of a rendered comic image (template with goal text overlaid in
     the bounding box) and a text prompt asking the model to complete the comic.
 
-    Reference: [@yu2025comicjailbreak]
+    Reference: [@tan2026comicjailbreak]
     Paper: https://arxiv.org/abs/2603.21697
     Repository: https://github.com/Social-AI-Studio/ComicJailbreak
     """
@@ -137,7 +137,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "comic_jailbreak"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch ComicJailbreak dataset and return as SeedDataset of image+text pairs.
 

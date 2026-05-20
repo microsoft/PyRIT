@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import textwrap
+import warnings
 from dataclasses import fields as dc_fields
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -63,7 +64,7 @@ class TestSeedDatasetProvider:
             def dataset_name(self):
                 return "dynamic_test"
 
-            async def fetch_dataset(self):
+            async def fetch_dataset_async(self):
                 return SeedDataset(seeds=[])
 
         providers = SeedDatasetProvider.get_all_providers()
@@ -88,14 +89,14 @@ class TestSeedDatasetProvider:
         mock_provider1 = MagicMock(__name__="P1")
         mock_provider1.return_value.dataset_name = "d1"
         mock_provider1.return_value._parse_metadata = AsyncMock(return_value=None)
-        mock_provider1.return_value.fetch_dataset = AsyncMock(
+        mock_provider1.return_value.fetch_dataset_async = AsyncMock(
             return_value=SeedDataset(seeds=[SeedPrompt(value="p1", data_type="text")], dataset_name="d1")
         )
 
         mock_provider2 = MagicMock(__name__="P2")
         mock_provider2.return_value.dataset_name = "d2"
         mock_provider2.return_value._parse_metadata = AsyncMock(return_value=None)
-        mock_provider2.return_value.fetch_dataset = AsyncMock(
+        mock_provider2.return_value.fetch_dataset_async = AsyncMock(
             return_value=SeedDataset(seeds=[SeedPrompt(value="p2", data_type="text")], dataset_name="d2")
         )
 
@@ -108,14 +109,14 @@ class TestSeedDatasetProvider:
         mock_provider1 = MagicMock(__name__="P1")
         mock_provider1.return_value.dataset_name = "d1"
         mock_provider1.return_value._parse_metadata = AsyncMock(return_value=None)
-        mock_provider1.return_value.fetch_dataset = AsyncMock(
+        mock_provider1.return_value.fetch_dataset_async = AsyncMock(
             return_value=SeedDataset(seeds=[SeedPrompt(value="p1", data_type="text")], dataset_name="d1")
         )
 
         mock_provider2 = MagicMock(__name__="P2")
         mock_provider2.return_value.dataset_name = "d2"
         mock_provider2.return_value._parse_metadata = AsyncMock(return_value=None)
-        mock_provider2.return_value.fetch_dataset = AsyncMock(side_effect=Exception("Should not be called"))
+        mock_provider2.return_value.fetch_dataset_async = AsyncMock(side_effect=Exception("Should not be called"))
 
         with patch.dict(SeedDatasetProvider._registry, {"P1": mock_provider1, "P2": mock_provider2}, clear=True):
             datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=["d1"])
@@ -127,14 +128,14 @@ class TestSeedDatasetProvider:
         mock_provider1 = MagicMock(__name__="P1")
         mock_provider1.return_value.dataset_name = "d1"
         mock_provider1.return_value._parse_metadata = AsyncMock(return_value=None)
-        mock_provider1.return_value.fetch_dataset = AsyncMock(
+        mock_provider1.return_value.fetch_dataset_async = AsyncMock(
             return_value=SeedDataset(seeds=[SeedPrompt(value="p1", data_type="text")], dataset_name="d1")
         )
 
         mock_provider2 = MagicMock(__name__="P2")
         mock_provider2.return_value.dataset_name = "d2"
         mock_provider2.return_value._parse_metadata = AsyncMock(return_value=None)
-        mock_provider2.return_value.fetch_dataset = AsyncMock(
+        mock_provider2.return_value.fetch_dataset_async = AsyncMock(
             return_value=SeedDataset(seeds=[SeedPrompt(value="p2", data_type="text")], dataset_name="d2")
         )
 
@@ -148,6 +149,99 @@ class TestSeedDatasetProvider:
                 await SeedDatasetProvider.fetch_datasets_async(dataset_names=["d1", "invalid1", "invalid2"])
 
 
+class TestFetchDatasetDeprecation:
+    """Tests for the fetch_dataset -> fetch_dataset_async deprecation bridge."""
+
+    async def test_legacy_caller_warns_and_dispatches_to_new_override(self):
+        """Calling deprecated fetch_dataset on a new-style subclass warns and works."""
+
+        class NewStyleProvider(SeedDatasetProvider):
+            should_register = False
+
+            @property
+            def dataset_name(self) -> str:
+                return "new_style"
+
+            async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+                return SeedDataset(seeds=[SeedPrompt(value="x", data_type="text")], dataset_name="new_style")
+
+        provider = NewStyleProvider()
+        with pytest.warns(DeprecationWarning, match="fetch_dataset is deprecated"):
+            dataset = await provider.fetch_dataset()
+        assert isinstance(dataset, SeedDataset)
+        assert dataset.dataset_name == "new_style"
+
+    async def test_new_caller_does_not_warn_for_new_override(self):
+        """Calling fetch_dataset_async on a new-style subclass does not warn."""
+
+        class NewStyleProvider(SeedDatasetProvider):
+            should_register = False
+
+            @property
+            def dataset_name(self) -> str:
+                return "new_style"
+
+            async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+                return SeedDataset(seeds=[SeedPrompt(value="x", data_type="text")], dataset_name="new_style")
+
+        provider = NewStyleProvider()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            dataset = await provider.fetch_dataset_async()
+        assert isinstance(dataset, SeedDataset)
+
+    async def test_legacy_subclass_emits_class_definition_warning(self):
+        """Defining a subclass that overrides only fetch_dataset emits a DeprecationWarning."""
+
+        with pytest.warns(DeprecationWarning, match="overrides the deprecated fetch_dataset method"):
+
+            class LegacyProvider(SeedDatasetProvider):
+                should_register = False
+
+                @property
+                def dataset_name(self) -> str:
+                    return "legacy"
+
+                async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+                    return SeedDataset(seeds=[SeedPrompt(value="x", data_type="text")], dataset_name="legacy")
+
+    async def test_new_caller_dispatches_to_legacy_override_with_warning(self):
+        """Calling fetch_dataset_async on a legacy-style subclass warns and delegates."""
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+
+            class LegacyProvider(SeedDatasetProvider):
+                should_register = False
+
+                @property
+                def dataset_name(self) -> str:
+                    return "legacy"
+
+                async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+                    return SeedDataset(seeds=[SeedPrompt(value="x", data_type="text")], dataset_name="legacy")
+
+        provider = LegacyProvider()
+        with pytest.warns(DeprecationWarning, match="rename the override to fetch_dataset_async"):
+            dataset = await provider.fetch_dataset_async()
+        assert isinstance(dataset, SeedDataset)
+        assert dataset.dataset_name == "legacy"
+
+    async def test_no_override_raises_not_implemented(self):
+        """Subclass that overrides neither method raises NotImplementedError on fetch."""
+
+        class NoOverrideProvider(SeedDatasetProvider):
+            should_register = False
+
+            @property
+            def dataset_name(self) -> str:
+                return "no_override"
+
+        provider = NoOverrideProvider()
+        with pytest.raises(NotImplementedError, match="must implement fetch_dataset_async"):
+            await provider.fetch_dataset_async()
+
+
 class TestHarmBenchDataset:
     """Test the HarmBench dataset loader."""
 
@@ -156,7 +250,7 @@ class TestHarmBenchDataset:
         loader = _HarmBenchDataset()
 
         with patch.object(loader, "_fetch_from_url", return_value=mock_harmbench_data):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
             assert len(dataset.seeds) == 2
@@ -182,7 +276,7 @@ class TestHarmBenchDataset:
 
         with patch.object(loader, "_fetch_from_url", return_value=invalid_data):
             with pytest.raises(ValueError, match="Missing keys in example"):
-                await loader.fetch_dataset()
+                await loader.fetch_dataset_async()
 
     async def test_fetch_dataset_with_custom_source(self, mock_harmbench_data):
         """Test fetching with custom source URL."""
@@ -192,7 +286,7 @@ class TestHarmBenchDataset:
         )
 
         with patch.object(loader, "_fetch_from_url", return_value=mock_harmbench_data) as mock_fetch:
-            dataset = await loader.fetch_dataset(cache=False)
+            dataset = await loader.fetch_dataset_async(cache=False)
 
             assert len(dataset.seeds) == 2
             mock_fetch.assert_called_once()
@@ -210,7 +304,7 @@ class TestDarkBenchDataset:
         loader = _DarkBenchDataset()
 
         with patch.object(loader, "_fetch_from_huggingface", return_value=mock_darkbench_data):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
             assert len(dataset.seeds) == 2
@@ -237,7 +331,7 @@ class TestDarkBenchDataset:
         )
 
         with patch.object(loader, "_fetch_from_huggingface", return_value=mock_darkbench_data) as mock_fetch:
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 2
             mock_fetch.assert_called_once()

@@ -73,7 +73,6 @@ class PlaywrightTarget(PromptTarget):
         page: "Page",
         max_requests_per_minute: Optional[int] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the Playwright target.
@@ -86,15 +85,12 @@ class PlaywrightTarget(PromptTarget):
                 will be capped at the value provided.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
         """
         endpoint = page.url if page else ""
         super().__init__(
             max_requests_per_minute=max_requests_per_minute,
             endpoint=endpoint,
             custom_configuration=custom_configuration,
-            custom_capabilities=custom_capabilities,
         )
         self._interaction_func = interaction_func
         self._page = page

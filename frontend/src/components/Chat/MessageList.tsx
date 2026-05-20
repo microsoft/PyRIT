@@ -10,7 +10,7 @@ import {
   Spinner,
   mergeClasses,
 } from '@fluentui/react-components'
-import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular } from '@fluentui/react-icons'
+import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular, OpenRegular } from '@fluentui/react-icons'
 import { Message, MessageAttachment } from '../../types'
 import { useMessageListStyles } from './MessageList.styles'
 
@@ -282,7 +282,21 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                       )}
                       {att.type === 'file' && (
                         <div className={styles.attachmentFile}>
-                          <Text size={200}>📄 {att.name}</Text>
+                          <Text size={200} className={styles.attachmentFileName}>📄 {att.name}</Text>
+                          {att.url && (
+                            <Tooltip content="Open in new tab" relationship="label">
+                              <a
+                                href={att.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className={styles.attachmentOpenLink}
+                                data-testid={`attachment-open-${index}-${attIndex}`}
+                              >
+                                <OpenRegular fontSize={14} />
+                                <span>Open</span>
+                              </a>
+                            </Tooltip>
+                          )}
                         </div>
                       )}
                     </div>

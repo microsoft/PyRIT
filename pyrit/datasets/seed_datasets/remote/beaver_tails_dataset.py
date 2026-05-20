@@ -52,7 +52,7 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "beaver_tails"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch BeaverTails dataset from HuggingFace and return as SeedDataset.
 

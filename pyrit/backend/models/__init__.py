@@ -51,6 +51,7 @@ from pyrit.backend.models.initializers import (
     InitializerParameterSummary,
     ListRegisteredInitializersResponse,
     RegisteredInitializer,
+    RegisterInitializerRequest,
 )
 from pyrit.backend.models.scenarios import (
     ListRegisteredScenariosResponse,
@@ -110,6 +111,7 @@ __all__ = [
     "InitializerParameterSummary",
     "ListRegisteredInitializersResponse",
     "RegisteredInitializer",
+    "RegisterInitializerRequest",
     # Targets
     "CreateTargetRequest",
     "TargetCapabilitiesInfo",

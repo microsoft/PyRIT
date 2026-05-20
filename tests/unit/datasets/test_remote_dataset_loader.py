@@ -18,7 +18,7 @@ class ConcreteRemoteLoader(_RemoteDatasetLoader):
     def dataset_name(self):
         return "test_remote"
 
-    async def fetch_dataset(self):
+    async def fetch_dataset_async(self):
         return SeedDataset(prompts=[])
 
 

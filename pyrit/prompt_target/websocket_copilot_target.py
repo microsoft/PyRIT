@@ -14,7 +14,7 @@ import websockets
 from websockets.exceptions import InvalidStatus
 
 from pyrit.auth import CopilotAuthenticator, ManualCopilotAuthenticator
-from pyrit.common.data_url_converter import convert_local_image_to_data_url
+from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
@@ -96,7 +96,6 @@ class WebSocketCopilotTarget(PromptTarget):
         response_timeout_seconds: int = RESPONSE_TIMEOUT_SECONDS,
         authenticator: Optional[Union[CopilotAuthenticator, ManualCopilotAuthenticator]] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the WebSocketCopilotTarget.
@@ -112,8 +111,6 @@ class WebSocketCopilotTarget(PromptTarget):
                 If None, a new ``CopilotAuthenticator`` instance will be created with default settings.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
 
         Raises:
             ValueError: If ``response_timeout_seconds`` is not a positive integer.
@@ -137,7 +134,6 @@ class WebSocketCopilotTarget(PromptTarget):
             endpoint=self._websocket_base_url,
             model_name=model_name,
             custom_configuration=custom_configuration,
-            custom_capabilities=custom_capabilities,
         )
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -332,7 +328,7 @@ class WebSocketCopilotTarget(PromptTarget):
         Returns:
             dict: Message annotation structure for the uploaded image.
         """
-        data_url = await convert_local_image_to_data_url(image_path)
+        data_url = await convert_local_image_to_data_url_async(image_path)
 
         normalized_image_path = image_path.replace("\\", "/")
         file_name = pathlib.Path(normalized_image_path).name

@@ -7,7 +7,7 @@ import {
   tokens,
   mergeClasses,
 } from '@fluentui/react-components'
-import { SendRegular, AttachRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowShuffleRegular } from '@fluentui/react-icons'
+import { SendRegular, AttachRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowShuffleRegular, OpenRegular } from '@fluentui/react-icons'
 import { MessageAttachment, TargetInstance } from '../../types'
 import { useChatInputAreaStyles } from './ChatInputArea.styles'
 import { PIECE_TYPE_TO_DATA_TYPE } from './converterTypes'
@@ -15,6 +15,12 @@ import { PIECE_TYPE_TO_DATA_TYPE } from './converterTypes'
 // ---------------------------------------------------------------------------
 // Reusable status banner
 // ---------------------------------------------------------------------------
+
+export interface ConvertedFileChip {
+  name: string
+  url: string
+  iconKind: 'image' | 'audio' | 'video' | 'file'
+}
 
 interface StatusBannerProps {
   icon: React.ReactElement
@@ -55,7 +61,7 @@ function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testI
 
 interface AttachmentListProps {
   attachments: MessageAttachment[]
-  mediaConversions: Array<{ pieceType: string; convertedValue: string }>
+  mediaConversions: Array<{ pieceType: string; convertedValue: string; convertedDataType: string }>
   onRemove: (index: number) => void
   onClearMediaConversion: (pieceType: string) => void
   formatFileSize: (bytes: number) => string
@@ -120,21 +126,24 @@ function AttachmentList({ attachments, mediaConversions, onRemove, onClearMediaC
 interface TextInputRowsProps {
   input: string
   convertedValue?: string | null
+  convertedFileChip?: ConvertedFileChip | null
   disabled: boolean
   textareaRef: Ref<HTMLTextAreaElement>
   convertedRef: Ref<HTMLTextAreaElement>
   onInput: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
   onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void
   onConvertedValueChange: (value: string) => void
+  onClearConvertedFileChip?: () => void
   styles: ReturnType<typeof useChatInputAreaStyles>
   textInputClassName: string
 }
 
-function TextInputRows({ input, convertedValue, disabled, textareaRef, convertedRef, onInput, onKeyDown, onConvertedValueChange, styles, textInputClassName }: TextInputRowsProps) {
+function TextInputRows({ input, convertedValue, convertedFileChip, disabled, textareaRef, convertedRef, onInput, onKeyDown, onConvertedValueChange, onClearConvertedFileChip, styles, textInputClassName }: TextInputRowsProps) {
+  const hasConversion = Boolean(convertedValue) || Boolean(convertedFileChip)
   return (
     <>
       <div className={styles.textRow}>
-        {convertedValue && (
+        {hasConversion && (
           <span className={styles.originalBadge} data-testid="original-banner">Original</span>
         )}
         <textarea
@@ -160,6 +169,66 @@ function TextInputRows({ input, convertedValue, disabled, textareaRef, converted
             rows={1}
             data-testid="converted-value-input"
           />
+        </div>
+      )}
+      {!convertedValue && convertedFileChip && (
+        <div className={styles.convertedFileBlock} data-testid="converted-file-chip">
+          <div className={styles.convertedRow}>
+            <span className={styles.convertedBadge}>Converted</span>
+            <span aria-hidden="true">
+              {convertedFileChip.iconKind === 'image' && '🖼️'}
+              {convertedFileChip.iconKind === 'audio' && '🎵'}
+              {convertedFileChip.iconKind === 'video' && '🎥'}
+              {convertedFileChip.iconKind === 'file' && '📄'}
+            </span>
+            <Caption1 className={styles.convertedFilename} title={convertedFileChip.name}>
+              {convertedFileChip.name}
+            </Caption1>
+            <Tooltip content="Open in new tab" relationship="label">
+              <a
+                href={convertedFileChip.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={styles.openLink}
+                data-testid="converted-file-open"
+              >
+                <OpenRegular fontSize={14} />
+                <span>Open</span>
+              </a>
+            </Tooltip>
+            <Button
+              appearance="transparent"
+              size="small"
+              className={styles.dismissBtn}
+              icon={<DismissRegular />}
+              onClick={onClearConvertedFileChip}
+              data-testid="clear-converted-file-chip"
+            />
+          </div>
+          {convertedFileChip.iconKind === 'image' && (
+            <img
+              src={convertedFileChip.url}
+              alt={convertedFileChip.name}
+              className={styles.convertedImagePreview}
+              data-testid="converted-file-preview-image"
+            />
+          )}
+          {convertedFileChip.iconKind === 'audio' && (
+            <audio
+              controls
+              src={convertedFileChip.url}
+              className={styles.convertedAudioPreview}
+              data-testid="converted-file-preview-audio"
+            />
+          )}
+          {convertedFileChip.iconKind === 'video' && (
+            <video
+              controls
+              src={convertedFileChip.url}
+              className={styles.convertedVideoPreview}
+              data-testid="converted-file-preview-video"
+            />
+          )}
         </div>
       )}
     </>
@@ -255,11 +324,14 @@ interface ChatInputAreaProps {
   onClearConversion: () => void
   onConvertedValueChange: (value: string) => void
   converterOutputDataTypes?: string[]
-  mediaConversions?: Array<{ pieceType: string; convertedValue: string }>
+  mediaConversions?: Array<{ pieceType: string; convertedValue: string; convertedDataType: string }>
   onClearMediaConversion: (pieceType: string) => void
+  /** Chip describing a text→file conversion (e.g. PDFConverter output). */
+  convertedFileChip?: ConvertedFileChip | null
+  onClearConvertedFileChip?: () => void
 }
 
-const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onConvertedValueChange, converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion }, ref) {
+const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onConvertedValueChange, converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip }, ref) {
   const styles = useChatInputAreaStyles()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<MessageAttachment[]>([])
@@ -530,12 +602,14 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
               <TextInputRows
                 input={input}
                 convertedValue={convertedValue}
+                convertedFileChip={convertedFileChip}
                 disabled={disabled}
                 textareaRef={textareaRef}
                 convertedRef={convertedRef}
                 onInput={handleInput}
                 onKeyDown={handleKeyDown}
                 onConvertedValueChange={onConvertedValueChange}
+                onClearConvertedFileChip={onClearConvertedFileChip}
                 styles={styles}
                 textInputClassName={textInputClassName}
               />

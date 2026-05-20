@@ -199,8 +199,17 @@ async def initialize_and_run_async(*, parsed_args: Namespace) -> int:
         default_labels["operation"] = context._operation
     app.state.default_labels = default_labels
     app.state.max_concurrent_scenario_runs = context._max_concurrent_scenario_runs
+    app.state.allow_custom_initializers = context._allow_custom_initializers
 
     display_host = parsed_args.host
+    if context._allow_custom_initializers:
+        print("⚠️  WARNING: Custom initializer registration is ENABLED (allow_custom_initializers: true).")
+        print("   This allows arbitrary Python code execution via the REST API.")
+        if parsed_args.host == "0.0.0.0":
+            print("   🚨 Server is bound to 0.0.0.0 — accessible from the NETWORK. Use only on trusted networks!")
+        else:
+            print(f"   Server is bound to {display_host}.")
+
     print(f"🚀 Starting PyRIT backend on http://{display_host}:{parsed_args.port}")
     print(f"   API Docs: http://{display_host}:{parsed_args.port}/docs")
     if parsed_args.host == "0.0.0.0":

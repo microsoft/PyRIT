@@ -838,7 +838,7 @@ class TestInitializeContext:
         context.prepended_conversation = sample_conversation
         context.next_message = Message.from_prompt(prompt="Next message", role="user")
 
-        config = PrependedConversationConfig(non_chat_target_behavior="normalize_first_turn")
+        config = PrependedConversationConfig()
 
         await manager.initialize_context_async(
             context=context,
@@ -1088,7 +1088,8 @@ class TestPrependedConversationConfigSettings:
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
         context.prepended_conversation = sample_conversation
 
-        config = PrependedConversationConfig(non_chat_target_behavior="raise")
+        with pytest.warns(DeprecationWarning, match="non_chat_target_behavior"):
+            config = PrependedConversationConfig(non_chat_target_behavior="raise")
 
         with pytest.raises(
             ValueError,
@@ -1115,7 +1116,7 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
         context.next_message = None
 
-        config = PrependedConversationConfig(non_chat_target_behavior="normalize_first_turn")
+        config = PrependedConversationConfig()
 
         await manager.initialize_context_async(
             context=context,
@@ -1142,7 +1143,7 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
         context.next_message = Message.from_prompt(prompt="My question", role="user")
 
-        config = PrependedConversationConfig(non_chat_target_behavior="normalize_first_turn")
+        config = PrependedConversationConfig()
 
         await manager.initialize_context_async(
             context=context,
@@ -1170,7 +1171,7 @@ class TestPrependedConversationConfigSettings:
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
         context.prepended_conversation = sample_conversation
 
-        config = PrependedConversationConfig(non_chat_target_behavior="normalize_first_turn")
+        config = PrependedConversationConfig()
 
         state = await manager.initialize_context_async(
             context=context,
@@ -1314,7 +1315,7 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
         context.next_message = None
 
-        config = PrependedConversationConfig(non_chat_target_behavior="normalize_first_turn")
+        config = PrependedConversationConfig()
 
         await manager.initialize_context_async(
             context=context,
@@ -1348,7 +1349,6 @@ class TestPrependedConversationConfigSettings:
         context.next_message = None
 
         config = PrependedConversationConfig(
-            non_chat_target_behavior="normalize_first_turn",
             message_normalizer=mock_normalizer,
         )
 
@@ -1372,7 +1372,8 @@ class TestPrependedConversationConfigSettings:
 
     def test_default_factory_creates_raise_behavior(self) -> None:
         """Test that PrependedConversationConfig.default() creates raise behavior."""
-        config = PrependedConversationConfig.default()
+        with pytest.warns(DeprecationWarning, match="PrependedConversationConfig.default\\(\\) is deprecated"):
+            config = PrependedConversationConfig.default()
 
         assert config.non_chat_target_behavior == "raise"
         assert config.message_normalizer is None
@@ -1383,7 +1384,10 @@ class TestPrependedConversationConfigSettings:
 
     def test_for_non_chat_target_factory_creates_normalize_behavior(self) -> None:
         """Test that for_non_chat_target() creates normalize_first_turn behavior."""
-        config = PrependedConversationConfig.for_non_chat_target()
+        with pytest.warns(
+            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
+        ):
+            config = PrependedConversationConfig.for_non_chat_target()
 
         assert config.non_chat_target_behavior == "normalize_first_turn"
 
@@ -1392,14 +1396,20 @@ class TestPrependedConversationConfigSettings:
         from pyrit.message_normalizer import MessageStringNormalizer
 
         mock_normalizer = MagicMock(spec=MessageStringNormalizer)
-        config = PrependedConversationConfig.for_non_chat_target(message_normalizer=mock_normalizer)
+        with pytest.warns(
+            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
+        ):
+            config = PrependedConversationConfig.for_non_chat_target(message_normalizer=mock_normalizer)
 
         assert config.message_normalizer == mock_normalizer
         assert config.non_chat_target_behavior == "normalize_first_turn"
 
     def test_for_non_chat_target_with_custom_roles(self) -> None:
         """Test that for_non_chat_target() accepts custom apply_converters_to_roles."""
-        config = PrependedConversationConfig.for_non_chat_target(apply_converters_to_roles=["user"])
+        with pytest.warns(
+            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
+        ):
+            config = PrependedConversationConfig.for_non_chat_target(apply_converters_to_roles=["user"])
 
         assert config.apply_converters_to_roles == ["user"]
         assert config.non_chat_target_behavior == "normalize_first_turn"
@@ -1421,7 +1431,8 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
 
         # Even with raise behavior, chat targets should work
-        config = PrependedConversationConfig(non_chat_target_behavior="raise")
+        with pytest.warns(DeprecationWarning, match="non_chat_target_behavior"):
+            config = PrependedConversationConfig(non_chat_target_behavior="raise")
 
         state = await manager.initialize_context_async(
             context=context,

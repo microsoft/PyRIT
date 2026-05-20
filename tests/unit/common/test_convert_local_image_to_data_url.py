@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.common.data_url_converter import convert_local_image_to_data_url
+from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.memory.sqlite_memory import SQLiteMemory
 
 
 async def test_convert_image_to_data_url_file_not_found():
     with pytest.raises(FileNotFoundError):
-        await convert_local_image_to_data_url("nonexistent.jpg")
+        await convert_local_image_to_data_url_async("nonexistent.jpg")
 
 
 async def test_convert_image_with_unsupported_extension():
@@ -23,7 +23,7 @@ async def test_convert_image_with_unsupported_extension():
     assert os.path.exists(tmp_file_name)
 
     with pytest.raises(ValueError) as exc_info:
-        await convert_local_image_to_data_url(tmp_file_name)
+        await convert_local_image_to_data_url_async(tmp_file_name)
 
     assert "Unsupported image format" in str(exc_info.value)
 
@@ -36,7 +36,7 @@ async def test_convert_local_image_to_data_url_unsupported_format():
         tmp_file_name = tmp_file.name
     try:
         with pytest.raises(ValueError) as excinfo:
-            await convert_local_image_to_data_url(tmp_file_name)
+            await convert_local_image_to_data_url_async(tmp_file_name)
         assert "Unsupported image format" in str(excinfo.value)
     finally:
         os.remove(tmp_file_name)
@@ -45,7 +45,7 @@ async def test_convert_local_image_to_data_url_unsupported_format():
 async def test_convert_local_image_to_data_url_missing_file():
     # Should raise FileNotFoundError for missing file
     with pytest.raises(FileNotFoundError):
-        await convert_local_image_to_data_url("not_a_real_file.jpg")
+        await convert_local_image_to_data_url_async("not_a_real_file.jpg")
 
 
 @patch("os.path.exists", return_value=True)
@@ -63,7 +63,7 @@ async def test_convert_image_to_data_url_success(
 
     assert os.path.exists(tmp_file_name)
 
-    result = await convert_local_image_to_data_url(tmp_file_name)
+    result = await convert_local_image_to_data_url_async(tmp_file_name)
     assert "data:image/jpeg;base64,encoded_base64_string" in result
 
     # Assertions for the mocks

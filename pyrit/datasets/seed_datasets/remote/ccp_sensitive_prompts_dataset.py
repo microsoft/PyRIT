@@ -39,7 +39,7 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "ccp_sensitive_prompts"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch CCP-sensitive prompts dataset and return as SeedDataset.
 
