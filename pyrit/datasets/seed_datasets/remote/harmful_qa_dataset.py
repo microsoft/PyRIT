@@ -20,7 +20,7 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
 
     References:
         - https://huggingface.co/datasets/declare-lab/HarmfulQA
-        - [@chu2023harmfulqa]
+        - [@bhardwaj2023harmfulqa]
     License: Apache 2.0
 
     Warning: This dataset contains harmful questions designed to test LLM safety.

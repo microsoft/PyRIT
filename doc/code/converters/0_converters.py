@@ -8,10 +8,8 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 # ---
-
 # %% [markdown]
 # # Converters
-
 # %% [markdown]
 # Converters are used to transform prompts before sending them to the target.
 #
@@ -24,10 +22,10 @@
 # ## Converter Modality Reference Table
 #
 # The following table shows all available converters organized by their input and output modalities:
-
 # %%
 import pandas as pd
 
+from pyrit.output import output_attack_async
 from pyrit.prompt_converter import get_converter_modalities
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -102,7 +100,6 @@ print(await FirstLetterConverter().convert_tokens_async(prompt=prompt))  # type:
 # %%
 from pyrit.executor.attack import (
     AttackConverterConfig,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 from pyrit.prompt_converter import StringJoinConverter, VariationConverter
@@ -129,8 +126,7 @@ attack = PromptSendingAttack(
 
 result = await attack.execute_async(objective=objective)  # type: ignore
 
-printer = ConsoleAttackResultPrinter()
-await printer.print_conversation_async(result=result)  # type: ignore
+await output_attack_async(result)
 
 # %% [markdown]
 # ## Response Converters
@@ -154,7 +150,6 @@ await printer.print_conversation_async(result=result)  # type: ignore
 # %%
 from pyrit.executor.attack import (
     AttackConverterConfig,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 from pyrit.prompt_converter import TranslationConverter
@@ -191,5 +186,4 @@ attack = PromptSendingAttack(
 result = await attack.execute_async(objective=objective)  # type: ignore
 
 # Print the conversation showing both original and converted values
-printer = ConsoleAttackResultPrinter()
-await printer.print_conversation_async(result=result)  # type: ignore
+await output_attack_async(result)

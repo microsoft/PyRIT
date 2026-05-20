@@ -16,7 +16,7 @@ from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedGroup, SeedObjective
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario.core import BaselinePolicy
+from pyrit.scenario.core import BaselineAttackPolicy
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak, JailbreakStrategy
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
@@ -203,14 +203,14 @@ class TestJailbreakInitialization:
         with pytest.raises(ValueError, match="DatasetConfiguration has no seed_groups"):
             await scenario.initialize_async(objective_target=mock_objective_target)
 
-    def test_class_inherits_default_baseline_policy(self):
+    def test_class_inherits_default_baseline_attack_policy(self):
         """Jailbreak inherits the base default (Enabled) — baseline included by default."""
-        assert Jailbreak.BASELINE_POLICY is BaselinePolicy.Enabled
+        assert Jailbreak.BASELINE_ATTACK_POLICY is BaselineAttackPolicy.Enabled
 
     async def test_default_initialize_includes_baseline(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
-        """initialize_async without include_baseline honors BASELINE_POLICY=Enabled."""
+        """initialize_async without include_baseline honors BASELINE_ATTACK_POLICY=Enabled."""
         with patch.object(Jailbreak, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(objective_target=mock_objective_target)

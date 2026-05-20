@@ -13,7 +13,7 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult
 from pyrit.scenario import DatasetConfiguration, ScenarioResult
-from pyrit.scenario.core import AtomicAttack, BaselinePolicy, Scenario, ScenarioStrategy
+from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioStrategy
 
 
 def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
@@ -74,7 +74,7 @@ def create_mock_atomic_attack(name: str, objectives: list[str]) -> MagicMock:
 class ConcreteScenario(Scenario):
     """Concrete implementation of Scenario for testing."""
 
-    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Forbidden
+    BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
     def __init__(self, *, atomic_attacks_to_return=None, objective_scorer=None, **kwargs):
         # Get strategy_class from kwargs or use default

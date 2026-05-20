@@ -86,7 +86,6 @@ class OpenAITarget(PromptTarget):
         httpx_client_kwargs: Optional[dict[str, Any]] = None,
         underlying_model: Optional[str] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize an instance of OpenAITarget.
@@ -115,8 +114,6 @@ class OpenAITarget(PromptTarget):
                 Defaults to None.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. If None, uses the class-level defaults. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
 
         Raises:
             ValueError: If no API key is provided and the endpoint is not an Azure endpoint.
@@ -148,7 +145,6 @@ class OpenAITarget(PromptTarget):
             model_name=self._model_name,
             underlying_model=underlying_model,
             custom_configuration=custom_configuration,
-            custom_capabilities=custom_capabilities,
         )
 
         # API key: use passed value, env var, or fall back to Entra ID for Azure endpoints
