@@ -37,7 +37,7 @@ async def test_connect_success(target):
     mock_client.realtime.connect.return_value.__aenter__ = AsyncMock(return_value=mock_connection)
 
     with patch.object(target, "_get_openai_client", return_value=mock_client):
-        connection = await target.connect(conversation_id="test_conv")
+        connection = await target.connect_async(conversation_id="test_conv")
         assert connection == mock_connection
         mock_client.realtime.connect.assert_called_once_with(model="test")
     await target.cleanup_target()

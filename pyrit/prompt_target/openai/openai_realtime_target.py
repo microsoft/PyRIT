@@ -242,7 +242,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
 
         return self._realtime_client
 
-    async def connect(self, conversation_id: str) -> Any:
+    async def connect_async(self, conversation_id: str) -> Any:
         """
         Connect to Realtime API using AsyncOpenAI client and return the realtime connection.
 
@@ -370,7 +370,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         message = normalized_conversation[-1]
         conversation_id = message.message_pieces[0].conversation_id
         if conversation_id not in self._existing_conversation:
-            connection = await self.connect(conversation_id=conversation_id)
+            connection = await self.connect_async(conversation_id=conversation_id)
             self._existing_conversation[conversation_id] = connection
 
             # Only send config when creating a new connection

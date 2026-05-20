@@ -91,6 +91,7 @@ converters = PromptConverterConfiguration.from_converters(converters=[AudioFrequ
 # and gets the model's response. Exercises the full pipeline (chunk push, convert-on-commit,
 # item swap, response trigger, memory persistence) without barge-in.
 
+
 # %%
 async def single_turn_source():
     async for chunk in _yield_chunks(question_pcm_24k):

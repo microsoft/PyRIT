@@ -19,13 +19,14 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
 from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -99,8 +100,8 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         self,
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
     ) -> None:
         """
@@ -172,7 +173,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         target = cast("RealtimeTarget", self._objective_target)
         assert context.audio_chunks is not None  # validated upstream
 
-        connection = await target.connect(conversation_id=context.conversation_id)
+        connection = await target.connect_async(conversation_id=context.conversation_id)
         raw_buffer = bytearray()
         turn_lock = asyncio.Lock()
         last_assistant_message: Message | None = None
@@ -202,11 +203,11 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
 
                     using_converted_audio = bool(self._request_converters) and converted_pcm != snapshot
                     if using_converted_audio:
+                        await target.insert_user_audio_async(connection=connection, pcm_bytes=converted_pcm)
                         try:
                             await target.delete_conversation_item_async(connection=connection, item_id=event.item_id)
                         except Exception as e:
                             logger.warning(f"conversation.item.delete failed for {event.item_id}: {e}")
-                        await target.insert_user_audio_async(connection=connection, pcm_bytes=converted_pcm)
 
                     turn_future = await target.request_response_async(connection=connection, dispatcher=dispatcher)
                     turn_result = await turn_future
@@ -356,6 +357,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             audio_piece.prompt_metadata["interrupted"] = True
         assistant_message = Message(message_pieces=[text_piece, audio_piece])
 
-        target._memory.add_message_to_memory(request=user_message)
-        target._memory.add_message_to_memory(request=assistant_message)
+        memory = CentralMemory.get_memory_instance()
+        memory.add_message_to_memory(request=user_message)
+        memory.add_message_to_memory(request=assistant_message)
         return assistant_message

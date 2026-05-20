@@ -118,7 +118,7 @@ async def test_perform_async_streams_chunks_and_tears_down(vad_target):
     """Happy path: connect, send config, subscribe, push chunks, stop, close — no commits."""
     attack = BargeInAttack(objective_target=vad_target)
     connection = _mock_connection()
-    vad_target.connect = AsyncMock(return_value=connection)
+    vad_target.connect_async = AsyncMock(return_value=connection)
     vad_target.send_streaming_session_config_async = AsyncMock()
     vad_target.push_audio_chunk_async = AsyncMock()
     dispatcher = AsyncMock()
@@ -131,7 +131,7 @@ async def test_perform_async_streams_chunks_and_tears_down(vad_target):
     with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
         result = await attack._perform_async(context=ctx)
 
-    vad_target.connect.assert_awaited_once_with(conversation_id=ctx.conversation_id)
+    vad_target.connect_async.assert_awaited_once_with(conversation_id=ctx.conversation_id)
     vad_target.send_streaming_session_config_async.assert_awaited_once()
     vad_target.subscribe_events_async.assert_awaited_once()
     assert vad_target.push_audio_chunk_async.await_count == len(chunks)
@@ -147,7 +147,7 @@ async def test_perform_async_fires_request_response_on_commit(vad_target):
     """A commit event must drive request_response_async and increment the turn counter."""
     attack = BargeInAttack(objective_target=vad_target)
     connection = _mock_connection()
-    vad_target.connect = AsyncMock(return_value=connection)
+    vad_target.connect_async = AsyncMock(return_value=connection)
     vad_target.send_streaming_session_config_async = AsyncMock()
     vad_target.push_audio_chunk_async = AsyncMock()
 
@@ -184,7 +184,7 @@ async def test_perform_async_stops_dispatcher_even_on_exception(vad_target):
     """If the chunk loop raises, dispatcher.stop() and connection.close() still run."""
     attack = BargeInAttack(objective_target=vad_target)
     connection = _mock_connection()
-    vad_target.connect = AsyncMock(return_value=connection)
+    vad_target.connect_async = AsyncMock(return_value=connection)
     vad_target.send_streaming_session_config_async = AsyncMock()
     vad_target.push_audio_chunk_async = AsyncMock(side_effect=RuntimeError("push exploded"))
     dispatcher = AsyncMock()
@@ -267,7 +267,7 @@ async def test_perform_async_swaps_raw_item_when_converters_change_audio(vad_tar
     bump = _make_audio_converter(lambda pcm: bytes((b + 1) & 0xFF for b in pcm))
     attack = BargeInAttack(objective_target=vad_target, attack_converter_config=_converter_config([bump]))
     connection = _mock_connection()
-    vad_target.connect = AsyncMock(return_value=connection)
+    vad_target.connect_async = AsyncMock(return_value=connection)
     vad_target.send_streaming_session_config_async = AsyncMock()
     vad_target.push_audio_chunk_async = AsyncMock()
     vad_target.delete_conversation_item_async = AsyncMock()
@@ -311,7 +311,7 @@ async def test_perform_async_skips_swap_when_no_converters(vad_target):
     """Empty converter list: don't delete raw, don't insert converted, just request response."""
     attack = BargeInAttack(objective_target=vad_target)  # no converter config
     connection = _mock_connection()
-    vad_target.connect = AsyncMock(return_value=connection)
+    vad_target.connect_async = AsyncMock(return_value=connection)
     vad_target.send_streaming_session_config_async = AsyncMock()
     vad_target.push_audio_chunk_async = AsyncMock()
     vad_target.delete_conversation_item_async = AsyncMock()
@@ -351,7 +351,7 @@ async def test_perform_async_clears_raw_buffer_between_commits(vad_target):
     bump = _make_audio_converter(lambda pcm: bytes((b + 1) & 0xFF for b in pcm))
     attack = BargeInAttack(objective_target=vad_target, attack_converter_config=_converter_config([bump]))
     connection = _mock_connection()
-    vad_target.connect = AsyncMock(return_value=connection)
+    vad_target.connect_async = AsyncMock(return_value=connection)
     vad_target.send_streaming_session_config_async = AsyncMock()
     vad_target.push_audio_chunk_async = AsyncMock()
     vad_target.delete_conversation_item_async = AsyncMock()
@@ -404,7 +404,7 @@ async def test_perform_async_uses_injected_normalizer(vad_target):
         prompt_normalizer=fake_normalizer,
     )
     connection = _mock_connection()
-    vad_target.connect = AsyncMock(return_value=connection)
+    vad_target.connect_async = AsyncMock(return_value=connection)
     vad_target.send_streaming_session_config_async = AsyncMock()
     vad_target.push_audio_chunk_async = AsyncMock()
     vad_target.delete_conversation_item_async = AsyncMock()
@@ -460,7 +460,7 @@ async def _drive_one_audio_turn(
 ):
     """Helper that runs a single audio-driven turn end-to-end against a mocked target."""
     connection = _mock_connection()
-    vad_target.connect = AsyncMock(return_value=connection)
+    vad_target.connect_async = AsyncMock(return_value=connection)
     vad_target.send_streaming_session_config_async = AsyncMock()
     vad_target.push_audio_chunk_async = AsyncMock()
     vad_target.delete_conversation_item_async = AsyncMock()
@@ -493,16 +493,18 @@ async def test_persists_user_and_assistant_messages_per_turn(vad_target):
     """A successful turn writes 1 user piece + 2 assistant pieces sharing the conversation id."""
     attack = BargeInAttack(objective_target=vad_target)
     add_calls: list[Any] = []
-    vad_target._memory = MagicMock()
-    vad_target._memory.add_message_to_memory = MagicMock(side_effect=lambda **kw: add_calls.append(kw["request"]))
+    mock_memory = MagicMock()
+    mock_memory.add_message_to_memory = MagicMock(side_effect=lambda **kw: add_calls.append(kw["request"]))
 
-    result = await _drive_one_audio_turn(
-        attack,
-        vad_target,
-        raw_chunk=b"\x00" * 96,
-        item_id="raw_1",
-        turn_result=RealtimeTargetResult(audio_bytes=b"\xaa" * 96, transcripts=["hello"]),
-    )
+    with patch("pyrit.executor.attack.streaming.barge_in.CentralMemory") as mock_cm:
+        mock_cm.get_memory_instance.return_value = mock_memory
+        result = await _drive_one_audio_turn(
+            attack,
+            vad_target,
+            raw_chunk=b"\x00" * 96,
+            item_id="raw_1",
+            turn_result=RealtimeTargetResult(audio_bytes=b"\xaa" * 96, transcripts=["hello"]),
+        )
 
     assert len(add_calls) == 2
     user_msg, assistant_msg = add_calls
@@ -520,16 +522,18 @@ async def test_persists_interrupted_metadata_on_assistant_pieces(vad_target):
     """Interrupted turns mark both assistant pieces with prompt_metadata['interrupted'] = True."""
     attack = BargeInAttack(objective_target=vad_target)
     add_calls: list[Any] = []
-    vad_target._memory = MagicMock()
-    vad_target._memory.add_message_to_memory = MagicMock(side_effect=lambda **kw: add_calls.append(kw["request"]))
+    mock_memory = MagicMock()
+    mock_memory.add_message_to_memory = MagicMock(side_effect=lambda **kw: add_calls.append(kw["request"]))
 
-    await _drive_one_audio_turn(
-        attack,
-        vad_target,
-        raw_chunk=b"\x00" * 96,
-        item_id="raw_int",
-        turn_result=RealtimeTargetResult(audio_bytes=b"\xbb" * 96, transcripts=["partial"], interrupted=True),
-    )
+    with patch("pyrit.executor.attack.streaming.barge_in.CentralMemory") as mock_cm:
+        mock_cm.get_memory_instance.return_value = mock_memory
+        await _drive_one_audio_turn(
+            attack,
+            vad_target,
+            raw_chunk=b"\x00" * 96,
+            item_id="raw_int",
+            turn_result=RealtimeTargetResult(audio_bytes=b"\xbb" * 96, transcripts=["partial"], interrupted=True),
+        )
 
     assistant_msg = add_calls[1]
     for piece in assistant_msg.message_pieces:
@@ -549,16 +553,18 @@ async def test_persists_converter_identifiers_on_user_piece(vad_target):
         ),
     )
     add_calls: list[Any] = []
-    vad_target._memory = MagicMock()
-    vad_target._memory.add_message_to_memory = MagicMock(side_effect=lambda **kw: add_calls.append(kw["request"]))
+    mock_memory = MagicMock()
+    mock_memory.add_message_to_memory = MagicMock(side_effect=lambda **kw: add_calls.append(kw["request"]))
 
-    await _drive_one_audio_turn(
-        attack,
-        vad_target,
-        raw_chunk=b"\x05" * 96,
-        item_id="raw_c",
-        turn_result=RealtimeTargetResult(audio_bytes=b"", transcripts=[]),
-    )
+    with patch("pyrit.executor.attack.streaming.barge_in.CentralMemory") as mock_cm:
+        mock_cm.get_memory_instance.return_value = mock_memory
+        await _drive_one_audio_turn(
+            attack,
+            vad_target,
+            raw_chunk=b"\x05" * 96,
+            item_id="raw_c",
+            turn_result=RealtimeTargetResult(audio_bytes=b"", transcripts=[]),
+        )
 
     user_msg = add_calls[0]
     identifiers = user_msg.message_pieces[0].converter_identifiers
@@ -582,17 +588,19 @@ async def test_persists_converted_audio_when_converters_changed_bytes(vad_target
         return f"/tmp/audio_{len(saved_calls)}.wav"
 
     vad_target.save_audio = AsyncMock(side_effect=fake_save_audio)
-    vad_target._memory = MagicMock()
-    vad_target._memory.add_message_to_memory = MagicMock()
+    mock_memory = MagicMock()
+    mock_memory.add_message_to_memory = MagicMock()
 
     raw = b"\x05" * 96
-    await _drive_one_audio_turn(
-        attack,
-        vad_target,
-        raw_chunk=raw,
-        item_id="raw_x",
-        turn_result=RealtimeTargetResult(audio_bytes=b"\xff" * 96, transcripts=[]),
-    )
+    with patch("pyrit.executor.attack.streaming.barge_in.CentralMemory") as mock_cm:
+        mock_cm.get_memory_instance.return_value = mock_memory
+        await _drive_one_audio_turn(
+            attack,
+            vad_target,
+            raw_chunk=raw,
+            item_id="raw_x",
+            turn_result=RealtimeTargetResult(audio_bytes=b"\xff" * 96, transcripts=[]),
+        )
 
     # save_audio called twice per turn: first for user audio (must be CONVERTED), then assistant audio.
     assert len(saved_calls) == 2
@@ -603,16 +611,18 @@ async def test_persists_converted_audio_when_converters_changed_bytes(vad_target
 async def test_attack_result_last_response_is_final_assistant_text_piece(vad_target):
     """AttackResult.last_response must point at the last assistant message's first piece (text)."""
     attack = BargeInAttack(objective_target=vad_target)
-    vad_target._memory = MagicMock()
-    vad_target._memory.add_message_to_memory = MagicMock()
+    mock_memory = MagicMock()
+    mock_memory.add_message_to_memory = MagicMock()
 
-    result = await _drive_one_audio_turn(
-        attack,
-        vad_target,
-        raw_chunk=b"\x00" * 96,
-        item_id="raw_lr",
-        turn_result=RealtimeTargetResult(audio_bytes=b"\xaa" * 96, transcripts=["final answer"]),
-    )
+    with patch("pyrit.executor.attack.streaming.barge_in.CentralMemory") as mock_cm:
+        mock_cm.get_memory_instance.return_value = mock_memory
+        result = await _drive_one_audio_turn(
+            attack,
+            vad_target,
+            raw_chunk=b"\x00" * 96,
+            item_id="raw_lr",
+            turn_result=RealtimeTargetResult(audio_bytes=b"\xaa" * 96, transcripts=["final answer"]),
+        )
 
     assert result.last_response is not None
     assert result.last_response.converted_value_data_type == "text"
