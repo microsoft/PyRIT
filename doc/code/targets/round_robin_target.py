@@ -15,7 +15,7 @@
 # selection. This is useful for load-balancing across multiple deployments of the same model (e.g.,
 # Azure OpenAI endpoints in different regions) to avoid rate limits or spread cost.
 #
-# **Key behaviors:**
+# **Key considerations:**
 # - All inner targets must be the same concrete class (e.g., all `OpenAIChatTarget`).
 # - All inner targets must support multi-turn conversations and editable history.
 # - Inner targets must have the same behavioral parameters (model, temperature, top_p).
@@ -132,6 +132,11 @@ print(f"\nDistribution: Target A = {counts['Target A']}, Target B = {counts['Tar
 # conversation from shared memory on each turn. This means different turns of the same
 # conversation may be handled by different inner targets — true load-balancing even within
 # a single multi-turn interaction.
+#
+# Note that using a `RoundRobinTarget` within a multi-turn attack can lead to greater API costs
+# due to loss of prompt caching. For longer, elaborate multi-turn attacks, especially where
+# rate limiting is not a primary concern, consider using a singular target.
+#
 
 # %%
 from pyrit.executor.attack import AttackAdversarialConfig, CrescendoAttack

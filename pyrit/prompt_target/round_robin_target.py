@@ -4,13 +4,14 @@
 import itertools
 import logging
 from dataclasses import fields
-from typing import Any
+from typing import Any, Optional
 
 from pyrit.identifiers import TARGET_BEHAVIORAL_PARAM_FALLBACKS, TARGET_BEHAVIORAL_PARAMS, ComponentIdentifier
 from pyrit.models import Message
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +31,14 @@ class RoundRobinTarget(PromptTarget):
     shared memory on each request regardless of which target handled prior turns.
 
     Note: switching targets mid-conversation defeats provider-side prompt
-    caching (e.g., OpenAI prefix caching). This is a cost/latency trade-off,
-    not a correctness issue.
+    prefix caching (e.g., OpenAI cached input tokens can give cost
+    reduction on long conversations). For multi-turn attacks like Crescendo
+    with many objectives, this can significantly increase API cost compared
+    to pinning each conversation to a single target. This is a cost/latency
+    vs. throughput trade-off — round-robin avoids per-endpoint rate limits at
+    the expense of caching. Users who need cache-efficient multi-turn
+    conversations should assign individual targets at the attack or scenario
+    level rather than using round-robin for those workloads.
 
     Memory entries are stamped with the round-robin's own identifier (not the
     inner target's). The inner target that handled each specific request is
@@ -49,6 +56,7 @@ class RoundRobinTarget(PromptTarget):
         *,
         targets: list[PromptTarget],
         weights: list[int] | None = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
     ) -> None:
         """
         Initialize the RoundRobinTarget.
@@ -61,6 +69,12 @@ class RoundRobinTarget(PromptTarget):
                 provided, must be the same length as ``targets`` with all values
                 > 0. For example, ``weights=[2, 1]`` sends roughly twice as many
                 requests to the first target. Defaults to equal weight.
+            custom_configuration (TargetConfiguration, Optional): Optional override
+                for the target configuration. When ``None`` (the default), the configuration
+                is built from the intersection of all inner targets' capabilities with
+                the default policy. When provided, the caller's configuration is used as-is
+                — the caller is responsible for ensuring it is compatible with
+                the inner targets.
 
         Raises:
             ValueError: If fewer than 2 targets are provided, targets are
@@ -70,6 +84,9 @@ class RoundRobinTarget(PromptTarget):
         """
         if len(targets) < 2:
             raise ValueError(f"RoundRobinTarget requires at least 2 targets, got {len(targets)}.")
+
+        if any(isinstance(t, RoundRobinTarget) for t in targets):
+            raise ValueError("Nesting RoundRobinTarget inside another RoundRobinTarget is not supported.")
 
         first_type = type(targets[0])
         for i, t in enumerate(targets[1:], start=1):
@@ -87,14 +104,14 @@ class RoundRobinTarget(PromptTarget):
 
         intersected = _intersect_capabilities([t.capabilities for t in targets])
 
+        effective_configuration = custom_configuration or TargetConfiguration(capabilities=intersected)
+
         super().__init__(
-            custom_configuration=TargetConfiguration(capabilities=intersected),
+            custom_configuration=effective_configuration,
         )
 
         # Validate that the intersected capabilities meet chat target requirements
         # (multi-turn + editable history).
-        from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS
-
         CHAT_TARGET_REQUIREMENTS.validate(target=self)
 
         # Ensure that for LLM scoring evaluation purposes, the inner targets have the equivalent behavioral params

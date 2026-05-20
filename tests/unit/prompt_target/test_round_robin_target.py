@@ -23,6 +23,14 @@ def test_init_rejects_empty_targets():
 
 
 @pytest.mark.usefixtures("patch_central_database")
+def test_init_rejects_nested_round_robin():
+    t1, t2 = MockPromptTarget(), MockPromptTarget()
+    rr = RoundRobinTarget(targets=[t1, t2])
+    with pytest.raises(ValueError, match="Nesting RoundRobinTarget"):
+        RoundRobinTarget(targets=[rr, rr])
+
+
+@pytest.mark.usefixtures("patch_central_database")
 def test_init_rejects_mixed_classes():
     from pyrit.prompt_target import TextTarget
 
