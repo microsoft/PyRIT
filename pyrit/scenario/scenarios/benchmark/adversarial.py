@@ -37,7 +37,7 @@ class AdversarialBenchmark(Scenario):
 
     #: AdversarialBenchmark compares attack-success rates across adversarial models; a baseline
     #: attack would be model-independent and contribute no signal to the comparison.
-    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Forbidden
+    BASELINE_ATTACK_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Forbidden
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:

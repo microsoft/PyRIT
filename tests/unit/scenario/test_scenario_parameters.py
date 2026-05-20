@@ -35,7 +35,7 @@ def _make_scenario(*, declared_params: list[Parameter]) -> Scenario:
 
     class _ParamTestScenario(Scenario):
         # No baseline in tests so atomic_attacks observations stay deterministic.
-        BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Forbidden
+        BASELINE_ATTACK_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Forbidden
 
         @classmethod
         def get_strategy_class(cls):

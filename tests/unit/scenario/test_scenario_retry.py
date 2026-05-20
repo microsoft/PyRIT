@@ -137,7 +137,7 @@ def create_mock_atomic_attack(name: str, objectives: list[str], run_async_mock: 
 class ConcreteScenario(Scenario):
     """Concrete implementation of Scenario for testing."""
 
-    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Forbidden
+    BASELINE_ATTACK_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Forbidden
 
     def __init__(self, atomic_attacks_to_return=None, objective_scorer=None, **kwargs):
         # Get strategy_class from kwargs or use default

@@ -466,7 +466,7 @@ class TestBenchmarkRuntime:
             mock_objective_target=mock_objective_target,
             adversarial_models=single_adversarial_model,
         )
-        assert type(scenario).BASELINE_POLICY is BaselinePolicy.Forbidden
+        assert type(scenario).BASELINE_ATTACK_POLICY is BaselinePolicy.Forbidden
         assert not any(a.atomic_attack_name == "baseline" for a in scenario._atomic_attacks)
 
     async def test_baseline_explicit_true_raises(self, mock_objective_target, single_adversarial_model):

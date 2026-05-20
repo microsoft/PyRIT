@@ -205,12 +205,12 @@ class TestJailbreakInitialization:
 
     def test_class_inherits_default_baseline_policy(self):
         """Jailbreak inherits the base default (Enabled) — baseline included by default."""
-        assert Jailbreak.BASELINE_POLICY is BaselinePolicy.Enabled
+        assert Jailbreak.BASELINE_ATTACK_POLICY is BaselinePolicy.Enabled
 
     async def test_default_initialize_includes_baseline(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
-        """initialize_async without include_baseline honors BASELINE_POLICY=Enabled."""
+        """initialize_async without include_baseline honors BASELINE_ATTACK_POLICY=Enabled."""
         with patch.object(Jailbreak, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
             scenario = Jailbreak(objective_scorer=mock_objective_scorer)
             await scenario.initialize_async(objective_target=mock_objective_target)

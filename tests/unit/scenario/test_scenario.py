@@ -100,7 +100,7 @@ class ConcreteScenario(Scenario):
 
     # Tests using this fixture should default to no baseline; set the class policy to Forbidden
     # so we don't have to thread include_baseline=False through every initialize_async call.
-    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Forbidden
+    BASELINE_ATTACK_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Forbidden
 
     def __init__(self, atomic_attacks_to_return=None, **kwargs):
         # Add required strategy_class if not provided

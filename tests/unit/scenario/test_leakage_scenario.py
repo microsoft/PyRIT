@@ -105,7 +105,7 @@ class TestLeakageInitialization:
 
     def test_init_supports_default_baseline(self):
         """Leakage opts into the parent's default baseline."""
-        assert Leakage.BASELINE_POLICY is BaselinePolicy.Enabled
+        assert Leakage.BASELINE_ATTACK_POLICY is BaselinePolicy.Enabled
 
 
 @pytest.mark.usefixtures(*FIXTURES)
