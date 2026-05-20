@@ -196,19 +196,21 @@ class AzureMLChatTarget(PromptTarget):
         Set the endpoint and key for accessing the Azure ML model. Use this function to manually
         pass in your own endpoint uri and api key. Defaults to the values in the .env file for the variables
         stored in self.endpoint_uri_environment_variable and self.api_key_environment_variable (which default to
-        "AZURE_ML_MANAGED_ENDPOINT" and "AZURE_ML_KEY" respectively).
+        "AZURE_ML_MANAGED_ENDPOINT" and "AZURE_ML_KEY" respectively). It is recommended to set these variables
+        in the .env file and call _set_env_configuration_vars rather than passing the uri and key directly to
+        this function or the target constructor.
 
-        If ``api_key`` is a callable (synchronous or asynchronous), it is treated as an Entra ID
-        token provider. The callable is stored on ``self._api_key_provider`` and resolved per-request
+        If ``api_key`` is a callable, it is treated as an Entra ID token provider.
+        The callable is stored on ``self._api_key_provider`` and resolved per-request
         inside ``_get_headers_async``. Synchronous providers are wrapped via
-        ``ensure_async_token_provider``. In callable mode the ``AZURE_ML_KEY`` environment variable
-        is intentionally NOT consulted, so the caller-provided provider always wins.
+        ``ensure_async_token_provider``.
 
         Args:
             endpoint (str | None): The endpoint uri for the deployed Azure ML model.
-            api_key (str | Callable[[], str | Awaitable[str]] | None): A static API key string,
-                an async/sync callable returning a bearer token, or None to fall back to the
-                ``AZURE_ML_KEY`` environment variable.
+            api_key (str | Callable[[], str | Awaitable[str]] | None):
+                The API key for accessing the Azure ML endpoint, or a callable
+                which returns a bearer token, or None to fall back to the
+                ``AZURE_ML_KEY`` env variable.
         """
         self._endpoint = default_values.get_required_value(
             env_var_name=self.endpoint_uri_environment_variable, passed_value=endpoint
@@ -216,10 +218,6 @@ class AzureMLChatTarget(PromptTarget):
 
         if callable(api_key):
             normalized = ensure_async_token_provider(api_key)
-            # ``ensure_async_token_provider`` returns the input unchanged when it is None
-            # or a string and returns a callable when the input is callable. We already
-            # verified the input is callable above, so narrow the return type for ty.
-            assert callable(normalized), "ensure_async_token_provider must return a callable for callable input"
             provider = cast("Callable[[], Awaitable[str]]", normalized)
             self._api_key_provider: Callable[[], Awaitable[str]] | None = provider
             self._api_key = ""
@@ -347,9 +345,9 @@ class AzureMLChatTarget(PromptTarget):
         """
         Headers for accessing inference endpoint deployed in AML using a static API key.
 
-        Only valid when this target was configured with a string ``api_key``. When an Entra ID
-        token provider was supplied, callers must use ``_get_headers_async`` instead, because
-        the token must be fetched asynchronously and refreshed on each request.
+        Only valid when this target was configured with a string ``api_key``.
+        When an Entra ID token provider supplied, callers must use ``_get_headers_async``
+        instead, because the token must be fetched asynchronously and refreshed on each request.
 
         Returns:
             headers(dict): contains bearer token as AML key and content-type: JSON
