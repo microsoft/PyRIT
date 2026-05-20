@@ -9,6 +9,8 @@ deferred inside each ``*MemoryPrinter`` constructor, so importing this module (o
 ``pyrit.output``) does not pull in the memory stack until a memory-backed printer is instantiated.
 """
 
+import os
+
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import AttackResult, Message, Score
 from pyrit.models.scenario_result import ScenarioResult
@@ -31,6 +33,7 @@ async def output_attack_async(
     include_adversarial_conversation: bool = False,
     blur_images: bool = False,
     blur_radius: int = 20,
+    blurred_dir: str | os.PathLike[str] | None = None,
 ) -> None:
     """
     Print an attack result in the specified format to the specified destination.
@@ -46,16 +49,23 @@ async def output_attack_async(
             Defaults to False.
         blur_images (bool): If True, apply a Gaussian blur to image outputs before
             rendering them. For "pretty" output, image bytes are blurred in-memory before
-            display. For "markdown" output, a blurred sibling file is written next to
-            each image and linked instead of the original. Defaults to False.
+            display. For "markdown" output, a blurred file is written to disk and the
+            markdown links to it instead of the original. The original image file is
+            **not** modified and remains accessible on disk; this flag is intended to
+            reduce reviewer exposure, not to enforce access control.
+            Defaults to False.
         blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
             Defaults to 20.
+        blurred_dir (str | PathLike | None): For "markdown" output, directory to write
+            blurred copies into. Defaults to None (sibling of the original). Ignored
+            when ``format != "markdown"``.
     """
     if format == "markdown":
         printer = MarkdownAttackResultMemoryPrinter(
             sink=sink or get_default_sink(),
             blur_images=blur_images,
             blur_radius=blur_radius,
+            blurred_dir=blurred_dir,
         )
     else:
         printer = PrettyAttackResultMemoryPrinter(

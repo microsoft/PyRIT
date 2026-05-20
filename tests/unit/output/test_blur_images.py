@@ -187,6 +187,109 @@ def test_pretty_attack_result_memory_printer_forwards_blur_flag(patch_central_da
 def test_markdown_attack_result_memory_printer_forwards_blur_flag(patch_central_database):
     from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 
-    printer = MarkdownAttackResultMemoryPrinter(blur_images=True, blur_radius=9)
+    printer = MarkdownAttackResultMemoryPrinter(blur_images=True, blur_radius=9, blurred_dir="/tmp/blurred")
     assert printer._conversation_printer._blur_images is True
     assert printer._conversation_printer._blur_radius == 9
+    assert printer._conversation_printer._blurred_dir == "/tmp/blurred"
+
+
+# --- Round 2: configurable destination ---
+
+
+def test_markdown_blurred_dir_redirects_output(tmp_path):
+    image_bytes = _make_image_bytes()
+    image_path = tmp_path / "src" / "img.png"
+    image_path.parent.mkdir()
+    image_path.write_bytes(image_bytes)
+    blurred_dir = tmp_path / "blurred"
+
+    printer = _ConcreteMarkdown(blur_images=True, blur_radius=5, blurred_dir=str(blurred_dir))
+    lines = printer._format_image_content(image_path=str(image_path))
+
+    blurred_path = blurred_dir / "img_blurred.png"
+    assert blurred_path.exists()
+    # Original directory must not contain the blurred copy
+    assert not (image_path.parent / "img_blurred.png").exists()
+    expected_rel = os.path.relpath(str(blurred_path)).replace("\\", "/")
+    assert lines[0] == f"![Image]({expected_rel})\n"
+
+
+# --- Round 2: atomic write ---
+
+
+def test_markdown_atomic_write_leaves_no_temp_on_failure(tmp_path):
+    image_bytes = _make_image_bytes()
+    image_path = tmp_path / "img.png"
+    image_path.write_bytes(image_bytes)
+
+    printer = _ConcreteMarkdown(blur_images=True, blur_radius=5)
+
+    # Force os.replace to fail; the temp file should be cleaned up and the original
+    # path returned as fallback.
+    with patch("pyrit.output.conversation.markdown.os.replace", side_effect=OSError("boom")):
+        lines = printer._format_image_content(image_path=str(image_path))
+
+    # Falls back to the original
+    expected_rel = os.path.relpath(str(image_path)).replace("\\", "/")
+    assert lines[0] == f"![Image]({expected_rel})\n"
+
+    # No temp files left behind, no blurred file produced
+    leftovers = [p.name for p in tmp_path.iterdir() if p.name != "img.png"]
+    assert leftovers == [], f"Unexpected leftover files: {leftovers}"
+
+
+# --- Round 2: original not modified ---
+
+
+def test_markdown_blur_does_not_modify_original(tmp_path):
+    image_bytes = _make_image_bytes()
+    image_path = tmp_path / "img.png"
+    image_path.write_bytes(image_bytes)
+    original_mtime = image_path.stat().st_mtime_ns
+
+    printer = _ConcreteMarkdown(blur_images=True, blur_radius=5)
+    printer._format_image_content(image_path=str(image_path))
+
+    assert image_path.read_bytes() == image_bytes
+    assert image_path.stat().st_mtime_ns == original_mtime
+
+
+# --- Round 2: end-to-end via output_attack_async ---
+
+
+async def test_output_attack_async_forwards_blur_to_markdown_printer():
+    from pyrit.output import helpers
+
+    fake_printer = MagicMock()
+    fake_printer.write_async = AsyncMock()
+    with patch.object(helpers, "MarkdownAttackResultMemoryPrinter", return_value=fake_printer) as cls:
+        await helpers.output_attack_async(
+            result=MagicMock(),
+            format="markdown",
+            blur_images=True,
+            blur_radius=11,
+            blurred_dir="/tmp/x",
+        )
+
+    kwargs = cls.call_args.kwargs
+    assert kwargs["blur_images"] is True
+    assert kwargs["blur_radius"] == 11
+    assert kwargs["blurred_dir"] == "/tmp/x"
+
+
+async def test_output_attack_async_forwards_blur_to_pretty_printer():
+    from pyrit.output import helpers
+
+    fake_printer = MagicMock()
+    fake_printer.write_async = AsyncMock()
+    with patch.object(helpers, "PrettyAttackResultMemoryPrinter", return_value=fake_printer) as cls:
+        await helpers.output_attack_async(
+            result=MagicMock(),
+            format="pretty",
+            blur_images=True,
+            blur_radius=11,
+        )
+
+    kwargs = cls.call_args.kwargs
+    assert kwargs["blur_images"] is True
+    assert kwargs["blur_radius"] == 11
