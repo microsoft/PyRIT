@@ -33,7 +33,7 @@ def _stamp_scenario_linkage(*, attack_results, atomic_attack):
     """
     Stamp attribution_parent_id + attribution_data on each AttackResult the
     same way the real attack persistence path does. Mirrors what
-    ``_DefaultAttackStrategyEventHandler._stamp_attribution`` does at runtime
+    ``_DefaultAttackStrategyEventHandler._apply_attribution`` does at runtime
     so test fixtures that mock out the executor still produce DB rows the new
     foreign-key-based hydration can find.
     """

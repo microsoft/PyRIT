@@ -388,7 +388,7 @@ def test_backfill_is_idempotent_and_does_not_clobber_existing_linkage():
                     / "memory"
                     / "alembic"
                     / "versions"
-                    / "9c8b7a6d5e4f_add_scenario_linkage_to_attack_results.py"
+                    / "9c8b7a6d5e4f_add_attribution_to_attack_results.py"
                 )
                 spec = spec_from_file_location("scenario_linkage_migration", migration_path)
                 assert spec is not None and spec.loader is not None

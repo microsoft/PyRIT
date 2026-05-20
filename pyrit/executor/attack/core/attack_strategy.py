@@ -231,7 +231,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         # Stamp attribution onto the result before persistence so the
         # AttackResultEntry row records its lineage. Outside an orchestrator
         # _attribution is None and both attribution fields stay None.
-        self._stamp_attribution(context=event_data.context, result=event_data.result)
+        self._apply_attribution(context=event_data.context, result=event_data.result)
 
         self._logger.debug(f"Attack execution completed in {execution_time_ms}ms")
 
@@ -239,7 +239,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         self._memory.add_attack_results_to_memory(attack_results=[event_data.result])
 
     @staticmethod
-    def _stamp_attribution(
+    def _apply_attribution(
         *,
         context: AttackStrategyContextT,
         result: AttackResult,
@@ -331,7 +331,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
 
         # Stamp attribution onto the error result so it is locatable via the
         # attribution_parent_id foreign key on resume.
-        self._stamp_attribution(context=context, result=error_result)
+        self._apply_attribution(context=context, result=error_result)
 
         self._memory.add_attack_results_to_memory(attack_results=[error_result])
 
