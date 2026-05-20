@@ -1,17 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""
-Streaming barge-in attack over realtime audio targets.
-
-Pushes user audio chunks into a continuous Realtime API session, lets server VAD
-detect turn boundaries, runs configured audio converters against the buffered raw
-audio for each detected turn, swaps the server's raw user item for the converted
-audio, manually fires ``response.create``, and observes server-side interruption
-when new user audio arrives while the assistant is still speaking. Per-turn
-``Message`` pairs are written to ``CentralMemory``; interrupted turns carry
-``prompt_metadata["interrupted"] = True`` on both assistant pieces.
-"""
+"""Streaming barge-in attack over realtime audio targets."""
 
 from __future__ import annotations
 
@@ -57,19 +47,7 @@ _REALTIME_SAMPLE_RATE_HZ = 24000
 
 @dataclass
 class BargeInAttackContext(AttackContext[AttackParamsT]):
-    """
-    Context for a streaming barge-in attack.
-
-    Beyond the standard ``AttackContext`` fields, callers supply:
-
-    Attributes:
-        conversation_id: Identifier shared by all turns persisted from this session.
-        audio_chunks: Async iterator yielding raw PCM16 mono @ 24 kHz chunks. Drives
-            the cadence of input; the attack pushes each chunk as it arrives. When
-            the iterator exhausts, the attack waits briefly for any in-flight turn
-            to resolve, then tears down.
-        system_prompt: System prompt to apply to the realtime session.
-    """
+    """Context for a streaming barge-in attack with audio chunk source and session config."""
 
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     audio_chunks: AsyncIterator[bytes] | None = None
@@ -108,19 +86,10 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         Initialize the streaming barge-in attack.
 
         Args:
-            objective_target: Target to attack. Must declare ``STREAMING_BARGE_IN``
-                in its capabilities (validated by ``TARGET_REQUIREMENTS``); the
-                server-VAD configuration check happens lazily when the streaming
-                session config is sent.
-            attack_converter_config: Converter configurations applied to each
-                committed user turn via ``PromptNormalizer.convert_audio_async``.
-                ``request_converters`` runs on the raw user audio post-commit;
-                ``response_converters`` is currently unused (streaming responses
-                are surfaced raw to the caller). Defaults to no converters.
-            prompt_normalizer: Optional normalizer override. Defaults to a fresh
-                ``PromptNormalizer`` instance.
-            params_type: Attack parameter dataclass type. Defaults to
-                ``AttackParameters``.
+            objective_target: Target to attack. Must declare ``STREAMING_BARGE_IN`` capability.
+            attack_converter_config: Converters applied to each committed user turn.
+            prompt_normalizer: Optional normalizer override.
+            params_type: Attack parameter dataclass type.
         """
         super().__init__(
             objective_target=objective_target,
@@ -307,17 +276,10 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         turn_result: RealtimeTargetResult,
     ) -> Message:
         """
-        Persist the user+assistant ``Message`` pair for one completed turn to ``CentralMemory``.
-
-        Saves user audio (whichever PCM the model actually heard — converted or raw)
-        and the assistant response audio to disk, builds a one-piece user ``Message``
-        and a two-piece assistant ``Message`` (text transcript + audio_path), stamps
-        ``converter_identifiers`` on the user piece, and sets
-        ``prompt_metadata["interrupted"] = True`` on both assistant pieces when the
-        turn was cut short by server-side barge-in.
+        Persist the user+assistant Message pair for one completed turn to CentralMemory.
 
         Returns:
-            The assistant ``Message`` so callers can surface it as ``last_response``.
+            The assistant Message so callers can surface it as ``last_response``.
         """
         user_audio_path = await target.save_audio(
             user_audio_pcm,

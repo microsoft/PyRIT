@@ -16,16 +16,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ServerVadConfig:
-    """
-    Server-side voice activity detection (VAD) tuning for realtime audio targets.
-
-    Attributes:
-        threshold: VAD activation threshold (0.0 to 1.0). Defaults to 0.4.
-        prefix_padding_ms: Milliseconds of pre-roll audio retained before detected speech.
-            Defaults to 200.
-        silence_duration_ms: Milliseconds of silence required to detect end-of-turn.
-            Defaults to 1500.
-    """
+    """Server-side voice activity detection (VAD) tuning for realtime audio targets."""
 
     threshold: float = 0.4
     prefix_padding_ms: int = 200
@@ -48,18 +39,7 @@ class ServerVadConfig:
 
 @dataclass
 class RealtimeTargetResult:
-    """
-    Result of a Realtime API turn, containing the audio and transcripts actually delivered.
-
-    Attributes:
-        audio_bytes: Raw PCM16 audio returned by the assistant. May be partial if the
-            turn was interrupted.
-        transcripts: Transcript deltas captured during the turn.
-        interrupted: True if the turn was cut short by server VAD detecting new user
-            speech during the assistant's response. Always False on the atomic
-            ``send_audio_async`` / ``send_text_async`` paths; populated in the
-            streaming-session path when a barge-in is detected.
-    """
+    """Result of a Realtime API turn: delivered audio, transcripts, and interruption status."""
 
     audio_bytes: bytes = b""
     transcripts: list[str] = field(default_factory=list)
@@ -72,26 +52,7 @@ class RealtimeTargetResult:
 
 @dataclass
 class _RealtimeTurnState:
-    """
-    Mutable per-turn state assembled by the dispatcher and read by the cancel path.
-
-    The dispatcher routes incoming events into this object during a turn; the
-    completion future is resolved by the dispatcher with a ``RealtimeTargetResult``
-    snapshotted from these fields once the turn ends normally or via interruption.
-
-    Attributes:
-        completion: Future resolved with the assembled result when the turn ends.
-        is_responding: True between ``response.created`` and ``response.done`` for
-            the active response.
-        delivered_audio: Assistant audio bytes accumulated from ``response.audio.delta``.
-            Uses ``bytearray`` so deltas append in place rather than reallocating.
-        delivered_transcripts: Transcript deltas accumulated from ``response.audio_transcript.delta``.
-        current_item_id: Item id of the assistant response currently being streamed.
-            None until ``response.output_item.added`` fires.
-        last_response_id: Response id of the in-flight response. None until
-            ``response.created`` fires.
-        interrupted: Set True when the cancel/truncate path runs.
-    """
+    """Mutable per-turn state assembled by the dispatcher from incoming events."""
 
     completion: asyncio.Future[RealtimeTargetResult]
     is_responding: bool = False
@@ -104,15 +65,7 @@ class _RealtimeTurnState:
 
 @dataclass(frozen=True)
 class _CommittedEvent:
-    """
-    Event-shaped payload passed to ``on_user_audio_committed`` callbacks.
-
-    Attributes:
-        item_id: Server-assigned id of the conversation item that was committed.
-            Used to delete the raw item before replaying converted audio.
-        audio_start_ms: Optional audio start timestamp from the underlying server
-            event, when reported by the provider. May be useful for analytics.
-    """
+    """Payload passed to ``on_user_audio_committed`` callbacks when server VAD commits."""
 
     item_id: str
     audio_start_ms: int | None = None
@@ -122,14 +75,7 @@ class _RealtimeEventDispatcher(ABC):
     """
     Owns a realtime connection's event stream and routes events to the active turn.
 
-    One long-lived async task per websocket connection. The dispatcher is the only
-    code that consumes the connection's async iterator; turn-aware senders register
-    a ``_RealtimeTurnState`` and ``await state.completion`` while the dispatcher
-    mutates the state in response to incoming events.
-
-    Provider-specific event names and cancel wire calls are isolated to the
-    abstract methods so each realtime provider (OpenAI, Gemini Live, etc.) supplies
-    only its routing and cancel logic.
+    Provider-specific event routing and cancel logic are isolated to the abstract methods.
     """
 
     def __init__(
