@@ -55,13 +55,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class BaselinePolicy(Enum):
+class BaselineAttackPolicy(Enum):
     """
     Declares how a scenario type treats the default baseline atomic attack.
 
     The baseline is a plain ``PromptSendingAttack`` that sends each objective unmodified,
     used as a comparison point against the scenario's strategies. Each scenario class
-    declares its policy via ``Scenario.BASELINE_POLICY``; callers can still override
+    declares its policy via ``Scenario.BASELINE_ATTACK_POLICY``; callers can still override
     at runtime via ``initialize_async(include_baseline=...)`` for the ``Enabled`` and
     ``Disabled`` states.
     """
@@ -145,7 +145,7 @@ class Scenario(ABC):
     #: ``initialize_async`` and overridable per run via ``include_baseline`` for the
     #: ``Enabled`` and ``Disabled`` states; ``Forbidden`` is a hard constraint and a
     #: caller-supplied ``include_baseline=True`` raises ``ValueError``.
-    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Enabled
+    BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
 
     @classmethod
     def _get_additional_scoring_questions(cls) -> Sequence[Path]:
@@ -621,14 +621,14 @@ class Scenario(ABC):
             include_baseline (bool | None): Whether to prepend a baseline atomic attack that sends
                 all objectives without modifications, allowing comparison between unmodified prompts
                 and the scenario's strategies. If None (the default), the scenario type's
-                ``BASELINE_POLICY`` class attribute decides: ``Enabled`` includes it,
+                ``BASELINE_ATTACK_POLICY`` class attribute decides: ``Enabled`` includes it,
                 ``Disabled`` omits it, and ``Forbidden`` always omits it (and rejects an
-                explicit ``True``). Passing ``True`` to a scenario whose ``BASELINE_POLICY``
+                explicit ``True``). Passing ``True`` to a scenario whose ``BASELINE_ATTACK_POLICY``
                 is ``Forbidden`` raises ``ValueError``.
 
         Raises:
             ValueError: If no objective_target is provided, or if ``include_baseline=True`` is passed
-                to a scenario whose ``BASELINE_POLICY`` is ``Forbidden``.
+                to a scenario whose ``BASELINE_ATTACK_POLICY`` is ``Forbidden``.
         """
         # Validate required parameters
         if objective_target is None:
@@ -657,15 +657,15 @@ class Scenario(ABC):
         # scenario type never silently inherits a True default; explicit-True on a forbidden
         # type is a hard error rather than a silent ignore. For the Enabled / Disabled states,
         # a None runtime value defers to the policy.
-        if self.BASELINE_POLICY is BaselinePolicy.Forbidden:
+        if self.BASELINE_ATTACK_POLICY is BaselineAttackPolicy.Forbidden:
             if include_baseline is True:
                 raise ValueError(
                     f"{type(self).__name__} does not support a default baseline "
-                    f"(BASELINE_POLICY = Forbidden); pass include_baseline=False or omit the argument."
+                    f"(BASELINE_ATTACK_POLICY = Forbidden); pass include_baseline=False or omit the argument."
                 )
             include_baseline = False
         elif include_baseline is None:
-            include_baseline = self.BASELINE_POLICY is BaselinePolicy.Enabled
+            include_baseline = self.BASELINE_ATTACK_POLICY is BaselineAttackPolicy.Enabled
 
         self._include_baseline = include_baseline
 

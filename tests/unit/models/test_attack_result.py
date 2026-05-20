@@ -8,7 +8,10 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models.attack_result import AttackOutcome, AttackResult
+from pyrit.models.conversation_reference import ConversationReference, ConversationType
+from pyrit.models.message_piece import MessagePiece
 from pyrit.models.retry_event import RetryEvent
+from pyrit.models.score import Score
 
 
 class TestAttackResultDeprecation:
@@ -351,3 +354,84 @@ class TestAttackResultErrorRoundTrip:
         )
         entry = AttackResultEntry(entry=original)
         assert len(entry.error_traceback) == 10240
+
+
+def test_to_dict_from_dict_roundtrip():
+    scorer_id = ComponentIdentifier(
+        class_name="SelfAskTrueFalseScorer",
+        class_module="pyrit.score",
+    )
+    target_id = ComponentIdentifier(
+        class_name="OpenAIChatTarget",
+        class_module="pyrit.prompt_target",
+        params={"endpoint": "https://api.example.com"},
+    )
+    attack_id = ComponentIdentifier(
+        class_name="PromptSendingAttack",
+        class_module="pyrit.executor.attack",
+    )
+    last_response = MessagePiece(
+        id="12345678-aaaa-bbbb-cccc-123456789abc",
+        role="assistant",
+        original_value="Sure, here is the answer.",
+        conversation_id="conv-1",
+        sequence=1,
+        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+        prompt_target_identifier=target_id,
+        attack_identifier=attack_id,
+    )
+    last_score = Score(
+        score_value="true",
+        score_value_description="met objective",
+        score_type="true_false",
+        score_rationale="objective clearly met",
+        scorer_class_identifier=scorer_id,
+        message_piece_id="12345678-aaaa-bbbb-cccc-123456789abc",
+        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    original = AttackResult(
+        conversation_id="conv-1",
+        objective="Generate harmful content",
+        attack_result_id="ar-001",
+        atomic_attack_identifier=attack_id,
+        last_response=last_response,
+        last_score=last_score,
+        executed_turns=5,
+        execution_time_ms=2500,
+        outcome=AttackOutcome.SUCCESS,
+        outcome_reason="Objective was achieved",
+        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+        related_conversations={
+            ConversationReference(
+                conversation_id="conv-2",
+                conversation_type=ConversationType.PRUNED,
+                description="pruned branch",
+            ),
+            ConversationReference(
+                conversation_id="conv-3",
+                conversation_type=ConversationType.SCORE,
+                description="scoring conversation",
+            ),
+        },
+        metadata={"model": "gpt-4", "temperature": 0.7},
+        labels={"category": "violence", "severity": "high"},
+        error_message="partial error",
+        error_type="RuntimeError",
+        error_traceback="Traceback ...\n  File ...",
+        retry_events=[
+            RetryEvent(
+                attempt_number=1,
+                function_name="send_prompt",
+                exception_type="TimeoutError",
+                exception_message="Request timed out",
+                component_role="target",
+                component_name="OpenAIChatTarget",
+                endpoint="https://api.example.com",
+                elapsed_seconds=30.5,
+                timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+            ),
+        ],
+        total_retries=1,
+    )
+    roundtripped = AttackResult.from_dict(original.to_dict())
+    assert original.to_dict() == roundtripped.to_dict()

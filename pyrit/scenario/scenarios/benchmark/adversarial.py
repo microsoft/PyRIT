@@ -15,7 +15,7 @@ from pyrit.registry import AttackTechniqueRegistry, AttackTechniqueSpec
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
-from pyrit.scenario.core.scenario import BaselinePolicy, Scenario
+from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 
 if TYPE_CHECKING:
@@ -37,7 +37,7 @@ class AdversarialBenchmark(Scenario):
 
     #: AdversarialBenchmark compares attack-success rates across adversarial models; a baseline
     #: attack would be model-independent and contribute no signal to the comparison.
-    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Forbidden
+    BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:

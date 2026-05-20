@@ -129,7 +129,6 @@ class PlaywrightCopilotTarget(PromptTarget):
         page: "Page",
         copilot_type: CopilotType = CopilotType.CONSUMER,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the Playwright Copilot target.
@@ -140,14 +139,12 @@ class PlaywrightCopilotTarget(PromptTarget):
                 Defaults to CopilotType.CONSUMER.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
 
         Raises:
             RuntimeError: If the Playwright page is not initialized.
             ValueError: If the page URL doesn't match the specified copilot_type.
         """
-        super().__init__(custom_configuration=custom_configuration, custom_capabilities=custom_capabilities)
+        super().__init__(custom_configuration=custom_configuration)
         self._page = page
         self._type = copilot_type
 

@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import warnings
 from dataclasses import fields
 
 import pytest
@@ -15,7 +14,7 @@ from pyrit.prompt_target.common.target_capabilities import (
     TargetCapabilities,
     UnsupportedCapabilityBehavior,
 )
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration, resolve_configuration_compat
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
 @pytest.fixture
@@ -199,26 +198,6 @@ async def test_normalize_async_adapts_multi_turn(adapt_all_policy, make_message)
     assert len(result) == 1
     assert "[Conversation History]" in result[0].message_pieces[0].converted_value
     assert "turn 2" in result[0].message_pieces[0].converted_value
-
-
-def test_resolve_configuration_compat_raises_when_both_supplied():
-    caps = TargetCapabilities()
-    config = TargetConfiguration(capabilities=caps)
-    with pytest.raises(ValueError, match="Cannot specify both"):
-        resolve_configuration_compat(custom_configuration=config, custom_capabilities=caps)
-
-
-def test_resolve_configuration_compat_wraps_capabilities_with_warning():
-    caps = TargetCapabilities(supports_multi_turn=True)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = resolve_configuration_compat(custom_configuration=None, custom_capabilities=caps)
-
-    assert isinstance(result, TargetConfiguration)
-    assert result.capabilities.supports_multi_turn is True
-    deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert len(deprecation_warnings) == 1
-    assert "custom_capabilities" in str(deprecation_warnings[0].message)
 
 
 # ---------------------------------------------------------------------------
