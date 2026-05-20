@@ -521,19 +521,19 @@ describe("CreateTargetDialog", () => {
       target: { value: "https://my-resource.openai.azure.com/" },
     });
 
-    // API Key field is visible by default.
+    // check that API Key field is visible by default.
     expect(
       screen.getByPlaceholderText("API key (stored in memory only)")
     ).toBeInTheDocument();
 
-    // Select Entra radio.
+    // Select Entra option.
     await user.click(
       screen.getByRole("radio", {
         name: /Microsoft Entra Authentication/,
       })
     );
 
-    // API Key field is hidden in Entra mode.
+    // check that API Key field is hidden when Entra mode is selected.
     expect(
       screen.queryByPlaceholderText("API key (stored in memory only)")
     ).not.toBeInTheDocument();
@@ -575,7 +575,7 @@ describe("CreateTargetDialog", () => {
       target: { value: "https://my-resource.openai.azure.com/" },
     });
 
-    // Type a key, then switch to Entra.
+    // Type a key, then switch to Entra option.
     fireEvent.change(
       screen.getByPlaceholderText("API key (stored in memory only)"),
       { target: { value: "sk-typed-before-switch" } }
