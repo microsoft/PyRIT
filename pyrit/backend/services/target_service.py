@@ -50,17 +50,14 @@ _AZURE_OPENAI_HOSTNAME_SUFFIXES = (
 def _is_azure_openai_endpoint(endpoint: str) -> bool:
     """
     Return True if ``endpoint`` resolves to a known Azure OpenAI / AI Foundry host.
-
-    Strict hostname-suffix check (not a substring search) so a bearer token is
-    never issued for an attacker-controlled endpoint whose URL merely contains
-    the word "azure".
+    Uses a strict hostname-suffix check (not a substring search).
 
     Args:
         endpoint (str): The endpoint URL to validate.
 
     Returns:
-        bool: True if the endpoint's hostname ends with a recognised Azure OpenAI /
-        AI Foundry suffix; False otherwise (including for malformed URLs).
+        bool: True if the endpoint's hostname ends with a recognised Azure suffix;
+            False otherwise
     """
     hostname = (urlparse(endpoint).hostname or "").lower()
     return any(hostname.endswith(suffix) for suffix in _AZURE_OPENAI_HOSTNAME_SUFFIXES)

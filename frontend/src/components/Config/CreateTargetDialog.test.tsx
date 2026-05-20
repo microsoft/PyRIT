@@ -529,7 +529,7 @@ describe("CreateTargetDialog", () => {
     // Select Entra radio.
     await user.click(
       screen.getByRole("radio", {
-        name: /Microsoft Entra ID/,
+        name: /Microsoft Entra Authentication/,
       })
     );
 
@@ -582,7 +582,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await user.click(
-      screen.getByRole("radio", { name: /Microsoft Entra ID/ })
+      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
     );
 
     await user.click(screen.getByText("Create Target"));
@@ -611,11 +611,11 @@ describe("CreateTargetDialog", () => {
     fireEvent.change(endpointInput, { target: { value: "https://api.openai.com/" } });
 
     await user.click(
-      screen.getByRole("radio", { name: /Microsoft Entra ID/ })
+      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
     );
 
     expect(
-      screen.getByText(/Microsoft Entra ID authentication is only supported for Azure endpoints/)
+      screen.getByText(/Entra auth only works with Azure OpenAI/)
     ).toBeInTheDocument();
   });
 
@@ -638,11 +638,11 @@ describe("CreateTargetDialog", () => {
     });
 
     await user.click(
-      screen.getByRole("radio", { name: /Microsoft Entra ID/ })
+      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
     );
 
     expect(
-      screen.queryByText(/only supported for Azure endpoints/)
+      screen.queryByText(/Entra auth only works with Azure OpenAI/)
     ).not.toBeInTheDocument();
   });
 });

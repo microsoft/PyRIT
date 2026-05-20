@@ -83,8 +83,8 @@ class CreateTargetRequest(BaseModel):
     auth_mode: Literal["api_key", "entra"] = Field(
         "api_key",
         description=(
-            "Authentication mode. 'api_key' uses the api_key in params (default, backwards-compatible). "
-            "'entra' uses Microsoft Entra ID (DefaultAzureCredential); requires an Azure endpoint and is "
+            "Authentication mode. 'api_key' uses the api_key in params (default)"
+            "'entra' uses Microsoft Entra ID; requires an Azure endpoint and is "
             "supported by OpenAI-family targets and AzureMLChatTarget."
         ),
     )
