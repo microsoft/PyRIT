@@ -26,11 +26,13 @@ class AttackResultAttribution:
     onto the resulting ``AttackResult`` by the attack persistence path so the
     DB row records its lineage.
 
-    All three fields are opaque to the attack layer. The orchestrator chooses
+    Both fields are opaque to the attack layer. The orchestrator chooses
     what they mean and how to query them back later. For example,
-    ``Scenario`` uses ``parent_id`` for the scenario result UUID,
-    ``parent_collection`` for the atomic attack name, and ``position`` for
-    the original 0-based seed-group index.
+    ``Scenario`` uses ``parent_id`` for the scenario result UUID and
+    ``parent_collection`` for the atomic attack name. Result identity within
+    a collection is reconstructed from the row's own ``objective_sha256``
+    rather than a positional index, so resume is stable under reordering or
+    re-sampling.
 
     Attributes:
         parent_id (str): The ID of the parent entity that owns this attack
@@ -40,12 +42,7 @@ class AttackResultAttribution:
         parent_collection (str): A free-form label naming the per-parent
             collection this result belongs to. Persisted into
             ``AttackResultEntry.attribution_data``.
-        position (int): The 0-based position of this result within its
-            ``parent_collection``. Assigned **before** task execution so it is
-            deterministic and parallel-safe, and used as the stable resume key.
-            Persisted into ``AttackResultEntry.attribution_data``.
     """
 
     parent_id: str
     parent_collection: str
-    position: int

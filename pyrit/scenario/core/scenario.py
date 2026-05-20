@@ -24,6 +24,7 @@ from tqdm.auto import tqdm
 from pyrit.common import REQUIRED_VALUE, Parameter, apply_defaults
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.parameter import coerce_value, validate_param_type
+from pyrit.common.utils import to_sha256
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
@@ -728,6 +729,7 @@ class Scenario(ABC):
                 )
 
             self._validate_stored_scenario(stored_result=existing_results[0])
+            self._apply_persisted_sample(stored_result=existing_results[0])
             return  # Valid resume - skip creating new scenario result
 
         # Build display group mapping from atomic attacks
@@ -746,11 +748,83 @@ class Scenario(ABC):
             attack_results=attack_results,
             scenario_run_state="CREATED",
             display_group_map=self._display_group_map,
+            metadata=self._build_initial_scenario_metadata(),
         )
 
         self._memory.add_scenario_results_to_memory(scenario_results=[result])
         self._scenario_result_id = str(result.id)
         logger.info(f"Created new scenario result with ID: {self._scenario_result_id}")
+
+    def _build_initial_scenario_metadata(self) -> dict[str, Any]:
+        """
+        Build the metadata dict persisted with a freshly-created ``ScenarioResult``.
+
+        When ``max_dataset_size`` is in effect, the dataset config draws an
+        unseeded ``random.sample`` and the chosen subset would silently change
+        on the next run (e.g. a resume). To make resume reliable, snapshot the
+        chosen objective hashes here so the next ``_setup_scenario_async`` can
+        replay them via ``restrict_seed_groups_to_hashes``.
+
+        When ``max_dataset_size`` is not set, the sample equals the dataset and
+        nothing needs pinning; the dict is empty.
+
+        Returns:
+            dict[str, Any]: Metadata payload for the new ScenarioResult.
+        """
+        metadata: dict[str, Any] = {}
+        if getattr(self._dataset_config, "max_dataset_size", None) is None:
+            return metadata
+        hashes: list[str] = []
+        seen: set[str] = set()
+        for aa in self._atomic_attacks:
+            for sg in aa.seed_groups:
+                if sg.objective is None:
+                    continue
+                sha = to_sha256(sg.objective.value)
+                if sha not in seen:
+                    seen.add(sha)
+                    hashes.append(sha)
+        metadata["sampled_objective_hashes"] = hashes
+        return metadata
+
+    def _apply_persisted_sample(self, *, stored_result: ScenarioResult) -> None:
+        """
+        On resume, replay the originally-sampled objective subset.
+
+        When the first run used ``max_dataset_size``, the chosen subset was
+        recorded in ``ScenarioResult.metadata["sampled_objective_hashes"]``.
+        Restrict each atomic attack's freshly-resolved seed_groups to that set
+        so a fresh ``random.sample`` draw on resume can't silently shift which
+        objectives the scenario operates on. If any persisted hash is no longer
+        present in the dataset, refuse to resume — running a smaller subset
+        than the user committed to would silently produce different results.
+
+        Args:
+            stored_result (ScenarioResult): The scenario result loaded from memory.
+
+        Raises:
+            ValueError: If any persisted objective hash is missing from the
+                currently-resolved dataset.
+        """
+        metadata = stored_result.metadata or {}
+        persisted = metadata.get("sampled_objective_hashes")
+        if not persisted:
+            return
+
+        keep_hashes: set[str] = set(persisted)
+        retained: set[str] = set()
+        for aa in self._atomic_attacks:
+            retained |= aa.restrict_seed_groups_to_hashes(keep_hashes=keep_hashes)
+
+        missing = keep_hashes - retained
+        if missing:
+            sample = sorted(missing)[:3]
+            raise ValueError(
+                f"Scenario result id '{self._scenario_result_id}' cannot resume: "
+                f"{len(missing)} persisted objective hash(es) are no longer present in the dataset "
+                f"(missing examples: {', '.join(h[:12] + '...' for h in sample)}). "
+                f"Either restore the missing objectives or drop scenario_result_id to start a new scenario."
+            )
 
     def _build_baseline_atomic_attack(self, *, seed_groups: list[SeedAttackGroup]) -> AtomicAttack:
         """
@@ -851,26 +925,28 @@ class Scenario(ABC):
             f"(ID: {self._scenario_result_id}, state: {stored_result.scenario_run_state})"
         )
 
-    def _get_completed_objective_indices_for_attack(self, *, atomic_attack_name: str) -> set[int]:
+    def _get_completed_objective_hashes_for_attack(self, *, atomic_attack_name: str) -> set[str]:
         """
-        Get the set of objective_index values that have already been completed
-        (non-error) for a specific atomic attack inside this scenario.
+        Return the set of ``objective_sha256`` values already completed (non-error)
+        for a specific atomic attack inside this scenario.
 
-        Queries AttackResultEntry rows directly by ``attribution_parent_id`` —
+        Queries ``AttackResultEntry`` rows directly by ``attribution_parent_id`` —
         which is stamped at write-time by the attack persistence path — so
         results from an interrupted run are visible even though the
         ``ScenarioResult.attack_results`` aggregate may not yet reflect them.
+        Identity is content-derived (``to_sha256(objective)``), so it stays
+        stable even if ``get_seed_groups()`` reorders or resamples between runs.
 
         Args:
             atomic_attack_name (str): The atomic attack name to scope to.
 
         Returns:
-            Set[int]: Original objective_index values that completed without error.
+            set[str]: ``objective_sha256`` hex strings for completed-without-error rows.
         """
         if not self._scenario_result_id:
             return set()
 
-        completed_indices: set[int] = set()
+        completed_hashes: set[str] = set()
         try:
             rows = self._memory.get_attack_results(scenario_result_id=self._scenario_result_id)
             for row in rows:
@@ -880,23 +956,24 @@ class Scenario(ABC):
                     continue
                 if row.attribution_data.get("parent_collection") != atomic_attack_name:
                     continue
-                position = row.attribution_data.get("position")
-                if isinstance(position, int):
-                    completed_indices.add(position)
+                if row.objective:
+                    completed_hashes.add(to_sha256(row.objective))
         except Exception as e:
             logger.warning(
-                f"Failed to retrieve completed objective indices for atomic attack '{atomic_attack_name}': {str(e)}"
+                f"Failed to retrieve completed objective hashes for atomic attack '{atomic_attack_name}': {str(e)}"
             )
 
-        return completed_indices
+        return completed_hashes
 
     async def _get_remaining_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
         Get the list of atomic attacks that still have objectives to complete.
 
-        Uses ``objective_index`` (the original position of each seed group in the
-        atomic attack) for resume rather than objective text, so duplicate
-        objective text in two distinct seed groups doesn't collapse on resume.
+        Uses ``objective_sha256`` as the stable identity for resume: each
+        atomic attack enforces uniqueness of objective hashes at construction
+        time, and the executor stamps ``attribution_parent_id`` +
+        ``attribution_data["parent_collection"]`` on the row so a content-hash
+        join is sufficient.
 
         Returns:
             List[AtomicAttack]: List of atomic attacks with uncompleted objectives.
@@ -908,13 +985,13 @@ class Scenario(ABC):
         remaining_attacks: list[AtomicAttack] = []
 
         for atomic_attack in self._atomic_attacks:
-            completed_indices = self._get_completed_objective_indices_for_attack(
+            completed_hashes = self._get_completed_objective_hashes_for_attack(
                 atomic_attack_name=atomic_attack.atomic_attack_name
             )
 
-            if completed_indices:
+            if completed_hashes:
                 original_count = len(atomic_attack.seed_groups)
-                atomic_attack.filter_seed_groups_by_indices(completed_indices=completed_indices)
+                atomic_attack.filter_seed_groups_by_completed_hashes(completed_hashes=completed_hashes)
                 remaining_count = len(atomic_attack.seed_groups)
                 if remaining_count == 0:
                     logger.info(

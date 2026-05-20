@@ -63,12 +63,15 @@ def upgrade() -> None:
             ondelete="SET NULL",
         )
 
-    # ScenarioResultEntries: drop the not-yet-released error_attack_result_ids_json.
+    # ScenarioResultEntries: drop the not-yet-released error_attack_result_ids_json,
+    # and add scenario_metadata for free-form scenario-level JSON state (e.g.
+    # the persisted sampled_objective_hashes used for resume).
     # Error AttackResults are now linkable via the new attribution_parent_id
     # foreign key; the per-scenario manifest column is no longer used.
     # Wrapped in a batch op for SQLite.
     with op.batch_alter_table("ScenarioResultEntries") as batch_op:
         batch_op.drop_column("error_attack_result_ids_json")
+        batch_op.add_column(sa.Column("scenario_metadata", sa.JSON(), nullable=True))
 
     # Backfill attribution linkage from the existing attack_results_json manifest.
     _backfill_attribution_linkage()
@@ -76,11 +79,10 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Revert this schema upgrade."""
-    # Re-add error_attack_result_ids_json on ScenarioResultEntries.
-    op.add_column(
-        "ScenarioResultEntries",
-        sa.Column("error_attack_result_ids_json", sa.Unicode(), nullable=True),
-    )
+    # Re-add error_attack_result_ids_json on ScenarioResultEntries and drop scenario_metadata.
+    with op.batch_alter_table("ScenarioResultEntries") as batch_op:
+        batch_op.add_column(sa.Column("error_attack_result_ids_json", sa.Unicode(), nullable=True))
+        batch_op.drop_column("scenario_metadata")
 
     # Drop foreign key + columns from AttackResultEntries.
     with op.batch_alter_table("AttackResultEntries") as batch_op:
@@ -131,7 +133,7 @@ def _backfill_attribution_linkage() -> None:
         for atomic_attack_name, conversation_ids in manifest.items():
             if not isinstance(conversation_ids, list):
                 continue
-            for objective_index, conversation_id in enumerate(conversation_ids):
+            for conversation_id in conversation_ids:
                 if not isinstance(conversation_id, str):
                     continue
                 # Check for duplicate conversation_id matches (data anomaly).
@@ -150,7 +152,7 @@ def _backfill_attribution_linkage() -> None:
                         f"All matching rows will be linked to scenario {scenario_id}."
                     )
 
-                attribution_data = json.dumps({"parent_collection": atomic_attack_name, "position": objective_index})
+                attribution_data = json.dumps({"parent_collection": atomic_attack_name})
                 result = bind.execute(
                     update_stmt,
                     {

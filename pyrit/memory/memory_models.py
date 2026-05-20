@@ -1016,6 +1016,14 @@ class ScenarioResultEntry(Base):
     error_message: Mapped[Optional[str]] = mapped_column(Unicode, nullable=True)
     error_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
+    # Free-form JSON metadata stamped by the scenario. Currently used to record
+    # ``sampled_objective_hashes`` — the objective sha256 set chosen on the
+    # first run, replayed on resume so a fresh ``random.sample`` can't
+    # silently change which objectives the scenario operates on. Column is
+    # named ``scenario_metadata`` because SQLAlchemy's ``DeclarativeBase``
+    # reserves ``metadata`` as a class attribute on the model.
+    scenario_metadata: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
     def __init__(self, *, entry: ScenarioResult) -> None:
         """
         Initialize a ScenarioResultEntry from a ScenarioResult object.
@@ -1067,6 +1075,7 @@ class ScenarioResultEntry(Base):
 
         self.error_message = entry.error_message
         self.error_type = entry.error_type
+        self.scenario_metadata = entry.metadata if entry.metadata else None
 
         self.timestamp = datetime.now(tz=timezone.utc)
 
@@ -1123,6 +1132,7 @@ class ScenarioResultEntry(Base):
             display_group_map=display_group_map,
             error_message=self.error_message,
             error_type=self.error_type,
+            metadata=dict(self.scenario_metadata) if self.scenario_metadata else None,
         )
 
     def get_conversation_ids_by_attack_name(self) -> dict[str, list[str]]:

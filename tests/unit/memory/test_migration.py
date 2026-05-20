@@ -295,15 +295,14 @@ def test_backfill_links_attack_results_via_conversation_id():
             for conv in ("conv-a-0", "conv-a-1", "conv-b-0"):
                 assert results_by_conv[conv][0] == sid, f"{conv} should be backfilled"
 
-            # attribution_data carries parent_collection (the atomic attack name)
-            # and the 0-based manifest position.
+            # attribution_data carries parent_collection (the atomic attack name).
             sd_a0 = json.loads(results_by_conv["conv-a-0"][1])
             sd_a1 = json.loads(results_by_conv["conv-a-1"][1])
             sd_b0 = json.loads(results_by_conv["conv-b-0"][1])
 
-            assert sd_a0 == {"parent_collection": "a", "position": 0}
-            assert sd_a1 == {"parent_collection": "a", "position": 1}
-            assert sd_b0 == {"parent_collection": "b", "position": 0}
+            assert sd_a0 == {"parent_collection": "a"}
+            assert sd_a1 == {"parent_collection": "a"}
+            assert sd_b0 == {"parent_collection": "b"}
         finally:
             engine.dispose()
 

@@ -18,6 +18,7 @@ import warnings
 from typing import TYPE_CHECKING, Any, Optional
 
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
@@ -119,12 +120,7 @@ class AtomicAttack:
             sg.validate()
 
         self._seed_groups = seed_groups
-        # Original positions for each currently-active seed group. Used to map a
-        # per-task input index (from the executor) back to the stable position
-        # stored in AttackResultEntry.attribution_data. Resume filtering
-        # preserves the original indices so newly-persisted results don't
-        # collide with already-persisted ones.
-        self._original_indices: list[int] = list(range(len(seed_groups)))
+        self._validate_unique_objective_hashes()
         self._adversarial_chat = adversarial_chat
         self._objective_scorer = objective_scorer
         self._memory_labels = memory_labels or {}
@@ -138,6 +134,33 @@ class AtomicAttack:
             f"Initialized atomic attack with {len(self._seed_groups)} seed groups, "
             f"attack type: {type(self._attack_technique.attack).__name__}"
         )
+
+    def _validate_unique_objective_hashes(self) -> None:
+        """
+        Ensure each seed group in this atomic attack has a unique objective hash.
+
+        Within a single ``AtomicAttack`` (one ``atomic_attack_name``, one
+        technique), the objective text identifies a unit of work. Duplicates
+        would mean two indistinguishable rows on the write side, which makes
+        resume reconciliation ambiguous — the new hash-based resume key
+        treats a set of hashes as already-done, with no way to distinguish
+        which of two duplicate rows is "the one" that is still outstanding.
+        Loud failure here beats silent resume corruption later.
+
+        Raises:
+            ValueError: If two seed groups share the same ``objective_sha256``.
+        """
+        seen: dict[str, int] = {}
+        for sg in self._seed_groups:
+            if sg.objective is None:
+                continue
+            sha = to_sha256(sg.objective.value)
+            if sha in seen:
+                raise ValueError(
+                    f"AtomicAttack '{self.atomic_attack_name}' has duplicate objective hash "
+                    f"{sha[:12]}... across seed_groups; each (objective, technique) pair must be unique."
+                )
+            seen[sha] = 1
 
     @property
     def attack_technique(self) -> AttackTechnique:
@@ -168,53 +191,74 @@ class AtomicAttack:
         """
         Filter seed groups to only those with objectives in the remaining list.
 
-        Deprecated — prefer ``filter_seed_groups_by_indices``. Filtering by
-        objective text collapses two distinct seed groups that happen to share
-        the same objective text (common when seed groups are programmatically
-        generated or when a baseline is paired with its strategy variants).
-        Index-based filtering is the stable identity for resume.
+        Deprecated — prefer ``filter_seed_groups_by_completed_hashes``. Filtering
+        by objective text collapses two distinct seed groups that happen to share
+        the same objective text. Hash-based filtering aligns with the
+        ``objective_sha256`` resume key written to ``AttackResultEntry``.
 
         Args:
             remaining_objectives (List[str]): List of objectives that still need to be executed.
         """
         print_deprecation_message(
             old_item="AtomicAttack.filter_seed_groups_by_objectives",
-            new_item="AtomicAttack.filter_seed_groups_by_indices",
+            new_item="AtomicAttack.filter_seed_groups_by_completed_hashes",
             removed_in="0.16.0",
         )
         remaining_set = set(remaining_objectives)
-        kept: list[tuple[int, SeedAttackGroup]] = [
-            (orig_idx, sg)
-            for orig_idx, sg in zip(self._original_indices, self._seed_groups, strict=True)
-            if sg.objective is not None and sg.objective.value in remaining_set
+        self._seed_groups = [
+            sg for sg in self._seed_groups if sg.objective is not None and sg.objective.value in remaining_set
         ]
-        self._original_indices = [idx for idx, _ in kept]
-        self._seed_groups = [sg for _, sg in kept]
 
-    def filter_seed_groups_by_indices(self, *, completed_indices: set[int]) -> None:
+    def filter_seed_groups_by_completed_hashes(self, *, completed_hashes: set[str]) -> None:
         """
-        Filter out seed groups whose original index is in ``completed_indices``.
+        Drop seed groups whose ``objective_sha256`` is already in the completed set.
 
-        This is the stable-identity replacement for
-        ``filter_seed_groups_by_objectives``. Each seed group's original index
-        (its position when the ``AtomicAttack`` was first constructed) is
-        tracked across filtering, so the executor can later map each per-task
-        input index back to the original index when stamping
-        ``attribution_data["position"]``. This prevents newly-persisted
-        results from colliding with already-persisted ones on resume.
+        This is the resume filter: within an atomic attack, ``objective_sha256``
+        is the stable identity (enforced unique by ``__init__``). Content-derived
+        keys are robust to reordering and resampling, so resume produces the
+        right remaining-work set even when ``get_seed_groups()`` is rebuilt
+        from scratch on each ``run_async()``.
 
         Args:
-            completed_indices (set[int]): Original indices that have already
-                been executed (typically retrieved from
-                ``Scenario._get_completed_objectives_for_attack``).
+            completed_hashes (set[str]): SHA256 hashes of objective text for
+                seed groups that have already produced a (non-error) ``AttackResult``.
         """
-        kept: list[tuple[int, SeedAttackGroup]] = [
-            (orig_idx, sg)
-            for orig_idx, sg in zip(self._original_indices, self._seed_groups, strict=True)
-            if orig_idx not in completed_indices
+        self._seed_groups = [
+            sg
+            for sg in self._seed_groups
+            if sg.objective is None or to_sha256(sg.objective.value) not in completed_hashes
         ]
-        self._original_indices = [idx for idx, _ in kept]
-        self._seed_groups = [sg for _, sg in kept]
+
+    def restrict_seed_groups_to_hashes(self, *, keep_hashes: set[str]) -> set[str]:
+        """
+        Keep only seed groups whose ``objective_sha256`` is in ``keep_hashes``.
+
+        Inverse of ``filter_seed_groups_by_completed_hashes``: used on resume to
+        replay the originally-sampled subset and ignore any seed groups that
+        were added since (or that landed in this run's fresh ``random.sample``
+        draw and are no longer in the persisted set).
+
+        Args:
+            keep_hashes (set[str]): SHA256 hashes of objective text for seed
+                groups to keep.
+
+        Returns:
+            set[str]: The hashes that were actually retained (intersection of
+            ``keep_hashes`` and the current seed_groups' hashes). The caller
+            can union these across atomic attacks to detect persisted hashes
+            that no longer exist in the dataset.
+        """
+        retained: set[str] = set()
+        new_groups: list[SeedAttackGroup] = []
+        for sg in self._seed_groups:
+            if sg.objective is None:
+                continue
+            sha = to_sha256(sg.objective.value)
+            if sha in keep_hashes:
+                retained.add(sha)
+                new_groups.append(sg)
+        self._seed_groups = new_groups
+        return retained
 
     async def run_async(
         self,
@@ -270,26 +314,16 @@ class AtomicAttack:
             else:
                 execution_seed_groups = self._seed_groups
 
-            # Build an attribution factory when this atomic attack is being
-            # executed inside a Scenario. The factory maps each per-task input
-            # index (position in the currently-active seed_groups list) back to
-            # the original position so resume can locate already-done work and
-            # newly-persisted results don't collide with old ones. The Scenario
-            # uses parent_collection for the atomic attack name and position
-            # for the original seed-group index; the attack layer treats both
-            # as opaque strings/ints.
-            attribution_factory = None
+            # Build attribution when this atomic attack is being executed inside
+            # a Scenario. The same attribution object is stamped on every
+            # per-task AttackContext; per-task identity is reconstructed from
+            # the row's own objective_sha256 (no positional state required).
+            attribution: AttackResultAttribution | None = None
             if self._scenario_result_id is not None:
-                scenario_id = self._scenario_result_id
-                name = self.atomic_attack_name
-                original_indices = list(self._original_indices)
-
-                def attribution_factory(input_index: int) -> AttackResultAttribution:
-                    return AttackResultAttribution(
-                        parent_id=scenario_id,
-                        parent_collection=name,
-                        position=original_indices[input_index],
-                    )
+                attribution = AttackResultAttribution(
+                    parent_id=self._scenario_result_id,
+                    parent_collection=self.atomic_attack_name,
+                )
 
             results = await executor.execute_attack_from_seed_groups_async(
                 attack=technique.attack,
@@ -298,7 +332,7 @@ class AtomicAttack:
                 objective_scorer=self._objective_scorer,
                 memory_labels=self._memory_labels,
                 return_partial_on_failure=return_partial_on_failure,
-                attribution_factory=attribution_factory,
+                attribution=attribution,
                 **self._attack_execute_params,
             )
 

@@ -47,9 +47,9 @@ def save_attack_results_to_memory(attack_results, *, atomic_attack=None):
         sid = getattr(atomic_attack, "_scenario_result_id", None)
         name = getattr(atomic_attack, "atomic_attack_name", None)
         if sid and name:
-            for i, r in enumerate(attack_results):
+            for r in attack_results:
                 r.attribution_parent_id = sid
-                r.attribution_data = {"parent_collection": name, "position": i}
+                r.attribution_data = {"parent_collection": name}
     memory = CentralMemory.get_memory_instance()
     memory.add_attack_results_to_memory(attack_results=attack_results)
 
@@ -58,8 +58,10 @@ def create_mock_atomic_attack(name: str, objectives: list[str]) -> MagicMock:
     """Create a mock AtomicAttack with required attributes for baseline creation.
 
     The mock tracks its objectives and properly updates when
-    filter_seed_groups_by_objectives OR filter_seed_groups_by_indices is called.
+    filter_seed_groups_by_objectives OR filter_seed_groups_by_completed_hashes is called.
     """
+    from pyrit.common.utils import to_sha256
+
     mock_attack_strategy = MagicMock()
     mock_attack_strategy.get_objective_target.return_value = MagicMock()
     mock_attack_strategy.get_attack_scoring_config.return_value = MagicMock()
@@ -70,35 +72,21 @@ def create_mock_atomic_attack(name: str, objectives: list[str]) -> MagicMock:
     attack._attack = mock_attack_strategy
     attack._scenario_result_id = None
 
-    # Track current objectives and their original indices in mutable containers.
     original_objectives = list(objectives)
     current_objectives = {"value": list(objectives)}
-    current_indices = {"value": list(range(len(objectives)))}
 
     type(attack).objectives = PropertyMock(side_effect=lambda: current_objectives["value"])
     type(attack).seed_groups = PropertyMock(side_effect=lambda: current_objectives["value"])
 
     def filter_objectives(*, remaining_objectives):
         remaining_set = set(remaining_objectives)
-        kept = [
-            (idx, obj)
-            for idx, obj in zip(current_indices["value"], current_objectives["value"], strict=True)
-            if obj in remaining_set
-        ]
-        current_indices["value"] = [i for i, _ in kept]
-        current_objectives["value"] = [o for _, o in kept]
+        current_objectives["value"] = [o for o in current_objectives["value"] if o in remaining_set]
 
-    def filter_indices(*, completed_indices):
-        kept = [
-            (idx, obj)
-            for idx, obj in zip(current_indices["value"], current_objectives["value"], strict=True)
-            if idx not in completed_indices
-        ]
-        current_indices["value"] = [i for i, _ in kept]
-        current_objectives["value"] = [o for _, o in kept]
+    def filter_completed_hashes(*, completed_hashes):
+        current_objectives["value"] = [o for o in current_objectives["value"] if to_sha256(o) not in completed_hashes]
 
     attack.filter_seed_groups_by_objectives = MagicMock(side_effect=filter_objectives)
-    attack.filter_seed_groups_by_indices = MagicMock(side_effect=filter_indices)
+    attack.filter_seed_groups_by_completed_hashes = MagicMock(side_effect=filter_completed_hashes)
     attack._original_objectives = original_objectives
 
     return attack

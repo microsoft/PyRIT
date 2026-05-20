@@ -51,9 +51,9 @@ def save_attack_results_to_memory(attack_results, *, atomic_attack=None):
         sid = getattr(atomic_attack, "_scenario_result_id", None)
         name = getattr(atomic_attack, "atomic_attack_name", None)
         if sid and name:
-            for i, r in enumerate(attack_results):
+            for r in attack_results:
                 r.attribution_parent_id = sid
-                r.attribution_data = {"parent_collection": name, "position": i}
+                r.attribution_data = {"parent_collection": name}
     memory = CentralMemory.get_memory_instance()
     memory.add_attack_results_to_memory(attack_results=attack_results)
 
@@ -140,35 +140,24 @@ def create_mock_atomic_attack(name: str, objectives: list[str], run_async_mock: 
     attack._attack = mock_attack_strategy
     attack._scenario_result_id = None
 
-    # Track objectives + their original indices so the new index-based filtering
-    # mirrors the new resume path. The legacy text-based filter is wired too
-    # to support callers that still exercise it.
+    # Track objectives + objective-hash mapping so the new hash-based filter
+    # behaves correctly in resume tests. The legacy text-based filter is wired
+    # too to support callers that still exercise it.
+    from pyrit.common.utils import to_sha256
+
     current_objectives = {"value": list(objectives)}
-    current_indices = {"value": list(range(len(objectives)))}
     type(attack).objectives = PropertyMock(side_effect=lambda: current_objectives["value"])
     type(attack).seed_groups = PropertyMock(side_effect=lambda: current_objectives["value"])
 
     def filter_objectives(*, remaining_objectives):
         remaining_set = set(remaining_objectives)
-        kept = [
-            (idx, obj)
-            for idx, obj in zip(current_indices["value"], current_objectives["value"], strict=True)
-            if obj in remaining_set
-        ]
-        current_indices["value"] = [i for i, _ in kept]
-        current_objectives["value"] = [o for _, o in kept]
+        current_objectives["value"] = [o for o in current_objectives["value"] if o in remaining_set]
 
-    def filter_indices(*, completed_indices):
-        kept = [
-            (idx, obj)
-            for idx, obj in zip(current_indices["value"], current_objectives["value"], strict=True)
-            if idx not in completed_indices
-        ]
-        current_indices["value"] = [i for i, _ in kept]
-        current_objectives["value"] = [o for _, o in kept]
+    def filter_completed_hashes(*, completed_hashes):
+        current_objectives["value"] = [o for o in current_objectives["value"] if to_sha256(o) not in completed_hashes]
 
     attack.filter_seed_groups_by_objectives = MagicMock(side_effect=filter_objectives)
-    attack.filter_seed_groups_by_indices = MagicMock(side_effect=filter_indices)
+    attack.filter_seed_groups_by_completed_hashes = MagicMock(side_effect=filter_completed_hashes)
 
     if run_async_mock:
         attack.run_async = run_async_mock
@@ -684,61 +673,27 @@ class TestScenarioForeignKeyResumeRegression:
         # Resume executed only the missing objectives — the core fix.
         assert executed == ["o3", "o4"]
 
-    async def test_duplicate_objective_text_does_not_collapse_on_resume(self, mock_objective_target):
-        """Two seed groups with the SAME objective text are distinct slots —
-        resume must treat them as separate (index-based) rather than collapse
-        them by text."""
-        atomic_attack = create_mock_atomic_attack("dup_attack", ["dup-obj", "dup-obj"])
+    async def test_duplicate_objective_text_in_atomic_attack_is_rejected(self, mock_objective_target):
+        """Resume identity is the objective sha256 within an AtomicAttack, so
+        the real ``AtomicAttack.__init__`` refuses to construct with duplicate
+        objective text. We exercise the production constructor here to lock
+        that contract in (the resume mocks bypass it intentionally)."""
+        from pyrit.executor.attack import AttackStrategy
+        from pyrit.models import SeedAttackGroup, SeedObjective
+        from pyrit.scenario import AtomicAttack
+        from pyrit.scenario.core.attack_technique import AttackTechnique
 
-        async def first(*args, **kwargs):
-            partials = [create_attack_result(0, conversation_id="dup-c0", objective="dup-obj")]
-            save_attack_results_to_memory(partials, atomic_attack=atomic_attack)
-            raise Exception("crash mid-attack")
-
-        atomic_attack.run_async = first
-
-        scenario = ConcreteScenario(
-            name="Dup Scenario",
-            version=1,
-            atomic_attacks_to_return=[atomic_attack],
-        )
-        await scenario.initialize_async(objective_target=mock_objective_target, max_retries=0)
-
-        with pytest.raises(Exception, match="crash mid-attack"):
-            await scenario.run_async()
-
-        scenario_result_id = scenario._scenario_result_id
-        assert scenario_result_id is not None
-
-        # === Resume ===
-        atomic_attack_resume = create_mock_atomic_attack("dup_attack", ["dup-obj", "dup-obj"])
-        executed: list[str] = []
-
-        async def second(*args, **kwargs):
-            executed.extend(atomic_attack_resume.objectives)
-            results = [
-                create_attack_result(i, conversation_id=f"dup-c-resume-{i}", objective=obj)
-                for i, obj in enumerate(atomic_attack_resume.objectives, start=1)
-            ]
-            save_attack_results_to_memory(results, atomic_attack=atomic_attack_resume)
-            return AttackExecutorResult(completed_results=results, incomplete_objectives=[])
-
-        atomic_attack_resume.run_async = second
-
-        scenario_resumed = ConcreteScenario(
-            name="Dup Scenario",
-            version=1,
-            atomic_attacks_to_return=[atomic_attack_resume],
-            scenario_result_id=scenario_result_id,
-        )
-        await scenario_resumed.initialize_async(objective_target=mock_objective_target, max_retries=0)
-        await scenario_resumed.run_async()
-
-        # Resume executed exactly ONE "dup-obj" — the missing index — even
-        # though the text matched the already-done seed group. Index-based
-        # resume is what makes this work; the deprecated text-based filter
-        # would have collapsed both seed groups.
-        assert executed == ["dup-obj"]
+        mock_attack = MagicMock(spec=AttackStrategy)
+        duplicate_groups = [
+            SeedAttackGroup(seeds=[SeedObjective(value="dup-obj")]),
+            SeedAttackGroup(seeds=[SeedObjective(value="dup-obj")]),
+        ]
+        with pytest.raises(ValueError, match="duplicate objective hash"):
+            AtomicAttack(
+                attack_technique=AttackTechnique(attack=mock_attack),
+                seed_groups=duplicate_groups,
+                atomic_attack_name="dup_attack",
+            )
 
     async def test_duplicate_atomic_attack_name_warns_but_does_not_raise(self, mock_objective_target, caplog):
         """Duplicate atomic_attack_name within a scenario degrades resume to

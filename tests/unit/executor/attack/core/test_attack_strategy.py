@@ -623,7 +623,6 @@ class TestDefaultAttackStrategyEventHandler:
             sample_attack_context._attribution = AttackResultAttribution(
                 parent_id="scenario-1",
                 parent_collection="atomic_a",
-                position=3,
             )
 
             event_data = StrategyEventData(
@@ -638,7 +637,6 @@ class TestDefaultAttackStrategyEventHandler:
         assert sample_attack_result.attribution_parent_id == "scenario-1"
         assert sample_attack_result.attribution_data == {
             "parent_collection": "atomic_a",
-            "position": 3,
         }
 
     async def test_on_post_execute_no_attribution_leaves_fields_none(
@@ -674,7 +672,6 @@ class TestDefaultAttackStrategyEventHandler:
             sample_attack_context._attribution = AttackResultAttribution(
                 parent_id="scenario-err",
                 parent_collection="atomic_err",
-                position=7,
             )
 
             event_data = StrategyEventData(
@@ -693,7 +690,6 @@ class TestDefaultAttackStrategyEventHandler:
         assert persisted.attribution_parent_id == "scenario-err"
         assert persisted.attribution_data == {
             "parent_collection": "atomic_err",
-            "position": 7,
         }
 
 

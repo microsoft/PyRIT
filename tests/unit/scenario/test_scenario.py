@@ -41,9 +41,9 @@ def _stamp_scenario_linkage(*, attack_results, atomic_attack):
     name = getattr(atomic_attack, "atomic_attack_name", None)
     if not sid or not name:
         return
-    for i, r in enumerate(attack_results):
+    for r in attack_results:
         r.attribution_parent_id = sid
-        r.attribution_data = {"parent_collection": name, "position": i}
+        r.attribution_data = {"parent_collection": name}
 
 
 def create_mock_run_async(attack_results, *, atomic_attack=None):

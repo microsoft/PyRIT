@@ -337,94 +337,81 @@ class TestExecuteAttackFromSeedGroupsAsync:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestAttributionFactoryPropagation:
+class TestAttributionPropagation:
     """Tests for AttackResultAttribution propagation through the AttackExecutor.
 
-    The executor stamps ``context._attribution = attribution_factory(input_index)``
-    on each per-task context. The input_index must be the seed group's original
-    position so attribution is deterministic and parallel-safe — never derived
-    from completion order.
+    The executor stamps the same ``AttackResultAttribution`` on every per-task
+    context. Per-task identity is reconstructed from each row's own
+    ``objective_sha256`` at hydration/resume time, so no positional state is
+    threaded through the executor.
     """
 
-    async def test_attribution_factory_sets_per_task_attribution_in_order(self):
+    async def test_attribution_stamps_every_per_task_context(self):
         from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 
         attack = create_mock_attack()
-        seen_indices: list[int] = []
+        seen_parent_ids: list[str] = []
+        seen_collections: list[str] = []
 
         async def capture(context):
-            # Read the attribution stamped by the executor BEFORE the task runs.
             attr = context._attribution
             assert attr is not None
-            seen_indices.append(attr.position)
+            seen_parent_ids.append(attr.parent_id)
+            seen_collections.append(attr.parent_collection)
             return create_attack_result(context.params.objective)
 
         attack.execute_with_context_async = AsyncMock(side_effect=capture)
 
         seed_groups = [create_seed_group(f"obj-{i}") for i in range(4)]
-
-        def factory(idx: int) -> AttackResultAttribution:
-            return AttackResultAttribution(
-                parent_id="sid",
-                parent_collection="atomic",
-                position=idx,
-            )
+        attribution = AttackResultAttribution(parent_id="sid", parent_collection="atomic")
 
         executor = AttackExecutor(max_concurrency=1)
         result = await executor.execute_attack_from_seed_groups_async(
             attack=attack,
             seed_groups=seed_groups,
-            attribution_factory=factory,
+            attribution=attribution,
         )
 
-        # Each per-task context saw a distinct, contiguous position — the
-        # seed group's original input position.
-        assert sorted(seen_indices) == [0, 1, 2, 3]
+        assert seen_parent_ids == ["sid"] * 4
+        assert seen_collections == ["atomic"] * 4
         assert len(result.completed_results) == 4
 
-    async def test_attribution_factory_parallel_safe_with_high_concurrency(self):
-        """At max_concurrency > 1, each task still receives its own position
-        regardless of completion order. Out-of-order completion must not produce
-        stamped positions that point at the wrong seed group.
+    async def test_attribution_parallel_safe_with_high_concurrency(self):
+        """At max_concurrency > 1, every task still sees the same attribution
+        regardless of completion order — there is no per-task positional state.
         """
         from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 
         attack = create_mock_attack()
-        seen: dict[str, int] = {}
+        seen: dict[str, AttackResultAttribution] = {}
 
         async def out_of_order(context):
             attr = context._attribution
             assert attr is not None
-            # Reverse-delay the tasks so completion order is the inverse of input
-            # order. The stamped position must still match the seed group.
-            await asyncio.sleep(0.005 * (10 - attr.position))
-            seen[context.params.objective] = attr.position
+            # Reverse-delay tasks so completion order is inverse of input order.
+            i = int(context.params.objective.split("-")[1])
+            await asyncio.sleep(0.005 * (10 - i))
+            seen[context.params.objective] = attr
             return create_attack_result(context.params.objective)
 
         attack.execute_with_context_async = AsyncMock(side_effect=out_of_order)
 
         seed_groups = [create_seed_group(f"obj-{i}") for i in range(6)]
-
-        def factory(idx: int) -> AttackResultAttribution:
-            return AttackResultAttribution(
-                parent_id="sid",
-                parent_collection="atomic",
-                position=idx,
-            )
+        attribution = AttackResultAttribution(parent_id="sid", parent_collection="atomic")
 
         executor = AttackExecutor(max_concurrency=6)
         await executor.execute_attack_from_seed_groups_async(
             attack=attack,
             seed_groups=seed_groups,
-            attribution_factory=factory,
+            attribution=attribution,
         )
 
-        # Each objective is stamped with its OWN input index, regardless of
-        # completion order.
         for i in range(6):
-            assert seen[f"obj-{i}"] == i
+            attr = seen[f"obj-{i}"]
+            assert attr.parent_id == "sid"
+            assert attr.parent_collection == "atomic"
 
-    async def test_no_attribution_factory_leaves_context_attribution_none(self):
+    async def test_no_attribution_leaves_context_attribution_none(self):
         attack = create_mock_attack()
 
         async def capture(context):

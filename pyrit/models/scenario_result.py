@@ -71,6 +71,7 @@ class ScenarioResult:
         display_group_map: dict[str, str] | None = None,
         error_message: str | None = None,
         error_type: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Initialize a scenario result.
@@ -92,6 +93,13 @@ class ScenarioResult:
                 printer to aggregate results for user-facing output.
             error_message (Optional[str]): Scenario-level error message when the run fails.
             error_type (Optional[str]): Exception class name when the run fails.
+            metadata (Optional[dict[str, Any]]): Free-form JSON metadata persisted
+                with the scenario result. Currently used to record
+                ``sampled_objective_hashes`` — the objective ``sha256`` set chosen
+                on the first run, replayed on resume so a fresh
+                ``random.sample`` can't silently change which objectives the
+                scenario operates on. Keys are not part of any public contract
+                and may evolve.
 
         """
         self.id = id if id is not None else uuid.uuid4()
@@ -110,6 +118,7 @@ class ScenarioResult:
         self._display_group_map = display_group_map or {}
         self.error_message = error_message
         self.error_type = error_type
+        self.metadata: dict[str, Any] = metadata if metadata is not None else {}
 
     @property
     def display_group_map(self) -> dict[str, str]:

@@ -201,19 +201,21 @@ def test_attack_results_populated_correctly(sqlite_instance: MemoryInterface):
 
 
 def test_attack_order_preserved(sqlite_instance: MemoryInterface):
-    """Test that attack results are sorted by objective_index within each attack name."""
+    """Hydration sorts each atomic attack's results by ``timestamp`` (which
+    monotonically tracks insertion order under normal sequential execution)."""
     scenario_result = create_scenario_result(name="Ordered Scenario", attack_results={})
     sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
 
     sid = scenario_result.id
-    # Insert in reverse order to prove the hydration sorts by objective_index, not insert order.
+    # Insert in a specific order; hydration must surface them in the same order.
     attack_results = [
         _make_attack_result_for_scenario(
             scenario_result_id=sid, atomic_attack_name="Attack1", objective_index=i, conversation_id=f"conv_{i}"
         )
-        for i in reversed(range(5))
+        for i in range(5)
     ]
-    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+    for ar in attack_results:
+        sqlite_instance.add_attack_results_to_memory(attack_results=[ar])
 
     results = sqlite_instance.get_scenario_results()
     retrieved_attacks = results[0].attack_results["Attack1"]
@@ -678,7 +680,7 @@ def _make_attack_result_for_scenario(
         outcome=outcome,
         executed_turns=1,
         attribution_parent_id=str(scenario_result_id),
-        attribution_data={"parent_collection": atomic_attack_name, "position": objective_index},
+        attribution_data={"parent_collection": atomic_attack_name},
     )
 
 
@@ -771,7 +773,7 @@ def test_delete_scenario_sets_attack_result_foreign_key_to_null(sqlite_instance:
     with closing(sqlite_instance.get_session()) as session:
         entry = session.query(AttackResultEntry).filter_by(conversation_id=ar.conversation_id).one()
         assert entry.attribution_parent_id is None
-        assert entry.attribution_data == {"parent_collection": "a", "position": 0}
+        assert entry.attribution_data == {"parent_collection": "a"}
 
 
 def test_update_scenario_run_state_targeted_update_preserves_manifest(sqlite_instance: MemoryInterface):

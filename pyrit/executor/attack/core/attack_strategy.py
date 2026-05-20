@@ -263,7 +263,6 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         result.attribution_parent_id = attribution.parent_id
         result.attribution_data = {
             "parent_collection": attribution.parent_collection,
-            "position": attribution.position,
         }
 
     def _log_attack_outcome(self, result: AttackResult) -> None:

@@ -2009,6 +2009,34 @@ class MemoryInterface(abc.ABC):
 
         logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state}'")
 
+    def update_scenario_metadata(
+        self,
+        *,
+        scenario_result_id: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """
+        Replace the ``scenario_metadata`` JSON blob on an existing scenario result.
+
+        Used by the scenario layer to persist first-run state (e.g.
+        ``sampled_objective_hashes``) that resume needs to replay. Performs a
+        targeted UPDATE so it doesn't clobber other columns.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result to update.
+            metadata (dict[str, Any]): The full metadata dict to store. Pass the
+                merged dict, not just the new keys — this writes the whole value.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
+        with closing(self.get_session()) as session:
+            entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
+            if not entry:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
+            entry.scenario_metadata = metadata if metadata else None
+            session.commit()
+
     def get_scenario_results(
         self,
         *,
@@ -2208,7 +2236,7 @@ class MemoryInterface(abc.ABC):
         ``AttackResultEntry.attribution_parent_id`` foreign key in a single
         batched query, then group by scenario + ``parent_collection`` (which
         the scenario layer uses for the atomic attack name) and sort each
-        group by ``attribution_data["position"]``.
+        group by ``AttackResultEntry.timestamp``.
 
         Foreign-key linkage is the sole source of truth — set at write-time by
         the attack persistence path when an ``AttackResultAttribution`` is on
@@ -2230,7 +2258,7 @@ class MemoryInterface(abc.ABC):
             batch_values=scenario_ids,
         )
 
-        grouped: dict[uuid.UUID, dict[str, list[tuple[int, AttackResult]]]] = {entry.id: {} for entry in entries}
+        grouped: dict[uuid.UUID, dict[str, list[tuple[datetime, AttackResult]]]] = {entry.id: {} for entry in entries}
 
         for row in attack_rows:
             scenario_id = row.attribution_parent_id
@@ -2245,8 +2273,7 @@ class MemoryInterface(abc.ABC):
                 )
                 continue
 
-            position = data.get("position")
-            sort_key = position if isinstance(position, int) else 0
+            sort_key = row.timestamp or datetime.min.replace(tzinfo=timezone.utc)
             grouped[scenario_id].setdefault(name, []).append((sort_key, row.get_attack_result()))
 
         return {
