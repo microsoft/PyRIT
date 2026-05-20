@@ -1148,3 +1148,91 @@ class TestAtomicAttackAttributionStamping:
         assert isinstance(attribution, AttackResultAttribution)
         assert attribution.parent_id == "00000000-0000-0000-0000-000000000abc"
         assert attribution.parent_collection == "MyAtomicAttack"
+
+    async def test_attribution_includes_technique_eval_hash(
+        self, mock_attack, sample_seed_groups, sample_attack_results
+    ):
+        """The stamped attribution must carry ``parent_eval_hash`` equal to
+        ``technique_eval_hash`` so resume disambiguates between two atomic
+        attacks that share a name but use different techniques."""
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="MyAtomicAttack",
+        )
+        atomic._scenario_result_id = "00000000-0000-0000-0000-000000000abc"
+
+        with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = wrap_results(sample_attack_results)
+            await atomic.run_async()
+
+        attribution = mock_exec.call_args.kwargs["attribution"]
+        assert attribution.parent_eval_hash is not None
+        assert attribution.parent_eval_hash == atomic.technique_eval_hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAtomicAttackTechniqueEvalHash:
+    """``technique_eval_hash`` must be stable across seed groups and differ
+    between distinct technique configurations — it's the resume bucket key."""
+
+    def test_hash_is_independent_of_seed_groups(self, mock_attack, sample_seed_groups):
+        a1 = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="same",
+        )
+        a2 = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=[SeedAttackGroup(seeds=[SeedObjective(value="different-objective")])],
+            atomic_attack_name="same",
+        )
+        assert a1.technique_eval_hash == a2.technique_eval_hash
+
+    def test_hash_differs_for_different_attacks(self, sample_seed_groups):
+        attack_a = MagicMock(spec=AttackStrategy)
+        attack_a.get_identifier.return_value = ComponentIdentifier(class_name="AttackA", class_module="pyrit.test")
+        attack_b = MagicMock(spec=AttackStrategy)
+        attack_b.get_identifier.return_value = ComponentIdentifier(class_name="AttackB", class_module="pyrit.test")
+
+        a1 = AtomicAttack(
+            attack_technique=AttackTechnique(attack=attack_a),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="same",
+        )
+        a2 = AtomicAttack(
+            attack_technique=AttackTechnique(attack=attack_b),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="same",
+        )
+        assert a1.technique_eval_hash != a2.technique_eval_hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAtomicAttackFilterSeedGroupsByObjectivesDeprecation:
+    """Tests for the deprecated ``filter_seed_groups_by_objectives`` shim
+    that ships with v0.13.0 → 0.16.0 deprecation."""
+
+    def test_emits_deprecation_warning(self, mock_attack, sample_seed_groups):
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="test",
+        )
+        with patch("pyrit.scenario.core.atomic_attack.print_deprecation_message") as mock_dep:
+            atomic.filter_seed_groups_by_objectives(remaining_objectives=["objective1"])
+        assert mock_dep.call_count == 1
+        kwargs = mock_dep.call_args.kwargs
+        assert "filter_seed_groups_by_objectives" in kwargs["old_item"]
+        assert "keep_seed_groups_with_hashes" in kwargs["new_item"]
+        assert kwargs["removed_in"] == "0.16.0"
+
+    def test_filters_by_text_match(self, mock_attack, sample_seed_groups):
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="test",
+        )
+        with patch("pyrit.scenario.core.atomic_attack.print_deprecation_message"):
+            atomic.filter_seed_groups_by_objectives(remaining_objectives=["objective2"])
+        assert [sg.objective.value for sg in atomic.seed_groups] == ["objective2"]

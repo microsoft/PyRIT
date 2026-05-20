@@ -720,3 +720,162 @@ class TestScenarioForeignKeyResumeRegression:
         assert not any("duplicate atomic_attack_name" in record.message for record in caplog.records), (
             "Duplicate atomic_attack_name should be supported without warning"
         )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestGetCompletedObjectiveHashesForAttack:
+    """Direct tests for ``Scenario._get_completed_objective_hashes_for_attack``
+    — the filter that excludes already-completed objectives on resume.
+
+    Covers the row-filtering branches: outcome=ERROR rows, rows without
+    attribution_data, and the technique-disambiguation branch where two
+    atomic attacks share a name but differ in technique eval hash.
+    """
+
+    def _make_scenario(self, scenario_result_id="scn-1"):
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = scenario_result_id
+        scenario._memory = MagicMock()
+        return scenario
+
+    def _make_atomic(self, name, eval_hash="hash-A"):
+        atomic = MagicMock(spec=AtomicAttack)
+        atomic.atomic_attack_name = name
+        type(atomic).technique_eval_hash = PropertyMock(return_value=eval_hash)
+        return atomic
+
+    def _row(self, *, objective, outcome=AttackOutcome.SUCCESS, attribution_data=None):
+        row = MagicMock()
+        row.outcome = outcome
+        row.attribution_data = attribution_data
+        row.objective = objective
+        return row
+
+    def test_returns_empty_when_scenario_result_id_unset(self):
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = None
+        result = scenario._get_completed_objective_hashes_for_attack(
+            atomic_attack=self._make_atomic("a"),
+        )
+        assert result == set()
+
+    def test_skips_error_rows(self):
+        from pyrit.common.utils import to_sha256
+
+        scenario = self._make_scenario()
+        scenario._memory.get_attack_results.return_value = [
+            self._row(
+                objective="ok",
+                outcome=AttackOutcome.SUCCESS,
+                attribution_data={"parent_collection": "a", "parent_eval_hash": "hash-A"},
+            ),
+            self._row(
+                objective="failed",
+                outcome=AttackOutcome.ERROR,
+                attribution_data={"parent_collection": "a", "parent_eval_hash": "hash-A"},
+            ),
+        ]
+        result = scenario._get_completed_objective_hashes_for_attack(
+            atomic_attack=self._make_atomic("a"),
+        )
+        assert result == {to_sha256("ok")}
+
+    def test_skips_rows_without_attribution_data(self):
+        from pyrit.common.utils import to_sha256
+
+        scenario = self._make_scenario()
+        scenario._memory.get_attack_results.return_value = [
+            self._row(objective="legacy", attribution_data=None),
+            self._row(
+                objective="new",
+                attribution_data={"parent_collection": "a", "parent_eval_hash": "hash-A"},
+            ),
+        ]
+        result = scenario._get_completed_objective_hashes_for_attack(
+            atomic_attack=self._make_atomic("a"),
+        )
+        assert result == {to_sha256("new")}
+
+    def test_skips_rows_with_mismatched_eval_hash(self):
+        """Two atomic attacks with the same name but different techniques
+        must not cross-pollinate completed hashes. This is the core Option-B
+        guarantee."""
+        from pyrit.common.utils import to_sha256
+
+        scenario = self._make_scenario()
+        scenario._memory.get_attack_results.return_value = [
+            self._row(
+                objective="mine",
+                attribution_data={"parent_collection": "encoding", "parent_eval_hash": "hash-base64"},
+            ),
+            self._row(
+                objective="theirs",
+                attribution_data={"parent_collection": "encoding", "parent_eval_hash": "hash-hex"},
+            ),
+        ]
+        result = scenario._get_completed_objective_hashes_for_attack(
+            atomic_attack=self._make_atomic("encoding", eval_hash="hash-base64"),
+        )
+        assert result == {to_sha256("mine")}
+
+    def test_backward_compat_matches_name_only_when_eval_hash_missing(self):
+        """Rows persisted before ``parent_eval_hash`` shipped match name-only
+        so pre-existing resume runs aren't stranded."""
+        from pyrit.common.utils import to_sha256
+
+        scenario = self._make_scenario()
+        scenario._memory.get_attack_results.return_value = [
+            self._row(
+                objective="old",
+                attribution_data={"parent_collection": "a"},  # no parent_eval_hash
+            ),
+        ]
+        result = scenario._get_completed_objective_hashes_for_attack(
+            atomic_attack=self._make_atomic("a", eval_hash="hash-A"),
+        )
+        assert result == {to_sha256("old")}
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestApplyPersistedObjectives:
+    """Direct tests for ``Scenario._apply_persisted_objectives`` — the
+    resume-time replay that locks subsequent runs to the originally-sampled
+    objective subset."""
+
+    def _make_scenario_with_atomics(self, atomics):
+        scenario = ConcreteScenario(name="S", version=1, atomic_attacks_to_return=[])
+        scenario._scenario_result_id = "scn-1"
+        scenario._atomic_attacks = atomics
+        return scenario
+
+    def test_noop_when_metadata_has_no_persisted_hashes(self):
+        atomic = MagicMock(spec=AtomicAttack)
+        scenario = self._make_scenario_with_atomics([atomic])
+        stored = MagicMock()
+        stored.metadata = {}
+        scenario._apply_persisted_objectives(stored_result=stored)
+        atomic.keep_seed_groups_with_hashes.assert_not_called()
+
+    def test_replays_persisted_subset_across_atomics(self):
+        atomic_a = MagicMock(spec=AtomicAttack)
+        atomic_a.keep_seed_groups_with_hashes.return_value = {"h1", "h2"}
+        atomic_b = MagicMock(spec=AtomicAttack)
+        atomic_b.keep_seed_groups_with_hashes.return_value = {"h3"}
+        scenario = self._make_scenario_with_atomics([atomic_a, atomic_b])
+
+        stored = MagicMock()
+        stored.metadata = {"objective_hashes": ["h1", "h2", "h3"]}
+        scenario._apply_persisted_objectives(stored_result=stored)
+
+        atomic_a.keep_seed_groups_with_hashes.assert_called_once_with(hashes={"h1", "h2", "h3"})
+        atomic_b.keep_seed_groups_with_hashes.assert_called_once_with(hashes={"h1", "h2", "h3"})
+
+    def test_raises_when_persisted_hash_is_missing(self):
+        atomic = MagicMock(spec=AtomicAttack)
+        atomic.keep_seed_groups_with_hashes.return_value = {"h1"}  # h2 missing
+        scenario = self._make_scenario_with_atomics([atomic])
+
+        stored = MagicMock()
+        stored.metadata = {"objective_hashes": ["h1", "h2"]}
+        with pytest.raises(ValueError, match="cannot resume"):
+            scenario._apply_persisted_objectives(stored_result=stored)
