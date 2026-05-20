@@ -174,8 +174,9 @@ class _RealtimeEventDispatcher(ABC):
         """
         Cancel the background dispatch task and release the reference.
 
-        In-flight callback tasks are awaited (with exception suppression) so
-        their resources release cleanly before the connection is torn down.
+        In-flight callback tasks are cancelled and awaited (with exception
+        suppression) so they don't deadlock waiting on the turn future that the
+        now-dead dispatch loop would have resolved.
         """
         if self._task is not None:
             self._task.cancel()
@@ -185,6 +186,8 @@ class _RealtimeEventDispatcher(ABC):
         if self._callback_tasks:
             pending = list(self._callback_tasks)
             self._callback_tasks.clear()
+            for task in pending:
+                task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
 
     def register_turn(self, state: _RealtimeTurnState) -> None:

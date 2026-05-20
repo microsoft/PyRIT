@@ -939,9 +939,7 @@ async def test_subscribe_events_async_returns_started_dispatcher(target):
     async def on_committed(event):
         received.append(event)
 
-    dispatcher = await target.subscribe_events_async(
-        connection=connection, on_user_audio_committed=on_committed
-    )
+    dispatcher = await target.subscribe_events_async(connection=connection, on_user_audio_committed=on_committed)
     try:
         # Yield until the dispatch loop processes the scripted event.
         for _ in range(20):

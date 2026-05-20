@@ -361,11 +361,7 @@ class PromptNormalizer:
                     identifiers.append(converter.get_identifier())
 
             with wave.open(current_path, "rb") as wav_in:
-                if (
-                    wav_in.getnchannels() != 1
-                    or wav_in.getsampwidth() != 2
-                    or wav_in.getframerate() != sample_rate
-                ):
+                if wav_in.getnchannels() != 1 or wav_in.getsampwidth() != 2 or wav_in.getframerate() != sample_rate:
                     raise ValueError(
                         "Converter output incompatible with streaming target: "
                         f"expected mono PCM16 @ {sample_rate} Hz, got channels={wav_in.getnchannels()} "

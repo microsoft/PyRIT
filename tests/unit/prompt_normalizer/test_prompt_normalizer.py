@@ -17,6 +17,7 @@ from pyrit.exceptions import (
     execution_context,
     get_execution_context,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     Message,
@@ -635,10 +636,6 @@ async def test_add_prepended_conversation_to_memory(mock_memory_instance):
 # Placeholder for convert_audio_async tests
 
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.prompt_normalizer import PromptConverterConfiguration
-
-
 def _make_audio_converter(transformer, *, output_sample_rate=24000, identifier_name="MockAudioConverter"):
     """Mock audio converter whose convert_tokens_async runs transformer(pcm) and emits a new WAV path."""
     converter = MagicMock()
@@ -669,9 +666,7 @@ def _make_audio_converter(transformer, *, output_sample_rate=24000, identifier_n
 async def test_convert_audio_async_no_configurations_returns_input(sqlite_instance):
     normalizer = PromptNormalizer()
     pcm = b"\xaa" * 1024
-    out, ids = await normalizer.convert_audio_async(
-        pcm_bytes=pcm, sample_rate=24000, converter_configurations=[]
-    )
+    out, ids = await normalizer.convert_audio_async(pcm_bytes=pcm, sample_rate=24000, converter_configurations=[])
     assert out == pcm
     assert ids == []
 
@@ -732,4 +727,3 @@ async def test_convert_audio_async_rejects_mismatched_sample_rate(sqlite_instanc
             sample_rate=24000,
             converter_configurations=PromptConverterConfiguration.from_converters(converters=[bad]),
         )
-

@@ -34,9 +34,7 @@ _CLEAN_ENV = {"OPENAI_REALTIME_UNDERLYING_MODEL": ""}
 @pytest.fixture
 @patch.dict("os.environ", _CLEAN_ENV)
 def vad_target(sqlite_instance):
-    return RealtimeTarget(
-        api_key="test_key", endpoint="wss://test_url", model_name="test", server_vad=True
-    )
+    return RealtimeTarget(api_key="test_key", endpoint="wss://test_url", model_name="test", server_vad=True)
 
 
 async def _aiter(chunks: list[bytes]) -> AsyncIterator[bytes]:
@@ -130,7 +128,7 @@ async def test_perform_async_streams_chunks_and_tears_down(vad_target):
     chunks = [b"\x11" * 480, b"\x22" * 480, b"\x33" * 240]
     ctx = _attack_context(audio_chunks=_aiter(chunks))
 
-    with patch.object(attack, "_POST_STREAM_SETTLE_SECONDS", 0):
+    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
         result = await attack._perform_async(context=ctx)
 
     vad_target.connect.assert_awaited_once_with(conversation_id=ctx.conversation_id)
@@ -170,11 +168,11 @@ async def test_perform_async_fires_request_response_on_commit(vad_target):
     async def chunks_then_commit() -> AsyncIterator[bytes]:
         yield b"\x00" * 480
         # Drive a fake commit mid-stream.
-        await captured["on_committed"](_CommittedEvent(item_id="raw_1"))
+        await asyncio.create_task(captured["on_committed"](_CommittedEvent(item_id="raw_1")))
 
     ctx = _attack_context(audio_chunks=chunks_then_commit())
 
-    with patch.object(attack, "_POST_STREAM_SETTLE_SECONDS", 0):
+    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
         result = await attack._perform_async(context=ctx)
 
     vad_target.request_response_async.assert_awaited_once()
@@ -195,7 +193,7 @@ async def test_perform_async_stops_dispatcher_even_on_exception(vad_target):
     ctx = _attack_context(audio_chunks=_aiter([b"\x00" * 96]))
 
     with pytest.raises(RuntimeError, match="push exploded"):
-        with patch.object(attack, "_POST_STREAM_SETTLE_SECONDS", 0):
+        with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
             await attack._perform_async(context=ctx)
 
     dispatcher.stop.assert_awaited_once()
@@ -208,9 +206,7 @@ async def test_perform_async_stops_dispatcher_even_on_exception(vad_target):
 async def test_send_streaming_session_config_async_emits_create_response_false(vad_target):
     """The streaming session config must flip create_response to False on turn_detection."""
     connection = _mock_connection()
-    await vad_target.send_streaming_session_config_async(
-        connection=connection, system_prompt="hi"
-    )
+    await vad_target.send_streaming_session_config_async(connection=connection, system_prompt="hi")
     connection.session.update.assert_awaited_once()
     config = connection.session.update.call_args.kwargs["session"]
     assert config["audio"]["input"]["turn_detection"]["create_response"] is False
@@ -293,19 +289,17 @@ async def test_perform_async_swaps_raw_item_when_converters_change_audio(vad_tar
 
     async def chunks_then_commit() -> AsyncIterator[bytes]:
         yield raw_chunk
-        await captured["on_committed"](_CommittedEvent(item_id="raw_99"))
+        await asyncio.create_task(captured["on_committed"](_CommittedEvent(item_id="raw_99")))
 
     ctx = BargeInAttackContext(
         params=AttackParameters(objective="obj"),
         audio_chunks=chunks_then_commit(),
     )
 
-    with patch.object(attack, "_POST_STREAM_SETTLE_SECONDS", 0):
+    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
         result = await attack._perform_async(context=ctx)
 
-    vad_target.delete_conversation_item_async.assert_awaited_once_with(
-        connection=connection, item_id="raw_99"
-    )
+    vad_target.delete_conversation_item_async.assert_awaited_once_with(connection=connection, item_id="raw_99")
     vad_target.insert_user_audio_async.assert_awaited_once()
     inserted_pcm = vad_target.insert_user_audio_async.call_args.kwargs["pcm_bytes"]
     assert inserted_pcm == bytes((b + 1) & 0xFF for b in raw_chunk)
@@ -336,14 +330,14 @@ async def test_perform_async_skips_swap_when_no_converters(vad_target):
 
     async def chunks_then_commit() -> AsyncIterator[bytes]:
         yield b"\x00" * 96
-        await captured["on_committed"](_CommittedEvent(item_id="raw_42"))
+        await asyncio.create_task(captured["on_committed"](_CommittedEvent(item_id="raw_42")))
 
     ctx = BargeInAttackContext(
         params=AttackParameters(objective="obj"),
         audio_chunks=chunks_then_commit(),
     )
 
-    with patch.object(attack, "_POST_STREAM_SETTLE_SECONDS", 0):
+    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
         result = await attack._perform_async(context=ctx)
 
     vad_target.delete_conversation_item_async.assert_not_called()
@@ -382,16 +376,16 @@ async def test_perform_async_clears_raw_buffer_between_commits(vad_target):
 
     async def chunks_then_two_commits() -> AsyncIterator[bytes]:
         yield b"\x01" * 96
-        await captured["on_committed"](_CommittedEvent(item_id="raw_1"))
+        await asyncio.create_task(captured["on_committed"](_CommittedEvent(item_id="raw_1")))
         yield b"\x02" * 96
-        await captured["on_committed"](_CommittedEvent(item_id="raw_2"))
+        await asyncio.create_task(captured["on_committed"](_CommittedEvent(item_id="raw_2")))
 
     ctx = BargeInAttackContext(
         params=AttackParameters(objective="obj"),
         audio_chunks=chunks_then_two_commits(),
     )
 
-    with patch.object(attack, "_POST_STREAM_SETTLE_SECONDS", 0):
+    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
         await attack._perform_async(context=ctx)
 
     insert_calls = vad_target.insert_user_audio_async.await_args_list
@@ -431,14 +425,14 @@ async def test_perform_async_uses_injected_normalizer(vad_target):
 
     async def chunks_then_commit() -> AsyncIterator[bytes]:
         yield raw
-        await captured["on_committed"](_CommittedEvent(item_id="raw_z"))
+        await asyncio.create_task(captured["on_committed"](_CommittedEvent(item_id="raw_z")))
 
     ctx = BargeInAttackContext(
         params=AttackParameters(objective="obj"),
         audio_chunks=chunks_then_commit(),
     )
 
-    with patch.object(attack, "_POST_STREAM_SETTLE_SECONDS", 0):
+    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
         await attack._perform_async(context=ctx)
 
     fake_normalizer.convert_audio_async.assert_awaited_once()
@@ -485,13 +479,13 @@ async def _drive_one_audio_turn(
 
     async def chunks_then_commit() -> AsyncIterator[bytes]:
         yield raw_chunk
-        await captured["on_committed"](_CommittedEvent(item_id=item_id))
+        await asyncio.create_task(captured["on_committed"](_CommittedEvent(item_id=item_id)))
 
     ctx = BargeInAttackContext(
         params=AttackParameters(objective="obj"),
         audio_chunks=chunks_then_commit(),
     )
-    with patch.object(attack, "_POST_STREAM_SETTLE_SECONDS", 0):
+    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
         return await attack._perform_async(context=ctx)
 
 
@@ -534,9 +528,7 @@ async def test_persists_interrupted_metadata_on_assistant_pieces(vad_target):
         vad_target,
         raw_chunk=b"\x00" * 96,
         item_id="raw_int",
-        turn_result=RealtimeTargetResult(
-            audio_bytes=b"\xbb" * 96, transcripts=["partial"], interrupted=True
-        ),
+        turn_result=RealtimeTargetResult(audio_bytes=b"\xbb" * 96, transcripts=["partial"], interrupted=True),
     )
 
     assistant_msg = add_calls[1]

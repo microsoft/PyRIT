@@ -567,9 +567,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         self,
         *,
         connection: Any,
-        on_user_audio_committed: (
-            Callable[[_CommittedEvent], Coroutine[Any, Any, None]] | None
-        ) = None,
+        on_user_audio_committed: (Callable[[_CommittedEvent], Coroutine[Any, Any, None]] | None) = None,
     ) -> _RealtimeEventDispatcher:
         """
         Start consuming events from the connection and route them via the OpenAI dispatcher.

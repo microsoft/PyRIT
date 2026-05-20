@@ -89,7 +89,10 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         required=frozenset({CapabilityName.STREAMING_BARGE_IN}),
     )
 
-    _POST_STREAM_SETTLE_SECONDS = 1.0
+    #: Maximum time to wait after the chunk source exhausts for any in-flight VAD-committed
+    #: turn to finish (commit → convert → response.create → response.done → persist). Acts as
+    #: a safety cap; the attack returns as soon as the last turn actually completes.
+    _MAX_POST_STREAM_WAIT_SECONDS = 30.0
 
     @apply_defaults
     def __init__(
@@ -174,10 +177,14 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         turn_lock = asyncio.Lock()
         last_assistant_message: Message | None = None
         executed_turns = 0
+        turn_tasks: list[asyncio.Task[None]] = []
 
         async def on_committed(event: _CommittedEvent) -> None:
             """Convert-on-commit dance: snapshot raw audio → run converters → swap → request response → persist."""
             nonlocal last_assistant_message, executed_turns
+            current_task = asyncio.current_task()
+            if current_task is not None:
+                turn_tasks.append(current_task)
             try:
                 async with turn_lock:
                     snapshot = bytes(raw_buffer)
@@ -196,18 +203,12 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
                     using_converted_audio = bool(self._request_converters) and converted_pcm != snapshot
                     if using_converted_audio:
                         try:
-                            await target.delete_conversation_item_async(
-                                connection=connection, item_id=event.item_id
-                            )
+                            await target.delete_conversation_item_async(connection=connection, item_id=event.item_id)
                         except Exception as e:
                             logger.warning(f"conversation.item.delete failed for {event.item_id}: {e}")
-                        await target.insert_user_audio_async(
-                            connection=connection, pcm_bytes=converted_pcm
-                        )
+                        await target.insert_user_audio_async(connection=connection, pcm_bytes=converted_pcm)
 
-                    turn_future = await target.request_response_async(
-                        connection=connection, dispatcher=dispatcher
-                    )
+                    turn_future = await target.request_response_async(connection=connection, dispatcher=dispatcher)
                     turn_result = await turn_future
 
                     user_audio_pcm = converted_pcm if using_converted_audio else snapshot
@@ -229,17 +230,18 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         )
 
         try:
-            await target.send_streaming_session_config_async(
-                connection=connection, system_prompt=context.system_prompt
-            )
+            await target.send_streaming_session_config_async(connection=connection, system_prompt=context.system_prompt)
 
             async for chunk in context.audio_chunks:
                 if chunk:
                     raw_buffer.extend(chunk)
                 await target.push_audio_chunk_async(connection=connection, pcm_bytes=chunk)
 
-            # Give server VAD time to commit the buffer and the dispatcher to drain.
-            await asyncio.sleep(self._POST_STREAM_SETTLE_SECONDS)
+            # Wait for any in-flight committed-turn tasks to finish (convert + response +
+            # persistence), capped by a safety timeout. The chunk source must end with enough
+            # trailing silence for server VAD's silence threshold to fire commit — otherwise
+            # the last turn never enters the convert pipeline and there is nothing to wait on.
+            await self._wait_for_pending_turns_async(turn_tasks)
         finally:
             await dispatcher.stop()
             try:
@@ -257,9 +259,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         return AttackResult(
             conversation_id=context.conversation_id,
             objective=context.objective,
-            atomic_attack_identifier=build_atomic_attack_identifier(
-                attack_identifier=self.get_identifier()
-            ),
+            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
             last_response=last_assistant_message.message_pieces[0] if last_assistant_message else None,
             last_score=None,
             related_conversations=context.related_conversations,
@@ -268,6 +268,33 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             executed_turns=executed_turns,
             labels=context.memory_labels,
         )
+
+    async def _wait_for_pending_turns_async(self, turn_tasks: list[asyncio.Task[None]]) -> None:
+        """
+        Wait for any in-flight VAD-committed turn tasks to finish, with a safety timeout.
+
+        Returns as soon as all known turn tasks complete (or the cap elapses, whichever
+        comes first). The timeout is a safety net for stuck turns; the common case is to
+        return immediately once the last turn's persistence finishes.
+
+        Args:
+            turn_tasks: Task handles for every ``on_committed`` invocation launched so far.
+                Tasks added after this method starts are not waited on; the dispatcher
+                callback machinery makes this race vanishingly unlikely in practice.
+        """
+        if not turn_tasks:
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*turn_tasks, return_exceptions=True),
+                timeout=self._MAX_POST_STREAM_WAIT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Timed out after {self._MAX_POST_STREAM_WAIT_SECONDS}s waiting for in-flight turn tasks to "
+                "finish; teardown will cancel them. Increase _MAX_POST_STREAM_WAIT_SECONDS if responses "
+                "regularly take longer."
+            )
 
     async def _persist_turn_async(
         self,
