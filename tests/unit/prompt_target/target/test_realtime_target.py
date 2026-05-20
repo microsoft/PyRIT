@@ -45,7 +45,7 @@ async def test_connect_success(target):
 
 async def test_send_prompt_async(target):
     # Mock the necessary methods
-    target.connect = AsyncMock(return_value=AsyncMock())
+    target.connect_async = AsyncMock(return_value=AsyncMock())
     target.send_config = AsyncMock()
     result = RealtimeTargetResult(audio_bytes=b"file", transcripts=["hello"])
     target.send_text_async = AsyncMock(return_value=("output.wav", result))
@@ -80,7 +80,7 @@ async def test_send_prompt_async(target):
 
 async def test_send_prompt_async_propagates_interrupted_to_metadata(target):
     """When a turn result carries interrupted=True, both response pieces' metadata must reflect it."""
-    target.connect = AsyncMock(return_value=AsyncMock())
+    target.connect_async = AsyncMock(return_value=AsyncMock())
     target.send_config = AsyncMock()
     interrupted_result = RealtimeTargetResult(audio_bytes=b"partial", transcripts=["hi"], interrupted=True)
     target.send_text_async = AsyncMock(return_value=("partial.wav", interrupted_result))
@@ -106,7 +106,7 @@ async def test_send_prompt_async_propagates_interrupted_to_metadata(target):
 
 async def test_send_prompt_async_omits_interrupted_metadata_when_not_set(target):
     """A non-interrupted result must not write an interrupted key to MessagePiece metadata."""
-    target.connect = AsyncMock(return_value=AsyncMock())
+    target.connect_async = AsyncMock(return_value=AsyncMock())
     target.send_config = AsyncMock()
     normal_result = RealtimeTargetResult(audio_bytes=b"full", transcripts=["hi"])
     target.send_text_async = AsyncMock(return_value=("full.wav", normal_result))
@@ -183,7 +183,7 @@ async def test_get_system_prompt_empty_conversation(target):
 
 async def test_multiple_websockets_created_for_multiple_conversations(target):
     # Mock the necessary methods
-    target.connect = AsyncMock(return_value=AsyncMock())
+    target.connect_async = AsyncMock(return_value=AsyncMock())
     target.send_config = AsyncMock()
     result = RealtimeTargetResult(audio_bytes=b"event1", transcripts=["event2"])
     target.send_text_async = AsyncMock(return_value=("output_audio_path", result))
@@ -406,7 +406,7 @@ async def test_multi_turn_reuses_connection(target):
     This ensures that the server-side conversation context is preserved.
     """
     mock_connection = AsyncMock()
-    target.connect = AsyncMock(return_value=mock_connection)
+    target.connect_async = AsyncMock(return_value=mock_connection)
     target.send_config = AsyncMock()
     result = RealtimeTargetResult(audio_bytes=b"audio", transcripts=["response"])
     target.send_text_async = AsyncMock(return_value=("output.wav", result))
@@ -436,7 +436,7 @@ async def test_multi_turn_reuses_connection(target):
     await target.send_prompt_async(message=Message(message_pieces=[message_piece_2]))
 
     # Connection should only be created once for the conversation
-    target.connect.assert_called_once_with(conversation_id=conversation_id)
+    target.connect_async.assert_called_once_with(conversation_id=conversation_id)
     target.send_config.assert_called_once()
 
     # Both turns should use the same connection
@@ -714,8 +714,8 @@ def _make_dispatcher(connection):
     return _OpenAIRealtimeDispatcher(connection=connection)
 
 
-async def test_cancel_calls_response_cancel_with_state_response_id():
-    """_cancel must forward state.last_response_id to response.cancel."""
+async def test_cancel_does_not_send_response_cancel():
+    """_cancel must NOT send response.cancel (server auto-cancels on speech detection)."""
     connection = AsyncMock()
     dispatcher = _make_dispatcher(connection)
     state = _turn_state(response_id="resp_42")
@@ -723,7 +723,7 @@ async def test_cancel_calls_response_cancel_with_state_response_id():
 
     await dispatcher._cancel(state=state)
 
-    connection.response.cancel.assert_awaited_once_with(response_id="resp_42")
+    connection.response.cancel.assert_not_awaited()
 
 
 async def test_cancel_truncates_to_delivered_audio_ms():
@@ -744,20 +744,18 @@ async def test_cancel_truncates_to_delivered_audio_ms():
     assert state.interrupted is True
 
 
-async def test_cancel_marks_interrupted_even_when_response_cancel_raises(caplog):
-    """A failed response.cancel must log at debug (likely server-side cancelled) and still flip state.interrupted."""
+async def test_cancel_only_truncates_no_response_cancel(caplog):
+    """_cancel must only truncate, not send response.cancel (server handles cancellation)."""
     connection = AsyncMock()
-    connection.response.cancel.side_effect = RuntimeError("boom")
     dispatcher = _make_dispatcher(connection)
-    state = _turn_state()
+    state = _turn_state(item_id="item_1")
+    state.delivered_audio.extend(b"\x00" * 4800)
 
-    with caplog.at_level("DEBUG"):
-        await dispatcher._cancel(state=state)
+    await dispatcher._cancel(state=state)
 
     assert state.interrupted is True
-    # Truncate must still have been attempted despite the cancel failure.
     connection.conversation.item.truncate.assert_awaited_once()
-    assert any("response.cancel raised" in record.message and record.levelname == "DEBUG" for record in caplog.records)
+    connection.response.cancel.assert_not_awaited()
 
 
 async def test_cancel_marks_interrupted_when_truncate_raises(caplog):
@@ -827,7 +825,7 @@ async def test_route_event_speech_started_while_responding_cancels_and_resolves_
     )
     await dispatcher._route_event(event=_scripted_event("input_audio_buffer.speech_started"), state=state)
 
-    connection.response.cancel.assert_awaited_once_with(response_id="r1")
+    connection.response.cancel.assert_not_awaited()
     connection.conversation.item.truncate.assert_awaited_once_with(
         item_id="i1",
         content_index=0,

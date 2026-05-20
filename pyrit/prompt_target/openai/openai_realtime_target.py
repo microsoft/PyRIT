@@ -1112,19 +1112,17 @@ class _OpenAIRealtimeDispatcher(_RealtimeEventDispatcher):
 
     async def _cancel(self, *, state: _RealtimeTurnState) -> None:
         """
-        Send ``response.cancel`` + ``conversation.item.truncate`` for the in-flight response.
+        Truncate the in-flight response's conversation item to what was actually delivered.
 
-        Marks ``state.interrupted = True`` even when either wire call fails.
+        The server auto-cancels the response when it detects new speech, so we only need to
+        trim the conversation history to match the audio we received.
+
+        Marks ``state.interrupted = True`` even when the truncate call fails.
         Does not resolve ``state.completion``; the caller (``_route_event``) does that.
 
         Args:
             state (_RealtimeTurnState): The turn whose response should be cancelled.
         """
-        if state.last_response_id is not None:
-            try:
-                await self._connection.response.cancel(response_id=state.last_response_id)
-            except Exception as e:
-                logger.debug(f"response.cancel raised for {state.last_response_id} (likely cancelled server-side): {e}")
         if state.current_item_id is not None:
             # PCM16 @ 24 kHz: 48 bytes per millisecond.
             audio_end_ms = len(state.delivered_audio) // 48
