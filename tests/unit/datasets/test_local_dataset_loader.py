@@ -42,7 +42,7 @@ seeds:
         file_path.write_text(valid_yaml_content, encoding="utf-8")
 
         loader = _LocalDatasetLoader(file_path=file_path)
-        dataset = await loader.fetch_dataset()
+        dataset = await loader.fetch_dataset_async()
 
         assert isinstance(dataset, SeedDataset)
         assert dataset.dataset_name == "test_dataset"
@@ -52,4 +52,4 @@ seeds:
     async def test_fetch_dataset_file_not_found(self):
         loader = _LocalDatasetLoader(file_path=Path("non_existent.yaml"))
         with pytest.raises(Exception):  # noqa: B017
-            await loader.fetch_dataset()
+            await loader.fetch_dataset_async()

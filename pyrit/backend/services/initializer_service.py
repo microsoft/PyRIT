@@ -2,12 +2,13 @@
 # Licensed under the MIT license.
 
 """
-Initializer service for listing available initializers.
+Initializer service for listing, registering, and removing initializers.
 
-Provides read-only access to the InitializerRegistry, exposing initializer
+Provides access to the InitializerRegistry, exposing initializer
 metadata through the REST API.
 """
 
+import logging
 from functools import lru_cache
 
 from pyrit.backend.models.common import PaginationInfo
@@ -17,6 +18,8 @@ from pyrit.backend.models.initializers import (
     RegisteredInitializer,
 )
 from pyrit.registry import InitializerMetadata, InitializerRegistry
+
+logger = logging.getLogger(__name__)
 
 
 def _metadata_to_registered_initializer(metadata: InitializerMetadata) -> RegisteredInitializer:
@@ -47,7 +50,7 @@ def _metadata_to_registered_initializer(metadata: InitializerMetadata) -> Regist
 
 class InitializerService:
     """
-    Service for listing available initializers.
+    Service for listing, registering, and removing initializers.
 
     Uses InitializerRegistry as the source of truth for initializer metadata.
     """
@@ -98,6 +101,44 @@ class InitializerService:
             if metadata.registry_name == initializer_name:
                 return _metadata_to_registered_initializer(metadata)
         return None
+
+    async def register_initializer_async(
+        self,
+        *,
+        name: str,
+        script_content: str,
+    ) -> RegisteredInitializer:
+        """
+        Register an initializer from uploaded Python source code.
+
+        Args:
+            name: Registry name for the new initializer.
+            script_content: Python source code containing a PyRITInitializer subclass.
+
+        Returns:
+            The newly registered initializer summary.
+
+        Raises:
+            ValueError: If the script is invalid or contains no initializer class.
+        """
+        self._registry.register_from_content(name=name, script_content=script_content)
+
+        initializer = await self.get_initializer_async(initializer_name=name)
+        if not initializer:
+            raise ValueError(f"Initializer '{name}' was registered but metadata could not be retrieved.")
+        return initializer
+
+    async def unregister_initializer_async(self, *, initializer_name: str) -> None:
+        """
+        Remove a custom initializer from the registry.
+
+        Built-in initializers cannot be removed.
+
+        Args:
+            initializer_name: The registry name to remove.
+        """
+        self._registry.unregister_and_cleanup(initializer_name)
+        logger.info(f"Unregistered initializer: {initializer_name}")
 
     @staticmethod
     def _paginate(

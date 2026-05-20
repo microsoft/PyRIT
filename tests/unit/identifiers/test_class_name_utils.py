@@ -3,7 +3,11 @@
 
 import pytest
 
-from pyrit.identifiers.class_name_utils import class_name_to_snake_case, snake_case_to_class_name
+from pyrit.identifiers.class_name_utils import (
+    class_name_to_snake_case,
+    snake_case_to_class_name,
+    validate_registry_name,
+)
 
 # --- class_name_to_snake_case ---
 
@@ -94,3 +98,44 @@ def test_round_trip_snake_to_class(class_name):
     snake = class_name_to_snake_case(class_name)
     result = snake_case_to_class_name(snake)
     assert result == class_name
+
+
+# --- validate_registry_name ---
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["simple", "my_custom", "a", "target", "load_default_datasets", "x" * 64],
+)
+def test_validate_registry_name_accepts_valid(name):
+    validate_registry_name(name)  # should not raise
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",  # empty
+        "1starts_digit",  # starts with digit
+        "_leading",  # starts with underscore
+        "UPPER",  # uppercase
+        "has-dash",  # dash
+        "has.dot",  # dot
+        "has space",  # space
+        "../traversal",  # path traversal
+        "x" * 65,  # too long
+    ],
+)
+def test_validate_registry_name_rejects_invalid(name):
+    with pytest.raises(ValueError, match="Invalid registry name"):
+        validate_registry_name(name)
+
+
+@pytest.mark.parametrize(
+    "class_name",
+    ["SimpleInitializer", "TargetInitializer", "LoadDefaultDatasets", "AIRTInitializer"],
+)
+def test_validate_registry_name_accepts_snake_case_output(class_name):
+    """Names produced by class_name_to_snake_case should always be valid registry names."""
+    snake = class_name_to_snake_case(class_name, suffix="Initializer")
+    if snake:  # skip empty (suffix == class_name edge case)
+        validate_registry_name(snake)

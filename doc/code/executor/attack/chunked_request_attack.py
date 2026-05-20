@@ -7,18 +7,16 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 # ---
-
 # %% [markdown]
 # # Chunked Request Attack
 #
 # This attack extracts information across multiple turns. This technique bypasses length-based filters or output truncation by asking for specific character ranges of a secret value.
-
 # %%
 from pyrit.executor.attack import (
     AttackScoringConfig,
     ChunkedRequestAttack,
-    ConsoleAttackResultPrinter,
 )
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -41,7 +39,7 @@ scoring_config = AttackScoringConfig(
 attack = ChunkedRequestAttack(objective_target=objective_target, attack_scoring_config=scoring_config, total_length=500)
 
 result = await attack.execute_async(objective=objective)  # type: ignore
-await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
+await output_attack_async(result)
 
 # Access the combined chunks from metadata
 print(f"\nCombined chunks: {result.metadata.get('combined_chunks', '')}")

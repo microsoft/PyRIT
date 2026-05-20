@@ -45,7 +45,7 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "jbb_behaviors"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch JBB-Behaviors dataset and return as SeedDataset.
 

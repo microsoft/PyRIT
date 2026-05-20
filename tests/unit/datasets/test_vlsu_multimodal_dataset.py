@@ -79,7 +79,7 @@ class TestVLSUMultimodalDataset:
                 return_value="/fake/path/image.png",
             ),
         ):
-            dataset = await dataset_loader.fetch_dataset(cache=False)
+            dataset = await dataset_loader.fetch_dataset_async(cache=False)
 
             assert isinstance(dataset, SeedDataset)
             assert len(dataset.seeds) == 2  # Text + Image pair
@@ -135,7 +135,7 @@ class TestVLSUMultimodalDataset:
                 return_value="/fake/path/image.png",
             ),
         ):
-            dataset = await dataset_loader.fetch_dataset(cache=False)
+            dataset = await dataset_loader.fetch_dataset_async(cache=False)
 
             assert len(dataset.seeds) == 2  # Text + Image pair
 
@@ -165,7 +165,7 @@ class TestVLSUMultimodalDataset:
 
         with patch.object(dataset_loader, "_fetch_from_url", return_value=mock_data):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
-                await dataset_loader.fetch_dataset(cache=False)
+                await dataset_loader.fetch_dataset_async(cache=False)
 
     async def test_fetch_dataset_multiple_pairs(self):
         """Test that multiple text+image pairs are created correctly."""
@@ -204,7 +204,7 @@ class TestVLSUMultimodalDataset:
                 return_value="/fake/path/image.png",
             ),
         ):
-            dataset = await dataset_loader.fetch_dataset(cache=False)
+            dataset = await dataset_loader.fetch_dataset_async(cache=False)
 
             assert len(dataset.seeds) == 4  # 2 pairs of text + image
 
@@ -256,7 +256,7 @@ class TestVLSUMultimodalDataset:
                 return_value="/fake/path/image.png",
             ),
         ):
-            dataset = await dataset_loader.fetch_dataset(cache=False)
+            dataset = await dataset_loader.fetch_dataset_async(cache=False)
 
             # Only the slur category should be included (1 pair = 2 prompts)
             assert len(dataset.seeds) == 2
@@ -291,7 +291,7 @@ class TestVLSUMultimodalDataset:
         ):
             # Both text and image should be skipped when image fails
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
-                await dataset_loader.fetch_dataset(cache=False)
+                await dataset_loader.fetch_dataset_async(cache=False)
 
     async def test_custom_unsafe_grades(self):
         """Test that custom unsafe_grades parameter works correctly."""
@@ -331,7 +331,7 @@ class TestVLSUMultimodalDataset:
                 return_value="/fake/path/image.png",
             ),
         ):
-            dataset = await dataset_loader.fetch_dataset(cache=False)
+            dataset = await dataset_loader.fetch_dataset_async(cache=False)
 
             # Only the "unsafe" pair should be included
             assert len(dataset.seeds) == 2
@@ -364,7 +364,7 @@ class TestVLSUMultimodalDataset:
                 return_value="/fake/path/image.png",
             ),
         ):
-            dataset = await dataset_loader.fetch_dataset(cache=False)
+            dataset = await dataset_loader.fetch_dataset_async(cache=False)
 
             # Both should use combined_category, not their individual categories
             for seed in dataset.seeds:

@@ -48,7 +48,7 @@ class TestTransphobiaAwarenessDataset:
         dataset_loader = _TransphobiaAwarenessDataset()
 
         with patch("pandas.read_excel", return_value=mock_df):
-            dataset = await dataset_loader.fetch_dataset(cache=False)
+            dataset = await dataset_loader.fetch_dataset_async(cache=False)
 
             assert isinstance(dataset, SeedDataset)
             assert dataset.dataset_name == "transphobia_awareness"
@@ -79,7 +79,7 @@ class TestTransphobiaAwarenessDataset:
         dataset_loader = _TransphobiaAwarenessDataset()
 
         with patch("pandas.read_excel", return_value=mock_df):
-            dataset = await dataset_loader.fetch_dataset(cache=False)
+            dataset = await dataset_loader.fetch_dataset_async(cache=False)
 
             # All Trans and Transgender should be mapped to "transgender"
             assert dataset.seeds[0].metadata["keyword"] == "transgender"
@@ -104,7 +104,7 @@ class TestTransphobiaAwarenessDataset:
         dataset_loader = _TransphobiaAwarenessDataset()
 
         with patch("pandas.read_excel", return_value=mock_df):
-            dataset = await dataset_loader.fetch_dataset(cache=False)
+            dataset = await dataset_loader.fetch_dataset_async(cache=False)
 
             # First seed should have sentiment
             assert "question_sentiment" in dataset.seeds[0].metadata

@@ -17,7 +17,7 @@ from transformers import (
 )
 
 from pyrit.common import default_values
-from pyrit.common.download_hf_model import download_specific_files
+from pyrit.common.download_hf_model import download_specific_files_async
 from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, construct_response_from_request
@@ -77,7 +77,6 @@ class HuggingFaceChatTarget(PromptTarget):
         attn_implementation: str | None = None,
         max_requests_per_minute: int | None = None,
         custom_configuration: TargetConfiguration | None = None,
-        custom_capabilities: TargetCapabilities | None = None,
     ) -> None:
         """
         Initialize the HuggingFaceChatTarget.
@@ -109,8 +108,6 @@ class HuggingFaceChatTarget(PromptTarget):
             max_requests_per_minute (int | None): The maximum number of requests per minute. Defaults to None.
             custom_configuration (TargetConfiguration | None): Override the default configuration for this target
                 instance. Defaults to None.
-            custom_capabilities (TargetCapabilities | None): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
 
         Raises:
             ValueError: If neither or both of `model_id` and `model_path` are provided.
@@ -122,7 +119,6 @@ class HuggingFaceChatTarget(PromptTarget):
             max_requests_per_minute=max_requests_per_minute,
             model_name=model_name,
             custom_configuration=custom_configuration,
-            custom_capabilities=custom_capabilities,
         )
 
         if not model_id and not model_path:
@@ -280,11 +276,16 @@ class HuggingFaceChatTarget(PromptTarget):
                 if self.necessary_files is None:
                     # Download all files if no specific files are provided
                     logger.info(f"Downloading all files for {self.model_id}...")
-                    await download_specific_files(self.model_id or "", None, self.huggingface_token, Path(cache_dir))  # type: ignore[ty:invalid-argument-type]
+                    await download_specific_files_async(
+                        self.model_id or "",
+                        None,
+                        self.huggingface_token,  # type: ignore[ty:invalid-argument-type]
+                        Path(cache_dir),
+                    )
                 else:
                     # Download only the necessary files
                     logger.info(f"Downloading specific files for {self.model_id}...")
-                    await download_specific_files(
+                    await download_specific_files_async(
                         self.model_id or "",
                         self.necessary_files,
                         self.huggingface_token,  # type: ignore[ty:invalid-argument-type]

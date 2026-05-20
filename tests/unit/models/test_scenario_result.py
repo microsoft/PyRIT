@@ -186,3 +186,117 @@ class TestScenarioResult:
             error_attack_result_ids=["id-1", "id-2"],
         )
         assert sr.error_attack_result_ids == ["id-1", "id-2"]
+
+
+def test_scenario_identifier_to_dict_from_dict_roundtrip():
+    original = ScenarioIdentifier(
+        name="ContentHarms",
+        description="Tests content harm scenarios",
+        scenario_version=3,
+        init_data={"max_turns": 5, "strategy": "crescendo"},
+        pyrit_version="0.14.0",
+    )
+    roundtripped = ScenarioIdentifier.from_dict(original.to_dict())
+    assert original.to_dict() == roundtripped.to_dict()
+
+
+def test_scenario_result_to_dict_from_dict_roundtrip():
+    from datetime import datetime, timezone
+
+    from pyrit.models.conversation_reference import ConversationReference, ConversationType
+    from pyrit.models.retry_event import RetryEvent
+
+    scenario_id = ScenarioIdentifier(
+        name="ContentHarms",
+        description="Tests content harm scenarios",
+        scenario_version=2,
+        pyrit_version="0.14.0",
+    )
+    target_id = ComponentIdentifier(
+        class_name="OpenAIChatTarget",
+        class_module="pyrit.prompt_target",
+        params={"endpoint": "https://api.example.com"},
+    )
+    scorer_id = ComponentIdentifier(
+        class_name="SelfAskTrueFalseScorer",
+        class_module="pyrit.score",
+    )
+    attack_result = AttackResult(
+        conversation_id="conv-1",
+        objective="test objective",
+        outcome=AttackOutcome.SUCCESS,
+        outcome_reason="Objective achieved",
+        executed_turns=3,
+        execution_time_ms=1500,
+        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+        related_conversations={
+            ConversationReference(
+                conversation_id="conv-2",
+                conversation_type=ConversationType.PRUNED,
+                description="pruned branch",
+            ),
+        },
+        metadata={"model": "gpt-4"},
+        labels={"category": "violence"},
+        retry_events=[
+            RetryEvent(
+                attempt_number=1,
+                function_name="send_prompt",
+                exception_type="TimeoutError",
+                exception_message="timed out",
+                component_role="target",
+                timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+            ),
+        ],
+        total_retries=1,
+    )
+    original = ScenarioResult(
+        id=uuid.UUID("12345678-1234-1234-1234-123456789abc"),
+        scenario_identifier=scenario_id,
+        objective_target_identifier=target_id,
+        objective_scorer_identifier=scorer_id,
+        scenario_run_state="COMPLETED",
+        attack_results={"crescendo": [attack_result]},
+        display_group_map={"crescendo": "Crescendo Attack"},
+        labels={"env": "test"},
+        creation_time=datetime(2026, 1, 15, 11, 0, 0, tzinfo=timezone.utc),
+        completion_time=datetime(2026, 1, 15, 12, 30, 0, tzinfo=timezone.utc),
+        number_tries=1,
+        error_attack_result_ids=["err-1"],
+        error_message="partial failure",
+        error_type="RuntimeError",
+    )
+    roundtripped = ScenarioResult.from_dict(original.to_dict())
+    assert original.to_dict() == roundtripped.to_dict()
+
+
+def test_scenario_identifier_from_dict_missing_pyrit_version_yields_unknown():
+    """from_dict should preserve 'unknown' rather than fabricating the current version when missing."""
+    data = {
+        "name": "Legacy",
+        "description": "loaded from older payload",
+        "scenario_version": 1,
+        "init_data": None,
+        # pyrit_version intentionally absent
+    }
+    identifier = ScenarioIdentifier.from_dict(data)
+    assert identifier.pyrit_version == "unknown"
+
+
+def test_scenario_result_from_dict_preserves_missing_completion_time():
+    """An in-progress scenario serialized without completion_time should round-trip with completion_time=None."""
+    scenario_id = ScenarioIdentifier(name="Test", scenario_version=1, pyrit_version="0.14.0")
+    target_id = ComponentIdentifier(class_name="OpenAIChatTarget", class_module="pyrit.prompt_target")
+
+    original = ScenarioResult(
+        scenario_identifier=scenario_id,
+        objective_target_identifier=target_id,
+        objective_scorer_identifier=None,
+        attack_results={},
+        scenario_run_state="IN_PROGRESS",
+    )
+    original.completion_time = None  # type: ignore[ty:invalid-assignment]
+
+    roundtripped = ScenarioResult.from_dict(original.to_dict())
+    assert roundtripped.completion_time is None
+    assert roundtripped.scenario_run_state == "IN_PROGRESS"

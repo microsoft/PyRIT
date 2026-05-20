@@ -69,7 +69,7 @@ class TestCBTBenchDataset:
         loader = _CBTBenchDataset()
 
         with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
             assert len(dataset.seeds) == 2
@@ -95,7 +95,7 @@ class TestCBTBenchDataset:
         )
 
         with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data) as mock_fetch:
-            dataset = await loader.fetch_dataset(cache=False)
+            dataset = await loader.fetch_dataset_async(cache=False)
 
             assert len(dataset.seeds) == 2
             mock_fetch.assert_called_once()
@@ -110,7 +110,7 @@ class TestCBTBenchDataset:
         loader = _CBTBenchDataset()
 
         with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data_missing_thoughts):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 1
             assert dataset.seeds[0].value == "A situation without thoughts."
@@ -121,14 +121,14 @@ class TestCBTBenchDataset:
 
         with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data_empty):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
-                await loader.fetch_dataset()
+                await loader.fetch_dataset_async()
 
     async def test_fetch_dataset_metadata_includes_config(self, mock_cbt_bench_data):
         """Test that metadata includes the config name."""
         loader = _CBTBenchDataset(config="distortions_seed")
 
         with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             for seed in dataset.seeds:
                 assert seed.metadata["config"] == "distortions_seed"
@@ -138,7 +138,7 @@ class TestCBTBenchDataset:
         loader = _CBTBenchDataset()
 
         with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             for seed in dataset.seeds:
                 assert seed.source == "https://huggingface.co/datasets/Psychotherapy-LLM/CBT-Bench"

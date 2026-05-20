@@ -40,7 +40,7 @@ class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "librai_do_not_answer"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch LibrAI Do Not Answer dataset and return as SeedDataset.
 

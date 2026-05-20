@@ -40,7 +40,7 @@ class _TDC23RedteamingDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "tdc23_redteaming"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch TDC23-RedTeaming dataset and return as SeedDataset.
 

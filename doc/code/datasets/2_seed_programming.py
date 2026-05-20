@@ -30,7 +30,6 @@ import pathlib
 
 from pyrit.executor.attack import (
     AttackExecutor,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
@@ -68,8 +67,6 @@ scoring_config = AttackScoringConfig(
 )
 
 attack = PromptSendingAttack(objective_target=target, attack_scoring_config=scoring_config)
-printer = ConsoleAttackResultPrinter()
-
 # every attack has this to extract parameters from the seed group
 params = await attack.params_type.from_seed_group_async(seed_group=seed_group)  # type: ignore
 print("Attack Parameters:", params)

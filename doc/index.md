@@ -65,110 +65,98 @@ Evaluate AI responses with true/false, Likert scale, classification, and custom 
 ---
 
 ## Getting Started
+1. Install PyRIT and verify installation.\
+For more details and alternative installation methods, see the [Install PyRIT](getting_started/install) page
+```bash
+# note: for local installation, python version 3.13 is recommended: https://www.python.org/downloads/latest/python3.13
+pip install pyrit
+python -c "import pyrit; print(f'PyRIT version installed: {pyrit.__version__}')"
+```
 
-Getting PyRIT running takes two steps: **install** the package, then **configure** your AI endpoints. For the path that's right for you, see the [Getting Started](getting_started/README) guide.
-
-### Step 1: Install
-
-PyRIT offers flexible installation options to suit different needs. Choose the path that best fits your use case.
-
-::::{important}
-**Version Compatibility:**
-- **User installations** (Docker, Local) install the **latest stable release** from PyPI
-- **Contributor installations** (Docker, Local) use the **latest development code** from the `main` branch
-- Always match your notebooks to your PyRIT version
-::::
+2. Create and populate endpoint and startup configuration files in `~/.pyrit/.env` and `~/.pyrit/.pyrit_conf` with minimal content below.\
+For more details, see the [Configure PyRIT](getting_started/configuration) page.
 
 :::::{grid} 1 1 2 2
-:gutter: 3
 
-::::{card} 🐋 User Docker Installation
-:link: getting_started/install_docker
-**Quick Start** ⭐
-
-Get started immediately with a pre-configured environment:
-- ✅ All dependencies included
-- ✅ No Python setup needed
-- ✅ JupyterLab built-in
-- ✅ Works on all platforms
+::::{card} 🔑 ~/.pyrit/.env
+```bash
+# example OPENAI_CHAT_ENDPOINT values:
+# "https://api.openai.com/v1"
+# "https://<project>.cognitiveservices.azure.com/openai/v1/"
+# "https://<project>.services.ai.azure.com/openai/v1"
+OPENAI_CHAT_ENDPOINT="<open-ai-chat-endpoint>"
+OPENAI_CHAT_KEY="<your-api-key>"
+OPENAI_CHAT_MODEL="<model-name>"
+```
 ::::
 
-::::{card} ☀️ User Local Installation
-:link: getting_started/install_local
-**Custom Setup**
+::::{card} 📄 ~/.pyrit/.pyrit_conf
+```yaml
+memory_db_type: in_memory
 
-Install PyRIT directly on your machine:
-- ✅ Pip or uv
-- ✅ Full Python environment control
-- ✅ Easy integration with existing workflows
+initializers:
+  - name: target
+    args:
+      tags:
+        - default
+        - scorer
+  - name: scorer
+  - name: load_default_datasets
+```
 ::::
 
-::::{card} 🐋 Contributor Docker Installation
-:link: getting_started/install_devcontainers
-**Recommended for Contributors** ⭐
-
-Pre-configured Docker container with VS Code:
-- ✅ Consistent across all contributors
-- ✅ All extensions pre-installed
-- ✅ One-click setup
-::::
-
-::::{card} ☀️ Contributor Local Installation
-:link: getting_started/install_local_dev
-**Custom Dev Setup**
-
-Install from source in editable mode:
-- ✅ Full development control
-- ✅ Use any IDE or editor
-- ✅ Customize environment
-::::
 :::::
 
-### Step 2: Configure
+3. Use PyRIT in any mode that best fits your use case: Scanner, GUI, or Framework.
 
-After installing, configure PyRIT with your AI endpoint credentials and initialize the framework. PyRIT reads from `~/.pyrit/` by default. For more details, see the [Configure PyRIT](getting_started/configuration) page.
+::::{tab-set}
 
-:::::{grid} 1 1 2 2
-:gutter: 3
-
-::::{card} 🔑 Populating Secrets
-:link: getting_started/populating_secrets
-**Set Up Your .env File**
-
-Create `~/.pyrit/.env` with your provider credentials. Tabbed examples for OpenAI, Azure, Ollama, Groq, HuggingFace, and more.
-::::
-
-::::{card} 📄 Config File (Recommended)
-:link: getting_started/pyrit_conf
-**Full Framework Setup** ⭐
-
-Set up `.pyrit_conf` + `.env` for persistent config. Enables initializers that register targets, scorers, and datasets — required for `pyrit_scan` and scenarios.
-::::
-:::::
-
-### Step 3: Use It!
-
-:::::{grid} 1 1 3 3
-:gutter: 3
-
-::::{card} 🔍 PyRIT Scanner
-:link: scanner/0_scanner
-**Automated Red Teaming**
-
+:::{tab-item}🔍 Scanner
 Run security assessments from the command line with `pyrit_scan` or the interactive `pyrit_shell`. Execute built-in scenarios against your AI targets.
-::::
 
-::::{card} 🖥️ PyRIT GUI
-:link: gui/0_gui
-**Human-Led Red Teaming**
+```bash
+pyrit_scan airt.scam --target openai_chat
+```
 
+![scanner-demo](scanner-demo.png)
+
+Use `pyrit_scan --help` to learn more about what else `pyrit_scan` can do.
+For more details, see the [Scanner](scanner/0_scanner) page.
+:::
+
+:::{tab-item}🖥️ GUI
 Use CoPyRIT's graphical interface for interactive red teaming. Chat with AI systems, track findings, and collaborate with your team.
-::::
 
-::::{card} 🧩 Framework
-:link: code/framework
-**Build Your Own**
+Start the local web app and give it a try:
 
+```bash
+pyrit_backend # serves webapp on http://localhost:8000/
+```
+![copyrit-demo](copyrit-demo.png)
+
+For more details, see the [GUI](gui/0_gui) page.
+:::
+
+:::{tab-item}🧩 Framework
 Dive into PyRIT's modular components — targets, converters, scorers, memory, and more. Create custom attacks and extend the framework.
+
+```python
+from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
+from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+
+await initialize_pyrit_async(memory_db_type=IN_MEMORY)
+
+target = OpenAIChatTarget()
+attack = PromptSendingAttack(objective_target=target)
+result = await attack.execute_async(objective="What model exactly are you? be concise.")
+
+printer = ConsoleAttackResultPrinter()
+await printer.print_conversation_async(result=result)
+```
+
+![framework-demo](framework-demo.png)
+:::
+
+For more details, see the [Framework](code/framework) page.
 ::::
-:::::
