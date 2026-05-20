@@ -36,8 +36,8 @@ const SUPPORTED_TARGET_TYPES = Object.keys(TARGET_TYPE_CONFIG)
 
 type AuthMode = 'api_key' | 'entra'
 
-// Mirrors the backend's strict hostname-suffix check (target_service.py).
-// Used to warn the user before they submit; the backend remains the source of truth.
+// Mirrors backend's hostname-suffix check (list in target_service.py).
+// The backend still does the check and will reject unsupported endpoints, but this allows us to show a warning in the UI if the user selects Microsoft Entra authentication with a non-Azure OpenAI endpoint.
 const AZURE_OPENAI_HOSTNAME_SUFFIXES = [
   '.openai.azure.com',
   '.ai.azure.com',
@@ -287,10 +287,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
               </Field>
 
               {showNonAzureEntraWarning && (
-                <MessageBar intent="warning">
-                  <MessageBarBody>
-                    Microsoft Entra ID authentication is only supported for Azure endpoints
-                    (*.openai.azure.com or *.ai.azure.com). This request will be rejected by the server.
+                <MessageBar intent="warning" className={styles.warningMessage}>
+                  <MessageBarBody className={styles.warningMessageBody}>
+                    Error: Entra auth only works with Azure OpenAI / AI Foundry endpoints (for example,
+                    *.openai.azure.com or *.ai.azure.com).
                   </MessageBarBody>
                 </MessageBar>
               )}

@@ -204,11 +204,6 @@ class TargetService:
         Instantiates the target with the given type and params,
         then registers it in the registry under its registry name.
 
-        When ``request.auth_mode == "entra"``, an Azure token-provider callable is
-        injected as ``api_key`` before instantiation. Any ``api_key`` value in the
-        original ``params`` is discarded in that case. Entra ID is supported for
-        OpenAI-family targets (against Azure endpoints) and ``AzureMLChatTarget``.
-
         Args:
             request: The create target request with type, params, and auth_mode.
 
@@ -216,13 +211,13 @@ class TargetService:
             TargetInstance with the new target's details.
 
         Raises:
-            ValueError: If the target type is not found, or if Entra ID is requested
+            ValueError: If the target type is not found, if Entra ID is requested
                 for an unsupported target type, or if Entra ID is requested for an
                 OpenAI target against a non-Azure endpoint.
         """
         target_class = self._get_target_class(target_type=request.type)
 
-        # Build a fresh params dict so we never mutate the incoming Pydantic model.
+        # Copy params so we can modify values (eg api_key) without changing request.params.
         params: dict[str, Any] = dict(request.params)
 
         if request.auth_mode == "entra":
@@ -237,15 +232,13 @@ class TargetService:
     @staticmethod
     def _apply_entra_auth(*, target_class: type, target_type: str, params: dict[str, Any]) -> dict[str, Any]:
         """
-        Replace any ``api_key`` in ``params`` with an Entra ID token provider for
+        Replace ``api_key`` in ``params`` with an Entra ID token provider for
         the given target class.
 
         Args:
-            target_class (type): The target class being instantiated. Used to select the
-                correct token-provider scope.
-            target_type (str): The user-facing target type name (used only in error messages).
-            params (dict[str, Any]): The target constructor parameters from the request.
-                This dict is not mutated.
+            target_class (type): The target class being instantiated
+            target_type (str): The user-facing target type name
+            params (dict[str, Any]): The target constructor parameters from the request
 
         Returns:
             dict[str, Any]: A new params dict with ``api_key`` replaced by an async
@@ -257,7 +250,6 @@ class TargetService:
         """
         new_params = dict(params)
         if "api_key" in new_params:
-            # User error: api_key isn't used in Entra mode. Don't log the value.
             logger.debug("Discarding 'api_key' from params because auth_mode='entra'.")
             new_params.pop("api_key", None)
 
