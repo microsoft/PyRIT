@@ -29,6 +29,8 @@ async def output_attack_async(
     include_auxiliary_scores: bool = False,
     include_pruned_conversations: bool = False,
     include_adversarial_conversation: bool = False,
+    blur_images: bool = False,
+    blur_radius: int = 20,
 ) -> None:
     """
     Print an attack result in the specified format to the specified destination.
@@ -42,11 +44,25 @@ async def output_attack_async(
         include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
         include_adversarial_conversation (bool): Whether to include the adversarial conversation.
             Defaults to False.
+        blur_images (bool): If True, apply a Gaussian blur to image outputs before
+            rendering them. For "pretty" output, image bytes are blurred in-memory before
+            display. For "markdown" output, a blurred sibling file is written next to
+            each image and linked instead of the original. Defaults to False.
+        blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
+            Defaults to 20.
     """
     if format == "markdown":
-        printer = MarkdownAttackResultMemoryPrinter(sink=sink or get_default_sink())
+        printer = MarkdownAttackResultMemoryPrinter(
+            sink=sink or get_default_sink(),
+            blur_images=blur_images,
+            blur_radius=blur_radius,
+        )
     else:
-        printer = PrettyAttackResultMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
+        printer = PrettyAttackResultMemoryPrinter(
+            sink=sink or get_default_sink(StdoutSink),
+            blur_images=blur_images,
+            blur_radius=blur_radius,
+        )
 
     await printer.write_async(
         result,
@@ -116,6 +132,8 @@ async def output_conversation_async(
     sink: Sink | None = None,
     include_scores: bool = False,
     include_reasoning_trace: bool = False,
+    blur_images: bool = False,
+    blur_radius: int = 20,
 ) -> None:
     """
     Print a conversation message history in the specified format.
@@ -127,6 +145,10 @@ async def output_conversation_async(
             for "markdown".
         include_scores (bool): Whether to include scores. Defaults to False.
         include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
+        blur_images (bool): If True, apply a Gaussian blur to image outputs before
+            rendering them. Defaults to False.
+        blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
+            Defaults to 20.
 
     Raises:
         ValueError: If ``format`` is not a supported value.
@@ -134,7 +156,11 @@ async def output_conversation_async(
     if format != "pretty":
         raise ValueError(f"Unsupported format for conversation: {format!r}. Only 'pretty' is available.")
 
-    printer = PrettyConversationMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
+    printer = PrettyConversationMemoryPrinter(
+        sink=sink or get_default_sink(StdoutSink),
+        blur_images=blur_images,
+        blur_radius=blur_radius,
+    )
     await printer.write_async(
         messages,
         include_scores=include_scores,

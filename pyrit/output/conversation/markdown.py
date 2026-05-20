@@ -1,12 +1,15 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import logging
 import os
 
 from pyrit.models import Message, MessagePiece, Score
 from pyrit.output.conversation.base import ConversationPrinterBase
 from pyrit.output.score.markdown import MarkdownScorePrinter
 from pyrit.output.sink import Sink
+
+logger = logging.getLogger(__name__)
 
 
 class MarkdownConversationPrinter(ConversationPrinterBase):
@@ -22,6 +25,8 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         *,
         sink: Sink | None = None,
         score_printer: MarkdownScorePrinter | None = None,
+        blur_images: bool = False,
+        blur_radius: int = 20,
     ) -> None:
         """
         Initialize the markdown conversation printer.
@@ -30,9 +35,16 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
             sink (Sink | None): Output sink. Defaults to StdoutSink().
             score_printer (MarkdownScorePrinter | None): Score printer for inline score rendering.
                 Defaults to a new MarkdownScorePrinter with matching sink.
+            blur_images (bool): If True, write a blurred copy of each referenced image
+                next to the original (as ``<stem>_blurred.png``) and emit the markdown
+                link pointing at the blurred copy. Defaults to False.
+            blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
+                Defaults to 20.
         """
         super().__init__(sink=sink)
         self._score_printer = score_printer or MarkdownScorePrinter(sink=sink)
+        self._blur_images = blur_images
+        self._blur_radius = blur_radius
 
     async def render_async(
         self,
@@ -181,9 +193,42 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         Returns:
             list[str]: Markdown lines for the image.
         """
-        relative_path = os.path.relpath(image_path)
+        display_path = self._maybe_blur_image_on_disk(image_path=image_path) if self._blur_images else image_path
+        relative_path = os.path.relpath(display_path)
         posix_path = relative_path.replace("\\", "/")
         return [f"![Image]({posix_path})\n"]
+
+    def _maybe_blur_image_on_disk(self, *, image_path: str) -> str:
+        """
+        Produce a blurred sibling copy of ``image_path`` and return its path.
+
+        The blurred file is written as ``<stem>_blurred.png`` next to the original.
+        If the blurred file already exists it is reused (idempotent). On any
+        failure the original ``image_path`` is returned and a warning is logged.
+
+        Args:
+            image_path (str): The path to the source image file.
+
+        Returns:
+            str: The path to the blurred image, or the original path on failure.
+        """
+        try:
+            stem, _ = os.path.splitext(image_path)
+            blurred_path = f"{stem}_blurred.png"
+            if os.path.exists(blurred_path):
+                return blurred_path
+
+            from pyrit.output._image_utils import blur_image_bytes
+
+            with open(image_path, "rb") as f:
+                original_bytes = f.read()
+            blurred_bytes = blur_image_bytes(image_bytes=original_bytes, radius=self._blur_radius)
+            with open(blurred_path, "wb") as f:
+                f.write(blurred_bytes)
+            return blurred_path
+        except Exception as exc:
+            logger.warning(f"Failed to write blurred image for {image_path}; using original. Error: {exc}")
+            return image_path
 
     def _format_audio_content(self, *, audio_path: str) -> list[str]:
         """
@@ -273,6 +318,8 @@ class MarkdownConversationMemoryPrinter(MarkdownConversationPrinter):
         *,
         sink: Sink | None = None,
         score_printer: MarkdownScorePrinter | None = None,
+        blur_images: bool = False,
+        blur_radius: int = 20,
     ) -> None:
         """
         Initialize the markdown conversation printer with CentralMemory data source.
@@ -280,8 +327,17 @@ class MarkdownConversationMemoryPrinter(MarkdownConversationPrinter):
         Args:
             sink (Sink | None): Output sink. Defaults to StdoutSink().
             score_printer (MarkdownScorePrinter | None): Score printer for inline score rendering.
+            blur_images (bool): If True, write a blurred copy next to each image and
+                link to it instead of the original. Defaults to False.
+            blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
+                Defaults to 20.
         """
-        super().__init__(sink=sink, score_printer=score_printer)
+        super().__init__(
+            sink=sink,
+            score_printer=score_printer,
+            blur_images=blur_images,
+            blur_radius=blur_radius,
+        )
         from pyrit.memory import CentralMemory
 
         self._memory = CentralMemory.get_memory_instance()
