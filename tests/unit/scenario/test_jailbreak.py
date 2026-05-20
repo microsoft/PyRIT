@@ -203,7 +203,7 @@ class TestJailbreakInitialization:
         with pytest.raises(ValueError, match="DatasetConfiguration has no seed_groups"):
             await scenario.initialize_async(objective_target=mock_objective_target)
 
-    def test_class_inherits_default_baseline_policy(self):
+    def test_class_inherits_default_baseline_attack_policy(self):
         """Jailbreak inherits the base default (Enabled) — baseline included by default."""
         assert Jailbreak.BASELINE_ATTACK_POLICY is BaselinePolicy.Enabled
 
