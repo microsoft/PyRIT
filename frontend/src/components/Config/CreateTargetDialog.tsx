@@ -320,7 +320,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
             <Button appearance="secondary" onClick={handleClose} disabled={submitting}>
               Cancel
             </Button>
-            <Button appearance="primary" onClick={handleSubmit} disabled={submitting || !targetType || !endpoint}>
+            <Button
+              appearance="primary"
+              onClick={handleSubmit}
+              disabled={submitting || !targetType || !endpoint || showNonAzureEntraWarning}
+            >
               {submitting ? 'Creating...' : 'Create Target'}
             </Button>
           </DialogActions>

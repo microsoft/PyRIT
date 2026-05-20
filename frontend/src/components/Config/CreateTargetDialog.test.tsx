@@ -645,4 +645,32 @@ describe("CreateTargetDialog", () => {
       screen.queryByText(/Entra auth only works with Azure OpenAI/)
     ).not.toBeInTheDocument();
   });
+
+  it("should disable Create Target and skip API call for Entra + non-Azure OpenAI endpoint", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, { target: { value: "https://api.test.com/" } });
+
+    await user.click(
+      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+    );
+
+    const createButton = screen.getByText("Create Target").closest("button");
+    expect(createButton).toBeDisabled();
+
+    await user.click(screen.getByText("Create Target"));
+
+    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
+  });
 });

@@ -42,6 +42,11 @@ def _mock_target_identifier(*, class_name: str = "MockTarget", **kwargs) -> Comp
     )
 
 
+async def _test_token_provider() -> str:
+    """Shared async token provider used in Entra authentication tests."""
+    return "test-token"
+
+
 class TestListTargets:
     """Tests for TargetService.list_targets method."""
 
@@ -307,17 +312,14 @@ class TestCreateTarget:
 
 
 class TestCreateTargetEntraAuth:
-    """Tests for TargetService.create_target_async with auth_mode='entra'."""
+    """Test that creating targets with Entra auth mode properly authenticates and handles edge cases."""
 
     async def test_create_openai_target_with_entra_injects_token_provider(self, sqlite_instance) -> None:
-        """OpenAI Entra path: api_key is replaced with the async token provider callable."""
-
-        async def sentinel_provider() -> str:
-            return "test-token"
+        """Entra auth path: api_key is replaced with the authentication callable"""
 
         with patch(
             "pyrit.backend.services.target_service.get_azure_openai_auth",
-            return_value=sentinel_provider,
+            return_value=_test_token_provider,
         ) as mock_get_auth:
             service = TargetService()
 
@@ -336,17 +338,14 @@ class TestCreateTargetEntraAuth:
             target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
             assert target_obj is not None
             # OpenAI target preserves async callables verbatim through ensure_async_token_provider.
-            assert target_obj._api_key is sentinel_provider  # type: ignore[attr-defined]
+            assert target_obj._api_key is _test_token_provider  # type: ignore[attr-defined]
 
     async def test_create_openai_target_with_entra_drops_user_api_key(self, sqlite_instance) -> None:
         """Any api_key supplied alongside auth_mode='entra' must be discarded."""
 
-        async def sentinel_provider() -> str:
-            return "test-token"
-
         with patch(
             "pyrit.backend.services.target_service.get_azure_openai_auth",
-            return_value=sentinel_provider,
+            return_value=_test_token_provider,
         ):
             service = TargetService()
 
@@ -364,19 +363,16 @@ class TestCreateTargetEntraAuth:
 
             target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
             assert target_obj is not None
-            assert target_obj._api_key is sentinel_provider  # type: ignore[attr-defined]
+            assert target_obj._api_key is _test_token_provider  # type: ignore[attr-defined]
             # The literal "should-be-ignored" string must never appear.
             assert target_obj._api_key != "should-be-ignored"  # type: ignore[attr-defined]
 
     async def test_create_openai_target_with_entra_does_not_mutate_request_params(self, sqlite_instance) -> None:
         """The CreateTargetRequest.params object must remain unchanged after creation."""
 
-        async def sentinel_provider() -> str:
-            return "test-token"
-
         with patch(
             "pyrit.backend.services.target_service.get_azure_openai_auth",
-            return_value=sentinel_provider,
+            return_value=_test_token_provider,
         ):
             service = TargetService()
 
@@ -439,12 +435,9 @@ class TestCreateTargetEntraAuth:
     async def test_create_azureml_target_with_entra_injects_token_provider(self, sqlite_instance) -> None:
         """AzureML Entra path: api_key is replaced with the ML scope token provider."""
 
-        async def sentinel_provider() -> str:
-            return "aml-token"
-
         with patch(
             "pyrit.backend.services.target_service.get_azure_async_token_provider",
-            return_value=sentinel_provider,
+            return_value=_test_token_provider,
         ) as mock_get_provider:
             service = TargetService()
 
@@ -460,7 +453,7 @@ class TestCreateTargetEntraAuth:
             target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
             assert target_obj is not None
             # AzureMLChatTarget stores the provider on _api_key_provider; static _api_key is cleared.
-            assert target_obj._api_key_provider is sentinel_provider  # type: ignore[attr-defined]
+            assert target_obj._api_key_provider is _test_token_provider  # type: ignore[attr-defined]
             assert target_obj._api_key == ""  # type: ignore[attr-defined]
 
     async def test_create_target_entra_unsupported_type_raises(self, sqlite_instance) -> None:
