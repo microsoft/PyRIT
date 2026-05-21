@@ -5,8 +5,8 @@
 Enforce the ``pyrit.models`` import boundary.
 
 ``pyrit.models`` is the canonical data layer. Files in ``pyrit/models/``
-(excluding ``seeds/``) may import only from stdlib, ``pydantic``,
-``pyrit.common.deprecation``, and other ``pyrit.models.*`` submodules.
+may import only from stdlib, ``pydantic``, ``pyrit.common.deprecation``,
+and other ``pyrit.models.*`` submodules.
 
 This test uses a ratchet pattern: ``KNOWN_TOP_LEVEL_VIOLATIONS`` and
 ``KNOWN_LAZY_VIOLATIONS`` track imports that exist today and are expected to
@@ -14,7 +14,7 @@ disappear in a specific phase. The lists must shrink monotonically — if a know
 violation is no longer in source, this test fails and the entry must be
 removed.
 
-See plan.md / ``.github/instructions/style-guide.instructions.md`` for context.
+See plan.md / ``.github/instructions/models.instructions.md`` for context.
 """
 
 from __future__ import annotations
@@ -61,6 +61,27 @@ KNOWN_TOP_LEVEL_VIOLATIONS: dict[str, dict[str, str]] = {
     "pyrit.models.data_type_serializer": {
         "pyrit.common.path": "phase-8",
     },
+    "pyrit.models.seeds.seed": {
+        "pyrit.common.utils": "seeds-followup",
+        "pyrit.common.yaml_loadable": "seeds-followup",
+    },
+    "pyrit.models.seeds.seed_dataset": {
+        "pyrit.common": "seeds-followup",
+        "pyrit.common.utils": "seeds-followup",
+        "pyrit.common.yaml_loadable": "seeds-followup",
+    },
+    "pyrit.models.seeds.seed_group": {
+        "pyrit.common.yaml_loadable": "seeds-followup",
+    },
+    "pyrit.models.seeds.seed_objective": {
+        "pyrit.common.path": "seeds-followup",
+    },
+    "pyrit.models.seeds.seed_prompt": {
+        "pyrit.common.path": "seeds-followup",
+    },
+    "pyrit.models.seeds.seed_simulated_conversation": {
+        "pyrit.common.path": "seeds-followup",
+    },
 }
 
 # Lazy / TYPE_CHECKING imports of cross-package modules. Same ratchet, tracked
@@ -87,8 +108,8 @@ KNOWN_LAZY_VIOLATIONS: dict[str, dict[str, str]] = {
 
 def _module_name_for(path: Path) -> str:
     """Return the dotted module name for a file inside ``pyrit/models/``."""
-    # path: .../pyrit/models/<file>.py  →  pyrit.models.<file>
-    return f"pyrit.models.{path.stem}"
+    rel = path.relative_to(MODELS_PACKAGE).with_suffix("")
+    return "pyrit.models." + ".".join(rel.parts)
 
 
 def _resolve_from_import(node: ast.ImportFrom, source_module: str) -> str:
@@ -163,8 +184,8 @@ class _ImportCollector(ast.NodeVisitor):
 
 
 def _scan_files() -> list[Path]:
-    """Return the set of ``pyrit/models/*.py`` files in scope (top-level only)."""
-    return sorted(p for p in MODELS_PACKAGE.glob("*.py") if p.name not in EXCLUDE_FILES)
+    """Return all ``pyrit/models/**/*.py`` files in scope."""
+    return sorted(p for p in MODELS_PACKAGE.rglob("*.py") if p.name not in EXCLUDE_FILES)
 
 
 def _analyze(path: Path) -> tuple[str, set[str], set[str]]:
@@ -253,19 +274,8 @@ def test_known_lazy_violations_still_apply() -> None:
         )
 
 
-def test_seeds_excluded() -> None:
-    """Sanity check: seeds/ is excluded from this test until its own refactor."""
-    scanned = _scan_files()
-    seed_files = [p for p in scanned if "seeds" in p.parts]
-    assert not seed_files, (
-        f"seeds/ should not be in scope yet: {seed_files}. "
-        "When the seeds refactor lands, add seeds-specific allowlists and "
-        "include those files in _scan_files()."
-    )
-
-
 def test_scan_finds_expected_files() -> None:
-    """Sanity check: the scanner picks up the known top-level model files."""
+    """Sanity check: the scanner picks up the known model files."""
     scanned = {p.name for p in _scan_files()}
     # A non-exhaustive sample of files that must exist for this test to be meaningful.
     expected = {
@@ -276,6 +286,8 @@ def test_scan_finds_expected_files() -> None:
         "scenario_result.py",
         "storage_io.py",
         "data_type_serializer.py",
+        "seed.py",
+        "seed_dataset.py",
     }
     missing = expected - scanned
     assert not missing, f"Expected pyrit.models files not found by scanner: {missing}"

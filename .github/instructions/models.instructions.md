@@ -6,8 +6,8 @@ applyTo: "pyrit/models/**"
 
 ## Import Boundary
 
-`pyrit.models` is the canonical data layer. Files in `pyrit/models/` (excluding
-`seeds/`, which is deferred) may import only from:
+`pyrit.models` is the canonical data layer. Files in `pyrit/models/` may
+import only from:
 
 - the standard library
 - `pydantic`
