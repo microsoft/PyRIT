@@ -7,7 +7,7 @@ from typing import Literal
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import SeedDataset, SeedObjective
 
 logger = logging.getLogger(__name__)
 
@@ -76,13 +76,13 @@ class _CategoricalHarmfulQADataset(_RemoteDatasetLoader):
         Fetch CategoricalHarmfulQA dataset from HuggingFace and return as SeedDataset.
 
         The Category field is exposed via ``harm_categories``; the Subcategory and
-        the language code are recorded in the per-prompt ``metadata``.
+        the language code are recorded in the per-objective ``metadata``.
 
         Args:
             cache (bool): Whether to cache the fetched dataset. Defaults to True.
 
         Returns:
-            SeedDataset: A SeedDataset containing the CategoricalHarmfulQA questions.
+            SeedDataset: A SeedDataset containing the CategoricalHarmfulQA objectives.
         """
         logger.info(f"Loading CategoricalHarmfulQA dataset from {self.HF_DATASET_NAME} (language={self.language})")
 
@@ -108,10 +108,10 @@ class _CategoricalHarmfulQADataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["DeCLaRe Lab, Singapore University of Technology and Design"]
 
-        seed_prompts = [
-            SeedPrompt(
+        seed_objectives = [
+            SeedObjective(
                 value=item["Question"],
-                data_type="text",
+                name="CategoricalHarmfulQA",
                 dataset_name=self.dataset_name,
                 harm_categories=[item["Category"]] if item.get("Category") else [],
                 description=description,
@@ -126,6 +126,6 @@ class _CategoricalHarmfulQADataset(_RemoteDatasetLoader):
             for item in data
         ]
 
-        logger.info(f"Successfully loaded {len(seed_prompts)} questions from CategoricalHarmfulQA dataset")
+        logger.info(f"Successfully loaded {len(seed_objectives)} objectives from CategoricalHarmfulQA dataset")
 
-        return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)
+        return SeedDataset(seeds=seed_objectives, dataset_name=self.dataset_name)
