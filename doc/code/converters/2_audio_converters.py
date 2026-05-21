@@ -23,7 +23,7 @@
 # - **[Audio to Audio](#audio-to-audio)**: Modify audio files (speed, volume, echo, frequency, noise)
 
 # %% [markdown]
-# <a id="text-to-audio"></a>
+# (text-to-audio)=
 # ## Text to Audio
 #
 # The `AzureSpeechTextToAudioConverter` converts text input into audio output, generating spoken audio files.
@@ -45,7 +45,7 @@ print(audio_convert_result)
 assert os.path.exists(audio_convert_result.output_text)
 
 # %% [markdown]
-# <a id="audio-to-text"></a>
+# (audio-to-text)=
 # ## Audio to Text
 #
 # The `AzureSpeechAudioToTextConverter` transcribes audio files into text. Below we use the audio file created in the previous section.
@@ -70,7 +70,7 @@ transcript = await speech_text_converter.convert_async(prompt=prompt)  # type: i
 print(transcript)
 
 # %% [markdown]
-# <a id="audio-to-audio"></a>
+# (audio-to-audio)=
 # ## Audio to Audio
 #
 # Audio-to-audio converters modify existing audio files. All of these converters accept `audio_path` input

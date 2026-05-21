@@ -22,7 +22,7 @@
 # - **[LLM-Based Converters](#llm-based-converters)**: AI-powered transformations including translation, variation, and semantic modifications
 
 # %% [markdown]
-# <a id="non-llm-converters"></a>
+# (non-llm-converters)=
 # ## Non-LLM Converters
 #
 # Non-LLM converters use deterministic algorithms to transform text. These include:
@@ -225,7 +225,7 @@ var_selector = VariationSelectorSmugglerConverter(action="encode", embed_in_base
 print("Variation Selector:", await var_selector.convert_async(prompt=prompt))  # type: ignore
 
 # %% [markdown]
-# <a id="llm-based-converters"></a>
+# (llm-based-converters)=
 # ## LLM-Based Converters
 #
 # LLM-based converters use language models to transform prompts. These converters are more flexible and can produce more natural variations, but they are slower and require an LLM target.
