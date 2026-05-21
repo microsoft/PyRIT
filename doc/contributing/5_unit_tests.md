@@ -13,4 +13,4 @@ Testing is an art to get right! But here are some best practices in terms of uni
 - Don't write to the actual database, use a `MagicMock` for the memory object or use `patch_central_database` as the database connection.
 
 
-Not all of our current tests follow these practices (we're working on it!) But for some good examples, see [test_tts_send_prompt_file_save_async](../../tests/unit/target/test_tts_target.py), which has many of these best practices incorporated in the test.
+Not all of our current tests follow these practices (we're working on it!) But for some good examples, see [test_tts_send_prompt_file_save_async](../../tests/unit/prompt_target/target/test_tts_target.py), which has many of these best practices incorporated in the test.
