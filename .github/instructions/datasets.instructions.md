@@ -87,6 +87,13 @@ Add the loader and any new public enums to `pyrit/datasets/seed_datasets/remote/
 - Add the new cite key to the hidden-citations block in `doc/bibliography.md` in alphabetical position.
 - Reference the cite key from the loader's class docstring as `Reference: [@citekey]`.
 
+## Update and regenerate `doc/code/datasets/1_loading_datasets`
+
+The rendered datasets notebook drives the public list of built-in datasets on the docs site, so every new loader must touch it:
+
+- Add the new dataset and its cite key to the prose paragraph at the top of `doc/code/datasets/1_loading_datasets.py` (alphabetical with the rest), and add the matching entry to `doc/code/datasets/1_loading_datasets.ipynb`.
+- Regenerate the notebook so the `SeedDatasetProvider.get_all_dataset_names_async()` output cell picks up the new loader: `jupytext --to ipynb --execute doc/code/datasets/1_loading_datasets.py`. Inline edits to both files are also acceptable per `docs.instructions.md`, but executed regeneration is the only way the rendered dataset-name list stays in sync.
+
 ## Test loaders against mocked HF data
 
 Place tests in `tests/unit/datasets/test_<dataset>_dataset.py`. Mock `_fetch_from_huggingface` (or `_fetch_from_url`) — never make a live call. Cover:
