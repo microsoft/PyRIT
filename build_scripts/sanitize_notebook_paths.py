@@ -125,8 +125,7 @@ def _strip_user_paths(text: str) -> str:
     text = _WINDOWS_PATH_PATTERN.sub(_windows_path_replacer, text)
     for pattern in _UNIX_PATH_PATTERNS:
         text = pattern.sub("./", text)
-    text = _COPILOT_REPO_PATTERN.sub("./", text)
-    return text
+    return _COPILOT_REPO_PATTERN.sub("./", text)
 
 
 if __name__ == "__main__":
