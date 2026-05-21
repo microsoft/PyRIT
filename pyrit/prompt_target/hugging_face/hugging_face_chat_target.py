@@ -17,7 +17,7 @@ from transformers import (
 )
 
 from pyrit.common import default_values
-from pyrit.common.download_hf_model import download_specific_files
+from pyrit.common.download_hf_model import download_specific_files_async
 from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, construct_response_from_request
@@ -276,11 +276,16 @@ class HuggingFaceChatTarget(PromptTarget):
                 if self.necessary_files is None:
                     # Download all files if no specific files are provided
                     logger.info(f"Downloading all files for {self.model_id}...")
-                    await download_specific_files(self.model_id or "", None, self.huggingface_token, Path(cache_dir))  # type: ignore[ty:invalid-argument-type]
+                    await download_specific_files_async(
+                        self.model_id or "",
+                        None,
+                        self.huggingface_token,  # type: ignore[ty:invalid-argument-type]
+                        Path(cache_dir),
+                    )
                 else:
                     # Download only the necessary files
                     logger.info(f"Downloading specific files for {self.model_id}...")
-                    await download_specific_files(
+                    await download_specific_files_async(
                         self.model_id or "",
                         self.necessary_files,
                         self.huggingface_token,  # type: ignore[ty:invalid-argument-type]

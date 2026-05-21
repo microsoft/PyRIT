@@ -138,6 +138,7 @@ project:
             - file: code/scoring/5_refusal_scorer.ipynb
             - file: code/scoring/6_batch_scorer.ipynb
             - file: code/scoring/7_scorer_metrics.ipynb
+            - file: code/scoring/credential_leak_scorer.ipynb
             - file: code/scoring/insecure_code_scorer.ipynb
             - file: code/scoring/persuasion_full_conversation_scorer.ipynb
             - file: code/scoring/prompt_shield_scorer.ipynb

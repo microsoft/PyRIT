@@ -7,7 +7,7 @@ import logging
 from collections.abc import MutableSequence
 from typing import Any, Optional
 
-from pyrit.common.data_url_converter import convert_local_image_to_data_url
+from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
@@ -613,7 +613,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
                     entry = {"type": "text", "text": message_piece.converted_value}
                     content.append(entry)
                 elif message_piece.converted_value_data_type == "image_path":
-                    data_base64_encoded_url = await convert_local_image_to_data_url(message_piece.converted_value)
+                    data_base64_encoded_url = await convert_local_image_to_data_url_async(message_piece.converted_value)
                     image_url_entry = {"url": data_base64_encoded_url}
                     entry = {"type": "image_url", "image_url": image_url_entry}
                     content.append(entry)

@@ -8,18 +8,16 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Optional, TypeVar
+from typing import Any, Optional, TypeVar
 
+from pyrit.common.deprecation import print_deprecation_message
+from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+from pyrit.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models.conversation_reference import ConversationReference, ConversationType
+from pyrit.models.message_piece import MessagePiece
+from pyrit.models.retry_event import RetryEvent
+from pyrit.models.score import Score
 from pyrit.models.strategy_result import StrategyResult
-
-if TYPE_CHECKING:
-    from pyrit.identifiers.component_identifier import ComponentIdentifier
-    from pyrit.models.conversation_reference import ConversationReference
-    from pyrit.models.message_piece import MessagePiece
-    from pyrit.models.retry_event import RetryEvent
-    from pyrit.models.score import Score
-
-from pyrit.models.conversation_reference import ConversationType
 
 AttackResultT = TypeVar("AttackResultT", bound="AttackResult")
 
@@ -107,6 +105,14 @@ class AttackResult(StrategyResult):
     retry_events: list[RetryEvent] = field(default_factory=list)
     total_retries: int = 0
 
+    # Attribution / parent linkage (infrastructure-managed). Set by the attack
+    # persistence path when an AttackResultAttribution is present on the
+    # AttackContext. User code should not set these directly; ad-hoc
+    # AttackResults created outside an orchestrator leave both fields as None
+    # and the corresponding DB columns remain NULL.
+    attribution_parent_id: str | None = None
+    attribution_data: dict[str, Any] | None = None
+
     @property
     def attack_identifier(self) -> Optional[ComponentIdentifier]:
         """
@@ -119,8 +125,6 @@ class AttackResult(StrategyResult):
             Optional[ComponentIdentifier]: The attack strategy identifier, or ``None``.
 
         """
-        from pyrit.common.deprecation import print_deprecation_message
-
         print_deprecation_message(
             old_item="AttackResult.attack_identifier",
             new_item="AttackResult.atomic_attack_identifier or get_attack_strategy_identifier()",
@@ -231,8 +235,6 @@ class AttackResult(StrategyResult):
         Returns:
             dict[str, Any]: Serialized payload suitable for REST APIs or persistence.
         """
-        from pyrit.models.conversation_reference import ConversationReference
-
         return {
             "conversation_id": self.conversation_id,
             "objective": self.objective,
@@ -246,13 +248,10 @@ class AttackResult(StrategyResult):
             "execution_time_ms": self.execution_time_ms,
             "outcome": self.outcome.value,
             "outcome_reason": self.outcome_reason,
-            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "timestamp": self.timestamp.isoformat(),
             "related_conversations": sorted(
-                [
-                    ref.to_dict() if isinstance(ref, ConversationReference) else ref
-                    for ref in self.related_conversations
-                ],
-                key=lambda r: r["conversation_id"] if isinstance(r, dict) else "",
+                [ref.to_dict() for ref in self.related_conversations],
+                key=lambda r: r["conversation_id"],
             ),
             "metadata": self.metadata,
             "labels": self.labels,
@@ -274,12 +273,6 @@ class AttackResult(StrategyResult):
         Returns:
             AttackResult: Reconstructed instance.
         """
-        from pyrit.identifiers.component_identifier import ComponentIdentifier
-        from pyrit.models.conversation_reference import ConversationReference
-        from pyrit.models.message_piece import MessagePiece
-        from pyrit.models.retry_event import RetryEvent
-        from pyrit.models.score import Score
-
         return cls(
             conversation_id=data["conversation_id"],
             objective=data["objective"],
@@ -330,16 +323,12 @@ def _add_attack_identifier_compat(cls: type) -> type:
     def wrapped_init(self: Any, *args: Any, **kwargs: Any) -> None:
         attack_identifier = kwargs.pop("attack_identifier", None)
         if attack_identifier is not None:
-            from pyrit.common.deprecation import print_deprecation_message
-
             print_deprecation_message(
                 old_item="AttackResult(attack_identifier=...)",
                 new_item="AttackResult(atomic_attack_identifier=...)",
                 removed_in="0.15.0",
             )
             if kwargs.get("atomic_attack_identifier") is None:
-                from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
-
                 kwargs["atomic_attack_identifier"] = build_atomic_attack_identifier(
                     attack_identifier=attack_identifier,
                 )

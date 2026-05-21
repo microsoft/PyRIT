@@ -39,12 +39,14 @@ from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     get_all_objective_metrics,
 )
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+from pyrit.score.true_false.credential_leak_scorer import CredentialLeakScorer
 from pyrit.score.true_false.decoding_scorer import DecodingScorer
 from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
 from pyrit.score.true_false.gandalf_scorer import GandalfScorer
 from pyrit.score.true_false.markdown_injection import MarkdownInjectionScorer
 from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
 from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
+from pyrit.score.true_false.regex_scorer import RegexScorer
 from pyrit.score.true_false.self_ask_category_scorer import ContentClassifierPaths, SelfAskCategoryScorer
 from pyrit.score.true_false.self_ask_general_true_false_scorer import SelfAskGeneralTrueFalseScorer
 from pyrit.score.true_false.self_ask_question_answer_scorer import SelfAskQuestionAnswerScorer
@@ -114,6 +116,7 @@ __all__ = [
     "ContentClassifierPaths",
     "ConsoleScorerPrinter",
     "ConversationScorer",
+    "CredentialLeakScorer",
     "DecodingScorer",
     "create_conversation_scorer",
     "FloatScaleScoreAggregator",
@@ -139,6 +142,7 @@ __all__ = [
     "PlagiarismScorer",
     "PromptShieldScorer",
     "QuestionAnswerScorer",
+    "RegexScorer",
     "RegistryUpdateBehavior",
     "Scorer",
     "ScorerEvalDatasetFiles",

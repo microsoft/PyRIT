@@ -227,7 +227,8 @@ def test_message_to_dict() -> None:
     result = message.to_dict()
 
     assert result["role"] == "user"
-    assert result["is_simulated"] is False
+    assert result["converted_value"] == "Hello world"
+    assert result["converted_value_data_type"] == "text"
     assert "conversation_id" in result
     assert "sequence" in result
     assert len(result["pieces"]) == 1

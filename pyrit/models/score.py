@@ -210,12 +210,16 @@ class Score:
         return cls(
             id=data.get("id"),
             score_value=data["score_value"],
-            score_value_description=data.get("score_value_description", ""),
+            score_value_description=data["score_value_description"],
             score_type=data["score_type"],
             score_category=data.get("score_category"),
-            score_rationale=data.get("score_rationale", ""),
+            score_rationale=data["score_rationale"],
             score_metadata=data.get("score_metadata"),
-            scorer_class_identifier=ComponentIdentifier.from_dict(data["scorer_class_identifier"]),
+            scorer_class_identifier=(  # type: ignore[ty:invalid-argument-type]
+                ComponentIdentifier.from_dict(data["scorer_class_identifier"])
+                if data.get("scorer_class_identifier")
+                else None
+            ),
             message_piece_id=data["message_piece_id"],
             timestamp=datetime.fromisoformat(data["timestamp"]) if data.get("timestamp") else None,
             objective=data.get("objective"),

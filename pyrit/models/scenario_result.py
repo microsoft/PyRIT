@@ -58,7 +58,7 @@ class ScenarioIdentifier:
         return {
             "name": self.name,
             "description": self.description,
-            "version": self.version,
+            "scenario_version": self.version,
             "pyrit_version": self.pyrit_version,
             "init_data": self.init_data,
         }
@@ -77,9 +77,9 @@ class ScenarioIdentifier:
         return cls(
             name=data["name"],
             description=data.get("description", ""),
-            scenario_version=data.get("version", 1),
+            scenario_version=data.get("scenario_version", 1),
             init_data=data.get("init_data"),
-            pyrit_version=data.get("pyrit_version"),
+            pyrit_version=data.get("pyrit_version") or "unknown",
         )
 
 
@@ -105,9 +105,10 @@ class ScenarioResult:
         number_tries: int = 0,
         id: uuid.UUID | None = None,  # noqa: A002
         display_group_map: dict[str, str] | None = None,
-        error_attack_result_ids: list[str] | None = None,
         error_message: str | None = None,
         error_type: str | None = None,
+        error_attack_result_ids: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Initialize a scenario result.
@@ -127,11 +128,17 @@ class ScenarioResult:
             display_group_map (Optional[dict[str, str]]): Optional mapping of
                 atomic_attack_name → display group label. Used by the console
                 printer to aggregate results for user-facing output.
-            error_attack_result_ids (Optional[list[str]]): IDs of AttackResults that
-                contain error information. Used for quick error lookup without scanning
-                all attack results.
             error_message (Optional[str]): Scenario-level error message when the run fails.
             error_type (Optional[str]): Exception class name when the run fails.
+            error_attack_result_ids (Optional[list[str]]): IDs of attack results that
+                errored during the scenario run. Defaults to an empty list.
+            metadata (Optional[dict[str, Any]]): Free-form JSON metadata persisted
+                with the scenario result. Currently used to record
+                ``objective_hashes`` — the objective ``sha256`` set chosen
+                on the first run, replayed on resume so a fresh
+                ``random.sample`` can't silently change which objectives the
+                scenario operates on. Keys are not part of any public contract
+                and may evolve.
 
         """
         self.id = id if id is not None else uuid.uuid4()
@@ -148,9 +155,10 @@ class ScenarioResult:
         self.completion_time = completion_time if completion_time is not None else datetime.now(timezone.utc)
         self.number_tries = number_tries
         self._display_group_map = display_group_map or {}
-        self.error_attack_result_ids = error_attack_result_ids or []
         self.error_message = error_message
         self.error_type = error_type
+        self.error_attack_result_ids: list[str] = list(error_attack_result_ids) if error_attack_result_ids else []
+        self.metadata: dict[str, Any] = metadata if metadata is not None else {}
 
     @property
     def display_group_map(self) -> dict[str, str]:
@@ -339,7 +347,7 @@ class ScenarioResult:
         """
         from pyrit.identifiers.component_identifier import ComponentIdentifier
 
-        return cls(
+        result = cls(
             id=uuid.UUID(data["id"]) if data.get("id") else None,
             scenario_identifier=ScenarioIdentifier.from_dict(data["scenario_identifier"]),
             objective_target_identifier=(
@@ -366,3 +374,8 @@ class ScenarioResult:
             error_message=data.get("error_message"),
             error_type=data.get("error_type"),
         )
+        # Preserve missing completion_time: __init__ defaults it to now(), but a
+        # still-running scenario shouldn't be marked as completed-at-load-time.
+        if not data.get("completion_time"):
+            result.completion_time = None  # type: ignore[ty:invalid-assignment]
+        return result

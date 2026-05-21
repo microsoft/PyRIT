@@ -19,6 +19,7 @@ from pyrit.backend.services.scenario_run_service import (
     _DEFAULT_MAX_CONCURRENT_RUNS,
     ScenarioRunService,
 )
+from pyrit.models import AttackOutcome
 
 _REGISTRY_PATCH_BASE = "pyrit.registry"
 _MEMORY_PATCH = "pyrit.memory.CentralMemory.get_memory_instance"
@@ -74,7 +75,6 @@ def _make_db_scenario_result(
     sr.display_group_map = {}
     sr.error_message = None
     sr.error_type = None
-    sr.error_attack_result_ids = []
     return sr
 
 
@@ -83,6 +83,9 @@ def mock_memory():
     """Patch CentralMemory.get_memory_instance to return a mock."""
     mock = MagicMock()
     mock.get_scenario_results.return_value = []
+    # Default: no error AttackResults linked to any scenario. Tests that exercise
+    # the error fallback path explicitly set get_attack_results.return_value.
+    mock.get_attack_results.return_value = []
     with patch(_MEMORY_PATCH, return_value=mock):
         yield mock
 
@@ -298,9 +301,14 @@ class TestScenarioRunServiceGetRun:
         assert fetched.status == ScenarioRunStatus.IN_PROGRESS
 
     def test_get_run_falls_back_to_persisted_error(self, mock_memory) -> None:
-        """Test that get_run extracts error from persisted error AttackResult when no active task."""
+        """Test that get_run extracts error from persisted error AttackResult when no active task.
+
+        After the foreign-key-based scenario linkage refactor, error
+        AttackResults are located via
+        ``get_attack_results(scenario_result_id=..., outcome=ERROR)`` rather
+        than via a per-scenario error_attack_result_ids manifest.
+        """
         db_result = _make_db_scenario_result(result_id="sr-fail", run_state="FAILED")
-        db_result.error_attack_result_ids = ["err-ar-1"]
 
         # Mock the error AttackResult lookup
         error_ar = MagicMock()
@@ -315,7 +323,10 @@ class TestScenarioRunServiceGetRun:
         assert fetched is not None
         assert fetched.error == "Connection refused"
         assert fetched.error_type == "ConnectionError"
-        mock_memory.get_attack_results.assert_called_once_with(attack_result_ids=["err-ar-1"])
+        mock_memory.get_attack_results.assert_called_once_with(
+            scenario_result_id="sr-fail",
+            outcome=AttackOutcome.ERROR,
+        )
 
 
 class TestScenarioRunServiceListRuns:
