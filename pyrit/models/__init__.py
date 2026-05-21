@@ -8,7 +8,7 @@ Public model exports for PyRIT core data structures and helpers.
 ``seeds/``, which is deferred) must import only from the standard library,
 ``pydantic``, ``pyrit.common.deprecation``, and other ``pyrit.models.*``
 submodules. The CI test ``tests/unit/models/test_import_boundary.py`` enforces
-this. See ``.github/instructions/style-guide.instructions.md`` for the rule.
+this. See ``.github/instructions/models.instructions.md`` for the rule.
 """
 
 from pyrit.models.attack_result import AttackOutcome, AttackResult, AttackResultT
