@@ -9,30 +9,161 @@ import logging
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
-from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig
-from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
 from pyrit.registry import AttackTechniqueRegistry, AttackTechniqueSpec
 from pyrit.registry.tag_query import TagQuery
-from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
-from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 
 if TYPE_CHECKING:
-    from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
 
-class AdversarialBenchmark(Scenario):
+#: Strategy tag applied by ``BenchmarkInitializer`` to every fanned variant it
+#: registers in ``AttackTechniqueRegistry``. The benchmark scenario reads its
+#: strategy enum from entries carrying this tag.
+BENCHMARK_FANOUT_TAG: str = "benchmark_fanout"
+
+
+class _StrategyOnlyMarker:
     """
-    Benchmarking scenario that compares the attack success rate (ASR)
-    of several different adversarial models.
+    Sentinel attack class used only to satisfy ``AttackTechniqueSpec.attack_class``
+    when reconstructing minimal specs for strategy-enum construction.
+
+    ``AttackTechniqueRegistry.build_strategy_class_from_specs`` reads only
+    ``spec.name`` and ``spec.strategy_tags`` — never ``attack_class`` — so the
+    sentinel is safe. At attack-execution time the base
+    ``Scenario._get_atomic_attacks_async`` looks up the real factory by name
+    from ``AttackTechniqueRegistry`` (where ``BenchmarkInitializer`` registered
+    it), so this sentinel never reaches a runtime construction site.
     """
 
-    VERSION: int = 1
+
+def _build_benchmark_strategy() -> type[ScenarioStrategy]:
+    """
+    Build the ``BenchmarkStrategy`` enum from ``BenchmarkInitializer``-registered fanout.
+
+    *Fanned entries* (also called *fanned variants*) are the per-target copies
+    of adversarial-capable scenario techniques that ``BenchmarkInitializer``
+    registers into ``AttackTechniqueRegistry``. For each adversarial-capable
+    technique in ``SCENARIO_TECHNIQUES`` and each adversarial-tagged target
+    in ``TargetRegistry``, the initializer creates one fanned variant named
+    ``f"{source_technique}__{target_name}"`` with the live target bound onto
+    ``adversarial_chat`` and the strategy tag
+    :data:`BENCHMARK_FANOUT_TAG` appended. This function reads those entries
+    back and builds an enum whose concrete members are exactly the fanned
+    variants.
+
+    Implementation note: this is a module-level function rather than a
+    ``@staticmethod`` on ``AdversarialBenchmark``. Strategy-class
+    construction never reads scenario instance state, so the function does
+    not belong to the class; module-level placement makes the dependency
+    (only the registry) explicit and the unit-test surface flat.
+
+    Reconstructs minimal ``AttackTechniqueSpec`` stand-ins (name +
+    strategy_tags only) from each fanned entry to pass into
+    ``build_strategy_class_from_specs``. The sentinel
+    :class:`_StrategyOnlyMarker` is used for the required ``attack_class``
+    field — see the sentinel's docstring for why this is safe.
+
+    Aggregate selectors on the generated enum:
+
+    * ``all`` — every fanned variant (auto-included by the builder).
+    * ``light`` — variants tagged ``"light"`` (inherited from the source spec).
+    * ``single_turn`` / ``multi_turn`` — variants tagged with the matching
+      turn-style tag inherited from the source spec.
+
+    Per-target selection is also available via the auto-applied
+    ``f"model:{target_name}"`` tag on each fanned variant, accessible by name
+    on the generated enum (e.g.
+    ``BenchmarkStrategy("red_teaming__adversarial_chat_singleturn")``).
+
+    Returns:
+        type[ScenarioStrategy]: The dynamically generated ``BenchmarkStrategy`` class.
+    """
+    registry = AttackTechniqueRegistry.get_registry_singleton()
+    fanned_entries = registry.get_by_tag(tag=BENCHMARK_FANOUT_TAG)
+
+    fanned_specs = [
+        AttackTechniqueSpec(
+            name=entry.name,
+            attack_class=_StrategyOnlyMarker,
+            strategy_tags=list(entry.tags.keys()),
+        )
+        for entry in fanned_entries
+    ]
+
+    return AttackTechniqueRegistry.build_strategy_class_from_specs(  # type: ignore[ty:invalid-return-type]
+        class_name="BenchmarkStrategy",
+        specs=fanned_specs,
+        aggregate_tags={
+            "light": TagQuery.any_of("light"),
+            "single_turn": TagQuery.any_of("single_turn"),
+            "multi_turn": TagQuery.any_of("multi_turn"),
+        },
+    )
+
+
+class AdversarialBenchmark(Scenario):
+    """
+    Benchmark scenario that compares the attack success rate (ASR) across adversarial models.
+
+    Adversarial-model fan-out is provided by ``BenchmarkInitializer``, which
+    registers per-target *fanned variants* of adversarial-capable scenario
+    techniques into ``AttackTechniqueRegistry`` tagged ``benchmark_fanout``.
+    This scenario reads those variants and builds its strategy enum from
+    them, so the set of available strategies reflects whichever adversarial
+    targets were discovered when ``BenchmarkInitializer`` ran (typically via
+    ``.pyrit_conf`` initializer ordering).
+
+    Inherits the base ``Scenario._get_atomic_attacks_async`` loop with no
+    override; the fanned ``adversarial_chat`` binding lives on the
+    registered factories, so atomic-attack construction needs no special
+    handling here.
+
+    When permuted atomic attacks materialize
+    =========================================
+    The (technique × target × dataset) cross-product now happens in two
+    stages, not one (the pre-collapse override did all three at runtime):
+
+    1. **Initializer time** — ``BenchmarkInitializer.initialize_async``
+       runs the (technique × adversarial-target) cross-product. For each
+       adversarial-capable technique in ``SCENARIO_TECHNIQUES`` and each
+       adversarial-tagged target in ``TargetRegistry``, it registers one
+       fanned ``AttackTechniqueFactory`` into ``AttackTechniqueRegistry``
+       with the live target baked onto the factory's adversarial config.
+       After this step, the registry contains N×M fanned entries where N
+       is the count of adversarial-capable techniques and M is the count of
+       discovered adversarial targets.
+
+    2. **Scenario runtime** — ``Scenario._get_atomic_attacks_async``
+       (inherited, base class) runs the (fanned-variant × dataset)
+       cross-product. It iterates ``self._scenario_strategies`` (the
+       fanned-variant names the user picked via the ``BenchmarkStrategy``
+       enum), pairs each with every seed group in
+       ``self._dataset_config``, and builds one ``AtomicAttack`` per pair.
+       The target binding rides through on the factory created in step 1,
+       so no per-target handling is needed at this layer.
+
+    The user-observable result is the same shape as before
+    (one ``AtomicAttack`` per (technique, target, dataset) triple), but the
+    target dimension is now owned by the initializer and the dataset
+    dimension is owned by the scenario.
+
+    Display grouping is by target name (the part after ``__`` in each
+    fanned technique name) rather than by technique, so per-model ASR rolls
+    up naturally in result displays.
+    """
+
+    #: Bumped from 1 (pre-collapse) to 2 because the ``atomic_attack_name``
+    #: format changed from ``f"{technique}__{model}__{dataset}"`` (triple-segment,
+    #: old override-driven) to ``f"{technique}__{model}_{dataset}"`` (double-
+    #: underscore-then-single-underscore, base-inherited). Cached results from
+    #: VERSION=1 remain queryable but won't suppress fresh runs.
+    VERSION: int = 2
+
     _cached_strategy_class: ClassVar[type[ScenarioStrategy] | None] = None
 
     #: AdversarialBenchmark compares attack-success rates across adversarial models; a baseline
@@ -42,24 +173,29 @@ class AdversarialBenchmark(Scenario):
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
         """
-        Return the AdversarialBenchmarkStrategy enum, building on first access.
+        Return the ``BenchmarkStrategy`` enum, building on first access.
+
+        The enum is cached per-class for the lifetime of the process. To
+        rebuild after registry mutations (e.g. after re-running
+        ``BenchmarkInitializer`` with different adversarial targets), set
+        ``AdversarialBenchmark._cached_strategy_class = None`` and call again.
 
         Returns:
-            type[ScenarioStrategy]: The BenchmarkStrategy enum class.
+            type[ScenarioStrategy]: The ``BenchmarkStrategy`` enum class.
         """
         if cls._cached_strategy_class is None:
-            cls._cached_strategy_class = AdversarialBenchmark._build_benchmark_strategy()
-
+            cls._cached_strategy_class = _build_benchmark_strategy()
         return cls._cached_strategy_class
 
     @classmethod
     def get_default_strategy(cls) -> ScenarioStrategy:
         """
-        Return the default strategy (``light`` — run benchmark-friendly techniques
-        that can wrap up quickly and without too many system resources).
+        Return the default strategy (``light``).
 
         Returns:
-            ScenarioStrategy: The ``light`` aggregate member.
+            ScenarioStrategy: The ``light`` aggregate member — runs the subset
+            of benchmark-friendly techniques that finish quickly with modest
+            system resources.
         """
         return cls.get_strategy_class()("light")
 
@@ -69,7 +205,8 @@ class AdversarialBenchmark(Scenario):
         Return the default dataset configuration for benchmarking.
 
         Returns:
-            DatasetConfiguration: Configuration with standard harm-category datasets.
+            DatasetConfiguration: ``harmbench`` capped at 8 prompts per
+            atomic attack.
         """
         return DatasetConfiguration(
             dataset_names=["harmbench"],
@@ -80,7 +217,6 @@ class AdversarialBenchmark(Scenario):
     def __init__(
         self,
         *,
-        adversarial_models: list[PromptTarget],
         objective_scorer: TrueFalseScorer | None = None,
         scenario_result_id: str | None = None,
     ) -> None:
@@ -88,48 +224,12 @@ class AdversarialBenchmark(Scenario):
         Initialize the AdversarialBenchmark scenario.
 
         Args:
-            adversarial_models: A non-empty list of ``PromptTarget`` instances
-                that each satisfy :data:`CHAT_TARGET_REQUIREMENTS` (multi-turn
-                with editable history).  Individual techniques selected at
-                run time may impose stricter capability requirements which are
-                enforced when their attack instances are constructed.
-                Labels are inferred from each target's identifier (preferring
-                ``underlying_model_name`` over ``model_name`` over the class
-                name).  Identical targets are silently deduped and distinct
-                targets whose inferred names collide are suffixed (``_2``,
-                ``_3``, …) with a warning.
-            objective_scorer: Scorer for evaluating attack success.
-                Defaults to the registered default objective scorer.
-            scenario_result_id: Optional ID of an existing scenario
-                result to resume.
-
-        Raises:
-            ValueError: If ``adversarial_models`` is empty, not a list, or
-                contains a target that does not satisfy
-                :data:`CHAT_TARGET_REQUIREMENTS`.
+            objective_scorer: Scorer for evaluating attack success. Defaults
+                to the registered default objective scorer (typically the
+                composite refusal+scale scorer set up by an initializer).
+            scenario_result_id: Optional ID of an existing scenario result
+                to resume.
         """
-        if not adversarial_models:
-            raise ValueError("adversarial_models must be a non-empty list of PromptTarget instances.")
-
-        if not isinstance(adversarial_models, list):
-            raise ValueError("adversarial_models must be a list of PromptTarget instances.")
-
-        for target in adversarial_models:
-            try:
-                CHAT_TARGET_REQUIREMENTS.validate(target=target)
-            except ValueError as exc:
-                raise ValueError(
-                    f"adversarial_models entry {type(target).__name__} does not satisfy "
-                    f"the chat-target capability requirements: {exc}"
-                ) from exc
-
-        # Infer labels, then wrap each bare target in a default AttackAdversarialConfig
-        # so it can be passed to factory.create() as an override.
-        labeled_targets = self._infer_labels(items=adversarial_models)
-        self._adversarial_configs: dict[str, AttackAdversarialConfig] = {
-            label: AttackAdversarialConfig(target=target) for label, target in labeled_targets.items()
-        }
-
         self._objective_scorer: TrueFalseScorer = (
             objective_scorer if objective_scorer else self._get_default_objective_scorer()
         )
@@ -141,156 +241,24 @@ class AdversarialBenchmark(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
+    def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> str:
         """
-        Build atomic attacks from the cross-product of techniques × models × datasets.
+        Group atomic-attack results by adversarial-target label rather than by technique.
 
-        Factories are built locally from adversarial-capable ``SCENARIO_TECHNIQUES``
-        (not the registry singleton).  Each model is injected at create-time via
-        ``attack_adversarial_config_override``.
-
-        Returns:
-            list[AtomicAttack]: One atomic attack per technique/model/dataset combination.
-
-        Raises:
-            ValueError: If the scenario has not been initialized.
-        """
-        if self._objective_target is None:
-            raise ValueError(
-                "Scenario not properly initialized. Call await scenario.initialize_async() before running."
-            )
-
-        benchmarkable_specs = AdversarialBenchmark._get_benchmarkable_specs()
-        local_factories = {
-            spec.name: AttackTechniqueRegistry.build_factory_from_spec(spec) for spec in benchmarkable_specs
-        }
-
-        selected_techniques = {s.value for s in self._scenario_strategies}
-        seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
-        scoring_config = AttackScoringConfig(objective_scorer=self._objective_scorer)
-
-        atomic_attacks: list[AtomicAttack] = []
-        for technique_name in selected_techniques:
-            factory = local_factories.get(technique_name)
-            if factory is None:
-                logger.warning("No factory for technique '%s', skipping.", technique_name)
-                continue
-
-            for model_label, adv_config in self._adversarial_configs.items():
-                for dataset_name, seed_groups in seed_groups_by_dataset.items():
-                    attack_technique = factory.create(
-                        objective_target=self._objective_target,
-                        attack_scoring_config=scoring_config,
-                        attack_adversarial_config_override=adv_config,
-                    )
-                    atomic_attacks.append(
-                        AtomicAttack(
-                            atomic_attack_name=f"{technique_name}__{model_label}__{dataset_name}",
-                            attack_technique=attack_technique,
-                            seed_groups=list(seed_groups),
-                            adversarial_chat=adv_config.target,
-                            objective_scorer=self._objective_scorer,
-                            memory_labels=self._memory_labels,
-                            display_group=model_label,
-                        )
-                    )
-
-        return atomic_attacks
-
-    @staticmethod
-    def _infer_labels(
-        *,
-        items: list[PromptTarget],
-    ) -> dict[str, PromptTarget]:
-        """
-        Infer user-facing labels for a list of adversarial targets.
-
-        The dedupe key is ``target.get_identifier().hash`` so identical
-        targets collapse to a single entry silently, while two distinct
-        targets whose inferred names happen to match get a numeric suffix
-        and a ``logger.warning`` so the situation isn't silent.
+        Fanned technique names have the format ``f"{source}__{target_name}"``
+        (per ``BenchmarkInitializer``), so the target label is everything
+        after the ``__`` separator. Falls back to the full technique name
+        when no separator is present so legacy / non-fanned strategies still
+        render with a sensible label.
 
         Args:
-            items: List of ``PromptTarget`` instances.
+            technique_name: The fanned technique name, e.g.
+                ``"red_teaming__adversarial_chat_singleturn"``.
+            seed_group_name: Unused for this scenario (display rolls up
+                per-target, not per-seed-group).
 
         Returns:
-            dict[str, PromptTarget]: Mapping from inferred label to the
-                original target.  Targets are wrapped in an
-                ``AttackAdversarialConfig`` by ``__init__`` after this call.
+            str: The display group label — the target portion of the fanned
+            name when ``__`` is present, otherwise the full technique name.
         """
-        result: dict[str, PromptTarget] = {}
-        seen_keys: dict[str, str | None] = {}
-
-        for target in items:
-            identifier = target.get_identifier()
-            params = identifier.params or {}
-            base_name = params.get("underlying_model_name") or params.get("model_name") or type(target).__name__
-
-            dedupe_key = identifier.hash
-
-            # Identical target already stored under some label — silently drop.
-            if dedupe_key in seen_keys.values():
-                continue
-
-            if base_name not in seen_keys:
-                result[base_name] = target
-                seen_keys[base_name] = dedupe_key
-                continue
-
-            # Distinct target colliding on inferred name — find next free suffix and warn.
-            counter = 2
-            while f"{base_name}_{counter}" in seen_keys:
-                counter += 1
-            suffixed = f"{base_name}_{counter}"
-            logger.warning(
-                "Inferred label '%s' collided with a different model setup; using '%s' instead.",
-                base_name,
-                suffixed,
-            )
-            result[suffixed] = target
-            seen_keys[suffixed] = dedupe_key
-
-        return result
-
-    @staticmethod
-    def _build_benchmark_strategy() -> type[ScenarioStrategy]:
-        """
-        Build the BenchmarkStrategy enum from adversarial-capable ``SCENARIO_TECHNIQUES``.
-
-        Returns a strategy class whose concrete members are adversarial-capable
-        techniques (no baked-in adversarial chat) and whose aggregates allow
-        selecting by turn style.
-
-        Returns:
-            type[ScenarioStrategy]: The dynamically generated strategy enum class.
-        """
-        specs = AdversarialBenchmark._get_benchmarkable_specs()
-        return AttackTechniqueRegistry.build_strategy_class_from_specs(  # type: ignore[ty:invalid-return-type]
-            class_name="BenchmarkStrategy",
-            specs=TagQuery.all("core").filter(specs),
-            aggregate_tags={
-                "default": TagQuery.any_of("default"),
-                "single_turn": TagQuery.any_of("single_turn"),
-                "multi_turn": TagQuery.any_of("multi_turn"),
-                "light": TagQuery.any_of("light"),
-            },
-        )
-
-    @staticmethod
-    def _get_benchmarkable_specs() -> list[AttackTechniqueSpec]:
-        """
-        Return techniques from ``SCENARIO_TECHNIQUES`` that accept an adversarial
-        model but don't have one already baked in.
-
-        This is the dual guard: ``_accepts_adversarial`` ensures the technique
-        CAN use an adversarial model, and ``adversarial_chat is None`` ensures
-        it doesn't already have one set — we inject our own at create-time.
-
-        Returns:
-            list[AttackTechniqueSpec]: Filtered, adversarial-ready specs.
-        """
-        return [
-            spec
-            for spec in SCENARIO_TECHNIQUES
-            if AttackTechniqueRegistry._accepts_adversarial(spec.attack_class) and spec.adversarial_chat is None
-        ]
+        return technique_name.split("__", 1)[1] if "__" in technique_name else technique_name
