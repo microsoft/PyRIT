@@ -89,12 +89,12 @@ class RoundRobinTarget(PromptTarget):
             raise ValueError("Nesting RoundRobinTarget inside another RoundRobinTarget is not supported.")
 
         first_type = type(targets[0])
-        for i, t in enumerate(targets[1:], start=1):
-            if type(t) is not first_type:
-                raise ValueError(
-                    f"All targets must be the same concrete class. "
-                    f"Target 0 is {first_type.__name__}, target {i} is {type(t).__name__}."
-                )
+        mismatched = [(i, type(t).__name__) for i, t in enumerate(targets[1:], start=1) if type(t) is not first_type]
+        if mismatched:
+            details = ", ".join(f"target {i} is {name}" for i, name in mismatched)
+            raise ValueError(
+                f"All targets must be the same concrete class. Target 0 is {first_type.__name__}, but {details}."
+            )
 
         weights = weights or [1] * len(targets)
         if len(weights) != len(targets):
@@ -139,7 +139,13 @@ class RoundRobinTarget(PromptTarget):
 
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
-        Select the next inner target and delegate the send.
+        Select the next inner target and delegate the send, with fallback.
+
+        Tries the next target in the weighted rotation. If the inner target
+        raises an exception (e.g., endpoint down, rate limit exhausted after
+        retries), falls back to the remaining unique targets before propagating
+        the failure. This prevents a single unhealthy endpoint from blocking
+        requests when other endpoints are available.
 
         The hash of the inner target that handled the request is recorded in
         ``prompt_metadata["inner_target_identifier"]`` on each response piece
@@ -150,17 +156,52 @@ class RoundRobinTarget(PromptTarget):
 
         Returns:
             list[Message]: Response messages from the inner target.
+
+        Raises:
+            Exception: If all unique inner targets fail.
         """
-        inner_target = self._next_target()
-        responses = await inner_target._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+        first_target = self._next_target()
+        tried_indices: set[int] = set()
+        last_exception: BaseException | None = None
 
-        inner_id_hash = inner_target.get_identifier().hash
-        if inner_id_hash is not None:
-            for response in responses:
-                for piece in response.message_pieces:
-                    piece.prompt_metadata["inner_target_identifier"] = inner_id_hash
+        # Build ordered fallback list following the rotation sequence.
+        # Start with the selected target, then continue through the rotation
+        # to try remaining unique targets in their natural order.
+        first_idx = self._targets.index(first_target)
+        tried_indices.add(first_idx)
+        targets_to_try: list[PromptTarget] = [first_target]
 
-        return responses
+        # Walk forward through the rotation from the current counter position
+        # to pick up remaining unique targets in rotation order.
+        for offset in range(len(self._rotation)):
+            idx = self._rotation[(self._counter + offset) % len(self._rotation)]
+            if idx not in tried_indices:
+                targets_to_try.append(self._targets[idx])
+                tried_indices.add(idx)
+            if len(tried_indices) == len(self._targets):
+                break
+
+        for target in targets_to_try:
+            try:
+                responses = await target._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+
+                inner_id_hash = target.get_identifier().hash
+                if inner_id_hash is not None:
+                    for response in responses:
+                        for piece in response.message_pieces:
+                            piece.prompt_metadata["inner_target_identifier"] = inner_id_hash
+
+                return responses
+            except Exception as ex:
+                logger.warning(
+                    f"Inner target {type(target).__name__} (index {self._targets.index(target)}) "
+                    f"failed: {ex}. Trying next target."
+                )
+                last_exception = ex
+
+        # All targets failed — propagate the last exception
+        assert last_exception is not None, "targets_to_try is never empty"
+        raise last_exception
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

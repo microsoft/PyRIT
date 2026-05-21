@@ -449,15 +449,15 @@ def test_compute_eval_hash_raises_when_hash_none_and_no_rules():
 
 
 # ---------------------------------------------------------------------------
-# unwrap_child tests
+# inner_child_name tests
 # ---------------------------------------------------------------------------
 
 
-class TestUnwrapChild:
-    """Tests for the unwrap_child feature in ChildEvalRule."""
+class TestInnerChildName:
+    """Tests for the inner_child_name feature in ChildEvalRule."""
 
     def test_unwrap_substitutes_first_inner_child(self):
-        """When the child has a sub-child matching unwrap_child, the unwrapped eval hash
+        """When the child has a sub-child matching inner_child_name, the unwrapped eval hash
         matches a direct (non-wrapped) target with the same behavioral params."""
         inner_target_east = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -489,7 +489,7 @@ class TestUnwrapChild:
         rules = {
             "prompt_target": ChildEvalRule(
                 included_params=frozenset({"underlying_model_name", "temperature"}),
-                unwrap_child="targets",
+                inner_child_name="targets",
             ),
         }
 
@@ -515,7 +515,7 @@ class TestUnwrapChild:
         rules = {
             "prompt_target": ChildEvalRule(
                 included_params=frozenset({"underlying_model_name", "temperature"}),
-                unwrap_child="targets",  # OpenAIChatTarget has no "targets" child
+                inner_child_name="targets",  # OpenAIChatTarget has no "targets" child
             ),
         }
 
@@ -523,14 +523,14 @@ class TestUnwrapChild:
         # Should still work — uses OpenAIChatTarget directly
         assert "children" in result
 
-        # Compare with rules without unwrap — should be identical
-        rules_no_unwrap = {
+        # Compare with rules without inner_child_name — should be identical
+        rules_no_inner = {
             "prompt_target": ChildEvalRule(
                 included_params=frozenset({"underlying_model_name", "temperature"}),
             ),
         }
-        result_no_unwrap = _build_eval_dict(scorer, child_eval_rules=rules_no_unwrap)
-        assert result == result_no_unwrap
+        result_no_inner = _build_eval_dict(scorer, child_eval_rules=rules_no_inner)
+        assert result == result_no_inner
 
     def test_scorer_eval_hash_matches_with_and_without_round_robin(self):
         """ScorerEvaluationIdentifier produces the same eval_hash whether

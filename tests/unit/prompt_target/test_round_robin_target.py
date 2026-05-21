@@ -264,6 +264,73 @@ async def test_send_prompt_to_target_round_robins_across_calls():
     assert t2.prompt_sent == ["second"]
 
 
+# ── Fallback on failure ──────────────────────────────────────────────────────
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_send_prompt_falls_back_to_next_target_on_failure():
+    from unittest.mock import AsyncMock
+
+    t1, t2 = MockPromptTarget(), MockPromptTarget()
+    rr = RoundRobinTarget(targets=[t1, t2])
+
+    # Make t1 raise an exception
+    t1._send_prompt_to_target_async = AsyncMock(side_effect=RuntimeError("endpoint down"))
+
+    message = Message.from_prompt(prompt="fallback test", role="user")
+    message.message_pieces[0].conversation_id = "fallback-conv"
+
+    response = await rr._send_prompt_to_target_async(normalized_conversation=[message])
+
+    # t1 failed, t2 should have handled it
+    assert t2.prompt_sent == ["fallback test"]
+    assert len(response) == 1
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_send_prompt_raises_when_all_targets_fail():
+    from unittest.mock import AsyncMock
+
+    t1, t2 = MockPromptTarget(), MockPromptTarget()
+    rr = RoundRobinTarget(targets=[t1, t2])
+
+    # Make both targets raise
+    t1._send_prompt_to_target_async = AsyncMock(side_effect=RuntimeError("t1 down"))
+    t2._send_prompt_to_target_async = AsyncMock(side_effect=RuntimeError("t2 down"))
+
+    message = Message.from_prompt(prompt="all fail", role="user")
+    message.message_pieces[0].conversation_id = "all-fail-conv"
+
+    with pytest.raises(RuntimeError, match="t2 down"):
+        await rr._send_prompt_to_target_async(normalized_conversation=[message])
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_send_prompt_fallback_follows_rotation_order():
+    """With 3 targets and weighted rotation [0, 0, 1, 2], if the first target
+    fails, fallback should try the next unique targets in rotation order."""
+    from unittest.mock import AsyncMock
+
+    t1, t2, t3 = MockPromptTarget(), MockPromptTarget(), MockPromptTarget()
+    rr = RoundRobinTarget(targets=[t1, t2, t3], weights=[2, 1, 1])
+
+    # Advance counter to position 2 so next target is t2 (index 1)
+    rr._counter = 2
+
+    # Make t2 fail — fallback should try t3 next (index 2 in rotation), then t1
+    t2._send_prompt_to_target_async = AsyncMock(side_effect=RuntimeError("t2 down"))
+
+    message = Message.from_prompt(prompt="rotation order test", role="user")
+    message.message_pieces[0].conversation_id = "rotation-order"
+
+    response = await rr._send_prompt_to_target_async(normalized_conversation=[message])
+
+    # t2 failed, t3 should have handled it (next in rotation after position 2 is index 2 → t3)
+    assert t3.prompt_sent == ["rotation order test"]
+    assert t1.prompt_sent == []
+    assert len(response) == 1
+
+
 # ── Identifier ───────────────────────────────────────────────────────────────
 
 
