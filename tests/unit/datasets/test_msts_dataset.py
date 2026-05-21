@@ -107,6 +107,16 @@ def test_invalid_text_modifier_raises():
         _MSTSDataset(text_modifiers=["assistance", "bogus"])
 
 
+def test_empty_languages_raises_value_error():
+    with pytest.raises(ValueError, match="MSTS languages must not be empty"):
+        _MSTSDataset(languages=[])
+
+
+def test_empty_text_modifiers_raises_value_error():
+    with pytest.raises(ValueError, match="MSTS text_modifiers must not be empty"):
+        _MSTSDataset(text_modifiers=[])
+
+
 def test_source_points_to_huggingface():
     loader = _MSTSDataset()
     assert loader.source == "https://huggingface.co/datasets/felfri/MSTS"

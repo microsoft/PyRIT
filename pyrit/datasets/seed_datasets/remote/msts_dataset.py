@@ -241,6 +241,12 @@ class _MSTSDataset(_RemoteDatasetLoader):
         if languages is None:
             return ["en"]
 
+        if not languages:
+            raise ValueError(
+                "MSTS languages must not be empty. Pass None to use the default ['en'] "
+                "or ['all'] to load every supported language."
+            )
+
         if languages == ["all"]:
             return list(_LANGUAGE_TO_SPLIT.keys())
 
@@ -270,6 +276,11 @@ class _MSTSDataset(_RemoteDatasetLoader):
         """
         if text_modifiers is None:
             return ["assistance", "intention"]
+
+        if not text_modifiers:
+            raise ValueError(
+                "MSTS text_modifiers must not be empty. Pass None to use the default ['assistance', 'intention']."
+            )
 
         invalid = [m for m in text_modifiers if m not in _VALID_TEXT_MODIFIERS]
         if invalid:
