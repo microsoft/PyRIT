@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 PYRIT_MEMORY_ALEMBIC_VERSION_TABLE = "pyrit_memory_alembic_version"
 _HEAD_REVISION = "head"
-_INITIAL_REVISION = "3b8f2c1a9d07"
+_INITIAL_REVISION = "ab8f2c1a9d07"
 _MEMORY_TABLES = {table.name for table in Base.metadata.sorted_tables}
 
 _ERROR_UNVERSIONED_SCHEMA_COMPARISON_FAILED = (

@@ -4,7 +4,7 @@
 """
 pre-alembic release schema.
 
-Revision ID: 3b8f2c1a9d07
+Revision ID: ab8f2c1a9d07
 Revises:
 Create Date: 2026-04-01 00:00:00.000000
 """
@@ -50,7 +50,7 @@ class _CustomUUID(TypeDecorator[uuid.UUID]):
 
 
 # revision identifiers, used by Alembic.
-revision: str = "3b8f2c1a9d07"
+revision: str = "ab8f2c1a9d07"
 down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

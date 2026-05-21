@@ -5,7 +5,7 @@
 add display_group_map_json to ScenarioResultEntries.
 
 Revision ID: e373726d391b
-Revises: 3b8f2c1a9d07
+Revises: ab8f2c1a9d07
 Create Date: 2026-04-23 11:32:09.031850
 """
 
@@ -16,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "e373726d391b"
-down_revision: str | None = "3b8f2c1a9d07"
+down_revision: str | None = "ab8f2c1a9d07"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
