@@ -68,7 +68,6 @@ class OpenAIVideoTarget(OpenAITarget):
         resolution_dimensions: VideoSize = "1280x720",
         n_seconds: int | VideoSeconds = 4,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -96,8 +95,6 @@ class OpenAIVideoTarget(OpenAITarget):
                 Defaults to 4.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
@@ -107,7 +104,7 @@ class OpenAIVideoTarget(OpenAITarget):
             MessagePiece. The video_id is returned in the response metadata after any successful
             generation (``response.message_pieces[0].prompt_metadata["video_id"]"").
         """
-        super().__init__(custom_configuration=custom_configuration, custom_capabilities=custom_capabilities, **kwargs)
+        super().__init__(custom_configuration=custom_configuration, **kwargs)
 
         self._n_seconds: VideoSeconds = (
             cast("VideoSeconds", str(n_seconds)) if isinstance(n_seconds, int) else n_seconds

@@ -62,7 +62,8 @@ async def test_generic_squash_normalize_to_dicts_async():
     assert len(result) == 1
     assert isinstance(result[0], dict)
     assert result[0]["role"] == "user"
-    converted_value = result[0]["converted_value"]
-    assert "### Instructions ###" in converted_value
-    assert "System message" in converted_value
-    assert "User message" in converted_value
+    assert "pieces" in result[0]
+    assert len(result[0]["pieces"]) == 1
+    assert "### Instructions ###" in result[0]["pieces"][0]["converted_value"]
+    assert "System message" in result[0]["pieces"][0]["converted_value"]
+    assert "User message" in result[0]["pieces"][0]["converted_value"]

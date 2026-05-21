@@ -107,7 +107,7 @@ class TestVisualLeakBenchDataset:
 
         assert image_prompt.prompt_group_id == text_prompt.prompt_group_id
         assert image_prompt.sequence == 0
-        assert text_prompt.sequence == 1
+        assert text_prompt.sequence == 0
         assert text_prompt.value == _VisualLeakBenchDataset.OCR_INJECTION_PROMPT
         assert image_prompt.value == "/fake/ocr.png"
 

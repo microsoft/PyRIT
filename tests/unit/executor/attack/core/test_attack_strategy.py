@@ -610,6 +610,88 @@ class TestDefaultAttackStrategyEventHandler:
             f"Attack is in '{StrategyEvent.ON_PRE_VALIDATE.value}' stage for {event_handler.__class__.__name__}"
         )
 
+    async def test_on_post_execute_stamps_scenario_attribution_when_present(
+        self, sample_attack_context, sample_attack_result, mock_memory
+    ):
+        """When the context carries an AttackResultAttribution, the persisted
+        AttackResult must have attribution_parent_id + attribution_data populated."""
+        from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
+
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+            sample_attack_context.start_time = 100.0
+            sample_attack_context._attribution = AttackResultAttribution(
+                parent_id="scenario-1",
+                parent_collection="atomic_a",
+            )
+
+            event_data = StrategyEventData(
+                event=StrategyEvent.ON_POST_EXECUTE,
+                strategy_name="TestStrategy",
+                strategy_id="test-id",
+                context=sample_attack_context,
+                result=sample_attack_result,
+            )
+            await handler.on_event(event_data)
+
+        assert sample_attack_result.attribution_parent_id == "scenario-1"
+        assert sample_attack_result.attribution_data == {
+            "parent_collection": "atomic_a",
+        }
+
+    async def test_on_post_execute_no_attribution_leaves_fields_none(
+        self, sample_attack_context, sample_attack_result, mock_memory
+    ):
+        """Outside a Scenario, _attribution is None and the attribution fields
+        on the persisted AttackResult must stay None."""
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+            sample_attack_context.start_time = 100.0
+            # _attribution defaults to None — no scenario stamping should happen.
+
+            event_data = StrategyEventData(
+                event=StrategyEvent.ON_POST_EXECUTE,
+                strategy_name="TestStrategy",
+                strategy_id="test-id",
+                context=sample_attack_context,
+                result=sample_attack_result,
+            )
+            await handler.on_event(event_data)
+
+        assert sample_attack_result.attribution_parent_id is None
+        assert sample_attack_result.attribution_data is None
+
+    async def test_on_error_stamps_scenario_attribution_when_present(self, sample_attack_context, mock_memory):
+        """Error AttackResults must also carry the attribution foreign key so
+        error lookups via get_attack_results(scenario_result_id=..., outcome=ERROR) work."""
+        from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
+
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+            sample_attack_context.start_time = 100.0
+            sample_attack_context._attribution = AttackResultAttribution(
+                parent_id="scenario-err",
+                parent_collection="atomic_err",
+            )
+
+            event_data = StrategyEventData(
+                event=StrategyEvent.ON_ERROR,
+                strategy_name="TestStrategy",
+                strategy_id="test-id",
+                context=sample_attack_context,
+                error=RuntimeError("boom"),
+            )
+            await handler.on_event(event_data)
+
+        # The error AttackResult was persisted; inspect what was sent to memory.
+        call = mock_memory.add_attack_results_to_memory.call_args
+        persisted = call.kwargs["attack_results"][0]
+        assert persisted.outcome == AttackOutcome.ERROR
+        assert persisted.attribution_parent_id == "scenario-err"
+        assert persisted.attribution_data == {
+            "parent_collection": "atomic_err",
+        }
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAttackStrategyIntegration:

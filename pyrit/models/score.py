@@ -194,6 +194,37 @@ class Score:
 
     __repr__ = __str__
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Score:
+        """
+        Reconstruct a Score from a dictionary.
+
+        Args:
+            data (dict[str, Any]): Dictionary as produced by to_dict().
+
+        Returns:
+            Score: Reconstructed instance.
+        """
+        from pyrit.identifiers.component_identifier import ComponentIdentifier
+
+        return cls(
+            id=data.get("id"),
+            score_value=data["score_value"],
+            score_value_description=data["score_value_description"],
+            score_type=data["score_type"],
+            score_category=data.get("score_category"),
+            score_rationale=data["score_rationale"],
+            score_metadata=data.get("score_metadata"),
+            scorer_class_identifier=(  # type: ignore[ty:invalid-argument-type]
+                ComponentIdentifier.from_dict(data["scorer_class_identifier"])
+                if data.get("scorer_class_identifier")
+                else None
+            ),
+            message_piece_id=data["message_piece_id"],
+            timestamp=datetime.fromisoformat(data["timestamp"]) if data.get("timestamp") else None,
+            objective=data.get("objective"),
+        )
+
 
 @dataclass
 class UnvalidatedScore:

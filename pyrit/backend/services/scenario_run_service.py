@@ -409,9 +409,13 @@ class ScenarioRunService:
         error = scenario_result.error_message
         error_type = scenario_result.error_type
 
-        # Fallback: look up error from persisted error AttackResults
-        if not error and scenario_result.error_attack_result_ids:
-            error_ars = self._memory.get_attack_results(attack_result_ids=scenario_result.error_attack_result_ids)
+        # Fallback: look up error from any persisted error AttackResults linked
+        # to this scenario via the new attribution_parent_id foreign key.
+        if not error:
+            error_ars = self._memory.get_attack_results(
+                scenario_result_id=scenario_result_id,
+                outcome=AttackOutcome.ERROR,
+            )
             if error_ars:
                 error = error_ars[0].error_message
                 error_type = error_ars[0].error_type

@@ -232,7 +232,7 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
             description="Image component of ML-VLSU multimodal prompt.",
             source=self.source,
             prompt_group_id=group_id,
-            sequence=1,
+            sequence=0,
             metadata={**metadata, "original_image_url": image_url},
         )
 

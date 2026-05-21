@@ -76,3 +76,13 @@ def test_conversation_reference_usable_as_dict_key():
     d = {ref: "value"}
     lookup_ref = ConversationReference(conversation_id="abc", conversation_type=ConversationType.ADVERSARIAL)
     assert d[lookup_ref] == "value"
+
+
+def test_to_dict_from_dict_roundtrip():
+    original = ConversationReference(
+        conversation_id="conv-123",
+        conversation_type=ConversationType.ADVERSARIAL,
+        description="main adversarial conversation",
+    )
+    roundtripped = ConversationReference.from_dict(original.to_dict())
+    assert original.to_dict() == roundtripped.to_dict()
