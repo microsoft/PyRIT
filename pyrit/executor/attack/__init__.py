@@ -38,9 +38,6 @@ from pyrit.executor.attack.multi_turn import (
     TreeOfAttacksWithPruningAttack,
     generate_simulated_conversation_async,
 )
-
-# Import printer modules last to avoid circular dependencies
-from pyrit.executor.attack.printer import AttackResultPrinter, ConsoleAttackResultPrinter, MarkdownAttackResultPrinter
 from pyrit.executor.attack.single_turn import (
     ContextComplianceAttack,
     FlipAttack,
@@ -52,6 +49,12 @@ from pyrit.executor.attack.single_turn import (
     SingleTurnAttackStrategy,
     SkeletonKeyAttack,
 )
+
+# Backward-compatibility aliases — import from pyrit.output.attack_result directly.
+# TODO: Remove these re-exports in two releases (target removal: 0.16.0).
+from pyrit.output.attack_result.base import AttackResultPrinterBase as AttackResultPrinter
+from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter as MarkdownAttackResultPrinter
+from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter as ConsoleAttackResultPrinter
 
 __all__ = [
     "AttackStrategy",

@@ -13,7 +13,6 @@ from pyrit.models import (
     construct_response_from_request,
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
@@ -63,7 +62,6 @@ class PromptShieldTarget(PromptTarget):
         field: Optional[PromptShieldEntryField] = None,
         max_requests_per_minute: Optional[int] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Class that initializes an Azure Content Safety Prompt Shield Target.
@@ -86,8 +84,6 @@ class PromptShieldTarget(PromptTarget):
                 will be capped at the value provided.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
 
         Raises:
             ValueError: If the endpoint value is not provided.
@@ -101,7 +97,6 @@ class PromptShieldTarget(PromptTarget):
             max_requests_per_minute=max_requests_per_minute,
             endpoint=endpoint_value,
             custom_configuration=custom_configuration,
-            custom_capabilities=custom_capabilities,
         )
 
         self._api_version = api_version or "2024-09-01"

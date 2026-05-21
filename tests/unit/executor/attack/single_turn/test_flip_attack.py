@@ -181,6 +181,7 @@ class TestFlipAttackSetup:
         """Test that conversation state is updated without converters for system prompt"""
         flip_attack._conversation_manager = MagicMock()
         flip_attack._conversation_manager.initialize_context_async = AsyncMock()
+        flip_attack._memory_labels = {}
 
         await flip_attack._setup_async(context=basic_context)
 

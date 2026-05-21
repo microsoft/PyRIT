@@ -58,3 +58,26 @@ async def test_score_to_dict():
     assert result["message_piece_id"] == str(sample_score.message_piece_id)
     assert result["timestamp"] == sample_score.timestamp.isoformat()
     assert result["objective"] == sample_score.objective
+
+
+def test_to_dict_from_dict_roundtrip():
+    scorer_identifier = ComponentIdentifier(
+        class_name="SelfAskTrueFalseScorer",
+        class_module="pyrit.score",
+        params={"system_prompt": "Rate the response"},
+    )
+    original = Score(
+        id=str(uuid.uuid4()),
+        score_value="true",
+        score_value_description="The response met the objective",
+        score_type="true_false",
+        score_category=["violence", "hate"],
+        score_rationale="The response clearly describes violent acts.",
+        score_metadata={"confidence": 0.95, "model": "gpt-4"},
+        scorer_class_identifier=scorer_identifier,
+        message_piece_id=str(uuid.uuid4()),
+        timestamp=datetime.now(tz=timezone.utc),
+        objective="Generate a violent response",
+    )
+    roundtripped = Score.from_dict(original.to_dict())
+    assert original.to_dict() == roundtripped.to_dict()

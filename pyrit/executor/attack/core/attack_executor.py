@@ -19,6 +19,7 @@ from typing import (
 )
 
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.executor.attack.core.attack_strategy import (
     AttackStrategy,
     AttackStrategyContextT,
@@ -142,6 +143,7 @@ class AttackExecutor:
         objective_scorer: Optional["TrueFalseScorer"] = None,
         field_overrides: Optional[Sequence[dict[str, Any]]] = None,
         return_partial_on_failure: bool = False,
+        attribution: Optional[AttackResultAttribution] = None,
         **broadcast_fields: Any,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
@@ -163,6 +165,12 @@ class AttackExecutor:
                 from_seed_group() as overrides.
             return_partial_on_failure: If True, returns partial results when some
                 objectives fail. If False (default), raises the first exception.
+            attribution: Optional ``AttackResultAttribution`` stamped onto every
+                per-task ``AttackContext`` so the persisted ``AttackResultEntry``
+                row carries ``attribution_parent_id`` + ``attribution_data``.
+                When ``None`` (default), no attribution is applied. The same
+                attribution is shared across all tasks; per-task identity is
+                reconstructed from the row's own ``objective_sha256``.
             **broadcast_fields: Fields applied to all seed groups (e.g., memory_labels).
                 Per-seed-group field_overrides take precedence.
 
@@ -205,6 +213,7 @@ class AttackExecutor:
             attack=attack,
             params_list=params_list,
             return_partial_on_failure=return_partial_on_failure,
+            attribution=attribution,
         )
 
     async def execute_attack_async(
@@ -214,6 +223,7 @@ class AttackExecutor:
         objectives: Sequence[str],
         field_overrides: Optional[Sequence[dict[str, Any]]] = None,
         return_partial_on_failure: bool = False,
+        attribution: Optional[AttackResultAttribution] = None,
         **broadcast_fields: Any,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
@@ -228,6 +238,9 @@ class AttackExecutor:
                 must match the length of objectives.
             return_partial_on_failure: If True, returns partial results when some
                 objectives fail. If False (default), raises the first exception.
+            attribution: Optional ``AttackResultAttribution`` stamped onto every
+                per-task ``AttackContext`` so the persistence path can record
+                orchestrator linkage. When ``None``, no attribution is applied.
             **broadcast_fields: Fields applied to all objectives (e.g., memory_labels).
                 Per-objective field_overrides take precedence.
 
@@ -268,6 +281,7 @@ class AttackExecutor:
             attack=attack,
             params_list=params_list,
             return_partial_on_failure=return_partial_on_failure,
+            attribution=attribution,
         )
 
     async def _execute_with_params_list_async(
@@ -276,6 +290,7 @@ class AttackExecutor:
         attack: AttackStrategy[AttackStrategyContextT, AttackStrategyResultT],
         params_list: Sequence[AttackParameters],
         return_partial_on_failure: bool = False,
+        attribution: Optional[AttackResultAttribution] = None,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
         Execute attacks in parallel with a list of pre-built parameters.
@@ -287,19 +302,23 @@ class AttackExecutor:
             attack: The attack strategy to execute.
             params_list: List of AttackParameters, one per execution.
             return_partial_on_failure: If True, returns partial results on failure.
+            attribution: Optional ``AttackResultAttribution`` stamped onto every
+                per-task ``AttackContext`` so the persistence path can record
+                orchestrator linkage.
 
         Returns:
             AttackExecutorResult with completed results and any incomplete objectives.
         """
         semaphore = asyncio.Semaphore(self._max_concurrency)
 
-        async def run_one(params: AttackParameters) -> AttackStrategyResultT:
+        async def run_one(index: int, params: AttackParameters) -> AttackStrategyResultT:
             async with semaphore:
-                # Create context with params
                 context = attack._context_type(params=params)
+                if attribution is not None:
+                    context._attribution = attribution
                 return await attack.execute_with_context_async(context=context)
 
-        tasks = [run_one(p) for p in params_list]
+        tasks = [run_one(i, p) for i, p in enumerate(params_list)]
         results_or_exceptions = await asyncio.gather(*tasks, return_exceptions=True)
 
         return self._process_execution_results(

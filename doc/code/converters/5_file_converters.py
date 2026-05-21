@@ -8,7 +8,6 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 # ---
-
 # %% [markdown]
 # # 5. File Converters
 #
@@ -20,7 +19,6 @@
 #
 # - **PDFConverter**: Convert text to PDF documents with templates or direct generation
 # - **WordDocConverter**: Convert text to Word (.docx) documents with optional placeholder injection
-
 # %% [markdown]
 # ## PDFConverter
 #
@@ -29,22 +27,20 @@
 # 1. **Template-Based PDF Generation**: Use YAML templates to render dynamic content into PDFs
 # 2. **Direct Prompt PDF Generation**: Convert plain text strings into PDFs without templates
 # 3. **Modify Existing PDFs**: Inject text into existing PDF documents
-
 # %% [markdown]
 # ### Template-Based PDF Generation
 #
 # This mode populates placeholders in a YAML-based template and converts the rendered content into a PDF.
-
 # %%
 import pathlib
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
     AttackConverterConfig,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 from pyrit.models import SeedPrompt
+from pyrit.output import output_attack_async
 from pyrit.prompt_converter import PDFConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import TextTarget
@@ -98,7 +94,7 @@ attack = PromptSendingAttack(
 )
 
 result = await attack.execute_async(objective=prompt)  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await output_attack_async(result)
 
 # %% [markdown]
 # ### Direct Prompt PDF Generation (No Template)
@@ -133,7 +129,7 @@ attack = PromptSendingAttack(
 )
 
 result = await attack.execute_async(objective=prompt)  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await output_attack_async(result)
 
 # %% [markdown]
 # ### Modifying Existing PDFs with Injection Items
@@ -205,7 +201,7 @@ attack = PromptSendingAttack(
 )
 
 result = await attack.execute_async(objective="Modify existing PDF")  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await output_attack_async(result)
 
 # %% [markdown]
 # ## WordDocConverter
@@ -238,7 +234,7 @@ attack = PromptSendingAttack(
 )
 
 result = await attack.execute_async(objective="This is a simple test string for Word document generation.")  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await output_attack_async(result)
 
 # %% [markdown]
 # ### Placeholder-Based Injection into Existing Word Documents
@@ -278,4 +274,4 @@ attack = PromptSendingAttack(
 )
 
 result = await attack.execute_async(objective="AI Red Team Engineer")  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await output_attack_async(result)
