@@ -6,6 +6,7 @@
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.parameter import Parameter
 from pyrit.setup.initializers.airt import AIRTInitializer
+from pyrit.setup.initializers.benchmark import BenchmarkInitializer
 from pyrit.setup.initializers.components.scenarios import ScenarioTechniqueInitializer
 from pyrit.setup.initializers.components.scorers import ScorerInitializer
 from pyrit.setup.initializers.components.targets import TargetInitializer
@@ -18,6 +19,7 @@ __all__ = [
     "Parameter",
     "PyRITInitializer",
     "AIRTInitializer",
+    "BenchmarkInitializer",
     "ScenarioTechniqueInitializer",
     "ScorerInitializer",
     "TargetInitializer",
