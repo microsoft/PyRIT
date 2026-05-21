@@ -23,6 +23,24 @@ describe("Navigation", () => {
     jest.clearAllMocks();
   });
 
+  it("renders the home button", () => {
+    renderWithProvider(<Navigation {...defaultProps} />);
+
+    const homeButton = screen.getByTitle("Home");
+    expect(homeButton).toBeInTheDocument();
+    expect(homeButton).not.toBeDisabled();
+  });
+
+  it("calls onNavigate with 'home' when home button is clicked", () => {
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <Navigation {...defaultProps} onNavigate={onNavigate} />
+    );
+
+    fireEvent.click(screen.getByTitle("Home"));
+    expect(onNavigate).toHaveBeenCalledWith("home");
+  });
+
   it("renders the chat button", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
 
