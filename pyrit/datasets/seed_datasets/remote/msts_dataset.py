@@ -146,9 +146,11 @@ class _MSTSDataset(_RemoteDatasetLoader):
                 language. Defaults to ``["en"]``.
             text_modifiers (list[str] | None): Subset of {"assistance", "intention"} to include.
                 Defaults to both.
-            max_examples (int | None): Maximum number of test rows to load across all
-                languages and modifiers combined. Each row produces 2 SeedPrompts
-                (image + text). Defaults to None (no limit).
+            max_examples (int | None): Maximum number of test pairs to successfully load
+                across all languages and modifiers combined. Rows whose image fetch fails
+                are skipped and do NOT count toward this limit, so a request for N examples
+                returns up to N pairs as long as enough source rows succeed. Each loaded
+                pair produces 2 SeedPrompts (image + text). Defaults to None (no limit).
             token (str | None): Optional HuggingFace authentication token.
 
         Raises:
@@ -173,6 +175,10 @@ class _MSTSDataset(_RemoteDatasetLoader):
         and both have ``sequence=0``, so they are delivered together as a single
         multimodal user message (image + text) rather than as two separate turns.
 
+        When ``max_examples`` is set, only successfully loaded pairs count toward the
+        limit; rows whose image fetch fails are logged and skipped without consuming
+        the quota.
+
         Args:
             cache (bool): Whether to cache the fetched dataset and images. Defaults to True.
 
@@ -183,7 +189,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
 
         prompts: list[SeedPrompt] = []
         failed_image_count = 0
-        rows_processed = 0
+        successful_pairs = 0
 
         for language in self.languages:
             split_name = _LANGUAGE_TO_SPLIT[language]
@@ -195,7 +201,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
             )
 
             for row in split_data:
-                if self.max_examples is not None and rows_processed >= self.max_examples:
+                if self.max_examples is not None and successful_pairs >= self.max_examples:
                     break
 
                 if row.get("prompt_type") not in self.text_modifiers:
@@ -212,9 +218,9 @@ class _MSTSDataset(_RemoteDatasetLoader):
                     continue
 
                 prompts.extend(pair)
-                rows_processed += 1
+                successful_pairs += 1
 
-            if self.max_examples is not None and rows_processed >= self.max_examples:
+            if self.max_examples is not None and successful_pairs >= self.max_examples:
                 break
 
         if failed_image_count > 0:
