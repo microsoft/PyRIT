@@ -6,12 +6,13 @@ import uuid
 from dataclasses import dataclass
 from typing import Literal
 
-from pyrit.common.net_utility import make_request_and_raise_if_error_async
-from pyrit.common.path import DB_DATA_PATH
+from pyrit.datasets.seed_datasets.remote._image_cache import (
+    fetch_and_cache_image_async,
+)
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Seed, SeedDataset, SeedObjective, SeedPrompt, data_serializer_factory
+from pyrit.models import Seed, SeedDataset, SeedObjective, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -346,20 +347,8 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
                 f"Invalid template name '{template_name}'. Must be one of: {', '.join(self.TEMPLATE_NAMES)}"
             )
 
-        filename = f"comic_jailbreak_{template_name}.png"
-        serializer = data_serializer_factory(category="seed-prompt-entries", data_type="image_path", extension="png")
-
-        results_path = serializer._memory.results_path or str(DB_DATA_PATH)
-        storage_io = serializer._memory.results_storage_io
-        serializer.value = str(results_path + serializer.data_sub_directory + f"/{filename}")
-        try:
-            if storage_io and await storage_io.path_exists(serializer.value):
-                return serializer.value
-        except Exception as e:
-            logger.warning(f"[ComicJailbreak] Failed to check cache for template {template_name}: {e}")
-
-        image_url = f"{self.TEMPLATE_BASE_URL}{template_name}.png"
-        response = await make_request_and_raise_if_error_async(endpoint_uri=image_url, method="GET")
-        await serializer.save_data(data=response.content, output_filename=filename.replace(".png", ""))
-
-        return str(serializer.value)
+        return await fetch_and_cache_image_async(
+            filename=f"comic_jailbreak_{template_name}.png",
+            image_url=f"{self.TEMPLATE_BASE_URL}{template_name}.png",
+            log_prefix="ComicJailbreak",
+        )
