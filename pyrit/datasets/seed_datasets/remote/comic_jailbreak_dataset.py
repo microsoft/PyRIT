@@ -142,8 +142,9 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         Fetch ComicJailbreak dataset and return as SeedDataset of image+text pairs.
 
         For each goal × template combination, renders the template-specific text into the
-        comic template image and returns a pair of prompts (image at sequence=0, text query
-        at sequence=1) linked by prompt_group_id.
+        comic template image and returns a pair of prompts (image and text query, both at
+        sequence=0) that share a ``prompt_group_id`` so they are delivered to the model as
+        a single multimodal user message.
 
         Args:
             cache: Whether to cache the fetched dataset. Defaults to True.
@@ -240,8 +241,9 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             behavior: The behavior label from the dataset.
 
         Returns:
-            list[Seed]: A three-element list with objective,
-                image (sequence=0), and text query (sequence=1).
+            list[Seed]: A three-element list with objective, image, and text query.
+                The image and text query share the same ``prompt_group_id`` and
+                ``sequence=0`` so they are delivered as a single multimodal user message.
         """
         group_id = uuid.uuid4()
         metadata: dict[str, str | int] = {
@@ -285,7 +287,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             authors=_AUTHORS,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
-            sequence=1,
+            sequence=0,
             metadata=metadata,
         )
 
