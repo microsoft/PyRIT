@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import io
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -325,3 +326,157 @@ async def test_fetch_and_save_image_returns_cached_path():
 
     expected = str(Path("/results/images", "msts_img_0001.jpg"))
     assert result == expected
+
+
+def test_encode_pil_image_returns_none_when_no_image():
+    assert _MSTSDataset._encode_pil_image(pil_image=None, extension="jpg") is None
+
+
+def test_encode_pil_image_jpeg_roundtrip():
+    from PIL import Image
+
+    img = Image.new("RGB", (4, 4), color="red")
+    data = _MSTSDataset._encode_pil_image(pil_image=img, extension="jpg")
+
+    assert isinstance(data, bytes) and len(data) > 0
+    decoded = Image.open(io.BytesIO(data))
+    assert decoded.format == "JPEG"
+
+
+def test_encode_pil_image_converts_non_rgb_to_rgb_for_jpeg():
+    from PIL import Image
+
+    img = Image.new("RGBA", (4, 4), color=(255, 0, 0, 128))
+    img.format = "JPEG"
+    data = _MSTSDataset._encode_pil_image(pil_image=img, extension="jpg")
+
+    assert isinstance(data, bytes) and len(data) > 0
+    decoded = Image.open(io.BytesIO(data))
+    assert decoded.mode == "RGB"
+
+
+def test_encode_pil_image_uses_format_when_no_image_format():
+    from PIL import Image
+
+    img = Image.new("RGB", (4, 4), color="blue")
+    img.format = None
+    data = _MSTSDataset._encode_pil_image(pil_image=img, extension="png")
+
+    decoded = Image.open(io.BytesIO(data))
+    assert decoded.format == "PNG"
+
+
+def test_encode_pil_image_returns_none_on_save_failure():
+    bad_image = MagicMock()
+    bad_image.format = "JPEG"
+    bad_image.mode = "RGB"
+    bad_image.save.side_effect = OSError("boom")
+
+    assert _MSTSDataset._encode_pil_image(pil_image=bad_image, extension="jpg") is None
+
+
+async def test_fetch_and_save_image_saves_pil_bytes_when_path_missing(tmp_path):
+    from PIL import Image
+
+    mock_serializer = MagicMock()
+    mock_memory = MagicMock()
+    mock_memory.results_path = str(tmp_path)
+    mock_storage_io = AsyncMock()
+    mock_storage_io.path_exists = AsyncMock(return_value=False)
+    mock_memory.results_storage_io = mock_storage_io
+    mock_serializer._memory = mock_memory
+    mock_serializer.data_sub_directory = "/images"
+    mock_serializer.save_data = AsyncMock()
+
+    img = Image.new("RGB", (4, 4), color="green")
+
+    with patch(
+        "pyrit.datasets.seed_datasets.remote.msts_dataset.data_serializer_factory",
+        return_value=mock_serializer,
+    ):
+        loader = _MSTSDataset()
+        result = await loader._fetch_and_save_image_async(
+            pil_image=img,
+            image_url="https://example.com/img.jpg",
+            image_id="img_0001",
+            extension="jpg",
+        )
+
+    mock_serializer.save_data.assert_awaited_once()
+    save_kwargs = mock_serializer.save_data.await_args.kwargs
+    assert save_kwargs["output_filename"] == "msts_img_0001"
+    assert isinstance(save_kwargs["data"], bytes) and len(save_kwargs["data"]) > 0
+    assert result == str(Path(str(tmp_path) + "/images", "msts_img_0001.jpg"))
+
+
+async def test_fetch_and_save_image_falls_back_to_url_when_pil_unavailable(tmp_path):
+    mock_serializer = MagicMock()
+    mock_memory = MagicMock()
+    mock_memory.results_path = str(tmp_path)
+    mock_storage_io = AsyncMock()
+    mock_storage_io.path_exists = AsyncMock(return_value=False)
+    mock_memory.results_storage_io = mock_storage_io
+    mock_serializer._memory = mock_memory
+    mock_serializer.data_sub_directory = "/images"
+    mock_serializer.save_data = AsyncMock()
+
+    mock_response = MagicMock()
+    mock_response.content = b"network-bytes"
+
+    with (
+        patch(
+            "pyrit.datasets.seed_datasets.remote.msts_dataset.data_serializer_factory",
+            return_value=mock_serializer,
+        ),
+        patch(
+            "pyrit.datasets.seed_datasets.remote.msts_dataset.make_request_and_raise_if_error_async",
+            new=AsyncMock(return_value=mock_response),
+        ) as mock_request,
+    ):
+        loader = _MSTSDataset()
+        result = await loader._fetch_and_save_image_async(
+            pil_image=None,
+            image_url="https://example.com/img.png",
+            image_id="img_0002",
+            extension="png",
+        )
+
+    mock_request.assert_awaited_once_with(endpoint_uri="https://example.com/img.png", method="GET")
+    mock_serializer.save_data.assert_awaited_once_with(data=b"network-bytes", output_filename="msts_img_0002")
+    assert result == str(Path(str(tmp_path) + "/images", "msts_img_0002.png"))
+
+
+async def test_fetch_and_save_image_continues_when_path_exists_raises(tmp_path):
+    mock_serializer = MagicMock()
+    mock_memory = MagicMock()
+    mock_memory.results_path = str(tmp_path)
+    mock_storage_io = AsyncMock()
+    mock_storage_io.path_exists = AsyncMock(side_effect=OSError("disk error"))
+    mock_memory.results_storage_io = mock_storage_io
+    mock_serializer._memory = mock_memory
+    mock_serializer.data_sub_directory = "/images"
+    mock_serializer.save_data = AsyncMock()
+
+    mock_response = MagicMock()
+    mock_response.content = b"recovered-bytes"
+
+    with (
+        patch(
+            "pyrit.datasets.seed_datasets.remote.msts_dataset.data_serializer_factory",
+            return_value=mock_serializer,
+        ),
+        patch(
+            "pyrit.datasets.seed_datasets.remote.msts_dataset.make_request_and_raise_if_error_async",
+            new=AsyncMock(return_value=mock_response),
+        ),
+    ):
+        loader = _MSTSDataset()
+        result = await loader._fetch_and_save_image_async(
+            pil_image=None,
+            image_url="https://example.com/img.jpg",
+            image_id="img_0003",
+            extension="jpg",
+        )
+
+    mock_serializer.save_data.assert_awaited_once_with(data=b"recovered-bytes", output_filename="msts_img_0003")
+    assert result == str(Path(str(tmp_path) + "/images", "msts_img_0003.jpg"))
