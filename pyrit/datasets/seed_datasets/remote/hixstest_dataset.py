@@ -4,7 +4,6 @@
 import logging
 import os
 from enum import Enum
-from typing import Optional
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -70,7 +69,7 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
         *,
         language: HiXSTestLanguage = HiXSTestLanguage.HINDI,
         split: str = "train",
-        token: Optional[str] = None,
+        token: str | None = None,
     ) -> None:
         """
         Initialize the HiXSTest dataset loader.
