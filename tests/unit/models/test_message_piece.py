@@ -1172,3 +1172,75 @@ class TestCopyLineageFrom:
         assert target.id == original_id
         assert target._role == original_role
         assert target.original_value == original_value
+
+
+def test_to_dict_from_dict_roundtrip():
+    from datetime import datetime, timezone
+
+    scorer_id = ComponentIdentifier(
+        class_name="SelfAskTrueFalseScorer",
+        class_module="pyrit.score",
+    )
+    target_id = ComponentIdentifier(
+        class_name="OpenAIChatTarget",
+        class_module="pyrit.prompt_target",
+        params={"endpoint": "https://api.example.com"},
+    )
+    attack_id = ComponentIdentifier(
+        class_name="PromptSendingAttack",
+        class_module="pyrit.executor.attack",
+    )
+    converter_id = ComponentIdentifier(
+        class_name="Base64Converter",
+        class_module="pyrit.prompt_converter",
+    )
+    score = Score(
+        score_value="true",
+        score_value_description="met objective",
+        score_type="true_false",
+        score_rationale="clearly met",
+        scorer_class_identifier=scorer_id,
+        message_piece_id="mp-score-ref",
+        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    original = MessagePiece(
+        id="12345678-aaaa-bbbb-cccc-000000000001",
+        role="assistant",
+        original_value="Hello world",
+        original_value_sha256="abc123",
+        converted_value="SGVsbG8gd29ybGQ=",
+        converted_value_sha256="def456",
+        conversation_id="conv-1",
+        sequence=2,
+        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+        prompt_metadata={"doc_type": "text"},
+        converter_identifiers=[converter_id],
+        prompt_target_identifier=target_id,
+        attack_identifier=attack_id,
+        original_value_data_type="text",
+        converted_value_data_type="text",
+        response_error="none",
+        original_prompt_id=uuid.UUID("12345678-1234-1234-1234-123456789abc"),
+    )
+    roundtripped = MessagePiece.from_dict(original.to_dict())
+    assert original.to_dict() == roundtripped.to_dict()
+
+
+def test_to_dict_from_dict_roundtrip_after_set_piece_not_in_database():
+    """Pieces marked not-in-database (id=None) must serialize and deserialize cleanly without ValueError."""
+    piece = MessagePiece(
+        role="user",
+        original_value="Hello world",
+        conversation_id="conv-not-in-db",
+    )
+    piece.set_piece_not_in_database()
+    piece.original_prompt_id = None  # type: ignore[assignment]
+
+    serialized = piece.to_dict()
+    assert serialized["id"] is None
+    assert serialized["original_prompt_id"] is None
+
+    # Must not raise ValueError on the literal string "None" or similar corruption.
+    roundtripped = MessagePiece.from_dict(serialized)
+    assert isinstance(roundtripped.id, uuid.UUID)
+    assert isinstance(roundtripped.original_prompt_id, uuid.UUID)

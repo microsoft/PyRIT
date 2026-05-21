@@ -293,6 +293,26 @@ def process_items(self, *, items: list[str]) -> list[str]:
         return []
 ```
 
+## Deprecations
+
+When deprecating a public class, function, method, parameter, or module path, use `pyrit.common.deprecation.print_deprecation_message` — never `warnings.warn` directly. It wraps `warnings.warn(..., DeprecationWarning, stacklevel=3)` with a consistent format so filtering still works.
+
+Set `removed_in` to **current version + 2 minor versions** (e.g. `0.14.x` → `removed_in="0.16.0"`). This gives one full release cycle of warning before removal.
+
+```python
+from pyrit.common.deprecation import print_deprecation_message
+
+def old_method(self, *, foo: str) -> None:
+    print_deprecation_message(
+        old_item="MyClass.old_method",
+        new_item="MyClass.new_method",
+        removed_in="0.16.0",
+    )
+    ...
+```
+
+`old_item` / `new_item` accept a class/callable (qualified name is generated) or a string.
+
 ## Pythonic Patterns
 
 ### List Comprehensions

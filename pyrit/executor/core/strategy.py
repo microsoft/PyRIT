@@ -31,11 +31,7 @@ StrategyContextT = TypeVar("StrategyContextT", bound="StrategyContext")
 
 
 class _StrategyRuntimeError(RuntimeError):
-    """RuntimeError subclass that carries an optional error_attack_result_id."""
-
-    def __init__(self, message: str, *, error_attack_result_id: str | None = None) -> None:
-        super().__init__(message)
-        self.error_attack_result_id = error_attack_result_id
+    """RuntimeError subclass for strategy execution failures."""
 
 
 @dataclass
@@ -386,9 +382,7 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
             else:
                 error_message = f"Strategy execution failed for {self.__class__.__name__}: {str(e)}"
 
-            # Attach the error attack result ID if the ON_ERROR handler created one
-            error_attack_result_id = getattr(context, "_error_attack_result_id", None)
-            runtime_error = _StrategyRuntimeError(error_message, error_attack_result_id=error_attack_result_id)
+            runtime_error = _StrategyRuntimeError(error_message)
             raise runtime_error from e
 
     async def execute_async(self, **kwargs: Any) -> StrategyResultT:

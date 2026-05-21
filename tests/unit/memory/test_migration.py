@@ -205,6 +205,263 @@ def test_migration_downgrade_creates_proper_structure():
             engine.dispose()
 
 
+# =============================================================================
+# Backfill tests for the attribution_parent_id foreign key migration
+# =============================================================================
+
+
+_SCENARIO_LINKAGE_REV = "9c8b7a6d5e4f"
+_PREV_REV = "7a1b2c3d4e5f"
+
+
+def _seed_pre_migration_scenario(connection, *, scenario_id, manifest_json):
+    """Insert a ScenarioResultEntry row at the pre-migration revision."""
+    connection.execute(
+        text(
+            'INSERT INTO "ScenarioResultEntries" '
+            "(id, scenario_name, scenario_description, scenario_version, pyrit_version, "
+            "objective_target_identifier, scenario_run_state, attack_results_json, "
+            "number_tries, completion_time, timestamp) "
+            "VALUES (:id, :name, '', 1, '0.14.0.dev0', '{}', 'COMPLETED', :manifest, 0, '2026-05-18', '2026-05-18')"
+        ),
+        {"id": scenario_id, "name": "Backfill Test", "manifest": manifest_json},
+    )
+
+
+def _seed_pre_migration_attack_result(connection, *, attack_id, conversation_id):
+    """Insert an AttackResultEntry row at the pre-migration revision."""
+    connection.execute(
+        text(
+            'INSERT INTO "AttackResultEntries" '
+            "(id, conversation_id, objective, attack_identifier, objective_sha256, executed_turns, "
+            "execution_time_ms, outcome, timestamp) "
+            "VALUES (:id, :conv, 'obj', '{}', 'sha', 1, 0, 'success', '2026-05-18')"
+        ),
+        {"id": attack_id, "conv": conversation_id},
+    )
+
+
+def _config_for(connection):
+    pyrit_root = Path(__file__).resolve().parent.parent.parent.parent / "pyrit"
+    script_location = pyrit_root / "memory" / "alembic"
+    config = Config()
+    config.set_main_option("script_location", str(script_location))
+    config.attributes["connection"] = connection
+    config.attributes["version_table"] = "pyrit_memory_alembic_version"
+    return config
+
+
+def test_backfill_links_attack_results_via_conversation_id():
+    """Upgrading from the pre-foreign-key revision backfills
+    attribution_parent_id + attribution_data on AttackResultEntries by
+    matching conversation_id."""
+    import json
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "backfill-test.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            sid = str(uuid.uuid4())
+            ar1_id = str(uuid.uuid4())
+            ar2_id = str(uuid.uuid4())
+            ar3_id = str(uuid.uuid4())
+
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                # Step the schema up to JUST before the linkage migration.
+                command.upgrade(config, _PREV_REV)
+
+                _seed_pre_migration_attack_result(connection, attack_id=ar1_id, conversation_id="conv-a-0")
+                _seed_pre_migration_attack_result(connection, attack_id=ar2_id, conversation_id="conv-a-1")
+                _seed_pre_migration_attack_result(connection, attack_id=ar3_id, conversation_id="conv-b-0")
+                _seed_pre_migration_scenario(
+                    connection,
+                    scenario_id=sid,
+                    manifest_json=json.dumps({"a": ["conv-a-0", "conv-a-1"], "b": ["conv-b-0"]}),
+                )
+
+                command.upgrade(config, _SCENARIO_LINKAGE_REV)
+
+                rows = connection.execute(
+                    text(
+                        "SELECT conversation_id, attribution_parent_id, attribution_data "
+                        'FROM "AttackResultEntries" ORDER BY conversation_id'
+                    )
+                ).fetchall()
+
+            results_by_conv = {r[0]: (r[1], r[2]) for r in rows}
+
+            # All three rows now point at the scenario via the new foreign key.
+            for conv in ("conv-a-0", "conv-a-1", "conv-b-0"):
+                assert results_by_conv[conv][0] == sid, f"{conv} should be backfilled"
+
+            # attribution_data carries parent_collection (the atomic attack name).
+            sd_a0 = json.loads(results_by_conv["conv-a-0"][1])
+            sd_a1 = json.loads(results_by_conv["conv-a-1"][1])
+            sd_b0 = json.loads(results_by_conv["conv-b-0"][1])
+
+            assert sd_a0 == {"parent_collection": "a"}
+            assert sd_a1 == {"parent_collection": "a"}
+            assert sd_b0 == {"parent_collection": "b"}
+        finally:
+            engine.dispose()
+
+
+def test_backfill_is_idempotent_and_does_not_clobber_existing_linkage():
+    """The backfill is safe to re-run: rows that already carry an
+    ``attribution_parent_id`` are not overwritten (the WHERE IS NULL guard). We
+    verify by upgrading, manually retargeting a row, then downgrading +
+    re-upgrading and asserting the manual retarget survives."""
+    import json
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "idempotent.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            sid_old = str(uuid.uuid4())
+            sid_manual = str(uuid.uuid4())
+            ar_id = str(uuid.uuid4())
+
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _PREV_REV)
+                _seed_pre_migration_attack_result(connection, attack_id=ar_id, conversation_id="conv-shared")
+                _seed_pre_migration_scenario(
+                    connection, scenario_id=sid_old, manifest_json=json.dumps({"a": ["conv-shared"]})
+                )
+                command.upgrade(config, _SCENARIO_LINKAGE_REV)
+
+                # Manually retarget the row to a DIFFERENT attribution_parent_id —
+                # simulate code that already linked it post-upgrade.
+                connection.execute(
+                    text('UPDATE "AttackResultEntries" SET attribution_parent_id = :sid WHERE conversation_id = :conv'),
+                    {"sid": sid_manual, "conv": "conv-shared"},
+                )
+
+                # Downgrade then re-upgrade to re-run the backfill.
+                command.downgrade(config, _PREV_REV)
+
+                # After downgrade the foreign key column is gone, but the
+                # manifest still references conv-shared. On re-upgrade, the
+                # backfill should NOT clobber sid_manual because the column was
+                # just re-added as NULL — actually downgrade DROPS the column
+                # data, so on re-upgrade the row will start at NULL and get
+                # linked again. The test we want is: re-running the backfill
+                # while a row already has a non-NULL foreign key does not
+                # overwrite it. We exercise that with a fresh second
+                # upgrade-then-no-op-re-upgrade.
+                command.upgrade(config, _SCENARIO_LINKAGE_REV)
+
+                # First upgrade after downgrade re-links it to sid_old (the
+                # manifest source). Now manually retarget again.
+                connection.execute(
+                    text('UPDATE "AttackResultEntries" SET attribution_parent_id = :sid WHERE conversation_id = :conv'),
+                    {"sid": sid_manual, "conv": "conv-shared"},
+                )
+
+                # Stamping should NOT happen on re-invocation since the column
+                # is already non-NULL. We verify by re-running the backfill
+                # logic via downgrade+upgrade is NOT what we want here — we
+                # want the IS NULL guard. Simulate by adding another scenario
+                # referencing the same conversation_id and re-running the
+                # backfill function only.
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScenarioResultEntries" '
+                        "(id, scenario_name, scenario_description, scenario_version, pyrit_version, "
+                        "objective_target_identifier, scenario_run_state, attack_results_json, "
+                        "number_tries, completion_time, timestamp) "
+                        "VALUES (:id, 'Other', '', 1, '0.14.0.dev0', '{}', 'COMPLETED', :manifest, 0, "
+                        "'2026-05-18', '2026-05-18')"
+                    ),
+                    {"id": str(uuid.uuid4()), "manifest": json.dumps({"x": ["conv-shared"]})},
+                )
+
+                # Manually call the backfill function (loaded via the alembic
+                # script directory — modules with leading-digit filenames are
+                # not importable through normal Python import).
+                from importlib.util import module_from_spec, spec_from_file_location
+
+                migration_path = (
+                    Path(__file__).resolve().parent.parent.parent.parent
+                    / "pyrit"
+                    / "memory"
+                    / "alembic"
+                    / "versions"
+                    / "9c8b7a6d5e4f_add_attribution_to_attack_results.py"
+                )
+                spec = spec_from_file_location("scenario_linkage_migration", migration_path)
+                assert spec is not None and spec.loader is not None
+                mig = module_from_spec(spec)
+                spec.loader.exec_module(mig)
+
+                from alembic import op as _op_mod
+
+                _original_get_bind = _op_mod.get_bind
+                _op_mod.get_bind = lambda: connection
+                try:
+                    mig._backfill_attribution_linkage()
+                finally:
+                    _op_mod.get_bind = _original_get_bind
+
+                # The row's manual retarget MUST survive — the IS NULL guard
+                # prevents the backfill from overwriting it.
+                row = connection.execute(
+                    text('SELECT attribution_parent_id FROM "AttackResultEntries" WHERE conversation_id = :conv'),
+                    {"conv": "conv-shared"},
+                ).scalar_one()
+                assert row == sid_manual
+        finally:
+            engine.dispose()
+
+
+def test_migration_drops_error_attack_result_ids_json_column():
+    """The not-yet-released error_attack_result_ids_json column is removed
+    in this migration (no deprecation window needed)."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "drop-col.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _PREV_REV)
+                cols_before = {c["name"] for c in inspect(connection).get_columns("ScenarioResultEntries")}
+                assert "error_attack_result_ids_json" in cols_before
+
+                command.upgrade(config, _SCENARIO_LINKAGE_REV)
+                cols_after = {c["name"] for c in inspect(connection).get_columns("ScenarioResultEntries")}
+                assert "error_attack_result_ids_json" not in cols_after
+        finally:
+            engine.dispose()
+
+
+def test_migration_downgrade_restores_dropped_column():
+    """Downgrading from the linkage revision re-adds error_attack_result_ids_json
+    and removes the new AttackResultEntries columns."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "downgrade-linkage.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _SCENARIO_LINKAGE_REV)
+
+                attack_cols_up = {c["name"] for c in inspect(connection).get_columns("AttackResultEntries")}
+                assert "attribution_parent_id" in attack_cols_up
+                assert "attribution_data" in attack_cols_up
+
+                command.downgrade(config, _PREV_REV)
+
+                attack_cols_down = {c["name"] for c in inspect(connection).get_columns("AttackResultEntries")}
+                assert "attribution_parent_id" not in attack_cols_down
+                assert "attribution_data" not in attack_cols_down
+
+                scenario_cols = {c["name"] for c in inspect(connection).get_columns("ScenarioResultEntries")}
+                assert "error_attack_result_ids_json" in scenario_cols
+        finally:
+            engine.dispose()
+
+
 def test_check_schema_migrations_calls_alembic_check():
     with tempfile.TemporaryDirectory() as temp_dir:
         db_path = os.path.join(temp_dir, "check-test.db")
