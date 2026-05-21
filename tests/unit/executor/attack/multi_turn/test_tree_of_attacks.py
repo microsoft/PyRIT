@@ -974,7 +974,10 @@ class TestBlockedScoringDefaults:
             score_value="0.0",
             score_value_description="blocked",
             score_type="float_scale",
-            score_rationale="The request was blocked by the target; returning 0.0.",
+            score_rationale=(
+                "The request was blocked by the target "
+                "(score_blocked_content is False or no partial content available); returning 0.0."
+            ),
             message_piece_id=str(piece.id),
             scorer_class_identifier=builder.objective_scorer.get_identifier(),
             objective="test objective",

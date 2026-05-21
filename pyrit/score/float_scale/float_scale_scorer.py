@@ -70,7 +70,10 @@ class FloatScaleScorer(Scorer):
             raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
 
         if first_piece.is_blocked():
-            rationale = "The request was blocked by the target; returning 0.0."
+            rationale = (
+                "The request was blocked by the target "
+                "(score_blocked_content is False or no partial content available); returning 0.0."
+            )
             description = "Blocked response; returning 0.0."
         elif first_piece.has_error():
             rationale = f"Response had an error: {first_piece.response_error}; returning 0.0."

@@ -181,7 +181,10 @@ class TrueFalseScorer(Scorer):
             raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
 
         if first_piece.is_blocked():
-            rationale = "The request was blocked by the target; returning false."
+            rationale = (
+                "The request was blocked by the target "
+                "(score_blocked_content is False or no partial content available); returning false."
+            )
             description = "Blocked response; returning false."
         elif first_piece.has_error():
             rationale = f"Response had an error: {first_piece.response_error}; returning false."
