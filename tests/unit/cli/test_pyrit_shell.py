@@ -153,11 +153,14 @@ class TestPyRITShell:
 
     def test_do_stop_server_no_launcher(self, shell, capsys):
         s, _ = shell
-        with patch(
-            "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
-            new_callable=AsyncMock,
-            return_value=True,
-        ), patch("pyrit.cli._server_launcher.stop_server_on_port", return_value=False):
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch("pyrit.cli._server_launcher.stop_server_on_port", return_value=False),
+        ):
             s.do_stop_server("")
         captured = capsys.readouterr()
         assert "No server found" in captured.out
@@ -611,22 +614,28 @@ class TestServerManagement:
     def test_stop_server_by_port_success(self, shell, capsys):
         s, _ = shell
         s._base_url = "http://localhost:8000"
-        with patch(
-            "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
-            new_callable=AsyncMock,
-            return_value=True,
-        ), patch("pyrit.cli._server_launcher.stop_server_on_port", return_value=True):
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch("pyrit.cli._server_launcher.stop_server_on_port", return_value=True),
+        ):
             s.do_stop_server("")
         assert "stopped" in capsys.readouterr().out
 
     def test_stop_server_by_port_skips_when_no_pyrit_backend(self, shell, capsys):
         s, _ = shell
         s._base_url = "http://localhost:8000"
-        with patch(
-            "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
-            new_callable=AsyncMock,
-            return_value=False,
-        ), patch("pyrit.cli._server_launcher.stop_server_on_port") as mock_stop:
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch("pyrit.cli._server_launcher.stop_server_on_port") as mock_stop,
+        ):
             s.do_stop_server("")
         mock_stop.assert_not_called()
         assert "not stopping" in capsys.readouterr().out

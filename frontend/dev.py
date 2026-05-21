@@ -196,14 +196,12 @@ def start_backend(*, config_file: str | None = None, initializers: list[str] | N
     if effective_config_file is None and initializers:
         import tempfile
 
-        synthesized = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", prefix="pyrit_dev_", delete=False
-        )
-        synthesized.write("initializers:\n")
-        for name in initializers:
-            synthesized.write(f"  - {name}\n")
-        synthesized.close()
-        effective_config_file = synthesized.name
+        fd, synthesized_path = tempfile.mkstemp(suffix=".yaml", prefix="pyrit_dev_", text=True)
+        with os.fdopen(fd, "w") as synthesized:
+            synthesized.write("initializers:\n")
+            for name in initializers:
+                synthesized.write(f"  - {name}\n")
+        effective_config_file = synthesized_path
         print(f"   Wrote initializer overrides to {effective_config_file}")
 
     if effective_config_file:
