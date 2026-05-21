@@ -400,3 +400,103 @@ class TestTargetInitializerDefaultObjectiveTarget:
             assert config.default_objective_target is False, (
                 f"Target {config.registry_name} should not have default_objective_target=True"
             )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestTargetInitializerConfigTagPropagation:
+    """Tests for TargetInitializer propagating ``TargetConfig.tags`` to the registry (F1c)."""
+
+    def setup_method(self) -> None:
+        """Reset registry before each test."""
+        TargetRegistry.reset_instance()
+
+    def teardown_method(self) -> None:
+        """Clean up after each test."""
+        TargetRegistry.reset_instance()
+        for var in [
+            "ADVERSARIAL_CHAT_ENDPOINT",
+            "ADVERSARIAL_CHAT_KEY",
+            "ADVERSARIAL_CHAT_MODEL",
+            "OPENAI_CHAT_ENDPOINT",
+            "OPENAI_CHAT_KEY",
+            "OPENAI_CHAT_MODEL",
+        ]:
+            os.environ.pop(var, None)
+
+    async def test_register_target_propagates_config_tags(self) -> None:
+        """
+        ``TargetConfig.tags`` should be added to the registry entry so the entire
+        ``TargetInitializerTags`` enum is queryable post-registration.
+        """
+        from pyrit.setup.initializers.components.targets import TargetInitializerTags
+
+        os.environ["ADVERSARIAL_CHAT_ENDPOINT"] = "https://test.openai.azure.com"
+        os.environ["ADVERSARIAL_CHAT_KEY"] = "test_key"
+        os.environ["ADVERSARIAL_CHAT_MODEL"] = "gpt-4o"
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert "adversarial_chat" in registry
+
+        adversarial_entries = registry.get_by_tag(tag=TargetInitializerTags.ADVERSARIAL)
+        assert any(entry.name == "adversarial_chat" for entry in adversarial_entries), (
+            "adversarial_chat should be discoverable by the ADVERSARIAL tag after F1c"
+        )
+
+        default_entries = registry.get_by_tag(tag=TargetInitializerTags.DEFAULT)
+        assert any(entry.name == "adversarial_chat" for entry in default_entries), (
+            "adversarial_chat declares both DEFAULT and ADVERSARIAL tags; both must propagate"
+        )
+
+    async def test_register_target_no_tags_in_config_no_extra_add_tags(self) -> None:
+        """An empty ``config.tags`` list must not trigger an ``add_tags`` call (no spurious empty-list passes)."""
+        from unittest.mock import MagicMock, patch
+
+        from pyrit.setup.initializers.components.targets import TargetConfig, TargetInitializer
+
+        config = TargetConfig(
+            registry_name="empty_tags_target",
+            target_class=MagicMock(return_value=MagicMock()),
+            endpoint_var="EMPTY_TAGS_ENDPOINT",
+            key_var="",
+            tags=[],
+        )
+
+        os.environ["EMPTY_TAGS_ENDPOINT"] = "https://example.com"
+
+        try:
+            mock_registry = MagicMock()
+            with patch.object(TargetRegistry, "get_registry_singleton", return_value=mock_registry):
+                init = TargetInitializer()
+                init._register_target(config)
+
+            mock_registry.register_instance.assert_called_once()
+            mock_registry.add_tags.assert_not_called()
+        finally:
+            os.environ.pop("EMPTY_TAGS_ENDPOINT", None)
+
+    async def test_register_target_default_objective_tag_still_applied(self) -> None:
+        """
+        Regression: ``default_objective_target=True`` must still add the ``DEFAULT_OBJECTIVE_TARGET``
+        tag alongside any ``config.tags``.
+        """
+        from pyrit.setup.initializers.components.targets import TargetInitializerTags
+
+        os.environ["OPENAI_CHAT_ENDPOINT"] = "https://api.openai.com/v1"
+        os.environ["OPENAI_CHAT_KEY"] = "test_key"
+        os.environ["OPENAI_CHAT_MODEL"] = "gpt-4o"
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        default_objective_entries = registry.get_by_tag(tag=TargetInitializerTags.DEFAULT_OBJECTIVE_TARGET)
+        assert len(default_objective_entries) == 1
+        assert default_objective_entries[0].name == "openai_chat"
+
+        default_entries = registry.get_by_tag(tag=TargetInitializerTags.DEFAULT)
+        assert any(entry.name == "openai_chat" for entry in default_entries), (
+            "openai_chat's config.tags=[DEFAULT] must propagate even when default_objective_target=True"
+        )

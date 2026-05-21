@@ -600,6 +600,8 @@ class TargetInitializer(PyRITInitializer):
         target = config.target_class(**kwargs)
         registry = TargetRegistry.get_registry_singleton()
         registry.register_instance(target, name=config.registry_name)
+        if config.tags:
+            registry.add_tags(name=config.registry_name, tags=list(config.tags))
         if config.default_objective_target:
             registry.add_tags(name=config.registry_name, tags=[TargetInitializerTags.DEFAULT_OBJECTIVE_TARGET])
         logger.info(f"Registered target: {config.registry_name}")
