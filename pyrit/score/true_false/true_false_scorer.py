@@ -144,19 +144,19 @@ class TrueFalseScorer(Scorer):
         result = self._score_aggregator(score_list)
 
         # Use the message_piece_id from the first score
-        return_score = Score(
-            score_value=str(result.value).lower(),
-            score_value_description=result.description,
-            score_type="true_false",
-            score_category=result.category,
-            score_metadata=result.metadata,
-            score_rationale=result.rationale,
-            scorer_class_identifier=self.get_identifier(),
-            message_piece_id=score_list[0].message_piece_id,
-            objective=objective,
-        )
-
-        return [return_score]
+        return [
+            Score(
+                score_value=str(result.value).lower(),
+                score_value_description=result.description,
+                score_type="true_false",
+                score_category=result.category,
+                score_metadata=result.metadata,
+                score_rationale=result.rationale,
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=score_list[0].message_piece_id,
+                objective=objective,
+            )
+        ]
 
     def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> Score:
         """
