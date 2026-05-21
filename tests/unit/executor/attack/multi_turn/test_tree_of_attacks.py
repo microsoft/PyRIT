@@ -1047,64 +1047,6 @@ class TestBlockedScoringDefaults:
         assert node.objective_score is not None
         assert node.objective_score.get_value() == 0.5
 
-    def test_node_init_does_not_accept_error_score_map(self, attack_builder):
-        """Sanity: _TreeOfAttacksNode no longer accepts the removed parameter."""
-        builder = attack_builder.with_default_mocks()
-
-        adversarial_chat_seed = MagicMock(spec=SeedPrompt)
-        adversarial_chat_seed.render_template_value = MagicMock(return_value="seed")
-        adversarial_chat_system = MagicMock(spec=SeedPrompt)
-        adversarial_chat_system.render_template_value = MagicMock(return_value="system")
-        adversarial_chat_template = MagicMock(spec=SeedPrompt)
-        adversarial_chat_template.render_template_value = MagicMock(return_value="template")
-        normalizer = MagicMock(spec=PromptNormalizer)
-        normalizer.send_prompt_async = AsyncMock(return_value=None)
-
-        with pytest.raises(TypeError, match="error_score_map"):
-            _TreeOfAttacksNode(
-                objective_target=builder.objective_target,
-                adversarial_chat=builder.adversarial_chat,
-                adversarial_chat_seed_prompt=adversarial_chat_seed,
-                adversarial_chat_system_seed_prompt=adversarial_chat_system,
-                adversarial_chat_prompt_template=adversarial_chat_template,
-                objective_scorer=builder.objective_scorer,
-                on_topic_scorer=None,
-                request_converters=[],
-                response_converters=[],
-                auxiliary_scorers=[],
-                attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
-                attack_strategy_name="TreeOfAttacksWithPruningAttack",
-                desired_response_prefix="Sure, here is",
-                prompt_normalizer=normalizer,
-                error_score_map={"blocked": 0.0},  # type: ignore[call-arg]
-            )
-
-    def test_attack_init_does_not_accept_error_score_map(self, attack_builder):
-        """Sanity: TAPAttack.__init__ no longer accepts the removed parameter."""
-        # Building with .build() doesn't pass error_score_map (we removed the builder method),
-        # so we directly instantiate to confirm the kwarg is rejected.
-        builder = attack_builder.with_default_mocks()
-        adversarial_config = AttackAdversarialConfig(target=builder.adversarial_chat)
-
-        mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
-        mock_threshold_scorer.threshold = 0.8
-        mock_threshold_scorer.scorer_type = "true_false"
-        mock_threshold_scorer.score_async = AsyncMock(return_value=[])
-        mock_threshold_scorer.get_identifier.return_value = ComponentIdentifier(
-            class_name="FloatScaleThresholdScorer",
-            class_module="pyrit.score",
-        )
-
-        scoring_config = TAPAttackScoringConfig(objective_scorer=mock_threshold_scorer)
-
-        with pytest.raises(TypeError, match="error_score_map"):
-            TreeOfAttacksWithPruningAttack(
-                objective_target=builder.objective_target,
-                attack_adversarial_config=adversarial_config,
-                attack_scoring_config=scoring_config,
-                error_score_map={"blocked": 0.0},  # type: ignore[call-arg]
-            )
-
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestBranchingLogic:
