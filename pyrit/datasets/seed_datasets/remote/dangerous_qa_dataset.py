@@ -1,13 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import json
 import logging
-from typing import Literal
+from typing import Literal, cast
 
-import requests
-
-from pyrit.common.path import DB_DATA_PATH
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
@@ -80,10 +76,28 @@ class _DangerousQADataset(_RemoteDatasetLoader):
 
         Returns:
             SeedDataset: A SeedDataset containing the DangerousQA questions.
+
+        Raises:
+            ValueError: If the source JSON is not a list of strings.
         """
         logger.info(f"Loading DangerousQA dataset from {self.source}")
 
-        questions = self._fetch_questions(cache=cache)
+        # The source JSON is a flat list of strings rather than the list-of-dicts
+        # shape most loaders use, but the JSON read/write helpers don't enforce
+        # any specific shape, so _fetch_from_url handles fetch and caching uniformly.
+        raw = self._fetch_from_url(
+            source=self.source,
+            source_type=self.source_type,
+            cache=cache,
+        )
+
+        if not all(isinstance(item, str) for item in raw):
+            invalid_types = sorted({type(item).__name__ for item in raw if not isinstance(item, str)})
+            raise ValueError(
+                f"Expected DangerousQA source to contain a JSON list of strings, got items of types: {invalid_types}"
+            )
+
+        questions = cast("list[str]", raw)
 
         authors = [
             "Omar Shaikh",
@@ -120,65 +134,3 @@ class _DangerousQADataset(_RemoteDatasetLoader):
         logger.info(f"Successfully loaded {len(seed_prompts)} prompts from DangerousQA dataset")
 
         return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)
-
-    def _fetch_questions(self, *, cache: bool) -> list[str]:
-        """
-        Fetch the DangerousQA questions as a list of strings.
-
-        The raw JSON file is a flat list of strings, which does not match the
-        list-of-dicts shape that ``_fetch_from_url`` expects. We handle the
-        fetch/cache here directly, wrapping each string in a single-key dict
-        on disk so the cached payload remains compatible with the shared JSON
-        helpers used by sibling loaders.
-
-        Args:
-            cache: Whether to read from / write to the on-disk cache.
-
-        Returns:
-            list[str]: The list of harmful questions.
-
-        Raises:
-            ValueError: If the source JSON is not a list of strings.
-            Exception: If the HTTP request to fetch the source fails.
-        """
-        cache_file = (
-            DB_DATA_PATH / "seed-prompt-entries" / self._get_cache_file_name(source=self.source, file_type="json")
-        )
-
-        if cache and cache_file.exists():
-            with cache_file.open("r", encoding="utf-8") as f:
-                cached = json.load(f)
-            return [entry["question"] for entry in cached]
-
-        raw = self._load_raw_questions()
-
-        if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
-            raise ValueError(
-                f"Expected DangerousQA source to contain a JSON list of strings, got: {type(raw).__name__}"
-            )
-
-        if cache:
-            cache_file.parent.mkdir(parents=True, exist_ok=True)
-            with cache_file.open("w", encoding="utf-8") as f:
-                json.dump([{"question": q} for q in raw], f)
-
-        return raw
-
-    def _load_raw_questions(self) -> list[str]:
-        """
-        Load the raw JSON payload from the configured source.
-
-        Returns:
-            list[str]: The list of question strings parsed from JSON.
-
-        Raises:
-            Exception: If the HTTP request fails.
-        """
-        if self.source_type == "public_url":
-            response = requests.get(self.source)
-            if response.status_code != 200:
-                raise Exception(f"Failed to fetch DangerousQA from {self.source}. Status code: {response.status_code}")
-            return response.json()
-
-        with open(self.source, encoding="utf-8") as f:
-            return json.load(f)
