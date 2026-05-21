@@ -14,7 +14,7 @@ from typing import (
 
 from openai.types.shared import ReasoningEffort
 
-from pyrit.common.data_url_converter import convert_local_image_to_data_url
+from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
@@ -239,7 +239,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
                 "text": piece.converted_value,
             }
         if piece.converted_value_data_type == "image_path":
-            data_url = await convert_local_image_to_data_url(piece.converted_value)
+            data_url = await convert_local_image_to_data_url_async(piece.converted_value)
             return {"type": "input_image", "image_url": {"url": data_url}}
         raise ValueError(f"Unsupported piece type for inline content: {piece.converted_value_data_type}")
 

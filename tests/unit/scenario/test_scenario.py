@@ -13,7 +13,7 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult
 from pyrit.scenario import DatasetConfiguration, ScenarioIdentifier, ScenarioResult
-from pyrit.scenario.core import AtomicAttack, BaselinePolicy, Scenario, ScenarioStrategy
+from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioStrategy
 from pyrit.score import Scorer
 
 # Reusable test scorer identifier
@@ -29,11 +29,36 @@ def save_attack_results_to_memory(attack_results):
     memory.add_attack_results_to_memory(attack_results=attack_results)
 
 
-def create_mock_run_async(attack_results):
-    """Create a mock run_async that saves results to memory before returning."""
+def _stamp_scenario_linkage(*, attack_results, atomic_attack):
+    """
+    Stamp attribution_parent_id + attribution_data on each AttackResult the
+    same way the real attack persistence path does. Mirrors what
+    ``_DefaultAttackStrategyEventHandler._apply_attribution`` does at runtime
+    so test fixtures that mock out the executor still produce DB rows the new
+    foreign-key-based hydration can find.
+    """
+    sid = getattr(atomic_attack, "_scenario_result_id", None)
+    name = getattr(atomic_attack, "atomic_attack_name", None)
+    if not sid or not name:
+        return
+    for r in attack_results:
+        r.attribution_parent_id = sid
+        r.attribution_data = {"parent_collection": name}
+
+
+def create_mock_run_async(attack_results, *, atomic_attack=None):
+    """
+    Create a mock ``run_async`` that stamps + saves results to memory.
+
+    Pass ``atomic_attack`` (the AtomicAttack MagicMock) so the helper can copy
+    its ``_scenario_result_id`` (set by ``Scenario._execute_scenario_async``)
+    and ``atomic_attack_name`` onto each result. Without those the foreign-key-
+    based hydration in ``get_scenario_results`` won't see the rows.
+    """
 
     async def mock_run_async(*args, **kwargs):
-        # Save results to memory (mimics what real attacks do)
+        if atomic_attack is not None:
+            _stamp_scenario_linkage(attack_results=attack_results, atomic_attack=atomic_attack)
         save_attack_results_to_memory(attack_results)
         return AttackExecutorResult(completed_results=attack_results, incomplete_objectives=[])
 
@@ -52,18 +77,24 @@ def mock_atomic_attacks():
     run1.atomic_attack_name = "attack_run_1"
     run1.display_group = "attack_run_1"
     run1._attack = mock_attack
+    run1._scenario_result_id = None
+    run1.set_scenario_result_id = MagicMock(side_effect=lambda sid: setattr(run1, "_scenario_result_id", sid))
     type(run1).objectives = PropertyMock(return_value=["objective1"])
 
     run2 = MagicMock(spec=AtomicAttack)
     run2.atomic_attack_name = "attack_run_2"
     run2.display_group = "attack_run_2"
     run2._attack = mock_attack
+    run2._scenario_result_id = None
+    run2.set_scenario_result_id = MagicMock(side_effect=lambda sid: setattr(run2, "_scenario_result_id", sid))
     type(run2).objectives = PropertyMock(return_value=["objective2"])
 
     run3 = MagicMock(spec=AtomicAttack)
     run3.atomic_attack_name = "attack_run_3"
     run3.display_group = "attack_run_3"
     run3._attack = mock_attack
+    run3._scenario_result_id = None
+    run3.set_scenario_result_id = MagicMock(side_effect=lambda sid: setattr(run3, "_scenario_result_id", sid))
     type(run3).objectives = PropertyMock(return_value=["objective3"])
 
     return [run1, run2, run3]
@@ -100,7 +131,7 @@ class ConcreteScenario(Scenario):
 
     # Tests using this fixture should default to no baseline; set the class policy to Forbidden
     # so we don't have to thread include_baseline=False through every initialize_async call.
-    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Forbidden
+    BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
     def __init__(self, atomic_attacks_to_return=None, **kwargs):
         # Add required strategy_class if not provided
@@ -327,7 +358,7 @@ class TestScenarioExecution:
         """Test that run_async executes all atomic attacks sequentially."""
         # Configure each run to return different results
         for i, run in enumerate(mock_atomic_attacks):
-            run.run_async = create_mock_run_async([sample_attack_results[i]])
+            run.run_async = create_mock_run_async([sample_attack_results[i]], atomic_attack=run)
 
         scenario = ConcreteScenario(
             name="Test Scenario",
@@ -359,7 +390,7 @@ class TestScenarioExecution:
     ):
         """Test that max_concurrency from init is passed to each atomic attack."""
         for i, run in enumerate(mock_atomic_attacks):
-            run.run_async = create_mock_run_async([sample_attack_results[i]])
+            run.run_async = create_mock_run_async([sample_attack_results[i]], atomic_attack=run)
 
         scenario = ConcreteScenario(
             name="Test Scenario",
@@ -383,9 +414,15 @@ class TestScenarioExecution:
     ):
         """Test that results from multiple atomic attacks are properly aggregated."""
         # Configure runs to return different numbers of results
-        mock_atomic_attacks[0].run_async = create_mock_run_async(sample_attack_results[0:2])
-        mock_atomic_attacks[1].run_async = create_mock_run_async(sample_attack_results[2:4])
-        mock_atomic_attacks[2].run_async = create_mock_run_async(sample_attack_results[4:5])
+        mock_atomic_attacks[0].run_async = create_mock_run_async(
+            sample_attack_results[0:2], atomic_attack=mock_atomic_attacks[0]
+        )
+        mock_atomic_attacks[1].run_async = create_mock_run_async(
+            sample_attack_results[2:4], atomic_attack=mock_atomic_attacks[1]
+        )
+        mock_atomic_attacks[2].run_async = create_mock_run_async(
+            sample_attack_results[4:5], atomic_attack=mock_atomic_attacks[2]
+        )
 
         scenario = ConcreteScenario(
             name="Test Scenario",
@@ -441,7 +478,7 @@ class TestScenarioExecution:
     ):
         """Test that run_async returns ScenarioResult with proper identifier."""
         for i, run in enumerate(mock_atomic_attacks):
-            run.run_async = create_mock_run_async([sample_attack_results[i]])
+            run.run_async = create_mock_run_async([sample_attack_results[i]], atomic_attack=run)
 
         scenario = ConcreteScenario(
             name="Test Scenario",
@@ -502,6 +539,10 @@ class TestScenarioProperties:
         single_run_mock.atomic_attack_name = "attack_1"
         single_run_mock.display_group = "attack_1"
         single_run_mock._attack = mock_attack
+        single_run_mock._scenario_result_id = None
+        single_run_mock.set_scenario_result_id = MagicMock(
+            side_effect=lambda sid: setattr(single_run_mock, "_scenario_result_id", sid)
+        )
         type(single_run_mock).objectives = PropertyMock(return_value=["obj1"])
         single_run = [single_run_mock]
 
@@ -519,6 +560,11 @@ class TestScenarioProperties:
             run.atomic_attack_name = f"attack_{i}"
             run.display_group = f"attack_{i}"
             run._attack = mock_attack
+            run._scenario_result_id = None
+            # Capture run by default arg to avoid late-binding in the closure.
+            run.set_scenario_result_id = MagicMock(
+                side_effect=lambda sid, _run=run: setattr(_run, "_scenario_result_id", sid)
+            )
             type(run).objectives = PropertyMock(return_value=[f"obj{i}"])
             many_runs.append(run)
 
@@ -779,7 +825,9 @@ class TestScenarioBaselineOnlyExecution:
         )
 
         # Mock the baseline attack's run_async
-        scenario._atomic_attacks[0].run_async = create_mock_run_async([sample_attack_results[0]])
+        scenario._atomic_attacks[0].run_async = create_mock_run_async(
+            [sample_attack_results[0]], atomic_attack=scenario._atomic_attacks[0]
+        )
 
         # Run the scenario
         result = await scenario.run_async()

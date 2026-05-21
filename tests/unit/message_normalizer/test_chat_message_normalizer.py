@@ -131,7 +131,7 @@ class TestChatMessageNormalizerNormalizeAsync:
         normalizer = ChatMessageNormalizer()
 
         with patch(
-            "pyrit.message_normalizer.chat_message_normalizer.convert_local_image_to_data_url",
+            "pyrit.message_normalizer.chat_message_normalizer.convert_local_image_to_data_url_async",
             new_callable=AsyncMock,
         ) as mock_convert:
             mock_convert.return_value = "data:image/png;base64,abc123"

@@ -14,7 +14,7 @@ import websockets
 from websockets.exceptions import InvalidStatus
 
 from pyrit.auth import CopilotAuthenticator, ManualCopilotAuthenticator
-from pyrit.common.data_url_converter import convert_local_image_to_data_url
+from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
@@ -328,7 +328,7 @@ class WebSocketCopilotTarget(PromptTarget):
         Returns:
             dict: Message annotation structure for the uploaded image.
         """
-        data_url = await convert_local_image_to_data_url(image_path)
+        data_url = await convert_local_image_to_data_url_async(image_path)
 
         normalized_image_path = image_path.replace("\\", "/")
         file_name = pathlib.Path(normalized_image_path).name

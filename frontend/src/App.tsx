@@ -3,6 +3,7 @@ import { FluentProvider, webLightTheme, webDarkTheme } from '@fluentui/react-com
 import { useMsal } from '@azure/msal-react'
 import MainLayout from './components/Layout/MainLayout'
 import ChatWindow from './components/Chat/ChatWindow'
+import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
 import AttackHistory from './components/History/AttackHistory'
 import { DEFAULT_HISTORY_FILTERS } from './components/History/historyFilters'
@@ -39,7 +40,7 @@ function ConnectionBannerContainer() {
 function App() {
   const { instance } = useMsal()
   const [isDarkMode, setIsDarkMode] = useState(true)
-  const [currentView, setCurrentView] = useState<ViewName>('chat')
+  const [currentView, setCurrentView] = useState<ViewName>('home')
   const [activeTarget, setActiveTarget] = useState<TargetInstance | null>(null)
   const [globalLabels, setGlobalLabels] = useState<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
   /** True while loading a historical attack from the history view */
@@ -175,6 +176,15 @@ function App() {
             onToggleTheme={toggleTheme}
             isDarkMode={isDarkMode}
           >
+            {currentView === 'home' && (
+              <Home
+                labels={globalLabels}
+                onLabelsChange={setGlobalLabels}
+                activeTarget={activeTarget}
+                onNavigate={setCurrentView}
+                onOpenAttack={handleOpenAttack}
+              />
+            )}
             {currentView === 'chat' && (
               <ChatWindow
                 onNewAttack={handleNewAttack}
