@@ -25,6 +25,7 @@ ty:
 docs-build:
 	uv run python build_scripts/pydoc2json.py pyrit --submodules -o doc/_api/pyrit_all.json
 	uv run python build_scripts/gen_api_md.py
+	# --strict validates URLs and cross-refs; skips are configured in doc/myst.yml under error_rules
 	cd doc && uv run jupyter-book build --all --html --strict
 	uv run ./build_scripts/generate_rss.py
 
@@ -36,6 +37,7 @@ docs-build:
 docs-build-all:
 	uv run python build_scripts/pydoc2json.py pyrit --submodules -o doc/_api/pyrit_all.json
 	uv run python build_scripts/gen_api_md.py
+	# --strict validates URLs and cross-refs; skips are configured in doc/myst.yml under error_rules
 	cd doc && uv run jupyter-book build --all --html --pdf --strict
 	uv run ./build_scripts/generate_rss.py
 
