@@ -290,8 +290,40 @@ async def test_metadata_includes_msts_fields(english_rows):
     assert text_prompt.metadata["language"] == "en"
     assert text_prompt.metadata["category"] == "Violent Crimes"
     assert text_prompt.metadata["subcategory"] == "Mass violence"
+    # subsubcategory is None in the fixture; loader should coerce to empty string.
+    assert text_prompt.metadata["subsubcategory"] == ""
     assert text_prompt.metadata["image_license"] == "CC0"
     assert text_prompt.metadata["original_image_url"] == "https://example.com/img.jpg"
+
+
+async def test_metadata_handles_none_nullable_fields():
+    loader = _MSTSDataset()
+    row = _make_row(
+        case_id="case_null",
+        image_id="img_null",
+        prompt_type="assistance",
+        prompt_text="text",
+    )
+    # Simulate HuggingFace returning None for nullable string columns.
+    row["unsafe_image_description"] = None
+    row["unsafe_image_license"] = None
+    row["hazard_subcategory"] = None
+
+    with (
+        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=[row])),
+        patch.object(
+            loader,
+            "_fetch_and_save_image_async",
+            new=AsyncMock(return_value="/tmp/msts.jpg"),
+        ),
+    ):
+        dataset = await loader.fetch_dataset_async()
+
+    text_prompt = next(p for p in dataset.seeds if p.data_type == "text")
+    assert text_prompt.metadata["image_description"] == ""
+    assert text_prompt.metadata["image_license"] == ""
+    assert text_prompt.metadata["subcategory"] == ""
+    assert text_prompt.metadata["subsubcategory"] == ""
 
 
 def test_infer_image_extension_from_url():
