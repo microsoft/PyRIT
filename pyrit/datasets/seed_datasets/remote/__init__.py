@@ -51,6 +51,10 @@ from pyrit.datasets.seed_datasets.remote.harmbench_multimodal_dataset import (
 from pyrit.datasets.seed_datasets.remote.harmful_qa_dataset import (
     _HarmfulQADataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.hixstest_dataset import (
+    HiXSTestLanguage,
+    _HiXSTestDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.jbb_behaviors_dataset import (
     _JBBBehaviorsDataset,
 )  # noqa: F401
@@ -65,6 +69,9 @@ from pyrit.datasets.seed_datasets.remote.medsafetybench_dataset import (
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.mlcommons_ailuminate_dataset import (
     _MLCommonsAILuminateDataset,
+)  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.msts_dataset import (
+    _MSTSDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.multilingual_vulnerability_dataset import (  # noqa: F401
     _MultilingualVulnerabilityDataset,
@@ -132,6 +139,7 @@ from pyrit.datasets.seed_datasets.remote.xstest_dataset import (
 )  # noqa: F401
 
 __all__ = [
+    "HiXSTestLanguage",
     "PromptIntelCategory",
     "PromptIntelSeverity",
     "SGXSTestLabel",
@@ -154,11 +162,13 @@ __all__ = [
     "_HarmBenchDataset",
     "_HarmBenchMultimodalDataset",
     "_HarmfulQADataset",
+    "_HiXSTestDataset",
     "_JBBBehaviorsDataset",
     "_LibrAIDoNotAnswerDataset",
     "_LLMLatentAdversarialTrainingDataset",
     "_MedSafetyBenchDataset",
     "_MLCommonsAILuminateDataset",
+    "_MSTSDataset",
     "_MultilingualVulnerabilityDataset",
     "_ORBench80KDataset",
     "_ORBenchHardDataset",
