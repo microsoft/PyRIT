@@ -539,3 +539,47 @@ class TestAdversarialBenchmarkSkipCachedInit:
             skip_cached=True,
         )
         assert bench._skip_cached is True
+
+
+# ---------------------------------------------------------------------------
+# Scorer flexibility — stage 1 (Commit 7 / F4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAdversarialBenchmarkScorerFlexibility:
+    """Tests for the widened objective_scorer annotation + isinstance guard (stage 1)."""
+
+    def test_objective_scorer_annotation_is_scorer(self):
+        """The parameter annotation is the broad Scorer base class for forward compatibility."""
+        import inspect
+
+        from pyrit.score import Scorer
+
+        sig = inspect.signature(AdversarialBenchmark.__init__)
+        annotation = sig.parameters["objective_scorer"].annotation
+        # ``Scorer | None`` resolves to ``Scorer | None`` at import time.
+        # str() captures both the runtime and stringified forms reliably.
+        assert "Scorer" in str(annotation)
+        assert Scorer is not None  # sanity that the import resolves
+
+    async def test_construct_accepts_truefalse_scorer_subclass(self):
+        """TrueFalseScorer remains the runtime-supported type; should construct cleanly."""
+        await _fan_out(target_names=["adv_a"])
+
+        scorer = MagicMock(spec=TrueFalseScorer)
+        bench = AdversarialBenchmark(objective_scorer=scorer)
+
+        assert bench._objective_scorer is scorer
+
+    async def test_non_truefalse_scorer_raises_typeerror_with_pointer(self):
+        """A Scorer subclass that isn't TrueFalseScorer must raise TypeError with a clear pointer."""
+        from pyrit.score import Scorer
+
+        await _fan_out(target_names=["adv_a"])
+
+        # Bare Scorer (not TrueFalseScorer) — covers any future non-TF subclass.
+        non_tf_scorer = MagicMock(spec=Scorer)
+
+        with pytest.raises(TypeError, match=r"requires a TrueFalseScorer.*follow-up"):
+            AdversarialBenchmark(objective_scorer=non_tf_scorer)

@@ -14,11 +14,12 @@ from pyrit.registry import AttackTechniqueRegistry, AttackTechniqueSpec
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
+from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.scenario.core.atomic_attack import AtomicAttack
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
-    from pyrit.score import TrueFalseScorer
+    from pyrit.score import Scorer
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +220,7 @@ class AdversarialBenchmark(Scenario):
     def __init__(
         self,
         *,
-        objective_scorer: TrueFalseScorer | None = None,
+        objective_scorer: Scorer | None = None,
         skip_cached: bool = False,
         scenario_result_id: str | None = None,
     ) -> None:
@@ -227,9 +228,17 @@ class AdversarialBenchmark(Scenario):
         Initialize the AdversarialBenchmark scenario.
 
         Args:
-            objective_scorer: Scorer for evaluating attack success. Defaults
-                to the registered default objective scorer (typically the
-                composite refusal+scale scorer set up by an initializer).
+            objective_scorer: Scorer for evaluating attack success. The
+                annotation is the broad ``Scorer`` base class for forward
+                compatibility with the planned non-``TrueFalseScorer``
+                scoring follow-up (see PR description / follow-up issue
+                tracker), but the runtime contract is currently still
+                ``TrueFalseScorer``: any other ``Scorer`` subclass raises
+                ``TypeError`` at construction with a message pointing at
+                the follow-up. Defaults to the registered default objective
+                scorer (typically the composite refusal+scale scorer set
+                up by an initializer), which is always a
+                ``TrueFalseScorer``.
             skip_cached: When ``True``, ``_get_atomic_attacks_async`` filters
                 out atomic attacks whose ``(atomic_attack_name,
                 technique_eval_hash)`` tuple already appears in a prior
@@ -242,10 +251,21 @@ class AdversarialBenchmark(Scenario):
                 (e.g. different scorer) do not cross-pollinate.
             scenario_result_id: Optional ID of an existing scenario result
                 to resume.
+
+        Raises:
+            TypeError: If ``objective_scorer`` is a ``Scorer`` subclass
+                other than ``TrueFalseScorer`` (full non-true/false support
+                is tracked as a follow-up; the type annotation is widened
+                ahead of the runtime support).
         """
-        self._objective_scorer: TrueFalseScorer = (
-            objective_scorer if objective_scorer else self._get_default_objective_scorer()
-        )
+        resolved_scorer: Scorer = objective_scorer if objective_scorer else self._get_default_objective_scorer()
+        if not isinstance(resolved_scorer, TrueFalseScorer):
+            raise TypeError(
+                f"AdversarialBenchmark currently requires a TrueFalseScorer for objective_scorer; "
+                f"got {type(resolved_scorer).__name__}. Full Scorer support (e.g. FloatScaleScorer) is "
+                f"tracked as the new-scoring follow-up — see the PR description for status."
+            )
+        self._objective_scorer: TrueFalseScorer = resolved_scorer
         self._skip_cached: bool = skip_cached
 
         super().__init__(
