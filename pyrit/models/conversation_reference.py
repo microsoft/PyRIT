@@ -10,8 +10,6 @@ from pydantic import BaseModel, ConfigDict
 
 from pyrit.common.deprecation import print_deprecation_message
 
-_DEPRECATION_REMOVED_IN = "0.16.0"
-
 
 class ConversationType(Enum):
     """Types of conversations that can be associated with an attack."""
@@ -68,7 +66,7 @@ class ConversationReference(BaseModel):
         print_deprecation_message(
             old_item=ConversationReference.to_dict,
             new_item='ConversationReference.model_dump(mode="json")',
-            removed_in=_DEPRECATION_REMOVED_IN,
+            removed_in="0.16.0",
         )
         return self.model_dump(mode="json")
 
@@ -90,6 +88,6 @@ class ConversationReference(BaseModel):
         print_deprecation_message(
             old_item=ConversationReference.from_dict,
             new_item="ConversationReference.model_validate",
-            removed_in=_DEPRECATION_REMOVED_IN,
+            removed_in="0.16.0",
         )
         return cls.model_validate(data)

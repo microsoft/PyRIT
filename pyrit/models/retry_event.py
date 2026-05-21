@@ -12,8 +12,6 @@ from pydantic import BaseModel, Field
 
 from pyrit.common.deprecation import print_deprecation_message
 
-_DEPRECATION_REMOVED_IN = "0.16.0"
-
 
 class RetryEvent(BaseModel):
     """
@@ -49,7 +47,7 @@ class RetryEvent(BaseModel):
         print_deprecation_message(
             old_item=RetryEvent.to_dict,
             new_item='RetryEvent.model_dump(mode="json")',
-            removed_in=_DEPRECATION_REMOVED_IN,
+            removed_in="0.16.0",
         )
         return self.model_dump(mode="json")
 
@@ -71,6 +69,6 @@ class RetryEvent(BaseModel):
         print_deprecation_message(
             old_item=RetryEvent.from_dict,
             new_item="RetryEvent.model_validate",
-            removed_in=_DEPRECATION_REMOVED_IN,
+            removed_in="0.16.0",
         )
         return cls.model_validate(data)
