@@ -7,7 +7,6 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 # ---
-
 # %% [markdown]
 # # Prompt Shield Scorer - optional
 # ## 0 TL;DR
@@ -37,10 +36,10 @@
 # %%
 from pyrit.executor.attack import (
     AttackScoringConfig,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 from pyrit.memory import CentralMemory
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget, PromptShieldTarget
 from pyrit.score import BatchScorer, PromptShieldScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -69,7 +68,7 @@ attack = PromptSendingAttack(
     attack_scoring_config=scoring_config,
 )
 result = await attack.execute_async(objective=example_prompt)  # type: ignore
-await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
+await output_attack_async(result)
 
 # Fetch prompts to score by conversation ID
 memory = CentralMemory.get_memory_instance()

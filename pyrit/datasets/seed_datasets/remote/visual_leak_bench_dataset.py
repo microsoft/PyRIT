@@ -47,8 +47,9 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
     - **PII Leakage**: Social engineering attacks to extract sensitive personal information
       across 8 PII types (Email, DOB, Phone, Password, PIN, API Key, SSN, Credit Card)
 
-    Each example produces an image prompt (sequence=0) and a text prompt (sequence=1)
-    linked via a shared ``prompt_group_id``. The text prompt is the query sent to the model.
+    Each example produces an image prompt and a text prompt that share both a
+    ``prompt_group_id`` and ``sequence=0`` so they are delivered to the model as a single
+    multimodal user message.
 
     Note: The first call may be slow as images need to be downloaded from remote URLs.
     Subsequent calls will be faster since images are cached locally.
@@ -123,9 +124,9 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         """
         Fetch VisualLeakBench examples and return as SeedDataset.
 
-        Each example produces a pair of prompts linked by a shared ``prompt_group_id``:
-        - sequence=0: image prompt (the adversarial image)
-        - sequence=1: text prompt (the query sent to the model)
+        Each example produces a pair of prompts that share both a ``prompt_group_id`` and
+        ``sequence=0`` so they are delivered to the model as a single multimodal user
+        message: the adversarial image and the text query.
 
         Args:
             cache: Whether to cache the fetched dataset. Defaults to True.
@@ -265,7 +266,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             authors=authors,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
-            sequence=1,
+            sequence=0,
             metadata={
                 "category": category_str,
                 "pii_type": pii_type_str,

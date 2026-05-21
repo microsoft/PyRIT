@@ -138,6 +138,7 @@ project:
             - file: code/scoring/5_refusal_scorer.ipynb
             - file: code/scoring/6_batch_scorer.ipynb
             - file: code/scoring/7_scorer_metrics.ipynb
+            - file: code/scoring/credential_leak_scorer.ipynb
             - file: code/scoring/insecure_code_scorer.ipynb
             - file: code/scoring/persuasion_full_conversation_scorer.ipynb
             - file: code/scoring/prompt_shield_scorer.ipynb
@@ -172,6 +173,7 @@ project:
           children:
             - file: code/registry/1_class_registry.ipynb
             - file: code/registry/2_instance_registry.ipynb
+        - file: code/output/0_output.ipynb
     - file: api/index.md
       children:
         - file: api/pyrit_analytics.md
@@ -200,10 +202,7 @@ project:
         - file: api/pyrit_scenario.md
         - file: api/pyrit_score.md
         - file: api/pyrit_setup.md
-          children:
-            - file: api/pyrit_setup_initializers.md
         - file: api/pyrit_show_versions.md
-        - file: api/pyrit_ui.md
     - file: blog/README.md
       children:
         - file: blog/2026_04_14_scoring_scorers.md

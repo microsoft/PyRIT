@@ -8,7 +8,6 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.0
 # ---
-
 # %% [markdown]
 # # 7. AML Chat Targets
 #
@@ -39,9 +38,9 @@
 # `**param_kwargs` allows for the setting of other parameters not explicitly shown in the constructor. A general list of possible adjustable parameters can be found
 # here: https://huggingface.co/docs/api-inference/tasks/text-generation but note that not all parameters may have an effect depending on the specific model. The
 # parameters that can be set per model can usually be found in the 'Consume' tab when you navigate to your endpoint in AML Studio.
-
 # %%
-from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
+from pyrit.executor.attack import PromptSendingAttack
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import AzureMLChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -53,7 +52,7 @@ azure_ml_chat_target = AzureMLChatTarget()
 attack = PromptSendingAttack(objective_target=azure_ml_chat_target)
 
 result = await attack.execute_async(objective="Hello! Describe yourself and the company who developed you.")  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await output_attack_async(result)
 
 # %% [markdown]
 #
