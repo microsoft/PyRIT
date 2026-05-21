@@ -268,7 +268,7 @@ export default function Home({
                           data-testid={`home-open-attack-${attack.attack_result_id}`}
                           title={attack.last_message_preview || attack.attack_type}
                         >
-                          {OUTCOME_ICONS[attack.outcome ?? 'undetermined']}
+                          {OUTCOME_ICONS[attack.outcome ?? 'undetermined'] ?? OUTCOME_ICONS.undetermined}
                           <Text size={200} className={styles.attackPreview}>
                             {attack.last_message_preview || attack.attack_type}
                           </Text>
