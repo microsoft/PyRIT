@@ -204,7 +204,11 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
             list[str]: Markdown lines for the image.
         """
         display_path = self._maybe_blur_image_on_disk(image_path=image_path) if self._blur_images else image_path
-        relative_path = os.path.relpath(display_path)
+        try:
+            relative_path = os.path.relpath(display_path)
+        except ValueError:
+            # Different mount/drive than cwd (Windows). Fall back to the absolute path.
+            relative_path = os.path.abspath(display_path)
         posix_path = relative_path.replace("\\", "/")
         return [f"![Image]({posix_path})\n"]
 

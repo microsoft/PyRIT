@@ -111,6 +111,14 @@ async def test_pretty_does_not_blur_by_default(tmp_path, patch_central_database)
     ipython_display.Image.assert_called_once_with(data=image_bytes)
 
 
+def _expected_link(path: str) -> str:
+    try:
+        rel = os.path.relpath(path)
+    except ValueError:
+        rel = os.path.abspath(path)
+    return rel.replace("\\", "/")
+
+
 # --- Markdown path ---
 
 
@@ -127,8 +135,7 @@ def test_markdown_writes_blurred_sibling_and_links_to_it(tmp_path):
     assert blurred_path.read_bytes() != image_bytes
 
     assert len(lines) == 1
-    expected_rel = os.path.relpath(str(blurred_path)).replace("\\", "/")
-    assert lines[0] == f"![Image]({expected_rel})\n"
+    assert lines[0] == f"![Image]({_expected_link(str(blurred_path))})\n"
 
 
 def test_markdown_blur_is_idempotent(tmp_path):
@@ -158,8 +165,7 @@ def test_markdown_default_does_not_blur(tmp_path):
 
     blurred_path = tmp_path / "img_blurred.png"
     assert not blurred_path.exists()
-    expected_rel = os.path.relpath(str(image_path)).replace("\\", "/")
-    assert lines[0] == f"![Image]({expected_rel})\n"
+    assert lines[0] == f"![Image]({_expected_link(str(image_path))})\n"
 
 
 def test_markdown_blur_failure_falls_back_to_original(tmp_path, caplog):
@@ -169,8 +175,21 @@ def test_markdown_blur_failure_falls_back_to_original(tmp_path, caplog):
     printer = _ConcreteMarkdown(blur_images=True, blur_radius=5)
     lines = printer._format_image_content(image_path=bogus_path)
 
-    expected_rel = os.path.relpath(bogus_path).replace("\\", "/")
-    assert lines[0] == f"![Image]({expected_rel})\n"
+    assert lines[0] == f"![Image]({_expected_link(bogus_path)})\n"
+
+
+def test_markdown_format_image_content_handles_cross_drive_path(tmp_path):
+    """``os.path.relpath`` raises ValueError on Windows for paths on a different
+    mount than cwd. The formatter must fall back to the absolute path instead of
+    propagating the error."""
+    image_path = str(tmp_path / "img.png")
+
+    printer = _ConcreteMarkdown()
+    with patch("pyrit.output.conversation.markdown.os.path.relpath", side_effect=ValueError("cross-drive")):
+        lines = printer._format_image_content(image_path=image_path)
+
+    expected = os.path.abspath(image_path).replace("\\", "/")
+    assert lines[0] == f"![Image]({expected})\n"
 
 
 # --- Helpers / wiring ---
@@ -210,7 +229,7 @@ def test_markdown_blurred_dir_redirects_output(tmp_path):
     assert blurred_path.exists()
     # Original directory must not contain the blurred copy
     assert not (image_path.parent / "img_blurred.png").exists()
-    expected_rel = os.path.relpath(str(blurred_path)).replace("\\", "/")
+    expected_rel = _expected_link(str(blurred_path))
     assert lines[0] == f"![Image]({expected_rel})\n"
 
 
@@ -230,7 +249,7 @@ def test_markdown_atomic_write_leaves_no_temp_on_failure(tmp_path):
         lines = printer._format_image_content(image_path=str(image_path))
 
     # Falls back to the original
-    expected_rel = os.path.relpath(str(image_path)).replace("\\", "/")
+    expected_rel = _expected_link(str(image_path))
     assert lines[0] == f"![Image]({expected_rel})\n"
 
     # No temp files left behind, no blurred file produced
