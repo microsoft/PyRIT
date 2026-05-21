@@ -118,11 +118,10 @@ def module_deprecation_getattr(
             raise AttributeError(f"module {old_module!r} has no attribute {name!r}")
         if name not in warned:
             warned.add(name)
-            warnings.warn(
-                f"{old_module}.{name} is deprecated and will be removed in {removed_in}. "
-                f"Use {target_module}.{name} instead.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item=f"{old_module}.{name}",
+                new_item=f"{target_module}.{name}",
+                removed_in=removed_in,
             )
         module = importlib.import_module(target_module)
         return getattr(module, name)
