@@ -3,14 +3,11 @@
 
 import itertools
 import logging
-from dataclasses import fields
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.identifiers import TARGET_BEHAVIORAL_PARAM_FALLBACKS, TARGET_BEHAVIORAL_PARAMS, ComponentIdentifier
 from pyrit.models import Message
 from pyrit.prompt_target.common.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS
 
 logger = logging.getLogger(__name__)
@@ -56,7 +53,6 @@ class RoundRobinTarget(PromptTarget):
         *,
         targets: list[PromptTarget],
         weights: list[int] | None = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
     ) -> None:
         """
         Initialize the RoundRobinTarget.
@@ -64,23 +60,20 @@ class RoundRobinTarget(PromptTarget):
         Args:
             targets: Inner targets to round-robin across. Must all be the same
                 concrete class, contain at least 2 entries, and support both
-                multi-turn and editable history capabilities.
+                multi-turn and editable history capabilities. All inner targets
+                must have identical configurations (capabilities, policy, and
+                normalization pipeline). The round-robin adopts this shared
+                configuration so its pipeline matches what the inner targets expect.
             weights: Optional relative integer weights for each target. When
                 provided, must be the same length as ``targets`` with all values
                 > 0. For example, ``weights=[2, 1]`` sends roughly twice as many
                 requests to the first target. Defaults to equal weight.
-            custom_configuration (TargetConfiguration, Optional): Optional override
-                for the target configuration. When ``None`` (the default), the configuration
-                is built from the intersection of all inner targets' capabilities with
-                the default policy. When provided, the caller's configuration is used as-is
-                — the caller is responsible for ensuring it is compatible with
-                the inner targets.
 
         Raises:
             ValueError: If fewer than 2 targets are provided, targets are
                 different classes, weights length doesn't match, weights contain
-                non-positive values, targets lack required capabilities, or
-                capability intersection yields empty modalities.
+                non-positive values, inner targets have different configurations,
+                or targets lack required capabilities.
         """
         if len(targets) < 2:
             raise ValueError(f"RoundRobinTarget requires at least 2 targets, got {len(targets)}.")
@@ -102,12 +95,14 @@ class RoundRobinTarget(PromptTarget):
         if any(w <= 0 for w in weights):
             raise ValueError("All weights must be positive integers.")
 
-        intersected = _intersect_capabilities([t.capabilities for t in targets])
+        # Validate all inner targets have identical configurations (capabilities,
+        # policy, and normalization pipeline). We adopt the shared configuration so the
+        # pipeline that actually runs matches what the user configured on their targets.
+        _validate_configuration_consistency(targets)
 
-        effective_configuration = custom_configuration or TargetConfiguration(capabilities=intersected)
-
+        # The first target's configuration is representative since we've validated they are all identical.
         super().__init__(
-            custom_configuration=effective_configuration,
+            custom_configuration=targets[0].configuration,
         )
 
         # Validate that the intersected capabilities meet chat target requirements
@@ -219,48 +214,36 @@ class RoundRobinTarget(PromptTarget):
         )
 
 
-def _intersect_capabilities(caps: list[TargetCapabilities]) -> TargetCapabilities:
+def _validate_configuration_consistency(targets: list[PromptTarget]) -> None:
     """
-    Compute the intersection (lower bound) of multiple TargetCapabilities.
+    Validate that all inner targets have identical TargetConfigurations.
 
-    Boolean fields are AND-ed. Modality frozensets are intersected.
+    Since RoundRobinTarget calls ``_send_prompt_to_target_async`` directly on
+    inner targets (bypassing ``send_prompt_async``), the inner targets'
+    normalization pipelines and policies never run. Only the round-robin's own
+    pipeline runs. We adopt the first target's configuration so the pipeline
+    matches what the user configured — but that is only valid if every inner
+    target has the same configuration.
+
+    Uses ``as_identifier_params()`` for comparison: two configurations that
+    behave identically produce equal dicts.
 
     Args:
-        caps: List of TargetCapabilities to intersect.
-
-    Returns:
-        TargetCapabilities: The intersected capabilities.
+        targets: The inner targets to validate.
 
     Raises:
-        ValueError: If the intersection of input or output modalities is empty.
+        ValueError: If any inner target has a different configuration.
     """
-    _capability_flags = [f.name for f in fields(TargetCapabilities) if f.type == "bool" or f.type is bool]
-
-    kwargs: dict[str, Any] = {}
-    for field_name in _capability_flags:
-        kwargs[field_name] = all(getattr(c, field_name) for c in caps)
-
-    input_intersection = caps[0].input_modalities
-    output_intersection = caps[0].output_modalities
-    for c in caps[1:]:
-        input_intersection = input_intersection & c.input_modalities
-        output_intersection = output_intersection & c.output_modalities
-
-    if not input_intersection:
-        raise ValueError(
-            "The intersection of input modalities across all targets is empty. "
-            "The targets have no common input modalities."
-        )
-    if not output_intersection:
-        raise ValueError(
-            "The intersection of output modalities across all targets is empty. "
-            "The targets have no common output modalities."
-        )
-
-    kwargs["input_modalities"] = input_intersection
-    kwargs["output_modalities"] = output_intersection
-
-    return TargetCapabilities(**kwargs)
+    reference = targets[0].configuration.as_identifier_params()
+    for i, t in enumerate(targets[1:], start=1):
+        other = t.configuration.as_identifier_params()
+        if other != reference:
+            raise ValueError(
+                f"All inner targets must have identical configurations (capabilities, "
+                f"policy, and normalization pipeline) because only the round-robin's "
+                f"own pipeline runs. Target 0 configuration: {reference}, "
+                f"target {i} configuration: {other}."
+            )
 
 
 def _validate_behavioral_consistency(targets: list[PromptTarget]) -> None:

@@ -75,15 +75,23 @@ def test_init_succeeds_with_weights():
     assert rr._rotation == [0, 0, 1, 2]
 
 
-# ── Capability validation ────────────────────────────────────────────────────
+# ── Configuration validation ─────────────────────────────────────────────────
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_capabilities_are_intersection_of_inner_targets():
-    t1 = MockPromptTarget()  # multi_turn=True, multi_message_pieces=True, etc.
-    t2 = MockPromptTarget()
+def test_configuration_adopted_from_inner_targets():
+    """Round-robin adopts the inner targets' shared configuration unchanged."""
+    t1, t2 = MockPromptTarget(), MockPromptTarget()
+    rr = RoundRobinTarget(targets=[t1, t2])
 
-    # Override t2 to have fewer capabilities (but keep multi_turn + editable_history)
+    assert rr.configuration.as_identifier_params() == t1.configuration.as_identifier_params()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_init_rejects_mismatched_capabilities():
+    """Targets with different capabilities are rejected."""
+    t1 = MockPromptTarget()
+    t2 = MockPromptTarget()
     t2._configuration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
@@ -93,20 +101,12 @@ def test_capabilities_are_intersection_of_inner_targets():
         )
     )
 
-    rr = RoundRobinTarget(targets=[t1, t2])
-    caps = rr.capabilities
-
-    # AND of booleans
-    assert caps.supports_multi_turn is True
-    assert caps.supports_multi_message_pieces is False
-    assert caps.supports_system_prompt is False
-    assert caps.supports_editable_history is True
-    assert caps.supports_json_output is False
-    assert caps.supports_json_schema is False
+    with pytest.raises(ValueError, match="identical configurations"):
+        RoundRobinTarget(targets=[t1, t2])
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_capabilities_modality_intersection():
+def test_init_rejects_mismatched_modalities():
     text_only = frozenset({frozenset({"text"})})
     text_and_image = frozenset({frozenset({"text"}), frozenset({"image_path"})})
 
@@ -129,34 +129,43 @@ def test_capabilities_modality_intersection():
         )
     )
 
-    rr = RoundRobinTarget(targets=[t1, t2])
-    assert rr.capabilities.input_modalities == text_only
-    assert rr.capabilities.output_modalities == text_only
+    with pytest.raises(ValueError, match="identical configurations"):
+        RoundRobinTarget(targets=[t1, t2])
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_capabilities_empty_modality_intersection_raises():
-    text_only = frozenset({frozenset({"text"})})
-    image_only = frozenset({frozenset({"image_path"})})
+def test_init_rejects_mismatched_policy():
+    from pyrit.prompt_target.common.target_capabilities import (
+        CapabilityHandlingPolicy,
+        CapabilityName,
+        UnsupportedCapabilityBehavior,
+    )
+
+    # Use capabilities that lack system_prompt so the policy for it matters
+    caps = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_editable_history=True,
+        supports_system_prompt=False,
+    )
+    raise_policy = CapabilityHandlingPolicy(
+        behaviors={
+            CapabilityName.MULTI_TURN: UnsupportedCapabilityBehavior.RAISE,
+            CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.RAISE,
+        }
+    )
+    adapt_policy = CapabilityHandlingPolicy(
+        behaviors={
+            CapabilityName.MULTI_TURN: UnsupportedCapabilityBehavior.RAISE,
+            CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.ADAPT,
+        }
+    )
 
     t1 = MockPromptTarget()
-    t1._configuration = TargetConfiguration(
-        capabilities=TargetCapabilities(
-            supports_multi_turn=True,
-            supports_editable_history=True,
-            input_modalities=text_only,
-        )
-    )
     t2 = MockPromptTarget()
-    t2._configuration = TargetConfiguration(
-        capabilities=TargetCapabilities(
-            supports_multi_turn=True,
-            supports_editable_history=True,
-            input_modalities=image_only,
-        )
-    )
+    t1._configuration = TargetConfiguration(capabilities=caps, policy=raise_policy)
+    t2._configuration = TargetConfiguration(capabilities=caps, policy=adapt_policy)
 
-    with pytest.raises(ValueError, match="input modalities"):
+    with pytest.raises(ValueError, match="identical configurations"):
         RoundRobinTarget(targets=[t1, t2])
 
 
