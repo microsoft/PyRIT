@@ -6,19 +6,25 @@
 AdversarialBenchmark no longer takes an ``adversarial_models`` constructor
 parameter and no longer builds local factories. It reads fanned variants
 from ``AttackTechniqueRegistry`` (registered by ``BenchmarkInitializer``)
-and inherits the base ``Scenario._get_atomic_attacks_async`` loop.
+and inherits the base ``Scenario._get_atomic_attacks_async`` loop, with
+an opt-in caching wrapper for cross-run skip-on-completion.
 
 These tests cover the new contract:
 * Class metadata (VERSION, BASELINE policy, defaults).
 * Strategy enum is built from ``benchmark_fanout``-tagged registry entries.
 * Display grouping uses the target-label portion of fanned technique names.
-* Construction accepts only ``objective_scorer`` and ``scenario_result_id``.
+* Construction accepts ``objective_scorer``, ``skip_cached``, and
+  ``scenario_result_id``.
+* ``skip_cached`` filters prior SUCCESS/FAILURE completions, keeps
+  ERROR/UNDETERMINED, respects eval-hash disambiguation, and only counts
+  COMPLETED scenario runs of the matching name + version.
 """
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pyrit.models import AttackOutcome
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
@@ -266,3 +272,270 @@ class TestAdversarialBenchmarkDisplayGroup:
             seed_group_name="seed_group_b",
         )
         assert first == second == "adv_a"
+
+
+# ---------------------------------------------------------------------------
+# skip_cached behavior (Commit 6 / F3)
+# ---------------------------------------------------------------------------
+
+
+def _make_scenario_result(*, result_id: str, run_state: str = "COMPLETED") -> MagicMock:
+    """Build a minimal ScenarioResult stand-in for cache-key tests."""
+    sr = MagicMock()
+    sr.id = result_id
+    sr.scenario_run_state = run_state
+    return sr
+
+
+def _make_attack_result(
+    *,
+    outcome: AttackOutcome,
+    parent_collection: str | None,
+    parent_eval_hash: str | None,
+) -> MagicMock:
+    """Build a minimal AttackResult stand-in with the attribution_data shape Commit 6 reads."""
+    ar = MagicMock()
+    ar.outcome = outcome
+    if parent_collection is None and parent_eval_hash is None:
+        ar.attribution_data = None
+    else:
+        data: dict[str, str] = {}
+        if parent_collection is not None:
+            data["parent_collection"] = parent_collection
+        if parent_eval_hash is not None:
+            data["parent_eval_hash"] = parent_eval_hash
+        ar.attribution_data = data
+    return ar
+
+
+def _make_candidate(*, name: str, eval_hash: str) -> MagicMock:
+    """Build a minimal AtomicAttack stand-in with the two fields the cache filter reads."""
+    candidate = MagicMock()
+    candidate.atomic_attack_name = name
+    candidate.technique_eval_hash = eval_hash
+    return candidate
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAdversarialBenchmarkSkipCachedFilter:
+    """Tests for the _get_atomic_attacks_async caching wrapper."""
+
+    async def _make_bench(self, *, skip_cached: bool) -> AdversarialBenchmark:
+        await _fan_out(target_names=["adv_a"])
+        return AdversarialBenchmark(
+            objective_scorer=MagicMock(spec=TrueFalseScorer),
+            skip_cached=skip_cached,
+        )
+
+    async def test_skip_cached_default_false_means_no_filtering(self):
+        """skip_cached defaults to False; super() output is returned unchanged."""
+        bench = await self._make_bench(skip_cached=False)
+        candidates = [_make_candidate(name="red_teaming__adv_a", eval_hash="hash_a")]
+
+        with patch.object(
+            AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=candidates
+        ) as super_mock:
+            result = await bench._get_atomic_attacks_async()
+
+        assert result == candidates
+        super_mock.assert_awaited_once()
+
+    async def test_skip_cached_true_drops_completed_pairs(self):
+        """SUCCESS and FAILURE prior outcomes drop the matching candidate."""
+        bench = await self._make_bench(skip_cached=True)
+
+        candidates = [
+            _make_candidate(name="red_teaming__adv_a", eval_hash="hash_a"),
+            _make_candidate(name="tap__adv_a", eval_hash="hash_b"),
+            _make_candidate(name="crescendo_simulated__adv_a", eval_hash="hash_c"),
+        ]
+        prior_sr = _make_scenario_result(result_id="sid-1")
+        prior_attacks = [
+            _make_attack_result(
+                outcome=AttackOutcome.SUCCESS,
+                parent_collection="red_teaming__adv_a",
+                parent_eval_hash="hash_a",
+            ),
+            _make_attack_result(
+                outcome=AttackOutcome.FAILURE,
+                parent_collection="tap__adv_a",
+                parent_eval_hash="hash_b",
+            ),
+        ]
+
+        bench._memory = MagicMock()
+        bench._memory.get_scenario_results.return_value = [prior_sr]
+        bench._memory.get_attack_results.return_value = prior_attacks
+
+        with patch.object(AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=candidates):
+            result = await bench._get_atomic_attacks_async()
+
+        names = [c.atomic_attack_name for c in result]
+        assert names == ["crescendo_simulated__adv_a"]
+
+    async def test_skip_cached_keeps_error_outcomes(self):
+        """ERROR outcomes must retry — not be cached."""
+        bench = await self._make_bench(skip_cached=True)
+
+        candidates = [_make_candidate(name="red_teaming__adv_a", eval_hash="hash_a")]
+        prior_sr = _make_scenario_result(result_id="sid-1")
+        prior_attacks = [
+            _make_attack_result(
+                outcome=AttackOutcome.ERROR,
+                parent_collection="red_teaming__adv_a",
+                parent_eval_hash="hash_a",
+            ),
+        ]
+
+        bench._memory = MagicMock()
+        bench._memory.get_scenario_results.return_value = [prior_sr]
+        bench._memory.get_attack_results.return_value = prior_attacks
+
+        with patch.object(AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=candidates):
+            result = await bench._get_atomic_attacks_async()
+
+        assert result == candidates
+
+    async def test_skip_cached_keeps_undetermined_outcomes(self):
+        """UNDETERMINED outcomes must retry — not be cached."""
+        bench = await self._make_bench(skip_cached=True)
+
+        candidates = [_make_candidate(name="red_teaming__adv_a", eval_hash="hash_a")]
+        prior_sr = _make_scenario_result(result_id="sid-1")
+        prior_attacks = [
+            _make_attack_result(
+                outcome=AttackOutcome.UNDETERMINED,
+                parent_collection="red_teaming__adv_a",
+                parent_eval_hash="hash_a",
+            ),
+        ]
+
+        bench._memory = MagicMock()
+        bench._memory.get_scenario_results.return_value = [prior_sr]
+        bench._memory.get_attack_results.return_value = prior_attacks
+
+        with patch.object(AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=candidates):
+            result = await bench._get_atomic_attacks_async()
+
+        assert result == candidates
+
+    async def test_skip_cached_respects_eval_hash_disambiguation(self):
+        """Same atomic_attack_name but different parent_eval_hash → not considered cached."""
+        bench = await self._make_bench(skip_cached=True)
+
+        candidates = [_make_candidate(name="red_teaming__adv_a", eval_hash="new_hash")]
+        prior_sr = _make_scenario_result(result_id="sid-1")
+        prior_attacks = [
+            _make_attack_result(
+                outcome=AttackOutcome.SUCCESS,
+                parent_collection="red_teaming__adv_a",
+                parent_eval_hash="old_hash",
+            ),
+        ]
+
+        bench._memory = MagicMock()
+        bench._memory.get_scenario_results.return_value = [prior_sr]
+        bench._memory.get_attack_results.return_value = prior_attacks
+
+        with patch.object(AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=candidates):
+            result = await bench._get_atomic_attacks_async()
+
+        assert result == candidates
+
+    async def test_skip_cached_only_considers_completed_scenarios(self):
+        """Scenarios in IN_PROGRESS / FAILED / CANCELLED state must not seed the cache."""
+        bench = await self._make_bench(skip_cached=True)
+
+        candidates = [_make_candidate(name="red_teaming__adv_a", eval_hash="hash_a")]
+        in_progress = _make_scenario_result(result_id="sid-1", run_state="IN_PROGRESS")
+        failed = _make_scenario_result(result_id="sid-2", run_state="FAILED")
+
+        bench._memory = MagicMock()
+        bench._memory.get_scenario_results.return_value = [in_progress, failed]
+        bench._memory.get_attack_results.return_value = [
+            _make_attack_result(
+                outcome=AttackOutcome.SUCCESS,
+                parent_collection="red_teaming__adv_a",
+                parent_eval_hash="hash_a",
+            ),
+        ]
+
+        with patch.object(AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=candidates):
+            result = await bench._get_atomic_attacks_async()
+
+        assert result == candidates
+        bench._memory.get_attack_results.assert_not_called()
+
+    async def test_skip_cached_filters_by_scenario_name_and_version(self):
+        """get_scenario_results is queried with this scenario's name + VERSION; old VERSION=1 results don't apply."""
+        bench = await self._make_bench(skip_cached=True)
+
+        bench._memory = MagicMock()
+        bench._memory.get_scenario_results.return_value = []
+
+        with patch.object(AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=[]):
+            await bench._get_atomic_attacks_async()
+
+        bench._memory.get_scenario_results.assert_called_once_with(
+            scenario_name="AdversarialBenchmark",
+            scenario_version=AdversarialBenchmark.VERSION,
+        )
+
+    async def test_skip_cached_handles_missing_attribution_data(self):
+        """Rows with attribution_data=None or missing parent_collection are silently skipped."""
+        bench = await self._make_bench(skip_cached=True)
+
+        candidates = [_make_candidate(name="red_teaming__adv_a", eval_hash="hash_a")]
+        prior_sr = _make_scenario_result(result_id="sid-1")
+        prior_attacks = [
+            _make_attack_result(
+                outcome=AttackOutcome.SUCCESS,
+                parent_collection=None,
+                parent_eval_hash=None,
+            ),
+            _make_attack_result(
+                outcome=AttackOutcome.SUCCESS,
+                parent_collection=None,
+                parent_eval_hash="hash_x",
+            ),
+        ]
+
+        bench._memory = MagicMock()
+        bench._memory.get_scenario_results.return_value = [prior_sr]
+        bench._memory.get_attack_results.return_value = prior_attacks
+
+        with patch.object(AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=candidates):
+            result = await bench._get_atomic_attacks_async()
+
+        assert result == candidates
+
+    async def test_skip_cached_memory_error_falls_back_to_no_filter(self):
+        """An exception from get_scenario_results must not block the run — return base candidates as-is."""
+        bench = await self._make_bench(skip_cached=True)
+
+        candidates = [_make_candidate(name="red_teaming__adv_a", eval_hash="hash_a")]
+        bench._memory = MagicMock()
+        bench._memory.get_scenario_results.side_effect = RuntimeError("db down")
+
+        with patch.object(AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=candidates):
+            result = await bench._get_atomic_attacks_async()
+
+        assert result == candidates
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAdversarialBenchmarkSkipCachedInit:
+    """Tests for the skip_cached constructor surface."""
+
+    async def test_skip_cached_defaults_to_false(self):
+        await _fan_out(target_names=["adv_a"])
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        assert bench._skip_cached is False
+
+    async def test_skip_cached_can_be_set_true(self):
+        await _fan_out(target_names=["adv_a"])
+        bench = AdversarialBenchmark(
+            objective_scorer=MagicMock(spec=TrueFalseScorer),
+            skip_cached=True,
+        )
+        assert bench._skip_cached is True

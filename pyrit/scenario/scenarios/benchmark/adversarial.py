@@ -9,12 +9,14 @@ import logging
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
+from pyrit.models import AttackOutcome
 from pyrit.registry import AttackTechniqueRegistry, AttackTechniqueSpec
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 
 if TYPE_CHECKING:
+    from pyrit.scenario.core.atomic_attack import AtomicAttack
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
     from pyrit.score import TrueFalseScorer
 
@@ -218,6 +220,7 @@ class AdversarialBenchmark(Scenario):
         self,
         *,
         objective_scorer: TrueFalseScorer | None = None,
+        skip_cached: bool = False,
         scenario_result_id: str | None = None,
     ) -> None:
         """
@@ -227,12 +230,23 @@ class AdversarialBenchmark(Scenario):
             objective_scorer: Scorer for evaluating attack success. Defaults
                 to the registered default objective scorer (typically the
                 composite refusal+scale scorer set up by an initializer).
+            skip_cached: When ``True``, ``_get_atomic_attacks_async`` filters
+                out atomic attacks whose ``(atomic_attack_name,
+                technique_eval_hash)`` tuple already appears in a prior
+                ``COMPLETED`` ``ScenarioResult`` for the same scenario name
+                and version with outcome ``SUCCESS`` or ``FAILURE``.
+                ``ERROR`` and ``UNDETERMINED`` outcomes always retry. Cache
+                identity is content-derived via
+                ``AtomicAttack.technique_eval_hash``, so two atomic attacks
+                with the same name but different technique configurations
+                (e.g. different scorer) do not cross-pollinate.
             scenario_result_id: Optional ID of an existing scenario result
                 to resume.
         """
         self._objective_scorer: TrueFalseScorer = (
             objective_scorer if objective_scorer else self._get_default_objective_scorer()
         )
+        self._skip_cached: bool = skip_cached
 
         super().__init__(
             version=self.VERSION,
@@ -240,6 +254,102 @@ class AdversarialBenchmark(Scenario):
             strategy_class=self.get_strategy_class(),
             scenario_result_id=scenario_result_id,
         )
+
+    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
+        """
+        Build the base set of atomic attacks, then filter out cached completions when requested.
+
+        Delegates to the base ``Scenario._get_atomic_attacks_async`` to
+        construct the (fanned-variant × dataset) candidate list, then drops
+        any candidate whose ``(atomic_attack_name, technique_eval_hash)``
+        tuple appears in :meth:`_collect_cached_completion_pairs` (only when
+        ``self._skip_cached`` is ``True``). Always returns the unfiltered
+        base list when caching is disabled.
+
+        Returns:
+            list[AtomicAttack]: The atomic attacks to actually execute on
+            this run.
+        """
+        candidates = await super()._get_atomic_attacks_async()
+        if not self._skip_cached:
+            return candidates
+
+        cached_pairs = self._collect_cached_completion_pairs()
+        filtered = [c for c in candidates if (c.atomic_attack_name, c.technique_eval_hash) not in cached_pairs]
+        skipped = len(candidates) - len(filtered)
+        if skipped > 0:
+            logger.info(
+                "skip_cached=True: dropping %d/%d atomic attack(s) already completed in prior runs.",
+                skipped,
+                len(candidates),
+            )
+        return filtered
+
+    def _collect_cached_completion_pairs(self) -> set[tuple[str, str | None]]:
+        """
+        Collect cache keys for atomic attacks that completed in any prior run of this scenario.
+
+        Walks ``ScenarioResult`` rows for the same scenario name and
+        ``VERSION``, restricts to ``scenario_run_state == "COMPLETED"``,
+        then walks the linked ``AttackResult`` rows (joined via
+        ``AttackResultEntry.attribution_parent_id``) and records the
+        ``(atomic_attack_name, parent_eval_hash)`` tuple for every
+        ``SUCCESS`` or ``FAILURE`` outcome. The pair shape mirrors the
+        ``(atomic_attack_name, technique_eval_hash)`` tuple used by
+        :meth:`_get_atomic_attacks_async` so a direct ``in`` check filters
+        candidates without further key construction.
+
+        Resilient to attribution-data variation: rows whose
+        ``attribution_data`` is ``None`` or missing ``parent_collection``
+        are skipped. Rows without ``parent_eval_hash`` enter the cache with
+        ``None`` in that slot, so they only match candidates whose
+        ``technique_eval_hash`` also resolves to ``None`` (currently never,
+        since ``AtomicAttack.technique_eval_hash`` is always populated post-#1758).
+
+        Returns:
+            set[tuple[str, str | None]]: Cache keys for already-completed
+            atomic attacks. Empty set on any unexpected error (logged at
+            warning level) — caching becomes a no-op rather than blocking
+            the run.
+        """
+        scenario_name = type(self).__name__
+        cached_pairs: set[tuple[str, str | None]] = set()
+
+        try:
+            prior_results = self._memory.get_scenario_results(
+                scenario_name=scenario_name,
+                scenario_version=self.VERSION,
+            )
+        except Exception as exc:
+            logger.warning("skip_cached: failed to query prior scenario results (%s); skipping cache filter.", exc)
+            return cached_pairs
+
+        for scenario_result in prior_results:
+            if scenario_result.scenario_run_state != "COMPLETED":
+                continue
+            if scenario_result.id is None:
+                continue
+            try:
+                attack_results = self._memory.get_attack_results(scenario_result_id=str(scenario_result.id))
+            except Exception as exc:
+                logger.warning(
+                    "skip_cached: failed to load attack results for scenario %s (%s); skipping that run.",
+                    scenario_result.id,
+                    exc,
+                )
+                continue
+
+            for ar in attack_results:
+                if ar.outcome not in (AttackOutcome.SUCCESS, AttackOutcome.FAILURE):
+                    continue
+                data = ar.attribution_data or {}
+                atomic_attack_name = data.get("parent_collection")
+                if not atomic_attack_name:
+                    continue
+                parent_eval_hash = data.get("parent_eval_hash")
+                cached_pairs.add((atomic_attack_name, parent_eval_hash))
+
+        return cached_pairs
 
     def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> str:
         """
