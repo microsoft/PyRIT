@@ -312,7 +312,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
         case_id = str(row.get("case_id", ""))
         image_id = str(row.get("unsafe_image_id", ""))
         prompt_text = str(row.get("prompt_text", ""))
-        prompt_type = str(row.get("prompt_type", ""))
+        text_modifier = str(row.get("prompt_type", ""))
         image_url = str(row.get("unsafe_image_url", ""))
         hazard_category = str(row.get("hazard_category", ""))
         image_license = str(row.get("unsafe_image_license") or "")
@@ -334,7 +334,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
         metadata: dict[str, str | int] = {
             "case_id": case_id,
             "image_id": image_id,
-            "text_modifier": prompt_type,
+            "text_modifier": text_modifier,
             "image_description": image_description,
             "category": hazard_category,
             "subcategory": hazard_subcategory,
@@ -347,7 +347,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
         image_prompt = SeedPrompt(
             value=local_image_path,
             data_type="image_path",
-            name=f"MSTS Image - {case_id} ({language}/{prompt_type})",
+            name=f"MSTS Image - {case_id} ({language}/{text_modifier})",
             dataset_name=self.dataset_name,
             harm_categories=harm_categories,
             description=(
@@ -365,7 +365,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
         text_prompt = SeedPrompt(
             value=prompt_text,
             data_type="text",
-            name=f"MSTS Text - {case_id} ({language}/{prompt_type})",
+            name=f"MSTS Text - {case_id} ({language}/{text_modifier})",
             dataset_name=self.dataset_name,
             harm_categories=harm_categories,
             description=(
