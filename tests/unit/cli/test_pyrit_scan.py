@@ -331,6 +331,34 @@ class TestStopServerOnPort:
         assert _server_launcher.stop_server_on_port(port=8000) is True
         mock_kill.assert_called_once()
 
+    @patch("sys.platform", "win32")
+    @patch("subprocess.run")
+    @patch("os.kill")
+    def test_stop_on_windows_does_not_match_port_substring(self, mock_kill, mock_run):
+        from pyrit.cli import _server_launcher
+
+        # Listening on :8000/:8080 should NOT be matched when stopping port 80.
+        mock_run.return_value = MagicMock(
+            stdout=(
+                "  TCP    0.0.0.0:8000           0.0.0.0:0              LISTENING       1234\n"
+                "  TCP    0.0.0.0:8080           0.0.0.0:0              LISTENING       2345\n"
+            ),
+        )
+        assert _server_launcher.stop_server_on_port(port=80) is False
+        mock_kill.assert_not_called()
+
+    @patch("sys.platform", "win32")
+    @patch("subprocess.run")
+    @patch("os.kill")
+    def test_stop_on_windows_matches_ipv6_local_address(self, mock_kill, mock_run):
+        from pyrit.cli import _server_launcher
+
+        mock_run.return_value = MagicMock(
+            stdout="  TCP    [::]:8000              [::]:0                 LISTENING       9999\n",
+        )
+        assert _server_launcher.stop_server_on_port(port=8000) is True
+        mock_kill.assert_called_once_with(9999, pytest.importorskip("signal").SIGTERM)
+
     @patch("sys.platform", "linux")
     @patch("subprocess.run")
     @patch("os.kill")

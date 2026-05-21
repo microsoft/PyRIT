@@ -49,11 +49,21 @@ def _find_pid_on_port_windows(*, port: int) -> int | None:
     except (OSError, subprocess.SubprocessError):
         return None
     for line in result.stdout.splitlines():
-        if f":{port}" in line and "LISTENING" in line:
-            try:
-                return int(line.strip().split()[-1])
-            except (ValueError, IndexError):
-                continue
+        if "LISTENING" not in line:
+            continue
+        tokens = line.split()
+        if len(tokens) < 5:
+            continue
+        # Match the local-address column exactly so port 80 doesn't match
+        # :8000 / :8080 / etc. Handles both IPv4 ("0.0.0.0:8000") and
+        # IPv6 ("[::]:8000") local-address formats.
+        local_addr = tokens[1]
+        if local_addr.rsplit(":", 1)[-1] != str(port):
+            continue
+        try:
+            return int(tokens[-1])
+        except (ValueError, IndexError):
+            continue
     return None
 
 

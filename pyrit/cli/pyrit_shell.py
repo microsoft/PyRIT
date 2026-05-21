@@ -497,18 +497,22 @@ class PyRITShell(cmd.Cmd):
         if arg.strip():
             print(f"Error: stop-server does not accept arguments, got: {arg.strip()}")
             return
-        from pyrit.cli._server_launcher import stop_server_on_port
+        from pyrit.cli._server_launcher import ServerLauncher, stop_server_on_port
 
         # If we own the launcher, use it directly
         if self._launcher is not None:
             self._launcher.stop()
             print("Server stopped.")
         else:
-            # Find and kill by port
+            # Find and kill by port. Probe first so we don't SIGTERM a non-pyrit
+            # process that happens to be listening on this port.
             from urllib.parse import urlparse
 
             base_url = self._base_url or self._resolve_base_url()
             port = urlparse(base_url).port or 8000
+            if not self._run_async(ServerLauncher.probe_health_async(base_url=base_url)):
+                print(f"No pyrit backend responding at {base_url}; not stopping anything.")
+                return
             if stop_server_on_port(port=port):
                 print(f"Server on port {port} stopped.")
             else:
