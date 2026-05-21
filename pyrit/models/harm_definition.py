@@ -9,19 +9,18 @@ Harm definitions provide the scale descriptions used for evaluating harm categor
 
 import logging
 import re
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Union
 
 import yaml
+from pydantic import BaseModel, Field
 
 from pyrit.common.path import HARM_DEFINITION_PATH
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ScaleDescription:
+class ScaleDescription(BaseModel):
     """
     A single scale description entry from a harm definition.
 
@@ -35,8 +34,7 @@ class ScaleDescription:
     description: str
 
 
-@dataclass
-class HarmDefinition:
+class HarmDefinition(BaseModel):
     """
     A harm definition loaded from a YAML file.
 
@@ -54,8 +52,8 @@ class HarmDefinition:
 
     version: str
     category: str
-    scale_descriptions: list[ScaleDescription] = field(default_factory=list)
-    source_path: Optional[str] = field(default=None, kw_only=True)
+    scale_descriptions: list[ScaleDescription] = Field(default_factory=list)
+    source_path: Optional[str] = None
 
     def get_scale_description(self, score_value: str) -> Optional[str]:
         """
@@ -92,7 +90,6 @@ class HarmDefinition:
             False otherwise.
 
         """
-        # Check if category matches pattern: only lowercase letters and underscores
         if not re.match(r"^[a-z_]+$", category):
             return False
 
@@ -127,7 +124,6 @@ class HarmDefinition:
         """
         path = Path(harm_definition_path)
 
-        # If it's just a filename (no directory separators), look in the standard directory
         resolved_path = HARM_DEFINITION_PATH / path if path.parent == Path(".") else path
 
         if not resolved_path.exists():
@@ -145,7 +141,6 @@ class HarmDefinition:
         if not isinstance(data, dict):
             raise ValueError(f"Harm definition file {resolved_path} must contain a YAML mapping/dictionary.")
 
-        # Validate required fields
         if "version" not in data:
             raise ValueError(f"Harm definition file {resolved_path} is missing required 'version' field.")
         if "category" not in data:
@@ -153,7 +148,6 @@ class HarmDefinition:
         if "scale_descriptions" not in data:
             raise ValueError(f"Harm definition file {resolved_path} is missing required 'scale_descriptions' field.")
 
-        # Parse scale descriptions
         scale_descriptions = []
         for item in data["scale_descriptions"]:
             if not isinstance(item, dict) or "score_value" not in item or "description" not in item:

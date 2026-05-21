@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from typing import Any, Optional
+
+from pydantic import BaseModel, ConfigDict
 
 # Would prefer StrEnum, but.... Python 3.10
 _METADATAKEYS = {
@@ -16,8 +17,7 @@ _METADATAKEYS = {
 }
 
 
-@dataclass
-class _JsonResponseConfig:
+class _JsonResponseConfig(BaseModel):
     """
     Configuration for JSON responses (with OpenAI).
 
@@ -26,6 +26,8 @@ class _JsonResponseConfig:
     and
     https://platform.openai.com/docs/api-reference/responses/create#responses_create-text
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
     schema: Optional[dict[str, Any]] = None
