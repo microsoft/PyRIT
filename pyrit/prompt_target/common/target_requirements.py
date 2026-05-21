@@ -6,10 +6,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from pyrit.models import PromptDataType
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
 if TYPE_CHECKING:
+    from pyrit.models import PromptDataType
     from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 
@@ -79,16 +79,20 @@ class TargetRequirements:
             except ValueError as exc:
                 errors.append(str(exc))
 
-        errors.extend(self._check_modalities(
-            required=self.required_input_modalities,
-            supported=target.configuration.capabilities.input_modalities,
-            direction="input",
-        ))
-        errors.extend(self._check_modalities(
-            required=self.required_output_modalities,
-            supported=target.configuration.capabilities.output_modalities,
-            direction="output",
-        ))
+        errors.extend(
+            self._check_modalities(
+                required=self.required_input_modalities,
+                supported=target.configuration.capabilities.input_modalities,
+                direction="input",
+            )
+        )
+        errors.extend(
+            self._check_modalities(
+                required=self.required_output_modalities,
+                supported=target.configuration.capabilities.output_modalities,
+                direction="output",
+            )
+        )
 
         if errors:
             raise ValueError(
@@ -104,14 +108,12 @@ class TargetRequirements:
         direction: str,
     ) -> list[str]:
         """Return error strings for each required modality combo not covered by *supported*."""
-        errors: list[str] = []
-        for combo in sorted(required, key=lambda c: sorted(c)):
-            if not any(combo <= sup for sup in supported):
-                errors.append(
-                    f"Target must support {direction} modality {{{', '.join(sorted(combo))}}}; "
-                    f"supported: {[sorted(s) for s in sorted(supported, key=lambda s: sorted(s))]}."
-                )
-        return errors
+        return [
+            f"Target must support {direction} modality {{{', '.join(sorted(combo))}}}; "
+            f"supported: {[sorted(s) for s in sorted(supported, key=lambda s: sorted(s))]}."
+            for combo in sorted(required, key=lambda c: sorted(c))
+            if not any(combo <= sup for sup in supported)
+        ]
 
 
 def _build_chat_target_requirements() -> TargetRequirements:
