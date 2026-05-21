@@ -69,7 +69,7 @@ class TestCategoricalHarmfulQADataset:
             assert mock_fetch.await_args.kwargs["split"] == language
             assert all(seed.metadata["language"] == language for seed in dataset.seeds)
 
-    async def test_fetch_dataset_skips_empty_category(self):
+    async def test_fetch_dataset_with_empty_category(self):
         loader = _CategoricalHarmfulQADataset()
         data = [
             {
