@@ -27,12 +27,13 @@ class FloatScaleScorer(Scorer):
 
     When no supported pieces remain after validator filtering (e.g. the response is
     blocked, has another error type, or no piece matches the scorer's supported data
-    types), `_score_async` returns a single `Score` with value `0.0`. The rationale
-    distinguishes blocked / error / filtered cases. This mirrors `TrueFalseScorer`'s
-    `False` default so that downstream consumers (attack strategies, threshold wrappers)
-    get a consistent, "attack did not succeed" value without each call site needing
-    special-cased error handling. Subclasses that need different semantics (e.g. a
-    refusal-style "blocked = True") should override `_score_piece_async` or `_score_async`.
+    types), the base ``score_async`` invokes ``_build_fallback_score`` and returns a
+    single ``Score`` with value ``0.0``. The rationale distinguishes blocked / error /
+    filtered cases. This mirrors ``TrueFalseScorer``'s ``False`` default so that
+    downstream consumers (attack strategies, threshold wrappers) get a consistent,
+    "attack did not succeed" value without each call site needing special-cased error
+    handling. Subclasses that need different semantics (e.g. a refusal-style
+    "blocked = True") should override ``_score_piece_async`` or ``_build_fallback_score``.
     """
 
     def __init__(self, *, validator: ScorerPromptValidator, chat_target: Optional[PromptTarget] = None) -> None:
@@ -45,34 +46,6 @@ class FloatScaleScorer(Scorer):
                 for validation against ``TARGET_REQUIREMENTS``.
         """
         super().__init__(validator=validator, chat_target=chat_target)
-
-    async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
-        """
-        Score the given request response asynchronously.
-
-        Scores all supported pieces and returns the resulting list. When no supported
-        pieces remain (e.g. the response was blocked, had an error, or no piece type
-        matched the validator), returns a list with a single ``Score`` with value ``0.0`` instead
-        of an empty list, so downstream consumers see a consistent neutral value.
-
-        Args:
-            message (Message): The message to score.
-            objective (Optional[str]): The objective to evaluate against. Defaults to None.
-
-        Returns:
-            list[Score]: A list of Score objects. Contains a single ``0.0`` score when
-                no pieces could be scored and the message has at least one piece.
-
-        Raises:
-            ValueError: If the message piece has no ``id`` or ``original_prompt_id`` when the
-                no-pieces fallback path is taken.
-        """
-        score_list = await super()._score_async(message, objective=objective)
-
-        if score_list or not message.message_pieces:
-            return score_list
-
-        return [self._build_fallback_score(message=message, objective=objective)]
 
     def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> Score:
         """

@@ -29,12 +29,13 @@ class TrueFalseScorer(Scorer):
 
     When no supported pieces remain after validator filtering (e.g. the response is
     blocked, has another error type, or no piece matches the scorer's supported data
-    types), `_score_async` returns a single `Score(False)` whose rationale distinguishes
-    blocked / error / filtered cases. This mirrors `FloatScaleScorer`'s `0.0` default so
-    that downstream consumers (attack strategies, threshold wrappers) get a consistent,
-    "attack did not succeed" value without each call site needing special-cased error
-    handling. Subclasses that need different semantics (e.g. `SelfAskRefusalScorer`,
-    which returns `True` on blocked) should override `_score_piece_async` and accept the
+    types), the base ``score_async`` invokes ``_build_fallback_score`` and returns a
+    single ``Score(False)`` whose rationale distinguishes blocked / error / filtered
+    cases. This mirrors ``FloatScaleScorer``'s ``0.0`` default so that downstream
+    consumers (attack strategies, threshold wrappers) get a consistent, "attack did not
+    succeed" value without each call site needing special-cased error handling.
+    Subclasses that need different semantics (e.g. ``SelfAskRefusalScorer``, which
+    returns ``True`` on blocked) should override ``_score_piece_async`` and accept the
     error data type in their validator.
     """
 
@@ -121,22 +122,23 @@ class TrueFalseScorer(Scorer):
         Score the given request response asynchronously.
 
         For TrueFalseScorer, multiple piece scores are aggregated into a single true/false score.
+        When no supported pieces remain (e.g. the response was blocked, had an error, or no piece
+        type matched the validator), returns an empty list; the base ``score_async`` then invokes
+        ``_build_fallback_score`` to produce a single neutral ``Score(False)``.
 
         Args:
             message (Message): The message to score.
             objective (Optional[str]): The objective to evaluate against. Defaults to None.
 
         Returns:
-            list[Score]: A list containing a single true/false Score object.
-
-        Raises:
-            ValueError: If no pieces are scored and cannot determine a piece ID for the return score.
+            list[Score]: A list containing a single aggregated true/false Score, or an empty
+                list when no pieces could be scored (the base class will supply a fallback).
         """
         # Get individual scores for all supported pieces using base implementation logic
         score_list = await super()._score_async(message, objective=objective)
 
         if not score_list:
-            return [self._build_fallback_score(message=message, objective=objective)]
+            return []
 
         # Use score aggregator to combine multiple piece scores into a single score
         result = self._score_aggregator(score_list)
