@@ -3,6 +3,7 @@ import {
 } from '@fluentui/react-components'
 import {
   ChatRegular,
+  HomeRegular,
   SettingsRegular,
   HistoryRegular,
   WeatherMoonRegular,
@@ -10,7 +11,7 @@ import {
 } from '@fluentui/react-icons'
 import { useNavigationStyles } from './Navigation.styles'
 
-export type ViewName = 'chat' | 'history' | 'config'
+export type ViewName = 'home' | 'chat' | 'history' | 'config'
 
 interface NavigationProps {
   currentView: ViewName
@@ -24,6 +25,16 @@ export default function Navigation({ currentView, onNavigate, onToggleTheme, isD
 
   return (
     <div className={styles.root}>
+      <Button
+        className={styles.navButton}
+        data-active={currentView === 'home'}
+        appearance="subtle"
+        icon={<HomeRegular />}
+        title="Home"
+        aria-label="Home"
+        onClick={() => onNavigate('home')}
+      />
+
       <Button
         className={styles.navButton}
         data-active={currentView === 'chat'}

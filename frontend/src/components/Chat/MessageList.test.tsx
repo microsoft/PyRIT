@@ -34,7 +34,9 @@ describe("MessageList", () => {
       </TestWrapper>
     );
 
-    expect(document.body).toBeTruthy();
+    expect(
+      screen.getByText("There are no messages in this conversation yet.")
+    ).toBeInTheDocument();
   });
 
   it("should render all messages", () => {

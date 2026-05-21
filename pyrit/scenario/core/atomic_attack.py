@@ -17,8 +17,10 @@ import logging
 from typing import TYPE_CHECKING, Any, Optional
 
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
+from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
 from pyrit.memory import CentralMemory
@@ -117,20 +119,92 @@ class AtomicAttack:
             sg.validate()
 
         self._seed_groups = seed_groups
+        self._validate_unique_objective_hashes()
         self._adversarial_chat = adversarial_chat
         self._objective_scorer = objective_scorer
         self._memory_labels = memory_labels or {}
         self._attack_execute_params = attack_execute_params
+        # Set via set_scenario_result_id() by Scenario._execute_scenario_async
+        # before run_async. When set, each persisted AttackResult is linked to
+        # the scenario via the attribution_parent_id foreign key on
+        # AttackResultEntry.
+        self._scenario_result_id: str | None = None
 
         logger.info(
             f"Initialized atomic attack with {len(self._seed_groups)} seed groups, "
             f"attack type: {type(self._attack_technique.attack).__name__}"
         )
 
+    def set_scenario_result_id(self, scenario_result_id: str | None) -> None:
+        """
+        Bind this atomic attack to a scenario result for attribution.
+
+        Called by ``Scenario._execute_scenario_async`` before each
+        ``run_async`` so persisted ``AttackResult`` rows carry the
+        ``attribution_parent_id`` foreign key back to the scenario. Pass
+        ``None`` to clear the binding (e.g. when running an atomic attack
+        outside of a scenario).
+
+        Args:
+            scenario_result_id (str | None): The scenario result UUID this
+                atomic attack belongs to, or ``None`` to detach.
+        """
+        self._scenario_result_id = scenario_result_id
+
+    def _validate_unique_objective_hashes(self) -> None:
+        """
+        Ensure each seed group in this atomic attack has a unique objective hash.
+
+        Within a single ``AtomicAttack`` (one ``atomic_attack_name``, one
+        technique), the objective text identifies a unit of work. Duplicates
+        would mean two indistinguishable rows on the write side, which makes
+        resume reconciliation ambiguous — the hash-based resume key treats a
+        set of hashes as already-done, with no way to distinguish which of two
+        duplicate rows is "the one" that is still outstanding.
+
+        The hash is currently derived from objective text only. A future
+        iteration may hash the full ``SeedGroup`` (minus technique-specific
+        fields) so two seed groups that share an objective string but differ
+        in other inputs can coexist in one atomic attack.
+
+        Raises:
+            ValueError: If two seed groups share the same ``objective_sha256``.
+        """
+        seen: dict[str, int] = {}
+        for sg in self._seed_groups:
+            if sg.objective is None:
+                continue
+            sha = to_sha256(sg.objective.value)
+            if sha in seen:
+                raise ValueError(
+                    f"AtomicAttack '{self.atomic_attack_name}' has duplicate objective hash "
+                    f"{sha[:12]}... across seed_groups; each (objective, technique) pair must be unique."
+                )
+            seen[sha] = 1
+
     @property
     def attack_technique(self) -> AttackTechnique:
         """Get the attack technique for this atomic attack."""
         return self._attack_technique
+
+    @property
+    def technique_eval_hash(self) -> str:
+        """
+        Behavioral evaluation hash for this atomic attack's technique configuration.
+
+        Builds an ``AtomicAttack`` identifier from this attack's technique
+        (without any seed group) and runs it through
+        ``AtomicAttackEvaluationIdentifier`` so target/scorer/seed-identifier
+        noise is stripped per the standard atomic-attack eval rules. The
+        result is stable across resume runs and across different seed groups,
+        which is what makes it usable as the resume disambiguator alongside
+        ``atomic_attack_name``.
+        """
+        composite = build_atomic_attack_identifier(
+            technique_identifier=self._attack_technique.get_identifier(),
+            seed_group=None,
+        )
+        return AtomicAttackEvaluationIdentifier(composite).eval_hash
 
     @property
     def objectives(self) -> list[str]:
@@ -152,19 +226,77 @@ class AtomicAttack:
         """
         return list(self._seed_groups)
 
+    def drop_seed_groups_with_hashes(self, *, hashes: set[str]) -> None:
+        """
+        Drop seed groups whose ``objective_sha256`` is in ``hashes``.
+
+        This is the resume filter: within an atomic attack, ``objective_sha256``
+        is the stable identity (enforced unique by ``__init__``). Content-derived
+        keys are robust to reordering and resampling, so resume produces the
+        right remaining-work set even when ``get_seed_groups()`` is rebuilt
+        from scratch on each ``run_async()``.
+
+        Args:
+            hashes (set[str]): SHA256 hashes of objective text for seed groups
+                to drop (typically those that have already produced a
+                non-error ``AttackResult``).
+        """
+        self._seed_groups = [
+            sg for sg in self._seed_groups if sg.objective is None or to_sha256(sg.objective.value) not in hashes
+        ]
+
     def filter_seed_groups_by_objectives(self, *, remaining_objectives: list[str]) -> None:
         """
         Filter seed groups to only those with objectives in the remaining list.
 
-        This is used for scenario resumption to skip already completed objectives.
+        .. deprecated::
+            Use ``drop_seed_groups_with_hashes`` (or ``keep_seed_groups_with_hashes``)
+            which keys on content-addressed ``objective_sha256`` instead of
+            objective text. Scheduled for removal in 0.16.0.
 
         Args:
             remaining_objectives (List[str]): List of objectives that still need to be executed.
         """
+        print_deprecation_message(
+            old_item="AtomicAttack.filter_seed_groups_by_objectives(remaining_objectives=...)",
+            new_item="AtomicAttack.keep_seed_groups_with_hashes(hashes=...)",
+            removed_in="0.16.0",
+        )
         remaining_set = set(remaining_objectives)
         self._seed_groups = [
             sg for sg in self._seed_groups if sg.objective is not None and sg.objective.value in remaining_set
         ]
+
+    def keep_seed_groups_with_hashes(self, *, hashes: set[str]) -> set[str]:
+        """
+        Keep only seed groups whose ``objective_sha256`` is in ``hashes``.
+
+        Inverse of ``drop_seed_groups_with_hashes``: used on resume to
+        replay the originally-sampled subset and ignore any seed groups that
+        were added since (or that landed in this run's fresh ``random.sample``
+        draw and are no longer in the persisted set).
+
+        Args:
+            hashes (set[str]): SHA256 hashes of objective text for seed
+                groups to keep.
+
+        Returns:
+            set[str]: The hashes that were actually retained (intersection of
+            ``hashes`` and the current seed_groups' hashes). The caller can
+            union these across atomic attacks to detect persisted hashes that
+            no longer exist in the dataset.
+        """
+        retained: set[str] = set()
+        new_groups: list[SeedAttackGroup] = []
+        for sg in self._seed_groups:
+            if sg.objective is None:
+                continue
+            sha = to_sha256(sg.objective.value)
+            if sha in hashes:
+                retained.add(sha)
+                new_groups.append(sg)
+        self._seed_groups = new_groups
+        return retained
 
     async def run_async(
         self,
@@ -220,6 +352,18 @@ class AtomicAttack:
             else:
                 execution_seed_groups = self._seed_groups
 
+            # Build attribution when this atomic attack is being executed inside
+            # a Scenario. The same attribution object is stamped on every
+            # per-task AttackContext; per-task identity is reconstructed from
+            # the row's own objective_sha256 (no positional state required).
+            attribution: AttackResultAttribution | None = None
+            if self._scenario_result_id is not None:
+                attribution = AttackResultAttribution(
+                    parent_id=self._scenario_result_id,
+                    parent_collection=self.atomic_attack_name,
+                    parent_eval_hash=self.technique_eval_hash,
+                )
+
             results = await executor.execute_attack_from_seed_groups_async(
                 attack=technique.attack,
                 seed_groups=execution_seed_groups,
@@ -227,6 +371,7 @@ class AtomicAttack:
                 objective_scorer=self._objective_scorer,
                 memory_labels=self._memory_labels,
                 return_partial_on_failure=return_partial_on_failure,
+                attribution=attribution,
                 **self._attack_execute_params,
             )
 
