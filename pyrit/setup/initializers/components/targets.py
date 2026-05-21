@@ -191,7 +191,7 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
     ),
     TargetConfig(
         registry_name="adversarial_chat_singleturn",
-        target_class=OpenAIChatTarget,
+        target_class=AzureMLChatTarget,
         endpoint_var="ADVERSARIAL_CHAT_SINGLETURN_ENDPOINT",
         key_var="ADVERSARIAL_CHAT_SINGLETURN_KEY",
         model_var="ADVERSARIAL_CHAT_SINGLETURN_MODEL",
@@ -200,7 +200,7 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
     ),
     TargetConfig(
         registry_name="adversarial_chat_multiturn",
-        target_class=OpenAIChatTarget,
+        target_class=AzureMLChatTarget,
         endpoint_var="ADVERSARIAL_CHAT_MULTITURN_ENDPOINT",
         key_var="ADVERSARIAL_CHAT_MULTITURN_KEY",
         model_var="ADVERSARIAL_CHAT_MULTITURN_MODEL",
@@ -209,7 +209,7 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
     ),
     TargetConfig(
         registry_name="adversarial_chat_reasoning",
-        target_class=OpenAIChatTarget,
+        target_class=AzureMLChatTarget,
         endpoint_var="ADVERSARIAL_CHAT_REASONING_ENDPOINT",
         key_var="ADVERSARIAL_CHAT_REASONING_KEY",
         model_var="ADVERSARIAL_CHAT_REASONING_MODEL",
