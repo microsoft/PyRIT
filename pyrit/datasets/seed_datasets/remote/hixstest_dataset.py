@@ -168,7 +168,22 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
         return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)
 
     def _select_value(self, item: dict) -> str:
-        """Return the prompt text to use as ``SeedPrompt.value`` based on ``self.language``."""
-        if self.language is HiXSTestLanguage.ENGLISH:
-            return item.get("english_prompt", "")
-        return item.get("prompt", "")
+        """
+        Return the prompt text to use as ``SeedPrompt.value`` based on ``self.language``.
+
+        Args:
+            item (dict): A single row from the HiXSTest dataset.
+
+        Returns:
+            str: The prompt text in the configured language.
+
+        Raises:
+            ValueError: If the selected language's prompt field is missing or empty.
+        """
+        key = "english_prompt" if self.language is HiXSTestLanguage.ENGLISH else "prompt"
+        value = item.get(key)
+        if not value:
+            raise ValueError(
+                f"HiXSTest row is missing required field '{key}' for language={self.language.value}: {item!r}"
+            )
+        return value
