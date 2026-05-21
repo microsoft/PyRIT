@@ -52,7 +52,7 @@ class FloatScaleScorer(Scorer):
 
         Scores all supported pieces and returns the resulting list. When no supported
         pieces remain (e.g. the response was blocked, had an error, or no piece type
-        matched the validator), returns a single ``Score`` with value ``0.0`` instead
+        matched the validator), returns a list with a single ``Score`` with value ``0.0`` instead
         of an empty list, so downstream consumers see a consistent neutral value.
 
         Args:
