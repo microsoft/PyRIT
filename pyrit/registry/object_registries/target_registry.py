@@ -12,14 +12,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional, Union
 
-from pyrit.registry.object_registries.base_instance_registry import RegistryEntry
 from pyrit.registry.object_registries.retrievable_instance_registry import (
     RetrievableInstanceRegistry,
 )
-from pyrit.registry.tag_query import TagQuery
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
+    from pyrit.registry.object_registries.base_instance_registry import RegistryEntry
+    from pyrit.registry.tag_query import TagQuery
 
 logger = logging.getLogger(__name__)
 
