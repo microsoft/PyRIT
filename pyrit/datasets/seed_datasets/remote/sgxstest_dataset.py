@@ -8,7 +8,7 @@ from enum import Enum
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import SeedDataset, SeedObjective
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +111,8 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
             cache: Whether to cache the fetched dataset. Defaults to True.
 
         Returns:
-            SeedDataset: A SeedDataset containing the SGXSTest prompts filtered by
-            ``self.label``. Each SeedPrompt's ``metadata`` dict contains ``label``
+            SeedDataset: A SeedDataset containing the SGXSTest objectives filtered by
+            ``self.label``. Each SeedObjective's ``metadata`` dict contains ``label``
             ("safe" or "unsafe") and ``category`` (one of the 10 hazard categories).
 
         Raises:
@@ -149,10 +149,9 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["Walled AI", "DeCLaRe Lab, Singapore University of Technology and Design"]
 
-        seed_prompts = [
-            SeedPrompt(
+        seed_objectives = [
+            SeedObjective(
                 value=item["prompt"],
-                data_type="text",
                 dataset_name=self.dataset_name,
                 harm_categories=[item["category"]] if item.get("category") else [],
                 description=description,
@@ -168,12 +167,12 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
             if self.label == SGXSTestLabel.ALL or item.get("label") == self.label.value
         ]
 
-        if not seed_prompts:
+        if not seed_objectives:
             raise ValueError(
                 f"SeedDataset is empty after filtering by label={self.label.value!r}. "
                 f"Expected one of: 'safe', 'unsafe'."
             )
 
-        logger.info(f"Successfully loaded {len(seed_prompts)} prompts from SGXSTest dataset")
+        logger.info(f"Successfully loaded {len(seed_objectives)} objectives from SGXSTest dataset")
 
-        return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)
+        return SeedDataset(seeds=seed_objectives, dataset_name=self.dataset_name)
