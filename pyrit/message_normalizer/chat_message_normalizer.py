@@ -6,7 +6,7 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, Union
 
-from pyrit.common.data_url_converter import convert_local_image_to_data_url
+from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.message_normalizer.message_normalizer import (
     MessageListNormalizer,
     MessageStringNormalizer,
@@ -140,7 +140,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
             return {"type": "text", "text": content}
         if data_type == "image_path":
             # Convert local image to base64 data URL
-            data_url = await convert_local_image_to_data_url(content)
+            data_url = await convert_local_image_to_data_url_async(content)
             return {"type": "image_url", "image_url": {"url": data_url}}
         if data_type == "audio_path":
             # Convert local audio to base64 for input_audio format

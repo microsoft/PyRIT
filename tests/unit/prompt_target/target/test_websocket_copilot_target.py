@@ -112,7 +112,7 @@ def sample_mixed_pieces(make_message_piece):
 @pytest.fixture
 def patch_convert_local_image_to_data_url():
     with patch(
-        "pyrit.prompt_target.websocket_copilot_target.convert_local_image_to_data_url",
+        "pyrit.prompt_target.websocket_copilot_target.convert_local_image_to_data_url_async",
         new=AsyncMock(return_value="data:image/png;base64,abc123"),
     ):
         yield
@@ -666,7 +666,7 @@ class TestConnectAndSend:
         with patch("websockets.connect", return_value=mock_websocket):
             with patch.object(target, "_upload_image_async", new=AsyncMock(return_value="doc_id_123")):
                 with patch(
-                    "pyrit.prompt_target.websocket_copilot_target.convert_local_image_to_data_url",
+                    "pyrit.prompt_target.websocket_copilot_target.convert_local_image_to_data_url_async",
                     new=AsyncMock(return_value="data:image/png;base64,abc123"),
                 ):
                     response = await target._connect_and_send(
@@ -691,7 +691,7 @@ class TestConnectAndSend:
         with patch("websockets.connect", return_value=mock_websocket):
             with patch.object(target, "_upload_image_async", new=AsyncMock(side_effect=["doc_id_1", "doc_id_2"])):
                 with patch(
-                    "pyrit.prompt_target.websocket_copilot_target.convert_local_image_to_data_url",
+                    "pyrit.prompt_target.websocket_copilot_target.convert_local_image_to_data_url_async",
                     new=AsyncMock(return_value="data:image/png;base64,abc123"),
                 ):
                     response = await target._connect_and_send(

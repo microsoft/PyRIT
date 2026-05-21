@@ -27,7 +27,7 @@
 # Do-Not-Answer [@wang2023donotanswer],
 # EquityMedQA [@pfohl2024equitymedqa],
 # HarmBench [@mazeika2024harmbench],
-# HarmfulQA [@chu2023harmfulqa],
+# HarmfulQA [@bhardwaj2023harmfulqa],
 # JailbreakBench [@chao2024jailbreakbench],
 # LLM-LAT [@sheshadri2024lat],
 # MedSafetyBench [@han2024medsafetybench],

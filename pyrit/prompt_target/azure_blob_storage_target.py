@@ -75,7 +75,6 @@ class AzureBlobStorageTarget(PromptTarget):
         blob_content_type: SupportedContentType = SupportedContentType.PLAIN_TEXT,
         max_requests_per_minute: Optional[int] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the Azure Blob Storage target.
@@ -90,8 +89,6 @@ class AzureBlobStorageTarget(PromptTarget):
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
         """
         self._blob_content_type: str = blob_content_type.value
 
@@ -106,7 +103,6 @@ class AzureBlobStorageTarget(PromptTarget):
             endpoint=self._container_url,
             max_requests_per_minute=max_requests_per_minute,
             custom_configuration=custom_configuration,
-            custom_capabilities=custom_capabilities,
         )
 
     def _build_identifier(self) -> ComponentIdentifier:

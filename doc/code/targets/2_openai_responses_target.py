@@ -7,7 +7,6 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.18.1
 # ---
-
 # %% [markdown]
 # # 2. OpenAI Responses Target
 #
@@ -22,12 +21,12 @@
 # - endpoint: The API endpoint (`OPENAI_RESPONSES_ENDPOINT` environment variable). For OpenAI, these are just "https://api.openai.com/v1/responses".
 # - auth: The API key for authentication (`OPENAI_RESPONSES_KEY` environment variable).
 # - model_name: The model to use (`OPENAI_RESPONSES_MODEL` environment variable). For OpenAI, these are any available model name and are listed here: "https://platform.openai.com/docs/models".
-
 # %%
 import os
 
 from pyrit.auth import get_azure_openai_auth
-from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
+from pyrit.executor.attack import PromptSendingAttack
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIResponseTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -43,7 +42,7 @@ target = OpenAIResponseTarget(
 attack = PromptSendingAttack(objective_target=target)
 
 result = await attack.execute_async(objective="Tell me a joke")  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await output_attack_async(result)
 
 # %% [markdown]
 # ## Reasoning Configuration
@@ -59,7 +58,7 @@ await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # ty
 import os
 
 from pyrit.auth import get_azure_openai_auth
-from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.prompt_target import OpenAIResponseTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -75,7 +74,7 @@ target = OpenAIResponseTarget(
 
 attack = PromptSendingAttack(objective_target=target)
 result = await attack.execute_async(objective="What are the most dangerous items in a household?")  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result, include_reasoning_trace=True)  # type: ignore
+await output_attack_async(result)
 
 # %% [markdown]
 # ## JSON Generation
