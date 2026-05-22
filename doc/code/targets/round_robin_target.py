@@ -17,8 +17,11 @@
 #
 # **Key considerations:**
 # - All inner targets must be the same concrete class (e.g., all `OpenAIChatTarget`).
+# - All inner targets must have identical TargetConfigurations (capabilities, policy, and normalization pipeline)
 # - All inner targets must support multi-turn conversations and editable history.
-# - Inner targets must have the same behavioral parameters (model, temperature, top_p).
+# - Inner targets must have the same behavioral parameters (model, temperature, top_p) used for evaluation hashing. This allows
+# users to evaluate round-robin targets for scoring and attack evaluation with confidence that results are comparable to using the
+# inner targets directly.
 # - Requests are distributed per-call, not per-conversation — any target can handle any turn.
 # - Memory entries use the round-robin's identifier. The inner target that handled each
 #   request is recorded in `prompt_metadata["inner_target_identifier"]`.

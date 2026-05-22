@@ -36,7 +36,7 @@ class RoundRobinTarget(PromptTarget):
     inner target's). The inner target that handled each specific request is
     recorded in ``prompt_metadata["inner_target_identifier"]`` for traceability.
     The eval hash (used for scorer evaluation grouping) unwraps through the
-    round-robin to the inner target's behavioral params, so scoring results
+    round-robin to the inner target's behavioral params, so evaluation results
     are comparable whether a round-robin or direct target is used.
 
     Not thread-safe. Safe for concurrent use within a single asyncio event loop
