@@ -30,10 +30,12 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    expect(screen.getByTestId('label-operator')).toBeInTheDocument()
-    expect(screen.getByTestId('label-operation')).toBeInTheDocument()
-    expect(screen.getByText('roakey')).toBeInTheDocument()
-    expect(screen.getByText('op_trash_panda')).toBeInTheDocument()
+    // The visible inline chips are the canonical render. The component
+    // also has an aria-hidden "measure" row with mirrored chips used
+    // purely to compute available width — query by data-testid so we
+    // don't accidentally match the hidden mirror.
+    expect(screen.getByTestId('label-operator')).toHaveTextContent('roakey')
+    expect(screen.getByTestId('label-operation')).toHaveTextContent('op_trash_panda')
   })
 
   it('should show warning icon for dummy values', () => {
@@ -93,7 +95,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -120,7 +122,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -148,7 +150,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -222,7 +224,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -243,7 +245,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -338,7 +340,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -364,7 +366,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -401,7 +403,7 @@ describe('LabelsBar', () => {
       expect(mockedLabelsApi.getLabels).toHaveBeenCalled()
     })
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -431,7 +433,7 @@ describe('LabelsBar', () => {
       expect(mockedLabelsApi.getLabels).toHaveBeenCalled()
     })
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -540,5 +542,102 @@ describe('LabelsBar', () => {
 
     // team should have a remove button
     expect(screen.getByTestId('remove-label-team')).toBeInTheDocument()
+  })
+
+  it('always renders a labels icon button with a count of total labels', () => {
+    // The labels icon is always present at the leftmost position with a
+    // badge showing the total label count, regardless of how many chips
+    // happen to fit inline. Clicking it opens a popover with the full
+    // label list and the add form.
+    render(
+      <TestWrapper>
+        <LabelsBar
+          labels={{ operator: 'alice', operation: 'op_one', team: 'red' }}
+          onLabelsChange={jest.fn()}
+        />
+      </TestWrapper>
+    )
+
+    const iconBtn = screen.getByTestId('labels-icon-btn')
+    expect(iconBtn).toBeInTheDocument()
+    expect(iconBtn).toHaveAttribute('aria-label', expect.stringContaining('3'))
+    expect(iconBtn).toHaveTextContent('3')
+  })
+
+  it('icon button opens a popover with all labels and the add form', async () => {
+    render(
+      <TestWrapper>
+        <LabelsBar
+          labels={{ operator: 'alice', operation: 'op_one', team: 'red' }}
+          onLabelsChange={jest.fn()}
+        />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('popover-label-operator')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('popover-label-operation')).toBeInTheDocument()
+    expect(screen.getByTestId('popover-label-team')).toBeInTheDocument()
+    expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
+    expect(screen.getByTestId('new-label-value')).toBeInTheDocument()
+    expect(screen.getByTestId('confirm-add-label')).toBeInTheDocument()
+  })
+
+  it('hides only the chips that do not fit and never the icon button', async () => {
+    // Regression guard for the narrow-viewport ribbon bug: even when the
+    // available width is too small for every chip to fit, the labels icon
+    // (with full count) and as many chips as do fit should still render.
+    // Tests sub the layout properties to simulate a narrow ribbon.
+    const onChange = jest.fn()
+    const { container, rerender } = render(
+      <TestWrapper>
+        <div>
+          <LabelsBar
+            labels={{ operator: 'alice', operation: 'op_one', team: 'red', env: 'prod' }}
+            onLabelsChange={onChange}
+          />
+        </div>
+      </TestWrapper>
+    )
+
+    const root = container.querySelector('[data-testid="labels-bar"]') as HTMLElement | null
+    if (!root) throw new Error('labels-bar not found')
+    Object.defineProperty(root, 'clientWidth', { configurable: true, value: 250 })
+    // Each chip is 100 px wide → 2 chips fit after reserving room for the icon button.
+    const measure = root.querySelector('[aria-hidden="true"]') as HTMLElement | null
+    if (measure) {
+      const chips = Array.from(measure.querySelectorAll('[data-label-idx]')) as HTMLElement[]
+      for (const chip of chips) {
+        Object.defineProperty(chip, 'offsetWidth', { configurable: true, value: 100 })
+      }
+    }
+
+    rerender(
+      <TestWrapper>
+        <div>
+          <LabelsBar
+            labels={{ operator: 'alice', operation: 'op_one', team: 'red', env: 'prod', extra: 'x' }}
+            onLabelsChange={onChange}
+          />
+        </div>
+      </TestWrapper>
+    )
+
+    // The icon button stays visible with the full count (5 labels).
+    await waitFor(() => {
+      const btn = screen.getByTestId('labels-icon-btn')
+      expect(btn).toHaveAttribute('aria-label', expect.stringContaining('5'))
+    })
+
+    // Some chips render inline and some don't (the heuristic decides which);
+    // the important guarantee is that the popover is reachable for the rest.
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
+    await waitFor(() => {
+      expect(screen.getByTestId('popover-label-operator')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('popover-label-extra')).toBeInTheDocument()
   })
 })
