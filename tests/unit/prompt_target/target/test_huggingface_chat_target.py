@@ -99,9 +99,10 @@ def mock_create_task():
 
 
 @pytest.fixture(autouse=True)
-def mock_download_specific_files():
+def mock_download_specific_files_async():
     with patch(
-        "pyrit.prompt_target.hugging_face.hugging_face_chat_target.download_specific_files", new_callable=AsyncMock
+        "pyrit.prompt_target.hugging_face.hugging_face_chat_target.download_specific_files_async",
+        new_callable=AsyncMock,
     ) as mock:
         yield mock
 
@@ -118,7 +119,7 @@ def test_init_with_no_token_var_raises(monkeypatch, patch_central_database):
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-async def test_hf_initialization(patch_central_database, mock_download_specific_files):
+async def test_hf_initialization(patch_central_database, mock_download_specific_files_async):
     # Test the initialization without loading the actual models
     hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
     assert hf_chat.model_id == "test_model"
@@ -128,7 +129,22 @@ async def test_hf_initialization(patch_central_database, mock_download_specific_
     await hf_chat.load_model_and_tokenizer()
     assert hf_chat.model is not None
     assert hf_chat.tokenizer is not None
-    mock_download_specific_files.assert_awaited_once()
+    mock_download_specific_files_async.assert_awaited_once()
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+async def test_hf_initialization_with_necessary_files(patch_central_database, mock_download_specific_files_async):
+    HuggingFaceChatTarget.disable_cache()
+    try:
+        hf_chat = HuggingFaceChatTarget(
+            model_id="test_model_necessary_files", use_cuda=False, necessary_files=["config.json", "tokenizer.json"]
+        )
+        await hf_chat.load_model_and_tokenizer()
+        mock_download_specific_files_async.assert_awaited_once()
+        args = mock_download_specific_files_async.await_args.args
+        assert args[1] == ["config.json", "tokenizer.json"]
+    finally:
+        HuggingFaceChatTarget.enable_cache()
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")

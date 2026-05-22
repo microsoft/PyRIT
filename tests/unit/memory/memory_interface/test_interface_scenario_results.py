@@ -160,21 +160,24 @@ def test_empty_ids_returns_empty(sqlite_instance: MemoryInterface):
 
 def test_attack_results_populated_correctly(sqlite_instance: MemoryInterface):
     """Test that retrieving scenario results populates attack_results correctly."""
-    # Create and add attack results
-    attack_result1 = create_attack_result("conv_1", "Objective 1", AttackOutcome.SUCCESS)
-    attack_result2 = create_attack_result("conv_2", "Objective 2", AttackOutcome.FAILURE)
-    attack_result3 = create_attack_result("conv_3", "Objective 3", AttackOutcome.SUCCESS)
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
-
-    # Create scenario result with multiple attacks
-    scenario_result = create_scenario_result(
-        name="Multi-Attack Scenario",
-        attack_results={
-            "PromptInjection": [attack_result1, attack_result2],
-            "Crescendo": [attack_result3],
-        },
-    )
+    scenario_result = create_scenario_result(name="Multi-Attack Scenario", attack_results={})
     sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+
+    sid = scenario_result.id
+    attack_result1 = _make_attack_result_for_scenario(
+        scenario_result_id=sid, atomic_attack_name="PromptInjection", objective_index=0, conversation_id="conv_1"
+    )
+    attack_result2 = _make_attack_result_for_scenario(
+        scenario_result_id=sid,
+        atomic_attack_name="PromptInjection",
+        objective_index=1,
+        conversation_id="conv_2",
+        outcome=AttackOutcome.FAILURE,
+    )
+    attack_result3 = _make_attack_result_for_scenario(
+        scenario_result_id=sid, atomic_attack_name="Crescendo", objective_index=0, conversation_id="conv_3"
+    )
+    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
 
     # Retrieve and verify attack_results are populated
     results = sqlite_instance.get_scenario_results()
@@ -198,40 +201,42 @@ def test_attack_results_populated_correctly(sqlite_instance: MemoryInterface):
 
 
 def test_attack_order_preserved(sqlite_instance: MemoryInterface):
-    """Test that attack results maintain their order within each attack name."""
-    # Create and add attack results
-    attack_results = [create_attack_result(f"conv_{i}", f"Objective {i}") for i in range(5)]
-    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
-
-    # Create scenario result with ordered attacks
-    scenario_result = create_scenario_result(
-        name="Ordered Scenario",
-        attack_results={
-            "Attack1": attack_results,
-        },
-    )
+    """Hydration sorts each atomic attack's results by ``timestamp`` (which
+    monotonically tracks insertion order under normal sequential execution)."""
+    scenario_result = create_scenario_result(name="Ordered Scenario", attack_results={})
     sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
 
-    # Retrieve and verify order is preserved
+    sid = scenario_result.id
+    # Insert in a specific order; hydration must surface them in the same order.
+    attack_results = [
+        _make_attack_result_for_scenario(
+            scenario_result_id=sid, atomic_attack_name="Attack1", objective_index=i, conversation_id=f"conv_{i}"
+        )
+        for i in range(5)
+    ]
+    for ar in attack_results:
+        sqlite_instance.add_attack_results_to_memory(attack_results=[ar])
+
     results = sqlite_instance.get_scenario_results()
     retrieved_attacks = results[0].attack_results["Attack1"]
 
-    # Verify the conversation IDs are in the same order
     retrieved_conv_ids = [ar.conversation_id for ar in retrieved_attacks]
-    original_conv_ids = [ar.conversation_id for ar in attack_results]
-    assert retrieved_conv_ids == original_conv_ids
+    assert retrieved_conv_ids == [f"conv_{i}" for i in range(5)]
 
 
-def test_stores_conversation_ids_only(sqlite_instance: MemoryInterface, sample_attack_results):
-    """Test that scenario results store only conversation IDs, not full AttackResult objects."""
-    # Create and add scenario result
-    scenario_result = create_scenario_result(
-        name="Test Scenario",
-        attack_results={"Attack1": [sample_attack_results[0]]},
-    )
+def test_stores_conversation_ids_only(sqlite_instance: MemoryInterface):
+    """Test that scenario results expose AttackResult objects with conversation IDs after hydration."""
+    scenario_result = create_scenario_result(name="Test Scenario", attack_results={})
     sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
 
-    # Retrieve the scenario result to verify structure
+    ar = _make_attack_result_for_scenario(
+        scenario_result_id=scenario_result.id,
+        atomic_attack_name="Attack1",
+        objective_index=0,
+        conversation_id="conv_1",
+    )
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar])
+
     results = sqlite_instance.get_scenario_results(scenario_result_ids=[str(scenario_result.id)])
     assert len(results) == 1
 
@@ -299,23 +304,28 @@ def test_preserves_metadata(sqlite_instance: MemoryInterface):
 
 def test_multiple_scenarios_with_attacks(sqlite_instance: MemoryInterface):
     """Test retrieving multiple scenarios with their attack results populated."""
-    # Create attack results for multiple scenarios
-    attack_results_scenario1 = [create_attack_result(f"conv_s1_{i}", f"S1 Objective {i}") for i in range(5)]
-    attack_results_scenario2 = [create_attack_result(f"conv_s2_{i}", f"S2 Objective {i}") for i in range(3)]
-
-    all_attack_results = attack_results_scenario1 + attack_results_scenario2
-    sqlite_instance.add_attack_results_to_memory(attack_results=all_attack_results)
-
-    # Create multiple scenario results
-    scenario1 = create_scenario_result(
-        name="Scenario 1",
-        attack_results={"Attack1": attack_results_scenario1},
-    )
-    scenario2 = create_scenario_result(
-        name="Scenario 2",
-        attack_results={"Attack2": attack_results_scenario2},
-    )
+    scenario1 = create_scenario_result(name="Scenario 1", attack_results={})
+    scenario2 = create_scenario_result(name="Scenario 2", attack_results={})
     sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2])
+
+    all_attack_results = [
+        _make_attack_result_for_scenario(
+            scenario_result_id=scenario1.id,
+            atomic_attack_name="Attack1",
+            objective_index=i,
+            conversation_id=f"conv_s1_{i}",
+        )
+        for i in range(5)
+    ] + [
+        _make_attack_result_for_scenario(
+            scenario_result_id=scenario2.id,
+            atomic_attack_name="Attack2",
+            objective_index=i,
+            conversation_id=f"conv_s2_{i}",
+        )
+        for i in range(3)
+    ]
+    sqlite_instance.add_attack_results_to_memory(attack_results=all_attack_results)
 
     # Retrieve all scenarios
     results = sqlite_instance.get_scenario_results()
@@ -648,58 +658,147 @@ def test_combined_filters(sqlite_instance: MemoryInterface):
     assert "gpt-4" in results[0].objective_target_identifier.params["model_name"]
 
 
-def test_update_scenario_error_attacks_success(sqlite_instance: MemoryInterface, sample_attack_results):
-    """Test successfully linking error attack result IDs to a scenario result."""
+# =============================================================================
+# Scenario linkage (attribution_parent_id foreign key + attribution_data on
+# AttackResultEntry) hydration tests
+# =============================================================================
+
+
+def _make_attack_result_for_scenario(
+    *,
+    scenario_result_id,
+    atomic_attack_name,
+    objective_index,
+    conversation_id=None,
+    outcome=AttackOutcome.SUCCESS,
+):
+    """Build an AttackResult pre-stamped with scenario linkage (mirrors what
+    the event handler does when an AttackResultAttribution is on the context)."""
+    return AttackResult(
+        conversation_id=conversation_id or f"conv-{atomic_attack_name}-{objective_index}",
+        objective=f"objective-{atomic_attack_name}-{objective_index}",
+        outcome=outcome,
+        executed_turns=1,
+        attribution_parent_id=str(scenario_result_id),
+        attribution_data={"parent_collection": atomic_attack_name},
+    )
+
+
+def test_get_scenario_results_loads_attack_results_via_foreign_key(sqlite_instance: MemoryInterface):
+    """When AttackResultEntry rows carry the attribution_parent_id foreign key,
+    hydration picks them up directly — without needing the legacy
+    attack_results_json manifest. This is the path that makes mid-AtomicAttack
+    interruption-recovery work."""
     scenario_result = create_scenario_result(
-        name="Error Scenario",
-        attack_results={"Attack1": [sample_attack_results[0]]},
+        name="ForeignKey-only Scenario",
+        attack_results={},  # manifest intentionally empty
     )
     sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
 
-    error_ids = ["error-ar-1", "error-ar-2"]
-    sqlite_instance.update_scenario_error_attacks(
-        scenario_result_id=str(scenario_result.id),
-        error_attack_result_ids=error_ids,
+    sid = scenario_result.id
+    ar1 = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="a", objective_index=0)
+    ar2 = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="a", objective_index=1)
+    ar3 = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="b", objective_index=0)
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
+
+    [result] = sqlite_instance.get_scenario_results(scenario_result_ids=[str(sid)])
+    assert set(result.attack_results.keys()) == {"a", "b"}
+    assert [r.conversation_id for r in result.attack_results["a"]] == [
+        "conv-a-0",
+        "conv-a-1",
+    ]
+    assert [r.conversation_id for r in result.attack_results["b"]] == ["conv-b-0"]
+
+
+def test_get_attack_results_filters_by_scenario_result_id(sqlite_instance: MemoryInterface):
+    """get_attack_results gains a scenario_result_id filter — replaces the
+    removed error_attack_result_ids_json lookup path."""
+    scenario_result = create_scenario_result(name="Filter Scenario")
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+    sid = scenario_result.id
+
+    ok = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="a", objective_index=0)
+    err = _make_attack_result_for_scenario(
+        scenario_result_id=sid,
+        atomic_attack_name="a",
+        objective_index=1,
+        outcome=AttackOutcome.ERROR,
     )
+    # An unrelated AttackResult NOT linked to this scenario should be excluded.
+    unrelated = create_attack_result("unrelated-conv", "unrelated-obj")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ok, err, unrelated])
 
-    # Verify the error IDs were persisted
-    results = sqlite_instance.get_scenario_results(scenario_result_ids=[str(scenario_result.id)])
-    assert len(results) == 1
-    assert results[0].error_attack_result_ids == error_ids
+    all_for_scenario = sqlite_instance.get_attack_results(scenario_result_id=str(sid))
+    assert {r.conversation_id for r in all_for_scenario} == {ok.conversation_id, err.conversation_id}
+
+    only_errors = sqlite_instance.get_attack_results(
+        scenario_result_id=str(sid),
+        outcome=AttackOutcome.ERROR.value,
+    )
+    assert [r.conversation_id for r in only_errors] == [err.conversation_id]
 
 
-def test_update_scenario_error_attacks_appends_to_existing(sqlite_instance: MemoryInterface, sample_attack_results):
-    """Test that updating error attacks appends to existing IDs without duplicates."""
+def test_delete_scenario_sets_attack_result_foreign_key_to_null(sqlite_instance: MemoryInterface):
+    """ON DELETE SET NULL: deleting the parent ScenarioResultEntry nulls the
+    attribution_parent_id foreign key on its linked AttackResultEntries but
+    the AttackResultEntries survive (attribution_data is retained as
+    historical provenance).
+
+    Note: SQLite does not enforce foreign keys by default; this test enables
+    them on the session for the duration of the delete to verify the
+    ON DELETE SET NULL clause works. Production deployments using SQL Server
+    enforce foreign keys by default.
+    """
+    from contextlib import closing
+
+    from sqlalchemy import text as _sql_text
+
+    from pyrit.memory.memory_models import AttackResultEntry, ScenarioResultEntry
+
+    scenario_result = create_scenario_result(name="To Be Deleted")
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+    sid = scenario_result.id
+
+    ar = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="a", objective_index=0)
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar])
+
+    # Enable foreign keys for the delete and verify the SET NULL clause fires.
+    with closing(sqlite_instance.get_session()) as session:
+        session.execute(_sql_text("PRAGMA foreign_keys = ON"))
+        session.query(ScenarioResultEntry).filter_by(id=sid).delete()
+        session.commit()
+
+    # The AttackResult survives, but its foreign key is now NULL.
+    # attribution_data is retained as historical provenance.
+    with closing(sqlite_instance.get_session()) as session:
+        entry = session.query(AttackResultEntry).filter_by(conversation_id=ar.conversation_id).one()
+        assert entry.attribution_parent_id is None
+        assert entry.attribution_data == {"parent_collection": "a"}
+
+
+def test_update_scenario_run_state_targeted_update_preserves_manifest(sqlite_instance: MemoryInterface):
+    """update_scenario_run_state must be a targeted UPDATE — it must not
+    re-serialize the whole row and clobber the manifest column during the
+    deprecation window."""
     scenario_result = create_scenario_result(
-        name="Error Scenario",
-        attack_results={"Attack1": [sample_attack_results[0]]},
+        name="Targeted Update",
+        attack_results={"a": []},  # baseline manifest
     )
     sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+    sid = str(scenario_result.id)
 
-    # First update
-    sqlite_instance.update_scenario_error_attacks(
-        scenario_result_id=str(scenario_result.id),
-        error_attack_result_ids=["error-ar-1"],
+    sqlite_instance.update_scenario_run_state(
+        scenario_result_id=sid,
+        scenario_run_state="FAILED",
+        error_message="boom",
+        error_type="RuntimeError",
     )
 
-    # Second update with overlap and new ID
-    sqlite_instance.update_scenario_error_attacks(
-        scenario_result_id=str(scenario_result.id),
-        error_attack_result_ids=["error-ar-1", "error-ar-2"],
-    )
-
-    results = sqlite_instance.get_scenario_results(scenario_result_ids=[str(scenario_result.id)])
-    # Should be deduplicated: ["error-ar-1", "error-ar-2"]
-    assert results[0].error_attack_result_ids == ["error-ar-1", "error-ar-2"]
-
-
-def test_update_scenario_error_attacks_not_found(sqlite_instance: MemoryInterface):
-    """Test that updating a nonexistent scenario result raises ValueError."""
-    with pytest.raises(ValueError, match="not found in memory"):
-        sqlite_instance.update_scenario_error_attacks(
-            scenario_result_id="nonexistent-id",
-            error_attack_result_ids=["error-ar-1"],
-        )
+    # State and error fields updated.
+    [hydrated] = sqlite_instance.get_scenario_results(scenario_result_ids=[sid])
+    assert hydrated.scenario_run_state == "FAILED"
+    assert hydrated.error_message == "boom"
+    assert hydrated.error_type == "RuntimeError"
 
 
 def test_get_scenario_results_by_target_identifier_filter_hash(sqlite_instance: MemoryInterface):

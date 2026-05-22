@@ -223,7 +223,7 @@ class TestVLGuardDataset:
             assert text_prompt.data_type == "text"
             assert image_prompt.data_type == "image_path"
             assert text_prompt.sequence == 0
-            assert image_prompt.sequence == 1
+            assert image_prompt.sequence == 0
 
     async def test_missing_image_skipped(self, mock_vlguard_metadata, tmp_path):
         """Test that examples with missing images are skipped."""

@@ -70,7 +70,6 @@ class OpenAIImageTarget(OpenAITarget):
         style: Optional[Literal["natural", "vivid"]] = None,
         background: Optional[Literal["transparent", "opaque", "auto"]] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -113,8 +112,6 @@ class OpenAIImageTarget(OpenAITarget):
                 Default is to not specify, which will use "auto" behavior.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
             *args: Additional positional arguments to be passed to AzureOpenAITarget.
             **kwargs: Additional keyword arguments to be passed to AzureOpenAITarget.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the
@@ -164,9 +161,7 @@ class OpenAIImageTarget(OpenAITarget):
         self.image_size = image_size
         self.background = background
 
-        super().__init__(
-            *args, custom_configuration=custom_configuration, custom_capabilities=custom_capabilities, **kwargs
-        )
+        super().__init__(*args, custom_configuration=custom_configuration, **kwargs)
 
     def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_IMAGE_MODEL"
@@ -301,7 +296,8 @@ class OpenAIImageTarget(OpenAITarget):
         # Construct request parameters for image editing
         image_edit_args: dict[str, Any] = {
             "model": self._model_name,
-            "image": image_files,
+            # Single image can be sent (and MUST BE in MAI models) as a tuple, multiple images must be a list
+            "image": image_files[0] if len(image_files) == 1 else image_files,
             "prompt": text_prompt,
             "size": self.image_size,
         }

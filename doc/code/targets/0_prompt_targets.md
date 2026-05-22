@@ -23,7 +23,7 @@ A `Message` object is a normalized object with all the information a target will
 
 A `PromptTarget` is a generic place to send a prompt. With PyRIT, the idea is that it will eventually be consumed by an AI application, but that doesn't have to be immediate. For example, you could have a SharePoint target. Everything you send a prompt to is a `PromptTarget`. Many attacks work generically with any `PromptTarget` including `RedTeamingAttack` and `PromptSendingAttack`.
 
-With some algorithms, you want to send a prompt, set a system prompt, and modify conversation history (including PAIR [@chao2023pair], TAP [@mehrotra2023tap], and flip attack [@li2024flipattack]). These algorithms require a target whose [`TargetCapabilities`](#target-capabilities) declare both `supports_multi_turn=True` and `supports_editable_history=True` — i.e. you can modify a conversation history. Consumers express this requirement via `CHAT_TARGET_REQUIREMENTS` and validate it against `target.configuration` at construction time. See [Target Capabilities](#target-capabilities) below for the full list of capabilities and how they compose into a `TargetConfiguration`.
+With some algorithms, you want to send a prompt, set a system prompt, and modify conversation history (including PAIR [@chao2023pair], TAP [@mehrotra2023tap], and flip attack [@liu2024flipattack]). These algorithms require a target whose [`TargetCapabilities`](#target-capabilities) declare both `supports_multi_turn=True` and `supports_editable_history=True` — i.e. you can modify a conversation history. Consumers express this requirement via `CHAT_TARGET_REQUIREMENTS` and validate it against `target.configuration` at construction time. See [Target Capabilities](#target-capabilities) below for the full list of capabilities and how they compose into a `TargetConfiguration`.
 
 Note: The previous `PromptChatTarget` class is **deprecated** as of v0.14.0 and will be removed in v0.16.0. Use `PromptTarget` directly with a `TargetConfiguration` declaring `supports_multi_turn=True` and `supports_editable_history=True`. See [Target Capabilities](#target-capabilities) for details.
 
@@ -77,6 +77,19 @@ CHAT_TARGET_REQUIREMENTS.validate(target=target)
 ```
 
 `TargetRequirements.validate` collects every missing capability and raises a single `ValueError`. For one-off checks against a single capability you can also call `target.configuration.ensure_can_handle(capability=...)` directly.
+
+`TargetRequirements` can also enforce **modality** constraints via `required_input_modalities` and `required_output_modalities`. Each entry is a set of `PromptDataType` values the consumer needs the target to accept (or produce). At least one of the target's modality combos must be a superset of each required combo:
+
+```python
+from pyrit.prompt_target import TargetRequirements
+
+# A consumer that requires image input and text output
+VISION_REQUIREMENTS = TargetRequirements(
+    required_input_modalities=frozenset({frozenset({"image_path"})}),
+    required_output_modalities=frozenset({frozenset({"text"})}),
+)
+VISION_REQUIREMENTS.validate(target=target)
+```
 
 ### Adapting vs raising
 

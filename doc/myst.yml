@@ -11,6 +11,31 @@ project:
     - format: pdf
       template: plain_latex_book
       output: exports/book.pdf
+  # See https://mystmd.org/guide for error_rules schema.
+  # Rule IDs come from https://github.com/jupyter-book/mystmd
+  # (packages/myst-common/src/ruleids.ts).
+  error_rules:
+    # mystmd v2.x has no LaTeX renderer for the MyST layout directives we use
+    # extensively in the HTML site (grid, tabSet, details, mermaid). They
+    # render fine in HTML; PDF export emits "Unhandled LaTeX conversion for
+    # node of X" errors per node. Track upstream support and remove this
+    # suppression when those renderers land.
+    - rule: tex-renders
+      severity: ignore
+
+    # External APIs that require auth — always return 401/403 from CI workers
+    # and public link checkers. The URLs themselves are correct; they just
+    # can't be verified without credentials. Every other broken URL in the
+    # tree has been fixed (see PR #1745); only add to this list when a URL
+    # is genuinely unverifiable, not just inconvenient to update.
+    - rule: link-resolves
+      severity: ignore
+      keys:
+        - "https://platform.openai.com/**"
+        - "https://api.openai.com/**"
+        - "http://api.openai.com"
+        - "http://api.openai.com/**"
+        - "https://cognitiveservices.azure.com/**"
   toc:
     - file: index.md
     - file: getting_started/README.md
@@ -138,6 +163,7 @@ project:
             - file: code/scoring/5_refusal_scorer.ipynb
             - file: code/scoring/6_batch_scorer.ipynb
             - file: code/scoring/7_scorer_metrics.ipynb
+            - file: code/scoring/credential_leak_scorer.ipynb
             - file: code/scoring/insecure_code_scorer.ipynb
             - file: code/scoring/persuasion_full_conversation_scorer.ipynb
             - file: code/scoring/prompt_shield_scorer.ipynb
@@ -172,6 +198,7 @@ project:
           children:
             - file: code/registry/1_class_registry.ipynb
             - file: code/registry/2_instance_registry.ipynb
+        - file: code/output/0_output.ipynb
     - file: api/index.md
       children:
         - file: api/pyrit_analytics.md
@@ -200,10 +227,7 @@ project:
         - file: api/pyrit_scenario.md
         - file: api/pyrit_score.md
         - file: api/pyrit_setup.md
-          children:
-            - file: api/pyrit_setup_initializers.md
         - file: api/pyrit_show_versions.md
-        - file: api/pyrit_ui.md
     - file: blog/README.md
       children:
         - file: blog/2026_04_14_scoring_scorers.md

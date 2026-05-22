@@ -7,7 +7,6 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 # ---
-
 # %% [markdown]
 # # 5. Memory Labels and Advanced Memory Queries
 #
@@ -34,15 +33,14 @@
 # 1. Send prompts to a text target using `PromptSendingAttack`, passing in `memory_labels` to the execution function.
 # 2. Retrieve these prompts by querying for the corresponding memory label(s).
 # 3. Resend the retrieved prompts.
-
 # %%
 import uuid
 
 from pyrit.executor.attack import (
     AttackExecutor,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -62,7 +60,7 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 )
 
 for result in results:
-    await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+    await output_attack_async(result)
 
 # %% [markdown]
 # Because you have labeled `group1`, you can retrieve these prompts later. For example, you could score them as shown [here](../scoring/6_batch_scorer.ipynb). Or you could resend them as shown below; this script will resend any prompts with the label regardless of modality.
@@ -104,7 +102,7 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 )
 
 for result in results:
-    await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+    await output_attack_async(result)
 
 # %% [markdown]
 # ## Part 2 — Identifier Filters

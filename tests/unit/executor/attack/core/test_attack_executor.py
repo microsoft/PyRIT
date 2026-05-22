@@ -337,6 +337,99 @@ class TestExecuteAttackFromSeedGroupsAsync:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+class TestAttributionPropagation:
+    """Tests for AttackResultAttribution propagation through the AttackExecutor.
+
+    The executor stamps the same ``AttackResultAttribution`` on every per-task
+    context. Per-task identity is reconstructed from each row's own
+    ``objective_sha256`` at hydration/resume time, so no positional state is
+    threaded through the executor.
+    """
+
+    async def test_attribution_stamps_every_per_task_context(self):
+        from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
+
+        attack = create_mock_attack()
+        seen_parent_ids: list[str] = []
+        seen_collections: list[str] = []
+
+        async def capture(context):
+            attr = context._attribution
+            assert attr is not None
+            seen_parent_ids.append(attr.parent_id)
+            seen_collections.append(attr.parent_collection)
+            return create_attack_result(context.params.objective)
+
+        attack.execute_with_context_async = AsyncMock(side_effect=capture)
+
+        seed_groups = [create_seed_group(f"obj-{i}") for i in range(4)]
+        attribution = AttackResultAttribution(parent_id="sid", parent_collection="atomic")
+
+        executor = AttackExecutor(max_concurrency=1)
+        result = await executor.execute_attack_from_seed_groups_async(
+            attack=attack,
+            seed_groups=seed_groups,
+            attribution=attribution,
+        )
+
+        assert seen_parent_ids == ["sid"] * 4
+        assert seen_collections == ["atomic"] * 4
+        assert len(result.completed_results) == 4
+
+    async def test_attribution_parallel_safe_with_high_concurrency(self):
+        """At max_concurrency > 1, every task still sees the same attribution
+        regardless of completion order — there is no per-task positional state.
+        """
+        from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
+
+        attack = create_mock_attack()
+        seen: dict[str, AttackResultAttribution] = {}
+
+        async def out_of_order(context):
+            attr = context._attribution
+            assert attr is not None
+            # Reverse-delay tasks so completion order is inverse of input order.
+            i = int(context.params.objective.split("-")[1])
+            await asyncio.sleep(0.005 * (10 - i))
+            seen[context.params.objective] = attr
+            return create_attack_result(context.params.objective)
+
+        attack.execute_with_context_async = AsyncMock(side_effect=out_of_order)
+
+        seed_groups = [create_seed_group(f"obj-{i}") for i in range(6)]
+        attribution = AttackResultAttribution(parent_id="sid", parent_collection="atomic")
+
+        executor = AttackExecutor(max_concurrency=6)
+        await executor.execute_attack_from_seed_groups_async(
+            attack=attack,
+            seed_groups=seed_groups,
+            attribution=attribution,
+        )
+
+        for i in range(6):
+            attr = seen[f"obj-{i}"]
+            assert attr.parent_id == "sid"
+            assert attr.parent_collection == "atomic"
+
+    async def test_no_attribution_leaves_context_attribution_none(self):
+        attack = create_mock_attack()
+
+        async def capture(context):
+            attr = context._attribution
+            assert attr is None
+            return create_attack_result(context.params.objective)
+
+        attack.execute_with_context_async = AsyncMock(side_effect=capture)
+
+        seed_groups = [create_seed_group("obj-0"), create_seed_group("obj-1")]
+        executor = AttackExecutor(max_concurrency=2)
+        await executor.execute_attack_from_seed_groups_async(
+            attack=attack,
+            seed_groups=seed_groups,
+        )
+
+
+@pytest.mark.usefixtures("patch_central_database")
 class TestPartialFailureHandling:
     """Tests for partial failure handling."""
 

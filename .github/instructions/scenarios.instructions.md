@@ -11,15 +11,15 @@ Scenarios orchestrate multi-attack security testing campaigns. Each scenario gro
 All scenarios inherit from `Scenario` (ABC) and must:
 
 1. **Define `VERSION`** as a class constant (increment on breaking changes)
-2. **Optionally declare `BASELINE_POLICY`** (defaults to `BaselinePolicy.Enabled` — a baseline `PromptSendingAttack` is prepended and callers can opt out per run via `initialize_async(include_baseline=False)`):
-   - `BaselinePolicy.Disabled` — baseline supported but off by default (e.g. `Jailbreak`, where templates dominate the run).
-   - `BaselinePolicy.Forbidden` — baseline is meaningless for this scenario's comparison axis (e.g. `AdversarialBenchmark`, which compares against gold-standard answers). Explicit `include_baseline=True` raises `ValueError`.
+2. **Optionally declare `BASELINE_ATTACK_POLICY`** (defaults to `BaselineAttackPolicy.Enabled` — a baseline `PromptSendingAttack` is prepended and callers can opt out per run via `initialize_async(include_baseline=False)`):
+   - `BaselineAttackPolicy.Disabled` — baseline supported but off by default (e.g. `Jailbreak`, where templates dominate the run).
+   - `BaselineAttackPolicy.Forbidden` — baseline is meaningless for this scenario's comparison axis (e.g. `AdversarialBenchmark`, which compares against gold-standard answers). Explicit `include_baseline=True` raises `ValueError`.
 3. **Implement three abstract methods:**
 
 ```python
 class MyScenario(Scenario):
     VERSION: int = 1
-    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Enabled
+    BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
 
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
