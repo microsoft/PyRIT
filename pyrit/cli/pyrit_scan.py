@@ -336,6 +336,18 @@ async def _resolve_server_url_async(*, parsed_args: Namespace) -> str | None:
 
     # Auto-start if requested
     if parsed_args.start_server:
+        # The launcher can only bind localhost:8000. If the user explicitly
+        # configured a different URL we can't honor it — refuse rather than
+        # silently start a server the user can't reach.
+        if base_url != DEFAULT_SERVER_URL:
+            print(
+                f"Error: cannot --start-server because the configured server URL ({base_url}) "
+                f"does not match the launcher default ({DEFAULT_SERVER_URL}). "
+                "Either remove --server-url / the server.url config entry, "
+                "or start the backend manually with `pyrit_backend --host ... --port ...`.",
+                file=sys.stderr,
+            )
+            return None
         launcher = ServerLauncher()
         try:
             return await launcher.start_async(config_file=parsed_args.config_file)

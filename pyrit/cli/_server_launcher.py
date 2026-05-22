@@ -18,6 +18,8 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
+from pyrit.cli.api_client import PyRITApiClient
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -145,8 +147,6 @@ class ServerLauncher:
         Returns:
             bool: ``True`` if ``GET /api/health`` returned 200.
         """
-        from pyrit.cli.api_client import PyRITApiClient
-
         async with PyRITApiClient(base_url=base_url) as client:
             return await client.health_check_async()
 

@@ -5,6 +5,7 @@
 Unit tests for the pyrit_shell CLI module (thin REST client).
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -180,6 +181,33 @@ class TestPyRITShell:
         assert result is False
         captured = capsys.readouterr()
         assert "Server not available" in captured.out
+
+
+class TestShellRunAsyncTimeout:
+    """Regression: _run_async must time out instead of hanging on a stuck coroutine."""
+
+    def test_run_async_raises_timeout_error(self):
+        s = pyrit_shell.PyRITShell(no_animation=True)
+        try:
+
+            async def hangs():
+                await asyncio.sleep(10)
+
+            with pytest.raises(TimeoutError, match="did not complete"):
+                s._run_async(hangs(), timeout=0.05)
+        finally:
+            s._shutdown_loop()
+
+    def test_run_async_returns_value_within_timeout(self):
+        s = pyrit_shell.PyRITShell(no_animation=True)
+        try:
+
+            async def quick():
+                return 42
+
+            assert s._run_async(quick(), timeout=5) == 42
+        finally:
+            s._shutdown_loop()
 
 
 class TestShellMain:

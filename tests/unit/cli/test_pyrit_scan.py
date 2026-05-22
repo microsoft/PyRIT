@@ -531,6 +531,28 @@ class TestResolveServerUrl:
             assert await pyrit_scan._resolve_server_url_async(parsed_args=parsed) is None
         assert "nope" in capsys.readouterr().out
 
+    async def test_start_server_refuses_when_url_differs_from_default(self, capsys):
+        # User explicitly configured a non-default URL but asks us to launch the bundled
+        # backend. The launcher only knows how to bind localhost:8000, so we must refuse.
+        parsed = Namespace(server_url="http://other:9999", start_server=True, config_file=None)
+        start_async_mock = AsyncMock()
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.start_async",
+                new=start_async_mock,
+            ),
+        ):
+            result = await pyrit_scan._resolve_server_url_async(parsed_args=parsed)
+        assert result is None
+        start_async_mock.assert_not_called()
+        err = capsys.readouterr().err
+        assert "cannot --start-server" in err
+        assert "http://other:9999" in err
+
     async def test_resolution_order_cli_beats_config_beats_default(self):
         """CLI flag > config-file value > built-in default."""
         # 1) CLI flag wins even when config has a different value.

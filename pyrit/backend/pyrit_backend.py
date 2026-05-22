@@ -107,6 +107,14 @@ def main(*, args: Optional[list[str]] = None) -> int:
     if parsed_args.config_file is not None:
         os.environ["PYRIT_CONFIG_FILE"] = str(parsed_args.config_file)
 
+    if parsed_args.host not in ("localhost", "127.0.0.1", "::1"):
+        print(
+            f"WARNING: Binding pyrit_backend to {parsed_args.host}:{parsed_args.port} exposes the API "
+            "on a non-loopback interface. The PyRIT backend has no authentication; only do this on "
+            "a trusted network.",
+            file=sys.stderr,
+        )
+
     try:
         import uvicorn
 

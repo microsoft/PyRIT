@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import cmd
+import concurrent.futures
 import contextlib
 import logging
 import sys
@@ -82,18 +83,31 @@ class PyRITShell(cmd.Cmd):
         self._loop_thread = threading.Thread(target=self._loop.run_forever, name="pyrit-shell-loop", daemon=True)
         self._loop_thread.start()
 
-    def _run_async(self, coro: Coroutine[Any, Any, _T]) -> _T:
+    def _run_async(self, coro: Coroutine[Any, Any, _T], *, timeout: float | None = 120.0) -> _T:
         """
         Run a coroutine on the shell's persistent loop and return its result.
 
         Args:
             coro: Coroutine to schedule on the background loop.
+            timeout: Maximum seconds to wait. ``None`` waits forever. Defaults to
+                120s, which comfortably covers every per-call REST request and
+                the 30s server startup probe.
 
         Returns:
             The coroutine's result.
+
+        Raises:
+            TimeoutError: If the coroutine does not complete within *timeout*.
         """
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result()
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError as exc:
+            future.cancel()
+            raise TimeoutError(
+                f"Backend call did not complete within {timeout}s. The server may be hung or "
+                "unreachable; try `stop-server` and re-running."
+            ) from exc
 
     def _shutdown_loop(self) -> None:
         """Stop the background event loop and join the thread."""

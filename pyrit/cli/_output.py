@@ -27,7 +27,7 @@ except ImportError:
 
 
 def _cprint(text: str, *, color: str | None = None, bold: bool = False) -> None:
-    """Print *text*, optionally coloured if ``termcolor`` is available."""
+    """Print *text*, optionally colored if ``termcolor`` is available."""
     if _HAS_COLOR and color:
         attrs = ["bold"] if bold else None
         termcolor.cprint(text, color, attrs=attrs)

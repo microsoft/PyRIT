@@ -87,6 +87,26 @@ class TestMain:
         pyrit_backend.main(args=["--reload"])
         assert mock_run.call_args.kwargs["reload"] is True
 
+    @patch("uvicorn.run")
+    def test_main_warns_when_binding_non_loopback(self, mock_run: MagicMock, capsys) -> None:
+        pyrit_backend.main(args=["--host", "0.0.0.0", "--port", "9000"])
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+        assert "0.0.0.0" in captured.err
+        assert "9000" in captured.err
+
+    @patch("uvicorn.run")
+    def test_main_no_warning_for_localhost(self, mock_run: MagicMock, capsys) -> None:
+        pyrit_backend.main(args=["--host", "localhost"])
+        captured = capsys.readouterr()
+        assert "WARNING" not in captured.err
+
+    @patch("uvicorn.run")
+    def test_main_no_warning_for_127_0_0_1(self, mock_run: MagicMock, capsys) -> None:
+        pyrit_backend.main(args=["--host", "127.0.0.1"])
+        captured = capsys.readouterr()
+        assert "WARNING" not in captured.err
+
 
 class TestParseArgsDoesNotAcceptLegacyFlags:
     """

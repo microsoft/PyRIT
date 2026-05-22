@@ -23,7 +23,7 @@ async def test_probe_health_returns_true_when_client_healthy():
     fake_client.__aenter__ = AsyncMock(return_value=fake_client)
     fake_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("pyrit.cli.api_client.PyRITApiClient", return_value=fake_client):
+    with patch("pyrit.cli._server_launcher.PyRITApiClient", return_value=fake_client):
         result = await ServerLauncher.probe_health_async(base_url="http://localhost:8000")
     assert result is True
     fake_client.health_check_async.assert_awaited_once()
@@ -35,7 +35,7 @@ async def test_probe_health_returns_false_when_client_unhealthy():
     fake_client.__aenter__ = AsyncMock(return_value=fake_client)
     fake_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("pyrit.cli.api_client.PyRITApiClient", return_value=fake_client):
+    with patch("pyrit.cli._server_launcher.PyRITApiClient", return_value=fake_client):
         result = await ServerLauncher.probe_health_async(base_url="http://localhost:8000")
     assert result is False
 
