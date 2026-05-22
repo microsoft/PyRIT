@@ -4,7 +4,7 @@
 import asyncio
 import base64
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -710,9 +710,13 @@ async def test_swap_user_audio_async_inserts_converted_then_deletes_original(tar
         converted_pcm=b"\xab" * 96,
     )
 
-    # Insert came first (item.create), then delete.
     connection.conversation.item.create.assert_awaited_once()
     connection.conversation.item.delete.assert_awaited_once_with(item_id="raw_swap_1")
+    # Insert must precede delete: any future refactor that swaps the order or runs them
+    # concurrently would corrupt the streaming session — pin the ordering here.
+    create_index = connection.method_calls.index(call.conversation.item.create(item=ANY))
+    delete_index = connection.method_calls.index(call.conversation.item.delete(item_id="raw_swap_1"))
+    assert create_index < delete_index
 
 
 async def test_swap_user_audio_async_logs_and_swallows_delete_failure(target, caplog):
@@ -730,6 +734,10 @@ async def test_swap_user_audio_async_logs_and_swallows_delete_failure(target, ca
 
     connection.conversation.item.create.assert_awaited_once()
     connection.conversation.item.delete.assert_awaited_once_with(item_id="raw_swap_fail")
+    # Even on delete failure, insert must have happened first.
+    create_index = connection.method_calls.index(call.conversation.item.create(item=ANY))
+    delete_index = connection.method_calls.index(call.conversation.item.delete(item_id="raw_swap_fail"))
+    assert create_index < delete_index
     assert any("delete failed for raw_swap_fail" in record.message for record in caplog.records)
 
 

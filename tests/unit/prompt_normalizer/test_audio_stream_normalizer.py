@@ -98,6 +98,22 @@ async def test_normalize_async_respects_data_type_filter():
     assert len(ids) == 1
 
 
+async def test_normalize_async_short_circuits_when_all_configs_filtered_out():
+    """When every config is text-only, skip the WAV round-trip entirely."""
+    normalizer = AudioStreamNormalizer()
+    text_only = _make_audio_converter(lambda pcm: bytes((b + 9) & 0xFF for b in pcm))
+
+    configs = [
+        PromptConverterConfiguration(converters=[text_only], prompt_data_types_to_apply=["text"]),
+    ]
+    pcm = b"\x00\x10\x20\x30"
+    out, ids = await normalizer.normalize_async(pcm_bytes=pcm, sample_rate=24000, converter_configurations=configs)
+
+    assert out == pcm  # bytes unchanged
+    assert ids == []
+    text_only.convert_tokens_async.assert_not_awaited()
+
+
 async def test_normalize_async_rejects_mismatched_sample_rate():
     """Converter output at a different sample rate must raise ValueError."""
     normalizer = AudioStreamNormalizer()

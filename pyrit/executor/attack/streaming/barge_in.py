@@ -232,7 +232,8 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
                     converted_pcm=converted_pcm,
                 )
 
-            turn_result = await self._drive_response_async(target=target, connection=connection, dispatcher=dispatcher)
+            turn_future = await target.request_response_async(connection=connection, dispatcher=dispatcher)
+            turn_result = await turn_future
 
             user_audio_pcm = converted_pcm if using_converted_audio else snapshot
             state.last_assistant_message = await self._persist_turn_async(
@@ -254,22 +255,6 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         snapshot = bytes(state.raw_buffer)
         state.raw_buffer.clear()
         return snapshot
-
-    async def _drive_response_async(
-        self,
-        *,
-        target: RealtimeTarget,
-        connection: Any,
-        dispatcher: RealtimeEventDispatcher,
-    ) -> RealtimeTargetResult:
-        """
-        Trigger ``response.create`` and await the resulting turn future.
-
-        Returns:
-            The completed ``RealtimeTargetResult`` for the assistant turn.
-        """
-        turn_future = await target.request_response_async(connection=connection, dispatcher=dispatcher)
-        return await turn_future
 
     def _build_result(
         self,

@@ -60,7 +60,17 @@ class AudioStreamNormalizer:
         Raises:
             ValueError: If converter output is not mono PCM16 at ``sample_rate``.
         """
-        if not converter_configurations or not pcm_bytes:
+        if not pcm_bytes:
+            return pcm_bytes, []
+
+        # Drop configs that don't target audio_path so we never enter the WAV bridge when
+        # nothing applicable will run (e.g. text-only converters configured on a streaming attack).
+        applicable_configs = [
+            config
+            for config in converter_configurations
+            if not config.prompt_data_types_to_apply or "audio_path" in config.prompt_data_types_to_apply
+        ]
+        if not applicable_configs:
             return pcm_bytes, []
 
         identifiers: list[ComponentIdentifier] = []
@@ -73,10 +83,7 @@ class AudioStreamNormalizer:
                 wav_out.setframerate(sample_rate)
                 wav_out.writeframes(pcm_bytes)
 
-            for config in converter_configurations:
-                if config.prompt_data_types_to_apply and "audio_path" not in config.prompt_data_types_to_apply:
-                    continue
-
+            for config in applicable_configs:
                 for converter in config.converters:
                     outer_context = get_execution_context()
                     with execution_context(
