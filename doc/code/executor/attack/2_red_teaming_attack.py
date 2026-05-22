@@ -57,6 +57,7 @@
 #
 # Note that for this to succeed, the `AttackAdversarialConfig` requires an LLM endpoint without serious content moderation or other kinds of safety filtering mechanisms. Success depends on the model and may not be achieved every time.
 #
+# %%
 import logging
 
 from pyrit.executor.attack import (
