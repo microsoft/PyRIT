@@ -174,8 +174,8 @@ class TestMossBenchDataset:
         # Metadata preserves over-type, attribute flags, harm indices, pid.
         for prompt in (text_prompt, image_prompt):
             assert prompt.metadata["pid"] == "1"
-            assert prompt.metadata["over_type"] == "exaggerated_risk"
-            assert prompt.metadata["over_type_label"] == "Exaggerated Risk"
+            assert prompt.metadata["oversensitivity_type"] == "exaggerated_risk"
+            assert prompt.metadata["oversensitivity_type_label"] == "Exaggerated Risk"
             assert prompt.metadata["human"] is False
             assert prompt.metadata["child"] is True
             assert prompt.metadata["syn"] is True
@@ -279,7 +279,7 @@ class TestMossBenchDataset:
         ):
             await dataset_loader.fetch_dataset_async(cache=False)
 
-    async def test_fetch_dataset_unknown_over_type_raises(self):
+    async def test_fetch_dataset_unknown_oversensitivity_type_raises(self):
         bad_example = _make_example(pid=1, over="type 99")
         mock_data = _make_information_json([bad_example])
         dataset_loader = _MossBenchDataset()

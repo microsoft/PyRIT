@@ -45,14 +45,14 @@ class MossBenchOversensitivityType(Enum):
 
 # Mapping from the raw ``metadata.over`` string in MOSSBench's information.json
 # to the loader's public enum.
-_RAW_OVER_TO_ENUM: dict[str, MossBenchOversensitivityType] = {
+_RAW_OVERSENSITIVITY_TO_ENUM: dict[str, MossBenchOversensitivityType] = {
     "type 1": MossBenchOversensitivityType.EXAGGERATED_RISK,
     "type 2": MossBenchOversensitivityType.NEGATED_HARM,
     "type 3": MossBenchOversensitivityType.COUNTERINTUITIVE_INTERPRETATION,
 }
 
 # Human-readable label per oversensitivity type (matches the paper).
-_OVER_TYPE_LABELS: dict[MossBenchOversensitivityType, str] = {
+_OVERSENSITIVITY_TYPE_LABELS: dict[MossBenchOversensitivityType, str] = {
     MossBenchOversensitivityType.EXAGGERATED_RISK: "Exaggerated Risk",
     MossBenchOversensitivityType.NEGATED_HARM: "Negated Harm",
     MossBenchOversensitivityType.COUNTERINTUITIVE_INTERPRETATION: "Counterintuitive Interpretation",
@@ -206,8 +206,8 @@ class _MossBenchDataset(_RemoteDatasetLoader):
 
         for example in examples:
             pid, question, image_filename = self._extract_required_fields(example)
-            over_type = self._parse_over_type(example)
-            if not self._matches_filters(over_type):
+            oversensitivity_type = self._parse_oversensitivity_type(example)
+            if not self._matches_filters(oversensitivity_type):
                 continue
 
             try:
@@ -216,7 +216,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
                     question=question,
                     image_filename=image_filename,
                     example=example,
-                    over_type=over_type,
+                    oversensitivity_type=oversensitivity_type,
                 )
             except Exception as e:
                 failed_image_count += 1
@@ -262,12 +262,12 @@ class _MossBenchDataset(_RemoteDatasetLoader):
             )
         return cast("Iterable[dict[str, Any]]", raw.values())
 
-    def _matches_filters(self, over_type: MossBenchOversensitivityType) -> bool:
+    def _matches_filters(self, oversensitivity_type: MossBenchOversensitivityType) -> bool:
         """
         Return whether an example passes the configured oversensitivity-type filter.
 
         Args:
-            over_type (MossBenchOversensitivityType): Parsed oversensitivity
+            oversensitivity_type (MossBenchOversensitivityType): Parsed oversensitivity
                 type for the candidate example.
 
         Returns:
@@ -275,7 +275,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         """
         if self.oversensitivity_types is None:
             return True
-        return over_type in self.oversensitivity_types
+        return oversensitivity_type in self.oversensitivity_types
 
     async def _build_prompt_pair_async(
         self,
@@ -284,7 +284,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         question: str,
         image_filename: str,
         example: dict[str, Any],
-        over_type: MossBenchOversensitivityType,
+        oversensitivity_type: MossBenchOversensitivityType,
     ) -> list[SeedPrompt]:
         """
         Build an image+text ``SeedPrompt`` pair for a single MOSSBench example.
@@ -297,8 +297,8 @@ class _MossBenchDataset(_RemoteDatasetLoader):
                 ``"42.png"``); joined onto ``IMAGE_BASE_URL`` to form the URL.
             example (dict[str, Any]): Single example dict from the upstream
                 ``information.json`` (used to extract attribute-flag metadata).
-            over_type (MossBenchOversensitivityType): Parsed oversensitivity
-                type for the example.
+            oversensitivity_type (MossBenchOversensitivityType): Parsed
+                oversensitivity type for the example.
 
         Returns:
             list[SeedPrompt]: A two-element list — the image prompt followed by
@@ -308,7 +308,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         Raises:
             Exception: If the image cannot be fetched.
         """
-        meta = self._extract_metadata(example=example, over_type=over_type)
+        meta = self._extract_metadata(example=example, oversensitivity_type=oversensitivity_type)
         group_id = uuid.uuid4()
         image_url = f"{self.IMAGE_BASE_URL}{image_filename}"
 
@@ -319,7 +319,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
             data_type="image_path",
             name=f"MOSSBench Image - {pid}",
             dataset_name=self.dataset_name,
-            harm_categories=[over_type.value],
+            harm_categories=[oversensitivity_type.value],
             description=self.DESCRIPTION,
             authors=list(self.AUTHORS),
             source=self.PAPER_URL,
@@ -333,7 +333,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
             data_type="text",
             name=f"MOSSBench Text - {pid}",
             dataset_name=self.dataset_name,
-            harm_categories=[over_type.value],
+            harm_categories=[oversensitivity_type.value],
             description=self.DESCRIPTION,
             authors=list(self.AUTHORS),
             source=self.PAPER_URL,
@@ -373,7 +373,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         return pid, question, image_filename
 
     @staticmethod
-    def _parse_over_type(example: dict[str, Any]) -> MossBenchOversensitivityType:
+    def _parse_oversensitivity_type(example: dict[str, Any]) -> MossBenchOversensitivityType:
         """
         Map the raw ``metadata.over`` string to a ``MossBenchOversensitivityType``.
 
@@ -390,19 +390,19 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         """
         meta = example.get("metadata") or {}
         raw_over = meta.get("over")
-        if raw_over not in _RAW_OVER_TO_ENUM:
-            valid = ", ".join(sorted(_RAW_OVER_TO_ENUM))
+        if raw_over not in _RAW_OVERSENSITIVITY_TO_ENUM:
+            valid = ", ".join(sorted(_RAW_OVERSENSITIVITY_TO_ENUM))
             raise ValueError(
                 f"MOSSBench example pid={example.get('pid', '?')} has unknown over type "
                 f"{raw_over!r}; expected one of: {valid}."
             )
-        return _RAW_OVER_TO_ENUM[raw_over]
+        return _RAW_OVERSENSITIVITY_TO_ENUM[raw_over]
 
     @staticmethod
     def _extract_metadata(
         *,
         example: dict[str, Any],
-        over_type: MossBenchOversensitivityType,
+        oversensitivity_type: MossBenchOversensitivityType,
     ) -> dict[str, Any]:
         """
         Build the per-seed metadata dict, preserving all upstream attribute flags.
@@ -410,12 +410,12 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         Args:
             example (dict[str, Any]): Single example dict from the upstream
                 ``information.json``.
-            over_type (MossBenchOversensitivityType): Parsed oversensitivity
-                type for the example.
+            oversensitivity_type (MossBenchOversensitivityType): Parsed
+                oversensitivity type for the example.
 
         Returns:
-            dict[str, Any]: Metadata dict including ``pid``, the over-type
-            slug + label, and the raw image-attribute flags
+            dict[str, Any]: Metadata dict including ``pid``, the
+            oversensitivity-type slug + label, and the raw image-attribute flags
             (``human``, ``child``, ``syn``, ``ocr``, ``harm_indices``).
         """
         meta = example.get("metadata") or {}
@@ -423,8 +423,8 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         harm_indices = [int(h) for h in harm_raw if isinstance(h, (int, float, str)) and str(h).lstrip("-").isdigit()]
         return {
             "pid": str(example["pid"]),
-            "over_type": over_type.value,
-            "over_type_label": _OVER_TYPE_LABELS[over_type],
+            "oversensitivity_type": oversensitivity_type.value,
+            "oversensitivity_type_label": _OVERSENSITIVITY_TYPE_LABELS[oversensitivity_type],
             "human": bool(meta.get("human", 0)),
             "child": bool(meta.get("child", 0)),
             "syn": bool(meta.get("syn", 0)),
