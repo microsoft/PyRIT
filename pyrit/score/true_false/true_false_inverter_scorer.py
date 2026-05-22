@@ -32,10 +32,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             raise ValueError("The scorer must be a true false scorer")
         self._scorer = scorer
 
-        # Reuse the inner scorer's validator so the inverter accepts (and rejects) the
-        # same inputs as its wrapped scorer. Using a default validator would mask
-        # validation mismatches and feed the inner scorer pieces it cannot handle.
-        super().__init__(validator=scorer._validator)
+        super().__init__(validator=ScorerPromptValidator())
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -72,14 +69,6 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         """
         Scores the piece using the underlying true-false scorer and returns the inverted score.
 
-        Calls the inner scorer's ``_score_async`` directly (not its public ``score_async``)
-        so the inner scorer's fallback does not fire before the inverter sees the result.
-        If the inner scorer produces no scores (e.g. the message was blocked or had an
-        unsupported data type), an empty list is returned so that the base ``score_async``
-        invokes this inverter's own ``_build_fallback_score`` (``False`` = "attack did not
-        succeed") instead of inverting the inner's fallback (which would yield ``True`` =
-        "attack succeeded", a misleading semantic for generic wrapped scorers).
-
         Args:
             message (Message): The message to score.
             objective (Optional[str]): The objective to evaluate against (the original attacker model's objective).
@@ -87,16 +76,13 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             role_filter (Optional[ChatMessageRole]): Optional filter for message roles. Defaults to None.
 
         Returns:
-            list[Score]: A list containing a single Score object with the inverted true/false value,
-                or an empty list when the inner scorer produced no scores.
+            list[Score]: A list containing a single Score object with the inverted true/false value.
         """
-        scores = await self._scorer._score_async(
+        scores = await self._scorer.score_async(
             message,
             objective=objective,
+            role_filter=role_filter,
         )
-
-        if not scores:
-            return []
 
         # TrueFalseScorers only have a single score
         inv_score = scores[0]
