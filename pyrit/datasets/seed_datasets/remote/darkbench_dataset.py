@@ -25,7 +25,7 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "medium"  # 660 prompts across 6 dark-pattern categories
+    size: str = "large"  # 660 prompts across 6 dark-pattern categories
     tags: frozenset[str] = frozenset({"default", "safety"})
 
     def __init__(

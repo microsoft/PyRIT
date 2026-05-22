@@ -25,7 +25,7 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "large"  # 440 base prompts + 9,240 with style mutations
+    size: str = "medium"  # 440 base prompts (style mutations not loaded by default)
     tags: frozenset[str] = frozenset({"safety", "jailbreak", "synthetic"})
 
     VALID_CATEGORIES = [

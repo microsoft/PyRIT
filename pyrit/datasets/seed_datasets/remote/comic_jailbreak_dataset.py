@@ -92,7 +92,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         "privacy",
     )
     modalities: tuple[str, ...] = ("text", "image")
-    size: str = "large"  # 300 goals × 5 templates
+    size: str = "large"  # 3501 image-text jailbreak prompts
     tags: frozenset[str] = frozenset({"safety", "multimodal"})
 
     def __init__(

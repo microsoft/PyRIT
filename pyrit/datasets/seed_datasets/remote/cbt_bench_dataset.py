@@ -30,7 +30,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "medium"  # ~146 core_fine_seed therapy seeds (default config)
+    size: str = "small"  # 20 core_fine_seed therapy seeds (default config)
     tags: frozenset[str] = frozenset({"safety", "medical"})
 
     def __init__(

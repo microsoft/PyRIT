@@ -25,7 +25,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "huge"  # 15k 'alert' + 30k 'alert_adversarial' prompts
+    size: str = "huge"  # 30968 prompts (default config)
     tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
 
     def __init__(

@@ -25,7 +25,7 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "large"  # ~1.8k medical-safety prompts (combined train+test+generated)
+    size: str = "huge"  # 76174 medical-safety prompts (combined train+test+generated)
     tags: frozenset[str] = frozenset({"safety", "medical"})
 
     def __init__(

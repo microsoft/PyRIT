@@ -26,7 +26,7 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "small"  # ~60 aggregated social-bias prompts
+    size: str = "huge"  # 40750 social-bias prompts (multi-turn expansion of source rows)
     tags: frozenset[str] = frozenset({"safety", "bias", "multiturn"})
 
     def __init__(

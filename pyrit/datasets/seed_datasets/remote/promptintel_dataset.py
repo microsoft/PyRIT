@@ -66,7 +66,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "medium"  # ~150-400 indicators (varies as registry grows)
+    size: str = "medium"  # indicator count varies with registry contents; gated by API key
     tags: frozenset[str] = frozenset({"safety", "jailbreak", "cybersecurity"})
 
     API_BASE_URL = "https://api.promptintel.novahunting.ai/api/v1"

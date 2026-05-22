@@ -105,7 +105,7 @@ class _ORBench80KDataset(_ORBenchBaseDataset):
         "OR-Bench 80K contains ~80k over-refusal prompts categorized into 10 rejection "
         "categories. This is the main comprehensive benchmark for evaluating LLM over-refusal."
     )
-    size: str = "huge"  # ~80k over-refusal prompts
+    size: str = "huge"  # 80359 over-refusal prompts
     should_register = True
 
     @property
@@ -127,7 +127,7 @@ class _ORBenchHardDataset(_ORBenchBaseDataset):
         "OR-Bench Hard-1K contains ~1k challenging safe prompts that commonly trigger "
         "over-refusal in language models. These prompts should be answerable without refusing."
     )
-    size: str = "large"  # ~1k challenging safe prompts
+    size: str = "large"  # 1319 challenging safe prompts
     should_register = True
 
     @property
@@ -150,7 +150,7 @@ class _ORBenchToxicDataset(_ORBenchBaseDataset):
         "OR-Bench Toxic contains toxic prompts that language models should correctly refuse. "
         "Used as a contrast set to evaluate refusal calibration."
     )
-    size: str = "large"  # ~600 toxic prompts for refusal calibration
+    size: str = "large"  # 655 toxic prompts for refusal calibration
     should_register = True
 
     @property

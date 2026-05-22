@@ -43,7 +43,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text", "image")
-    size: str = "small"  # 110 harmful multimodal behaviors
+    size: str = "medium"  # 220 harmful multimodal behaviors
     tags: frozenset[str] = frozenset({"safety", "jailbreak", "multimodal"})
 
     def __init__(

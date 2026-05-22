@@ -23,7 +23,7 @@ class _LLMLatentAdversarialTrainingDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "large"  # ~4.95k harmful prompts
+    size: str = "large"  # 4948 harmful prompts
     tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
 
     def __init__(

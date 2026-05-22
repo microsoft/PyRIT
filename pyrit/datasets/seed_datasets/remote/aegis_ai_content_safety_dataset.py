@@ -62,7 +62,7 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "huge"  # 33,416 annotated human-LLM interactions
+    size: str = "huge"  # 19093 annotated human-LLM interactions
     tags: frozenset[str] = frozenset({"default", "safety"})
 
     def __init__(

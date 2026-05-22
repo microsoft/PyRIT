@@ -41,7 +41,7 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "medium"  # ~300-1000 prompts per language
+    size: str = "medium"  # 987 prompts across multiple languages
     tags: frozenset[str] = frozenset({"safety", "multilingual"})
 
     def __init__(

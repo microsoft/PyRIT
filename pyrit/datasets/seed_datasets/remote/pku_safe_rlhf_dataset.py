@@ -25,7 +25,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "huge"  # ~297k prompt-response pairs across 19 harm categories
+    size: str = "huge"  # 73907 prompt-response pairs across 19 harm categories
     tags: frozenset[str] = frozenset({"default", "safety"})
 
     def __init__(

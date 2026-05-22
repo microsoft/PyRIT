@@ -30,7 +30,7 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "large"  # ~2k harmful questions by academic topic
+    size: str = "large"  # 1960 harmful questions by academic topic
     tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
 
     def __init__(

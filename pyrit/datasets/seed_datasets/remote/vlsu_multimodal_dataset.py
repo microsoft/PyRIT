@@ -52,7 +52,7 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text", "image")
-    size: str = "large"  # ~1.7k image-text safety annotations
+    size: str = "huge"  # 11074 image-text safety annotations
     tags: frozenset[str] = frozenset({"default", "safety", "multimodal"})
 
     def __init__(

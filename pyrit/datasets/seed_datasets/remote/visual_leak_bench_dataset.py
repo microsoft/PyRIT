@@ -71,7 +71,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
     )
 
     tags: frozenset[str] = frozenset({"default", "safety", "privacy"})
-    size: str = "large"
+    size: str = "large"  # 2000 image-text PII / OCR-injection prompts
     modalities: tuple[str, ...] = ("image", "text")
     harm_categories: tuple[str, ...] = ("privacy", "pii_leakage", "ocr_injection")
 

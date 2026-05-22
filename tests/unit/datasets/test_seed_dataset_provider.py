@@ -355,7 +355,7 @@ class TestMetadataParsingRemote:
         metadata = await loader._parse_metadata()
         assert metadata is not None
         assert metadata.tags == {"default", "safety"}
-        assert metadata.size == {"large"}
+        assert metadata.size == {"medium"}
         assert metadata.modalities == {"text"}
         assert metadata.harm_categories == {"cybercrime", "illegal", "harmful", "chemical_biological", "harassment"}
         # source_type is not declared as a class attribute on HarmBench;

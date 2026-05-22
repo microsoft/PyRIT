@@ -34,7 +34,7 @@ class _SaladBenchDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "huge"  # ~30k harmful questions across 6 domains, 16 tasks, 65+ categories
+    size: str = "huge"  # 21318 harmful questions across 6 domains, 16 tasks, 65+ categories
     tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
 
     def __init__(

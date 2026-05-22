@@ -34,7 +34,7 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "huge"  # ~10k real user-chatbot conversations from Chatbot Arena
+    size: str = "huge"  # 5082 real user-chatbot conversations from Chatbot Arena
     tags: frozenset[str] = frozenset({"default", "safety", "multiturn"})
 
     OPENAI_MODERATION_THRESHOLD: float = 0.8

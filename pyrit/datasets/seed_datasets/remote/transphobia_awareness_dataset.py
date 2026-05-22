@@ -36,7 +36,7 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "medium"  # ~140 Quora questions on transgender / non-binary topics
+    size: str = "medium"  # 300 Quora questions on transgender / non-binary topics
     tags: frozenset[str] = frozenset({"default", "safety", "bias"})
 
     RATINGS_URL = "https://zenodo.org/records/15482694/files/Ratings.xlsx?download=1"

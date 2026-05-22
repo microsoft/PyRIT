@@ -23,7 +23,7 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "small"  # ~100 censorship-sensitive prompts (single-language Mandarin)
+    size: str = "large"  # 1360 censorship-sensitive prompts (single-language Mandarin)
     tags: frozenset[str] = frozenset({"safety", "multilingual"})
 
     def __init__(

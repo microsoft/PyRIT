@@ -22,7 +22,7 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
     # Metadata
     harm_categories: list[str] = ["cybercrime", "illegal", "harmful", "chemical_biological", "harassment"]
     modalities: list[str] = ["text"]
-    size: str = "large"  # 504 seeds
+    size: str = "medium"  # 400 harmful behaviors
     tags: set[str] = {"default", "safety"}
 
     def __init__(

@@ -95,7 +95,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text", "image")
-    size: str = "large"  # ~1.9k image-instruction pairs across 4 categories
+    size: str = "large"  # 884 image-instruction pairs across 4 categories
     tags: frozenset[str] = frozenset({"safety", "multimodal"})
 
     def __init__(

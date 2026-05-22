@@ -33,7 +33,7 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "huge"  # 330k+ annotated prompt-response entries
+    size: str = "huge"  # 166382 annotated prompt-response entries (default config)
     tags: frozenset[str] = frozenset({"default", "safety"})
 
     def __init__(

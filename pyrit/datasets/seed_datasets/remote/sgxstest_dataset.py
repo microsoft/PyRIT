@@ -67,7 +67,7 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
         "safe targets",
     ]
     modalities: list[str] = ["text"]
-    size: str = "medium"  # 200 prompts
+    size: str = "small"  # 100 prompts
     tags: set[str] = {"safety", "multilingual"}
 
     def __init__(

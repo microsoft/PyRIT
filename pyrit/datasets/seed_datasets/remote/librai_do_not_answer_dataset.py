@@ -24,7 +24,7 @@ class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[str, ...] = ("text",)
-    size: str = "medium"  # ~939 prompts across multiple risk areas
+    size: str = "large"  # 939 prompts across multiple risk areas
     tags: frozenset[str] = frozenset({"default", "safety", "refusal"})
 
     def __init__(
