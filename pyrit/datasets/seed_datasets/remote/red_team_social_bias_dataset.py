@@ -24,6 +24,11 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
     Reference: [@vantaylor2024socialbias]
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "small"  # ~60 aggregated social-bias prompts
+    tags: frozenset[str] = frozenset({"safety", "bias", "multiturn"})
+
     def __init__(
         self,
         *,

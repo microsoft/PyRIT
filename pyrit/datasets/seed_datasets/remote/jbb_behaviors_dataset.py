@@ -24,6 +24,11 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
     before using these prompts against production LLMs.
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "small"  # 100 harmful behaviors across 10 categories
+    tags: frozenset[str] = frozenset({"safety", "jailbreak"})
+
     def __init__(
         self,
         *,

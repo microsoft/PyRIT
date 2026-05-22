@@ -22,6 +22,11 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
     Reference: [@jiang2025sosbench]
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "large"  # 3,000 hazard-focused scientific prompts across 6 domains
+    tags: frozenset[str] = frozenset({"safety", "medical", "cybersecurity"})
+
     def __init__(
         self,
         *,

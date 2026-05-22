@@ -28,6 +28,11 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
 
     HF_DATASET_NAME: str = "Bertievidgen/SimpleSafetyTests"
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "small"  # 100 critical safety test prompts
+    tags: frozenset[str] = frozenset({"safety"})
+
     def __init__(
         self,
         *,

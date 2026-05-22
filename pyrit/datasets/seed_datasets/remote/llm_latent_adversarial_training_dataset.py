@@ -21,6 +21,11 @@ class _LLMLatentAdversarialTrainingDataset(_RemoteDatasetLoader):
     Reference: [@sheshadri2024lat]
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "large"  # ~4.95k harmful prompts
+    tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
+
     def __init__(
         self,
         *,

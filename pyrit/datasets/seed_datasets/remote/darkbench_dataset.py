@@ -23,6 +23,11 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         - https://openreview.net/forum?id=odjMSBSWRt
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "medium"  # 660 prompts across 6 dark-pattern categories
+    tags: frozenset[str] = frozenset({"default", "safety"})
+
     def __init__(
         self,
         *,

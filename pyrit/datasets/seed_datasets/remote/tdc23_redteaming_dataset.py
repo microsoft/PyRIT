@@ -22,6 +22,11 @@ class _TDC23RedteamingDataset(_RemoteDatasetLoader):
     Reference: [@mazeika2023tdc]
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "small"  # 100 narrative-style harmful prompts
+    tags: frozenset[str] = frozenset({"safety", "jailbreak"})
+
     def __init__(
         self,
         *,

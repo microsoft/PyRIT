@@ -23,6 +23,11 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
     Paper: [@ji2024pkusaferlhf]
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "huge"  # ~297k prompt-response pairs across 19 harm categories
+    tags: frozenset[str] = frozenset({"default", "safety"})
+
     def __init__(
         self,
         *,

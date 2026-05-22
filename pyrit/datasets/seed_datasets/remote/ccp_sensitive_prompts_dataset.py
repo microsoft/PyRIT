@@ -21,6 +21,11 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
     Reference: [@promptfoo2025ccp]
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "small"  # ~100 censorship-sensitive prompts (single-language Mandarin)
+    tags: frozenset[str] = frozenset({"safety", "multilingual"})
+
     def __init__(
         self,
         *,

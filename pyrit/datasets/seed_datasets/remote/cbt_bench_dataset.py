@@ -28,6 +28,11 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
         - [@zhang2024cbtbench]
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "medium"  # ~146 core_fine_seed therapy seeds (default config)
+    tags: frozenset[str] = frozenset({"safety", "medical"})
+
     def __init__(
         self,
         *,

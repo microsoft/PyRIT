@@ -39,6 +39,11 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
         "Tagalog": "tgl",
     }
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "medium"  # ~300-1000 prompts per language
+    tags: frozenset[str] = frozenset({"safety", "multilingual"})
+
     def __init__(
         self,
         *,

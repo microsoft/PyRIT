@@ -24,6 +24,11 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
     Reference: [@pfohl2024equitymedqa]
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "medium"  # ~300 prompts across 11 medical-bias subsets
+    tags: frozenset[str] = frozenset({"safety", "bias", "medical"})
+
     DATA_SUBSETS: list[str] = [
         "cc_llm",
         "cc_manual",

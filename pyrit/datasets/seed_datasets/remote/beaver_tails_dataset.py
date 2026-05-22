@@ -31,6 +31,11 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
 
     HF_DATASET_NAME: str = "PKU-Alignment/BeaverTails"
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "huge"  # 330k+ annotated prompt-response entries
+    tags: frozenset[str] = frozenset({"default", "safety"})
+
     def __init__(
         self,
         *,

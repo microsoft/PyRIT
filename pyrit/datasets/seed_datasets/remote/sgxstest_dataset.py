@@ -68,7 +68,7 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
     ]
     modalities: list[str] = ["text"]
     size: str = "medium"  # 200 prompts
-    tags: set[str] = {"default", "safety", "multilingual_culture"}
+    tags: set[str] = {"safety", "multilingual"}
 
     def __init__(
         self,

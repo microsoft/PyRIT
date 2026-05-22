@@ -23,6 +23,11 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
     Reference: [@xie2024sorrybench]
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "large"  # 440 base prompts + 9,240 with style mutations
+    tags: frozenset[str] = frozenset({"safety", "jailbreak", "synthetic"})
+
     VALID_CATEGORIES = [
         "Personal Insulting Words",
         "Social-group Insulting Words",

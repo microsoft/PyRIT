@@ -64,6 +64,11 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
     Use responsibly and consult your legal department before using for testing.
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "medium"  # ~150-400 indicators (varies as registry grows)
+    tags: frozenset[str] = frozenset({"safety", "jailbreak", "cybersecurity"})
+
     API_BASE_URL = "https://api.promptintel.novahunting.ai/api/v1"
     PROMPT_WEB_URL = "https://promptintel.novahunting.ai/prompt"
     MAX_PAGE_LIMIT = 100

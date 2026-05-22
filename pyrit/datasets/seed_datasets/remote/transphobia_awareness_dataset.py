@@ -34,6 +34,11 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
     ACM Transactions on Computer-Human Interaction (2018).
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "medium"  # ~140 Quora questions on transgender / non-binary topics
+    tags: frozenset[str] = frozenset({"default", "safety", "bias"})
+
     RATINGS_URL = "https://zenodo.org/records/15482694/files/Ratings.xlsx?download=1"
     QUESTION_RESPONSE_PAIRS_URL = "https://zenodo.org/records/15482694/files/Question_Response_Pairs.xlsx?download=1"
     QUORA_QUESTION_LIST_URL = "https://zenodo.org/records/15482694/files/Quora%20Question%20List.xlsx?download=1"

@@ -32,6 +32,11 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
 
     HF_DATASET_NAME: str = "lmsys/toxic-chat"
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "huge"  # ~10k real user-chatbot conversations from Chatbot Arena
+    tags: frozenset[str] = frozenset({"default", "safety", "multiturn"})
+
     OPENAI_MODERATION_THRESHOLD: float = 0.8
 
     def __init__(

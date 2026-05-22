@@ -50,6 +50,11 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
     Reference: [@palaskar2025vlsu]
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text", "image")
+    size: str = "large"  # ~1.7k image-text safety annotations
+    tags: frozenset[str] = frozenset({"default", "safety", "multimodal"})
+
     def __init__(
         self,
         *,

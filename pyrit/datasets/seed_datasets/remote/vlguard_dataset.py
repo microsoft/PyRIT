@@ -93,6 +93,11 @@ class _VLGuardDataset(_RemoteDatasetLoader):
     Paper: Safety Fine-Tuning at (Almost) No Cost: A Baseline for Vision Large Language Models (ICML 2024)
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text", "image")
+    size: str = "large"  # ~1.9k image-instruction pairs across 4 categories
+    tags: frozenset[str] = frozenset({"safety", "multimodal"})
+
     def __init__(
         self,
         *,

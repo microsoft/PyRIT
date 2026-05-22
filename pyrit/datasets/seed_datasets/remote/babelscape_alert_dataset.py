@@ -23,6 +23,11 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
     Reference: [@tedeschi2024alert]
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "huge"  # 15k 'alert' + 30k 'alert_adversarial' prompts
+    tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
+
     def __init__(
         self,
         *,

@@ -41,6 +41,11 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
     Paper: [@mazeika2024harmbench]
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text", "image")
+    size: str = "small"  # 110 harmful multimodal behaviors
+    tags: frozenset[str] = frozenset({"safety", "jailbreak", "multimodal"})
+
     def __init__(
         self,
         *,

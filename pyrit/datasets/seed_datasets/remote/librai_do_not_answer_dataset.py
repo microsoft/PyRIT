@@ -22,6 +22,11 @@ class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
     GitHub: https://github.com/libr-ai/do-not-answer
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "medium"  # ~939 prompts across multiple risk areas
+    tags: frozenset[str] = frozenset({"default", "safety", "refusal"})
+
     def __init__(
         self,
         *,

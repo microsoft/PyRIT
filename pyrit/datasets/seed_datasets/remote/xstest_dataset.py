@@ -21,6 +21,11 @@ class _XSTestDataset(_RemoteDatasetLoader):
     Reference: https://github.com/paul-rottger/exaggerated-safety
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "medium"  # 450 safe + unsafe contrast prompts
+    tags: frozenset[str] = frozenset({"default", "safety", "refusal"})
+
     def __init__(
         self,
         *,

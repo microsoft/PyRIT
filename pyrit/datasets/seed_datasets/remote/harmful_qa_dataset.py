@@ -28,6 +28,11 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
 
     HF_DATASET_NAME: str = "declare-lab/HarmfulQA"
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "large"  # ~2k harmful questions by academic topic
+    tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
+
     def __init__(
         self,
         *,

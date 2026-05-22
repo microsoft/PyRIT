@@ -25,6 +25,11 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
     Website: https://jailbreak-llms.xinyueshen.me/
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "medium"  # 390 questions (13 scenarios x 30 questions)
+    tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
+
     def __init__(
         self,
         *,

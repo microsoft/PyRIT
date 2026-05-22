@@ -23,6 +23,11 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
     Paper: [@vidgen2024ailuminate]
     """
 
+    # Metadata
+    modalities: tuple[str, ...] = ("text",)
+    size: str = "large"  # 1,200 hazard-category prompts
+    tags: frozenset[str] = frozenset({"default", "safety"})
+
     HAZARD_CATEGORIES_MAP = {
         "vcr": "Violent Crimes",
         "src": "Sex-Related Crimes",
