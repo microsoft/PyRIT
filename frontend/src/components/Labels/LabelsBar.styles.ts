@@ -21,11 +21,6 @@ export const useLabelsBarStyles = makeStyles({
     whiteSpace: 'nowrap',
     minWidth: 'max-content',
   },
-  inlineAddButton: {
-    flexShrink: 0,
-    minWidth: 'auto',
-    padding: `2px ${tokens.spacingHorizontalXS}`,
-  },
   labelsContainer: {
     display: 'flex',
     alignItems: 'center',

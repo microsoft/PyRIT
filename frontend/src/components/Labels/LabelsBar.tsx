@@ -10,7 +10,6 @@ import {
   PopoverSurface,
 } from '@fluentui/react-components'
 import {
-  AddRegular,
   DismissRegular,
   WarningRegular,
   TagRegular,
@@ -189,8 +188,6 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     check()
     return () => observer.disconnect()
   }, [labelEntries])
-
-  const allFit = visibleCount === Infinity || visibleCount >= labelEntries.length
 
   const renderLabelBadge = (key: string, value: string, idx: number) => {
     const isDummy = isDummyValue(key, value)
@@ -434,19 +431,6 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
         {labelEntries
           .slice(0, visibleCount === Infinity ? labelEntries.length : visibleCount)
           .map(([key, value], idx) => renderLabelBadge(key, value, idx))}
-        {allFit && labelEntries.length > 0 && (
-          <Tooltip content="Add a label" relationship="label">
-            <Button
-              appearance="subtle"
-              size="small"
-              icon={<AddRegular />}
-              aria-label="Add a label"
-              data-testid="add-label-btn"
-              onClick={() => { setIsPopoverOpen(true); setError('') }}
-              className={styles.inlineAddButton}
-            />
-          </Tooltip>
-        )}
       </div>
     </div>
   )

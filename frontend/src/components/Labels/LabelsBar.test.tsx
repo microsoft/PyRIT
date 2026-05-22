@@ -95,7 +95,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -122,7 +122,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -150,7 +150,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -224,7 +224,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -245,7 +245,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -340,7 +340,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -366,7 +366,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -403,7 +403,7 @@ describe('LabelsBar', () => {
       expect(mockedLabelsApi.getLabels).toHaveBeenCalled()
     })
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
@@ -433,7 +433,7 @@ describe('LabelsBar', () => {
       expect(mockedLabelsApi.getLabels).toHaveBeenCalled()
     })
 
-    fireEvent.click(screen.getByTestId('add-label-btn'))
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
       expect(screen.getByTestId('new-label-key')).toBeInTheDocument()

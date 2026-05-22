@@ -111,6 +111,7 @@ export default function TargetBadge({ target }: TargetBadgeProps) {
         className={styles.badge}
         data-testid="target-badge"
         aria-label={`Active target: ${target.target_registry_name}`}
+        tabIndex={0}
       >
         <Text className={styles.badgeText} size={200} weight="semibold">
           {displayName}
