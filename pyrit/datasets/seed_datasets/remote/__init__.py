@@ -30,6 +30,9 @@ from pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset import (
     ComicJailbreakTemplateConfig,
     _ComicJailbreakDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.dangerous_qa_dataset import (
+    _DangerousQADataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.darkbench_dataset import (
     _DarkBenchDataset,
 )  # noqa: F401
@@ -152,6 +155,7 @@ __all__ = [
     "_ComicJailbreakDataset",
     "COMIC_JAILBREAK_TEMPLATES",
     "ComicJailbreakTemplateConfig",
+    "_DangerousQADataset",
     "_DarkBenchDataset",
     "_EquityMedQADataset",
     "_ForbiddenQuestionsDataset",

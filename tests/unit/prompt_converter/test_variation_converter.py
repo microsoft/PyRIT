@@ -54,11 +54,60 @@ async def test_variation_converter_send_prompt_async_bad_json_exception_retries(
 
         mock_create.return_value = [message]
 
-        with pytest.raises(InvalidJsonException):
-            await prompt_variation.convert_async(prompt="testing", input_type="text")
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            with pytest.raises(InvalidJsonException):
+                await prompt_variation.convert_async(prompt="testing", input_type="text")
 
         # RETRY_MAX_NUM_ATTEMPTS is set to 2 in conftest.py
         assert mock_create.call_count == 2
+
+
+async def test_variation_converter_extracts_first_element_from_json_list(sqlite_instance):
+    prompt_target = MockPromptTarget()
+    prompt_variation = VariationConverter(converter_target=prompt_target)
+
+    response = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                conversation_id="test-id",
+                original_value='["first variation", "second variation"]',
+                original_value_data_type="text",
+                prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
+                sequence=1,
+            )
+        ]
+    )
+    with patch.object(prompt_target, "send_prompt_async", new=AsyncMock(return_value=[response])):
+        result = await prompt_variation.convert_async(prompt="testing")
+    assert result.output_text == "first variation"
+
+
+async def test_variation_converter_preserves_original_and_converted_values(sqlite_instance):
+    prompt_target = MockPromptTarget()
+    prompt_variation = VariationConverter(converter_target=prompt_target)
+
+    response = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                conversation_id="test-id",
+                original_value='["variation"]',
+                original_value_data_type="text",
+                prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
+                sequence=1,
+            )
+        ]
+    )
+    with patch.object(prompt_target, "send_prompt_async", new=AsyncMock(return_value=[response])) as mock_send:
+        await prompt_variation.convert_async(prompt="hello world")
+
+    sent_message = mock_send.call_args[1]["message"]
+    piece = sent_message.message_pieces[0]
+    assert piece.original_value == "hello world"
+    assert "hello world" in piece.converted_value
+    assert "=== begin ===" in piece.converted_value
+    assert "=== end ===" in piece.converted_value
 
 
 def test_variation_converter_input_supported(sqlite_instance):
