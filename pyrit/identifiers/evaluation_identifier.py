@@ -26,8 +26,8 @@ from typing import Any, ClassVar, Optional
 from pyrit.identifiers.component_identifier import ComponentIdentifier, config_hash
 
 # Behavioral params that define model output quality for scoring.
-TARGET_BEHAVIORAL_PARAMS: frozenset[str] = frozenset({"underlying_model_name", "temperature", "top_p"})
-TARGET_BEHAVIORAL_PARAM_FALLBACKS: dict[str, str] = {"underlying_model_name": "model_name"}
+TARGET_EVAL_PARAMS: frozenset[str] = frozenset({"underlying_model_name", "temperature", "top_p"})
+TARGET_EVAL_PARAM_FALLBACKS: dict[str, str] = {"underlying_model_name": "model_name"}
 
 
 @dataclass(frozen=True)
@@ -261,8 +261,8 @@ class ScorerEvaluationIdentifier(EvaluationIdentifier):
 
     CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]] = {
         "prompt_target": ChildEvalRule(
-            included_params=TARGET_BEHAVIORAL_PARAMS,
-            param_fallbacks=TARGET_BEHAVIORAL_PARAM_FALLBACKS,
+            included_params=TARGET_EVAL_PARAMS,
+            param_fallbacks=TARGET_EVAL_PARAM_FALLBACKS,
             inner_child_name="targets",
         ),
     }
@@ -293,8 +293,8 @@ class AtomicAttackEvaluationIdentifier(EvaluationIdentifier):
             inner_child_name="targets",
         ),
         "adversarial_chat": ChildEvalRule(
-            included_params=TARGET_BEHAVIORAL_PARAMS,
-            param_fallbacks=TARGET_BEHAVIORAL_PARAM_FALLBACKS,
+            included_params=TARGET_EVAL_PARAMS,
+            param_fallbacks=TARGET_EVAL_PARAM_FALLBACKS,
         ),
         "objective_scorer": ChildEvalRule(exclude=True),
         "seed_identifiers": ChildEvalRule(exclude=True),

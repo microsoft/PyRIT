@@ -5,7 +5,7 @@ import itertools
 import logging
 from typing import Any
 
-from pyrit.identifiers import TARGET_BEHAVIORAL_PARAM_FALLBACKS, TARGET_BEHAVIORAL_PARAMS, ComponentIdentifier
+from pyrit.identifiers import TARGET_EVAL_PARAM_FALLBACKS, TARGET_EVAL_PARAMS, ComponentIdentifier
 from pyrit.models import Message
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS
@@ -35,6 +35,7 @@ class RoundRobinTarget(PromptTarget):
     Memory entries are stamped with the round-robin's own identifier (not the
     inner target's). The inner target that handled each specific request is
     recorded in ``prompt_metadata["inner_target_identifier"]`` for traceability.
+
     The eval hash (used for scorer evaluation grouping) unwraps through the
     round-robin to the inner target's behavioral params, so evaluation results
     are comparable whether a round-robin or direct target is used.
@@ -66,9 +67,10 @@ class RoundRobinTarget(PromptTarget):
 
         Raises:
             ValueError: If fewer than 2 targets are provided, targets are
-                different classes, weights length doesn't match, weights contain
-                non-positive values, inner targets have different configurations,
-                or targets lack required capabilities.
+                different classes, a nested RoundRobinTarget is detected,
+                weights length doesn't match, weights contain non-positive
+                values, inner targets have different configurations, or
+                targets lack required capabilities.
         """
         if len(targets) < 2:
             raise ValueError(f"RoundRobinTarget requires at least 2 targets, got {len(targets)}.")
@@ -100,7 +102,7 @@ class RoundRobinTarget(PromptTarget):
             custom_configuration=targets[0].configuration,
         )
 
-        # Validate that the intersected capabilities meet chat target requirements
+        # Validate that the adopted capabilities meet chat target requirements
         # (multi-turn + editable history).
         CHAT_TARGET_REQUIREMENTS.validate(target=self)
 
@@ -182,8 +184,7 @@ class RoundRobinTarget(PromptTarget):
         """
         Build the identifier for this round-robin target.
 
-        Includes the weights as a behavioral parameter and all inner target
-        identifiers as children.
+        Includes the weights and all inner target identifiers as children.
 
         Returns:
             ComponentIdentifier: The identifier for this target.
@@ -248,15 +249,15 @@ def _validate_behavioral_consistency(targets: list[PromptTarget]) -> None:
 
     def _resolve_param(identifier: ComponentIdentifier, param: str) -> Any:
         value = identifier.params.get(param)
-        if (value is None or value == "") and param in TARGET_BEHAVIORAL_PARAM_FALLBACKS:
-            value = identifier.params.get(TARGET_BEHAVIORAL_PARAM_FALLBACKS[param])
+        if (value is None or value == "") and param in TARGET_EVAL_PARAM_FALLBACKS:
+            value = identifier.params.get(TARGET_EVAL_PARAM_FALLBACKS[param])
         return value
 
-    reference = {p: _resolve_param(first_id, p) for p in TARGET_BEHAVIORAL_PARAMS}
+    reference = {p: _resolve_param(first_id, p) for p in TARGET_EVAL_PARAMS}
 
     for i, t in enumerate(targets[1:], start=1):
         t_id = t.get_identifier()
-        for param in TARGET_BEHAVIORAL_PARAMS:
+        for param in TARGET_EVAL_PARAMS:
             actual = _resolve_param(t_id, param)
             if actual != reference[param]:
                 raise ValueError(
