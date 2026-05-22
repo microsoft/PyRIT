@@ -293,9 +293,7 @@ red_teaming_attack = RedTeamingAttack(
 )
 
 result = await red_teaming_attack.execute_async(objective=objective, memory_labels={"harm_category": "illegal"})  # type: ignore
-await output_attack_async().print_result_async(  # type: ignore
-    result=result, include_adversarial_conversation=True
-)
+await output_attack_async(result, include_adversarial_conversation=True)
 
 # %% [markdown]
 # ## Displaying Results with Better Formatting
