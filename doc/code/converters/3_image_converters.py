@@ -21,7 +21,7 @@
 # - **[Image to Image](#image-to-image)**: Modify or transform existing images
 
 # %% [markdown]
-# <a id="text-to-image"></a>
+# (text-to-image)=
 # ## Text to Image
 #
 # ### QRCodeConverter
@@ -76,7 +76,7 @@ image = Image.open(image_path)
 display(image)
 
 # %% [markdown]
-# <a id="image-to-image"></a>
+# (image-to-image)=
 # ## Image to Image
 #
 # ### AddTextImageConverter

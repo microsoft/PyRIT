@@ -154,14 +154,18 @@ test.describe("Application Smoke Tests", () => {
   });
 
   test("should display PyRIT header", async ({ page }) => {
+    await expect(page.getByTitle("Chat")).toBeVisible({ timeout: 10000 });
+    await page.getByTitle("Chat").click();
     await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 10000 });
   });
 
   test("should have New Attack button", async ({ page }) => {
+    await page.getByTitle("Chat").click();
     await expect(page.getByRole("button", { name: /new attack/i })).toBeVisible();
   });
 
   test("should show 'no target' hint when no target is active", async ({ page }) => {
+    await page.getByTitle("Chat").click();
     await expect(page.getByTestId("no-target-banner")).toBeVisible();
   });
 });
@@ -169,7 +173,7 @@ test.describe("Application Smoke Tests", () => {
 test.describe("Theme Toggle", () => {
   test("should toggle dark/light theme", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTitle("Chat")).toBeVisible({ timeout: 10000 });
 
     // The app defaults to dark mode, so the toggle button title should say "Light Mode"
     const themeBtn = page.getByTitle("Light Mode");
@@ -293,6 +297,7 @@ test.describe("Multiple Messages", () => {
 test.describe("Chat without target", () => {
   test("should disable input when no target is active", async ({ page }) => {
     await page.goto("/");
+    await page.getByTitle("Chat").click();
 
     // The no-target-banner should be visible because no target is active
     await expect(page.getByTestId("no-target-banner")).toBeVisible();

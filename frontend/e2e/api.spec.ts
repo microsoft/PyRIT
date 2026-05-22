@@ -141,6 +141,6 @@ test.describe("Error Handling", () => {
     await page.goto("/");
 
     // UI should be responsive even while APIs are delayed
-    await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTitle("Chat")).toBeVisible({ timeout: 10000 });
   });
 });
