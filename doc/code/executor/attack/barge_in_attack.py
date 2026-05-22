@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.18.1
 # ---
 
 # %% [markdown]
@@ -87,7 +87,7 @@ converters = PromptConverterConfiguration.from_converters(converters=[AudioFrequ
 # %% [markdown]
 # ## Section 1: Single-turn streaming with a converter
 #
-# Streams one user utterance, applies a frequency-shift converter after VAD commits the turn,
+# Streams one user statement, applies a frequency-shift converter after VAD commits the turn,
 # and gets the model's response. Exercises the full pipeline (chunk push, convert-on-commit,
 # item swap, response trigger, memory persistence) without barge-in.
 
