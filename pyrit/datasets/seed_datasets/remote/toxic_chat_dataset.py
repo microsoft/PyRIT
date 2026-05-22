@@ -83,7 +83,7 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
 
         return categories
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch ToxicChat dataset from HuggingFace and return as SeedDataset.
 

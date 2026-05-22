@@ -8,7 +8,6 @@ This module provides the Scenario class that orchestrates the execution of multi
 AtomicAttack instances sequentially, enabling comprehensive security testing campaigns.
 """
 
-import asyncio
 import copy
 import json
 import logging
@@ -25,10 +24,11 @@ from tqdm.auto import tqdm
 from pyrit.common import REQUIRED_VALUE, Parameter, apply_defaults
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.parameter import coerce_value, validate_param_type
+from pyrit.common.utils import to_sha256
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
-from pyrit.models import AttackResult, SeedAttackGroup
+from pyrit.models import AttackOutcome, AttackResult, SeedAttackGroup
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
@@ -55,13 +55,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class BaselinePolicy(Enum):
+class BaselineAttackPolicy(Enum):
     """
     Declares how a scenario type treats the default baseline atomic attack.
 
     The baseline is a plain ``PromptSendingAttack`` that sends each objective unmodified,
     used as a comparison point against the scenario's strategies. Each scenario class
-    declares its policy via ``Scenario.BASELINE_POLICY``; callers can still override
+    declares its policy via ``Scenario.BASELINE_ATTACK_POLICY``; callers can still override
     at runtime via ``initialize_async(include_baseline=...)`` for the ``Enabled`` and
     ``Disabled`` states.
     """
@@ -145,7 +145,7 @@ class Scenario(ABC):
     #: ``initialize_async`` and overridable per run via ``include_baseline`` for the
     #: ``Enabled`` and ``Disabled`` states; ``Forbidden`` is a hard constraint and a
     #: caller-supplied ``include_baseline=True`` raises ``ValueError``.
-    BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Enabled
+    BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
 
     @classmethod
     def _get_additional_scoring_questions(cls) -> Sequence[Path]:
@@ -218,14 +218,9 @@ class Scenario(ABC):
         self._memory = CentralMemory.get_memory_instance()
         self._atomic_attacks: list[AtomicAttack] = []
         self._scenario_result_id: Optional[str] = str(scenario_result_id) if scenario_result_id else None
-        self._result_lock = asyncio.Lock()
 
         # Store prepared strategies for use in _get_atomic_attacks_async
         self._scenario_strategies: list[ScenarioStrategy] = []
-
-        # Store original objectives for each atomic attack (before any mutations)
-        # Key: atomic_attack_name, Value: tuple of original objectives
-        self._original_objectives_map: dict[str, tuple[str, ...]] = {}
 
         # Maps atomic_attack_name → display_group for user-facing aggregation
         self._display_group_map: dict[str, str] = {}
@@ -621,14 +616,14 @@ class Scenario(ABC):
             include_baseline (bool | None): Whether to prepend a baseline atomic attack that sends
                 all objectives without modifications, allowing comparison between unmodified prompts
                 and the scenario's strategies. If None (the default), the scenario type's
-                ``BASELINE_POLICY`` class attribute decides: ``Enabled`` includes it,
+                ``BASELINE_ATTACK_POLICY`` class attribute decides: ``Enabled`` includes it,
                 ``Disabled`` omits it, and ``Forbidden`` always omits it (and rejects an
-                explicit ``True``). Passing ``True`` to a scenario whose ``BASELINE_POLICY``
+                explicit ``True``). Passing ``True`` to a scenario whose ``BASELINE_ATTACK_POLICY``
                 is ``Forbidden`` raises ``ValueError``.
 
         Raises:
             ValueError: If no objective_target is provided, or if ``include_baseline=True`` is passed
-                to a scenario whose ``BASELINE_POLICY`` is ``Forbidden``.
+                to a scenario whose ``BASELINE_ATTACK_POLICY`` is ``Forbidden``.
         """
         # Validate required parameters
         if objective_target is None:
@@ -657,15 +652,15 @@ class Scenario(ABC):
         # scenario type never silently inherits a True default; explicit-True on a forbidden
         # type is a hard error rather than a silent ignore. For the Enabled / Disabled states,
         # a None runtime value defers to the policy.
-        if self.BASELINE_POLICY is BaselinePolicy.Forbidden:
+        if self.BASELINE_ATTACK_POLICY is BaselineAttackPolicy.Forbidden:
             if include_baseline is True:
                 raise ValueError(
                     f"{type(self).__name__} does not support a default baseline "
-                    f"(BASELINE_POLICY = Forbidden); pass include_baseline=False or omit the argument."
+                    f"(BASELINE_ATTACK_POLICY = Forbidden); pass include_baseline=False or omit the argument."
                 )
             include_baseline = False
         elif include_baseline is None:
-            include_baseline = self.BASELINE_POLICY is BaselinePolicy.Enabled
+            include_baseline = self.BASELINE_ATTACK_POLICY is BaselineAttackPolicy.Enabled
 
         self._include_baseline = include_baseline
 
@@ -699,11 +694,6 @@ class Scenario(ABC):
                 seed_groups = self._dataset_config.get_all_seed_attack_groups()
             self._atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=seed_groups))
 
-        # Store original objectives for each atomic attack (before any mutations during execution)
-        self._original_objectives_map = {
-            atomic_attack.atomic_attack_name: tuple(atomic_attack.objectives) for atomic_attack in self._atomic_attacks
-        }
-
         # Snapshot params onto the identifier before the resume branch so the identifier
         # is fully populated regardless of which branch we take. Deep-copy avoids sharing
         # mutable state with self.params.
@@ -724,6 +714,7 @@ class Scenario(ABC):
                 )
 
             self._validate_stored_scenario(stored_result=existing_results[0])
+            self._apply_persisted_objectives(stored_result=existing_results[0])
             return  # Valid resume - skip creating new scenario result
 
         # Build display group mapping from atomic attacks
@@ -742,11 +733,83 @@ class Scenario(ABC):
             attack_results=attack_results,
             scenario_run_state="CREATED",
             display_group_map=self._display_group_map,
+            metadata=self._build_initial_scenario_metadata(),
         )
 
         self._memory.add_scenario_results_to_memory(scenario_results=[result])
         self._scenario_result_id = str(result.id)
         logger.info(f"Created new scenario result with ID: {self._scenario_result_id}")
+
+    def _build_initial_scenario_metadata(self) -> dict[str, Any]:
+        """
+        Build the metadata dict persisted with a freshly-created ``ScenarioResult``.
+
+        When ``max_dataset_size`` is in effect, the dataset config draws an
+        unseeded ``random.sample`` and the chosen subset would silently change
+        on the next run (e.g. a resume). To make resume reliable, snapshot the
+        chosen objective hashes here so the next ``_setup_scenario_async`` can
+        replay them via ``keep_seed_groups_with_hashes``.
+
+        When ``max_dataset_size`` is not set, the sample equals the dataset and
+        nothing needs pinning; the dict is empty.
+
+        Returns:
+            dict[str, Any]: Metadata payload for the new ScenarioResult.
+        """
+        metadata: dict[str, Any] = {}
+        if getattr(self._dataset_config, "max_dataset_size", None) is None:
+            return metadata
+        hashes: list[str] = []
+        seen: set[str] = set()
+        for aa in self._atomic_attacks:
+            for sg in aa.seed_groups:
+                if sg.objective is None:
+                    continue
+                sha = to_sha256(sg.objective.value)
+                if sha not in seen:
+                    seen.add(sha)
+                    hashes.append(sha)
+        metadata["objective_hashes"] = hashes
+        return metadata
+
+    def _apply_persisted_objectives(self, *, stored_result: ScenarioResult) -> None:
+        """
+        On resume, replay the originally-sampled objective subset.
+
+        When the first run used ``max_dataset_size``, the chosen subset was
+        recorded in ``ScenarioResult.metadata["objective_hashes"]``.
+        Restrict each atomic attack's freshly-resolved seed_groups to that set
+        so a fresh ``random.sample`` draw on resume can't silently shift which
+        objectives the scenario operates on. If any persisted hash is no longer
+        present in the dataset, refuse to resume — running a smaller subset
+        than the user committed to would silently produce different results.
+
+        Args:
+            stored_result (ScenarioResult): The scenario result loaded from memory.
+
+        Raises:
+            ValueError: If any persisted objective hash is missing from the
+                currently-resolved dataset.
+        """
+        metadata = stored_result.metadata or {}
+        persisted = metadata.get("objective_hashes")
+        if not persisted:
+            return
+
+        persisted_hashes: set[str] = set(persisted)
+        retained: set[str] = set()
+        for aa in self._atomic_attacks:
+            retained |= aa.keep_seed_groups_with_hashes(hashes=persisted_hashes)
+
+        missing = persisted_hashes - retained
+        if missing:
+            sample = sorted(missing)[:3]
+            raise ValueError(
+                f"Scenario result id '{self._scenario_result_id}' cannot resume: "
+                f"{len(missing)} persisted objective hash(es) are no longer present in the dataset "
+                f"(missing examples: {', '.join(h[:12] + '...' for h in sample)}). "
+                f"Either restore the missing objectives or drop scenario_result_id to start a new scenario."
+            )
 
     def _build_baseline_atomic_attack(self, *, seed_groups: list[SeedAttackGroup]) -> AtomicAttack:
         """
@@ -847,45 +910,69 @@ class Scenario(ABC):
             f"(ID: {self._scenario_result_id}, state: {stored_result.scenario_run_state})"
         )
 
-    def _get_completed_objectives_for_attack(self, *, atomic_attack_name: str) -> set[str]:
+    def _get_completed_objective_hashes_for_attack(self, *, atomic_attack: AtomicAttack) -> set[str]:
         """
-        Get the set of objectives that have already been completed for a specific atomic attack.
+        Return the set of ``objective_sha256`` values already completed (non-error)
+        for a specific atomic attack inside this scenario.
+
+        Queries ``AttackResultEntry`` rows directly by ``attribution_parent_id`` —
+        which is stamped at write-time by the attack persistence path — so
+        results from an interrupted run are visible even though the
+        ``ScenarioResult.attack_results`` aggregate may not yet reflect them.
+        Identity is content-derived (``to_sha256(objective)``), so it stays
+        stable even if ``get_seed_groups()`` reorders or resamples between runs.
+
+        Rows are matched on ``(parent_collection, parent_eval_hash)`` so that
+        two ``AtomicAttack`` instances sharing a name but using different
+        techniques (e.g. base64 vs hex encoders) never cross-pollinate their
+        completed-hash sets on resume. Rows persisted before
+        ``parent_eval_hash`` was introduced (or by callers that don't supply
+        one) match name-only as a backward-compatible fallback.
 
         Args:
-            atomic_attack_name (str): The name of the atomic attack to check.
+            atomic_attack (AtomicAttack): The live atomic attack whose
+                ``atomic_attack_name`` and technique identifier scope the query.
 
         Returns:
-            Set[str]: Set of objective strings that have been completed.
+            set[str]: ``objective_sha256`` hex strings for completed-without-error rows.
         """
         if not self._scenario_result_id:
             return set()
 
-        completed_objectives: set[str] = set()
+        atomic_attack_name = atomic_attack.atomic_attack_name
+        expected_eval_hash = atomic_attack.technique_eval_hash
 
+        completed_hashes: set[str] = set()
         try:
-            # Retrieve the scenario result from memory
-            scenario_results = self._memory.get_scenario_results(scenario_result_ids=[self._scenario_result_id])
-
-            if scenario_results:
-                scenario_result = scenario_results[0]
-                # Get completed objectives for this atomic attack name
-                if atomic_attack_name in scenario_result.attack_results:
-                    completed_objectives = {
-                        result.objective for result in scenario_result.attack_results[atomic_attack_name]
-                    }
+            rows = self._memory.get_attack_results(scenario_result_id=self._scenario_result_id)
+            for row in rows:
+                if row.outcome == AttackOutcome.ERROR:
+                    continue
+                if row.attribution_data is None:
+                    continue
+                if row.attribution_data.get("parent_collection") != atomic_attack_name:
+                    continue
+                row_eval_hash = row.attribution_data.get("parent_eval_hash")
+                if row_eval_hash is not None and row_eval_hash != expected_eval_hash:
+                    continue
+                if row.objective:
+                    completed_hashes.add(to_sha256(row.objective))
         except Exception as e:
             logger.warning(
-                f"Failed to retrieve completed objectives for atomic attack '{atomic_attack_name}': {str(e)}"
+                f"Failed to retrieve completed objective hashes for atomic attack '{atomic_attack_name}': {str(e)}"
             )
 
-        return completed_objectives
+        return completed_hashes
 
     async def _get_remaining_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
         Get the list of atomic attacks that still have objectives to complete.
 
-        This method filters out atomic attacks where all objectives have been completed,
-        and updates the objectives list for atomic attacks that are partially complete.
+        Uses ``objective_sha256`` as the stable identity for resume: each
+        atomic attack enforces uniqueness of objective hashes at construction
+        time, and the executor stamps ``attribution_parent_id`` +
+        ``attribution_data["parent_collection"]`` on the row so a content-hash
+        join is sufficient.
 
         Returns:
             List[AtomicAttack]: List of atomic attacks with uncompleted objectives.
@@ -897,63 +984,26 @@ class Scenario(ABC):
         remaining_attacks: list[AtomicAttack] = []
 
         for atomic_attack in self._atomic_attacks:
-            # Get completed objectives for this atomic attack name
-            completed_objectives = self._get_completed_objectives_for_attack(
-                atomic_attack_name=atomic_attack.atomic_attack_name
-            )
+            completed_hashes = self._get_completed_objective_hashes_for_attack(atomic_attack=atomic_attack)
 
-            # Get ORIGINAL objectives (before any mutations) from stored map
-            original_objectives = self._original_objectives_map.get(atomic_attack.atomic_attack_name, ())
-
-            # Calculate remaining objectives
-            remaining_objectives = [obj for obj in original_objectives if obj not in completed_objectives]
-
-            if remaining_objectives:
-                # If there are remaining objectives, update the atomic attack
-                if len(remaining_objectives) < len(original_objectives):
+            if completed_hashes:
+                original_count = len(atomic_attack.seed_groups)
+                atomic_attack.drop_seed_groups_with_hashes(hashes=completed_hashes)
+                remaining_count = len(atomic_attack.seed_groups)
+                if remaining_count == 0:
+                    logger.info(
+                        f"Atomic attack '{atomic_attack.atomic_attack_name}' has all objectives completed, skipping"
+                    )
+                    continue
+                if remaining_count < original_count:
                     logger.info(
                         f"Atomic attack '{atomic_attack.atomic_attack_name}' has "
-                        f"{len(remaining_objectives)}/{len(original_objectives)} objectives remaining"
+                        f"{remaining_count}/{original_count} objectives remaining"
                     )
-                # Update the objectives for this atomic attack to only include remaining ones
-                atomic_attack.filter_seed_groups_by_objectives(remaining_objectives=remaining_objectives)
 
-                remaining_attacks.append(atomic_attack)
-            else:
-                logger.info(
-                    f"Atomic attack '{atomic_attack.atomic_attack_name}' has all objectives completed, skipping"
-                )
+            remaining_attacks.append(atomic_attack)
 
         return remaining_attacks
-
-    async def _update_scenario_result_async(
-        self, *, atomic_attack_name: str, attack_results: list[AttackResult]
-    ) -> None:
-        """
-        Update the scenario result in memory with new attack results (thread-safe).
-
-        This method is thread-safe and can be called from parallel executions.
-
-        Args:
-            atomic_attack_name (str): The name of the atomic attack.
-            attack_results (List[AttackResult]): The list of new attack results to add.
-        """
-        if not self._scenario_result_id:
-            logger.warning("Cannot update scenario result: no scenario result ID available")
-            return
-
-        async with self._result_lock:
-            success = self._memory.add_attack_results_to_scenario(
-                scenario_result_id=self._scenario_result_id,
-                atomic_attack_name=atomic_attack_name,
-                attack_results=attack_results,
-            )
-
-            if not success:
-                logger.error(
-                    f"Failed to update scenario result with {len(attack_results)} results "
-                    f"for atomic attack '{atomic_attack_name}'"
-                )
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
@@ -1191,6 +1241,12 @@ class Scenario(ABC):
                 ),
                 start=completed_count + 1,
             ):
+                # Stamp the scenario id onto the atomic attack so each persisted
+                # AttackResult carries the attribution_parent_id linkage. This
+                # is what enables mid-run interruption recovery (results are
+                # visible without the post-atomic-attack bulk manifest write).
+                atomic_attack.set_scenario_result_id(scenario_result_id)
+
                 logger.info(
                     f"Executing atomic attack {i}/{len(self._atomic_attacks)} "
                     f"('{atomic_attack.atomic_attack_name}') in scenario '{self._name}'"
@@ -1202,12 +1258,8 @@ class Scenario(ABC):
                         return_partial_on_failure=True,
                     )
 
-                    # Always save completed results, even if some objectives didn't complete
-                    if atomic_results.completed_results:
-                        await self._update_scenario_result_async(
-                            atomic_attack_name=atomic_attack.atomic_attack_name,
-                            attack_results=atomic_results.completed_results,
-                        )
+                    # Per-result scenario linkage is now stamped by the attack
+                    # event handler at write time; no post-atomic bulk update.
 
                     # Check if there were any incomplete objectives
                     if atomic_results.has_incomplete:
@@ -1224,19 +1276,12 @@ class Scenario(ABC):
                         for obj, exc in atomic_results.incomplete_objectives:
                             logger.error(f"  Incomplete objective '{obj[:50]}...': {str(exc)}")
 
-                        # Collect error attack result IDs from the exceptions
-                        error_ids = []
-                        for _, exc in atomic_results.incomplete_objectives:
-                            error_id = getattr(exc, "error_attack_result_id", None)
-                            if error_id:
-                                error_ids.append(error_id)
-
-                        # Link error attack results to the scenario result
-                        if error_ids:
-                            self._memory.update_scenario_error_attacks(
-                                scenario_result_id=scenario_result_id,
-                                error_attack_result_ids=error_ids,
-                            )
+                        # Error AttackResults are linked to this scenario via the
+                        # attribution_parent_id foreign key on AttackResultEntry
+                        # (stamped by the attack event handler when an
+                        # AttackResultAttribution is on the context). The
+                        # previous per-scenario error_id manifest is no longer
+                        # needed.
 
                         # Mark scenario as failed
                         error_msg = (

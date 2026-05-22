@@ -20,7 +20,7 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
 
     References:
         - https://huggingface.co/datasets/declare-lab/HarmfulQA
-        - [@chu2023harmfulqa]
+        - [@bhardwaj2023harmfulqa]
     License: Apache 2.0
 
     Warning: This dataset contains harmful questions designed to test LLM safety.
@@ -46,7 +46,7 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "harmful_qa"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch HarmfulQA dataset from HuggingFace and return as SeedDataset.
 

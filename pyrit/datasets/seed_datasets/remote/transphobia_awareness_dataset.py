@@ -52,7 +52,7 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "transphobia_awareness"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Transphobia-Awareness dataset and return as SeedDataset.
 

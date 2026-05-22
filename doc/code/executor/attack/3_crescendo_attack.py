@@ -28,9 +28,9 @@ from pyrit.auth import get_azure_openai_auth
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackConverterConfig,
-    ConsoleAttackResultPrinter,
     CrescendoAttack,
 )
+from pyrit.output import output_attack_async
 from pyrit.prompt_converter import EmojiConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import OpenAIChatTarget
@@ -76,6 +76,6 @@ attack = CrescendoAttack(
 result = await attack.execute_async(objective=conversation_objective)  # type: ignore
 
 # For seven turns this can take a few minutes depending on LLM latency
-await ConsoleAttackResultPrinter().print_result_async(  # type: ignore
-    result=result, include_pruned_conversations=True, include_adversarial_conversation=True
+await output_attack_async(  # type: ignore
+    result, include_pruned_conversations=True, include_adversarial_conversation=True
 )

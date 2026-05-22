@@ -70,7 +70,7 @@ class TestBeaverTailsDataset:
         loader = _BeaverTailsDataset()
 
         with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_beaver_tails_data)):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
             assert len(dataset.seeds) == 2  # Only unsafe entries
@@ -85,7 +85,7 @@ class TestBeaverTailsDataset:
         loader = _BeaverTailsDataset(unsafe_only=False)
 
         with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_beaver_tails_data)):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 3  # All entries including safe
 
@@ -120,7 +120,7 @@ class TestBeaverTailsDataset:
         loader = _BeaverTailsDataset()
 
         with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=MockDataset())):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
             # Both prompts should be preserved — untrusted text is never passed through Jinja
             assert len(dataset.seeds) == 2
             assert dataset.seeds[0].value == "This contains {% endraw %} which is Jinja2 syntax"

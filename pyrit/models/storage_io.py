@@ -300,9 +300,9 @@ class AzureBlobStorageIO(StorageIO):
         """
         Asynchronously reads the content of a file (blob) from Azure Blob Storage.
 
-        If the provided `path` is a full URL
-        (e.g., "https://account.blob.core.windows.net/container/dir1/dir2/sample.png"),
-        it extracts the relative blob path (e.g., "dir1/dir2/sample.png") to correctly access the blob.
+        If the provided ``path`` is a full URL
+        (e.g., ``https://account.blob.core.windows.net/container/dir1/dir2/sample.png``),
+        it extracts the relative blob path (e.g., ``dir1/dir2/sample.png``) to correctly access the blob.
         If a relative path is provided, it will use it as-is.
 
         Args:
@@ -313,10 +313,11 @@ class AzureBlobStorageIO(StorageIO):
             bytes: The content of the file (blob) as bytes.
 
         Example:
-            file_content =
-            await read_file("https://account.blob.core.windows.net/container/dir2/1726627689003831.png")
-            # Or using a relative path:
-            file_content = await read_file("dir1/dir2/1726627689003831.png")
+            ``file_content = await read_file("https://account.blob.core.windows.net/container/dir2/1726627689003831.png")``
+
+            Or using a relative path:
+
+            ``file_content = await read_file("dir1/dir2/1726627689003831.png")``
 
         """
         if not self._client_async:

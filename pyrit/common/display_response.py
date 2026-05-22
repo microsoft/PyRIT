@@ -6,6 +6,7 @@ import logging
 
 from PIL import Image
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.notebook_utils import is_in_ipython_session
 from pyrit.memory import CentralMemory
 from pyrit.models import AzureBlobStorageIO, DiskStorageIO, MessagePiece
@@ -13,7 +14,7 @@ from pyrit.models import AzureBlobStorageIO, DiskStorageIO, MessagePiece
 logger = logging.getLogger(__name__)
 
 
-async def display_image_response(response_piece: MessagePiece) -> None:
+async def display_image_response_async(response_piece: MessagePiece) -> None:
     """
     Display response images if running in notebook environment.
 
@@ -54,3 +55,13 @@ async def display_image_response(response_piece: MessagePiece) -> None:
         display(image)  # type: ignore[ty:unresolved-reference] # noqa: F821
     if response_piece.response_error == "blocked":
         logger.info("---\nContent blocked, cannot show a response.\n---")
+
+
+async def display_image_response(response_piece: MessagePiece) -> None:
+    """Delegate to :func:`display_image_response_async` (deprecated alias)."""
+    print_deprecation_message(
+        old_item="pyrit.common.display_response.display_image_response",
+        new_item="pyrit.common.display_response.display_image_response_async",
+        removed_in="0.16.0",
+    )
+    await display_image_response_async(response_piece)

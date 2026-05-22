@@ -140,7 +140,7 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "sorry_bench"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Sorry-Bench dataset and return as SeedDataset.
 

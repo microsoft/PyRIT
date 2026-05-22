@@ -16,10 +16,10 @@ function renderPreview(overrides: Partial<ConverterPreviewProps> = {}) {
     isPreviewing: false,
     previewError: null,
     previewOutput: '',
+    previewOutputType: 'text',
     previewConverterInstanceId: null,
     onPreview: jest.fn(),
     onUseConvertedValue: jest.fn(),
-    outputDataType: 'text',
   }
   return render(
     <TestWrapper>
@@ -131,37 +131,42 @@ describe('Error display', () => {
 
 describe('Output rendering', () => {
   it('renders text output in a pre element', () => {
-    renderPreview({ previewOutput: 'aGVsbG8=' })
+    renderPreview({ previewOutput: 'aGVsbG8=', previewOutputType: 'text' })
     const result = screen.getByTestId('converter-preview-result')
     expect(result.tagName).toBe('PRE')
     expect(result).toHaveTextContent('aGVsbG8=')
   })
 
-  it('renders image output as img element for .png file', () => {
-    renderPreview({ previewOutput: '/path/to/output.png' })
+  it('renders image output as img element when previewOutputType is image_path', () => {
+    renderPreview({ previewOutput: '/path/to/output.png', previewOutputType: 'image_path' })
     const result = screen.getByTestId('converter-preview-result')
     expect(result.tagName).toBe('IMG')
     expect(result).toHaveAttribute('src', '/api/media?path=%2Fpath%2Fto%2Foutput.png')
   })
 
-  it('renders image output for .jpg extension', () => {
-    renderPreview({ previewOutput: '/path/to/output.jpg' })
-    const result = screen.getByTestId('converter-preview-result')
-    expect(result.tagName).toBe('IMG')
-  })
-
-  it('renders audio output as audio element for .wav file', () => {
-    renderPreview({ previewOutput: '/path/to/output.wav' })
+  it('renders audio output as audio element when previewOutputType is audio_path', () => {
+    renderPreview({ previewOutput: '/path/to/output.wav', previewOutputType: 'audio_path' })
     const result = screen.getByTestId('converter-preview-result')
     expect(result.tagName).toBe('AUDIO')
     expect(result).toHaveAttribute('src', '/api/media?path=%2Fpath%2Fto%2Foutput.wav')
   })
 
-  it('renders video output as video element for .mp4 file', () => {
-    renderPreview({ previewOutput: '/path/to/output.mp4' })
+  it('renders video output as video element when previewOutputType is video_path', () => {
+    renderPreview({ previewOutput: '/path/to/output.mp4', previewOutputType: 'video_path' })
     const result = screen.getByTestId('converter-preview-result')
     expect(result.tagName).toBe('VIDEO')
     expect(result).toHaveAttribute('src', '/api/media?path=%2Fpath%2Fto%2Foutput.mp4')
+  })
+
+  it('renders binary file output as a chip with an Open link', () => {
+    renderPreview({ previewOutput: '/tmp/result.pdf', previewOutputType: 'binary_path' })
+    const result = screen.getByTestId('converter-preview-result')
+    expect(result.tagName).toBe('DIV')
+    expect(result).toHaveTextContent('result.pdf')
+    const openLink = screen.getByTestId('converter-preview-open')
+    expect(openLink).toHaveAttribute('href', '/api/media?path=%2Ftmp%2Fresult.pdf')
+    expect(openLink).toHaveAttribute('target', '_blank')
+    expect(openLink).toHaveAttribute('rel', expect.stringContaining('noopener'))
   })
 })
 
@@ -189,6 +194,7 @@ describe('Use Converted Value button', () => {
       activeTab: 'text',
       previewText: 'hello',
       previewOutput: 'aGVsbG8=',
+      previewOutputType: 'text',
       previewConverterInstanceId: 'conv-1',
       onUseConvertedValue,
     })
@@ -198,7 +204,7 @@ describe('Use Converted Value button', () => {
       converterInstanceId: 'conv-1',
       convertedValue: 'aGVsbG8=',
       originalValue: 'hello',
-      outputDataType: 'text',
+      convertedDataType: 'text',
     })
   })
 
@@ -209,6 +215,7 @@ describe('Use Converted Value button', () => {
       previewText: '',
       attachmentData: { image: 'data:image/png;base64,abc' },
       previewOutput: '/path/to/output.png',
+      previewOutputType: 'image_path',
       previewConverterInstanceId: 'conv-2',
       onUseConvertedValue,
     })
@@ -218,7 +225,27 @@ describe('Use Converted Value button', () => {
       converterInstanceId: 'conv-2',
       convertedValue: '/path/to/output.png',
       originalValue: 'data:image/png;base64,abc',
-      outputDataType: 'text',
+      convertedDataType: 'image_path',
+    })
+  })
+
+  it('calls onUseConvertedValue with binary_path output for text→file converter', () => {
+    const onUseConvertedValue = jest.fn()
+    renderPreview({
+      activeTab: 'text',
+      previewText: 'make a pdf',
+      previewOutput: '/tmp/result.pdf',
+      previewOutputType: 'binary_path',
+      previewConverterInstanceId: 'conv-pdf',
+      onUseConvertedValue,
+    })
+    fireEvent.click(screen.getByTestId('use-converted-btn'))
+    expect(onUseConvertedValue).toHaveBeenCalledWith({
+      pieceType: 'text',
+      converterInstanceId: 'conv-pdf',
+      convertedValue: '/tmp/result.pdf',
+      originalValue: 'make a pdf',
+      convertedDataType: 'binary_path',
     })
   })
 

@@ -11,7 +11,7 @@ import pytest
 from pyrit.common import Parameter
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.scenario import DatasetConfiguration
-from pyrit.scenario.core import BaselinePolicy, Scenario, ScenarioStrategy
+from pyrit.scenario.core import BaselineAttackPolicy, Scenario, ScenarioStrategy
 from pyrit.score import Scorer
 
 _TEST_SCORER_ID = ComponentIdentifier(class_name="MockScorer", class_module="tests.unit.scenarios")
@@ -35,7 +35,7 @@ def _make_scenario(*, declared_params: list[Parameter]) -> Scenario:
 
     class _ParamTestScenario(Scenario):
         # No baseline in tests so atomic_attacks observations stay deterministic.
-        BASELINE_POLICY: ClassVar[BaselinePolicy] = BaselinePolicy.Forbidden
+        BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
         @classmethod
         def get_strategy_class(cls):

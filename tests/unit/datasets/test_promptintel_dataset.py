@@ -134,20 +134,20 @@ class TestPromptIntelDatasetInit:
 
 
 class TestPromptIntelDatasetFetch:
-    """Test fetch_dataset and data transformation."""
+    """Test fetch_dataset_async and data transformation."""
 
     async def test_fetch_no_api_key_raises(self):
         with patch.dict("os.environ", {}, clear=True):
             loader = _PromptIntelDataset()
             with pytest.raises(ValueError, match="API key is required"):
-                await loader.fetch_dataset()
+                await loader.fetch_dataset_async()
 
     async def test_fetch_dataset_returns_seed_dataset(self, api_key, mock_promptintel_response):
         loader = _PromptIntelDataset(api_key=api_key)
         mock_resp = _make_mock_response(json_data=mock_promptintel_response)
 
         with patch("requests.get", return_value=mock_resp):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
         assert isinstance(dataset, SeedDataset)
         # 2 prompts = 2 SeedPrompts
@@ -158,7 +158,7 @@ class TestPromptIntelDatasetFetch:
         mock_resp = _make_mock_response(json_data=mock_promptintel_response)
 
         with patch("requests.get", return_value=mock_resp):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
         # Find the first SeedPrompt
         prompts = [s for s in dataset.seeds if isinstance(s, SeedPrompt)]
@@ -178,7 +178,7 @@ class TestPromptIntelDatasetFetch:
         mock_resp = _make_mock_response(json_data=mock_promptintel_response)
 
         with patch("requests.get", return_value=mock_resp):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
         prompts = [s for s in dataset.seeds if isinstance(s, SeedPrompt)]
         first = prompts[0]
@@ -195,7 +195,7 @@ class TestPromptIntelDatasetFetch:
         mock_resp = _make_mock_response(json_data=mock_promptintel_response)
 
         with patch("requests.get", return_value=mock_resp):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
         prompts = [s for s in dataset.seeds if isinstance(s, SeedPrompt)]
         # After Jinja2 rendering, {% raw %}...{% endraw %} preserves the original text
@@ -208,7 +208,7 @@ class TestPromptIntelDatasetFetch:
 
         with patch("requests.get", return_value=mock_resp):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
-                await loader.fetch_dataset()
+                await loader.fetch_dataset_async()
 
     async def test_fetch_skips_records_without_prompt(self, api_key):
         data = {
@@ -230,7 +230,7 @@ class TestPromptIntelDatasetFetch:
         with patch("requests.get", return_value=mock_resp):
             # All records skipped -> empty seeds -> SeedDataset raises ValueError
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
-                await loader.fetch_dataset()
+                await loader.fetch_dataset_async()
 
     async def test_fetch_skips_records_without_title(self, api_key):
         data = {
@@ -252,7 +252,7 @@ class TestPromptIntelDatasetFetch:
         with patch("requests.get", return_value=mock_resp):
             # All records skipped -> empty seeds -> SeedDataset raises ValueError
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
-                await loader.fetch_dataset()
+                await loader.fetch_dataset_async()
 
 
 class TestPromptIntelDatasetPagination:
@@ -290,7 +290,7 @@ class TestPromptIntelDatasetPagination:
         responses = [_make_mock_response(json_data=page1), _make_mock_response(json_data=page2)]
 
         with patch("requests.get", side_effect=responses):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
         assert len(dataset.seeds) == 2  # 1 prompt from page1 + 1 from page2 = 2 SeedPrompts
 
@@ -299,7 +299,7 @@ class TestPromptIntelDatasetPagination:
         mock_resp = _make_mock_response(json_data=mock_promptintel_response)
 
         with patch("requests.get", return_value=mock_resp):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
         # max_prompts=1 should limit to 1 SeedPrompt
         assert len(dataset.seeds) == 1
@@ -317,7 +317,7 @@ class TestPromptIntelDatasetAPIErrors:
 
         with patch("requests.get", return_value=mock_resp):
             with pytest.raises(ConnectionError, match="status 401"):
-                await loader.fetch_dataset()
+                await loader.fetch_dataset_async()
 
     async def test_api_500_raises_connection_error(self, api_key):
         loader = _PromptIntelDataset(api_key=api_key)
@@ -328,7 +328,7 @@ class TestPromptIntelDatasetAPIErrors:
 
         with patch("requests.get", return_value=mock_resp):
             with pytest.raises(ConnectionError, match="status 500"):
-                await loader.fetch_dataset()
+                await loader.fetch_dataset_async()
 
 
 class TestPromptIntelDatasetFilters:
@@ -339,7 +339,7 @@ class TestPromptIntelDatasetFilters:
         mock_resp = _make_mock_response(json_data=mock_promptintel_response)
 
         with patch("requests.get", return_value=mock_resp) as mock_get:
-            await loader.fetch_dataset()
+            await loader.fetch_dataset_async()
 
         call_kwargs = mock_get.call_args
         assert call_kwargs.kwargs["params"]["severity"] == "critical"
@@ -349,7 +349,7 @@ class TestPromptIntelDatasetFilters:
         mock_resp = _make_mock_response(json_data=mock_promptintel_response)
 
         with patch("requests.get", return_value=mock_resp) as mock_get:
-            await loader.fetch_dataset()
+            await loader.fetch_dataset_async()
 
         call_kwargs = mock_get.call_args
         assert call_kwargs.kwargs["params"]["category"] == "manipulation"
@@ -392,7 +392,7 @@ class TestPromptIntelDatasetFilters:
         ]
 
         with patch("requests.get", side_effect=responses) as mock_get:
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
         # Two separate API calls should be made
         assert mock_get.call_count == 2
@@ -425,7 +425,7 @@ class TestPromptIntelDatasetFilters:
         mock_resp = _make_mock_response(json_data=response_data)
 
         with patch("requests.get", return_value=mock_resp):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
         # Should deduplicate by ID — only 1 seed even though 2 API calls
         assert len(dataset.seeds) == 1
@@ -435,7 +435,7 @@ class TestPromptIntelDatasetFilters:
         mock_resp = _make_mock_response(json_data=mock_promptintel_response)
 
         with patch("requests.get", return_value=mock_resp) as mock_get:
-            await loader.fetch_dataset()
+            await loader.fetch_dataset_async()
 
         call_kwargs = mock_get.call_args
         assert call_kwargs.kwargs["params"]["search"] == "jailbreak"

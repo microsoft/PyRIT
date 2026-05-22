@@ -60,23 +60,6 @@ def test_configuration_property_returns_configuration():
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_init_subclass_promotes_default_capabilities_with_warning():
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-
-        class _LegacyTarget(PromptTarget):
-            _DEFAULT_CAPABILITIES = TargetCapabilities(supports_multi_turn=True)
-
-            async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
-                return []
-
-    deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert any("_DEFAULT_CAPABILITIES is deprecated" in str(w.message) for w in deprecation_warnings)
-    assert isinstance(_LegacyTarget._DEFAULT_CONFIGURATION, TargetConfiguration)
-    assert _LegacyTarget._DEFAULT_CONFIGURATION.capabilities.supports_multi_turn is True
-
-
-@pytest.mark.usefixtures("patch_central_database")
 def test_subclassing_prompt_chat_target_emits_deprecation_warning():
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")

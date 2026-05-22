@@ -574,7 +574,7 @@ describe("ChatInputArea", () => {
         <ChatInputArea
           {...defaultProps}
           activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
-          mediaConversions={[{ pieceType: "image", convertedValue: "/tmp/converted.png" }]}
+          mediaConversions={[{ pieceType: "image", convertedValue: "/tmp/converted.png", convertedDataType: "image_path" }]}
         />
       </TestWrapper>
     );
@@ -602,7 +602,7 @@ describe("ChatInputArea", () => {
         <ChatInputArea
           {...defaultProps}
           activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
-          mediaConversions={[{ pieceType: "image", convertedValue: "/tmp/converted.png" }]}
+          mediaConversions={[{ pieceType: "image", convertedValue: "/tmp/converted.png", convertedDataType: "image_path" }]}
           onClearMediaConversion={onClearMediaConversion}
         />
       </TestWrapper>
@@ -677,6 +677,140 @@ describe("ChatInputArea", () => {
 
     expect(onSend).toHaveBeenCalledWith("hello", "convertedHello", []);
     expect(onClearConversion).toHaveBeenCalled();
+  });
+
+  it("should render converted file chip with Open link for text→file conversion", async () => {
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          convertedFileChip={{
+            name: "result.pdf",
+            url: "/api/media?path=%2Ftmp%2Fresult.pdf",
+            iconKind: "file",
+          }}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("original-banner")).toBeInTheDocument();
+    const chip = screen.getByTestId("converted-file-chip");
+    expect(chip).toHaveTextContent("result.pdf");
+    const openLink = screen.getByTestId("converted-file-open");
+    expect(openLink).toHaveAttribute("href", "/api/media?path=%2Ftmp%2Fresult.pdf");
+    expect(openLink).toHaveAttribute("target", "_blank");
+  });
+
+  it("should call onClearConvertedFileChip when chip dismiss is clicked", async () => {
+    const onClearConvertedFileChip = jest.fn();
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          convertedFileChip={{
+            name: "result.pdf",
+            url: "/api/media?path=%2Ftmp%2Fresult.pdf",
+            iconKind: "file",
+          }}
+          onClearConvertedFileChip={onClearConvertedFileChip}
+        />
+      </TestWrapper>
+    );
+
+    await user.click(screen.getByTestId("clear-converted-file-chip"));
+    expect(onClearConvertedFileChip).toHaveBeenCalledTimes(1);
+  });
+
+  it("should render an inline image preview for an image conversion", () => {
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          convertedFileChip={{
+            name: "result.png",
+            url: "/api/media?path=%2Ftmp%2Fresult.png",
+            iconKind: "image",
+          }}
+        />
+      </TestWrapper>
+    );
+
+    const preview = screen.getByTestId("converted-file-preview-image");
+    expect(preview.tagName).toBe("IMG");
+    expect(preview).toHaveAttribute("src", "/api/media?path=%2Ftmp%2Fresult.png");
+    expect(preview).toHaveAttribute("alt", "result.png");
+    // Header info (filename + Open link) is still rendered alongside the preview.
+    expect(screen.getByTestId("converted-file-chip")).toHaveTextContent("result.png");
+    expect(screen.getByTestId("converted-file-open")).toHaveAttribute("href", "/api/media?path=%2Ftmp%2Fresult.png");
+  });
+
+  it("should render an inline audio preview for an audio conversion", () => {
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          convertedFileChip={{
+            name: "speech.wav",
+            url: "/api/media?path=%2Ftmp%2Fspeech.wav",
+            iconKind: "audio",
+          }}
+        />
+      </TestWrapper>
+    );
+
+    const preview = screen.getByTestId("converted-file-preview-audio");
+    expect(preview.tagName).toBe("AUDIO");
+    expect(preview).toHaveAttribute("src", "/api/media?path=%2Ftmp%2Fspeech.wav");
+    expect(preview).toHaveAttribute("controls");
+    expect(screen.queryByTestId("converted-file-preview-image")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("converted-file-preview-video")).not.toBeInTheDocument();
+  });
+
+  it("should render an inline video preview for a video conversion", () => {
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          convertedFileChip={{
+            name: "clip.mp4",
+            url: "/api/media?path=%2Ftmp%2Fclip.mp4",
+            iconKind: "video",
+          }}
+        />
+      </TestWrapper>
+    );
+
+    const preview = screen.getByTestId("converted-file-preview-video");
+    expect(preview.tagName).toBe("VIDEO");
+    expect(preview).toHaveAttribute("src", "/api/media?path=%2Ftmp%2Fclip.mp4");
+    expect(preview).toHaveAttribute("controls");
+  });
+
+  it("should not render a media preview for a generic file conversion", () => {
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          convertedFileChip={{
+            name: "result.pdf",
+            url: "/api/media?path=%2Ftmp%2Fresult.pdf",
+            iconKind: "file",
+          }}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.queryByTestId("converted-file-preview-image")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("converted-file-preview-audio")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("converted-file-preview-video")).not.toBeInTheDocument();
   });
 
   // ---------------------------------------------------------------------------

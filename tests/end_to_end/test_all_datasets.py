@@ -55,7 +55,7 @@ def get_dataset_providers():
 )
 async def _fetch_with_retry(provider) -> SeedDataset:
     """Fetch a dataset with retry on transient network errors."""
-    return await provider.fetch_dataset(cache=False)
+    return await provider.fetch_dataset_async(cache=False)
 
 
 @pytest.fixture(scope="module", autouse=True)

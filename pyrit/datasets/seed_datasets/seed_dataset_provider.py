@@ -4,6 +4,7 @@
 import asyncio
 import inspect
 import logging
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import fields as dc_fields
 from typing import Any, Optional
@@ -25,7 +26,7 @@ class SeedDatasetProvider(ABC):
     both local and remote dataset providers.
 
     Subclasses must implement:
-    - fetch_dataset(): Fetch and return the dataset as a SeedDataset
+    - fetch_dataset_async(): Fetch and return the dataset as a SeedDataset
     - dataset_name property: Human-readable name for the dataset
 
     All subclasses also have a _metadata property that is optional to make
@@ -40,10 +41,22 @@ class SeedDatasetProvider(ABC):
         """
         Automatically register non-abstract subclasses.
 
-        This is called when a class inherits from SeedDatasetProvider.
+        This is called when a class inherits from SeedDatasetProvider. A
+        deprecation warning is emitted for subclasses that still override the
+        legacy ``fetch_dataset`` instead of ``fetch_dataset_async``.
         """
         super().__init_subclass__(**kwargs)
-        # Only register concrete (non-abstract) classes
+        if not inspect.isabstract(cls) and (
+            cls.fetch_dataset is not SeedDatasetProvider.fetch_dataset
+            and cls.fetch_dataset_async is SeedDatasetProvider.fetch_dataset_async
+        ):
+            warnings.warn(
+                f"{cls.__name__} overrides the deprecated fetch_dataset method. "
+                "Rename the override to fetch_dataset_async; fetch_dataset will be "
+                "removed in v0.16.0.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         if not inspect.isabstract(cls) and getattr(cls, "should_register", True):
             SeedDatasetProvider._registry[cls.__name__] = cls
             logger.debug(f"Registered dataset provider: {cls.__name__}")
@@ -58,10 +71,14 @@ class SeedDatasetProvider(ABC):
             str: The dataset name (e.g., "HarmBench", "JailbreakBench JBB-Behaviors")
         """
 
-    @abstractmethod
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the dataset and return as a SeedDataset.
+
+        Subclasses MUST override this method. The default implementation exists
+        only to provide a deprecation bridge for legacy subclasses that override
+        the old ``fetch_dataset`` name; in that case it dispatches to the legacy
+        method and emits a DeprecationWarning.
 
         Args:
             cache: Whether to cache the fetched dataset. Defaults to True.
@@ -71,8 +88,41 @@ class SeedDatasetProvider(ABC):
             SeedDataset: The fetched dataset with prompts.
 
         Raises:
+            NotImplementedError: If the subclass overrides neither
+                ``fetch_dataset_async`` nor the legacy ``fetch_dataset``.
             Exception: If the dataset cannot be fetched or processed.
         """
+        cls = type(self)
+        if cls.fetch_dataset is SeedDatasetProvider.fetch_dataset:
+            raise NotImplementedError(f"{cls.__name__} must implement fetch_dataset_async.")
+        warnings.warn(
+            f"{cls.__name__}.fetch_dataset is deprecated and will be removed in v0.16.0; "
+            "rename the override to fetch_dataset_async.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return await self.fetch_dataset(cache=cache)
+
+    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+        """
+        Fetch the dataset (deprecated alias of ``fetch_dataset_async``).
+
+        Kept as a backward-compatibility shim for callers of the public API.
+        Emits a DeprecationWarning and delegates to ``fetch_dataset_async``.
+
+        Args:
+            cache: Whether to cache the fetched dataset. Defaults to True.
+
+        Returns:
+            SeedDataset: The fetched dataset with prompts.
+        """
+        warnings.warn(
+            "SeedDatasetProvider.fetch_dataset is deprecated and will be removed in v0.16.0; "
+            "use fetch_dataset_async instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return await self.fetch_dataset_async(cache=cache)
 
     async def _parse_metadata(self) -> Optional[SeedDatasetMetadata]:
         """
@@ -283,7 +333,7 @@ class SeedDatasetProvider(ABC):
                 logger.debug(f"Skipping {provider_name} - not in filter list")
                 return None
 
-            dataset = await provider.fetch_dataset(cache=cache)
+            dataset = await provider.fetch_dataset_async(cache=cache)
             return (provider.dataset_name, dataset)
 
         # Create semaphore to limit concurrency

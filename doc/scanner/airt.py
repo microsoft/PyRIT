@@ -19,9 +19,9 @@
 # ## Setup
 
 # %%
+from pyrit.output import output_scenario_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario import DatasetConfiguration
-from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import LoadDefaultDatasets, ScorerInitializer, TargetInitializer
 
@@ -31,8 +31,6 @@ await initialize_pyrit_async(  # type: ignore
 )
 
 objective_target = OpenAIChatTarget()
-printer = ConsoleScenarioResultPrinter()
-
 # %% [markdown]
 # ## Rapid Response
 #
@@ -66,7 +64,7 @@ await scenario.initialize_async(  # type: ignore
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await printer.print_summary_async(scenario_result)  # type: ignore
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # ## Psychosocial
@@ -115,7 +113,7 @@ await scenario.initialize_async(  # type: ignore
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await printer.print_summary_async(scenario_result)  # type: ignore
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # ## Cyber
@@ -148,7 +146,7 @@ await scenario.initialize_async(  # type: ignore
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await printer.print_summary_async(scenario_result)  # type: ignore
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # ## Jailbreak
@@ -181,7 +179,7 @@ await scenario.initialize_async(  # type: ignore
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await printer.print_summary_async(scenario_result)  # type: ignore
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # ## Leakage
@@ -229,7 +227,7 @@ await scenario.initialize_async(  # type: ignore
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await printer.print_summary_async(scenario_result)  # type: ignore
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # ## Scam
@@ -261,4 +259,4 @@ await scenario.initialize_async(  # type: ignore
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await printer.print_summary_async(scenario_result)  # type: ignore
+await output_scenario_async(scenario_result)
