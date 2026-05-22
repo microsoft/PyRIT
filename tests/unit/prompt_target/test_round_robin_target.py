@@ -315,9 +315,8 @@ async def test_send_prompt_raises_when_all_targets_fail():
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_send_prompt_fallback_follows_rotation_order():
-    """With 3 targets and weighted rotation [0, 0, 1, 2], if the first target
-    fails, fallback should try the next unique targets in rotation order."""
+async def test_send_prompt_fallback_tries_remaining_targets():
+    """When the selected target fails, fallback tries the other targets."""
     from unittest.mock import AsyncMock
 
     t1, t2, t3 = MockPromptTarget(), MockPromptTarget(), MockPromptTarget()
@@ -326,17 +325,17 @@ async def test_send_prompt_fallback_follows_rotation_order():
     # Advance counter to position 2 so next target is t2 (index 1)
     rr._counter = 2
 
-    # Make t2 fail — fallback should try t3 next (index 2 in rotation), then t1
+    # Make t2 fail — fallback should try t1 next (first in list order), then t3
     t2._send_prompt_to_target_async = AsyncMock(side_effect=RuntimeError("t2 down"))
 
-    message = Message.from_prompt(prompt="rotation order test", role="user")
-    message.message_pieces[0].conversation_id = "rotation-order"
+    message = Message.from_prompt(prompt="fallback order test", role="user")
+    message.message_pieces[0].conversation_id = "fallback-order"
 
     response = await rr._send_prompt_to_target_async(normalized_conversation=[message])
 
-    # t2 failed, t3 should have handled it (next in rotation after position 2 is index 2 → t3)
-    assert t3.prompt_sent == ["rotation order test"]
-    assert t1.prompt_sent == []
+    # t2 failed, t1 is next in list order
+    assert t1.prompt_sent == ["fallback order test"]
+    assert t3.prompt_sent == []
     assert len(response) == 1
 
 

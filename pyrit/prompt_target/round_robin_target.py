@@ -18,10 +18,9 @@ class RoundRobinTarget(PromptTarget):
     A prompt target that distributes requests across multiple inner targets
     using weighted round-robin selection.
 
-    All inner targets must be the same concrete class and must support
-    multi-turn conversations with editable history. The round-robin target's
-    capabilities are the intersection (lower bound) of all inner targets'
-    capabilities.
+    All inner targets must be the same concrete class, share the same behavioral
+    parameters for evaluation purposes, have the same TargetConfiguration,
+    and must support multi-turn conversations with editable history.
 
     Requests are distributed per-call, not per-conversation. Because all inner
     targets support editable history, conversation history is reconstructed from
@@ -29,11 +28,7 @@ class RoundRobinTarget(PromptTarget):
 
     Note: switching targets mid-conversation defeats provider-side prompt
     prefix caching (e.g., OpenAI cached input tokens can give cost
-    reduction on long conversations). For multi-turn attacks like Crescendo
-    with many objectives, this can significantly increase API cost compared
-    to pinning each conversation to a single target. This is a cost/latency
-    vs. throughput trade-off — round-robin avoids per-endpoint rate limits at
-    the expense of caching. Users who need cache-efficient multi-turn
+    reduction on long conversations). Users who need cache-efficient multi-turn
     conversations should assign individual targets at the attack or scenario
     level rather than using round-robin for those workloads.
 
@@ -58,12 +53,12 @@ class RoundRobinTarget(PromptTarget):
         Initialize the RoundRobinTarget.
 
         Args:
-            targets: Inner targets to round-robin across. Must all be the same
-                concrete class, contain at least 2 entries, and support both
-                multi-turn and editable history capabilities. All inner targets
-                must have identical configurations (capabilities, policy, and
-                normalization pipeline). The round-robin adopts this shared
-                configuration so its pipeline matches what the inner targets expect.
+            targets: Inner targets to round-robin across. All targets must be the same
+                concrete class and must have identical configurations (capabilities,
+                policy, and normalization pipeline). This configuration must include
+                supporting editable history and multi-turn conversations. The round-robin
+                adopts this shared configuration so its pipeline matches what the inner
+                targets expect. Must contain at least two entries.
             weights: Optional relative integer weights for each target. When
                 provided, must be the same length as ``targets`` with all values
                 > 0. For example, ``weights=[2, 1]`` sends roughly twice as many
@@ -154,27 +149,11 @@ class RoundRobinTarget(PromptTarget):
 
         Raises:
             Exception: If all unique inner targets fail.
+            RuntimeError: If no targets are available to try (should be unreachable).
         """
         first_target = self._next_target()
-        tried_indices: set[int] = set()
+        targets_to_try = [first_target] + [t for t in self._targets if t is not first_target]
         last_exception: BaseException | None = None
-
-        # Build ordered fallback list following the rotation sequence.
-        # Start with the selected target, then continue through the rotation
-        # to try remaining unique targets in their natural order.
-        first_idx = self._targets.index(first_target)
-        tried_indices.add(first_idx)
-        targets_to_try: list[PromptTarget] = [first_target]
-
-        # Walk forward through the rotation from the current counter position
-        # to pick up remaining unique targets in rotation order.
-        for offset in range(len(self._rotation)):
-            idx = self._rotation[(self._counter + offset) % len(self._rotation)]
-            if idx not in tried_indices:
-                targets_to_try.append(self._targets[idx])
-                tried_indices.add(idx)
-            if len(tried_indices) == len(self._targets):
-                break
 
         for target in targets_to_try:
             try:
@@ -194,9 +173,10 @@ class RoundRobinTarget(PromptTarget):
                 )
                 last_exception = ex
 
-        # All targets failed — propagate the last exception
-        assert last_exception is not None, "targets_to_try is never empty"
-        raise last_exception
+        # All targets failed — propagate the last exception.
+        if last_exception is not None:
+            raise last_exception
+        raise RuntimeError("No targets to try — this should be unreachable.")
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -248,12 +228,15 @@ def _validate_configuration_consistency(targets: list[PromptTarget]) -> None:
 
 def _validate_behavioral_consistency(targets: list[PromptTarget]) -> None:
     """
-    Validate that all inner targets have the same behavioral parameters.
+    Validate that all inner targets have the same behavioral parameters for
+    scorer and attack evaluation purposes.
 
     Checks the params that affect model output quality (underlying_model_name,
     temperature, top_p). These must be identical across targets because the
     round-robin distributes requests arbitrarily — inconsistent behavioral
-    params would make scores non-comparable.
+    params would make scorers non-comparable. This validation allows users
+    to evaluate round-robin targets for scoring and attack evaluation with confidence
+    that results are comparable to using the inner targets directly.
 
     Args:
         targets: The inner targets to validate.

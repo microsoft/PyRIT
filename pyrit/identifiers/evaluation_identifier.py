@@ -293,8 +293,8 @@ class AtomicAttackEvaluationIdentifier(EvaluationIdentifier):
             inner_child_name="targets",
         ),
         "adversarial_chat": ChildEvalRule(
-            included_params=frozenset({"underlying_model_name", "temperature", "top_p"}),
-            param_fallbacks={"underlying_model_name": "model_name"},
+            included_params=TARGET_BEHAVIORAL_PARAMS,
+            param_fallbacks=TARGET_BEHAVIORAL_PARAM_FALLBACKS,
         ),
         "objective_scorer": ChildEvalRule(exclude=True),
         "seed_identifiers": ChildEvalRule(exclude=True),

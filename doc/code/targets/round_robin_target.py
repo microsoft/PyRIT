@@ -134,8 +134,11 @@ print(f"\nDistribution: Target A = {counts['Target A']}, Target B = {counts['Tar
 # a single multi-turn interaction.
 #
 # Note that using a `RoundRobinTarget` within a multi-turn attack can lead to greater API costs
-# due to loss of prompt caching. For longer, elaborate multi-turn attacks, especially where
-# rate limiting is not a primary concern, consider using a singular target.
+# due to loss of prompt caching. For multi-turn attacks like Crescendo with many objectives, this
+# can significantly increase API cost compared to pinning each conversation to a single target.
+# This is a cost/latency vs. throughput trade-off — round-robin avoids per-endpoint rate limits at
+# the expense of server-side caching. Users who need cache-efficient multi-turn conversations should
+# assign individual targets at the attack or scenario level rather than using round-robin for those workloads.
 #
 
 # %%
