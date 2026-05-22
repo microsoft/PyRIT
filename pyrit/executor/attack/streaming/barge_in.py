@@ -53,6 +53,17 @@ class BargeInAttackContext(AttackContext[AttackParamsT]):
     system_prompt: str = "You are a helpful AI assistant"
 
 
+@dataclass
+class _BargeInRunState:
+    """Mutable per-session state accumulated as turns commit."""
+
+    raw_buffer: bytearray = field(default_factory=bytearray)
+    turn_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    last_assistant_message: Message | None = None
+    executed_turns: int = 0
+    turn_tasks: list[asyncio.Task[None]] = field(default_factory=list)
+
+
 class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
     """
     Streaming attack that drives a Realtime API session with server VAD + barge-in.
@@ -144,54 +155,21 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             raise ValueError("BargeInAttackContext.audio_chunks must be set before executing the attack.")
 
         connection = await target.connect_async(conversation_id=context.conversation_id)
-        raw_buffer = bytearray()
-        turn_lock = asyncio.Lock()
-        last_assistant_message: Message | None = None
-        executed_turns = 0
-        turn_tasks: list[asyncio.Task[None]] = []
+        state = _BargeInRunState()
 
         async def on_committed(event: _CommittedEvent) -> None:
-            """Convert-on-commit dance: snapshot raw audio → run converters → swap → request response → persist."""
-            nonlocal last_assistant_message, executed_turns
             current_task = asyncio.current_task()
             if current_task is not None:
-                turn_tasks.append(current_task)
+                state.turn_tasks.append(current_task)
             try:
-                async with turn_lock:
-                    snapshot = bytes(raw_buffer)
-                    raw_buffer.clear()
-
-                    try:
-                        converted_pcm, applied_identifiers = await target.audio_normalizer.normalize_async(
-                            pcm_bytes=snapshot,
-                            sample_rate=_REALTIME_SAMPLE_RATE_HZ,
-                            converter_configurations=self._request_converters,
-                        )
-                    except Exception:
-                        logger.exception("Audio converters failed; dropping turn.")
-                        return
-
-                    using_converted_audio = bool(self._request_converters) and converted_pcm != snapshot
-                    if using_converted_audio:
-                        await target.insert_user_audio_async(connection=connection, pcm_bytes=converted_pcm)
-                        try:
-                            await target.delete_conversation_item_async(connection=connection, item_id=event.item_id)
-                        except Exception as e:
-                            logger.warning(f"conversation.item.delete failed for {event.item_id}: {e}")
-
-                    turn_future = await target.request_response_async(connection=connection, dispatcher=dispatcher)
-                    turn_result = await turn_future
-
-                    user_audio_pcm = converted_pcm if using_converted_audio else snapshot
-                    assistant_message = await self._persist_turn_async(
-                        target=target,
-                        conversation_id=context.conversation_id,
-                        user_audio_pcm=user_audio_pcm,
-                        applied_converter_identifiers=applied_identifiers,
-                        turn_result=turn_result,
-                    )
-                    last_assistant_message = assistant_message
-                    executed_turns += 1
+                await self._handle_committed_turn_async(
+                    state=state,
+                    event=event,
+                    target=target,
+                    connection=connection,
+                    dispatcher=dispatcher,
+                    conversation_id=context.conversation_id,
+                )
             except Exception:
                 logger.exception("BargeInAttack turn failed in convert-on-commit handler.")
 
@@ -205,14 +183,14 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
 
             async for chunk in context.audio_chunks:
                 if chunk:
-                    raw_buffer.extend(chunk)
+                    state.raw_buffer.extend(chunk)
                 await target.push_audio_chunk_async(connection=connection, pcm_bytes=chunk)
 
             # Wait for any in-flight committed-turn tasks to finish (convert + response +
             # persistence), capped by a safety timeout. The chunk source must end with enough
             # trailing silence for server VAD's silence threshold to fire commit — otherwise
             # the last turn never enters the convert pipeline and there is nothing to wait on.
-            await self._wait_for_pending_turns_async(turn_tasks)
+            await self._wait_for_pending_turns_async(state.turn_tasks)
         finally:
             await dispatcher.stop()
             try:
@@ -220,23 +198,122 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             except Exception as e:
                 logger.warning(f"Error closing streaming connection: {e}")
 
-        outcome = AttackOutcome.UNDETERMINED
-        outcome_reason: str | None
-        if executed_turns == 0:
-            outcome_reason = "No assistant turns completed (server VAD did not commit any user audio)"
+        return self._build_result(state=state, context=context)
+
+    async def _handle_committed_turn_async(
+        self,
+        *,
+        state: _BargeInRunState,
+        event: _CommittedEvent,
+        target: RealtimeTarget,
+        connection: Any,
+        dispatcher: _RealtimeEventDispatcher,
+        conversation_id: str,
+    ) -> None:
+        """Run the convert-on-commit dance for one VAD-committed user audio turn."""
+        async with state.turn_lock:
+            snapshot = self._snapshot_user_audio(state)
+
+            try:
+                converted_pcm, applied_identifiers = await target.audio_normalizer.normalize_async(
+                    pcm_bytes=snapshot,
+                    sample_rate=_REALTIME_SAMPLE_RATE_HZ,
+                    converter_configurations=self._request_converters,
+                )
+            except Exception:
+                logger.exception("Audio converters failed; dropping turn.")
+                return
+
+            using_converted_audio = bool(self._request_converters) and converted_pcm != snapshot
+            if using_converted_audio:
+                await self._swap_user_audio_async(
+                    target=target,
+                    connection=connection,
+                    converted_pcm=converted_pcm,
+                    original_item_id=event.item_id,
+                )
+
+            turn_result = await self._drive_response_async(target=target, connection=connection, dispatcher=dispatcher)
+
+            user_audio_pcm = converted_pcm if using_converted_audio else snapshot
+            state.last_assistant_message = await self._persist_turn_async(
+                target=target,
+                conversation_id=conversation_id,
+                user_audio_pcm=user_audio_pcm,
+                applied_converter_identifiers=applied_identifiers,
+                turn_result=turn_result,
+            )
+            state.executed_turns += 1
+
+    def _snapshot_user_audio(self, state: _BargeInRunState) -> bytes:
+        """
+        Snapshot the accumulated user PCM and clear the buffer for the next turn.
+
+        Returns:
+            Snapshot of buffered PCM bytes prior to clearing.
+        """
+        snapshot = bytes(state.raw_buffer)
+        state.raw_buffer.clear()
+        return snapshot
+
+    async def _swap_user_audio_async(
+        self,
+        *,
+        target: RealtimeTarget,
+        connection: Any,
+        converted_pcm: bytes,
+        original_item_id: str,
+    ) -> None:
+        """Replace the server's originally-committed item with the converted audio."""
+        await target.insert_user_audio_async(connection=connection, pcm_bytes=converted_pcm)
+        try:
+            await target.delete_conversation_item_async(connection=connection, item_id=original_item_id)
+        except Exception as e:
+            logger.warning(f"conversation.item.delete failed for {original_item_id}: {e}")
+
+    async def _drive_response_async(
+        self,
+        *,
+        target: RealtimeTarget,
+        connection: Any,
+        dispatcher: _RealtimeEventDispatcher,
+    ) -> RealtimeTargetResult:
+        """
+        Trigger ``response.create`` and await the resulting turn future.
+
+        Returns:
+            The completed ``RealtimeTargetResult`` for the assistant turn.
+        """
+        turn_future = await target.request_response_async(connection=connection, dispatcher=dispatcher)
+        return await turn_future
+
+    def _build_result(
+        self,
+        *,
+        state: _BargeInRunState,
+        context: BargeInAttackContext[Any],
+    ) -> AttackResult:
+        """
+        Assemble the final ``AttackResult`` from accumulated run state.
+
+        Returns:
+            ``AttackResult`` with the last assistant message, executed turn count, and outcome reason.
+        """
+        if state.executed_turns == 0:
+            outcome_reason: str | None = "No assistant turns completed (server VAD did not commit any user audio)"
         else:
-            outcome_reason = f"{executed_turns} assistant turn(s) completed; no scorer configured"
+            outcome_reason = f"{state.executed_turns} assistant turn(s) completed; no scorer configured"
 
         return AttackResult(
             conversation_id=context.conversation_id,
             objective=context.objective,
             atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
-            last_response=last_assistant_message.message_pieces[0] if last_assistant_message else None,
+            last_response=(state.last_assistant_message.message_pieces[0] if state.last_assistant_message else None),
             last_score=None,
             related_conversations=context.related_conversations,
-            outcome=outcome,
+            outcome=AttackOutcome.UNDETERMINED,
             outcome_reason=outcome_reason,
-            executed_turns=executed_turns,
+            executed_turns=state.executed_turns,
             labels=context.memory_labels,
         )
 
