@@ -84,6 +84,26 @@ await output_attack_async(attack_result)
 await output_attack_async(attack_result, format="markdown")
 
 # %% [markdown]
+# ### Blurring Images
+#
+# When an attack uses image converters or targets that return images, the rendered
+# output can include payloads you may not want to look at directly during review.
+# Pass `blur_images=True` to apply a Gaussian blur before rendering. The original
+# image file is **not** modified — this is a reviewer-exposure knob, not access
+# control.
+#
+# * In `pretty` output the blur is applied in-memory before display.
+# * In `markdown` output a blurred copy is written to disk and the markdown links
+#   to it instead of the original. Pass `blurred_dir` to redirect those copies
+#   out of the source tree.
+# * If blurring fails for any reason, a warning is logged and a plain-text link
+#   to the original is emitted (rather than silently rendering the unblurred image).
+# * Tune the strength with `blur_radius` (default 20).
+
+# %%
+await output_attack_async(attack_result, blur_images=True, blur_radius=25)
+
+# %% [markdown]
 # ## Printing Conversations Directly
 #
 # If you have a list of `Message` objects, you can render them without an

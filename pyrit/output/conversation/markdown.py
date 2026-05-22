@@ -197,22 +197,41 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         """
         Format image content as markdown.
 
+        When ``blur_images`` is True and the blur succeeds, the markdown links to
+        the blurred copy. When ``blur_images`` is True and the blur fails, a
+        plain-text link to the original is emitted (not an inline image) so the
+        reviewer is not silently exposed to the unblurred image.
+
         Args:
             image_path (str): The path to the image file.
 
         Returns:
             list[str]: Markdown lines for the image.
         """
-        display_path = self._maybe_blur_image_on_disk(image_path=image_path) if self._blur_images else image_path
-        try:
-            relative_path = os.path.relpath(display_path)
-        except ValueError:
-            # Different mount/drive than cwd (Windows). Fall back to the absolute path.
-            relative_path = os.path.abspath(display_path)
-        posix_path = relative_path.replace("\\", "/")
+        if self._blur_images:
+            blurred = self._maybe_blur_image_on_disk(image_path=image_path)
+            if blurred is None:
+                # Blur was requested but failed — render a text link, not an inline image.
+                link = self._format_link_path(image_path)
+                return [f"[image (blur failed — original)]({link})\n"]
+            display_path = blurred
+        else:
+            display_path = image_path
+
+        posix_path = self._format_link_path(display_path)
         return [f"![Image]({posix_path})\n"]
 
-    def _maybe_blur_image_on_disk(self, *, image_path: str) -> str:
+    @staticmethod
+    def _format_link_path(path: str) -> str:
+        """Return a markdown-friendly link (POSIX separators, relative if possible)."""
+        try:
+            relative_path = os.path.relpath(path)
+        except ValueError:
+            # Different mount/drive than cwd (Windows). Fall back to the absolute path.
+            relative_path = os.path.abspath(path)
+        return relative_path.replace("\\", "/")
+
+    def _maybe_blur_image_on_disk(self, *, image_path: str) -> str | None:
         """
         Produce a blurred copy of ``image_path`` and return its path.
 
@@ -222,17 +241,19 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         ``_blurred.png``. Existing blurred files are reused (cached by path). The
         write is atomic — bytes are written to a temp sibling then ``os.replace``\\d
         into place — so concurrent renders cannot observe a partial file. On any
-        failure the original ``image_path`` is returned and a warning is logged.
+        failure ``None`` is returned and a warning is logged so the caller can
+        render a fail-safe link to the original instead of the original image.
 
         Args:
             image_path (str): The path to the source image file.
 
         Returns:
-            str: The path to the blurred image, or the original path on failure.
+            str | None: The path to the blurred image, or ``None`` on failure.
         """
         try:
             blurred_path = self._blurred_destination(image_path=image_path)
             if os.path.exists(blurred_path):
+                logger.debug(f"Reusing cached blurred image at {blurred_path}")
                 return blurred_path
 
             os.makedirs(os.path.dirname(blurred_path) or ".", exist_ok=True)
@@ -255,8 +276,8 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
                 raise
             return blurred_path
         except Exception as exc:
-            logger.warning(f"Failed to write blurred image for {image_path}; using original. Error: {exc}")
-            return image_path
+            logger.warning(f"Failed to write blurred image for {image_path}; falling back to a text link. Error: {exc}")
+            return None
 
     def _blurred_destination(self, *, image_path: str) -> str:
         """

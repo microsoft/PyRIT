@@ -168,14 +168,18 @@ def test_markdown_default_does_not_blur(tmp_path):
     assert lines[0] == f"![Image]({_expected_link(str(image_path))})\n"
 
 
-def test_markdown_blur_failure_falls_back_to_original(tmp_path, caplog):
-    # Point at a path that does not exist — blurring should fail gracefully.
+def test_markdown_blur_failure_emits_text_link_to_original(tmp_path, caplog):
+    # Point at a path that does not exist — blurring should fail gracefully and emit
+    # a text link to the original (NOT an inline image of the original).
     bogus_path = str(tmp_path / "does_not_exist.png")
 
     printer = _ConcreteMarkdown(blur_images=True, blur_radius=5)
     lines = printer._format_image_content(image_path=bogus_path)
 
-    assert lines[0] == f"![Image]({_expected_link(bogus_path)})\n"
+    expected = _expected_link(bogus_path)
+    assert lines[0] == f"[image (blur failed — original)]({expected})\n"
+    # Crucially, no inline-image rendering of the unblurred original
+    assert not lines[0].startswith("!")
 
 
 def test_markdown_format_image_content_handles_cross_drive_path(tmp_path):
@@ -243,14 +247,13 @@ def test_markdown_atomic_write_leaves_no_temp_on_failure(tmp_path):
 
     printer = _ConcreteMarkdown(blur_images=True, blur_radius=5)
 
-    # Force os.replace to fail; the temp file should be cleaned up and the original
-    # path returned as fallback.
+    # Force os.replace to fail; the temp file should be cleaned up and a text link
+    # to the original returned.
     with patch("pyrit.output.conversation.markdown.os.replace", side_effect=OSError("boom")):
         lines = printer._format_image_content(image_path=str(image_path))
 
-    # Falls back to the original
     expected_rel = _expected_link(str(image_path))
-    assert lines[0] == f"![Image]({expected_rel})\n"
+    assert lines[0] == f"[image (blur failed — original)]({expected_rel})\n"
 
     # No temp files left behind, no blurred file produced
     leftovers = [p.name for p in tmp_path.iterdir() if p.name != "img.png"]

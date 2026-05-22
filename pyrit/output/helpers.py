@@ -53,6 +53,9 @@ async def output_attack_async(
             markdown links to it instead of the original. The original image file is
             **not** modified and remains accessible on disk; this flag is intended to
             reduce reviewer exposure, not to enforce access control.
+            If blurring fails for any reason (I/O error, decode error, etc.), a warning
+            is logged and a plain-text link to the original is emitted instead of an
+            inline image — the original is not silently rendered.
             Defaults to False.
         blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
             Defaults to 20.
@@ -156,7 +159,12 @@ async def output_conversation_async(
         include_scores (bool): Whether to include scores. Defaults to False.
         include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
         blur_images (bool): If True, apply a Gaussian blur to image outputs before
-            rendering them. Defaults to False.
+            rendering them. For "pretty" output (the only format supported here),
+            image bytes are blurred in-memory before display. The original image file
+            is **not** modified; this flag is intended to reduce reviewer exposure,
+            not to enforce access control. If blurring fails for any reason, a warning
+            is logged and the original is shown (pretty path only).
+            Defaults to False.
         blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
             Defaults to 20.
 
