@@ -70,10 +70,10 @@ class _MossBenchDataset(_RemoteDatasetLoader):
     VLM should answer normally, not refuse.
 
     Each example is delivered as a two-piece multimodal user turn — an image
-    and a benign text question — both wrapped in :class:`SeedPrompt` objects
+    and a benign text question — both wrapped in ``SeedPrompt`` objects
     that share a ``prompt_group_id`` and ``sequence=0``. No ``SeedObjective``
     is created (matching the convention used by the text-only over-refusal
-    loaders :class:`_XSTestDataset` and :class:`_ORBenchBaseDataset`); the
+    loaders ``_XSTestDataset`` and ``_ORBenchBaseDataset``); the
     "non-refusal expected" semantics live in the dataset's identity rather
     than in a per-row objective field.
 
@@ -81,7 +81,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         - **Image source**: GitHub raw URLs pinned to commit
           ``8d68b0614b39d8990a508e03d99975832f399db2``. All 300 PNG images are
           in the repo at predictable paths. The first call downloads each image
-          once via :func:`fetch_and_cache_image_async`; subsequent calls reuse
+          once via ``fetch_and_cache_image_async``; subsequent calls reuse
           the on-disk cache.
         - **Harm indices**: the upstream ``metadata.harm`` list contains
           HarmBench-style integer indices, but the explicit
@@ -149,16 +149,16 @@ class _MossBenchDataset(_RemoteDatasetLoader):
             oversensitivity_types (list[MossBenchOversensitivityType] | None):
                 Filter examples by oversensitivity stimulus type. If ``None``
                 (default), all three types are included. Valid values:
-                :class:`MossBenchOversensitivityType.EXAGGERATED_RISK`,
-                :class:`MossBenchOversensitivityType.NEGATED_HARM`,
-                :class:`MossBenchOversensitivityType.COUNTERINTUITIVE_INTERPRETATION`.
+                ``MossBenchOversensitivityType.EXAGGERATED_RISK``,
+                ``MossBenchOversensitivityType.NEGATED_HARM``,
+                ``MossBenchOversensitivityType.COUNTERINTUITIVE_INTERPRETATION``.
             max_examples (int | None): Maximum number of examples (image+text
                 pairs) to fetch. If ``None``, fetches all matching examples.
                 Useful for testing or quick validations.
 
         Raises:
             ValueError: If any value in ``oversensitivity_types`` is not a
-                :class:`MossBenchOversensitivityType` member.
+                ``MossBenchOversensitivityType`` member.
         """
         self.source = source
         self.source_type: Literal["public_url", "file"] = source_type
@@ -179,9 +179,9 @@ class _MossBenchDataset(_RemoteDatasetLoader):
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
-        Fetch MOSSBench examples and return them as a :class:`SeedDataset`.
+        Fetch MOSSBench examples and return them as a ``SeedDataset``.
 
-        Each example yields two :class:`SeedPrompt` objects — an image and a
+        Each example yields two ``SeedPrompt`` objects — an image and a
         benign text question — that share a ``prompt_group_id`` and
         ``sequence=0`` so the orchestrator delivers them as a single
         multimodal user turn.
@@ -191,7 +191,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
                 ``True``.
 
         Returns:
-            SeedDataset: A :class:`SeedDataset` containing the multimodal
+            SeedDataset: A ``SeedDataset`` containing the multimodal
             examples.
 
         Raises:
@@ -287,7 +287,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         over_type: MossBenchOversensitivityType,
     ) -> list[SeedPrompt]:
         """
-        Build an image+text :class:`SeedPrompt` pair for a single MOSSBench example.
+        Build an image+text ``SeedPrompt`` pair for a single MOSSBench example.
 
         Args:
             pid (str): MOSSBench prompt id (used in seed names and cached image
@@ -375,7 +375,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
     @staticmethod
     def _parse_over_type(example: dict[str, Any]) -> MossBenchOversensitivityType:
         """
-        Map the raw ``metadata.over`` string to a :class:`MossBenchOversensitivityType`.
+        Map the raw ``metadata.over`` string to a ``MossBenchOversensitivityType``.
 
         Args:
             example (dict[str, Any]): Single example dict from the upstream
