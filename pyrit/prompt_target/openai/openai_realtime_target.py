@@ -23,11 +23,11 @@ from pyrit.models import (
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.realtime_audio import (
+    CommittedEvent,
+    RealtimeEventDispatcher,
     RealtimeTargetResult,
+    RealtimeTurnState,
     ServerVadConfig,
-    _CommittedEvent,
-    _RealtimeEventDispatcher,
-    _RealtimeTurnState,
 )
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -572,12 +572,37 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         """
         await connection.conversation.item.delete(item_id=item_id)
 
+    async def swap_user_audio_async(
+        self,
+        *,
+        connection: Any,
+        committed_event: CommittedEvent,
+        converted_pcm: bytes,
+    ) -> None:
+        """
+        Replace the server's just-committed user audio with converted PCM.
+
+        Inserts ``converted_pcm`` as a new user item and best-effort deletes the original
+        item identified by ``committed_event``. Hides OpenAI's item-id concept from
+        callers so streaming attacks can stay provider-agnostic.
+
+        Args:
+            connection: Active Realtime API connection.
+            committed_event: Payload received in the on-committed callback.
+            converted_pcm: PCM16 mono @ 24 kHz audio to insert in place of the original.
+        """
+        await self.insert_user_audio_async(connection=connection, pcm_bytes=converted_pcm)
+        try:
+            await self.delete_conversation_item_async(connection=connection, item_id=committed_event.item_id)
+        except Exception as e:
+            logger.warning(f"conversation.item.delete failed for {committed_event.item_id}: {e}")
+
     async def subscribe_events_async(
         self,
         *,
         connection: Any,
-        on_user_audio_committed: (Callable[[_CommittedEvent], Coroutine[Any, Any, None]] | None) = None,
-    ) -> _RealtimeEventDispatcher:
+        on_user_audio_committed: (Callable[[CommittedEvent], Coroutine[Any, Any, None]] | None) = None,
+    ) -> RealtimeEventDispatcher:
         """
         Start consuming events from the connection and route them via the OpenAI dispatcher.
 
@@ -609,12 +634,12 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         self,
         *,
         connection: Any,
-        dispatcher: _RealtimeEventDispatcher,
+        dispatcher: RealtimeEventDispatcher,
     ) -> asyncio.Future[RealtimeTargetResult]:
         """
         Trigger ``response.create`` and return a future that resolves when the turn ends.
 
-        Constructs a fresh ``_RealtimeTurnState``, binds it to the dispatcher as the
+        Constructs a fresh ``RealtimeTurnState``, binds it to the dispatcher as the
         active turn, then sends ``response.create``. The dispatcher resolves the
         returned future via ``response.done`` (with ``interrupted=False``) or via
         the barge-in cancel path (with ``interrupted=True``).
@@ -631,7 +656,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         Raises:
             RuntimeError: If another turn is already pending on the dispatcher.
         """
-        state = _RealtimeTurnState(completion=asyncio.get_running_loop().create_future())
+        state = RealtimeTurnState(completion=asyncio.get_running_loop().create_future())
         dispatcher.register_turn(state)
         await connection.response.create()
         return state.completion
@@ -1031,15 +1056,15 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         raise NotImplementedError("RealtimeTarget uses receive_events for message construction")
 
 
-class _OpenAIRealtimeDispatcher(_RealtimeEventDispatcher):
+class _OpenAIRealtimeDispatcher(RealtimeEventDispatcher):
     """
-    Concrete ``_RealtimeEventDispatcher`` for the OpenAI Realtime API.
+    Concrete ``RealtimeEventDispatcher`` for the OpenAI Realtime API.
 
-    Routes OpenAI server events into the active ``_RealtimeTurnState`` and issues
+    Routes OpenAI server events into the active ``RealtimeTurnState`` and issues
     ``response.cancel`` plus ``conversation.item.truncate`` when interrupted.
     """
 
-    async def _route_event(self, *, event: Any, state: _RealtimeTurnState | None) -> None:
+    async def _route_event(self, *, event: Any, state: RealtimeTurnState | None) -> None:
         """Route an OpenAI Realtime event to the active turn or to an input-side callback."""
         event_type = getattr(event, "type", "")
 
@@ -1049,7 +1074,7 @@ class _OpenAIRealtimeDispatcher(_RealtimeEventDispatcher):
             if item_id is None:
                 return
             self._fire_committed_callback(
-                _CommittedEvent(
+                CommittedEvent(
                     item_id=item_id,
                     audio_start_ms=getattr(event, "audio_start_ms", None),
                 )
@@ -1119,7 +1144,7 @@ class _OpenAIRealtimeDispatcher(_RealtimeEventDispatcher):
             state.completion.set_exception(RuntimeError(f"Realtime API error: {message}"))
             return
 
-    async def _cancel(self, *, state: _RealtimeTurnState) -> None:
+    async def _cancel(self, *, state: RealtimeTurnState) -> None:
         """
         Truncate the in-flight response's conversation item to what was actually delivered.
 
@@ -1130,7 +1155,7 @@ class _OpenAIRealtimeDispatcher(_RealtimeEventDispatcher):
         Does not resolve ``state.completion``; the caller (``_route_event``) does that.
 
         Args:
-            state (_RealtimeTurnState): The turn whose response should be cancelled.
+            state (RealtimeTurnState): The turn whose response should be cancelled.
         """
         if state.current_item_id is not None:
             # PCM16 @ 24 kHz: 48 bytes per millisecond.

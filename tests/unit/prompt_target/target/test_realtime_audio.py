@@ -8,16 +8,16 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from pyrit.prompt_target.common.realtime_audio import (
+    CommittedEvent,
+    RealtimeEventDispatcher,
     RealtimeTargetResult,
-    _CommittedEvent,
-    _RealtimeEventDispatcher,
-    _RealtimeTurnState,
+    RealtimeTurnState,
 )
 
 
 async def test_realtime_turn_state_defaults():
     """Newly constructed turn state must be empty: no audio, no transcripts, not responding, not interrupted."""
-    state = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+    state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
 
     assert state.is_responding is False
     assert state.interrupted is False
@@ -41,7 +41,7 @@ def test_realtime_target_result_carries_interrupted_when_set():
     assert result.interrupted is True
 
 
-class _RecordingDispatcher(_RealtimeEventDispatcher):
+class _RecordingDispatcher(RealtimeEventDispatcher):
     """Minimal concrete dispatcher for testing the generic base class behavior."""
 
     def __init__(self, *, connection: Any) -> None:
@@ -49,13 +49,13 @@ class _RecordingDispatcher(_RealtimeEventDispatcher):
         self.routed_events: list[Any] = []
         self.cancel_calls: int = 0
 
-    async def _route_event(self, *, event: Any, state: _RealtimeTurnState | None) -> None:
+    async def _route_event(self, *, event: Any, state: RealtimeTurnState | None) -> None:
         self.routed_events.append(event)
         # End the turn on a sentinel event so tests can drain the loop.
         if state is not None and getattr(event, "_finish", False):
             state.completion.set_result(RealtimeTargetResult())
 
-    async def _cancel(self, *, state: _RealtimeTurnState) -> None:
+    async def _cancel(self, *, state: RealtimeTurnState) -> None:
         self.cancel_calls += 1
         state.interrupted = True
 
@@ -98,8 +98,8 @@ async def test_dispatcher_stop_releases_task():
 async def test_dispatcher_register_turn_rejects_concurrent_active_turn():
     """Registering a turn while another is active and unresolved must raise."""
     dispatcher = _RecordingDispatcher(connection=_ScriptedConnection([]))
-    first = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
-    second = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+    first = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+    second = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
 
     dispatcher.register_turn(first)
     with pytest.raises(RuntimeError, match="already active"):
@@ -109,9 +109,9 @@ async def test_dispatcher_register_turn_rejects_concurrent_active_turn():
 async def test_dispatcher_register_turn_allows_replacement_after_completion():
     """Once the active turn's future is done, register_turn may bind a new turn."""
     dispatcher = _RecordingDispatcher(connection=_ScriptedConnection([]))
-    first = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+    first = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
     first.completion.set_result(RealtimeTargetResult())
-    second = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+    second = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
 
     dispatcher.register_turn(first)
     dispatcher.register_turn(second)
@@ -123,7 +123,7 @@ async def test_dispatcher_loop_routes_events_to_active_turn():
     finish = _sentinel_event(finish=True)
     other = _sentinel_event()
     dispatcher = _RecordingDispatcher(connection=_ScriptedConnection([other, finish]))
-    state = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+    state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
     dispatcher.register_turn(state)
 
     await dispatcher.start()
@@ -152,12 +152,12 @@ async def test_dispatcher_loop_sets_exception_on_router_failure():
     """A router exception must propagate to the active turn's completion future."""
 
     class _ExplodingDispatcher(_RecordingDispatcher):
-        async def _route_event(self, *, event: Any, state: _RealtimeTurnState | None) -> None:
+        async def _route_event(self, *, event: Any, state: RealtimeTurnState | None) -> None:
             raise ValueError("router boom")
 
     event = _sentinel_event()
     dispatcher = _ExplodingDispatcher(connection=_ScriptedConnection([event]))
-    state = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+    state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
     dispatcher.register_turn(state)
 
     await dispatcher.start()
@@ -179,7 +179,7 @@ async def test_dispatcher_fires_committed_callback_as_background_task():
         # Block until the test releases us; this proves the dispatch loop did not wait.
         await release.wait()
 
-    class _CallbackDispatcher(_RealtimeEventDispatcher):
+    class _CallbackDispatcher(RealtimeEventDispatcher):
         async def _route_event(self, *, event, state):
             # Synthesize a committed callback fire on every event for the test.
             self._fire_committed_callback(event)
@@ -187,8 +187,8 @@ async def test_dispatcher_fires_committed_callback_as_background_task():
         async def _cancel(self, *, state):  # pragma: no cover - not exercised here
             return
 
-    fake_event_1 = MagicMock(spec=_CommittedEvent)
-    fake_event_2 = MagicMock(spec=_CommittedEvent)
+    fake_event_1 = MagicMock(spec=CommittedEvent)
+    fake_event_2 = MagicMock(spec=CommittedEvent)
     dispatcher = _CallbackDispatcher(
         connection=_ScriptedConnection([fake_event_1, fake_event_2]),
         on_user_audio_committed=slow_callback,
@@ -209,7 +209,7 @@ async def test_dispatcher_fires_committed_callback_as_background_task():
 async def test_dispatcher_records_failure_on_iterator_crash():
     """When the connection iterator raises, the dispatcher's failure property captures the exception."""
 
-    class _NoopDispatcher(_RealtimeEventDispatcher):
+    class _NoopDispatcher(RealtimeEventDispatcher):
         async def _route_event(self, *, event, state):  # pragma: no cover - never called
             return
 

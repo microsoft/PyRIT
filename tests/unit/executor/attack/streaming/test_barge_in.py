@@ -21,8 +21,8 @@ from pyrit.models import AttackOutcome
 from pyrit.prompt_normalizer import AudioStreamNormalizer, PromptConverterConfiguration
 from pyrit.prompt_target import RealtimeTarget
 from pyrit.prompt_target.common.realtime_audio import (
+    CommittedEvent,
     RealtimeTargetResult,
-    _CommittedEvent,
 )
 
 if TYPE_CHECKING:
@@ -168,7 +168,7 @@ async def test_perform_async_fires_request_response_on_commit(vad_target):
     async def chunks_then_commit() -> AsyncIterator[bytes]:
         yield b"\x00" * 480
         # Drive a fake commit mid-stream.
-        await asyncio.create_task(captured["on_committed"](_CommittedEvent(item_id="raw_1")))
+        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="raw_1")))
 
     ctx = _attack_context(audio_chunks=chunks_then_commit())
 
@@ -289,7 +289,7 @@ async def test_perform_async_swaps_raw_item_when_converters_change_audio(vad_tar
 
     async def chunks_then_commit() -> AsyncIterator[bytes]:
         yield raw_chunk
-        await asyncio.create_task(captured["on_committed"](_CommittedEvent(item_id="raw_99")))
+        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="raw_99")))
 
     ctx = BargeInAttackContext(
         params=AttackParameters(objective="obj"),
@@ -330,7 +330,7 @@ async def test_perform_async_skips_swap_when_no_converters(vad_target):
 
     async def chunks_then_commit() -> AsyncIterator[bytes]:
         yield b"\x00" * 96
-        await asyncio.create_task(captured["on_committed"](_CommittedEvent(item_id="raw_42")))
+        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="raw_42")))
 
     ctx = BargeInAttackContext(
         params=AttackParameters(objective="obj"),
@@ -376,9 +376,9 @@ async def test_perform_async_clears_raw_buffer_between_commits(vad_target):
 
     async def chunks_then_two_commits() -> AsyncIterator[bytes]:
         yield b"\x01" * 96
-        await asyncio.create_task(captured["on_committed"](_CommittedEvent(item_id="raw_1")))
+        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="raw_1")))
         yield b"\x02" * 96
-        await asyncio.create_task(captured["on_committed"](_CommittedEvent(item_id="raw_2")))
+        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="raw_2")))
 
     ctx = BargeInAttackContext(
         params=AttackParameters(objective="obj"),
@@ -425,7 +425,7 @@ async def test_perform_async_uses_target_audio_normalizer(vad_target):
 
     async def chunks_then_commit() -> AsyncIterator[bytes]:
         yield raw
-        await asyncio.create_task(captured["on_committed"](_CommittedEvent(item_id="raw_z")))
+        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="raw_z")))
 
     ctx = BargeInAttackContext(
         params=AttackParameters(objective="obj"),
@@ -478,7 +478,7 @@ async def _drive_one_audio_turn(
 
     async def chunks_then_commit() -> AsyncIterator[bytes]:
         yield raw_chunk
-        await asyncio.create_task(captured["on_committed"](_CommittedEvent(item_id=item_id)))
+        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id=item_id)))
 
     ctx = BargeInAttackContext(
         params=AttackParameters(objective="obj"),

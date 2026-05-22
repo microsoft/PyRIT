@@ -51,7 +51,7 @@ class RealtimeTargetResult:
 
 
 @dataclass
-class _RealtimeTurnState:
+class RealtimeTurnState:
     """Mutable per-turn state assembled by the dispatcher from incoming events."""
 
     completion: asyncio.Future[RealtimeTargetResult]
@@ -64,14 +64,14 @@ class _RealtimeTurnState:
 
 
 @dataclass(frozen=True)
-class _CommittedEvent:
+class CommittedEvent:
     """Payload passed to ``on_user_audio_committed`` callbacks when server VAD commits."""
 
     item_id: str
     audio_start_ms: int | None = None
 
 
-class _RealtimeEventDispatcher(ABC):
+class RealtimeEventDispatcher(ABC):
     """
     Owns a realtime connection's event stream and routes events to the active turn.
 
@@ -82,7 +82,7 @@ class _RealtimeEventDispatcher(ABC):
         self,
         *,
         connection: Any,
-        on_user_audio_committed: Callable[[_CommittedEvent], Coroutine[Any, Any, None]] | None = None,
+        on_user_audio_committed: Callable[[CommittedEvent], Coroutine[Any, Any, None]] | None = None,
     ) -> None:
         """
         Args:
@@ -95,7 +95,7 @@ class _RealtimeEventDispatcher(ABC):
         """
         self._connection = connection
         self._on_user_audio_committed = on_user_audio_committed
-        self._current_turn: _RealtimeTurnState | None = None
+        self._current_turn: RealtimeTurnState | None = None
         self._task: asyncio.Task[None] | None = None
         self._callback_tasks: set[asyncio.Task[None]] = set()
         self._failure: BaseException | None = None
@@ -136,12 +136,12 @@ class _RealtimeEventDispatcher(ABC):
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
 
-    def register_turn(self, state: _RealtimeTurnState) -> None:
+    def register_turn(self, state: RealtimeTurnState) -> None:
         """
         Bind a new turn as the active turn.
 
         Args:
-            state (_RealtimeTurnState): The turn whose completion future will be
+            state (RealtimeTurnState): The turn whose completion future will be
                 resolved when this turn ends.
 
         Raises:
@@ -183,7 +183,7 @@ class _RealtimeEventDispatcher(ABC):
             if turn is not None and not turn.completion.done():
                 turn.completion.set_exception(e)
 
-    def _fire_committed_callback(self, event: _CommittedEvent) -> None:
+    def _fire_committed_callback(self, event: CommittedEvent) -> None:
         """
         Schedule the ``on_user_audio_committed`` callback as a background task.
 
@@ -196,7 +196,7 @@ class _RealtimeEventDispatcher(ABC):
         task.add_done_callback(self._callback_tasks.discard)
 
     @abstractmethod
-    async def _route_event(self, *, event: Any, state: _RealtimeTurnState | None) -> None:
+    async def _route_event(self, *, event: Any, state: RealtimeTurnState | None) -> None:
         """
         Route a single provider-specific event.
 
@@ -214,13 +214,13 @@ class _RealtimeEventDispatcher(ABC):
 
         Args:
             event: A single provider-specific event from the connection iterator.
-            state (_RealtimeTurnState | None): The currently-active turn, or None
+            state (RealtimeTurnState | None): The currently-active turn, or None
                 if no turn is registered (e.g. between turns in a streaming
                 session).
         """
 
     @abstractmethod
-    async def _cancel(self, *, state: _RealtimeTurnState) -> None:
+    async def _cancel(self, *, state: RealtimeTurnState) -> None:
         """
         Send provider-specific cancel and truncate events for the in-flight response.
 
@@ -229,5 +229,5 @@ class _RealtimeEventDispatcher(ABC):
         that is the dispatcher's responsibility.
 
         Args:
-            state (_RealtimeTurnState): The turn whose response should be cancelled.
+            state (RealtimeTurnState): The turn whose response should be cancelled.
         """

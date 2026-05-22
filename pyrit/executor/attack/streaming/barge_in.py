@@ -33,9 +33,9 @@ if TYPE_CHECKING:
     from pyrit.identifiers import ComponentIdentifier
     from pyrit.prompt_target import PromptTarget
     from pyrit.prompt_target.common.realtime_audio import (
+        CommittedEvent,
+        RealtimeEventDispatcher,
         RealtimeTargetResult,
-        _CommittedEvent,
-        _RealtimeEventDispatcher,
     )
     from pyrit.prompt_target.openai.openai_realtime_target import RealtimeTarget
 
@@ -157,7 +157,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         connection = await target.connect_async(conversation_id=context.conversation_id)
         state = _BargeInRunState()
 
-        async def on_committed(event: _CommittedEvent) -> None:
+        async def on_committed(event: CommittedEvent) -> None:
             current_task = asyncio.current_task()
             if current_task is not None:
                 state.turn_tasks.append(current_task)
@@ -173,7 +173,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             except Exception:
                 logger.exception("BargeInAttack turn failed in convert-on-commit handler.")
 
-        dispatcher: _RealtimeEventDispatcher = await target.subscribe_events_async(
+        dispatcher: RealtimeEventDispatcher = await target.subscribe_events_async(
             connection=connection,
             on_user_audio_committed=on_committed,
         )
@@ -204,10 +204,10 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         self,
         *,
         state: _BargeInRunState,
-        event: _CommittedEvent,
+        event: CommittedEvent,
         target: RealtimeTarget,
         connection: Any,
-        dispatcher: _RealtimeEventDispatcher,
+        dispatcher: RealtimeEventDispatcher,
         conversation_id: str,
     ) -> None:
         """Run the convert-on-commit dance for one VAD-committed user audio turn."""
@@ -226,11 +226,10 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
 
             using_converted_audio = bool(self._request_converters) and converted_pcm != snapshot
             if using_converted_audio:
-                await self._swap_user_audio_async(
-                    target=target,
+                await target.swap_user_audio_async(
                     connection=connection,
+                    committed_event=event,
                     converted_pcm=converted_pcm,
-                    original_item_id=event.item_id,
                 )
 
             turn_result = await self._drive_response_async(target=target, connection=connection, dispatcher=dispatcher)
@@ -256,27 +255,12 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         state.raw_buffer.clear()
         return snapshot
 
-    async def _swap_user_audio_async(
-        self,
-        *,
-        target: RealtimeTarget,
-        connection: Any,
-        converted_pcm: bytes,
-        original_item_id: str,
-    ) -> None:
-        """Replace the server's originally-committed item with the converted audio."""
-        await target.insert_user_audio_async(connection=connection, pcm_bytes=converted_pcm)
-        try:
-            await target.delete_conversation_item_async(connection=connection, item_id=original_item_id)
-        except Exception as e:
-            logger.warning(f"conversation.item.delete failed for {original_item_id}: {e}")
-
     async def _drive_response_async(
         self,
         *,
         target: RealtimeTarget,
         connection: Any,
-        dispatcher: _RealtimeEventDispatcher,
+        dispatcher: RealtimeEventDispatcher,
     ) -> RealtimeTargetResult:
         """
         Trigger ``response.create`` and await the resulting turn future.

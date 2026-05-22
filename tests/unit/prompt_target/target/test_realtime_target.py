@@ -12,9 +12,9 @@ from pyrit.exceptions.exception_classes import ServerErrorException
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import RealtimeTarget, ServerVadConfig
 from pyrit.prompt_target.common.realtime_audio import (
+    CommittedEvent,
     RealtimeTargetResult,
-    _CommittedEvent,
-    _RealtimeTurnState,
+    RealtimeTurnState,
 )
 from pyrit.prompt_target.openai.openai_realtime_target import _OpenAIRealtimeDispatcher
 
@@ -699,9 +699,43 @@ async def test_delete_conversation_item_async_forwards_item_id(target):
     connection.conversation.item.delete.assert_awaited_once_with(item_id="raw_item_99")
 
 
-def _turn_state(*, response_id: str | None = "resp_abc", item_id: str | None = "item_xyz") -> _RealtimeTurnState:
+async def test_swap_user_audio_async_inserts_converted_then_deletes_original(target):
+    """``swap_user_audio_async`` must insert the converted PCM then delete the original item."""
+    connection = AsyncMock()
+    event = CommittedEvent(item_id="raw_swap_1")
+
+    await target.swap_user_audio_async(
+        connection=connection,
+        committed_event=event,
+        converted_pcm=b"\xab" * 96,
+    )
+
+    # Insert came first (item.create), then delete.
+    connection.conversation.item.create.assert_awaited_once()
+    connection.conversation.item.delete.assert_awaited_once_with(item_id="raw_swap_1")
+
+
+async def test_swap_user_audio_async_logs_and_swallows_delete_failure(target, caplog):
+    """Best-effort delete: if ``delete`` raises, ``swap`` logs a warning and returns normally."""
+    connection = AsyncMock()
+    connection.conversation.item.delete.side_effect = RuntimeError("delete blew up")
+    event = CommittedEvent(item_id="raw_swap_fail")
+
+    with caplog.at_level("WARNING"):
+        await target.swap_user_audio_async(
+            connection=connection,
+            committed_event=event,
+            converted_pcm=b"\x01" * 96,
+        )
+
+    connection.conversation.item.create.assert_awaited_once()
+    connection.conversation.item.delete.assert_awaited_once_with(item_id="raw_swap_fail")
+    assert any("delete failed for raw_swap_fail" in record.message for record in caplog.records)
+
+
+def _turn_state(*, response_id: str | None = "resp_abc", item_id: str | None = "item_xyz") -> RealtimeTurnState:
     """Build a turn state with the named ids preset; completion future is unused by cancel tests."""
-    return _RealtimeTurnState(
+    return RealtimeTurnState(
         completion=asyncio.get_event_loop().create_future(),
         is_responding=True,
         last_response_id=response_id,
@@ -792,7 +826,7 @@ async def test_route_event_happy_path_resolves_completion_with_assembled_result(
     """response.created -> output_item.added -> audio.delta -> transcript.delta -> response.done."""
     connection = AsyncMock()
     dispatcher = _make_dispatcher(connection)
-    state = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+    state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
 
     await dispatcher._route_event(event=_scripted_event("response.created", **{"response.id": "r1"}), state=state)
     await dispatcher._route_event(event=_scripted_event("response.output_item.added", **{"item.id": "i1"}), state=state)
@@ -815,7 +849,7 @@ async def test_route_event_speech_started_while_responding_cancels_and_resolves_
     """speech_started during a response triggers cancel and resolves with interrupted=True."""
     connection = AsyncMock()
     dispatcher = _make_dispatcher(connection)
-    state = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+    state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
 
     await dispatcher._route_event(event=_scripted_event("response.created", **{"response.id": "r1"}), state=state)
     await dispatcher._route_event(event=_scripted_event("response.output_item.added", **{"item.id": "i1"}), state=state)
@@ -841,7 +875,7 @@ async def test_route_event_stale_response_done_after_cancel_is_dropped():
     """A response.done with a stale response_id must not re-resolve a completed future."""
     connection = AsyncMock()
     dispatcher = _make_dispatcher(connection)
-    state = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+    state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
     # Pretend a turn just resolved as interrupted on response_id r1.
     state.last_response_id = "r1"
     state.completion.set_result(RealtimeTargetResult())
@@ -854,7 +888,7 @@ async def test_route_event_error_resolves_with_exception():
     """error events resolve the completion future via set_exception."""
     connection = AsyncMock()
     dispatcher = _make_dispatcher(connection)
-    state = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+    state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
 
     await dispatcher._route_event(event=_scripted_event("error", **{"error.message": "rate limited"}), state=state)
 
@@ -866,7 +900,7 @@ async def test_route_event_speech_started_without_responding_is_noop():
     """speech_started before a response is in flight does not call cancel or resolve."""
     connection = AsyncMock()
     dispatcher = _make_dispatcher(connection)
-    state = _RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+    state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
 
     await dispatcher._route_event(event=_scripted_event("input_audio_buffer.speech_started"), state=state)
 
@@ -932,7 +966,7 @@ async def test_subscribe_events_async_returns_started_dispatcher(target):
     connection = MagicMock()
     connection.__aiter__ = lambda self_: event_iter()
 
-    received: list[_CommittedEvent] = []
+    received: list[CommittedEvent] = []
 
     async def on_committed(event):
         received.append(event)
@@ -980,7 +1014,7 @@ async def test_request_response_async_registers_turn_and_sends_response_create(t
 
     dispatcher.register_turn.assert_called_once()
     registered_state = dispatcher.register_turn.call_args.args[0]
-    assert isinstance(registered_state, _RealtimeTurnState)
+    assert isinstance(registered_state, RealtimeTurnState)
     assert registered_state.completion is future
     connection.response.create.assert_awaited_once_with()
 
