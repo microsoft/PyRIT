@@ -31,6 +31,7 @@
 # JailbreakBench [@chao2024jailbreakbench],
 # LLM-LAT [@sheshadri2024lat],
 # MedSafetyBench [@han2024medsafetybench],
+# MOSSBench [@li2024mossbench],
 # Multilingual Alignment Prism [@aakanksha2024multilingual],
 # Multilingual Vulnerabilities [@tang2025multilingual],
 # OR-Bench [@cui2024orbench],
