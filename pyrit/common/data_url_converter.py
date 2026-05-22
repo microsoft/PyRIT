@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import DataTypeSerializer, data_serializer_factory
 
 # Supported image formats for Azure OpenAI GPT-4o,
@@ -8,7 +9,7 @@ from pyrit.models import DataTypeSerializer, data_serializer_factory
 AZURE_OPENAI_GPT4O_SUPPORTED_IMAGE_FORMATS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif"]
 
 
-async def convert_local_image_to_data_url(image_path: str) -> str:
+async def convert_local_image_to_data_url_async(image_path: str) -> str:
     """
     Convert a local image file to a data URL encoded in base64.
 
@@ -42,3 +43,18 @@ async def convert_local_image_to_data_url(image_path: str) -> str:
     # Construct the data URL, as per Azure OpenAI GPT-4 Turbo local image format
     # https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/gpt-with-vision?tabs=rest%2Csystem-assigned%2Cresource#call-the-chat-completion-apis
     return f"data:{mime_type};base64,{base64_encoded_data}"
+
+
+async def convert_local_image_to_data_url(image_path: str) -> str:
+    """
+    Delegate to :func:`convert_local_image_to_data_url_async` (deprecated alias).
+
+    Returns:
+        str: A string containing the MIME type and the base64-encoded data of the image, formatted as a data URL.
+    """
+    print_deprecation_message(
+        old_item="pyrit.common.data_url_converter.convert_local_image_to_data_url",
+        new_item="pyrit.common.data_url_converter.convert_local_image_to_data_url_async",
+        removed_in="0.16.0",
+    )
+    return await convert_local_image_to_data_url_async(image_path)

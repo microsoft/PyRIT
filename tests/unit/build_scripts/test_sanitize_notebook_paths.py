@@ -37,6 +37,25 @@ class TestStripUserPaths:
     def test_lowercase_users_segment(self) -> None:
         assert _strip_user_paths(r"C:\users\testuser\project\file.py") == "./project/file.py"
 
+    def test_copilot_worktree_windows(self) -> None:
+        assert (
+            _strip_user_paths(r"C:\Users\testuser\.copilot\repos\copilot-worktrees\pyrit\my-branch\.venv\Lib\file.py")
+            == "./.venv/Lib/file.py"
+        )
+
+    def test_copilot_worktree_linux(self) -> None:
+        assert (
+            _strip_user_paths("/home/testuser/.copilot/repos/copilot-worktrees/pyrit/my-branch/.venv/lib/file.py")
+            == "./.venv/lib/file.py"
+        )
+
+    def test_copilot_repo_no_worktree(self) -> None:
+        assert _strip_user_paths("/home/testuser/.copilot/repos/pyrit/src/foo.py") == "./src/foo.py"
+
+    def test_copilot_path_outside_repos_untouched(self) -> None:
+        # Only paths under .copilot/repos/ are collapsed.
+        assert _strip_user_paths("/home/testuser/.copilot/config/settings.json") == "./.copilot/config/settings.json"
+
 
 class TestSanitizeNotebookPaths:
     def _make_notebook(self, outputs: list) -> dict:

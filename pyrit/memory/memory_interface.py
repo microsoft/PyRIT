@@ -1701,6 +1701,7 @@ class MemoryInterface(abc.ABC):
         targeted_harm_categories: Optional[Sequence[str]] = None,
         labels: Optional[dict[str, str | Sequence[str]]] = None,
         identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
+        scenario_result_id: Optional[str] = None,
     ) -> Sequence[AttackResult]:
         """
         Retrieve a list of AttackResult objects based on the specified filters.
@@ -1750,6 +1751,10 @@ class MemoryInterface(abc.ABC):
             identifier_filters (Optional[Sequence[IdentifierFilter]], optional):
                 A sequence of IdentifierFilter objects that allows filtering by various attack identifier
                 JSON properties. Defaults to None.
+            scenario_result_id (Optional[str], optional): Filter to attack results linked to a
+                specific scenario via the ``AttackResultEntry.attribution_parent_id`` foreign key.
+                Combined with ``outcome=AttackOutcome.ERROR`` this is the replacement for the
+                removed per-scenario error_attack_result_ids manifest. Defaults to None.
 
         Returns:
             Sequence[AttackResult]: A list of AttackResult objects that match the specified filters.
@@ -1783,6 +1788,8 @@ class MemoryInterface(abc.ABC):
             conditions.append(AttackResultEntry.objective.contains(objective))
         if outcome:
             conditions.append(AttackResultEntry.outcome == outcome)
+        if scenario_result_id:
+            conditions.append(AttackResultEntry.attribution_parent_id == uuid.UUID(scenario_result_id))
 
         if attack_classes:
             # Case-insensitive to mirror converter_classes; forgives casing drift in
@@ -1958,64 +1965,6 @@ class MemoryInterface(abc.ABC):
             entries=[ScenarioResultEntry(entry=scenario_result) for scenario_result in scenario_results]
         )
 
-    def add_attack_results_to_scenario(
-        self,
-        *,
-        scenario_result_id: str,
-        atomic_attack_name: str,
-        attack_results: Sequence[AttackResult],
-    ) -> bool:
-        """
-        Add attack results to an existing scenario result in memory.
-
-        This method efficiently updates a scenario result by appending new attack results
-        to a specific atomic attack name without requiring a full retrieve-modify-save cycle.
-
-        Args:
-            scenario_result_id (str): The ID of the scenario result to update.
-            atomic_attack_name (str): The name of the atomic attack to add results for.
-            attack_results (Sequence[AttackResult]): The attack results to add.
-
-        Returns:
-            bool: True if the update was successful, False otherwise.
-
-        Example:
-            >>> memory.add_attack_results_to_scenario(
-            ...     scenario_result_id="123e4567-e89b-12d3-a456-426614174000",
-            ...     atomic_attack_name="base64_attack",
-            ...     attack_results=[result1, result2]
-            ... )
-        """
-        try:
-            # Retrieve current scenario result
-            scenario_results = self.get_scenario_results(scenario_result_ids=[scenario_result_id])
-
-            if not scenario_results:
-                logger.error(f"Scenario result with ID {scenario_result_id} not found in memory")
-                return False
-
-            scenario_result = scenario_results[0]
-
-            # Update attack results for this atomic attack name
-            if atomic_attack_name not in scenario_result.attack_results:
-                scenario_result.attack_results[atomic_attack_name] = []
-
-            scenario_result.attack_results[atomic_attack_name].extend(list(attack_results))
-
-            # Save updated result back to memory using update
-            entry = ScenarioResultEntry(entry=scenario_result)
-            self._update_entry(entry)
-
-            logger.info(
-                f"Added {len(attack_results)} attack results to scenario {scenario_result_id} "
-                f"for atomic attack '{atomic_attack_name}'"
-            )
-            return True
-
-        except Exception as e:
-            logger.exception(f"Failed to add attack results to scenario {scenario_result_id}: {str(e)}")
-            raise
-
     def update_scenario_run_state(
         self,
         *,
@@ -2027,6 +1976,13 @@ class MemoryInterface(abc.ABC):
         """
         Update the run state of an existing scenario result.
 
+        Performs a targeted UPDATE of only the state/error columns instead of
+        rebuilding the entire ``ScenarioResultEntry`` row. The full-row rebuild
+        used to read the stored row, mutate the ScenarioResult, and re-serialize
+        every column — including ``attack_results_json`` which is being phased
+        out and could be stale during the deprecation window. A targeted UPDATE
+        avoids clobbering manifest data and is also cheaper.
+
         Args:
             scenario_result_id (str): The ID of the scenario result to update.
             scenario_run_state (str): The new state for the scenario
@@ -2037,61 +1993,49 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the scenario result is not found.
         """
-        scenario_results = self.get_scenario_results(scenario_result_ids=[scenario_result_id])
-
-        if not scenario_results:
-            raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
-
-        scenario_result = scenario_results[0]
-
-        # Update the scenario run state
-        scenario_result.scenario_run_state = scenario_run_state  # type: ignore[ty:invalid-assignment]
-
-        if error_message is not None:
-            scenario_result.error_message = error_message
-        if error_type is not None:
-            scenario_result.error_type = error_type
-
-        # Save updated result back to memory using update
-        entry = ScenarioResultEntry(entry=scenario_result)
-        self._update_entry(entry)
-
-        logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state}'")
-
-    def update_scenario_error_attacks(self, *, scenario_result_id: str, error_attack_result_ids: list[str]) -> None:
-        """
-        Update the error attack result IDs on an existing scenario result.
-
-        This links failed AttackResults to the ScenarioResult so the REST API
-        can quickly find error details without scanning all attacks.
-
-        Performs the read-modify-write within a single DB session to avoid
-        inter-session consistency issues.
-
-        Args:
-            scenario_result_id: The ID of the scenario result to update.
-            error_attack_result_ids: IDs of AttackResults that contain error information.
-
-        Raises:
-            ValueError: If the scenario result is not found.
-        """
-        import json
-
         with closing(self.get_session()) as session:
             entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
 
             if not entry:
                 raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
 
-            existing: list[str] = (
-                json.loads(entry.error_attack_result_ids_json) if entry.error_attack_result_ids_json else []
-            )
-            merged = list(dict.fromkeys(existing + error_attack_result_ids))
-            entry.error_attack_result_ids_json = json.dumps(merged)
+            entry.scenario_run_state = scenario_run_state
+            if error_message is not None:
+                entry.error_message = error_message
+            if error_type is not None:
+                entry.error_type = error_type
 
             session.commit()
 
-        logger.info(f"Updated scenario {scenario_result_id} with {len(error_attack_result_ids)} error attack result(s)")
+        logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state}'")
+
+    def update_scenario_metadata(
+        self,
+        *,
+        scenario_result_id: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """
+        Replace the ``scenario_metadata`` JSON blob on an existing scenario result.
+
+        Used by the scenario layer to persist first-run state (e.g.
+        ``objective_hashes``) that resume needs to replay. Performs a
+        targeted UPDATE so it doesn't clobber other columns.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result to update.
+            metadata (dict[str, Any]): The full metadata dict to store. Pass the
+                merged dict, not just the new keys — this writes the whole value.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
+        with closing(self.get_session()) as session:
+            entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
+            if not entry:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
+            entry.scenario_metadata = metadata if metadata else None
+            session.commit()
 
     def get_scenario_results(
         self,
@@ -2144,6 +2088,57 @@ class MemoryInterface(abc.ABC):
         if scenario_result_ids is not None and len(scenario_result_ids) == 0:
             return []
 
+        conditions = self._build_scenario_result_query_conditions(
+            scenario_name=scenario_name,
+            scenario_version=scenario_version,
+            pyrit_version=pyrit_version,
+            added_after=added_after,
+            added_before=added_before,
+            labels=labels,
+            objective_target_endpoint=objective_target_endpoint,
+            objective_target_model_name=objective_target_model_name,
+            identifier_filters=identifier_filters,
+        )
+
+        try:
+            entries = self._query_scenario_result_entries(
+                scenario_result_ids=scenario_result_ids,
+                conditions=conditions,
+                limit=limit,
+            )
+
+            attack_results_by_scenario = self._get_attack_results_by_scenario(entries=entries)
+
+            scenario_results: list[ScenarioResult] = []
+            for entry in entries:
+                scenario_result = entry.get_scenario_result()
+                scenario_result.attack_results = attack_results_by_scenario.get(entry.id, {})
+                scenario_results.append(scenario_result)
+
+            return scenario_results
+        except Exception as e:
+            logger.exception(f"Failed to retrieve scenario results with error {e}")
+            raise
+
+    def _build_scenario_result_query_conditions(
+        self,
+        *,
+        scenario_name: str | None,
+        scenario_version: int | None,
+        pyrit_version: str | None,
+        added_after: datetime | None,
+        added_before: datetime | None,
+        labels: dict[str, str] | None,
+        objective_target_endpoint: str | None,
+        objective_target_model_name: str | None,
+        identifier_filters: Sequence[IdentifierFilter] | None,
+    ) -> "list[ColumnElement[bool]]":
+        """
+        Build the WHERE conditions for ``get_scenario_results``.
+
+        Returns:
+            list[ColumnElement[bool]]: SQLAlchemy WHERE clauses derived from the supplied filters.
+        """
         conditions: list[ColumnElement[bool]] = []
 
         if scenario_name:
@@ -2197,64 +2192,97 @@ class MemoryInterface(abc.ABC):
                 )
             )
 
-        try:
-            order_by_clause = ScenarioResultEntry.completion_time.desc()
+        return conditions
 
-            # Handle scenario_result_ids with batched queries if needed
-            if scenario_result_ids:
-                entries = self._execute_batched_query(
-                    ScenarioResultEntry,
-                    batch_column=ScenarioResultEntry.id,
-                    batch_values=list(scenario_result_ids),
-                    other_conditions=conditions,
-                    order_by=order_by_clause,
-                    limit=limit,
+    def _query_scenario_result_entries(
+        self,
+        *,
+        scenario_result_ids: Sequence[str] | None,
+        conditions: "list[ColumnElement[bool]]",
+        limit: int | None,
+    ) -> Sequence[ScenarioResultEntry]:
+        """
+        Run the (possibly batched) ScenarioResultEntry query.
+
+        Returns:
+            Sequence[ScenarioResultEntry]: The matching rows ordered by completion_time descending.
+        """
+        order_by_clause = ScenarioResultEntry.completion_time.desc()
+
+        if scenario_result_ids:
+            return self._execute_batched_query(
+                ScenarioResultEntry,
+                batch_column=ScenarioResultEntry.id,
+                batch_values=list(scenario_result_ids),
+                other_conditions=conditions,
+                order_by=order_by_clause,
+                limit=limit,
+            )
+
+        return self._query_entries(
+            ScenarioResultEntry,
+            conditions=and_(*conditions) if conditions else None,
+            order_by=order_by_clause,
+            limit=limit,
+        )
+
+    def _get_attack_results_by_scenario(
+        self,
+        *,
+        entries: Sequence[ScenarioResultEntry],
+    ) -> dict[uuid.UUID, dict[str, list[AttackResult]]]:
+        """
+        Fetch every ``AttackResult`` linked to the given scenarios via the
+        ``AttackResultEntry.attribution_parent_id`` foreign key in a single
+        batched query, then group by scenario + ``parent_collection`` (which
+        the scenario layer uses for the atomic attack name) and sort each
+        group by ``AttackResultEntry.timestamp``.
+
+        Foreign-key linkage is the sole source of truth — set at write-time by
+        the attack persistence path when an ``AttackResultAttribution`` is on
+        the context. Rows without a valid ``attribution_data`` payload are
+        skipped (and logged) rather than guessed at.
+
+        Returns:
+            dict[uuid.UUID, dict[str, list[AttackResult]]]: Mapping of
+            ``scenario_result_id`` → ``atomic_attack_name`` → ordered list of
+            ``AttackResult`` objects. Scenarios with no linked rows map to ``{}``.
+        """
+        if not entries:
+            return {}
+
+        scenario_ids = [entry.id for entry in entries]
+        attack_rows = self._execute_batched_query(
+            AttackResultEntry,
+            batch_column=AttackResultEntry.attribution_parent_id,
+            batch_values=scenario_ids,
+        )
+
+        grouped: dict[uuid.UUID, dict[str, list[tuple[datetime, AttackResult]]]] = {entry.id: {} for entry in entries}
+
+        for row in attack_rows:
+            scenario_id = row.attribution_parent_id
+            if scenario_id is None or scenario_id not in grouped:
+                continue
+
+            data = row.attribution_data or {}
+            name = data.get("parent_collection")
+            if not name:
+                logger.debug(
+                    f"Skipping AttackResultEntry {row.id} during scenario load: "
+                    "attribution_data missing parent_collection"
                 )
-            else:
-                entries = self._query_entries(
-                    ScenarioResultEntry,
-                    conditions=and_(*conditions) if conditions else None,
-                    order_by=order_by_clause,
-                    limit=limit,
-                )
+                continue
 
-            # Convert entries to ScenarioResults and populate attack_results efficiently
-            scenario_results = []
-            for entry in entries:
-                scenario_result = entry.get_scenario_result()
+            sort_key = row.timestamp or datetime.min.replace(tzinfo=timezone.utc)
+            grouped[scenario_id].setdefault(name, []).append((sort_key, row.get_attack_result()))
 
-                # Get conversation IDs grouped by attack name
-                conversation_ids_by_attack = entry.get_conversation_ids_by_attack_name()
-
-                # Collect all conversation IDs to query in a single batch
-                all_conversation_ids = []
-                for conv_ids in conversation_ids_by_attack.values():
-                    all_conversation_ids.extend(conv_ids)
-
-                # Query all AttackResults using batched queries if needed
-                if all_conversation_ids:
-                    attack_entries = self._execute_batched_query(
-                        AttackResultEntry,
-                        batch_column=AttackResultEntry.conversation_id,
-                        batch_values=all_conversation_ids,
-                    )
-
-                    # Build a dict for quick lookup
-                    attack_results_dict = {entry.conversation_id: entry.get_attack_result() for entry in attack_entries}
-
-                    # Populate attack_results by attack name, preserving order
-                    scenario_result.attack_results = {}
-                    for attack_name, conv_ids in conversation_ids_by_attack.items():
-                        scenario_result.attack_results[attack_name] = [
-                            attack_results_dict[conv_id] for conv_id in conv_ids if conv_id in attack_results_dict
-                        ]
-
-                scenario_results.append(scenario_result)
-
-            return scenario_results
-        except Exception as e:
-            logger.exception(f"Failed to retrieve scenario results with error {e}")
-            raise
+        return {
+            scenario_id: {
+                name: [ar for _, ar in sorted(bucket, key=lambda kv: kv[0])] for name, bucket in name_buckets.items()
+            }
+            for scenario_id, name_buckets in grouped.items()
+        }
 
     def print_schema(self) -> None:
         """

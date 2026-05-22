@@ -153,7 +153,7 @@ async def test_fetch_and_save_image_raises_when_memory_not_configured():
     mock_serializer._memory = mock_memory
 
     with patch(
-        "pyrit.datasets.seed_datasets.remote.harmbench_multimodal_dataset.data_serializer_factory",
+        "pyrit.datasets.seed_datasets.remote._image_cache.data_serializer_factory",
         return_value=mock_serializer,
     ):
         loader = _HarmBenchMultimodalDataset()
@@ -163,6 +163,7 @@ async def test_fetch_and_save_image_raises_when_memory_not_configured():
 
 async def test_fetch_and_save_image_returns_cached_path():
     """Test that _fetch_and_save_image_async returns cached path when image already exists."""
+    from pathlib import Path
     from unittest.mock import MagicMock
 
     mock_serializer = MagicMock()
@@ -175,7 +176,7 @@ async def test_fetch_and_save_image_returns_cached_path():
     mock_serializer.data_sub_directory = "/images"
 
     with patch(
-        "pyrit.datasets.seed_datasets.remote.harmbench_multimodal_dataset.data_serializer_factory",
+        "pyrit.datasets.seed_datasets.remote._image_cache.data_serializer_factory",
         return_value=mock_serializer,
     ):
         loader = _HarmBenchMultimodalDataset()
@@ -183,6 +184,6 @@ async def test_fetch_and_save_image_returns_cached_path():
             behavior_id="test_id", image_url="https://example.com/img.png"
         )
 
-    expected_path = "/results/images/harmbench_test_id.png"
+    expected_path = str(Path("/results") / "images" / "harmbench_test_id.png")
     assert result == expected_path
     assert mock_serializer.value == expected_path

@@ -24,10 +24,10 @@
 from pyrit.memory import CentralMemory
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
+await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
+
 # get the conversation from memory
 memory = CentralMemory.get_memory_instance()
-
-await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 # %% [markdown]
 # ### Creating Sample Data

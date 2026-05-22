@@ -324,7 +324,7 @@ test.describe("Error: connection banner on health failure", () => {
   }) => {
     // Let the page load normally first
     await page.goto("/");
-    await expect(page.getByText("PyRIT Attack")).toBeVisible({
+    await expect(page.getByTitle("Chat")).toBeVisible({
       timeout: 10000,
     });
 
@@ -372,7 +372,7 @@ test.describe("Error: connection banner recovery", () => {
     });
 
     await page.goto("/");
-    await expect(page.getByText("PyRIT Attack")).toBeVisible({
+    await expect(page.getByTitle("Chat")).toBeVisible({
       timeout: 10000,
     });
 
