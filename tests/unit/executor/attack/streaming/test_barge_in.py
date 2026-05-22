@@ -18,7 +18,7 @@ from pyrit.executor.attack import BargeInAttack, BargeInAttackContext
 from pyrit.executor.attack.core import AttackConverterConfig, AttackParameters
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import AttackOutcome
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+from pyrit.prompt_normalizer import AudioStreamNormalizer, PromptConverterConfiguration
 from pyrit.prompt_target import RealtimeTarget
 from pyrit.prompt_target.common.realtime_audio import (
     RealtimeTargetResult,
@@ -394,14 +394,14 @@ async def test_perform_async_clears_raw_buffer_between_commits(vad_target):
     assert insert_calls[1].kwargs["pcm_bytes"] == bytes((b + 1) & 0xFF for b in (b"\x02" * 96))
 
 
-async def test_perform_async_uses_injected_normalizer(vad_target):
-    """The attack must delegate audio conversion to its injected PromptNormalizer."""
-    fake_normalizer = MagicMock(spec=PromptNormalizer)
-    fake_normalizer.convert_audio_async = AsyncMock(return_value=(b"\xff" * 96, []))
+async def test_perform_async_uses_target_audio_normalizer(vad_target):
+    """The attack must delegate audio conversion to the target's audio_normalizer."""
+    fake_normalizer = MagicMock(spec=AudioStreamNormalizer)
+    fake_normalizer.normalize_async = AsyncMock(return_value=(b"\xff" * 96, []))
+    vad_target.audio_normalizer = fake_normalizer
     attack = BargeInAttack(
         objective_target=vad_target,
         attack_converter_config=_converter_config([_make_audio_converter(lambda pcm: pcm)]),
-        prompt_normalizer=fake_normalizer,
     )
     connection = _mock_connection()
     vad_target.connect_async = AsyncMock(return_value=connection)
@@ -435,11 +435,10 @@ async def test_perform_async_uses_injected_normalizer(vad_target):
     with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
         await attack._perform_async(context=ctx)
 
-    fake_normalizer.convert_audio_async.assert_awaited_once()
-    kwargs = fake_normalizer.convert_audio_async.call_args.kwargs
+    fake_normalizer.normalize_async.assert_awaited_once()
+    kwargs = fake_normalizer.normalize_async.call_args.kwargs
     assert kwargs["pcm_bytes"] == raw
     assert kwargs["sample_rate"] == 24000
-    # Converted audio (returned by mock) should reach insert_user_audio_async.
     vad_target.insert_user_audio_async.assert_awaited_once()
     assert vad_target.insert_user_audio_async.call_args.kwargs["pcm_bytes"] == b"\xff" * 96
 

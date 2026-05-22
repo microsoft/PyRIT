@@ -7,7 +7,7 @@ import logging
 import re
 import wave
 from collections.abc import Callable, Coroutine
-from typing import Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from openai import AsyncOpenAI
 
@@ -33,6 +33,9 @@ from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
+
+if TYPE_CHECKING:
+    from pyrit.prompt_normalizer import AudioStreamNormalizer
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +86,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         existing_convo: Optional[dict[str, Any]] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
         server_vad: bool | ServerVadConfig = False,
+        audio_normalizer: Optional["AudioStreamNormalizer"] = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -111,6 +115,10 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
                 ``True`` enables VAD with default tuning.
                 Pass a ``ServerVadConfig`` to enable with custom tuning. Streaming/interruption plumbing
                 arrives in subsequent changes; this currently only affects the emitted session config.
+            audio_normalizer (AudioStreamNormalizer, Optional): Normalizer applied to raw PCM
+                mid-turn before it is sent back into the conversation. Defaults to a stock
+                ``AudioStreamNormalizer`` that bridges PCM to PyRIT's file-based converter
+                pipeline. Override to plug in custom format adaptation.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
@@ -127,6 +135,10 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
             self._server_vad = ServerVadConfig()
         else:
             self._server_vad = None
+
+        from pyrit.prompt_normalizer import AudioStreamNormalizer
+
+        self.audio_normalizer: AudioStreamNormalizer = audio_normalizer or AudioStreamNormalizer()
 
     def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_REALTIME_MODEL"

@@ -4,10 +4,7 @@
 import asyncio
 import copy
 import logging
-import os
-import tempfile
 import traceback
-import wave
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -298,76 +295,6 @@ class PromptNormalizer:
 
                 piece.converted_value = converted_text
                 piece.converted_value_data_type = converted_text_data_type
-
-    async def convert_audio_async(
-        self,
-        *,
-        pcm_bytes: bytes,
-        sample_rate: int,
-        converter_configurations: list[PromptConverterConfiguration],
-    ) -> tuple[bytes, list[ComponentIdentifier]]:
-        """
-        Apply audio converter configurations to raw PCM and return converted PCM with identifiers that ran.
-
-        For streaming attacks that hold raw PCM mid-turn rather than a ``Message``. Respects
-        ``prompt_data_types_to_apply``; ``indexes_to_apply`` is ignored.
-
-        Args:
-            pcm_bytes (bytes): Raw PCM16 mono audio.
-            sample_rate (int): Sample rate in Hz.
-            converter_configurations (list[PromptConverterConfiguration]): Same shape used by ``convert_values``.
-
-        Returns:
-            tuple[bytes, list[ComponentIdentifier]]: ``(converted_pcm, identifiers_that_ran)``.
-
-        Raises:
-            ValueError: If converter output is not mono PCM16 at ``sample_rate``.
-        """
-        if not converter_configurations or not pcm_bytes:
-            return pcm_bytes, []
-
-        identifiers: list[ComponentIdentifier] = []
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            current_path = os.path.join(tmpdir, "streaming_input.wav")
-            with wave.open(current_path, "wb") as wav_out:
-                wav_out.setnchannels(1)
-                wav_out.setsampwidth(2)
-                wav_out.setframerate(sample_rate)
-                wav_out.writeframes(pcm_bytes)
-
-            for config in converter_configurations:
-                if config.prompt_data_types_to_apply and "audio_path" not in config.prompt_data_types_to_apply:
-                    continue
-
-                for converter in config.converters:
-                    outer_context = get_execution_context()
-                    with execution_context(
-                        component_role=ComponentRole.CONVERTER,
-                        attack_strategy_name=outer_context.attack_strategy_name if outer_context else None,
-                        attack_identifier=outer_context.attack_identifier if outer_context else None,
-                        component_identifier=converter.get_identifier(),
-                        objective_target_conversation_id=(
-                            outer_context.objective_target_conversation_id if outer_context else None
-                        ),
-                    ):
-                        result = await converter.convert_tokens_async(
-                            prompt=current_path,
-                            input_type="audio_path",
-                            start_token=self._start_token,
-                            end_token=self._end_token,
-                        )
-                    current_path = result.output_text
-                    identifiers.append(converter.get_identifier())
-
-            with wave.open(current_path, "rb") as wav_in:
-                if wav_in.getnchannels() != 1 or wav_in.getsampwidth() != 2 or wav_in.getframerate() != sample_rate:
-                    raise ValueError(
-                        "Converter output incompatible with streaming target: "
-                        f"expected mono PCM16 @ {sample_rate} Hz, got channels={wav_in.getnchannels()} "
-                        f"sampwidth={wav_in.getsampwidth()} rate={wav_in.getframerate()}."
-                    )
-                return wav_in.readframes(wav_in.getnframes()), identifiers
 
     async def _calc_hash(self, request: Message) -> None:
         """Add a request to the memory."""

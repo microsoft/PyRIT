@@ -24,7 +24,6 @@ from pyrit.models import (
     MessagePiece,
     construct_response_from_request,
 )
-from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
@@ -79,7 +78,6 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_converter_config: AttackConverterConfig | None = None,
-        prompt_normalizer: PromptNormalizer | None = None,
         params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
     ) -> None:
         """
@@ -87,8 +85,8 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
 
         Args:
             objective_target: Target to attack. Must declare ``STREAMING_BARGE_IN`` capability.
+                Audio normalization is delegated to ``objective_target.audio_normalizer``.
             attack_converter_config: Converters applied to each committed user turn.
-            prompt_normalizer: Optional normalizer override.
             params_type: Attack parameter dataclass type.
         """
         super().__init__(
@@ -100,7 +98,6 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         attack_converter_config = attack_converter_config or AttackConverterConfig()
         self._request_converters = attack_converter_config.request_converters
         self._response_converters = attack_converter_config.response_converters
-        self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
 
     def _validate_context(self, *, context: BargeInAttackContext[Any]) -> None:
         """
@@ -165,7 +162,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
                     raw_buffer.clear()
 
                     try:
-                        converted_pcm, applied_identifiers = await self._prompt_normalizer.convert_audio_async(
+                        converted_pcm, applied_identifiers = await target.audio_normalizer.normalize_async(
                             pcm_bytes=snapshot,
                             sample_rate=_REALTIME_SAMPLE_RATE_HZ,
                             converter_configurations=self._request_converters,
