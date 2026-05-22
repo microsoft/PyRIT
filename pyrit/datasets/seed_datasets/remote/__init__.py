@@ -39,6 +39,11 @@ from pyrit.datasets.seed_datasets.remote.darkbench_dataset import (
 from pyrit.datasets.seed_datasets.remote.equitymedqa_dataset import (
     _EquityMedQADataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.figstep_dataset import (
+    FigStepCategory,
+    FigStepVariant,
+    _FigStepDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.forbidden_questions_dataset import (
     _ForbiddenQuestionsDataset,
 )  # noqa: F401
@@ -139,6 +144,8 @@ from pyrit.datasets.seed_datasets.remote.xstest_dataset import (
 )  # noqa: F401
 
 __all__ = [
+    "FigStepCategory",
+    "FigStepVariant",
     "HiXSTestLanguage",
     "PromptIntelCategory",
     "PromptIntelSeverity",
@@ -158,6 +165,7 @@ __all__ = [
     "_DangerousQADataset",
     "_DarkBenchDataset",
     "_EquityMedQADataset",
+    "_FigStepDataset",
     "_ForbiddenQuestionsDataset",
     "_HarmBenchDataset",
     "_HarmBenchMultimodalDataset",
