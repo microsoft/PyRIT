@@ -6,11 +6,13 @@ import uuid
 from enum import Enum
 from typing import Literal, Optional
 
-from pyrit.common.net_utility import make_request_and_raise_if_error_async
+from pyrit.datasets.seed_datasets.remote._image_cache import (
+    fetch_and_cache_image_async,
+)
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt, data_serializer_factory
+from pyrit.models import SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -252,22 +254,7 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         Raises:
             RuntimeError: If the serializer memory is not properly configured.
         """
-        filename = f"ml_vlsu_{group_id}.png"
-        serializer = data_serializer_factory(category="seed-prompt-entries", data_type="image_path", extension="png")
-
-        # Return existing path if image already exists
-        results_path = serializer._memory.results_path
-        results_storage_io = serializer._memory.results_storage_io
-        if not results_path or results_storage_io is None:
-            raise RuntimeError("[ML-VLSU] Serializer memory is not properly configured.")
-        serializer.value = str(results_path + serializer.data_sub_directory + f"/{filename}")
-        try:
-            if await results_storage_io.path_exists(serializer.value):
-                return serializer.value
-        except Exception as e:
-            logger.warning(f"[ML-VLSU] Failed to check if image for {group_id} exists in cache: {e}")
-
-        # Add browser-like headers for better success rate
+        # Browser-like headers improve fetch success rate for the ML-VLSU hosting setup.
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
@@ -282,13 +269,11 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
             "Upgrade-Insecure-Requests": "1",
         }
 
-        response = await make_request_and_raise_if_error_async(
-            endpoint_uri=image_url,
-            method="GET",
-            headers=headers,
-            timeout=2.0,
+        return await fetch_and_cache_image_async(
+            filename=f"ml_vlsu_{group_id}.png",
+            image_url=image_url,
+            log_prefix="ML-VLSU",
+            request_headers=headers,
+            request_timeout=2.0,
             follow_redirects=True,
         )
-        await serializer.save_data(data=response.content, output_filename=filename.replace(".png", ""))
-
-        return str(serializer.value)
