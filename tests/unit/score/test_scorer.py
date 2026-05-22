@@ -144,18 +144,20 @@ class MockFloatScorer(Scorer):
         for score in scores:
             assert 0 <= float(score.score_value) <= 1
 
-    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> Score:
-        return Score(
-            score_value="0.0",
-            score_value_description="Mock fallback",
-            score_type="float_scale",
-            score_category=None,
-            score_metadata=None,
-            score_rationale="Mock fallback",
-            scorer_class_identifier=self.get_identifier(),
-            message_piece_id=message.message_pieces[0].id or "test-id",
-            objective=objective,
-        )
+    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+        return [
+            Score(
+                score_value="0.0",
+                score_value_description="Mock fallback",
+                score_type="float_scale",
+                score_category=None,
+                score_metadata=None,
+                score_rationale="Mock fallback",
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=message.message_pieces[0].id or "test-id",
+                objective=objective,
+            )
+        ]
 
     def get_scorer_metrics(self):
         return None

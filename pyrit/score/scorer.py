@@ -246,7 +246,7 @@ class Scorer(Identifiable, abc.ABC):
             raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(e)}") from e
 
         if not scores and scoring_message.message_pieces:
-            scores = [self._build_fallback_score(message=scoring_message, objective=objective)]
+            scores = self._build_fallback_score(message=scoring_message, objective=objective)
 
         self.validate_return_scores(scores=scores)
         self._memory.add_scores_to_memory(scores=scores)
@@ -369,9 +369,9 @@ class Scorer(Identifiable, abc.ABC):
         ]
 
     @abstractmethod
-    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> Score:
+    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
         """
-        Return a neutral fallback ``Score`` when ``_score_async`` produced no scores.
+        Return neutral fallback ``Score`` objects when ``_score_async`` produced no scores.
 
         Called from ``score_async`` after ``_score_async`` returns an empty list and the
         message still has pieces (e.g. the response was blocked, had an error, or no piece
@@ -379,15 +379,18 @@ class Scorer(Identifiable, abc.ABC):
         consistent "attack did not succeed" value is always returned and downstream
         consumers do not need to special-case error handling.
 
-        For example, ``FloatScaleScorer`` returns a ``Score`` with value ``0.0`` and
-        ``TrueFalseScorer`` returns a ``Score`` with value ``False``.
+        Most scorers return a single-element list (e.g. ``FloatScaleScorer`` returns
+        ``[Score(0.0)]`` and ``TrueFalseScorer`` returns ``[Score(False)]``). Scorers
+        whose normal output shape is multiple scores per message (e.g. one per category)
+        should return one fallback score per logical output slot so downstream consumers
+        iterating by shape continue to work on blocked / error input.
 
         Args:
             message (Message): The (possibly substituted) message that was scored.
             objective (Optional[str]): The objective associated with this scoring call.
 
         Returns:
-            Score: A single fallback score.
+            list[Score]: One or more fallback scores. Must not be empty.
         """
         ...
 

@@ -158,9 +158,9 @@ class TrueFalseScorer(Scorer):
             )
         ]
 
-    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> Score:
+    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
         """
-        Build a single ``false`` score when no pieces could be scored.
+        Build a single-element list containing a ``false`` score when no pieces could be scored.
 
         Inspects the first message piece to produce a rationale/description that
         distinguishes blocked, error, and filtered cases.
@@ -170,7 +170,8 @@ class TrueFalseScorer(Scorer):
             objective (Optional[str]): The objective associated with this scoring call.
 
         Returns:
-            Score: A ``false`` ``true_false`` score attributed to the first piece.
+            list[Score]: A single-element list containing a ``false`` ``true_false`` score
+                attributed to the first piece.
 
         Raises:
             ValueError: If the first message piece has no ``id`` or ``original_prompt_id``.
@@ -194,14 +195,16 @@ class TrueFalseScorer(Scorer):
             rationale = "No supported pieces to score after filtering; returning false."
             description = "No pieces to score after filtering; returning false."
 
-        return Score(
-            score_value=str(False).lower(),
-            score_value_description=description,
-            score_type="true_false",
-            score_category=None,
-            score_metadata=None,
-            score_rationale=rationale,
-            scorer_class_identifier=self.get_identifier(),
-            message_piece_id=piece_id,
-            objective=objective,
-        )
+        return [
+            Score(
+                score_value=str(False).lower(),
+                score_value_description=description,
+                score_type="true_false",
+                score_category=None,
+                score_metadata=None,
+                score_rationale=rationale,
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=piece_id,
+                objective=objective,
+            )
+        ]

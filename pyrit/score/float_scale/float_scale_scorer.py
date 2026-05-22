@@ -47,9 +47,9 @@ class FloatScaleScorer(Scorer):
         """
         super().__init__(validator=validator, chat_target=chat_target)
 
-    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> Score:
+    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
         """
-        Build a single neutral ``0.0`` score when no pieces could be scored.
+        Build a single-element list containing a neutral ``0.0`` score when no pieces could be scored.
 
         Inspects the first message piece to produce a rationale/description that
         distinguishes blocked, error, and filtered cases.
@@ -59,7 +59,8 @@ class FloatScaleScorer(Scorer):
             objective (Optional[str]): The objective associated with this scoring call.
 
         Returns:
-            Score: A ``0.0`` ``float_scale`` score attributed to the first piece.
+            list[Score]: A single-element list containing a ``0.0`` ``float_scale`` score
+                attributed to the first piece.
 
         Raises:
             ValueError: If the first message piece has no ``id`` or ``original_prompt_id``.
@@ -82,17 +83,19 @@ class FloatScaleScorer(Scorer):
             rationale = "No supported pieces to score after filtering; returning 0.0."
             description = "No pieces to score after filtering; returning 0.0."
 
-        return Score(
-            score_value="0.0",
-            score_value_description=description,
-            score_type="float_scale",
-            score_category=None,
-            score_metadata=None,
-            score_rationale=rationale,
-            scorer_class_identifier=self.get_identifier(),
-            message_piece_id=piece_id,
-            objective=objective,
-        )
+        return [
+            Score(
+                score_value="0.0",
+                score_value_description=description,
+                score_type="float_scale",
+                score_category=None,
+                score_metadata=None,
+                score_rationale=rationale,
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=piece_id,
+                objective=objective,
+            )
+        ]
 
     def validate_return_scores(self, scores: list[Score]) -> None:
         """

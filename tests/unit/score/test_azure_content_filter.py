@@ -294,3 +294,54 @@ def test_init_raises_runtime_error_when_api_key_not_string():
     ):
         with pytest.raises(RuntimeError, match="Expected string API key"):
             AzureContentFilterScorer(api_key="foo", endpoint="https://example.com")
+
+
+async def test_azure_content_filter_scorer_blocked_returns_one_score_per_category(patch_central_database):
+    """Blocked input should produce one neutral 0.0 fallback score per configured category."""
+    scorer = AzureContentFilterScorer(
+        api_key="foo",
+        endpoint="bar",
+        harm_categories=[TextCategory.HATE, TextCategory.VIOLENCE],
+    )
+
+    blocked_piece = MessagePiece(
+        role="assistant",
+        original_value="",
+        converted_value="",
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        response_error="blocked",
+    )
+    message = Message(message_pieces=[blocked_piece])
+
+    scores = await scorer.score_async(message=message)
+
+    assert len(scores) == 2
+    assert {s.score_category[0] for s in scores} == {TextCategory.HATE.value, TextCategory.VIOLENCE.value}
+    for score in scores:
+        assert score.score_type == "float_scale"
+        assert score.get_value() == 0.0
+        assert score.score_metadata == {"azure_severity": 0}
+        assert score.message_piece_id == (blocked_piece.id or blocked_piece.original_prompt_id)
+
+
+async def test_azure_content_filter_scorer_blocked_default_categories_returns_four_scores(patch_central_database):
+    """With default (all) harm categories, blocked input should produce four fallback scores."""
+    scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar")
+
+    blocked_piece = MessagePiece(
+        role="assistant",
+        original_value="",
+        converted_value="",
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        response_error="blocked",
+    )
+    message = Message(message_pieces=[blocked_piece])
+
+    scores = await scorer.score_async(message=message)
+
+    assert len(scores) == 4
+    assert {s.score_category[0] for s in scores} == {c.value for c in TextCategory}
+    for score in scores:
+        assert score.get_value() == 0.0
