@@ -125,15 +125,11 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
     Passing an empty list is rejected — pass ``None`` to disable a filter.
     """
 
-    # Class-attribute metadata picked up by SeedDatasetMetadata
-    harm_categories: list[str] = [
-        "prompt-injection",
-        "tool-poisoning",
-        "context-exfiltration",
-        "agent-manipulation",
-        "privilege-escalation",
-        "skill-compromise",
-    ]
+    # Class-attribute metadata picked up by SeedDatasetMetadata. Derived from
+    # _RULE_ID_TO_CATEGORY so the categories the loader claims to cover always
+    # match the categories it actually produces — same single-source-of-truth
+    # rationale as the enum-typed dict above.
+    harm_categories: list[str] = sorted({c.value for c in _RULE_ID_TO_CATEGORY.values()})
     modalities: list[str] = ["text"]
     size: str = "large"  # 1,054 seeds
     tags: set[str] = {"safety", "agent_security", "prompt_injection"}

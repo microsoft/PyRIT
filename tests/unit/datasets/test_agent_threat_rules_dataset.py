@@ -253,3 +253,16 @@ def test_rule_id_mapping_uses_enum() -> None:
     )
 
     assert all(isinstance(v, ATRCategory) for v in _RULE_ID_TO_CATEGORY.values())
+
+
+def test_harm_categories_matches_rule_id_mapping() -> None:
+    # Class-attribute metadata must match the categories the loader actually
+    # produces. Derived from _RULE_ID_TO_CATEGORY so drift is impossible — this
+    # test pins the invariant in case someone later replaces the derivation
+    # with a literal list.
+    from pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset import (
+        _RULE_ID_TO_CATEGORY,
+    )
+
+    expected = sorted({c.value for c in _RULE_ID_TO_CATEGORY.values()})
+    assert sorted(_AgentThreatRulesDataset.harm_categories) == expected
