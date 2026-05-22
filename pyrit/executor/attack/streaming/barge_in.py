@@ -138,9 +138,13 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         Returns:
             An ``AttackResult`` capturing the last assistant turn (if any) and the
             number of completed turns.
+
+        Raises:
+            ValueError: If ``context.audio_chunks`` is ``None``.
         """
         target = cast("RealtimeTarget", self._objective_target)
-        assert context.audio_chunks is not None  # validated upstream
+        if context.audio_chunks is None:
+            raise ValueError("BargeInAttackContext.audio_chunks must be set before executing the attack.")
 
         connection = await target.connect_async(conversation_id=context.conversation_id)
         raw_buffer = bytearray()
