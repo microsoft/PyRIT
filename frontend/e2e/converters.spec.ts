@@ -416,7 +416,7 @@ async function activateMockTarget(page: Page) {
   await setActiveBtn.click();
 
   await page.getByTitle("Chat", { exact: true }).click();
-  await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
 }
 
 /** Open converter panel and select a converter by name. */

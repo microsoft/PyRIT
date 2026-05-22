@@ -92,6 +92,11 @@ for flag in (
 #
 # `TargetRequirements.validate` collects every missing capability and raises a single `ValueError` so
 # callers see all violations at once.
+#
+# `TargetRequirements` can also enforce **modality** constraints via `required_input_modalities` and
+# `required_output_modalities`. Each entry is a set of `PromptDataType` values the consumer needs
+# the target to accept (or produce). At least one of the target's modality combos must be a superset
+# of each required combo.
 
 # %%
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
