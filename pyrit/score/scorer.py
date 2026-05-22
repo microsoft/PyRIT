@@ -246,9 +246,7 @@ class Scorer(Identifiable, abc.ABC):
             raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(e)}") from e
 
         if not scores and scoring_message.message_pieces:
-            fallback = self._build_fallback_score(message=scoring_message, objective=objective)
-            if fallback is not None:
-                scores = [fallback]
+            scores = [self._build_fallback_score(message=scoring_message, objective=objective)]
 
         self.validate_return_scores(scores=scores)
         self._memory.add_scores_to_memory(scores=scores)
@@ -370,25 +368,28 @@ class Scorer(Identifiable, abc.ABC):
             piece for piece in message.message_pieces if self._validator.is_message_piece_supported(message_piece=piece)
         ]
 
-    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> Optional[Score]:
+    @abstractmethod
+    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> Score:
         """
         Return a neutral fallback ``Score`` when ``_score_async`` produced no scores.
 
         Called from ``score_async`` after ``_score_async`` returns an empty list and the
         message still has pieces (e.g. the response was blocked, had an error, or no piece
-        matched the validator). The default returns ``None``, preserving the historical
-        behavior of returning an empty score list. Subclasses (e.g. ``TrueFalseScorer``,
-        ``FloatScaleScorer``) override this to provide a consistent "attack did not
-        succeed" value so downstream consumers do not need to special-case error handling.
+        matched the validator). Every ``Scorer`` subclass MUST implement this so that a
+        consistent "attack did not succeed" value is always returned and downstream
+        consumers do not need to special-case error handling.
+
+        For example, ``FloatScaleScorer`` returns a ``Score`` with value ``0.0`` and
+        ``TrueFalseScorer`` returns a ``Score`` with value ``False``.
 
         Args:
             message (Message): The (possibly substituted) message that was scored.
             objective (Optional[str]): The objective associated with this scoring call.
 
         Returns:
-            Optional[Score]: A single fallback score, or ``None`` to leave the result empty.
+            Score: A single fallback score.
         """
-        return None
+        ...
 
     @abstractmethod
     def validate_return_scores(self, scores: list[Score]) -> None:
