@@ -322,21 +322,30 @@ class Scenario(ABC):
         value is an ``AttackTechniqueFactory`` that can produce an
         ``AttackTechnique`` for that technique.
 
-        The base implementation lazily populates the
-        ``AttackTechniqueRegistry`` singleton with core techniques (via
-        ``ScenarioTechniqueRegistrar``) and returns all registered factories.
+        The base implementation returns every factory currently registered in
+        the ``AttackTechniqueRegistry`` singleton. The canonical scenario
+        techniques are populated by ``ScenarioTechniqueInitializer``
+        (``pyrit.setup.initializers.components.scenario_techniques``); ensure
+        that initializer has run before scenarios use this method.
         Subclasses may override to add, remove, or replace factories.
 
         Returns:
             dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
+
+        Raises:
+            RuntimeError: If the registry is empty (no initializer has run).
         """
-        from pyrit.scenario.core.scenario_techniques import register_scenario_techniques
-
-        register_scenario_techniques()
-
         from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 
-        return AttackTechniqueRegistry.get_registry_singleton().get_factories()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        factories = registry.get_factories()
+        if not factories:
+            raise RuntimeError(
+                "AttackTechniqueRegistry is empty. Run ScenarioTechniqueInitializer "
+                "(pyrit.setup.initializers.components.scenario_techniques) before "
+                "executing scenarios."
+            )
+        return factories
 
     def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> str:
         """

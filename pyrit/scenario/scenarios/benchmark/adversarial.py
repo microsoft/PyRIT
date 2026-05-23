@@ -11,15 +11,15 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
-from pyrit.registry import AttackTechniqueRegistry, AttackTechniqueSpec
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
-from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
+    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
     from pyrit.score import TrueFalseScorer
 
@@ -145,9 +145,9 @@ class AdversarialBenchmark(Scenario):
         """
         Build atomic attacks from the cross-product of techniques × models × datasets.
 
-        Factories are built locally from adversarial-capable ``SCENARIO_TECHNIQUES``
-        (not the registry singleton).  Each model is injected at create-time via
-        ``attack_adversarial_config_override``.
+        Factories are read from the singleton ``AttackTechniqueRegistry`` and
+        narrowed to adversarial-capable ones. Each model is injected at
+        create-time via ``attack_adversarial_config_override``.
 
         Returns:
             list[AtomicAttack]: One atomic attack per technique/model/dataset combination.
@@ -160,10 +160,8 @@ class AdversarialBenchmark(Scenario):
                 "Scenario not properly initialized. Call await scenario.initialize_async() before running."
             )
 
-        benchmarkable_specs = AdversarialBenchmark._get_benchmarkable_specs()
-        local_factories = {
-            spec.name: AttackTechniqueRegistry.build_factory_from_spec(spec) for spec in benchmarkable_specs
-        }
+        benchmarkable_factories = AdversarialBenchmark._get_benchmarkable_factories()
+        local_factories = {factory.name: factory for factory in benchmarkable_factories}
 
         selected_techniques = {s.value for s in self._scenario_strategies}
         seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
@@ -255,19 +253,17 @@ class AdversarialBenchmark(Scenario):
     @staticmethod
     def _build_benchmark_strategy() -> type[ScenarioStrategy]:
         """
-        Build the BenchmarkStrategy enum from adversarial-capable ``SCENARIO_TECHNIQUES``.
+        Build the BenchmarkStrategy enum from adversarial-capable factories.
 
         Returns a strategy class whose concrete members are adversarial-capable
-        techniques (no baked-in adversarial chat) and whose aggregates allow
-        selecting by turn style.
+        techniques and whose aggregates allow selecting by turn style.
 
         Returns:
             type[ScenarioStrategy]: The dynamically generated strategy enum class.
         """
-        specs = AdversarialBenchmark._get_benchmarkable_specs()
-        return AttackTechniqueRegistry.build_strategy_class_from_specs(  # type: ignore[ty:invalid-return-type]
+        return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[ty:invalid-return-type]
             class_name="BenchmarkStrategy",
-            specs=TagQuery.all("core").filter(specs),
+            factories=AdversarialBenchmark._get_benchmarkable_factories(),
             aggregate_tags={
                 "default": TagQuery.any_of("default"),
                 "single_turn": TagQuery.any_of("single_turn"),
@@ -277,20 +273,21 @@ class AdversarialBenchmark(Scenario):
         )
 
     @staticmethod
-    def _get_benchmarkable_specs() -> list[AttackTechniqueSpec]:
+    def _get_benchmarkable_factories() -> list[AttackTechniqueFactory]:
         """
-        Return techniques from ``SCENARIO_TECHNIQUES`` that accept an adversarial
-        model but don't have one already baked in.
+        Return ``core`` factories that drive an adversarial chat.
 
-        This is the dual guard: ``_accepts_adversarial`` ensures the technique
-        CAN use an adversarial model, and ``adversarial_chat is None`` ensures
-        it doesn't already have one set — we inject our own at create-time.
+        Every benchmark technique must accept an adversarial-config override at
+        ``create()`` time so the scenario can inject one chat per benchmark
+        model. We narrow to the ``core`` tag to exclude experimental / persona
+        variants.
 
         Returns:
-            list[AttackTechniqueSpec]: Filtered, adversarial-ready specs.
+            list[AttackTechniqueFactory]: Filtered core, adversarial-capable factories.
         """
+        registry = AttackTechniqueRegistry.get_registry_singleton()
         return [
-            spec
-            for spec in SCENARIO_TECHNIQUES
-            if AttackTechniqueRegistry._accepts_adversarial(spec.attack_class) and spec.adversarial_chat is None
+            factory
+            for factory in registry.get_factories().values()
+            if factory.uses_adversarial and "core" in factory.strategy_tags
         ]

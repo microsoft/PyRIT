@@ -20,28 +20,31 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_CYBER_TECHNIQUE_NAMES = {"prompt_sending", "red_teaming"}
+_CYBER_TECHNIQUE_NAMES = {"red_teaming"}
 
 
 def _build_cyber_strategy() -> type[ScenarioStrategy]:
     """
-    Build the Cyber strategy class dynamically from SCENARIO_TECHNIQUES.
+    Build the Cyber strategy class dynamically from the registered technique factories.
 
-    Selects only ``prompt_sending`` and ``red_teaming`` techniques from
-    the shared catalog.
+    Selects only the ``red_teaming`` factory from the singleton
+    ``AttackTechniqueRegistry``. A plain ``PromptSendingAttack`` baseline is
+    prepended automatically by ``Scenario._build_baseline_atomic_attack`` via
+    ``BaselineAttackPolicy.Enabled``.
 
     Returns:
         type[ScenarioStrategy]: The dynamically generated strategy enum class.
     """
     from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
     from pyrit.registry.tag_query import TagQuery
-    from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 
-    cyber_specs = [s for s in SCENARIO_TECHNIQUES if s.name in _CYBER_TECHNIQUE_NAMES]
+    registry = AttackTechniqueRegistry.get_registry_singleton()
+    factories = registry.get_factories()
+    cyber_factories = [f for name, f in factories.items() if name in _CYBER_TECHNIQUE_NAMES]
 
-    return AttackTechniqueRegistry.build_strategy_class_from_specs(  # type: ignore[ty:invalid-return-type]
+    return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[ty:invalid-return-type]
         class_name="CyberStrategy",
-        specs=cyber_specs,
+        factories=cyber_factories,
         aggregate_tags={
             "single_turn": TagQuery.any_of("single_turn"),
             "multi_turn": TagQuery.any_of("multi_turn"),

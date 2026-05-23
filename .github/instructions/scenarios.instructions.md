@@ -145,10 +145,58 @@ get atomic-attack construction **for free** — no override needed.
 
 The default implementation:
 1. Calls `self._get_attack_technique_factories()` to get name→factory mapping
+   (defaults to reading every `AttackTechniqueFactory` registered in the
+   `AttackTechniqueRegistry` singleton)
 2. Iterates over every (technique × dataset) pair from `self._dataset_config`
 3. Calls `factory.create()` with `objective_target` and conditional scorer override
 4. Uses `self._build_display_group()` for user-facing grouping
 5. Builds `AtomicAttack` with unique `atomic_attack_name` = `"{technique}_{dataset}"`
+
+### AttackTechniqueFactory
+
+Techniques are described by `AttackTechniqueFactory` instances rather than a separate spec
+dataclass.  The canonical catalog lives in
+`pyrit.setup.initializers.components.scenario_techniques` (`build_scenario_technique_factories()`)
+and is loaded into the registry by `ScenarioTechniqueInitializer`.
+
+```python
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+
+AttackTechniqueFactory(
+    name="prompt_sending",                  # REQUIRED — must match the strategy enum value
+    attack_class=PromptSendingAttack,
+    strategy_tags=["core", "single_turn", "default"],
+    attack_kwargs={"max_turns": 5},
+    adversarial_chat=None,                  # mutually exclusive with adversarial_config
+    adversarial_config=None,
+    seed_technique=None,
+    uses_adversarial=None,                  # None = auto-derive from attack signature/seeds
+    scorer_override_policy=ScorerOverridePolicy.WARN,
+)
+```
+
+Key points:
+- `name` is required and must match the strategy enum value the scenario looks up.
+- `strategy_tags` on the factory drives `TagQuery` filters used by
+  `AttackTechniqueRegistry.build_strategy_class_from_factories(...)`. This is **distinct**
+  from the per-entry `tags` argument passed to `registry.register_technique(...)`.
+- `uses_adversarial` is auto-derived from the attack class signature (presence of
+  `attack_adversarial_config`) and seed shape; pass `False` explicitly to opt out, or
+  `True` to force opt-in.
+- `kwargs` are validated against the attack class constructor signature at
+  factory-construction time, so typos fail loudly and early.
+
+### Registering factories
+
+```python
+registry = AttackTechniqueRegistry.get_registry_singleton()
+registry.register_from_factories(build_scenario_technique_factories())
+```
+
+`register_from_factories` reads `factory.strategy_tags` to populate the per-entry tags used
+by the registry. Tests that exercise scenarios should reset both `AttackTechniqueRegistry`
+and `TargetRegistry` and re-register a mock `adversarial_chat` so the catalog builder
+resolves without falling back to `OpenAIChatTarget`.
 
 ### Customization hooks (no need to override `_get_atomic_attacks_async`):
 - **`_get_attack_technique_factories()`** — override to add/remove/replace factories

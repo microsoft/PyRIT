@@ -28,20 +28,23 @@ logger = logging.getLogger(__name__)
 
 def _build_rapid_response_strategy() -> type[ScenarioStrategy]:
     """
-    Build the RapidResponse strategy class dynamically from SCENARIO_TECHNIQUES.
+    Build the RapidResponse strategy class dynamically from the registered factories.
 
-    Reads the spec list (pure data) — no registry interaction or target resolution.
+    Reads the singleton ``AttackTechniqueRegistry`` and filters to factories
+    tagged ``core``.
 
     Returns:
         type[ScenarioStrategy]: The dynamically generated strategy enum class.
     """
     from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
     from pyrit.registry.tag_query import TagQuery
-    from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 
-    return AttackTechniqueRegistry.build_strategy_class_from_specs(  # type: ignore[ty:invalid-return-type]
+    registry = AttackTechniqueRegistry.get_registry_singleton()
+    factories = list(registry.get_factories().values())
+
+    return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[ty:invalid-return-type]
         class_name="RapidResponseStrategy",
-        specs=TagQuery.all("core").filter(SCENARIO_TECHNIQUES),
+        factories=TagQuery.all("core").filter(factories),
         aggregate_tags={
             "default": TagQuery.any_of("default"),
             "single_turn": TagQuery.any_of("single_turn"),
