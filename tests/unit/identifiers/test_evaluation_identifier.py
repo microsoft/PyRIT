@@ -446,3 +446,141 @@ def test_compute_eval_hash_raises_when_hash_none_and_no_rules():
     object.__setattr__(identifier, "class_module", "test.module")
     with pytest.raises(RuntimeError, match="hash should be set by __post_init__"):
         compute_eval_hash(identifier, child_eval_rules={})
+
+
+# ---------------------------------------------------------------------------
+# inner_child_name tests
+# ---------------------------------------------------------------------------
+
+
+class TestInnerChildName:
+    """Tests for the inner_child_name feature in ChildEvalRule."""
+
+    def test_unwrap_substitutes_first_inner_child(self):
+        """When the child has a sub-child matching inner_child_name, the unwrapped eval hash
+        matches a direct (non-wrapped) target with the same behavioral params."""
+        inner_target_east = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            params={"underlying_model_name": "gpt-4o", "temperature": 0.7, "endpoint": "https://east.example.com"},
+        )
+        inner_target_west = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            params={"underlying_model_name": "gpt-4o", "temperature": 0.7, "endpoint": "https://west.example.com"},
+        )
+        wrapper = ComponentIdentifier(
+            class_name="RoundRobinTarget",
+            class_module="pyrit.prompt_target.round_robin_target",
+            params={"weights": [1, 1]},
+            children={"targets": [inner_target_east, inner_target_west]},
+        )
+        scorer_wrapped = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": wrapper},
+        )
+        scorer_direct = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": inner_target_east},
+        )
+
+        rules = {
+            "prompt_target": ChildEvalRule(
+                included_params=frozenset({"underlying_model_name", "temperature"}),
+                inner_child_name="targets",
+            ),
+        }
+
+        result_wrapped = _build_eval_dict(scorer_wrapped, child_eval_rules=rules)
+        result_direct = _build_eval_dict(scorer_direct, child_eval_rules=rules)
+
+        # Unwrapped hash should match the direct target (same behavioral params)
+        assert result_wrapped["children"]["prompt_target"] == result_direct["children"]["prompt_target"]
+
+    def test_unwrap_no_op_when_child_has_no_matching_subchild(self):
+        """When the child doesn't have the named sub-child, use the child as-is."""
+        regular_target = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            params={"underlying_model_name": "gpt-4o", "temperature": 0.7},
+        )
+        scorer = ComponentIdentifier(
+            class_name="Scorer",
+            class_module="pyrit.score",
+            children={"prompt_target": regular_target},
+        )
+
+        rules = {
+            "prompt_target": ChildEvalRule(
+                included_params=frozenset({"underlying_model_name", "temperature"}),
+                inner_child_name="targets",  # OpenAIChatTarget has no "targets" child
+            ),
+        }
+
+        result = _build_eval_dict(scorer, child_eval_rules=rules)
+        # Should still work — uses OpenAIChatTarget directly
+        assert "children" in result
+
+        # Compare with rules without inner_child_name — should be identical
+        rules_no_inner = {
+            "prompt_target": ChildEvalRule(
+                included_params=frozenset({"underlying_model_name", "temperature"}),
+            ),
+        }
+        result_no_inner = _build_eval_dict(scorer, child_eval_rules=rules_no_inner)
+        assert result == result_no_inner
+
+    def test_scorer_eval_hash_matches_with_and_without_round_robin(self):
+        """ScorerEvaluationIdentifier produces the same eval_hash whether
+        the scorer uses a direct target or a RoundRobinTarget wrapping it."""
+        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
+
+        inner_target = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            params={
+                "underlying_model_name": "gpt-4o",
+                "temperature": 0.7,
+                "top_p": 1.0,
+                "endpoint": "https://east.example.com",
+                "model_name": "gpt4o-east",
+            },
+        )
+        inner_target_west = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            params={
+                "underlying_model_name": "gpt-4o",
+                "temperature": 0.7,
+                "top_p": 1.0,
+                "endpoint": "https://west.example.com",
+                "model_name": "gpt4o-west",
+            },
+        )
+
+        wrapper = ComponentIdentifier(
+            class_name="RoundRobinTarget",
+            class_module="pyrit.prompt_target.round_robin_target",
+            params={"weights": [1, 1]},
+            children={"targets": [inner_target, inner_target_west]},
+        )
+
+        scorer_direct = ComponentIdentifier(
+            class_name="SelfAskScaleScorer",
+            class_module="pyrit.score.self_ask_scale_scorer",
+            params={"scorer_type": "float_scale"},
+            children={"prompt_target": inner_target},
+        )
+        scorer_rr = ComponentIdentifier(
+            class_name="SelfAskScaleScorer",
+            class_module="pyrit.score.self_ask_scale_scorer",
+            params={"scorer_type": "float_scale"},
+            children={"prompt_target": wrapper},
+        )
+
+        eval_direct = ScorerEvaluationIdentifier(scorer_direct).eval_hash
+        eval_rr = ScorerEvaluationIdentifier(scorer_rr).eval_hash
+
+        assert eval_direct == eval_rr
