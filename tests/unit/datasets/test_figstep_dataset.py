@@ -1,7 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import io
+import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -447,3 +450,203 @@ class TestFigStepProSubImageDiscovery:
 
         paths = await loader._fetch_figstep_pro_sub_images_async(row_idx=0, extract_dir=tmp_path)
         assert [Path(p).name for p in paths] == ["image_0_split_0.png"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestFigStepImageFetch:
+    """Tests for the single-image fetch helper that delegates to fetch_and_cache_image_async."""
+
+    async def test_fetch_figstep_image_passes_tiny_subset_to_cache(self):
+        loader = _FigStepDataset(use_tiny=True)
+        with patch(
+            "pyrit.datasets.seed_datasets.remote.figstep_dataset.fetch_and_cache_image_async",
+            new=AsyncMock(return_value="/cache/figstep_tiny_1_2.png"),
+        ) as mock_fetch:
+            result = await loader._fetch_figstep_image_async(
+                image_url="https://example.com/img.png",
+                category_id="1",
+                task_id="2",
+            )
+
+        assert result == "/cache/figstep_tiny_1_2.png"
+        mock_fetch.assert_awaited_once_with(
+            filename="figstep_tiny_1_2.png",
+            image_url="https://example.com/img.png",
+            log_prefix="FigStep",
+        )
+
+    async def test_fetch_figstep_image_passes_full_subset_to_cache(self):
+        loader = _FigStepDataset(use_tiny=False)
+        with patch(
+            "pyrit.datasets.seed_datasets.remote.figstep_dataset.fetch_and_cache_image_async",
+            new=AsyncMock(return_value="/cache/figstep_full_3_4.png"),
+        ) as mock_fetch:
+            result = await loader._fetch_figstep_image_async(
+                image_url="https://example.com/img.png",
+                category_id="3",
+                task_id="4",
+            )
+
+        assert result == "/cache/figstep_full_3_4.png"
+        kwargs = mock_fetch.await_args.kwargs
+        assert kwargs["filename"] == "figstep_full_3_4.png"
+        assert kwargs["log_prefix"] == "FigStep"
+
+
+def _make_pro_zip_bytes() -> bytes:
+    """Build a small in-memory zip resembling the FigStep-Pro sub-figures archive."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w") as zf:
+        zf.writestr("image_0_splits/image_0_split_0.png", b"png0")
+        zf.writestr("image_0_splits/image_0_split_1.png", b"png1")
+        zf.writestr("image_1_splits/image_1_split_0.png", b"png0b")
+    return buffer.getvalue()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestFigStepProAssetDownload:
+    """Tests for _download_and_extract_pro_zip_async and _fetch_benign_sentences."""
+
+    async def test_download_and_extract_pro_zip_writes_files(self, tmp_path: Path):
+        loader = _FigStepDataset(variant=FigStepVariant.FIGSTEP_PRO)
+        response = SimpleNamespace(content=_make_pro_zip_bytes())
+
+        with (
+            patch("pyrit.datasets.seed_datasets.remote.figstep_dataset.DB_DATA_PATH", tmp_path),
+            patch(
+                "pyrit.datasets.seed_datasets.remote.figstep_dataset.make_request_and_raise_if_error_async",
+                new=AsyncMock(return_value=response),
+            ) as mock_request,
+        ):
+            extract_dir = await loader._download_and_extract_pro_zip_async(cache=False)
+
+        expected_root = tmp_path / "seed-prompt-entries" / f"figstep_pro_subfigures_{loader.COMMIT_SHA}"
+        assert extract_dir == expected_root
+        assert (expected_root / "image_0_splits" / "image_0_split_0.png").read_bytes() == b"png0"
+        assert (expected_root / "image_0_splits" / "image_0_split_1.png").read_bytes() == b"png1"
+        assert (expected_root / "image_1_splits" / "image_1_split_0.png").read_bytes() == b"png0b"
+        mock_request.assert_awaited_once()
+        request_kwargs = mock_request.await_args.kwargs
+        assert request_kwargs["endpoint_uri"] == loader.FIGSTEP_PRO_ZIP_URL
+        assert request_kwargs["method"] == "GET"
+        assert request_kwargs["follow_redirects"] is True
+
+    async def test_download_and_extract_pro_zip_uses_cached_dir(self, tmp_path: Path):
+        loader = _FigStepDataset(variant=FigStepVariant.FIGSTEP_PRO)
+        cached_dir = tmp_path / "seed-prompt-entries" / f"figstep_pro_subfigures_{loader.COMMIT_SHA}"
+        cached_dir.mkdir(parents=True)
+        (cached_dir / "image_0_splits").mkdir()
+        (cached_dir / "image_0_splits" / "image_0_split_0.png").write_bytes(b"cached")
+
+        with (
+            patch("pyrit.datasets.seed_datasets.remote.figstep_dataset.DB_DATA_PATH", tmp_path),
+            patch(
+                "pyrit.datasets.seed_datasets.remote.figstep_dataset.make_request_and_raise_if_error_async",
+                new=AsyncMock(),
+            ) as mock_request,
+        ):
+            extract_dir = await loader._download_and_extract_pro_zip_async(cache=True)
+
+        assert extract_dir == cached_dir
+        mock_request.assert_not_awaited()
+
+    async def test_download_and_extract_pro_zip_redownloads_when_cache_dir_empty(self, tmp_path: Path):
+        loader = _FigStepDataset(variant=FigStepVariant.FIGSTEP_PRO)
+        empty_cache = tmp_path / "seed-prompt-entries" / f"figstep_pro_subfigures_{loader.COMMIT_SHA}"
+        empty_cache.mkdir(parents=True)  # exists but no children
+        response = SimpleNamespace(content=_make_pro_zip_bytes())
+
+        with (
+            patch("pyrit.datasets.seed_datasets.remote.figstep_dataset.DB_DATA_PATH", tmp_path),
+            patch(
+                "pyrit.datasets.seed_datasets.remote.figstep_dataset.make_request_and_raise_if_error_async",
+                new=AsyncMock(return_value=response),
+            ) as mock_request,
+        ):
+            extract_dir = await loader._download_and_extract_pro_zip_async(cache=True)
+
+        assert extract_dir == empty_cache
+        assert (empty_cache / "image_0_splits" / "image_0_split_0.png").exists()
+        mock_request.assert_awaited_once()
+
+    async def test_fetch_benign_sentences_fetches_and_skips_header(self, tmp_path: Path):
+        loader = _FigStepDataset(variant=FigStepVariant.FIGSTEP_PRO)
+        text = "sentence\nSteps to make *.\nMethods to commit *.\n\n"
+        response = SimpleNamespace(text=text)
+
+        with (
+            patch("pyrit.datasets.seed_datasets.remote.figstep_dataset.DB_DATA_PATH", tmp_path),
+            patch(
+                "pyrit.datasets.seed_datasets.remote.figstep_dataset.make_request_and_raise_if_error_async",
+                new=AsyncMock(return_value=response),
+            ) as mock_request,
+        ):
+            sentences = await loader._fetch_benign_sentences(cache=False)
+
+        assert sentences == ["Steps to make *.", "Methods to commit *."]
+        cache_path = tmp_path / "seed-prompt-entries" / f"figstep_benign_sentences_{loader.COMMIT_SHA}.txt"
+        assert cache_path.read_text(encoding="utf-8") == text
+        mock_request.assert_awaited_once()
+        request_kwargs = mock_request.await_args.kwargs
+        assert request_kwargs["endpoint_uri"] == loader.BENIGN_SENTENCES_URL
+        assert request_kwargs["method"] == "GET"
+        assert request_kwargs["follow_redirects"] is True
+
+    async def test_fetch_benign_sentences_reads_from_cache(self, tmp_path: Path):
+        loader = _FigStepDataset(variant=FigStepVariant.FIGSTEP_PRO)
+        cache_dir = tmp_path / "seed-prompt-entries"
+        cache_dir.mkdir(parents=True)
+        cache_path = cache_dir / f"figstep_benign_sentences_{loader.COMMIT_SHA}.txt"
+        cache_path.write_text("sentence\nCached one.\nCached two.\n", encoding="utf-8")
+
+        with (
+            patch("pyrit.datasets.seed_datasets.remote.figstep_dataset.DB_DATA_PATH", tmp_path),
+            patch(
+                "pyrit.datasets.seed_datasets.remote.figstep_dataset.make_request_and_raise_if_error_async",
+                new=AsyncMock(),
+            ) as mock_request,
+        ):
+            sentences = await loader._fetch_benign_sentences(cache=True)
+
+        assert sentences == ["Cached one.", "Cached two."]
+        mock_request.assert_not_awaited()
+
+    async def test_fetch_benign_sentences_keeps_first_line_when_not_header(self, tmp_path: Path):
+        loader = _FigStepDataset(variant=FigStepVariant.FIGSTEP_PRO)
+        # No "sentence" header row — the first line should be preserved.
+        response = SimpleNamespace(text="First real sentence.\nSecond sentence.\n")
+
+        with (
+            patch("pyrit.datasets.seed_datasets.remote.figstep_dataset.DB_DATA_PATH", tmp_path),
+            patch(
+                "pyrit.datasets.seed_datasets.remote.figstep_dataset.make_request_and_raise_if_error_async",
+                new=AsyncMock(return_value=response),
+            ),
+        ):
+            sentences = await loader._fetch_benign_sentences(cache=False)
+
+        assert sentences == ["First real sentence.", "Second sentence."]
+
+    async def test_ensure_figstep_pro_assets_combines_zip_and_sentences(self, tmp_path: Path):
+        loader = _FigStepDataset(variant=FigStepVariant.FIGSTEP_PRO)
+        fake_dir = tmp_path / "extracted"
+        fake_dir.mkdir()
+
+        with (
+            patch.object(
+                loader,
+                "_download_and_extract_pro_zip_async",
+                new=AsyncMock(return_value=fake_dir),
+            ) as mock_zip,
+            patch.object(
+                loader,
+                "_fetch_benign_sentences",
+                new=AsyncMock(return_value=["Sentence A", "Sentence B"]),
+            ) as mock_sentences,
+        ):
+            extract_dir, sentences = await loader._ensure_figstep_pro_assets_async(cache=False)
+
+        assert extract_dir == fake_dir
+        assert sentences == ["Sentence A", "Sentence B"]
+        mock_zip.assert_awaited_once_with(cache=False)
+        mock_sentences.assert_awaited_once_with(cache=False)
