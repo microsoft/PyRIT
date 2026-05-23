@@ -374,3 +374,156 @@ class TestMMSafetyBenchDataset:
         assert objective.value == "Run a credit card skimming scheme."
         assert text_prompt.value.startswith("The bottom of the image")
         assert objective.value != text_prompt.value
+
+    async def test_fetch_dataset_skips_rows_with_empty_id(self):
+        """Variant rows missing an `id` are dropped before the tiny / objective lookups."""
+        category = MMSafetyBenchCategory.LEGAL_OPINION
+        loader = _MMSafetyBenchDataset(categories=[category])
+
+        hf_lookup = _category_split(
+            category_value=category.value,
+            variant=MMSafetyBenchVariant.SD_TYPO,
+            text_only_rows=[_text_only_row(qid="0", question="Goal A")],
+            variant_rows=[
+                {"id": "", "question": "rephrased empty-id", "image": _FakePILImage()},
+                _variant_row(qid="0", question="rephrased A"),
+            ],
+        )
+
+        ctx_hf, ctx_save = _patch_loader(loader, hf_lookup=hf_lookup)
+        with ctx_hf, ctx_save:
+            dataset = await loader.fetch_dataset_async(cache=False)
+
+        # The empty-id row is skipped; only qid=0 survives.
+        assert len(dataset.seeds) == 3
+        objective = next(s for s in dataset.seeds if isinstance(s, SeedObjective))
+        assert objective.metadata is not None
+        assert objective.metadata["question_id"] == "0"
+
+    async def test_fetch_dataset_continues_when_image_save_fails(self, caplog):
+        """A row whose image fails to save is skipped, and a summary warning is logged."""
+        category = MMSafetyBenchCategory.PRIVACY_VIOLENCE
+        loader = _MMSafetyBenchDataset(categories=[category])
+
+        hf_lookup = _category_split(
+            category_value=category.value,
+            variant=MMSafetyBenchVariant.SD_TYPO,
+            text_only_rows=[
+                _text_only_row(qid="0", question="Goal A"),
+                _text_only_row(qid="1", question="Goal B"),
+            ],
+            variant_rows=[
+                _variant_row(qid="0", question="rephrased A"),
+                _variant_row(qid="1", question="rephrased B"),
+            ],
+        )
+
+        async def fake_fetch_from_huggingface(*, dataset_name: str, config: str, split: str, **_: Any) -> Any:
+            return hf_lookup.get((config, split), [])
+
+        async def flaky_save(*, pil_image: Any, category_value: str, question_id: str) -> str:
+            if question_id == "0":
+                raise OSError("disk full")
+            return f"/fake/{category_value}_{question_id}.jpg"
+
+        with (
+            patch.object(loader, "_fetch_from_huggingface", side_effect=fake_fetch_from_huggingface),
+            patch.object(loader, "_save_pil_image_async", side_effect=flaky_save),
+            caplog.at_level("WARNING", logger="pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset"),
+        ):
+            dataset = await loader.fetch_dataset_async(cache=False)
+
+        # qid=0 failed; qid=1 succeeded -> 3 seeds (one group).
+        assert len(dataset.seeds) == 3
+        objective = next(s for s in dataset.seeds if isinstance(s, SeedObjective))
+        assert objective.metadata is not None
+        assert objective.metadata["question_id"] == "1"
+
+        warnings = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("Failed to save image" in m and "0" in m for m in warnings)
+        assert any("Skipped 1 example" in m for m in warnings)
+
+    async def test_tiny_id_map_skips_unknown_scenarios(self, caplog):
+        """Unknown scenarios in TinyVersion_ID_List.json are logged and ignored, not raised."""
+        category = MMSafetyBenchCategory.MALWARE_GENERATION
+        loader = _MMSafetyBenchDataset(categories=[category], use_tiny=True)
+
+        hf_lookup = _category_split(
+            category_value=category.value,
+            variant=MMSafetyBenchVariant.SD_TYPO,
+            text_only_rows=[_text_only_row(qid="5", question="Goal")],
+            variant_rows=[_variant_row(qid="5", question="rephrased")],
+        )
+
+        tiny_payload = [
+            {"Scenario": "99-Bogus_Scenario", "Sampled_ID_List": [1, 2]},
+            {"Scenario": "03-Malware_Generation", "Sampled_ID_List": [5]},
+        ]
+
+        ctx_hf, ctx_save = _patch_loader(loader, hf_lookup=hf_lookup)
+        with (
+            ctx_hf,
+            ctx_save,
+            patch.object(loader, "_fetch_from_url", return_value=tiny_payload),
+            caplog.at_level("WARNING", logger="pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset"),
+        ):
+            dataset = await loader.fetch_dataset_async(cache=False)
+
+        assert len(dataset.seeds) == 3
+        warnings = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        assert any("Unknown scenario in TinyVersion" in m and "99-Bogus_Scenario" in m for m in warnings)
+
+    async def test_save_pil_image_async_with_jpeg_image(self):
+        """_save_pil_image_async serializes a JPEG PIL image and delegates to fetch_and_cache_image_async."""
+        loader = _MMSafetyBenchDataset(variant=MMSafetyBenchVariant.SD_TYPO)
+        captured: dict[str, Any] = {}
+
+        async def fake_cache(*, filename: str, image_bytes: bytes, log_prefix: str) -> str:
+            captured["filename"] = filename
+            captured["bytes"] = image_bytes
+            captured["log_prefix"] = log_prefix
+            return f"/fake/{filename}"
+
+        with patch(
+            "pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset.fetch_and_cache_image_async",
+            side_effect=fake_cache,
+        ):
+            local_path = await loader._save_pil_image_async(
+                pil_image=_FakePILImage(format_="JPEG"),
+                category_value="Illegal_Activitiy",
+                question_id="7",
+            )
+
+        assert local_path == "/fake/mm_safetybench_Illegal_Activitiy_SD_TYPO_7.jpg"
+        assert captured["log_prefix"] == "MM-SafetyBench"
+        assert captured["bytes"].startswith(b"\xff\xd8\xff")  # JPEG magic
+
+    async def test_save_pil_image_async_falls_back_to_jpeg_for_unknown_format(self):
+        """Unknown/None PIL formats fall back to JPEG with a .jpg extension."""
+        loader = _MMSafetyBenchDataset(variant=MMSafetyBenchVariant.SD)
+        captured_filenames: list[str] = []
+
+        async def fake_cache(*, filename: str, image_bytes: bytes, log_prefix: str) -> str:
+            captured_filenames.append(filename)
+            return f"/fake/{filename}"
+
+        with patch(
+            "pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset.fetch_and_cache_image_async",
+            side_effect=fake_cache,
+        ):
+            await loader._save_pil_image_async(
+                pil_image=_FakePILImage(format_=None),
+                category_value="HateSpeech",
+                question_id="3",
+            )
+            await loader._save_pil_image_async(
+                pil_image=_FakePILImage(format_="WEBP"),
+                category_value="HateSpeech",
+                question_id="4",
+            )
+
+        # Both fall back to .jpg because the format is not JPEG or PNG.
+        assert captured_filenames == [
+            "mm_safetybench_HateSpeech_SD_3.jpg",
+            "mm_safetybench_HateSpeech_SD_4.jpg",
+        ]
