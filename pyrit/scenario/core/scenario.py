@@ -8,6 +8,7 @@ This module provides the Scenario class that orchestrates the execution of multi
 AtomicAttack instances sequentially, enabling comprehensive security testing campaigns.
 """
 
+import asyncio
 import copy
 import json
 import logging
@@ -607,6 +608,9 @@ class Scenario(ABC):
                 Use this to specify dataset names or maximum dataset size from the CLI.
                 If not provided, scenarios use their default_dataset_config().
             max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 1.
+                This is the total in-flight budget for the scenario, split internally across
+                concurrent atomic attacks so that the cross-atomic and intra-atomic concurrency
+                together stay approximately at this value.
             max_retries (int): Maximum number of automatic retries if the scenario raises an exception.
                 Set to 0 (default) for no automatic retries. If set to a positive number,
                 the scenario will automatically retry up to this many times after an exception.
@@ -1230,97 +1234,23 @@ class Scenario(ABC):
         # Calculate starting index based on completed attacks
         completed_count = len(self._atomic_attacks) - len(remaining_attacks)
 
+        # When max_concurrency == 1, run atomic attacks serially with abort-on-first-failure
+        # semantics. Otherwise, run them all in parallel sharing a single objective-level
+        # Semaphore(max_concurrency) so the global in-flight objective budget never exceeds
+        # max_concurrency regardless of how the work is distributed across atomic attacks.
         try:
-            for i, atomic_attack in enumerate(
-                tqdm(
-                    remaining_attacks,
-                    desc=f"Executing {self._name}",
-                    unit="attack",
-                    total=len(self._atomic_attacks),
-                    initial=completed_count,
-                ),
-                start=completed_count + 1,
-            ):
-                # Stamp the scenario id onto the atomic attack so each persisted
-                # AttackResult carries the attribution_parent_id linkage. This
-                # is what enables mid-run interruption recovery (results are
-                # visible without the post-atomic-attack bulk manifest write).
-                atomic_attack.set_scenario_result_id(scenario_result_id)
-
-                logger.info(
-                    f"Executing atomic attack {i}/{len(self._atomic_attacks)} "
-                    f"('{atomic_attack.atomic_attack_name}') in scenario '{self._name}'"
+            if self._max_concurrency <= 1:
+                await self._execute_atomic_attacks_sequential_async(
+                    remaining_attacks=remaining_attacks,
+                    scenario_result_id=scenario_result_id,
+                    completed_count=completed_count,
                 )
-
-                try:
-                    atomic_results = await atomic_attack.run_async(
-                        max_concurrency=self._max_concurrency,
-                        return_partial_on_failure=True,
-                    )
-
-                    # Per-result scenario linkage is now stamped by the attack
-                    # event handler at write time; no post-atomic bulk update.
-
-                    # Check if there were any incomplete objectives
-                    if atomic_results.has_incomplete:
-                        incomplete_count = len(atomic_results.incomplete_objectives)
-                        completed_count = len(atomic_results.completed_results)
-
-                        logger.error(
-                            f"Atomic attack {i}/{len(self._atomic_attacks)} "
-                            f"('{atomic_attack.atomic_attack_name}') partially completed: "
-                            f"{completed_count} completed, {incomplete_count} incomplete"
-                        )
-
-                        # Log details of each incomplete objective
-                        for obj, exc in atomic_results.incomplete_objectives:
-                            logger.error(f"  Incomplete objective '{obj[:50]}...': {str(exc)}")
-
-                        # Error AttackResults are linked to this scenario via the
-                        # attribution_parent_id foreign key on AttackResultEntry
-                        # (stamped by the attack event handler when an
-                        # AttackResultAttribution is on the context). The
-                        # previous per-scenario error_id manifest is no longer
-                        # needed.
-
-                        # Mark scenario as failed
-                        error_msg = (
-                            f"Atomic attack '{atomic_attack.atomic_attack_name}' partially failed: "
-                            f"{incomplete_count} of {incomplete_count + completed_count} objectives incomplete. "
-                            f"See attack results for details."
-                        )
-                        self._memory.update_scenario_run_state(
-                            scenario_result_id=scenario_result_id,
-                            scenario_run_state="FAILED",
-                            error_message=error_msg,
-                            error_type=type(atomic_results.incomplete_objectives[0][1]).__name__,
-                        )
-
-                        # Raise exception with detailed information
-                        raise ValueError(error_msg) from atomic_results.incomplete_objectives[0][1]
-                    logger.info(
-                        f"Atomic attack {i}/{len(self._atomic_attacks)} completed successfully with "
-                        f"{len(atomic_results.completed_results)} results"
-                    )
-
-                except Exception as e:
-                    # Exception was raised either by run_async or by our check above
-                    logger.error(
-                        f"Atomic attack {i}/{len(self._atomic_attacks)} "
-                        f"('{atomic_attack.atomic_attack_name}') failed in scenario '{self._name}': {str(e)}"
-                    )
-
-                    # Mark scenario as failed if not already done
-                    scenario_results = self._memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
-                    if scenario_results and scenario_results[0].scenario_run_state != "FAILED":
-                        self._memory.update_scenario_run_state(
-                            scenario_result_id=scenario_result_id,
-                            scenario_run_state="FAILED",
-                            error_message=str(e),
-                            error_type=type(e).__name__,
-                        )
-
-                    raise
+            else:
+                await self._execute_atomic_attacks_parallel_async(
+                    remaining_attacks=remaining_attacks,
+                    scenario_result_id=scenario_result_id,
+                    completed_count=completed_count,
+                )
 
             logger.info(f"Scenario '{self._name}' completed successfully")
 
@@ -1339,3 +1269,174 @@ class Scenario(ABC):
         except Exception as e:
             logger.error(f"Scenario '{self._name}' failed with error: {str(e)}")
             raise
+
+    def _partial_result_to_exception(
+        self,
+        *,
+        atomic_attack: AtomicAttack,
+        atomic_results: Any,
+    ) -> ValueError | None:
+        """
+        Log the outcome of an atomic attack and return an exception if it didn't
+        fully complete.
+
+        Returns:
+            ValueError | None: An error to raise when the atomic attack has incomplete
+            objectives, otherwise ``None`` when all objectives finished successfully.
+        """
+        if not atomic_results.has_incomplete:
+            logger.info(
+                f"Atomic attack ('{atomic_attack.atomic_attack_name}') completed successfully with "
+                f"{len(atomic_results.completed_results)} results"
+            )
+            return None
+
+        incomplete_count = len(atomic_results.incomplete_objectives)
+        completed_in_run = len(atomic_results.completed_results)
+        logger.error(
+            f"Atomic attack ('{atomic_attack.atomic_attack_name}') partially completed: "
+            f"{completed_in_run} completed, {incomplete_count} incomplete"
+        )
+        for obj, exc in atomic_results.incomplete_objectives:
+            logger.error(f"  Incomplete objective '{obj[:50]}...': {str(exc)}")
+
+        inner = atomic_results.incomplete_objectives[0][1]
+        error = ValueError(
+            f"Atomic attack '{atomic_attack.atomic_attack_name}' partially failed: "
+            f"{incomplete_count} of {incomplete_count + completed_in_run} objectives incomplete. "
+            f"See attack results for details."
+        )
+        if isinstance(inner, BaseException):
+            error.__cause__ = inner
+        return error
+
+    def _mark_scenario_failed(self, *, scenario_result_id: str, error: BaseException) -> None:
+        """Mark the scenario run as FAILED, deriving message/type from ``error``."""
+        cause = error.__cause__ if error.__cause__ is not None else error
+        self._memory.update_scenario_run_state(
+            scenario_result_id=scenario_result_id,
+            scenario_run_state="FAILED",
+            error_message=str(error),
+            error_type=type(cause).__name__,
+        )
+
+    async def _execute_atomic_attacks_sequential_async(
+        self,
+        *,
+        remaining_attacks: list[AtomicAttack],
+        scenario_result_id: str,
+        completed_count: int,
+    ) -> None:
+        """
+        Execute atomic attacks one at a time. First failure marks the scenario FAILED
+        and raises immediately. This is the default behavior preserved from prior versions.
+
+        Raises:
+            ValueError: If an atomic attack returns incomplete objectives.
+            Exception: Re-raised from a failing atomic attack.
+        """
+        progress = tqdm(
+            remaining_attacks,
+            desc=f"Executing {self._name}",
+            unit="attack",
+            total=len(self._atomic_attacks),
+            initial=completed_count,
+        )
+        total = len(self._atomic_attacks)
+
+        for i, atomic_attack in enumerate(progress, start=completed_count + 1):
+            atomic_attack.set_scenario_result_id(scenario_result_id)
+            logger.info(
+                f"Executing atomic attack {i}/{total} "
+                f"('{atomic_attack.atomic_attack_name}') in scenario '{self._name}'"
+            )
+
+            try:
+                atomic_results = await atomic_attack.run_async(
+                    max_concurrency=self._max_concurrency,
+                    return_partial_on_failure=True,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Atomic attack {i}/{total} "
+                    f"('{atomic_attack.atomic_attack_name}') failed in scenario '{self._name}': {str(e)}"
+                )
+                self._mark_scenario_failed(scenario_result_id=scenario_result_id, error=e)
+                raise
+
+            error = self._partial_result_to_exception(
+                atomic_attack=atomic_attack, atomic_results=atomic_results
+            )
+            if error is not None:
+                self._mark_scenario_failed(scenario_result_id=scenario_result_id, error=error)
+                raise error
+
+    async def _execute_atomic_attacks_parallel_async(
+        self,
+        *,
+        remaining_attacks: list[AtomicAttack],
+        scenario_result_id: str,
+        completed_count: int,
+    ) -> None:
+        """
+        Execute all remaining atomic attacks concurrently. All in-flight objectives
+        across all atomic attacks share a single ``Semaphore(max_concurrency)`` so the
+        global concurrent-objective budget is bounded by ``max_concurrency`` regardless
+        of how work is distributed across atomic attacks. This means a long-running
+        atomic attack can elastically use freed slots from short ones.
+
+        Failure semantics differ from the sequential path: when an atomic attack fails or
+        returns ``has_incomplete``, in-flight siblings are allowed to finish (so their
+        partial work persists for resume), then the first error is re-raised.
+        """
+        shared_semaphore = asyncio.Semaphore(self._max_concurrency)
+        pbar = tqdm(
+            desc=f"Executing {self._name}",
+            unit="attack",
+            total=len(self._atomic_attacks),
+            initial=completed_count,
+        )
+
+        for atomic_attack in remaining_attacks:
+            atomic_attack.set_scenario_result_id(scenario_result_id)
+
+        logger.info(
+            f"Launching {len(remaining_attacks)} atomic attacks in parallel "
+            f"(shared max_concurrency={self._max_concurrency}) in scenario '{self._name}'"
+        )
+
+        async def run_one(atomic_attack: AtomicAttack) -> tuple[AtomicAttack, Any]:
+            try:
+                result = await atomic_attack.run_async(
+                    max_concurrency=self._max_concurrency,
+                    return_partial_on_failure=True,
+                    semaphore=shared_semaphore,
+                )
+                return atomic_attack, result
+            finally:
+                pbar.update(1)
+
+        try:
+            outcomes = await asyncio.gather(
+                *(run_one(aa) for aa in remaining_attacks),
+                return_exceptions=True,
+            )
+        finally:
+            pbar.close()
+
+        first_error: BaseException | None = None
+        for outcome in outcomes:
+            if isinstance(outcome, BaseException):
+                logger.error(f"Atomic attack failed in scenario '{self._name}': {str(outcome)}")
+                error = outcome
+            else:
+                atomic_attack, atomic_results = outcome
+                error = self._partial_result_to_exception(
+                    atomic_attack=atomic_attack, atomic_results=atomic_results
+                )
+            if error is not None and first_error is None:
+                first_error = error
+
+        if first_error is not None:
+            self._mark_scenario_failed(scenario_result_id=scenario_result_id, error=first_error)
+            raise first_error

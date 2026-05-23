@@ -263,7 +263,7 @@ class TestAtomicAttackExecution:
 
             result = await atomic_attack.run_async(max_concurrency=5)
 
-            mock_init.assert_called_once_with(max_concurrency=5)
+            mock_init.assert_called_once_with(max_concurrency=5, semaphore=None)
             assert len(result.completed_results) == 3
 
     async def test_run_async_with_default_concurrency(self, mock_attack, sample_seed_groups, sample_attack_results):
@@ -282,7 +282,7 @@ class TestAtomicAttackExecution:
 
             await atomic_attack.run_async()
 
-            mock_init.assert_called_once_with(max_concurrency=1)
+            mock_init.assert_called_once_with(max_concurrency=1, semaphore=None)
 
     async def test_run_async_passes_memory_labels(self, mock_attack, sample_seed_groups, sample_attack_results):
         """Test that memory labels are passed to the executor."""

@@ -13,6 +13,7 @@ times when that may not be possible or make sense. So this class exists to
 have a common interface for scenarios.
 """
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -303,6 +304,7 @@ class AtomicAttack:
         *,
         max_concurrency: int = 1,
         return_partial_on_failure: bool = True,
+        semaphore: asyncio.Semaphore | None = None,
         **attack_params: Any,
     ) -> AttackExecutorResult[AttackResult]:
         """
@@ -321,10 +323,16 @@ class AtomicAttack:
 
         Args:
             max_concurrency (int): Maximum number of concurrent attack executions.
-                Defaults to 1 for sequential execution.
+                Defaults to 1 for sequential execution. Ignored when ``semaphore``
+                is provided.
             return_partial_on_failure (bool): If True, returns partial results even when
                 some objectives don't complete execution. If False, raises an exception on
                 any execution failure. Defaults to True.
+            semaphore (asyncio.Semaphore | None): Optional externally-owned semaphore
+                used to gate objective execution. Allows a parent (e.g., a Scenario
+                running multiple atomic attacks in parallel) to share a single
+                concurrency budget across all of them. When provided, takes precedence
+                over ``max_concurrency``.
             **attack_params: Additional parameters to pass to the attack strategy.
 
         Returns:
@@ -334,7 +342,7 @@ class AtomicAttack:
         Raises:
             ValueError: If the attack execution fails completely and return_partial_on_failure=False.
         """
-        executor = AttackExecutor(max_concurrency=max_concurrency)
+        executor = AttackExecutor(max_concurrency=max_concurrency, semaphore=semaphore)
 
         logger.info(
             f"Starting atomic attack execution with {len(self._seed_groups)} seed groups "
