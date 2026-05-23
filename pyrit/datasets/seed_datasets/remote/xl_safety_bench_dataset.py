@@ -396,7 +396,7 @@ class _XLSafetyBenchCulturalDataset(_RemoteDatasetLoader):
 
     harm_categories: list[str] = [c.value for c in XLSafetyBenchCulturalCategory]
     modalities: list[str] = ["text"]
-    size: str = "medium"
+    size: str = "large"
     tags: set[str] = {"safety", "cultural", "multilingual", "country_grounded"}
 
     def __init__(
@@ -555,3 +555,432 @@ class _XLSafetyBenchCulturalDataset(_RemoteDatasetLoader):
             )
 
         return seed_prompts
+
+
+# --- Per-country jailbreak siblings -------------------------------------------------
+#
+# Each country in XL-SafetyBench is a distinct CSV under
+# ``data/jailbreak/<country>/safety_attack_prompts.csv``. Each sibling pins
+# ``countries`` to a single value so that the daily e2e dataset sweep exercises
+# every upstream file (the parent's no-args default also iterates all 10, but
+# the siblings give per-country e2e isolation, easier failure attribution, and
+# a more ergonomic "just one country" API).
+
+
+class _XLSafetyBenchJailbreakFranceDataset(_XLSafetyBenchJailbreakDataset):
+    """Sibling loader pinned to the France split of XL-SafetyBench Jailbreak."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchJailbreakCategory]] = None,
+    ) -> None:
+        super().__init__(countries=[XLSafetyBenchCountry.FRANCE], categories=categories)
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_jailbreak_france"
+
+
+class _XLSafetyBenchJailbreakGermanyDataset(_XLSafetyBenchJailbreakDataset):
+    """Sibling loader pinned to the Germany split of XL-SafetyBench Jailbreak."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchJailbreakCategory]] = None,
+    ) -> None:
+        super().__init__(countries=[XLSafetyBenchCountry.GERMANY], categories=categories)
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_jailbreak_germany"
+
+
+class _XLSafetyBenchJailbreakIndiaDataset(_XLSafetyBenchJailbreakDataset):
+    """Sibling loader pinned to the India split of XL-SafetyBench Jailbreak."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchJailbreakCategory]] = None,
+    ) -> None:
+        super().__init__(countries=[XLSafetyBenchCountry.INDIA], categories=categories)
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_jailbreak_india"
+
+
+class _XLSafetyBenchJailbreakIndonesiaDataset(_XLSafetyBenchJailbreakDataset):
+    """Sibling loader pinned to the Indonesia split of XL-SafetyBench Jailbreak."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchJailbreakCategory]] = None,
+    ) -> None:
+        super().__init__(countries=[XLSafetyBenchCountry.INDONESIA], categories=categories)
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_jailbreak_indonesia"
+
+
+class _XLSafetyBenchJailbreakJapanDataset(_XLSafetyBenchJailbreakDataset):
+    """Sibling loader pinned to the Japan split of XL-SafetyBench Jailbreak."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchJailbreakCategory]] = None,
+    ) -> None:
+        super().__init__(countries=[XLSafetyBenchCountry.JAPAN], categories=categories)
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_jailbreak_japan"
+
+
+class _XLSafetyBenchJailbreakSouthKoreaDataset(_XLSafetyBenchJailbreakDataset):
+    """Sibling loader pinned to the South Korea split of XL-SafetyBench Jailbreak."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchJailbreakCategory]] = None,
+    ) -> None:
+        super().__init__(countries=[XLSafetyBenchCountry.SOUTH_KOREA], categories=categories)
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_jailbreak_south_korea"
+
+
+class _XLSafetyBenchJailbreakSpainDataset(_XLSafetyBenchJailbreakDataset):
+    """Sibling loader pinned to the Spain split of XL-SafetyBench Jailbreak."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchJailbreakCategory]] = None,
+    ) -> None:
+        super().__init__(countries=[XLSafetyBenchCountry.SPAIN], categories=categories)
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_jailbreak_spain"
+
+
+class _XLSafetyBenchJailbreakTurkeyDataset(_XLSafetyBenchJailbreakDataset):
+    """Sibling loader pinned to the Turkey split of XL-SafetyBench Jailbreak."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchJailbreakCategory]] = None,
+    ) -> None:
+        super().__init__(countries=[XLSafetyBenchCountry.TURKEY], categories=categories)
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_jailbreak_turkey"
+
+
+class _XLSafetyBenchJailbreakUnitedArabEmiratesDataset(_XLSafetyBenchJailbreakDataset):
+    """Sibling loader pinned to the United Arab Emirates split of XL-SafetyBench Jailbreak."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchJailbreakCategory]] = None,
+    ) -> None:
+        super().__init__(countries=[XLSafetyBenchCountry.UNITED_ARAB_EMIRATES], categories=categories)
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_jailbreak_united_arab_emirates"
+
+
+class _XLSafetyBenchJailbreakUnitedStatesDataset(_XLSafetyBenchJailbreakDataset):
+    """Sibling loader pinned to the United States split of XL-SafetyBench Jailbreak."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchJailbreakCategory]] = None,
+    ) -> None:
+        super().__init__(countries=[XLSafetyBenchCountry.UNITED_STATES], categories=categories)
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_jailbreak_united_states"
+
+
+# --- Per-country cultural siblings -------------------------------------------------
+#
+# Each country in XL-SafetyBench Cultural is a distinct CSV under
+# ``data/cultural/<country>/scenario_prompts.csv``. Each sibling pins
+# ``countries`` to a single value. ``language_mode`` is still a sibling-level
+# kwarg because it selects between two columns in the SAME CSV (no new upstream
+# artifact), so it does not warrant a separate sibling per mode.
+
+
+class _XLSafetyBenchCulturalFranceDataset(_XLSafetyBenchCulturalDataset):
+    """Sibling loader pinned to the France split of XL-SafetyBench Cultural."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
+        language_mode: Literal["local", "english"] = "local",
+    ) -> None:
+        super().__init__(
+            countries=[XLSafetyBenchCountry.FRANCE],
+            categories=categories,
+            language_mode=language_mode,
+        )
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_cultural_france"
+
+
+class _XLSafetyBenchCulturalGermanyDataset(_XLSafetyBenchCulturalDataset):
+    """Sibling loader pinned to the Germany split of XL-SafetyBench Cultural."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
+        language_mode: Literal["local", "english"] = "local",
+    ) -> None:
+        super().__init__(
+            countries=[XLSafetyBenchCountry.GERMANY],
+            categories=categories,
+            language_mode=language_mode,
+        )
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_cultural_germany"
+
+
+class _XLSafetyBenchCulturalIndiaDataset(_XLSafetyBenchCulturalDataset):
+    """Sibling loader pinned to the India split of XL-SafetyBench Cultural."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
+        language_mode: Literal["local", "english"] = "local",
+    ) -> None:
+        super().__init__(
+            countries=[XLSafetyBenchCountry.INDIA],
+            categories=categories,
+            language_mode=language_mode,
+        )
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_cultural_india"
+
+
+class _XLSafetyBenchCulturalIndonesiaDataset(_XLSafetyBenchCulturalDataset):
+    """Sibling loader pinned to the Indonesia split of XL-SafetyBench Cultural."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
+        language_mode: Literal["local", "english"] = "local",
+    ) -> None:
+        super().__init__(
+            countries=[XLSafetyBenchCountry.INDONESIA],
+            categories=categories,
+            language_mode=language_mode,
+        )
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_cultural_indonesia"
+
+
+class _XLSafetyBenchCulturalJapanDataset(_XLSafetyBenchCulturalDataset):
+    """Sibling loader pinned to the Japan split of XL-SafetyBench Cultural."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
+        language_mode: Literal["local", "english"] = "local",
+    ) -> None:
+        super().__init__(
+            countries=[XLSafetyBenchCountry.JAPAN],
+            categories=categories,
+            language_mode=language_mode,
+        )
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_cultural_japan"
+
+
+class _XLSafetyBenchCulturalSouthKoreaDataset(_XLSafetyBenchCulturalDataset):
+    """Sibling loader pinned to the South Korea split of XL-SafetyBench Cultural."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
+        language_mode: Literal["local", "english"] = "local",
+    ) -> None:
+        super().__init__(
+            countries=[XLSafetyBenchCountry.SOUTH_KOREA],
+            categories=categories,
+            language_mode=language_mode,
+        )
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_cultural_south_korea"
+
+
+class _XLSafetyBenchCulturalSpainDataset(_XLSafetyBenchCulturalDataset):
+    """Sibling loader pinned to the Spain split of XL-SafetyBench Cultural."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
+        language_mode: Literal["local", "english"] = "local",
+    ) -> None:
+        super().__init__(
+            countries=[XLSafetyBenchCountry.SPAIN],
+            categories=categories,
+            language_mode=language_mode,
+        )
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_cultural_spain"
+
+
+class _XLSafetyBenchCulturalTurkeyDataset(_XLSafetyBenchCulturalDataset):
+    """Sibling loader pinned to the Turkey split of XL-SafetyBench Cultural."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
+        language_mode: Literal["local", "english"] = "local",
+    ) -> None:
+        super().__init__(
+            countries=[XLSafetyBenchCountry.TURKEY],
+            categories=categories,
+            language_mode=language_mode,
+        )
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_cultural_turkey"
+
+
+class _XLSafetyBenchCulturalUnitedArabEmiratesDataset(_XLSafetyBenchCulturalDataset):
+    """Sibling loader pinned to the United Arab Emirates split of XL-SafetyBench Cultural."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
+        language_mode: Literal["local", "english"] = "local",
+    ) -> None:
+        super().__init__(
+            countries=[XLSafetyBenchCountry.UNITED_ARAB_EMIRATES],
+            categories=categories,
+            language_mode=language_mode,
+        )
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_cultural_united_arab_emirates"
+
+
+class _XLSafetyBenchCulturalUnitedStatesDataset(_XLSafetyBenchCulturalDataset):
+    """Sibling loader pinned to the United States split of XL-SafetyBench Cultural."""
+
+    size: str = "medium"
+
+    def __init__(
+        self,
+        *,
+        categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
+        language_mode: Literal["local", "english"] = "local",
+    ) -> None:
+        super().__init__(
+            countries=[XLSafetyBenchCountry.UNITED_STATES],
+            categories=categories,
+            language_mode=language_mode,
+        )
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_cultural_united_states"

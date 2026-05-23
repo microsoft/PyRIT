@@ -10,7 +10,27 @@ from pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset import (
     XLSafetyBenchCulturalCategory,
     XLSafetyBenchJailbreakCategory,
     _XLSafetyBenchCulturalDataset,
+    _XLSafetyBenchCulturalFranceDataset,
+    _XLSafetyBenchCulturalGermanyDataset,
+    _XLSafetyBenchCulturalIndiaDataset,
+    _XLSafetyBenchCulturalIndonesiaDataset,
+    _XLSafetyBenchCulturalJapanDataset,
+    _XLSafetyBenchCulturalSouthKoreaDataset,
+    _XLSafetyBenchCulturalSpainDataset,
+    _XLSafetyBenchCulturalTurkeyDataset,
+    _XLSafetyBenchCulturalUnitedArabEmiratesDataset,
+    _XLSafetyBenchCulturalUnitedStatesDataset,
     _XLSafetyBenchJailbreakDataset,
+    _XLSafetyBenchJailbreakFranceDataset,
+    _XLSafetyBenchJailbreakGermanyDataset,
+    _XLSafetyBenchJailbreakIndiaDataset,
+    _XLSafetyBenchJailbreakIndonesiaDataset,
+    _XLSafetyBenchJailbreakJapanDataset,
+    _XLSafetyBenchJailbreakSouthKoreaDataset,
+    _XLSafetyBenchJailbreakSpainDataset,
+    _XLSafetyBenchJailbreakTurkeyDataset,
+    _XLSafetyBenchJailbreakUnitedArabEmiratesDataset,
+    _XLSafetyBenchJailbreakUnitedStatesDataset,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
@@ -321,3 +341,126 @@ async def test_jailbreak_deduplicates_countries():
         XLSafetyBenchCountry.FRANCE,
         XLSafetyBenchCountry.GERMANY,
     ]
+
+
+# --- Sibling smoke tests -----------------------------------------------------
+
+
+_JAILBREAK_SIBLINGS = [
+    (_XLSafetyBenchJailbreakFranceDataset, "xl_safety_bench_jailbreak_france", XLSafetyBenchCountry.FRANCE),
+    (_XLSafetyBenchJailbreakGermanyDataset, "xl_safety_bench_jailbreak_germany", XLSafetyBenchCountry.GERMANY),
+    (_XLSafetyBenchJailbreakIndiaDataset, "xl_safety_bench_jailbreak_india", XLSafetyBenchCountry.INDIA),
+    (
+        _XLSafetyBenchJailbreakIndonesiaDataset,
+        "xl_safety_bench_jailbreak_indonesia",
+        XLSafetyBenchCountry.INDONESIA,
+    ),
+    (_XLSafetyBenchJailbreakJapanDataset, "xl_safety_bench_jailbreak_japan", XLSafetyBenchCountry.JAPAN),
+    (
+        _XLSafetyBenchJailbreakSouthKoreaDataset,
+        "xl_safety_bench_jailbreak_south_korea",
+        XLSafetyBenchCountry.SOUTH_KOREA,
+    ),
+    (_XLSafetyBenchJailbreakSpainDataset, "xl_safety_bench_jailbreak_spain", XLSafetyBenchCountry.SPAIN),
+    (_XLSafetyBenchJailbreakTurkeyDataset, "xl_safety_bench_jailbreak_turkey", XLSafetyBenchCountry.TURKEY),
+    (
+        _XLSafetyBenchJailbreakUnitedArabEmiratesDataset,
+        "xl_safety_bench_jailbreak_united_arab_emirates",
+        XLSafetyBenchCountry.UNITED_ARAB_EMIRATES,
+    ),
+    (
+        _XLSafetyBenchJailbreakUnitedStatesDataset,
+        "xl_safety_bench_jailbreak_united_states",
+        XLSafetyBenchCountry.UNITED_STATES,
+    ),
+]
+
+_CULTURAL_SIBLINGS = [
+    (_XLSafetyBenchCulturalFranceDataset, "xl_safety_bench_cultural_france", XLSafetyBenchCountry.FRANCE),
+    (_XLSafetyBenchCulturalGermanyDataset, "xl_safety_bench_cultural_germany", XLSafetyBenchCountry.GERMANY),
+    (_XLSafetyBenchCulturalIndiaDataset, "xl_safety_bench_cultural_india", XLSafetyBenchCountry.INDIA),
+    (
+        _XLSafetyBenchCulturalIndonesiaDataset,
+        "xl_safety_bench_cultural_indonesia",
+        XLSafetyBenchCountry.INDONESIA,
+    ),
+    (_XLSafetyBenchCulturalJapanDataset, "xl_safety_bench_cultural_japan", XLSafetyBenchCountry.JAPAN),
+    (
+        _XLSafetyBenchCulturalSouthKoreaDataset,
+        "xl_safety_bench_cultural_south_korea",
+        XLSafetyBenchCountry.SOUTH_KOREA,
+    ),
+    (_XLSafetyBenchCulturalSpainDataset, "xl_safety_bench_cultural_spain", XLSafetyBenchCountry.SPAIN),
+    (_XLSafetyBenchCulturalTurkeyDataset, "xl_safety_bench_cultural_turkey", XLSafetyBenchCountry.TURKEY),
+    (
+        _XLSafetyBenchCulturalUnitedArabEmiratesDataset,
+        "xl_safety_bench_cultural_united_arab_emirates",
+        XLSafetyBenchCountry.UNITED_ARAB_EMIRATES,
+    ),
+    (
+        _XLSafetyBenchCulturalUnitedStatesDataset,
+        "xl_safety_bench_cultural_united_states",
+        XLSafetyBenchCountry.UNITED_STATES,
+    ),
+]
+
+
+@pytest.mark.parametrize("sibling_cls,expected_name,expected_country", _JAILBREAK_SIBLINGS)
+def test_jailbreak_sibling_pins_country(sibling_cls, expected_name, expected_country):
+    loader = sibling_cls()
+    assert loader.dataset_name == expected_name
+    assert loader._countries == [expected_country]
+    # Sibling inherits parent's category filter behavior.
+    assert loader._categories_filter is None
+    # Per-country slice is medium-sized (450 prompts), not the parent's large (4500).
+    assert sibling_cls.size == "medium"
+    # Siblings inherit the parent's tag set (incl. "default") so they show up in
+    # default-tagged sweeps and the e2e matrix.
+    assert "default" in sibling_cls.tags
+    assert "jailbreak" in sibling_cls.tags
+
+
+@pytest.mark.parametrize("sibling_cls,expected_name,expected_country", _CULTURAL_SIBLINGS)
+def test_cultural_sibling_pins_country(sibling_cls, expected_name, expected_country):
+    loader = sibling_cls()
+    assert loader.dataset_name == expected_name
+    assert loader._countries == [expected_country]
+    assert loader._categories_filter is None
+    # language_mode defaults to "local" on the sibling, matching the parent default.
+    assert loader._language_mode == "local"
+    assert sibling_cls.size == "medium"
+    # Cultural siblings inherit the parent's tag set, which intentionally
+    # excludes "default" (innocuous-by-construction).
+    assert "default" not in sibling_cls.tags
+    assert "cultural" in sibling_cls.tags
+
+
+async def test_jailbreak_sibling_forwards_categories():
+    loader = _XLSafetyBenchJailbreakJapanDataset(
+        categories=[XLSafetyBenchJailbreakCategory.HATE_AND_DISCRIMINATION],
+    )
+
+    with _patch_jailbreak_fetch(loader):
+        dataset = await loader.fetch_dataset_async()
+
+    # 1 country × 1 matching mock row.
+    assert len(dataset.seeds) == 1
+    assert dataset.seeds[0].metadata["country"] == "japan"
+    assert dataset.seeds[0].metadata["category"] == "Hate & Discrimination"
+
+
+async def test_cultural_sibling_forwards_language_mode_and_categories():
+    loader = _XLSafetyBenchCulturalGermanyDataset(
+        categories=[XLSafetyBenchCulturalCategory.LEGAL_LANDMINES],
+        language_mode="english",
+    )
+
+    with _patch_cultural_fetch(loader):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 1
+    seed = dataset.seeds[0]
+    assert seed.metadata["country"] == "germany"
+    assert seed.metadata["category"] == "Legal Landmines"
+    assert seed.metadata["language_mode"] == "english"
+    assert seed.value == "English scenario 2 for germany"
