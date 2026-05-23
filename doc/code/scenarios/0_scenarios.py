@@ -165,9 +165,11 @@ class MyScenario(Scenario):
 # ## Existing Scenarios
 
 # %%
-from pyrit.cli.frontend_core import FrontendCore, print_scenarios_list_async
+from pyrit.backend.services.scenario_service import get_scenario_service
+from pyrit.cli._output import print_scenario_list
 
-await print_scenarios_list_async(context=FrontendCore())  # type: ignore
+response = await get_scenario_service().list_scenarios_async(limit=200)  # type: ignore
+print_scenario_list(items=[s.model_dump() for s in response.items])
 
 # %% [markdown]
 #

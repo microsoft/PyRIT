@@ -6,8 +6,20 @@ export const useLabelsBarStyles = makeStyles({
     alignItems: 'center',
     gap: tokens.spacingHorizontalXS,
     overflow: 'hidden',
-    flex: '1 1 0',
-    minWidth: 0,
+    // Always reserve enough room for the labels icon + count badge so it
+    // stays visible at any ribbon width. `minWidth` is the width of the
+    // icon button alone; the chip area beyond it grows when there's
+    // additional space.
+    flex: '1 1 auto',
+    minWidth: '60px',
+    position: 'relative',
+  },
+  iconButton: {
+    flexShrink: 0,
+  },
+  iconTooltipBody: {
+    whiteSpace: 'nowrap',
+    minWidth: 'max-content',
   },
   labelsContainer: {
     display: 'flex',
@@ -18,18 +30,26 @@ export const useLabelsBarStyles = makeStyles({
     flex: '1 1 0',
     minWidth: 0,
   },
-  overflowBadge: {
-    flexShrink: 0,
-    cursor: 'pointer',
+  measureRow: {
+    position: 'absolute',
+    visibility: 'hidden',
+    pointerEvents: 'none',
+    whiteSpace: 'nowrap',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXS,
+    top: 0,
+    left: 0,
   },
   labelBadge: {
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
     gap: tokens.spacingHorizontalXXS,
     padding: `2px ${tokens.spacingHorizontalS}`,
     borderRadius: tokens.borderRadiusMedium,
     cursor: 'pointer',
     userSelect: 'none' as const,
+    flexShrink: 0,
   },
   labelNormal: {
     backgroundColor: tokens.colorNeutralBackground3,
@@ -51,6 +71,12 @@ export const useLabelsBarStyles = makeStyles({
     gap: tokens.spacingVerticalS,
     padding: tokens.spacingVerticalM,
     minWidth: '250px',
+  },
+  popoverDivider: {
+    height: '1px',
+    backgroundColor: tokens.colorNeutralStroke2,
+    marginTop: tokens.spacingVerticalXS,
+    marginBottom: tokens.spacingVerticalXS,
   },
   inputRow: {
     display: 'flex',
@@ -98,5 +124,6 @@ export const useLabelsBarStyles = makeStyles({
     color: tokens.colorPaletteYellowForeground2,
     display: 'flex',
     alignItems: 'center',
+    flexShrink: 0,
   },
 })

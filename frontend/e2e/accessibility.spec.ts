@@ -153,17 +153,17 @@ test.describe("Visual Consistency", () => {
     // Wait for initial render then navigate to chat to measure the chat ribbon
     await expect(page.getByTitle("Chat")).toBeVisible();
     await page.getByTitle("Chat").click();
-    await expect(page.getByText("PyRIT Attack")).toBeVisible();
+    const anchor = page.getByTestId("new-attack-btn");
+    await expect(anchor).toBeVisible();
 
     // Take measurements
-    const header = page.getByText("PyRIT Attack");
-    const initialBox = await header.boundingBox();
+    const initialBox = await anchor.boundingBox();
 
     // Wait a moment for any delayed renders
     await page.waitForTimeout(500);
 
     // Verify position hasn't changed
-    const finalBox = await header.boundingBox();
+    const finalBox = await anchor.boundingBox();
 
     if (initialBox && finalBox) {
       expect(finalBox.x).toBe(initialBox.x);
