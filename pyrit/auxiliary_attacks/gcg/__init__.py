@@ -25,6 +25,8 @@ Example:
     )
 """
 
+from typing import TYPE_CHECKING, Any
+
 from pyrit.auxiliary_attacks.gcg.config import (
     GCGAlgorithmConfig,
     GCGConfig,
@@ -33,10 +35,45 @@ from pyrit.auxiliary_attacks.gcg.config import (
     GCGOutputConfig,
     GCGStrategyConfig,
 )
-from pyrit.auxiliary_attacks.gcg.data import load_goals_and_targets
-from pyrit.auxiliary_attacks.gcg.generator import GCGContext, GCGGenerator, GCGResult
 
-GCG = GCGGenerator
+# Torch-dependent symbols are exposed lazily via PEP 562 __getattr__ so that
+# `from pyrit.auxiliary_attacks.gcg import GCGConfig` works on installs that
+# only have the base `dev` extra (no torch). Touching any of these names from
+# the package root triggers the underlying module import on first access; if
+# torch is missing the user gets a clear ModuleNotFoundError pointing at torch.
+_LAZY_IMPORTS = {
+    "GCG": ("pyrit.auxiliary_attacks.gcg.generator", "GCGGenerator"),
+    "GCGContext": ("pyrit.auxiliary_attacks.gcg.generator", "GCGContext"),
+    "GCGGenerator": ("pyrit.auxiliary_attacks.gcg.generator", "GCGGenerator"),
+    "GCGResult": ("pyrit.auxiliary_attacks.gcg.generator", "GCGResult"),
+    "load_goals_and_targets": ("pyrit.auxiliary_attacks.gcg.data", "load_goals_and_targets"),
+}
+
+if TYPE_CHECKING:
+    from pyrit.auxiliary_attacks.gcg.data import load_goals_and_targets
+    from pyrit.auxiliary_attacks.gcg.generator import (
+        GCGContext,
+        GCGGenerator,
+        GCGResult,
+    )
+
+    GCG = GCGGenerator
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_IMPORTS:
+        import importlib
+
+        module_name, attr = _LAZY_IMPORTS[name]
+        value = getattr(importlib.import_module(module_name), attr)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(list(globals().keys()) + list(_LAZY_IMPORTS.keys())))
+
 
 __all__ = [
     "GCG",

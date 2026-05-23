@@ -178,8 +178,27 @@ class GCGGenerator(
         self._output = output or GCGOutputConfig()
         self._hf_token = hf_token
 
-        if mp.get_start_method(allow_none=True) != "spawn":
+    def _ensure_spawn_start_method(self) -> None:
+        """Ensure torch.multiprocessing uses 'spawn' before workers are spawned.
+
+        GCG workers load CUDA models, which is unsafe with the default 'fork'
+        start method on Linux. We set 'spawn' on the first GCG run in the
+        interpreter; if some earlier code already configured a different method
+        (e.g. another test in a long-running pytest session) we log a warning
+        rather than crash, since changing the global start method out from under
+        unrelated code is worse than running with the existing setting.
+        """
+        current = mp.get_start_method(allow_none=True)
+        if current is None:
             mp.set_start_method("spawn")
+        elif current != "spawn":
+            self._logger.warning(
+                "torch.multiprocessing start method is already %r, not 'spawn'. "
+                "GCG workers load CUDA models and expect 'spawn'; results may be "
+                "unreliable. Configure 'spawn' before any other multiprocessing "
+                "code runs to silence this warning.",
+                current,
+            )
 
     def _build_identifier(self) -> ComponentIdentifier:
         """Build a behavioral identifier exposing model identity + key hyper-params."""
@@ -216,6 +235,7 @@ class GCGGenerator(
 
     async def _setup_async(self, *, context: GCGContext) -> None:
         """Apply target augmentation and spawn worker subprocesses."""
+        self._ensure_spawn_start_method()
         context.memory_labels = combine_dict({}, context.memory_labels)
 
         context.targets, context.test_targets = self._apply_target_augmentation(

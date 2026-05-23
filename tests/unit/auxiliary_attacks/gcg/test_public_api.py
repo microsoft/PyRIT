@@ -3,8 +3,15 @@
 
 """Tests for the top-level :mod:`pyrit.auxiliary_attacks.gcg` public API surface."""
 
-import pyrit.auxiliary_attacks.gcg as gcg_pkg
-from pyrit.auxiliary_attacks.gcg import (
+import pytest
+
+# GCG, GCGGenerator, GCGContext, GCGResult, and load_goals_and_targets are
+# torch-dependent (resolved via PEP 562 __getattr__ in the package __init__).
+# Skip the whole file on installs that only have the base `dev` extra.
+pytest.importorskip("torch", reason="GCG public API exposes torch-dependent symbols")
+
+import pyrit.auxiliary_attacks.gcg as gcg_pkg  # noqa: E402
+from pyrit.auxiliary_attacks.gcg import (  # noqa: E402
     GCG,
     GCGAlgorithmConfig,
     GCGConfig,

@@ -57,6 +57,59 @@ class TestGCGGeneratorInit:
         gen = GCGGenerator(models=[GCGModelConfig(name=_LLAMA_2)])
         assert gen._test_models == []
 
+    def test_init_does_not_touch_global_multiprocessing_state(self) -> None:
+        """Regression: __init__ used to call torch.multiprocessing.set_start_method,
+        which crashed under coverage runs when an earlier test had already pinned a
+        non-spawn context. Worker spawn config now happens in _setup_async."""
+        import torch.multiprocessing as mp
+
+        with patch.object(mp, "set_start_method") as mock_set:
+            GCGGenerator(models=[GCGModelConfig(name=_LLAMA_2)])
+        mock_set.assert_not_called()
+
+
+class TestEnsureSpawnStartMethod:
+    """Tests for the lazily-applied spawn-method guard used before workers are spawned."""
+
+    def test_sets_spawn_when_unset(self) -> None:
+        import torch.multiprocessing as mp
+
+        gen = GCGGenerator(models=[GCGModelConfig(name=_LLAMA_2)])
+        with (
+            patch.object(mp, "get_start_method", return_value=None) as mock_get,
+            patch.object(mp, "set_start_method") as mock_set,
+        ):
+            gen._ensure_spawn_start_method()
+        mock_get.assert_called_once_with(allow_none=True)
+        mock_set.assert_called_once_with("spawn")
+
+    def test_noop_when_already_spawn(self) -> None:
+        import torch.multiprocessing as mp
+
+        gen = GCGGenerator(models=[GCGModelConfig(name=_LLAMA_2)])
+        with (
+            patch.object(mp, "get_start_method", return_value="spawn"),
+            patch.object(mp, "set_start_method") as mock_set,
+        ):
+            gen._ensure_spawn_start_method()
+        mock_set.assert_not_called()
+
+    def test_warns_and_does_not_crash_when_already_other(self, caplog) -> None:
+        """Used to raise 'context has already been set' — now we warn and continue."""
+        import logging
+
+        import torch.multiprocessing as mp
+
+        gen = GCGGenerator(models=[GCGModelConfig(name=_LLAMA_2)])
+        with (
+            patch.object(mp, "get_start_method", return_value="fork"),
+            patch.object(mp, "set_start_method") as mock_set,
+            caplog.at_level(logging.WARNING, logger=generator_mod.logger.name),
+        ):
+            gen._ensure_spawn_start_method()
+        mock_set.assert_not_called()
+        assert any("fork" in r.message and "spawn" in r.message for r in caplog.records)
+
 
 class TestBuildIdentifier:
     def test_identifier_exposes_models_and_hyperparams(self) -> None:

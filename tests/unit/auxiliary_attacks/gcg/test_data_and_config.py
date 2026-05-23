@@ -9,13 +9,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.auxiliary_attacks.gcg.config import GCGConfig, GCGDataConfig, GCGModelConfig, GCGOutputConfig
-from pyrit.auxiliary_attacks.gcg.data import load_goals_and_targets
 
 attack_manager_mod = pytest.importorskip(
     "pyrit.auxiliary_attacks.gcg.attack.base.attack_manager",
     reason="GCG optional dependencies (torch, accelerate, etc.) not installed",
 )
 get_goals_and_targets = attack_manager_mod.get_goals_and_targets
+
+data_mod = pytest.importorskip(
+    "pyrit.auxiliary_attacks.gcg.data",
+    reason="GCG data module requires torch (transitive via attack_manager)",
+)
+load_goals_and_targets = data_mod.load_goals_and_targets
 
 run_mod = pytest.importorskip(
     "pyrit.auxiliary_attacks.gcg.experiments.run",
