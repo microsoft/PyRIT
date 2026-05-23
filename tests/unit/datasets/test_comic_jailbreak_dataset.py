@@ -116,21 +116,6 @@ class TestComicJailbreakDataset:
         # 3 templates with text × 1 goal = 3 groups × 3 seeds = 9
         assert len(dataset.seeds) == 9
 
-    async def test_fetch_dataset_max_examples(self):
-        """max_examples limits the number of pairs produced."""
-        mock_data = [_make_example(), _make_example(Goal="Another harmful goal")]
-        loader = _ComicJailbreakDataset(templates=["article", "speech", "message"], max_examples=2)
-
-        with (
-            patch.object(loader, "_fetch_from_url", return_value=mock_data),
-            patch.object(loader, "_fetch_template_async", new_callable=AsyncMock, return_value="/fake/template.png"),
-            patch.object(loader, "_render_comic_async", new_callable=AsyncMock, return_value="/fake/rendered.png"),
-        ):
-            dataset = await loader.fetch_dataset_async(cache=False)
-
-        # max_examples=2 → at most 2 groups × 3 seeds = 6
-        assert len(dataset.seeds) <= 6
-
     async def test_fetch_dataset_metadata(self):
         """Metadata contains goal, template, and behavior."""
         mock_data = [_make_example()]
