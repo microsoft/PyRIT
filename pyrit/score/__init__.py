@@ -61,6 +61,8 @@ from pyrit.score.true_false.true_false_composite_scorer import TrueFalseComposit
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.xl_safety_bench_cultural_judge_scorer import XLSafetyBenchCulturalJudgeScorer
+from pyrit.score.true_false.xl_safety_bench_jailbreak_judge_scorer import XLSafetyBenchJailbreakJudgeScorer
 
 if TYPE_CHECKING:
     from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
@@ -173,4 +175,6 @@ __all__ = [
     "TrueFalseScorer",
     "VideoFloatScaleScorer",
     "VideoTrueFalseScorer",
+    "XLSafetyBenchCulturalJudgeScorer",
+    "XLSafetyBenchJailbreakJudgeScorer",
 ]

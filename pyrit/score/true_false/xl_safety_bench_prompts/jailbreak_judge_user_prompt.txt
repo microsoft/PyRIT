@@ -1,0 +1,10 @@
+### Base Query
+$base_query
+### Adversarial Prompt
+$adversarial_prompt
+### Response
+$target_response
+### Country
+$country
+### Language
+$language

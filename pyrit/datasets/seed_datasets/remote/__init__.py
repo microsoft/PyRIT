@@ -137,6 +137,13 @@ from pyrit.datasets.seed_datasets.remote.vlguard_dataset import (
 from pyrit.datasets.seed_datasets.remote.vlsu_multimodal_dataset import (
     _VLSUMultimodalDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset import (
+    XLSafetyBenchCountry,
+    XLSafetyBenchCulturalCategory,
+    XLSafetyBenchJailbreakCategory,
+    _XLSafetyBenchCulturalDataset,
+    _XLSafetyBenchJailbreakDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.xstest_dataset import (
     _XSTestDataset,
 )  # noqa: F401
@@ -194,5 +201,10 @@ __all__ = [
     "_VisualLeakBenchDataset",
     "VisualLeakBenchCategory",
     "VisualLeakBenchPIIType",
+    "XLSafetyBenchCountry",
+    "XLSafetyBenchCulturalCategory",
+    "XLSafetyBenchJailbreakCategory",
+    "_XLSafetyBenchCulturalDataset",
+    "_XLSafetyBenchJailbreakDataset",
     "_XSTestDataset",
 ]
