@@ -66,7 +66,6 @@ class TestMossBenchDataset:
     def test_init_defaults(self):
         dataset = _MossBenchDataset()
         assert dataset.oversensitivity_types is None
-        assert dataset.max_examples is None
         assert dataset.source_type == "public_url"
         assert "/MOSSBench/" in dataset.source
         assert "information.json" in dataset.source
@@ -78,10 +77,6 @@ class TestMossBenchDataset:
         ]
         dataset = _MossBenchDataset(oversensitivity_types=types)
         assert dataset.oversensitivity_types == types
-
-    def test_init_with_max_examples(self):
-        dataset = _MossBenchDataset(max_examples=5)
-        assert dataset.max_examples == 5
 
     def test_init_with_invalid_oversensitivity_types_raises(self):
         with pytest.raises(ValueError, match="Expected MossBenchOversensitivityType"):
@@ -238,25 +233,6 @@ class TestMossBenchDataset:
 
         pids = {s.metadata["pid"] for s in dataset.seeds}
         assert pids == {"1", "3"}
-
-    async def test_fetch_dataset_max_examples_limits_pairs(self):
-        examples = [_make_example(pid=i, over="type 1") for i in range(1, 6)]
-        mock_data = _make_information_json(examples)
-        dataset_loader = _MossBenchDataset(max_examples=2)
-
-        with (
-            patch.object(dataset_loader, "_fetch_from_url", return_value=mock_data),
-            patch.object(
-                dataset_loader,
-                "_fetch_and_save_image_async",
-                side_effect=lambda *, image_url, pid: f"/fake/path/{pid}.png",
-            ),
-        ):
-            dataset = await dataset_loader.fetch_dataset_async(cache=False)
-
-        assert len(dataset.seeds) == 4  # 2 examples * 2 seeds
-        pids = {s.metadata["pid"] for s in dataset.seeds}
-        assert len(pids) == 2
 
     async def test_fetch_dataset_missing_required_key_raises(self):
         bad_example = {

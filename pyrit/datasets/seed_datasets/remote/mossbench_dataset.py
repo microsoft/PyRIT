@@ -135,7 +135,6 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         source: str = METADATA_URL,
         source_type: Literal["public_url", "file"] = "public_url",
         oversensitivity_types: Optional[list[MossBenchOversensitivityType]] = None,
-        max_examples: Optional[int] = None,
     ) -> None:
         """
         Initialize the MOSSBench dataset loader.
@@ -152,9 +151,6 @@ class _MossBenchDataset(_RemoteDatasetLoader):
                 ``MossBenchOversensitivityType.EXAGGERATED_RISK``,
                 ``MossBenchOversensitivityType.NEGATED_HARM``,
                 ``MossBenchOversensitivityType.COUNTERINTUITIVE_INTERPRETATION``.
-            max_examples (int | None): Maximum number of examples (image+text
-                pairs) to fetch. If ``None``, fetches all matching examples.
-                Useful for testing or quick validations.
 
         Raises:
             ValueError: If any value in ``oversensitivity_types`` is not a
@@ -163,7 +159,6 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         self.source = source
         self.source_type: Literal["public_url", "file"] = source_type
         self.oversensitivity_types = oversensitivity_types
-        self.max_examples = max_examples
 
         if oversensitivity_types is not None:
             self._validate_enums(
@@ -202,7 +197,6 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         examples = self._load_examples(cache=cache)
         prompts: list[SeedPrompt] = []
         failed_image_count = 0
-        included_examples = 0
 
         for example in examples:
             pid, question, image_filename = self._extract_required_fields(example)
@@ -224,10 +218,6 @@ class _MossBenchDataset(_RemoteDatasetLoader):
                 continue
 
             prompts.extend(pair)
-            included_examples += 1
-
-            if self.max_examples is not None and included_examples >= self.max_examples:
-                break
 
         if failed_image_count > 0:
             logger.warning(f"[MOSSBench] Skipped {failed_image_count} example(s) due to image fetch failures")
