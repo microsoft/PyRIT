@@ -232,11 +232,14 @@ test.describe("Target Config ↔ Chat Navigation", () => {
 
     // Navigate back to chat
     await page.getByTitle("Chat").click();
-    await expect(page.getByText("PyRIT Attack")).toBeVisible();
+    await expect(page.getByTestId("new-attack-btn")).toBeVisible();
 
-    // Chat should show the active target type
-    await expect(page.getByText("OpenAIChatTarget")).toBeVisible();
-    await expect(page.getByText(/gpt-4o/)).toBeVisible();
+    // Chat should show the active target type. Scope to the badge to
+    // avoid matching the (hidden) tooltip copy of the same text.
+    const badge = page.getByTestId("target-badge");
+    await expect(badge).toBeVisible();
+    await expect(badge).toContainText("OpenAIChatTarget");
+    await expect(badge).toContainText(/gpt-4o/);
   });
 
   test("should enable chat input after a target is set", async ({ page }) => {

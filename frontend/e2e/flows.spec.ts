@@ -161,7 +161,7 @@ async function activateTarget(page: Page, targetType: string): Promise<void> {
   const row = page.locator("tr", { has: page.getByText(targetType, { exact: true }) }).first();
   await row.getByRole("button", { name: /set active/i }).click();
   await page.getByTitle("Chat").click();
-  await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5_000 });
 }
 
 /** Navigate to an attack by opening the History view and clicking its row. */

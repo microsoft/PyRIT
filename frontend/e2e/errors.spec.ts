@@ -175,7 +175,7 @@ async function activateMockTarget(page: Page) {
   await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
   await setActiveBtn.click();
   await page.getByTitle("Chat").click();
-  await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
 }
 
 /** Send a message and wait for the response. */

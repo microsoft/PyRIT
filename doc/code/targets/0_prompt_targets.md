@@ -78,6 +78,19 @@ CHAT_TARGET_REQUIREMENTS.validate(target=target)
 
 `TargetRequirements.validate` collects every missing capability and raises a single `ValueError`. For one-off checks against a single capability you can also call `target.configuration.ensure_can_handle(capability=...)` directly.
 
+`TargetRequirements` can also enforce **modality** constraints via `required_input_modalities` and `required_output_modalities`. Each entry is a set of `PromptDataType` values the consumer needs the target to accept (or produce). At least one of the target's modality combos must be a superset of each required combo:
+
+```python
+from pyrit.prompt_target import TargetRequirements
+
+# A consumer that requires image input and text output
+VISION_REQUIREMENTS = TargetRequirements(
+    required_input_modalities=frozenset({frozenset({"image_path"})}),
+    required_output_modalities=frozenset({frozenset({"text"})}),
+)
+VISION_REQUIREMENTS.validate(target=target)
+```
+
 ### Adapting vs raising
 
 Some capability gaps can be papered over by PyRIT itself. For example, a single-turn target can be made to *appear* multi-turn by flattening the conversation history into a single prompt before sending. The `CapabilityHandlingPolicy` controls this on a per-capability basis:
