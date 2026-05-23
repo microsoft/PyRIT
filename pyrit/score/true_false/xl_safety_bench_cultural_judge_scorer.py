@@ -16,12 +16,11 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from pathlib import Path
-from string import Template
 from typing import TYPE_CHECKING, Optional
 
+from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.exceptions import InvalidJsonException, pyrit_json_retry, remove_markdown_json
-from pyrit.models import Message, MessagePiece, Score
+from pyrit.models import Message, MessagePiece, Score, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
@@ -35,16 +34,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Verbatim port of the XL-SafetyBench cultural judge templates. Variables use
-# `${var}` (Python ``string.Template``) syntax preserved as-is to avoid drift.
-_PROMPTS_DIR = Path(__file__).parent / "xl_safety_bench_prompts"
-_XL_CULTURAL_JUDGE_SYSTEM_TEMPLATE = Template(
-    (_PROMPTS_DIR / "cultural_judge_system_prompt.txt").read_text(encoding="utf-8")
+# Verbatim port of the XL-SafetyBench cultural judge templates. Stored as
+# ``SeedPrompt`` YAML so they carry full provenance metadata (authors, groups,
+# source, parameters) and can be discovered alongside other scorer prompts.
+_XL_SAFETY_BENCH_PROMPTS_DIR = SCORER_SEED_PROMPT_PATH / "xl_safety_bench"
+_XL_CULTURAL_JUDGE_SYSTEM_PROMPT = SeedPrompt.from_yaml_file(
+    _XL_SAFETY_BENCH_PROMPTS_DIR / "cultural_judge_system_prompt.yaml"
 )
-
-
-_XL_CULTURAL_JUDGE_USER_TEMPLATE = Template(
-    (_PROMPTS_DIR / "cultural_judge_user_prompt.txt").read_text(encoding="utf-8")
+_XL_CULTURAL_JUDGE_USER_PROMPT = SeedPrompt.from_yaml_file(
+    _XL_SAFETY_BENCH_PROMPTS_DIR / "cultural_judge_user_prompt.yaml"
 )
 
 
@@ -153,8 +151,8 @@ class XLSafetyBenchCulturalJudgeScorer(TrueFalseScorer):
         """
         return self._create_identifier(
             params={
-                "system_prompt_template": _XL_CULTURAL_JUDGE_SYSTEM_TEMPLATE.template,
-                "user_prompt_template": _XL_CULTURAL_JUDGE_USER_TEMPLATE.template,
+                "system_prompt_template": _XL_CULTURAL_JUDGE_SYSTEM_PROMPT.value,
+                "user_prompt_template": _XL_CULTURAL_JUDGE_USER_PROMPT.value,
                 "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             },
             children={
@@ -208,8 +206,8 @@ class XLSafetyBenchCulturalJudgeScorer(TrueFalseScorer):
             "scenario_text": scenario_text,
             "target_response": target_response,
         }
-        system_prompt = _XL_CULTURAL_JUDGE_SYSTEM_TEMPLATE.safe_substitute(substitutions)
-        user_prompt = _XL_CULTURAL_JUDGE_USER_TEMPLATE.safe_substitute(substitutions)
+        system_prompt = _XL_CULTURAL_JUDGE_SYSTEM_PROMPT.render_template_value(**substitutions)
+        user_prompt = _XL_CULTURAL_JUDGE_USER_PROMPT.render_template_value(**substitutions)
 
         parsed = await self._invoke_judge_async(
             system_prompt=system_prompt,
