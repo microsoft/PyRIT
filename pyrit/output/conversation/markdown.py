@@ -1,12 +1,16 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import contextlib
+import logging
 import os
 
 from pyrit.models import Message, MessagePiece, Score
 from pyrit.output.conversation.base import ConversationPrinterBase
 from pyrit.output.score.markdown import MarkdownScorePrinter
 from pyrit.output.sink import Sink
+
+logger = logging.getLogger(__name__)
 
 
 class MarkdownConversationPrinter(ConversationPrinterBase):
@@ -22,6 +26,9 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         *,
         sink: Sink | None = None,
         score_printer: MarkdownScorePrinter | None = None,
+        blur_images: bool = False,
+        blur_radius: int = 20,
+        blurred_dir: str | os.PathLike[str] | None = None,
     ) -> None:
         """
         Initialize the markdown conversation printer.
@@ -30,9 +37,24 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
             sink (Sink | None): Output sink. Defaults to StdoutSink().
             score_printer (MarkdownScorePrinter | None): Score printer for inline score rendering.
                 Defaults to a new MarkdownScorePrinter with matching sink.
+            blur_images (bool): If True, write a blurred copy of each referenced image
+                and emit the markdown link pointing at the blurred copy. Defaults to False.
+
+                Note: blurred files are cached by path. If the original image content
+                changes but the blurred file already exists, the stale blurred copy
+                is reused. Callers are responsible for cleaning up blurred artifacts.
+            blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
+                Defaults to 20.
+            blurred_dir (str | PathLike | None): Directory to write blurred copies into.
+                When None (default), blurred files are written as ``<stem>_blurred.png``
+                next to the original. When set, blurred files are written under this
+                directory using the original basename plus ``_blurred.png``.
         """
         super().__init__(sink=sink)
         self._score_printer = score_printer or MarkdownScorePrinter(sink=sink)
+        self._blur_images = blur_images
+        self._blur_radius = blur_radius
+        self._blurred_dir = os.fspath(blurred_dir) if blurred_dir is not None else None
 
     async def render_async(
         self,
@@ -175,15 +197,101 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         """
         Format image content as markdown.
 
+        When ``blur_images`` is True and the blur succeeds, the markdown links to
+        the blurred copy. When ``blur_images`` is True and the blur fails, a
+        plain-text link to the original is emitted (not an inline image) so the
+        reviewer is not silently exposed to the unblurred image.
+
         Args:
             image_path (str): The path to the image file.
 
         Returns:
             list[str]: Markdown lines for the image.
         """
-        relative_path = os.path.relpath(image_path)
-        posix_path = relative_path.replace("\\", "/")
+        if self._blur_images:
+            blurred = self._maybe_blur_image_on_disk(image_path=image_path)
+            if blurred is None:
+                # Blur was requested but failed — render a text link, not an inline image.
+                link = self._format_link_path(image_path)
+                return [f"[image (blur failed — original)]({link})\n"]
+            display_path = blurred
+        else:
+            display_path = image_path
+
+        posix_path = self._format_link_path(display_path)
         return [f"![Image]({posix_path})\n"]
+
+    @staticmethod
+    def _format_link_path(path: str) -> str:
+        """Return a markdown-friendly link (POSIX separators, relative if possible)."""
+        try:
+            relative_path = os.path.relpath(path)
+        except ValueError:
+            # Different mount/drive than cwd (Windows). Fall back to the absolute path.
+            relative_path = os.path.abspath(path)
+        return relative_path.replace("\\", "/")
+
+    def _maybe_blur_image_on_disk(self, *, image_path: str) -> str | None:
+        """
+        Produce a blurred copy of ``image_path`` and return its path.
+
+        By default the blurred file is written as ``<stem>_blurred.png`` next to the
+        original. When ``blurred_dir`` was supplied to the constructor, the blurred
+        file is written under that directory using the original basename plus
+        ``_blurred.png``. Existing blurred files are reused (cached by path). The
+        write is atomic — bytes are written to a temp sibling then ``os.replace``\\d
+        into place — so concurrent renders cannot observe a partial file. On any
+        failure ``None`` is returned and a warning is logged so the caller can
+        render a fail-safe link to the original instead of the original image.
+
+        Args:
+            image_path (str): The path to the source image file.
+
+        Returns:
+            str | None: The path to the blurred image, or ``None`` on failure.
+        """
+        try:
+            blurred_path = self._blurred_destination(image_path=image_path)
+            if os.path.exists(blurred_path):
+                logger.debug(f"Reusing cached blurred image at {blurred_path}")
+                return blurred_path
+
+            os.makedirs(os.path.dirname(blurred_path) or ".", exist_ok=True)
+
+            from pyrit.output._image_utils import blur_image_bytes
+
+            with open(image_path, "rb") as f:
+                original_bytes = f.read()
+            blurred_bytes = blur_image_bytes(image_bytes=original_bytes, radius=self._blur_radius)
+
+            temp_path = f"{blurred_path}.tmp.{os.getpid()}"
+            try:
+                with open(temp_path, "wb") as f:
+                    f.write(blurred_bytes)
+                os.replace(temp_path, blurred_path)
+            except Exception:
+                if os.path.exists(temp_path):
+                    with contextlib.suppress(OSError):
+                        os.remove(temp_path)
+                raise
+            return blurred_path
+        except Exception as exc:
+            logger.warning(f"Failed to write blurred image for {image_path}; falling back to a text link. Error: {exc}")
+            return None
+
+    def _blurred_destination(self, *, image_path: str) -> str:
+        """
+        Compute the destination path for a blurred copy of ``image_path``.
+
+        Args:
+            image_path (str): The path to the source image file.
+
+        Returns:
+            str: Path to the blurred file (sibling by default, or under ``blurred_dir``).
+        """
+        directory = self._blurred_dir if self._blurred_dir is not None else os.path.dirname(image_path)
+        stem = os.path.splitext(os.path.basename(image_path))[0]
+        return os.path.join(directory, f"{stem}_blurred.png")
 
     def _format_audio_content(self, *, audio_path: str) -> list[str]:
         """
@@ -273,6 +381,9 @@ class MarkdownConversationMemoryPrinter(MarkdownConversationPrinter):
         *,
         sink: Sink | None = None,
         score_printer: MarkdownScorePrinter | None = None,
+        blur_images: bool = False,
+        blur_radius: int = 20,
+        blurred_dir: str | os.PathLike[str] | None = None,
     ) -> None:
         """
         Initialize the markdown conversation printer with CentralMemory data source.
@@ -280,8 +391,20 @@ class MarkdownConversationMemoryPrinter(MarkdownConversationPrinter):
         Args:
             sink (Sink | None): Output sink. Defaults to StdoutSink().
             score_printer (MarkdownScorePrinter | None): Score printer for inline score rendering.
+            blur_images (bool): If True, write a blurred copy next to each image and
+                link to it instead of the original. Defaults to False.
+            blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
+                Defaults to 20.
+            blurred_dir (str | PathLike | None): Directory to write blurred copies into.
+                Defaults to None (sibling of the original).
         """
-        super().__init__(sink=sink, score_printer=score_printer)
+        super().__init__(
+            sink=sink,
+            score_printer=score_printer,
+            blur_images=blur_images,
+            blur_radius=blur_radius,
+            blurred_dir=blurred_dir,
+        )
         from pyrit.memory import CentralMemory
 
         self._memory = CentralMemory.get_memory_instance()

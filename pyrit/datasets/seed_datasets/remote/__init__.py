@@ -19,6 +19,9 @@ from pyrit.datasets.seed_datasets.remote.babelscape_alert_dataset import (
 from pyrit.datasets.seed_datasets.remote.beaver_tails_dataset import (
     _BeaverTailsDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.categorical_harmful_qa_dataset import (
+    _CategoricalHarmfulQADataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.cbt_bench_dataset import (
     _CBTBenchDataset,
 )  # noqa: F401
@@ -29,6 +32,9 @@ from pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset import (
     COMIC_JAILBREAK_TEMPLATES,
     ComicJailbreakTemplateConfig,
     _ComicJailbreakDataset,
+)  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.dangerous_qa_dataset import (
+    _DangerousQADataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.darkbench_dataset import (
     _DarkBenchDataset,
@@ -48,6 +54,10 @@ from pyrit.datasets.seed_datasets.remote.harmbench_multimodal_dataset import (
 from pyrit.datasets.seed_datasets.remote.harmful_qa_dataset import (
     _HarmfulQADataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.hixstest_dataset import (
+    HiXSTestLanguage,
+    _HiXSTestDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.jbb_behaviors_dataset import (
     _JBBBehaviorsDataset,
 )  # noqa: F401
@@ -62,6 +72,9 @@ from pyrit.datasets.seed_datasets.remote.medsafetybench_dataset import (
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.mlcommons_ailuminate_dataset import (
     _MLCommonsAILuminateDataset,
+)  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.msts_dataset import (
+    _MSTSDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.multilingual_vulnerability_dataset import (  # noqa: F401
     _MultilingualVulnerabilityDataset,
@@ -129,6 +142,7 @@ from pyrit.datasets.seed_datasets.remote.xstest_dataset import (
 )  # noqa: F401
 
 __all__ = [
+    "HiXSTestLanguage",
     "PromptIntelCategory",
     "PromptIntelSeverity",
     "SGXSTestLabel",
@@ -141,20 +155,24 @@ __all__ = [
     "_BeaverTailsDataset",
     "_CBTBenchDataset",
     "_CCPSensitivePromptsDataset",
+    "_CategoricalHarmfulQADataset",
     "_ComicJailbreakDataset",
     "COMIC_JAILBREAK_TEMPLATES",
     "ComicJailbreakTemplateConfig",
+    "_DangerousQADataset",
     "_DarkBenchDataset",
     "_EquityMedQADataset",
     "_ForbiddenQuestionsDataset",
     "_HarmBenchDataset",
     "_HarmBenchMultimodalDataset",
     "_HarmfulQADataset",
+    "_HiXSTestDataset",
     "_JBBBehaviorsDataset",
     "_LibrAIDoNotAnswerDataset",
     "_LLMLatentAdversarialTrainingDataset",
     "_MedSafetyBenchDataset",
     "_MLCommonsAILuminateDataset",
+    "_MSTSDataset",
     "_MultilingualVulnerabilityDataset",
     "_ORBench80KDataset",
     "_ORBenchHardDataset",

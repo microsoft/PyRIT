@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import os
 from datetime import datetime, timezone
 
 from pyrit.common.deprecation import print_deprecation_message
@@ -26,6 +27,9 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         display_inline: bool = True,
         conversation_printer: MarkdownConversationPrinter | None = None,
         score_printer: MarkdownScorePrinter | None = None,
+        blur_images: bool = False,
+        blur_radius: int = 20,
+        blurred_dir: str | os.PathLike[str] | None = None,
     ) -> None:
         """
         Initialize the markdown printer.
@@ -38,6 +42,13 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
                 Defaults to a new MarkdownConversationPrinter with matching sink.
             score_printer (MarkdownScorePrinter | None): Score printer.
                 Defaults to a new MarkdownScorePrinter with matching sink.
+            blur_images (bool): If True, write a blurred copy of each referenced
+                image and link to it instead of the original. Forwarded to the default
+                conversation printer when one is not supplied. Defaults to False.
+            blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
+                Defaults to 20.
+            blurred_dir (str | PathLike | None): Directory to write blurred copies into
+                when ``blur_images`` is True. Defaults to None (sibling of the original).
         """
         super().__init__(sink=sink)
         self._display_inline = display_inline
@@ -45,6 +56,9 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         self._conversation_printer = conversation_printer or MarkdownConversationPrinter(
             sink=sink,
             score_printer=self._score_printer,
+            blur_images=blur_images,
+            blur_radius=blur_radius,
+            blurred_dir=blurred_dir,
         )
 
     async def render_async(
@@ -322,7 +336,15 @@ class MarkdownAttackResultMemoryPrinter(MarkdownAttackResultPrinter):
     All formatting logic lives in MarkdownAttackResultPrinter.
     """
 
-    def __init__(self, *, sink: Sink | None = None, display_inline: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        sink: Sink | None = None,
+        display_inline: bool = True,
+        blur_images: bool = False,
+        blur_radius: int = 20,
+        blurred_dir: str | os.PathLike[str] | None = None,
+    ) -> None:
         """
         Initialize the markdown printer with CentralMemory data source.
 
@@ -330,12 +352,24 @@ class MarkdownAttackResultMemoryPrinter(MarkdownAttackResultPrinter):
             sink (Sink | None): Output sink. Defaults to StdoutSink().
             display_inline (bool): Kept for backward compatibility but unused.
                 All output is routed through the sink. Defaults to True.
+            blur_images (bool): If True, write a blurred copy of each referenced
+                image and link to it instead of the original. Defaults to False.
+            blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
+                Defaults to 20.
+            blurred_dir (str | PathLike | None): Directory to write blurred copies into.
+                Defaults to None (sibling of the original).
         """
         from pyrit.memory import CentralMemory
         from pyrit.output.conversation.markdown import MarkdownConversationMemoryPrinter
 
         score_printer = MarkdownScorePrinter(sink=sink)
-        conversation_printer = MarkdownConversationMemoryPrinter(sink=sink, score_printer=score_printer)
+        conversation_printer = MarkdownConversationMemoryPrinter(
+            sink=sink,
+            score_printer=score_printer,
+            blur_images=blur_images,
+            blur_radius=blur_radius,
+            blurred_dir=blurred_dir,
+        )
         super().__init__(
             sink=sink,
             display_inline=display_inline,
