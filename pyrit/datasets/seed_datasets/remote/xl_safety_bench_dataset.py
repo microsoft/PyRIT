@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Literal, Optional
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -204,6 +204,23 @@ def _common_metadata_for_country(country: XLSafetyBenchCountry) -> dict[str, str
     }
 
 
+def _normalize_csv_row(row: dict[str, str]) -> dict[str, str]:
+    """
+    Strip a UTF-8 BOM (U+FEFF) from any column header in a CSV row.
+
+    HuggingFace ships the XL-SafetyBench CSVs with a BOM, so the first column's key
+    arrives as ``"\ufeffid"`` rather than ``"id"``. Stripping it here keeps the rest
+    of the loader code dialect-agnostic.
+
+    Args:
+        row (dict[str, str]): A row dict produced by ``csv.DictReader``.
+
+    Returns:
+        dict[str, str]: The same row with any BOM-prefixed key stripped.
+    """
+    return {(k.lstrip("\ufeff") if k else k): v for k, v in row.items()}
+
+
 class _XLSafetyBenchJailbreakDataset(_RemoteDatasetLoader):
     """
     Loader for the Jailbreak track of XL-SafetyBench.
@@ -319,7 +336,8 @@ class _XLSafetyBenchJailbreakDataset(_RemoteDatasetLoader):
 
         country_metadata = _common_metadata_for_country(country)
         seed_prompts: list[SeedPrompt] = []
-        for row in rows:
+        for raw_row in rows:
+            row = _normalize_csv_row(raw_row)
             category = str(row.get("category", "")).strip()
             if self._categories_filter is not None and category not in self._categories_filter:
                 continue
@@ -368,6 +386,178 @@ class _XLSafetyBenchJailbreakDataset(_RemoteDatasetLoader):
             )
 
         return seed_prompts
+
+
+class _XLSafetyBenchJailbreakObjectivesDataset(_RemoteDatasetLoader):
+    """
+    Objectives view of the Jailbreak track of XL-SafetyBench.
+
+    Each row of the per-country ``attack_prompts.csv`` files pairs a fully crafted
+    adversarial ``attack_prompt`` with the underlying harmful goal it tries to elicit
+    (``base_query_local`` / ``base_query_english``). This loader exposes the *goals*
+    as :class:`SeedObjective` instances so PyRIT attack strategies can run their own
+    multi-turn jailbreaks against them, independent of the paper's bundled attack
+    prompts.
+
+    The CSV ships ~3 attack prompts per unique base query per country (450 prompts
+    cover ~150 goals × 10 countries → roughly 1,500 unique objectives). This loader
+    deduplicates by ``(country, base_query_local)`` and prefers the local-language
+    text as ``SeedObjective.value`` (the English version is preserved in metadata).
+
+    The CSV's other variant is :class:`_XLSafetyBenchJailbreakDataset`, which emits
+    the polished attack prompts themselves as :class:`SeedPrompt` instances.
+
+    Reference: [@choi2026xlsafetybench]
+    Paper: https://arxiv.org/abs/2605.05662
+    HuggingFace: https://huggingface.co/datasets/AIM-Intelligence/XL-SafetyBench
+    License: CC-BY-4.0
+
+    Content Warning: The base queries describe country-specific harmful intents.
+    """
+
+    harm_categories: list[str] = [c.value for c in XLSafetyBenchJailbreakCategory]
+    modalities: list[str] = ["text"]
+    size: str = "large"
+    tags: set[str] = {"safety", "jailbreak", "multilingual", "country_grounded", "objectives"}
+
+    def __init__(
+        self,
+        *,
+        countries: Optional[list[XLSafetyBenchCountry]] = None,
+        categories: Optional[list[XLSafetyBenchJailbreakCategory]] = None,
+    ) -> None:
+        """
+        Initialize the XL-SafetyBench Jailbreak Objectives dataset loader.
+
+        Args:
+            countries (Optional[list[XLSafetyBenchCountry]]): Subset of country-language
+                pairs to include. Defaults to ``None`` (all 10 countries).
+            categories (Optional[list[XLSafetyBenchJailbreakCategory]]): Subset of harm
+                categories to include. Defaults to ``None`` (all 5 categories).
+
+        Raises:
+            ValueError: If ``countries`` or ``categories`` is an empty list or contains
+                values that are not members of the expected enum.
+        """
+        self._countries = _resolve_countries(countries)
+        self._categories_filter = _resolve_category_filter(
+            categories=categories,
+            enum_cls=XLSafetyBenchJailbreakCategory,
+            label="category",
+        )
+        self.source = _HF_DATASET_URL
+
+    @property
+    def dataset_name(self) -> str:
+        """Return the dataset name."""
+        return "xl_safety_bench_jailbreak_objectives"
+
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+        """
+        Fetch XL-SafetyBench jailbreak objectives and return them as a SeedDataset.
+
+        Args:
+            cache (bool): Whether to cache the fetched dataset. Defaults to True.
+
+        Returns:
+            SeedDataset: A SeedDataset containing the filtered XL-SafetyBench jailbreak
+            objectives, deduplicated by ``(country, base_query_local)``.
+
+        Raises:
+            ValueError: If no objectives remain after filtering.
+        """
+        logger.info(
+            "Loading XL-SafetyBench Jailbreak objectives (countries=%s, categories=%s)",
+            [c.value for c in self._countries],
+            sorted(self._categories_filter) if self._categories_filter is not None else "all",
+        )
+
+        seeds: list[SeedObjective] = []
+        for country in self._countries:
+            seeds.extend(self._load_country(country=country, cache=cache))
+
+        if not seeds:
+            raise ValueError(
+                "No XL-SafetyBench jailbreak objectives matched the configured filters. "
+                "Check the country/category arguments."
+            )
+
+        logger.info(f"Successfully loaded {len(seeds)} objectives from XL-SafetyBench Jailbreak dataset")
+        return SeedDataset(seeds=seeds, dataset_name=self.dataset_name)
+
+    def _load_country(
+        self,
+        *,
+        country: XLSafetyBenchCountry,
+        cache: bool,
+    ) -> list[SeedObjective]:
+        """
+        Load and dedupe a single country's base queries into SeedObjective instances.
+
+        Args:
+            country (XLSafetyBenchCountry): The country whose split to load.
+            cache (bool): Whether to cache the fetched CSV file.
+
+        Returns:
+            list[SeedObjective]: SeedObjectives for the country, filtered by
+            ``categories`` and deduplicated by ``base_query_local``.
+        """
+        url = f"{_HF_RESOLVE_BASE}/data/jailbreak/{country.value}/attack_prompts.csv"
+        rows = self._fetch_from_url(source=url, source_type="public_url", cache=cache)
+
+        country_metadata = _common_metadata_for_country(country)
+        seen_objectives: dict[str, SeedObjective] = {}
+        for raw_row in rows:
+            row = _normalize_csv_row(raw_row)
+            category = str(row.get("category", "")).strip()
+            if self._categories_filter is not None and category not in self._categories_filter:
+                continue
+
+            base_query_local = str(row.get("base_query_local", "")).strip()
+            base_query_english = str(row.get("base_query_english", "")).strip()
+            objective_text = base_query_local or base_query_english
+            if not objective_text:
+                logger.warning(
+                    "[XLSafetyBench/JailbreakObjectives] Skipping row with empty base_query (id=%s, country=%s)",
+                    row.get("id", "<unknown>"),
+                    country.value,
+                )
+                continue
+
+            if objective_text in seen_objectives:
+                continue
+
+            row_id = str(row.get("id", "")).strip()
+            metadata: dict[str, str | int] = {
+                **country_metadata,
+                "row_id": row_id,
+                "category": category,
+                "subcategory_english": str(row.get("subcategory_english", "")),
+                "subcategory_local": str(row.get("subcategory_local", "")),
+                "base_query_english": base_query_english,
+                "base_query_local": base_query_local,
+                "track": "jailbreak_objectives",
+            }
+
+            seen_objectives[objective_text] = SeedObjective(
+                value=objective_text,
+                name=f"XL-SafetyBench Jailbreak Objective {country.value} {row_id}".strip(),
+                dataset_name=self.dataset_name,
+                harm_categories=[category] if category else [],
+                groups=_GROUPS,
+                authors=_AUTHORS,
+                description=(
+                    "Harmful base query from the Jailbreak track of XL-SafetyBench, a "
+                    "country-grounded multilingual safety benchmark. The query represents the "
+                    f"underlying goal that the paper's attack prompts aim to elicit in "
+                    f"{country_metadata['language']} for {country_metadata['country_display_name']}. "
+                    f"Paper: {_PAPER_URL}"
+                ),
+                source=self.source,
+                metadata=metadata,
+            )
+
+        return list(seen_objectives.values())
 
 
 class _XLSafetyBenchCulturalDataset(_RemoteDatasetLoader):
@@ -498,7 +688,8 @@ class _XLSafetyBenchCulturalDataset(_RemoteDatasetLoader):
         scenario_key = "scenario_local" if self._language_mode == "local" else "scenario_english"
 
         seed_prompts: list[SeedPrompt] = []
-        for row in rows:
+        for raw_row in rows:
+            row = _normalize_csv_row(raw_row)
             category = str(row.get("category", "")).strip()
             if self._categories_filter is not None and category not in self._categories_filter:
                 continue

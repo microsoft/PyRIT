@@ -26,13 +26,14 @@ from pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset import (
     _XLSafetyBenchJailbreakIndiaDataset,
     _XLSafetyBenchJailbreakIndonesiaDataset,
     _XLSafetyBenchJailbreakJapanDataset,
+    _XLSafetyBenchJailbreakObjectivesDataset,
     _XLSafetyBenchJailbreakSouthKoreaDataset,
     _XLSafetyBenchJailbreakSpainDataset,
     _XLSafetyBenchJailbreakTurkeyDataset,
     _XLSafetyBenchJailbreakUnitedArabEmiratesDataset,
     _XLSafetyBenchJailbreakUnitedStatesDataset,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
 
 
 def _jailbreak_rows(country_label: str) -> list[dict[str, str]]:
@@ -464,3 +465,226 @@ async def test_cultural_sibling_forwards_language_mode_and_categories():
     assert seed.metadata["category"] == "Legal Landmines"
     assert seed.metadata["language_mode"] == "english"
     assert seed.value == "English scenario 2 for germany"
+
+
+# ---------------------------------------------------------------------------
+# Jailbreak Objectives loader
+# ---------------------------------------------------------------------------
+
+
+def _patch_objectives_fetch(loader: _XLSafetyBenchJailbreakObjectivesDataset):
+    """Patch the objectives loader's URL fetch using per-country jailbreak mock rows."""
+
+    def side_effect(*, source: str, source_type: str, cache: bool) -> list[dict[str, str]]:
+        country = source.split("/data/jailbreak/")[1].split("/")[0]
+        return _jailbreak_rows(country)
+
+    return patch.object(loader, "_fetch_from_url", side_effect=side_effect)
+
+
+def test_jailbreak_objectives_dataset_name_and_tags():
+    loader = _XLSafetyBenchJailbreakObjectivesDataset()
+    assert loader.dataset_name == "xl_safety_bench_jailbreak_objectives"
+    # Objectives variant is a derived view over the same upstream CSVs as the prompts
+    # variant, so it intentionally OMITS the "default" tag to avoid duplicating those
+    # URLs in default-tagged sweeps.
+    assert "default" not in _XLSafetyBenchJailbreakObjectivesDataset.tags
+    assert "objectives" in _XLSafetyBenchJailbreakObjectivesDataset.tags
+    assert "jailbreak" in _XLSafetyBenchJailbreakObjectivesDataset.tags
+
+
+async def test_jailbreak_objectives_emit_seed_objectives():
+    loader = _XLSafetyBenchJailbreakObjectivesDataset(
+        countries=[XLSafetyBenchCountry.FRANCE, XLSafetyBenchCountry.JAPAN],
+    )
+
+    with _patch_objectives_fetch(loader):
+        dataset = await loader.fetch_dataset_async()
+
+    assert isinstance(dataset, SeedDataset)
+    # 2 countries × 2 unique base queries each = 4 objectives.
+    assert len(dataset.seeds) == 4
+    assert all(isinstance(s, SeedObjective) for s in dataset.seeds)
+    countries_seen = {s.metadata["country"] for s in dataset.seeds}
+    assert countries_seen == {"france", "japan"}
+    # value prefers the local-language base query.
+    assert all(s.value.startswith("Local base") for s in dataset.seeds)
+    # track field is set to the objectives variant.
+    assert all(s.metadata["track"] == "jailbreak_objectives" for s in dataset.seeds)
+
+
+async def test_jailbreak_objectives_dedupe_repeated_base_queries():
+    loader = _XLSafetyBenchJailbreakObjectivesDataset(countries=[XLSafetyBenchCountry.FRANCE])
+
+    # 3 rows but only 2 unique base queries (the first two share base_query_local).
+    rows = [
+        {
+            "id": "JB-fr-1a",
+            "category": "Criminal Activities",
+            "subcategory_english": "Fraud",
+            "subcategory_local": "Fraude",
+            "base_query_english": "Same goal, attack A",
+            "base_query_local": "Même objectif",
+            "attack_prompt": "Attack A",
+        },
+        {
+            "id": "JB-fr-1b",
+            "category": "Criminal Activities",
+            "subcategory_english": "Fraud",
+            "subcategory_local": "Fraude",
+            "base_query_english": "Same goal, attack B",
+            "base_query_local": "Même objectif",
+            "attack_prompt": "Attack B",
+        },
+        {
+            "id": "JB-fr-2",
+            "category": "Hate & Discrimination",
+            "subcategory_english": "Slur",
+            "subcategory_local": "Insulto",
+            "base_query_english": "Different goal",
+            "base_query_local": "Objectif différent",
+            "attack_prompt": "Attack C",
+        },
+    ]
+
+    with patch.object(loader, "_fetch_from_url", return_value=rows):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 2
+    values = {s.value for s in dataset.seeds}
+    assert values == {"Même objectif", "Objectif différent"}
+
+
+async def test_jailbreak_objectives_category_filter():
+    loader = _XLSafetyBenchJailbreakObjectivesDataset(
+        countries=[XLSafetyBenchCountry.SPAIN],
+        categories=[XLSafetyBenchJailbreakCategory.HATE_AND_DISCRIMINATION],
+    )
+
+    with _patch_objectives_fetch(loader):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 1
+    seed = dataset.seeds[0]
+    assert seed.harm_categories == ["Hate & Discrimination"]
+    assert seed.metadata["base_query_english"] == "Base query 2 for spain"
+    assert seed.metadata["base_query_local"] == "Local base 2 for spain"
+    assert seed.dataset_name == "xl_safety_bench_jailbreak_objectives"
+
+
+async def test_jailbreak_objectives_falls_back_to_english_when_local_blank():
+    loader = _XLSafetyBenchJailbreakObjectivesDataset(countries=[XLSafetyBenchCountry.FRANCE])
+    rows = [
+        {
+            "id": "JB-fr-only-en",
+            "category": "Criminal Activities",
+            "subcategory_english": "X",
+            "subcategory_local": "Y",
+            "base_query_english": "English-only fallback goal",
+            "base_query_local": "   ",
+            "attack_prompt": "Attack ignored",
+        },
+    ]
+
+    with patch.object(loader, "_fetch_from_url", return_value=rows):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 1
+    assert dataset.seeds[0].value == "English-only fallback goal"
+
+
+async def test_jailbreak_objectives_raises_when_filter_matches_nothing():
+    loader = _XLSafetyBenchJailbreakObjectivesDataset(
+        countries=[XLSafetyBenchCountry.FRANCE],
+        categories=[XLSafetyBenchJailbreakCategory.POLITICAL_AND_MISINFORMATION],
+    )
+
+    with _patch_objectives_fetch(loader):
+        with pytest.raises(ValueError, match="No XL-SafetyBench jailbreak objectives"):
+            await loader.fetch_dataset_async()
+
+
+# ---------------------------------------------------------------------------
+# BOM handling — HuggingFace ships the CSVs with a leading UTF-8 BOM so the
+# first column arrives as "\ufeffid". The loader must strip it so row_id and
+# the per-seed `name` aren't silently empty across all 4,500 prompts.
+# ---------------------------------------------------------------------------
+
+
+async def test_jailbreak_strips_bom_from_id_column():
+    loader = _XLSafetyBenchJailbreakDataset(countries=[XLSafetyBenchCountry.FRANCE])
+    bom_rows = [
+        {
+            "\ufeffid": "JB-fr-bom-1",
+            "category": "Criminal Activities",
+            "subcategory_english": "Fraud",
+            "subcategory_local": "Fraude",
+            "base_query_english": "bq1",
+            "base_query_local": "bql1",
+            "attack_prompt": "Attack one",
+        },
+        {
+            "\ufeffid": "JB-fr-bom-2",
+            "category": "Hate & Discrimination",
+            "subcategory_english": "Slur",
+            "subcategory_local": "Insulto",
+            "base_query_english": "bq2",
+            "base_query_local": "bql2",
+            "attack_prompt": "Attack two",
+        },
+    ]
+
+    with patch.object(loader, "_fetch_from_url", return_value=bom_rows):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 2
+    row_ids = {s.metadata["row_id"] for s in dataset.seeds}
+    assert row_ids == {"JB-fr-bom-1", "JB-fr-bom-2"}
+    names = {s.name for s in dataset.seeds}
+    assert names == {"XL-SafetyBench Jailbreak JB-fr-bom-1", "XL-SafetyBench Jailbreak JB-fr-bom-2"}
+
+
+async def test_cultural_strips_bom_from_id_column():
+    loader = _XLSafetyBenchCulturalDataset(countries=[XLSafetyBenchCountry.FRANCE])
+    bom_rows = [
+        {
+            "\ufeffid": "CC-fr-bom-1",
+            "category": "Symbolic Taboos & Gift-Giving",
+            "sensitivity_english": "Gift taboo",
+            "sensitivity_local": "Tabou cadeau",
+            "base_query_english": "Suggest a gift",
+            "base_query_local": "Suggère un cadeau",
+            "scenario_english": "English scenario",
+            "scenario_local": "Local scenario",
+            "hidden_violation": "Taboo gift",
+        },
+    ]
+
+    with patch.object(loader, "_fetch_from_url", return_value=bom_rows):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 1
+    assert dataset.seeds[0].metadata["row_id"] == "CC-fr-bom-1"
+    assert dataset.seeds[0].name == "XL-SafetyBench Cultural CC-fr-bom-1"
+
+
+async def test_jailbreak_objectives_strips_bom_from_id_column():
+    loader = _XLSafetyBenchJailbreakObjectivesDataset(countries=[XLSafetyBenchCountry.FRANCE])
+    bom_rows = [
+        {
+            "\ufeffid": "JB-fr-bom-obj-1",
+            "category": "Criminal Activities",
+            "subcategory_english": "Fraud",
+            "subcategory_local": "Fraude",
+            "base_query_english": "Goal english",
+            "base_query_local": "Goal local",
+            "attack_prompt": "Attack",
+        },
+    ]
+
+    with patch.object(loader, "_fetch_from_url", return_value=bom_rows):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 1
+    assert dataset.seeds[0].metadata["row_id"] == "JB-fr-bom-obj-1"
+    assert dataset.seeds[0].name == "XL-SafetyBench Jailbreak Objective france JB-fr-bom-obj-1"
