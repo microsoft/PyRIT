@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Literal, Optional
 
@@ -89,33 +90,28 @@ class XLSafetyBenchCulturalCategory(str, Enum):
     LEGAL_LANDMINES = "Legal Landmines"
 
 
-# Country → (ISO 639-1 code, language display name).
-_COUNTRY_LANGUAGE: dict[XLSafetyBenchCountry, tuple[str, str]] = {
-    XLSafetyBenchCountry.FRANCE: ("fr", "French"),
-    XLSafetyBenchCountry.GERMANY: ("de", "German"),
-    XLSafetyBenchCountry.INDIA: ("hi", "Hindi"),
-    XLSafetyBenchCountry.INDONESIA: ("id", "Indonesian"),
-    XLSafetyBenchCountry.JAPAN: ("ja", "Japanese"),
-    XLSafetyBenchCountry.SOUTH_KOREA: ("ko", "Korean"),
-    XLSafetyBenchCountry.SPAIN: ("es", "Spanish"),
-    XLSafetyBenchCountry.TURKEY: ("tr", "Turkish"),
-    XLSafetyBenchCountry.UNITED_ARAB_EMIRATES: ("ar", "Arabic"),
-    XLSafetyBenchCountry.UNITED_STATES: ("en", "English"),
-}
+@dataclass(frozen=True)
+class _CountryInfo:
+    """Display and language metadata for an XL-SafetyBench country."""
+
+    iso_639_1_code: str
+    language_display_name: str
+    country_display_name: str
 
 
-# Country display names mirroring the paper (used in judge prompts at score time).
-_COUNTRY_DISPLAY_NAME: dict[XLSafetyBenchCountry, str] = {
-    XLSafetyBenchCountry.FRANCE: "France",
-    XLSafetyBenchCountry.GERMANY: "Germany",
-    XLSafetyBenchCountry.INDIA: "India",
-    XLSafetyBenchCountry.INDONESIA: "Indonesia",
-    XLSafetyBenchCountry.JAPAN: "Japan",
-    XLSafetyBenchCountry.SOUTH_KOREA: "South Korea",
-    XLSafetyBenchCountry.SPAIN: "Spain",
-    XLSafetyBenchCountry.TURKEY: "Turkey",
-    XLSafetyBenchCountry.UNITED_ARAB_EMIRATES: "United Arab Emirates",
-    XLSafetyBenchCountry.UNITED_STATES: "United States",
+# Country → display name + language metadata (country display names mirror the paper and are used
+# in judge prompts at score time).
+_COUNTRY_INFO: dict[XLSafetyBenchCountry, _CountryInfo] = {
+    XLSafetyBenchCountry.FRANCE: _CountryInfo("fr", "French", "France"),
+    XLSafetyBenchCountry.GERMANY: _CountryInfo("de", "German", "Germany"),
+    XLSafetyBenchCountry.INDIA: _CountryInfo("hi", "Hindi", "India"),
+    XLSafetyBenchCountry.INDONESIA: _CountryInfo("id", "Indonesian", "Indonesia"),
+    XLSafetyBenchCountry.JAPAN: _CountryInfo("ja", "Japanese", "Japan"),
+    XLSafetyBenchCountry.SOUTH_KOREA: _CountryInfo("ko", "Korean", "South Korea"),
+    XLSafetyBenchCountry.SPAIN: _CountryInfo("es", "Spanish", "Spain"),
+    XLSafetyBenchCountry.TURKEY: _CountryInfo("tr", "Turkish", "Turkey"),
+    XLSafetyBenchCountry.UNITED_ARAB_EMIRATES: _CountryInfo("ar", "Arabic", "United Arab Emirates"),
+    XLSafetyBenchCountry.UNITED_STATES: _CountryInfo("en", "English", "United States"),
 }
 
 
@@ -199,12 +195,12 @@ def _common_metadata_for_country(country: XLSafetyBenchCountry) -> dict[str, str
     Returns:
         dict[str, str]: Country slug, display name, language ISO code, and language name.
     """
-    iso_code, language_name = _COUNTRY_LANGUAGE[country]
+    info = _COUNTRY_INFO[country]
     return {
         "country": country.value,
-        "country_display_name": _COUNTRY_DISPLAY_NAME[country],
-        "language": language_name,
-        "language_iso_code": iso_code,
+        "country_display_name": info.country_display_name,
+        "language": info.language_display_name,
+        "language_iso_code": info.iso_639_1_code,
     }
 
 
