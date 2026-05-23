@@ -7,7 +7,7 @@ from typing import Literal
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
     """
 
     # Metadata
-    modalities: tuple[str, ...] = ("text",)
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "huge"  # 76174 medical-safety prompts (combined train+test+generated)
     tags: frozenset[str] = frozenset({"safety", "medical"})
 

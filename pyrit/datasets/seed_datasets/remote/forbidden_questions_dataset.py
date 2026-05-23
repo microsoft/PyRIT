@@ -6,7 +6,7 @@ import logging
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
     """
 
     # Metadata
-    modalities: tuple[str, ...] = ("text",)
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "medium"  # 390 questions (13 scenarios x 30 questions)
     tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
 

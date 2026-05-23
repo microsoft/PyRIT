@@ -8,7 +8,7 @@ from uuid import uuid4
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
     """
 
     # Metadata
-    modalities: tuple[str, ...] = ("text",)
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "huge"  # 40750 social-bias prompts (multi-turn expansion of source rows)
     tags: frozenset[str] = frozenset({"safety", "bias", "multiturn"})
 

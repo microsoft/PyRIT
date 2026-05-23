@@ -10,7 +10,7 @@ from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt, data_serializer_factory
+from pyrit.models import Modality, SeedDataset, SeedPrompt, data_serializer_factory
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
     """
 
     # Metadata
-    modalities: tuple[str, ...] = ("text", "image")
+    modalities: tuple[Modality, ...] = (Modality.TEXT, Modality.IMAGE)
     size: str = "medium"  # 220 harmful multimodal behaviors
     tags: frozenset[str] = frozenset({"safety", "jailbreak", "multimodal"})
 

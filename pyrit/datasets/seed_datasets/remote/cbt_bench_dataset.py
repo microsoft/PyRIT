@@ -7,7 +7,7 @@ from typing import Any
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
     """
 
     # Metadata
-    modalities: tuple[str, ...] = ("text",)
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "small"  # 20 core_fine_seed therapy seeds (default config)
     tags: frozenset[str] = frozenset({"safety", "medical"})
 

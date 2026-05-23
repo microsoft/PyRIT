@@ -8,7 +8,7 @@ from enum import Enum
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedObjective
+from pyrit.models import Modality, SeedDataset, SeedObjective
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
         "safe contexts",
         "safe targets",
     ]
-    modalities: list[str] = ["text"]
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "small"  # 100 prompts
     tags: set[str] = {"safety", "multilingual"}
 

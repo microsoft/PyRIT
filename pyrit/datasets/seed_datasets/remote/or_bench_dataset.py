@@ -6,7 +6,7 @@ import logging
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
     should_register = False  # abstract base — subclasses register themselves
 
     # Metadata shared across all OR-Bench subclasses; subclasses override `size`.
-    modalities: tuple[str, ...] = ("text",)
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
     tags: frozenset[str] = frozenset({"default", "safety", "refusal"})
 
     def __init__(self, *, split: str = "train") -> None:

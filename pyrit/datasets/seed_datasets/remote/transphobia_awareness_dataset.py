@@ -9,7 +9,7 @@ import pandas as pd
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
     """
 
     # Metadata
-    modalities: tuple[str, ...] = ("text",)
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
     size: str = "medium"  # 300 Quora questions on transgender / non-binary topics
     tags: frozenset[str] = frozenset({"default", "safety", "bias"})
 

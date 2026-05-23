@@ -15,7 +15,7 @@ from pyrit.common.path import DB_DATA_PATH
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
     """
 
     # Metadata
-    modalities: tuple[str, ...] = ("text", "image")
+    modalities: tuple[Modality, ...] = (Modality.TEXT, Modality.IMAGE)
     size: str = "large"  # 884 image-instruction pairs across 4 categories
     tags: frozenset[str] = frozenset({"safety", "multimodal"})
 

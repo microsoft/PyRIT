@@ -24,7 +24,7 @@ from pyrit.datasets.seed_datasets.seed_metadata import (
     SeedDatasetMetadata,
     SeedDatasetSizeCategory,
 )
-from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedObjective, SeedPrompt
 
 
 @pytest.fixture
@@ -478,6 +478,7 @@ def _all_registered_remote_loaders() -> list[type]:
 
 
 _VALID_SIZES = set(typing.get_args(SeedDatasetSizeCategory))
+_VALID_MODALITIES = {m.value for m in Modality}
 
 
 class TestRemoteLoaderMetadataCoverage:
@@ -517,6 +518,12 @@ class TestRemoteLoaderMetadataCoverage:
         assert not invalid_sizes, (
             f"{loader_cls.__name__} declares invalid size(s) {sorted(invalid_sizes)}. "
             f"Valid sizes: {sorted(_VALID_SIZES)}."
+        )
+
+        invalid_modalities = metadata.modalities - _VALID_MODALITIES
+        assert not invalid_modalities, (
+            f"{loader_cls.__name__} declares invalid modality(ies) {sorted(invalid_modalities)}. "
+            f"Use pyrit.models.Modality members. Valid values: {sorted(_VALID_MODALITIES)}."
         )
 
 
