@@ -19,7 +19,7 @@ def __getattr__(name: str) -> Any:
         AttributeError: If the attribute name is not recognized.
     """
     if name == "AdversarialBenchmarkStrategy":
-        return AdversarialBenchmark.get_strategy_class()
+        return AdversarialBenchmark._build_benchmark_strategy()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

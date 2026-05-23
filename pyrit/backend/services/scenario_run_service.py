@@ -287,9 +287,24 @@ class ScenarioRunService:
         if request.labels:
             init_kwargs["memory_labels"] = request.labels
 
-        # Validate and resolve strategies
+        # Resolve strategies and default dataset config from a temporary instance
+        # of the scenario. The downstream _initialize_scenario_async builds its
+        # own instance (so that scenario_result_id can be passed), so this is a
+        # cheap throwaway used only for introspection.
+        instance_for_introspection: Scenario | None = None
+
+        if request.strategies or request.max_dataset_size is not None:
+            try:
+                instance_for_introspection = scenario_class()  # type: ignore[ty:missing-argument]
+            except Exception as exc:
+                raise ValueError(
+                    f"Cannot resolve runtime configuration for scenario '{request.scenario_name}': "
+                    f"scenario class is not instantiable without arguments ({exc})."
+                ) from exc
+
         if request.strategies:
-            strategy_class = scenario_class.get_strategy_class()
+            assert instance_for_introspection is not None
+            strategy_class = instance_for_introspection._strategy_class
             strategy_enums = []
             for name in request.strategies:
                 try:
@@ -309,7 +324,8 @@ class ScenarioRunService:
                 max_dataset_size=request.max_dataset_size,
             )
         elif request.max_dataset_size is not None:
-            default_config = scenario_class.default_dataset_config()
+            assert instance_for_introspection is not None
+            default_config = instance_for_introspection._default_dataset_config
             default_config.max_dataset_size = request.max_dataset_size
             init_kwargs["dataset_config"] = default_config
 

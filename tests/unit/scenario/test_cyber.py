@@ -28,7 +28,9 @@ def _mock_id(name: str) -> ComponentIdentifier:
 
 def _strategy_class():
     """Get the dynamically-generated CyberStrategy class."""
-    return Cyber.get_strategy_class()
+    from pyrit.scenario.scenarios.airt.cyber import _build_cyber_strategy
+
+    return _build_cyber_strategy()
 
 
 # ---------------------------------------------------------------------------
@@ -61,14 +63,15 @@ def mock_objective_scorer():
 def reset_technique_registry():
     """Reset the AttackTechniqueRegistry, TargetRegistry, and cached strategy class between tests."""
     from pyrit.registry import TargetRegistry
+    from pyrit.scenario.scenarios.airt.cyber import _build_cyber_strategy
 
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
-    Cyber._cached_strategy_class = None
+    _build_cyber_strategy.cache_clear()
     yield
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
-    Cyber._cached_strategy_class = None
+    _build_cyber_strategy.cache_clear()
 
 
 @pytest.fixture
@@ -113,21 +116,21 @@ class TestCyberBasic:
 
     def test_get_strategy_class(self):
         strat = _strategy_class()
-        assert Cyber.get_strategy_class() is strat
+        assert Cyber()._strategy_class is strat
 
     def test_get_default_strategy_returns_all(self):
         strat = _strategy_class()
-        assert Cyber.get_default_strategy() == strat.ALL
+        assert Cyber()._default_strategy == strat.ALL
 
     def test_default_dataset_config_has_malware_dataset(self):
-        config = Cyber.default_dataset_config()
+        config = Cyber()._default_dataset_config
         assert isinstance(config, DatasetConfiguration)
         names = config.get_default_dataset_names()
         assert "airt_malware" in names
         assert len(names) == 1
 
     def test_default_dataset_config_max_dataset_size(self):
-        config = Cyber.default_dataset_config()
+        config = Cyber()._default_dataset_config
         assert config.max_dataset_size == 4
 
     def test_initialization_with_custom_scorer(self, mock_objective_scorer):

@@ -13,6 +13,9 @@ from typing import Any
 from pyrit.scenario.scenarios.airt.rapid_response import (
     RapidResponse as ContentHarms,
 )
+from pyrit.scenario.scenarios.airt.rapid_response import (
+    _build_rapid_response_strategy,
+)
 
 
 def __getattr__(name: str) -> Any:
@@ -26,7 +29,7 @@ def __getattr__(name: str) -> Any:
         AttributeError: If the attribute name is not recognized.
     """
     if name == "ContentHarmsStrategy":
-        return ContentHarms.get_strategy_class()
+        return _build_rapid_response_strategy()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

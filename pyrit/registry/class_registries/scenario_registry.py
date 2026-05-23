@@ -197,6 +197,11 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
         """
         Build metadata for a Scenario class.
 
+        Instantiates the scenario with no arguments and reads the strategy/dataset
+        configuration off the instance. Falls back to a degraded metadata record
+        if instantiation fails (e.g. the scenario requires constructor arguments
+        that cannot be defaulted).
+
         Args:
             name: The registry name of the scenario.
             entry: The ClassEntry containing the scenario class.
@@ -207,13 +212,6 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
         scenario_class = entry.registered_class
 
         description = entry.get_description(fallback="No description available")
-
-        # Get the strategy class for this scenario
-        strategy_class = scenario_class.get_strategy_class()
-
-        dataset_config = scenario_class.default_dataset_config()
-        default_datasets = dataset_config.get_default_dataset_names()
-        max_dataset_size = dataset_config.max_dataset_size
 
         supported_parameters = tuple(
             ScenarioParameterMetadata(
@@ -227,15 +225,35 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
             for p in scenario_class.supported_parameters()
         )
 
+        try:
+            instance = scenario_class()  # type: ignore[ty:missing-argument]
+            strategy_class = instance._strategy_class
+            default_strategy_value = instance._default_strategy.value
+            all_strategies = tuple(s.value for s in strategy_class.get_all_strategies())
+            aggregate_strategies = tuple(s.value for s in strategy_class.get_aggregate_strategies())
+            default_datasets = tuple(instance._default_dataset_config.get_default_dataset_names())
+            max_dataset_size = instance._default_dataset_config.max_dataset_size
+        except Exception as exc:
+            logger.warning(
+                "Could not instantiate scenario %s for metadata; emitting degraded metadata. Reason: %s",
+                scenario_class.__name__,
+                exc,
+            )
+            default_strategy_value = ""
+            all_strategies = ()
+            aggregate_strategies = ()
+            default_datasets = ()
+            max_dataset_size = 0
+
         return ScenarioMetadata(
             class_name=scenario_class.__name__,
             class_module=scenario_class.__module__,
             class_description=description,
             registry_name=name,
-            default_strategy=scenario_class.get_default_strategy().value,
-            all_strategies=tuple(s.value for s in strategy_class.get_all_strategies()),
-            aggregate_strategies=tuple(s.value for s in strategy_class.get_aggregate_strategies()),
-            default_datasets=tuple(default_datasets),
+            default_strategy=default_strategy_value,
+            all_strategies=all_strategies,
+            aggregate_strategies=aggregate_strategies,
+            default_datasets=default_datasets,
             max_dataset_size=max_dataset_size,
             supported_parameters=supported_parameters,
         )

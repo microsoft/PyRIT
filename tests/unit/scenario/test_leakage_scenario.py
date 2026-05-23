@@ -177,14 +177,14 @@ class TestLeakageProperties:
         scenario = Leakage(objective_scorer=mock_objective_scorer)
         assert scenario.VERSION == 2
 
-    def test_get_strategy_class_returns_dynamic_class(self):
+    def test_get_strategy_class_returns_dynamic_class(self, mock_objective_scorer):
         """Test that get_strategy_class returns a dynamically generated strategy class."""
-        strategy_class = Leakage.get_strategy_class()
+        strategy_class = Leakage(objective_scorer=mock_objective_scorer)._strategy_class
         assert strategy_class is LeakageStrategy
 
-    def test_get_default_strategy_returns_default(self):
+    def test_get_default_strategy_returns_default(self, mock_objective_scorer):
         """Test that get_default_strategy returns the DEFAULT aggregate."""
-        default = Leakage.get_default_strategy()
+        default = Leakage(objective_scorer=mock_objective_scorer)._default_strategy
         assert default.value == "default"
 
     def test_required_datasets_returns_airt_leakage(self):
@@ -220,9 +220,9 @@ class TestLeakageStrategyEnum:
         assert LeakageStrategy.DEFAULT.value == "default"
         assert "default" in LeakageStrategy.DEFAULT.tags
 
-    def test_strategy_has_technique_members(self):
+    def test_strategy_has_technique_members(self, mock_objective_scorer):
         """Test that the strategy has technique members from core + leakage techniques."""
-        strategy_class = Leakage.get_strategy_class()
+        strategy_class = Leakage(objective_scorer=mock_objective_scorer)._strategy_class
         values = {m.value for m in strategy_class}
         # Leakage-unique techniques
         assert "first_letter" in values

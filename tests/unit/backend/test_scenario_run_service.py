@@ -99,8 +99,8 @@ def mock_all_registries(mock_memory):
     mock_scenario_instance._scenario_result_id = "sr-uuid-1"
 
     mock_scenario_class = MagicMock(return_value=mock_scenario_instance)
-    mock_scenario_class.get_strategy_class.return_value = MagicMock()
-    mock_scenario_class.default_dataset_config.return_value = MagicMock()
+    mock_scenario_instance._strategy_class = MagicMock()
+    mock_scenario_instance._default_dataset_config = MagicMock()
 
     mock_sr = MagicMock()
     mock_sr.get_class.return_value = mock_scenario_class
@@ -203,8 +203,8 @@ class TestScenarioRunServiceStartRun:
         mock_strategy_class = MagicMock(side_effect=ValueError("not a valid strategy"))
         mock_strategy_class.__iter__ = MagicMock(return_value=iter([MagicMock(value="valid_strat")]))
 
-        mock_scenario_class = MagicMock()
-        mock_scenario_class.get_strategy_class.return_value = mock_strategy_class
+        mock_instance = MagicMock(_strategy_class=mock_strategy_class)
+        mock_scenario_class = MagicMock(return_value=mock_instance)
 
         mock_sr = MagicMock()
         mock_sr.get_class.return_value = mock_scenario_class
