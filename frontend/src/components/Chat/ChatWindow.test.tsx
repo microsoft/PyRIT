@@ -288,8 +288,11 @@ describe("ChatWindow Integration", () => {
       </TestWrapper>
     );
 
-    expect(screen.getByText("PyRIT Attack")).toBeInTheDocument();
-    expect(screen.getByText("New Attack")).toBeInTheDocument();
+    // The ribbon no longer shows the "PyRIT Attack" prefix; the target
+    // badge stands on its own as the leftmost element.
+    expect(screen.queryByText("PyRIT Attack")).not.toBeInTheDocument();
+    expect(screen.getByTestId("target-badge")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /new attack/i })).toBeInTheDocument();
     expect(screen.getByRole("textbox")).toBeInTheDocument();
   });
 
@@ -321,8 +324,13 @@ describe("ChatWindow Integration", () => {
       </TestWrapper>
     );
 
-    expect(screen.getByText(/OpenAIChatTarget/)).toBeInTheDocument();
-    expect(screen.getByText(/gpt-4/)).toBeInTheDocument();
+    // The target badge is the leftmost element. Its visible label
+    // includes the type and model. The same strings also appear in the
+    // tooltip body, so we query the badge specifically.
+    const badge = screen.getByTestId("target-badge");
+    expect(badge).toHaveTextContent(/OpenAIChatTarget/);
+    expect(badge).toHaveTextContent(/gpt-4/);
+    expect(badge).toHaveAttribute("aria-label", expect.stringContaining(mockTarget.target_registry_name));
   });
 
   it("should show no-target message when target is null", () => {
@@ -389,8 +397,9 @@ describe("ChatWindow Integration", () => {
       </TestWrapper>
     );
 
-    expect(screen.getByText(/OpenAIChatTarget/)).toBeInTheDocument();
-    expect(screen.queryByText(/gpt/)).not.toBeInTheDocument();
+    const badge = screen.getByTestId("target-badge");
+    expect(badge).toHaveTextContent(/OpenAIChatTarget/);
+    expect(badge).not.toHaveTextContent(/gpt/);
   });
 
   // -----------------------------------------------------------------------

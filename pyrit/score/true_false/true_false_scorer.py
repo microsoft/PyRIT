@@ -24,6 +24,19 @@ class TrueFalseScorer(Scorer):
     This scorer evaluates prompt responses and returns a single boolean score indicating
     whether the response meets a specific criterion. Multiple pieces in a request response
     are aggregated using a TrueFalseAggregatorFunc function (default: TrueFalseScoreAggregator.OR).
+
+    **Default error / blocked behavior**
+
+    When no supported pieces remain after validator filtering (e.g. the response is
+    blocked, has another error type, or no piece matches the scorer's supported data
+    types), the base ``score_async`` invokes ``_build_fallback_score`` and returns a
+    single ``Score(False)`` whose rationale distinguishes blocked / error / filtered
+    cases. This mirrors ``FloatScaleScorer``'s ``0.0`` default so that downstream
+    consumers (attack strategies, threshold wrappers) get a consistent, "attack did not
+    succeed" value without each call site needing special-cased error handling.
+    Subclasses that need different semantics (e.g. ``SelfAskRefusalScorer``, which
+    returns ``True`` on blocked) should override ``_score_piece_async`` and accept the
+    error data type in their validator.
     """
 
     # Default evaluation configuration - evaluates against all objective CSVs
@@ -109,41 +122,81 @@ class TrueFalseScorer(Scorer):
         Score the given request response asynchronously.
 
         For TrueFalseScorer, multiple piece scores are aggregated into a single true/false score.
+        When no supported pieces remain (e.g. the response was blocked, had an error, or no piece
+        type matched the validator), returns an empty list; the base ``score_async`` then invokes
+        ``_build_fallback_score`` to produce a single neutral ``Score(False)``.
 
         Args:
             message (Message): The message to score.
             objective (Optional[str]): The objective to evaluate against. Defaults to None.
 
         Returns:
-            list[Score]: A list containing a single true/false Score object.
-
-        Raises:
-            ValueError: If no pieces are scored and cannot determine a piece ID for the return score.
+            list[Score]: A list containing a single aggregated true/false Score, or an empty
+                list when no pieces could be scored (the base class will supply a fallback).
         """
         # Get individual scores for all supported pieces using base implementation logic
         score_list = await super()._score_async(message, objective=objective)
 
         if not score_list:
-            # If no pieces matched (e.g., due to role filter or if all pieces filtered), return False
-            # Use the first message piece's ID (or original_prompt_id as fallback)
-            first_piece = message.message_pieces[0]
-            piece_id = first_piece.id or first_piece.original_prompt_id
-            if piece_id is None:
-                raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
+            return []
 
-            # Determine specific rationale based on message piece status
-            if first_piece.is_blocked():
-                rationale = "The request was blocked by the target; returning false."
-                description = "Blocked response; returning false."
-            elif first_piece.has_error():
-                rationale = f"Response had an error: {first_piece.response_error}; returning false."
-                description = "Error response; returning false."
-            else:
-                # this can happen with multi-modal responses if no supported pieces are present
-                rationale = "No supported pieces to score after filtering; returning false."
-                description = "No pieces to score after filtering; returning false."
+        # Use score aggregator to combine multiple piece scores into a single score
+        result = self._score_aggregator(score_list)
 
-            return_score = Score(
+        # Use the message_piece_id from the first score
+        return [
+            Score(
+                score_value=str(result.value).lower(),
+                score_value_description=result.description,
+                score_type="true_false",
+                score_category=result.category,
+                score_metadata=result.metadata,
+                score_rationale=result.rationale,
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=score_list[0].message_piece_id,
+                objective=objective,
+            )
+        ]
+
+    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+        """
+        Build a single-element list containing a ``false`` score when no pieces could be scored.
+
+        Inspects the first message piece to produce a rationale/description that
+        distinguishes blocked, error, and filtered cases.
+
+        Args:
+            message (Message): The message whose first piece is inspected for status.
+            objective (Optional[str]): The objective associated with this scoring call.
+
+        Returns:
+            list[Score]: A single-element list containing a ``false`` ``true_false`` score
+                attributed to the first piece.
+
+        Raises:
+            ValueError: If the first message piece has no ``id`` or ``original_prompt_id``.
+        """
+        first_piece = message.message_pieces[0]
+        piece_id = first_piece.id or first_piece.original_prompt_id
+        if piece_id is None:
+            raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
+
+        if first_piece.is_blocked():
+            rationale = (
+                "The request was blocked by the target "
+                "(score_blocked_content is False or no partial content available); returning false."
+            )
+            description = "Blocked response; returning false."
+        elif first_piece.has_error():
+            rationale = f"Response had an error: {first_piece.response_error}; returning false."
+            description = "Error response; returning false."
+        else:
+            # this can happen with multi-modal responses if no supported pieces are present
+            rationale = "No supported pieces to score after filtering; returning false."
+            description = "No pieces to score after filtering; returning false."
+
+        return [
+            Score(
                 score_value=str(False).lower(),
                 score_value_description=description,
                 score_type="true_false",
@@ -154,22 +207,4 @@ class TrueFalseScorer(Scorer):
                 message_piece_id=piece_id,
                 objective=objective,
             )
-            return [return_score]
-
-        # Use score aggregator to combine multiple piece scores into a single score
-        result = self._score_aggregator(score_list)
-
-        # Use the message_piece_id from the first score
-        return_score = Score(
-            score_value=str(result.value).lower(),
-            score_value_description=result.description,
-            score_type="true_false",
-            score_category=result.category,
-            score_metadata=result.metadata,
-            score_rationale=result.rationale,
-            scorer_class_identifier=self.get_identifier(),
-            message_piece_id=score_list[0].message_piece_id,
-            objective=objective,
-        )
-
-        return [return_score]
+        ]
