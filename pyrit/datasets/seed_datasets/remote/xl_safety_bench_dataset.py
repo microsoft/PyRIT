@@ -51,6 +51,12 @@ _GROUPS: list[str] = [
     "Microsoft",
     "Korea AI Safety Institute",
     "KT Corporation",
+    "BMW Group",
+    "Coinbase",
+    "Technical University of Munich",
+    "Ankara University",
+    "Cyril Amarchand Mangaldas",
+    "Seoul National University",
 ]
 
 

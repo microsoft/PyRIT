@@ -36,6 +36,12 @@ groups:
   - Microsoft
   - Korea AI Safety Institute
   - KT Corporation
+  - BMW Group
+  - Coinbase
+  - Technical University of Munich
+  - Ankara University
+  - Cyril Amarchand Mangaldas
+  - Seoul National University
 source: https://github.com/AIM-Intelligence/XL-SafetyBench
 parameters:
   - base_query
