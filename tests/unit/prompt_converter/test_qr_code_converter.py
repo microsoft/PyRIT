@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import os
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -50,17 +49,16 @@ async def test_qr_code_converter_invalid_prompt() -> None:
         await converter.convert_async(prompt="", input_type="text")
 
 
-async def test_qr_code_converter_convert_async() -> None:
+async def test_qr_code_converter_convert_async(tmp_path) -> None:
     converter = QRCodeConverter()
     with patch.object(converter._img_serializer, "get_data_filename") as mock_get_data_filename:
-        expected_filename = Path("sample_file.png").resolve()
+        expected_filename = tmp_path / "sample_file.png"
         mock_get_data_filename.return_value = expected_filename
         qr = await converter.convert_async(prompt="Sample prompt", input_type="text")
         assert qr
         assert str(qr.output_text) == str(expected_filename)
         assert qr.output_type == "image_path"
         assert os.path.exists(qr.output_text)
-        os.remove(qr.output_text)
 
 
 def test_text_image_converter_input_supported():
