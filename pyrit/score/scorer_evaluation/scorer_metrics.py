@@ -94,9 +94,13 @@ class HarmScorerMetrics(ScorerMetrics):
             a confidence interval for the mean absolute error.
         t_statistic (float): The t-statistic for the one-sample t-test comparing model scores to human scores with a
             null hypothesis that the mean difference is 0. A high positive t-statistic (along with a low p-value)
-            indicates that the model scores are typically higher than the human scores.
+            indicates that the model scores are typically higher than the human scores. When the model perfectly
+            agrees with the gold labels (zero difference everywhere), this is reported as 0.0. When all differences
+            are equal and non-zero (a systematic constant bias with no variance), the t-test is undefined and this
+            is reported as NaN; consult `mean_absolute_error` for the bias magnitude in that case.
         p_value (float): The p-value for the one-sample t-test above. It represents the probability of obtaining a
             difference in means as extreme as the observed difference, assuming the null hypothesis is true.
+            Reported as 1.0 on perfect agreement and NaN on the constant-non-zero-bias case (see `t_statistic`).
         krippendorff_alpha_combined (float): Krippendorff's alpha for the reliability data, which includes both
             human and model scores. This measures the agreement between all the human raters and model scoring trials
             and ranges between -1.0 to 1.0 where 1.0 indicates perfect agreement, 0.0 indicates no agreement, and
