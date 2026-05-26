@@ -479,18 +479,21 @@ class TestDeprecatedAliases:
     """Tests for backward-compatible ContentHarms aliases."""
 
     def test_content_harms_is_rapid_response(self):
-        from pyrit.scenario.scenarios.airt.content_harms import ContentHarms
+        with pytest.warns(DeprecationWarning, match="ContentHarms"):
+            from pyrit.scenario.scenarios.airt.content_harms import ContentHarms
 
         assert ContentHarms is RapidResponse
 
     def test_content_harms_strategy_is_rapid_response_strategy(self):
-        from pyrit.scenario.scenarios.airt.content_harms import ContentHarmsStrategy
+        with pytest.warns(DeprecationWarning, match="ContentHarmsStrategy"):
+            from pyrit.scenario.scenarios.airt.content_harms import ContentHarmsStrategy
 
         assert ContentHarmsStrategy is _strategy_class()
 
     def test_content_harms_instance_name_is_rapid_response(self, mock_objective_scorer):
         """ContentHarms() creates a RapidResponse with name 'RapidResponse'."""
-        from pyrit.scenario.scenarios.airt.content_harms import ContentHarms
+        with pytest.warns(DeprecationWarning, match="ContentHarms"):
+            from pyrit.scenario.scenarios.airt.content_harms import ContentHarms
 
         scenario = ContentHarms(
             objective_scorer=mock_objective_scorer,
