@@ -16,32 +16,27 @@ from pyrit.executor.attack.core.attack_config import AttackConverterConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
 from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
-from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
     Message,
     MessagePiece,
-    construct_response_from_request,
 )
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target.openai.openai_realtime_target import _REALTIME_COMMITTED_ITEM_ID_KEY
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from pyrit.identifiers import ComponentIdentifier
     from pyrit.prompt_target import PromptTarget
     from pyrit.prompt_target.common.realtime_audio import (
         CommittedEvent,
-        RealtimeEventDispatcher,
-        RealtimeTargetResult,
     )
     from pyrit.prompt_target.openai.openai_realtime_target import RealtimeTarget
 
 logger = logging.getLogger(__name__)
-
-_REALTIME_SAMPLE_RATE_HZ = 24000
 
 
 @dataclass
@@ -55,12 +50,9 @@ class BargeInAttackContext(AttackContext[AttackParamsT]):
 
 @dataclass
 class _BargeInRunState:
-    """Mutable per-session state accumulated as turns commit."""
+    """Mutable per-session state shared between ``_perform_async`` and ``on_committed``."""
 
     raw_buffer: bytearray = field(default_factory=bytearray)
-    turn_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    last_assistant_message: Message | None = None
-    executed_turns: int = 0
     turn_tasks: list[asyncio.Task[None]] = field(default_factory=list)
 
 
@@ -89,6 +81,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_converter_config: AttackConverterConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
     ) -> None:
         """
@@ -96,8 +89,9 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
 
         Args:
             objective_target: Target to attack. Must declare ``STREAMING_BARGE_IN`` capability.
-                Audio normalization is delegated to ``objective_target.audio_normalizer``.
             attack_converter_config: Converters applied to each committed user turn.
+            prompt_normalizer: Normalizer used to apply converters and persist messages.
+                Defaults to a fresh ``PromptNormalizer``.
             params_type: Attack parameter dataclass type.
         """
         super().__init__(
@@ -109,6 +103,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         attack_converter_config = attack_converter_config or AttackConverterConfig()
         self._request_converters = attack_converter_config.request_converters
         self._response_converters = attack_converter_config.response_converters
+        self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
 
     def _validate_context(self, *, context: BargeInAttackContext[Any]) -> None:
         """
@@ -156,25 +151,29 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
 
         connection = await target.connect_async(conversation_id=context.conversation_id)
         state = _BargeInRunState()
+        last_response: Message | None = None
+        executed_turns = 0
 
         async def on_committed(event: CommittedEvent) -> None:
+            nonlocal last_response, executed_turns
             current_task = asyncio.current_task()
             if current_task is not None:
                 state.turn_tasks.append(current_task)
             try:
-                await self._handle_committed_turn_async(
-                    state=state,
+                response = await self._handle_committed_turn_async(
                     event=event,
+                    context=context,
+                    state=state,
                     target=target,
-                    connection=connection,
-                    dispatcher=dispatcher,
-                    conversation_id=context.conversation_id,
                 )
+                last_response = response
+                executed_turns += 1
             except Exception:
                 logger.exception("BargeInAttack turn failed in convert-on-commit handler.")
 
-        dispatcher: RealtimeEventDispatcher = await target.subscribe_events_async(
+        await target.subscribe_events_async(
             connection=connection,
+            conversation_id=context.conversation_id,
             on_user_audio_committed=on_committed,
         )
 
@@ -186,103 +185,101 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
                     state.raw_buffer.extend(chunk)
                 await target.push_audio_chunk_async(connection=connection, pcm_bytes=chunk)
 
-            # Wait for any in-flight committed-turn tasks to finish (convert + response +
-            # persistence), capped by a safety timeout. The chunk source must end with enough
-            # trailing silence for server VAD's silence threshold to fire commit — otherwise
-            # the last turn never enters the convert pipeline and there is nothing to wait on.
+            # Wait for any in-flight committed-turn tasks to finish, capped by a safety timeout.
+            # The chunk source must end with enough trailing silence for server VAD's silence
+            # threshold to fire commit — otherwise the last turn never enters the pipeline.
             await self._wait_for_pending_turns_async(state.turn_tasks)
         finally:
-            await dispatcher.stop()
-            try:
-                await connection.close()
-            except Exception as e:
-                logger.warning(f"Error closing streaming connection: {e}")
+            await target.cleanup_conversation(context.conversation_id)
 
-        return self._build_result(state=state, context=context)
+        return self._build_result(
+            last_response=last_response,
+            executed_turns=executed_turns,
+            context=context,
+        )
 
     async def _handle_committed_turn_async(
         self,
         *,
-        state: _BargeInRunState,
         event: CommittedEvent,
+        context: BargeInAttackContext[Any],
+        state: _BargeInRunState,
         target: RealtimeTarget,
-        connection: Any,
-        dispatcher: RealtimeEventDispatcher,
-        conversation_id: str,
-    ) -> None:
-        """Run the convert-on-commit dance for one VAD-committed user audio turn."""
-        async with state.turn_lock:
-            snapshot = self._snapshot_user_audio(state)
-
-            try:
-                converted_pcm, applied_identifiers = await target.audio_normalizer.normalize_async(
-                    pcm_bytes=snapshot,
-                    sample_rate=_REALTIME_SAMPLE_RATE_HZ,
-                    converter_configurations=self._request_converters,
-                )
-            except Exception:
-                logger.exception("Audio converters failed; dropping turn.")
-                return
-
-            using_converted_audio = bool(self._request_converters) and converted_pcm != snapshot
-            if using_converted_audio:
-                await target.swap_user_audio_async(
-                    connection=connection,
-                    committed_event=event,
-                    converted_pcm=converted_pcm,
-                )
-
-            turn_future = await target.request_response_async(connection=connection, dispatcher=dispatcher)
-            turn_result = await turn_future
-
-            user_audio_pcm = converted_pcm if using_converted_audio else snapshot
-            state.last_assistant_message = await self._persist_turn_async(
-                target=target,
-                conversation_id=conversation_id,
-                user_audio_pcm=user_audio_pcm,
-                applied_converter_identifiers=applied_identifiers,
-                turn_result=turn_result,
-            )
-            state.executed_turns += 1
-
-    def _snapshot_user_audio(self, state: _BargeInRunState) -> bytes:
+    ) -> Message:
         """
-        Snapshot the accumulated user PCM and clear the buffer for the next turn.
+        Run one convert-and-respond turn for a VAD-committed user audio buffer.
+
+        Snapshots the locally-accumulated raw PCM, persists it as a durable WAV,
+        wraps it in a Message with the server's committed item id stashed in
+        ``prompt_metadata`` so the target's streaming branch can swap raw audio
+        for converter-transformed audio, then drives ``send_prompt_async``.
 
         Returns:
-            Snapshot of buffered PCM bytes prior to clearing.
+            The assistant Message returned by ``send_prompt_async`` for this turn.
         """
+        # Snapshot the locally-accumulated raw PCM and reset for the next turn.
         snapshot = bytes(state.raw_buffer)
         state.raw_buffer.clear()
-        return snapshot
+
+        # PromptNormalizer.send_prompt_async needs an audio_path-shaped Message,
+        # so persist the snapshot to a durable WAV before wrapping.
+        snapshot_path = await target.save_audio(
+            snapshot,
+            num_channels=1,
+            sample_width=2,
+            sample_rate=target.SAMPLE_RATE_HZ,
+        )
+        # Stash the server-assigned item id so the target's streaming branch
+        # can swap the raw buffer for converter-transformed audio.
+        piece = MessagePiece(
+            role="user",
+            original_value=snapshot_path,
+            original_value_data_type="audio_path",
+            converted_value=snapshot_path,
+            converted_value_data_type="audio_path",
+            conversation_id=context.conversation_id,
+            prompt_metadata={_REALTIME_COMMITTED_ITEM_ID_KEY: event.item_id},
+        )
+        message = Message(message_pieces=[piece])
+
+        return await self._prompt_normalizer.send_prompt_async(
+            message=message,
+            target=target,
+            request_converter_configurations=self._request_converters,
+            response_converter_configurations=self._response_converters,
+            conversation_id=context.conversation_id,
+            attack_identifier=self.get_identifier(),
+        )
 
     def _build_result(
         self,
         *,
-        state: _BargeInRunState,
+        last_response: Message | None,
+        executed_turns: int,
         context: BargeInAttackContext[Any],
     ) -> AttackResult:
         """
-        Assemble the final ``AttackResult`` from accumulated run state.
+        Assemble the final ``AttackResult`` from accumulated turn outcomes.
 
         Returns:
-            ``AttackResult`` with the last assistant message, executed turn count, and outcome reason.
+            ``AttackResult`` with the last assistant message, executed turn count,
+            and outcome reason.
         """
-        if state.executed_turns == 0:
+        if executed_turns == 0:
             outcome_reason: str | None = "No assistant turns completed (server VAD did not commit any user audio)"
         else:
-            outcome_reason = f"{state.executed_turns} assistant turn(s) completed; no scorer configured"
+            outcome_reason = f"{executed_turns} assistant turn(s) completed; no scorer configured"
 
         return AttackResult(
             conversation_id=context.conversation_id,
             objective=context.objective,
             atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
-            last_response=(state.last_assistant_message.message_pieces[0] if state.last_assistant_message else None),
+            last_response=(last_response.message_pieces[0] if last_response else None),
             last_score=None,
             related_conversations=context.related_conversations,
             outcome=AttackOutcome.UNDETERMINED,
             outcome_reason=outcome_reason,
-            executed_turns=state.executed_turns,
+            executed_turns=executed_turns,
             labels=context.memory_labels,
         )
 
@@ -312,61 +309,3 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
                 "finish; teardown will cancel them. Increase _MAX_POST_STREAM_WAIT_SECONDS if responses "
                 "regularly take longer."
             )
-
-    async def _persist_turn_async(
-        self,
-        *,
-        target: RealtimeTarget,
-        conversation_id: str,
-        user_audio_pcm: bytes,
-        applied_converter_identifiers: list[ComponentIdentifier],
-        turn_result: RealtimeTargetResult,
-    ) -> Message:
-        """
-        Persist the user+assistant Message pair for one completed turn to CentralMemory.
-
-        Returns:
-            The assistant Message so callers can surface it as ``last_response``.
-        """
-        user_audio_path = await target.save_audio(
-            user_audio_pcm,
-            num_channels=1,
-            sample_width=2,
-            sample_rate=_REALTIME_SAMPLE_RATE_HZ,
-        )
-        user_piece = MessagePiece(
-            role="user",
-            original_value=user_audio_path,
-            original_value_data_type="audio_path",
-            converted_value=user_audio_path,
-            converted_value_data_type="audio_path",
-            conversation_id=conversation_id,
-        )
-        user_piece.converter_identifiers.extend(applied_converter_identifiers)
-        user_message = Message(message_pieces=[user_piece])
-
-        response_audio_path = await target.save_audio(
-            turn_result.audio_bytes,
-            num_channels=1,
-            sample_width=2,
-            sample_rate=_REALTIME_SAMPLE_RATE_HZ,
-        )
-        text_piece = construct_response_from_request(
-            request=user_piece,
-            response_text_pieces=[turn_result.flatten_transcripts()],
-            response_type="text",
-        ).message_pieces[0]
-        audio_piece = construct_response_from_request(
-            request=user_piece,
-            response_text_pieces=[response_audio_path],
-            response_type="audio_path",
-        ).message_pieces[0]
-        if turn_result.interrupted:
-            text_piece.prompt_metadata["interrupted"] = True
-            audio_piece.prompt_metadata["interrupted"] = True
-        assistant_message = Message(message_pieces=[text_piece, audio_piece])
-
-        memory = CentralMemory.get_memory_instance()
-        memory.add_message_to_memory(request=user_message)
-        memory.add_message_to_memory(request=assistant_message)
-        return assistant_message

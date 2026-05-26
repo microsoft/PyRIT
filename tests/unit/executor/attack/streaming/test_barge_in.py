@@ -6,9 +6,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import tempfile
-import wave
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,14 +13,11 @@ import pytest
 
 from pyrit.executor.attack import BargeInAttack, BargeInAttackContext
 from pyrit.executor.attack.core import AttackConverterConfig, AttackParameters
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import AttackOutcome
-from pyrit.prompt_normalizer import AudioStreamNormalizer, PromptConverterConfiguration
+from pyrit.models import AttackOutcome, Message, MessagePiece
+from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import RealtimeTarget
-from pyrit.prompt_target.common.realtime_audio import (
-    CommittedEvent,
-    RealtimeTargetResult,
-)
+from pyrit.prompt_target.common.realtime_audio import CommittedEvent
+from pyrit.prompt_target.openai.openai_realtime_target import _REALTIME_COMMITTED_ITEM_ID_KEY
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -114,15 +108,58 @@ async def test_validate_context_requires_audio_chunks(vad_target):
 # ---- Streaming loop end-to-end ---------------------------------------------------------------
 
 
-async def test_perform_async_streams_chunks_and_tears_down(vad_target):
-    """Happy path: connect, send config, subscribe, push chunks, stop, close — no commits."""
-    attack = BargeInAttack(objective_target=vad_target)
+def _setup_streaming_target(vad_target, *, future_response: Message | None = None) -> AsyncMock:
+    """
+    Mock the streaming-mode surface on ``vad_target`` and return the connection mock.
+
+    Stubs ``connect_async``, ``send_streaming_session_config_async``, ``push_audio_chunk_async``,
+    ``subscribe_events_async``, ``save_audio``, and ``cleanup_conversation`` so a callback can
+    be invoked mid-stream without exercising the real target machinery.
+    """
     connection = _mock_connection()
     vad_target.connect_async = AsyncMock(return_value=connection)
     vad_target.send_streaming_session_config_async = AsyncMock()
     vad_target.push_audio_chunk_async = AsyncMock()
+    vad_target.save_audio = AsyncMock(return_value="/tmp/snapshot.wav")
+    vad_target.cleanup_conversation = AsyncMock()
+    return connection
+
+
+def _capture_committed_callback(vad_target, captured: dict[str, Any]) -> None:
+    """Wire ``subscribe_events_async`` to capture the registered ``on_user_audio_committed``."""
+
+    async def fake_subscribe(*, connection, conversation_id, on_user_audio_committed):
+        captured["on_committed"] = on_user_audio_committed
+        return AsyncMock()
+
+    vad_target.subscribe_events_async = AsyncMock(side_effect=fake_subscribe)
+
+
+def _stub_send_prompt(attack: BargeInAttack, return_value: Message | None = None) -> AsyncMock:
+    """Replace the attack's prompt_normalizer.send_prompt_async with an AsyncMock and return it."""
+    if return_value is None:
+        return_value = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value="ok",
+                    original_value_data_type="text",
+                    converted_value="ok",
+                    converted_value_data_type="text",
+                    conversation_id="any",
+                )
+            ]
+        )
+    send_mock = AsyncMock(return_value=return_value)
+    attack._prompt_normalizer.send_prompt_async = send_mock
+    return send_mock
+
+
+async def test_perform_async_streams_chunks_and_tears_down(vad_target):
+    """Happy path: connect, send config, subscribe, push chunks, then cleanup_conversation — no commits."""
+    attack = BargeInAttack(objective_target=vad_target)
+    connection = _setup_streaming_target(vad_target)
     dispatcher = AsyncMock()
-    dispatcher.stop = AsyncMock()
     vad_target.subscribe_events_async = AsyncMock(return_value=dispatcher)
 
     chunks = [b"\x11" * 480, b"\x22" * 480, b"\x33" * 240]
@@ -137,58 +174,150 @@ async def test_perform_async_streams_chunks_and_tears_down(vad_target):
     assert vad_target.push_audio_chunk_async.await_count == len(chunks)
     pushed = [call.kwargs["pcm_bytes"] for call in vad_target.push_audio_chunk_async.await_args_list]
     assert pushed == chunks
-    dispatcher.stop.assert_awaited_once()
-    connection.close.assert_awaited_once()
+    vad_target.cleanup_conversation.assert_awaited_once_with(ctx.conversation_id)
     assert result.executed_turns == 0
     assert result.outcome == AttackOutcome.UNDETERMINED
 
 
-async def test_perform_async_fires_request_response_on_commit(vad_target):
-    """A commit event must drive request_response_async and increment the turn counter."""
-    attack = BargeInAttack(objective_target=vad_target)
-    connection = _mock_connection()
-    vad_target.connect_async = AsyncMock(return_value=connection)
-    vad_target.send_streaming_session_config_async = AsyncMock()
-    vad_target.push_audio_chunk_async = AsyncMock()
-
-    # Capture the registered on_user_audio_committed so we can drive it.
+async def test_perform_async_calls_send_prompt_async_on_commit(vad_target):
+    """A commit must invoke prompt_normalizer.send_prompt_async with an audio_path Message."""
+    bump = MagicMock()
+    bump.get_identifier = MagicMock(return_value=MagicMock())
+    converter_config = AttackConverterConfig(
+        request_converters=PromptConverterConfiguration.from_converters(converters=[bump]),
+    )
+    attack = BargeInAttack(objective_target=vad_target, attack_converter_config=converter_config)
+    send_mock = _stub_send_prompt(attack)
+    _setup_streaming_target(vad_target)
     captured: dict[str, Any] = {}
-
-    async def fake_subscribe(*, connection, on_user_audio_committed):
-        captured["on_committed"] = on_user_audio_committed
-        return AsyncMock()
-
-    vad_target.subscribe_events_async = AsyncMock(side_effect=fake_subscribe)
-
-    expected = RealtimeTargetResult(audio_bytes=b"\xaa" * 96, transcripts=["hello"])
-    expected_future: asyncio.Future[RealtimeTargetResult] = asyncio.get_event_loop().create_future()
-    expected_future.set_result(expected)
-    vad_target.request_response_async = AsyncMock(return_value=expected_future)
+    _capture_committed_callback(vad_target, captured)
 
     async def chunks_then_commit() -> AsyncIterator[bytes]:
-        yield b"\x00" * 480
-        # Drive a fake commit mid-stream.
-        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="raw_1")))
+        yield b"\x05" * 480
+        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="item_42")))
 
     ctx = _attack_context(audio_chunks=chunks_then_commit())
 
     with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
         result = await attack._perform_async(context=ctx)
 
-    vad_target.request_response_async.assert_awaited_once()
+    send_mock.assert_awaited_once()
+    kwargs = send_mock.call_args.kwargs
+    sent_message = kwargs["message"]
+    assert sent_message.message_pieces[0].converted_value_data_type == "audio_path"
+    assert sent_message.message_pieces[0].conversation_id == ctx.conversation_id
+    assert sent_message.message_pieces[0].prompt_metadata[_REALTIME_COMMITTED_ITEM_ID_KEY] == "item_42"
+    assert kwargs["target"] is vad_target
+    assert kwargs["request_converter_configurations"] == attack._request_converters
+    assert kwargs["conversation_id"] == ctx.conversation_id
     assert result.executed_turns == 1
-    assert "1 assistant turn" in (result.outcome_reason or "")
 
 
-async def test_perform_async_stops_dispatcher_even_on_exception(vad_target):
-    """If the chunk loop raises, dispatcher.stop() and connection.close() still run."""
+async def test_perform_async_message_carries_snapshot_audio_path(vad_target):
+    """The audio_path on the user piece must point at the persisted snapshot WAV."""
     attack = BargeInAttack(objective_target=vad_target)
-    connection = _mock_connection()
-    vad_target.connect_async = AsyncMock(return_value=connection)
-    vad_target.send_streaming_session_config_async = AsyncMock()
+    send_mock = _stub_send_prompt(attack)
+    connection = _setup_streaming_target(vad_target)
+    vad_target.save_audio = AsyncMock(return_value="/tmp/persisted_snapshot.wav")
+    captured: dict[str, Any] = {}
+    _capture_committed_callback(vad_target, captured)
+
+    raw_chunk = b"\x07" * 96
+
+    async def chunks_then_commit() -> AsyncIterator[bytes]:
+        yield raw_chunk
+        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="i")))
+
+    ctx = _attack_context(audio_chunks=chunks_then_commit())
+
+    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
+        await attack._perform_async(context=ctx)
+
+    # save_audio called with the snapshot PCM; the resulting path lands on the message piece.
+    save_kwargs_or_args = vad_target.save_audio.call_args
+    saved_pcm = (
+        save_kwargs_or_args.args[0] if save_kwargs_or_args.args else save_kwargs_or_args.kwargs.get("audio_bytes")
+    )
+    assert saved_pcm == raw_chunk
+    piece = send_mock.call_args.kwargs["message"].message_pieces[0]
+    assert piece.original_value == "/tmp/persisted_snapshot.wav"
+    assert piece.converted_value == "/tmp/persisted_snapshot.wav"
+
+
+async def test_perform_async_clears_raw_buffer_between_commits(vad_target):
+    """Each commit gets fresh PCM: the snapshot saved for turn 2 has no carryover from turn 1."""
+    attack = BargeInAttack(objective_target=vad_target)
+    _stub_send_prompt(attack)
+    _setup_streaming_target(vad_target)
+    saved_pcm: list[bytes] = []
+
+    async def fake_save_audio(audio_bytes, **_):
+        saved_pcm.append(audio_bytes)
+        return f"/tmp/snap_{len(saved_pcm)}.wav"
+
+    vad_target.save_audio = AsyncMock(side_effect=fake_save_audio)
+    captured: dict[str, Any] = {}
+    _capture_committed_callback(vad_target, captured)
+
+    async def chunks_two_commits() -> AsyncIterator[bytes]:
+        yield b"\x01" * 96
+        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="i1")))
+        yield b"\x02" * 96
+        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="i2")))
+
+    ctx = _attack_context(audio_chunks=chunks_two_commits())
+
+    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
+        await attack._perform_async(context=ctx)
+
+    assert saved_pcm == [b"\x01" * 96, b"\x02" * 96]
+
+
+async def test_perform_async_tracks_last_response_and_turn_count(vad_target):
+    """AttackResult.last_response is the last Message from send_prompt_async; count matches commits."""
+    attack = BargeInAttack(objective_target=vad_target)
+    responses_in_order = [
+        Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value=text,
+                    original_value_data_type="text",
+                    converted_value=text,
+                    converted_value_data_type="text",
+                    conversation_id="x",
+                )
+            ]
+        )
+        for text in ("first", "second", "final")
+    ]
+    send_mock = AsyncMock(side_effect=responses_in_order)
+    attack._prompt_normalizer.send_prompt_async = send_mock
+    _setup_streaming_target(vad_target)
+    captured: dict[str, Any] = {}
+    _capture_committed_callback(vad_target, captured)
+
+    async def chunks_three_commits() -> AsyncIterator[bytes]:
+        for i in range(3):
+            yield bytes([i + 1]) * 96
+            await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id=f"i{i}")))
+
+    ctx = _attack_context(audio_chunks=chunks_three_commits())
+
+    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
+        result = await attack._perform_async(context=ctx)
+
+    assert result.executed_turns == 3
+    assert result.last_response is not None
+    assert result.last_response.converted_value == "final"
+
+
+async def test_perform_async_cleans_up_even_on_exception(vad_target):
+    """If the chunk loop raises, cleanup_conversation still fires."""
+    attack = BargeInAttack(objective_target=vad_target)
+    _setup_streaming_target(vad_target)
     vad_target.push_audio_chunk_async = AsyncMock(side_effect=RuntimeError("push exploded"))
-    dispatcher = AsyncMock()
-    vad_target.subscribe_events_async = AsyncMock(return_value=dispatcher)
+    vad_target.subscribe_events_async = AsyncMock(return_value=AsyncMock())
 
     ctx = _attack_context(audio_chunks=_aiter([b"\x00" * 96]))
 
@@ -196,8 +325,28 @@ async def test_perform_async_stops_dispatcher_even_on_exception(vad_target):
         with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
             await attack._perform_async(context=ctx)
 
-    dispatcher.stop.assert_awaited_once()
-    connection.close.assert_awaited_once()
+    vad_target.cleanup_conversation.assert_awaited_once_with(ctx.conversation_id)
+
+
+async def test_perform_async_swallows_callback_exception(vad_target):
+    """If send_prompt_async raises mid-turn, the session keeps going (no executed turn)."""
+    attack = BargeInAttack(objective_target=vad_target)
+    attack._prompt_normalizer.send_prompt_async = AsyncMock(side_effect=RuntimeError("converter blew up"))
+    _setup_streaming_target(vad_target)
+    captured: dict[str, Any] = {}
+    _capture_committed_callback(vad_target, captured)
+
+    async def chunks_then_commit() -> AsyncIterator[bytes]:
+        yield b"\x00" * 96
+        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="i")))
+
+    ctx = _attack_context(audio_chunks=chunks_then_commit())
+
+    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
+        result = await attack._perform_async(context=ctx)
+
+    # The callback caught the exception; no turn counted as successful.
+    assert result.executed_turns == 0
 
 
 # ---- send_streaming_session_config_async (target-side helper added in R4a) -------------------
@@ -219,410 +368,3 @@ async def test_send_streaming_session_config_async_requires_server_vad(sqlite_in
     connection = _mock_connection()
     with pytest.raises(ValueError, match="server VAD"):
         await no_vad.send_streaming_session_config_async(connection=connection, system_prompt="hi")
-
-
-# Placeholder for R4b tests
-
-
-# ---- Convert-on-commit dance (R4b) ----------------------------------------------------------
-
-
-def _make_audio_converter(transformer, *, identifier_name: str = "MockAudioConverter"):
-    """Mock audio converter whose convert_tokens_async runs transformer(pcm) and emits a new WAV path."""
-    converter = MagicMock()
-    converter.get_identifier = MagicMock(
-        return_value=ComponentIdentifier(class_name=identifier_name, class_module="tests.unit.mocks"),
-    )
-
-    async def _convert(*, prompt, input_type, start_token=None, end_token=None):
-        assert input_type == "audio_path"
-        with wave.open(prompt, "rb") as wf_in:
-            sample_rate = wf_in.getframerate()
-            pcm = wf_in.readframes(wf_in.getnframes())
-        new_pcm = transformer(pcm)
-        out_dir = tempfile.mkdtemp()
-        out_path = os.path.join(out_dir, "out.wav")
-        with wave.open(out_path, "wb") as wf_out:
-            wf_out.setnchannels(1)
-            wf_out.setsampwidth(2)
-            wf_out.setframerate(sample_rate)
-            wf_out.writeframes(new_pcm)
-        result = MagicMock()
-        result.output_text = out_path
-        return result
-
-    converter.convert_tokens_async = AsyncMock(side_effect=_convert)
-    return converter
-
-
-def _converter_config(converters: list[Any]) -> AttackConverterConfig:
-    """Wrap a list of converters into an AttackConverterConfig."""
-    return AttackConverterConfig(
-        request_converters=PromptConverterConfiguration.from_converters(converters=converters),
-    )
-
-
-async def test_perform_async_swaps_raw_item_when_converters_change_audio(vad_target):
-    """When converters change the audio, the attack must delete the raw item + insert converted."""
-    bump = _make_audio_converter(lambda pcm: bytes((b + 1) & 0xFF for b in pcm))
-    attack = BargeInAttack(objective_target=vad_target, attack_converter_config=_converter_config([bump]))
-    connection = _mock_connection()
-    vad_target.connect_async = AsyncMock(return_value=connection)
-    vad_target.send_streaming_session_config_async = AsyncMock()
-    vad_target.push_audio_chunk_async = AsyncMock()
-    vad_target.delete_conversation_item_async = AsyncMock()
-    vad_target.insert_user_audio_async = AsyncMock()
-
-    captured: dict[str, Any] = {}
-
-    async def fake_subscribe(*, connection, on_user_audio_committed):
-        captured["on_committed"] = on_user_audio_committed
-        return AsyncMock()
-
-    vad_target.subscribe_events_async = AsyncMock(side_effect=fake_subscribe)
-
-    result_future: asyncio.Future[RealtimeTargetResult] = asyncio.get_event_loop().create_future()
-    result_future.set_result(RealtimeTargetResult(audio_bytes=b"\xaa" * 96, transcripts=["ok"]))
-    vad_target.request_response_async = AsyncMock(return_value=result_future)
-
-    raw_chunk = b"\x05" * 96  # PCM16 sample-aligned
-
-    async def chunks_then_commit() -> AsyncIterator[bytes]:
-        yield raw_chunk
-        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="raw_99")))
-
-    ctx = BargeInAttackContext(
-        params=AttackParameters(objective="obj"),
-        audio_chunks=chunks_then_commit(),
-    )
-
-    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
-        result = await attack._perform_async(context=ctx)
-
-    vad_target.delete_conversation_item_async.assert_awaited_once_with(connection=connection, item_id="raw_99")
-    vad_target.insert_user_audio_async.assert_awaited_once()
-    inserted_pcm = vad_target.insert_user_audio_async.call_args.kwargs["pcm_bytes"]
-    assert inserted_pcm == bytes((b + 1) & 0xFF for b in raw_chunk)
-    vad_target.request_response_async.assert_awaited_once()
-    assert result.executed_turns == 1
-
-
-async def test_perform_async_skips_swap_when_no_converters(vad_target):
-    """Empty converter list: don't delete raw, don't insert converted, just request response."""
-    attack = BargeInAttack(objective_target=vad_target)  # no converter config
-    connection = _mock_connection()
-    vad_target.connect_async = AsyncMock(return_value=connection)
-    vad_target.send_streaming_session_config_async = AsyncMock()
-    vad_target.push_audio_chunk_async = AsyncMock()
-    vad_target.delete_conversation_item_async = AsyncMock()
-    vad_target.insert_user_audio_async = AsyncMock()
-
-    captured: dict[str, Any] = {}
-
-    async def fake_subscribe(*, connection, on_user_audio_committed):
-        captured["on_committed"] = on_user_audio_committed
-        return AsyncMock()
-
-    vad_target.subscribe_events_async = AsyncMock(side_effect=fake_subscribe)
-    result_future: asyncio.Future[RealtimeTargetResult] = asyncio.get_event_loop().create_future()
-    result_future.set_result(RealtimeTargetResult(audio_bytes=b"", transcripts=[]))
-    vad_target.request_response_async = AsyncMock(return_value=result_future)
-
-    async def chunks_then_commit() -> AsyncIterator[bytes]:
-        yield b"\x00" * 96
-        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="raw_42")))
-
-    ctx = BargeInAttackContext(
-        params=AttackParameters(objective="obj"),
-        audio_chunks=chunks_then_commit(),
-    )
-
-    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
-        result = await attack._perform_async(context=ctx)
-
-    vad_target.delete_conversation_item_async.assert_not_called()
-    vad_target.insert_user_audio_async.assert_not_called()
-    vad_target.request_response_async.assert_awaited_once()
-    assert result.executed_turns == 1
-
-
-async def test_perform_async_clears_raw_buffer_between_commits(vad_target):
-    """A commit must snapshot+reset the raw buffer so the next turn doesn't see prior audio."""
-    bump = _make_audio_converter(lambda pcm: bytes((b + 1) & 0xFF for b in pcm))
-    attack = BargeInAttack(objective_target=vad_target, attack_converter_config=_converter_config([bump]))
-    connection = _mock_connection()
-    vad_target.connect_async = AsyncMock(return_value=connection)
-    vad_target.send_streaming_session_config_async = AsyncMock()
-    vad_target.push_audio_chunk_async = AsyncMock()
-    vad_target.delete_conversation_item_async = AsyncMock()
-    vad_target.insert_user_audio_async = AsyncMock()
-
-    captured: dict[str, Any] = {}
-
-    async def fake_subscribe(*, connection, on_user_audio_committed):
-        captured["on_committed"] = on_user_audio_committed
-        return AsyncMock()
-
-    vad_target.subscribe_events_async = AsyncMock(side_effect=fake_subscribe)
-
-    def _future_with(result: RealtimeTargetResult) -> asyncio.Future[RealtimeTargetResult]:
-        fut: asyncio.Future[RealtimeTargetResult] = asyncio.get_event_loop().create_future()
-        fut.set_result(result)
-        return fut
-
-    vad_target.request_response_async = AsyncMock(
-        side_effect=lambda **_: _future_with(RealtimeTargetResult(audio_bytes=b"", transcripts=[]))
-    )
-
-    async def chunks_then_two_commits() -> AsyncIterator[bytes]:
-        yield b"\x01" * 96
-        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="raw_1")))
-        yield b"\x02" * 96
-        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="raw_2")))
-
-    ctx = BargeInAttackContext(
-        params=AttackParameters(objective="obj"),
-        audio_chunks=chunks_then_two_commits(),
-    )
-
-    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
-        await attack._perform_async(context=ctx)
-
-    insert_calls = vad_target.insert_user_audio_async.await_args_list
-    assert len(insert_calls) == 2
-    assert insert_calls[0].kwargs["pcm_bytes"] == bytes((b + 1) & 0xFF for b in (b"\x01" * 96))
-    assert insert_calls[1].kwargs["pcm_bytes"] == bytes((b + 1) & 0xFF for b in (b"\x02" * 96))
-
-
-async def test_perform_async_uses_target_audio_normalizer(vad_target):
-    """The attack must delegate audio conversion to the target's audio_normalizer."""
-    fake_normalizer = MagicMock(spec=AudioStreamNormalizer)
-    fake_normalizer.normalize_async = AsyncMock(return_value=(b"\xff" * 96, []))
-    vad_target.audio_normalizer = fake_normalizer
-    attack = BargeInAttack(
-        objective_target=vad_target,
-        attack_converter_config=_converter_config([_make_audio_converter(lambda pcm: pcm)]),
-    )
-    connection = _mock_connection()
-    vad_target.connect_async = AsyncMock(return_value=connection)
-    vad_target.send_streaming_session_config_async = AsyncMock()
-    vad_target.push_audio_chunk_async = AsyncMock()
-    vad_target.delete_conversation_item_async = AsyncMock()
-    vad_target.insert_user_audio_async = AsyncMock()
-
-    captured: dict[str, Any] = {}
-
-    async def fake_subscribe(*, connection, on_user_audio_committed):
-        captured["on_committed"] = on_user_audio_committed
-        return AsyncMock()
-
-    vad_target.subscribe_events_async = AsyncMock(side_effect=fake_subscribe)
-    fut: asyncio.Future[RealtimeTargetResult] = asyncio.get_event_loop().create_future()
-    fut.set_result(RealtimeTargetResult(audio_bytes=b"", transcripts=[]))
-    vad_target.request_response_async = AsyncMock(return_value=fut)
-
-    raw = b"\x05" * 96
-
-    async def chunks_then_commit() -> AsyncIterator[bytes]:
-        yield raw
-        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id="raw_z")))
-
-    ctx = BargeInAttackContext(
-        params=AttackParameters(objective="obj"),
-        audio_chunks=chunks_then_commit(),
-    )
-
-    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
-        await attack._perform_async(context=ctx)
-
-    fake_normalizer.normalize_async.assert_awaited_once()
-    kwargs = fake_normalizer.normalize_async.call_args.kwargs
-    assert kwargs["pcm_bytes"] == raw
-    assert kwargs["sample_rate"] == 24000
-    vad_target.insert_user_audio_async.assert_awaited_once()
-    assert vad_target.insert_user_audio_async.call_args.kwargs["pcm_bytes"] == b"\xff" * 96
-
-
-# Placeholder for R4c tests
-
-
-# ---- Per-turn persistence to CentralMemory (R4c) --------------------------------------------
-
-
-async def _drive_one_audio_turn(
-    attack,
-    vad_target,
-    *,
-    raw_chunk: bytes,
-    item_id: str,
-    turn_result: RealtimeTargetResult,
-):
-    """Helper that runs a single audio-driven turn end-to-end against a mocked target."""
-    connection = _mock_connection()
-    vad_target.connect_async = AsyncMock(return_value=connection)
-    vad_target.send_streaming_session_config_async = AsyncMock()
-    vad_target.push_audio_chunk_async = AsyncMock()
-    vad_target.delete_conversation_item_async = AsyncMock()
-    vad_target.insert_user_audio_async = AsyncMock()
-
-    captured: dict[str, Any] = {}
-
-    async def fake_subscribe(*, connection, on_user_audio_committed):
-        captured["on_committed"] = on_user_audio_committed
-        return AsyncMock()
-
-    vad_target.subscribe_events_async = AsyncMock(side_effect=fake_subscribe)
-    fut: asyncio.Future[RealtimeTargetResult] = asyncio.get_event_loop().create_future()
-    fut.set_result(turn_result)
-    vad_target.request_response_async = AsyncMock(return_value=fut)
-
-    async def chunks_then_commit() -> AsyncIterator[bytes]:
-        yield raw_chunk
-        await asyncio.create_task(captured["on_committed"](CommittedEvent(item_id=item_id)))
-
-    ctx = BargeInAttackContext(
-        params=AttackParameters(objective="obj"),
-        audio_chunks=chunks_then_commit(),
-    )
-    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
-        return await attack._perform_async(context=ctx)
-
-
-async def test_persists_user_and_assistant_messages_per_turn(vad_target):
-    """A successful turn writes 1 user piece + 2 assistant pieces sharing the conversation id."""
-    attack = BargeInAttack(objective_target=vad_target)
-    add_calls: list[Any] = []
-    mock_memory = MagicMock()
-    mock_memory.add_message_to_memory = MagicMock(side_effect=lambda **kw: add_calls.append(kw["request"]))
-
-    with patch("pyrit.executor.attack.streaming.barge_in.CentralMemory") as mock_cm:
-        mock_cm.get_memory_instance.return_value = mock_memory
-        result = await _drive_one_audio_turn(
-            attack,
-            vad_target,
-            raw_chunk=b"\x00" * 96,
-            item_id="raw_1",
-            turn_result=RealtimeTargetResult(audio_bytes=b"\xaa" * 96, transcripts=["hello"]),
-        )
-
-    assert len(add_calls) == 2
-    user_msg, assistant_msg = add_calls
-    assert len(user_msg.message_pieces) == 1
-    assert user_msg.message_pieces[0].converted_value_data_type == "audio_path"
-    assert user_msg.message_pieces[0].conversation_id == result.conversation_id
-    assert len(assistant_msg.message_pieces) == 2
-    piece_types = sorted(p.converted_value_data_type for p in assistant_msg.message_pieces)
-    assert piece_types == ["audio_path", "text"]
-    text_piece = next(p for p in assistant_msg.message_pieces if p.converted_value_data_type == "text")
-    assert text_piece.converted_value == "hello"
-
-
-async def test_persists_interrupted_metadata_on_assistant_pieces(vad_target):
-    """Interrupted turns mark both assistant pieces with prompt_metadata['interrupted'] = True."""
-    attack = BargeInAttack(objective_target=vad_target)
-    add_calls: list[Any] = []
-    mock_memory = MagicMock()
-    mock_memory.add_message_to_memory = MagicMock(side_effect=lambda **kw: add_calls.append(kw["request"]))
-
-    with patch("pyrit.executor.attack.streaming.barge_in.CentralMemory") as mock_cm:
-        mock_cm.get_memory_instance.return_value = mock_memory
-        await _drive_one_audio_turn(
-            attack,
-            vad_target,
-            raw_chunk=b"\x00" * 96,
-            item_id="raw_int",
-            turn_result=RealtimeTargetResult(audio_bytes=b"\xbb" * 96, transcripts=["partial"], interrupted=True),
-        )
-
-    assistant_msg = add_calls[1]
-    for piece in assistant_msg.message_pieces:
-        assert piece.prompt_metadata.get("interrupted") is True
-
-
-async def test_persists_converter_identifiers_on_user_piece(vad_target):
-    """Converter identifiers reported by convert_audio_async must land on the user piece."""
-    bump = _make_audio_converter(
-        lambda pcm: bytes((b + 1) & 0xFF for b in pcm),
-        identifier_name="BumpConverter",
-    )
-    attack = BargeInAttack(
-        objective_target=vad_target,
-        attack_converter_config=AttackConverterConfig(
-            request_converters=PromptConverterConfiguration.from_converters(converters=[bump]),
-        ),
-    )
-    add_calls: list[Any] = []
-    mock_memory = MagicMock()
-    mock_memory.add_message_to_memory = MagicMock(side_effect=lambda **kw: add_calls.append(kw["request"]))
-
-    with patch("pyrit.executor.attack.streaming.barge_in.CentralMemory") as mock_cm:
-        mock_cm.get_memory_instance.return_value = mock_memory
-        await _drive_one_audio_turn(
-            attack,
-            vad_target,
-            raw_chunk=b"\x05" * 96,
-            item_id="raw_c",
-            turn_result=RealtimeTargetResult(audio_bytes=b"", transcripts=[]),
-        )
-
-    user_msg = add_calls[0]
-    identifiers = user_msg.message_pieces[0].converter_identifiers
-    assert len(identifiers) == 1
-    assert identifiers[0].class_name == "BumpConverter"
-
-
-async def test_persists_converted_audio_when_converters_changed_bytes(vad_target):
-    """The user piece's audio_path must point at the converted PCM, not the raw snapshot."""
-    bump = _make_audio_converter(lambda pcm: bytes((b + 1) & 0xFF for b in pcm))
-    attack = BargeInAttack(
-        objective_target=vad_target,
-        attack_converter_config=AttackConverterConfig(
-            request_converters=PromptConverterConfiguration.from_converters(converters=[bump]),
-        ),
-    )
-    saved_calls: list[bytes] = []
-
-    async def fake_save_audio(audio_bytes, **_):
-        saved_calls.append(audio_bytes)
-        return f"/tmp/audio_{len(saved_calls)}.wav"
-
-    vad_target.save_audio = AsyncMock(side_effect=fake_save_audio)
-    mock_memory = MagicMock()
-    mock_memory.add_message_to_memory = MagicMock()
-
-    raw = b"\x05" * 96
-    with patch("pyrit.executor.attack.streaming.barge_in.CentralMemory") as mock_cm:
-        mock_cm.get_memory_instance.return_value = mock_memory
-        await _drive_one_audio_turn(
-            attack,
-            vad_target,
-            raw_chunk=raw,
-            item_id="raw_x",
-            turn_result=RealtimeTargetResult(audio_bytes=b"\xff" * 96, transcripts=[]),
-        )
-
-    # save_audio called twice per turn: first for user audio (must be CONVERTED), then assistant audio.
-    assert len(saved_calls) == 2
-    assert saved_calls[0] == bytes((b + 1) & 0xFF for b in raw)
-    assert saved_calls[1] == b"\xff" * 96
-
-
-async def test_attack_result_last_response_is_final_assistant_text_piece(vad_target):
-    """AttackResult.last_response must point at the last assistant message's first piece (text)."""
-    attack = BargeInAttack(objective_target=vad_target)
-    mock_memory = MagicMock()
-    mock_memory.add_message_to_memory = MagicMock()
-
-    with patch("pyrit.executor.attack.streaming.barge_in.CentralMemory") as mock_cm:
-        mock_cm.get_memory_instance.return_value = mock_memory
-        result = await _drive_one_audio_turn(
-            attack,
-            vad_target,
-            raw_chunk=b"\x00" * 96,
-            item_id="raw_lr",
-            turn_result=RealtimeTargetResult(audio_bytes=b"\xaa" * 96, transcripts=["final answer"]),
-        )
-
-    assert result.last_response is not None
-    assert result.last_response.converted_value_data_type == "text"
-    assert result.last_response.converted_value == "final answer"
