@@ -49,8 +49,23 @@ def test_validate_toc_files_error_when_file_missing(tmp_path: Path) -> None:
 
 
 def test_validate_toc_files_skips_api_generated_files(tmp_path: Path) -> None:
+    # When doc/api/ does not exist (e.g. pre-commit before any docs build),
+    # api/* TOC entries are skipped because they will be generated later.
     errors = validate_toc_files({"api/some_module"}, tmp_path)
     assert errors == []
+
+
+def test_validate_toc_files_validates_api_entries_when_api_dir_exists(tmp_path: Path) -> None:
+    # Once doc/api/ exists (post gen_api_md.py), api/* TOC entries are
+    # validated like any other file so stale entries are caught.
+    api_dir = tmp_path / "api"
+    api_dir.mkdir()
+    (api_dir / "pyrit_existing.md").write_text("# existing")
+
+    errors = validate_toc_files({"api/pyrit_existing.md", "api/pyrit_missing.md"}, tmp_path)
+
+    assert len(errors) == 1
+    assert "pyrit_missing.md" in errors[0]
 
 
 def test_validate_toc_files_multiple_missing_files(tmp_path: Path) -> None:
@@ -89,3 +104,18 @@ def test_find_orphaned_files_skips_py_companion_files(tmp_path: Path) -> None:
     (tmp_path / "notebook.py").write_text("# companion")
     orphaned = find_orphaned_files(set(), tmp_path)
     assert not any("notebook.py" in o for o in orphaned)
+
+
+def test_find_orphaned_files_detects_orphaned_api_pages_when_dir_exists(tmp_path: Path) -> None:
+    # Post-build: doc/api/ exists. Any generated page that isn't in the TOC
+    # is flagged so stale or unlisted modules surface immediately instead of
+    # showing up later as a Read the Docs build failure.
+    api_dir = tmp_path / "api"
+    api_dir.mkdir()
+    (api_dir / "pyrit_listed.md").write_text("# listed")
+    (api_dir / "pyrit_orphan.md").write_text("# orphan")
+
+    orphaned = find_orphaned_files({"api/pyrit_listed.md"}, tmp_path)
+
+    assert any("pyrit_orphan.md" in o for o in orphaned)
+    assert not any("pyrit_listed.md" in o for o in orphaned)
