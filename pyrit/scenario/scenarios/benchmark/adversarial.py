@@ -14,12 +14,12 @@ from pyrit.registry import AttackTechniqueRegistry, AttackTechniqueSpec
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.scenario.core.atomic_attack import AtomicAttack
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
-    from pyrit.score import Scorer
+    from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+
 
 logger = logging.getLogger(__name__)
 
@@ -167,8 +167,6 @@ class AdversarialBenchmark(Scenario):
     #: VERSION=1 remain queryable but won't suppress fresh runs.
     VERSION: int = 2
 
-    _cached_strategy_class: ClassVar[type[ScenarioStrategy] | None] = None
-
     #: AdversarialBenchmark compares attack-success rates across adversarial models; a baseline
     #: attack would be model-independent and contribute no signal to the comparison.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
@@ -220,7 +218,7 @@ class AdversarialBenchmark(Scenario):
     def __init__(
         self,
         *,
-        objective_scorer: Scorer | None = None,
+        objective_scorer: TrueFalseScorer | None = None,
         skip_cached: bool = False,
         scenario_result_id: str | None = None,
     ) -> None:
@@ -258,14 +256,9 @@ class AdversarialBenchmark(Scenario):
                 is tracked as a follow-up; the type annotation is widened
                 ahead of the runtime support).
         """
-        resolved_scorer: Scorer = objective_scorer if objective_scorer else self._get_default_objective_scorer()
-        if not isinstance(resolved_scorer, TrueFalseScorer):
-            raise TypeError(
-                f"AdversarialBenchmark currently requires a TrueFalseScorer for objective_scorer; "
-                f"got {type(resolved_scorer).__name__}. Full Scorer support (e.g. FloatScaleScorer) is "
-                f"tracked as the new-scoring follow-up — see the PR description for status."
-            )
-        self._objective_scorer: TrueFalseScorer = resolved_scorer
+        self._objective_scorer: TrueFalseScorer = (
+            objective_scorer if objective_scorer else self._get_default_objective_scorer()
+        )
         self._skip_cached: bool = skip_cached
 
         super().__init__(
