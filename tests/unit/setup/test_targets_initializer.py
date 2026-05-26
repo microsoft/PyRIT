@@ -218,7 +218,8 @@ class TestTargetInitializerTargetConfigs:
         ``TargetInitializer`` registers them (per ``BaseInstanceRegistry.register``
         semantics, characterized in ``test_target_registry.py``). Only the
         second entry would survive in the registry, which breaks downstream
-        fan-out (``BenchmarkInitializer``) and is hard to diagnose. Tracked
+        scenarios that resolve targets by name (e.g. ``AdversarialBenchmark``'s
+        ``adversarial_targets`` parameter) and is hard to diagnose. Tracked
         as ``duplicate-registry-name`` in failure_mode_followups.
         """
         registry_names = [config.registry_name for config in TARGET_CONFIGS]
@@ -609,8 +610,8 @@ class TestTargetInitializerAdversarialChatVariants:
             os.environ.pop(f"{env_prefix}_KEY", None)
 
     async def test_all_variants_discoverable_via_adversarial_tag_query(self) -> None:
-        """End-to-end: variants + ``adversarial_chat`` are returned by adversarial-tag ``get_by_tag_query``."""
-        from pyrit.registry.tag_query import TagQuery
+        """End-to-end: variants + ``adversarial_chat`` are returned by adversarial-tag ``get_by_tag``."""
+        from pyrit.setup.initializers.components.targets import TargetInitializerTags
 
         os.environ["ADVERSARIAL_CHAT_ENDPOINT"] = "https://parent.openai.azure.com/openai/v1"
         os.environ["ADVERSARIAL_CHAT_KEY"] = "test_key"
@@ -624,7 +625,7 @@ class TestTargetInitializerAdversarialChatVariants:
             await init.initialize_async()
 
             registry = TargetRegistry.get_registry_singleton()
-            matches = registry.get_by_tag_query(query=TagQuery.all("adversarial"))
+            matches = registry.get_by_tag(tag=TargetInitializerTags.ADVERSARIAL.value)
             match_names = {entry.name for entry in matches}
 
             expected = {"adversarial_chat"} | {name for name, _ in ADVERSARIAL_CHAT_VARIANTS}

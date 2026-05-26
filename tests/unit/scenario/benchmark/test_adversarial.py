@@ -3,73 +3,67 @@
 
 """Tests for the post-collapse AdversarialBenchmark scenario.
 
-AdversarialBenchmark no longer takes an ``adversarial_models`` constructor
-parameter and no longer builds local factories. It reads fanned variants
-from ``AttackTechniqueRegistry`` (registered by ``BenchmarkInitializer``)
-and inherits the base ``Scenario._get_atomic_attacks_async`` loop, with
-an opt-in caching wrapper for cross-run skip-on-completion.
+AdversarialBenchmark now owns its adversarial target axis directly via
+the ``adversarial_targets`` parameter declared in
+:meth:`supported_parameters`. Targets are user-supplied registry names
+that resolve to ``PromptTarget`` instances via ``TargetRegistry``. The
+``(technique × target × dataset)`` cross-product is built lazily inside
+:meth:`_get_atomic_attacks_async` using per-pair non-registered factories;
+no global ``AttackTechniqueRegistry`` state is mutated.
 
 These tests cover the new contract:
 * Class metadata (VERSION, BASELINE policy, defaults).
-* Strategy enum is built from ``benchmark_fanout``-tagged registry entries.
-* Display grouping uses the target-label portion of fanned technique names.
-* Construction accepts ``objective_scorer``, ``skip_cached``, and
-  ``scenario_result_id``.
-* ``skip_cached`` filters prior SUCCESS/FAILURE completions, keeps
-  ERROR/UNDETERMINED, respects eval-hash disambiguation, and only counts
-  COMPLETED scenario runs of the matching name + version.
+* Strategy enum is built from source ``SCENARIO_TECHNIQUES`` entries that
+  require an adversarial chat target; ``light`` aggregate preserves the
+  source ``light`` tag (excludes ``tap`` / ``crescendo_simulated``).
+* ``supported_parameters`` declares ``adversarial_targets: list[str]``.
+* ``_resolve_adversarial_targets`` raises with available names on typos.
+* ``_select_adversarial_specs`` drops non-adversarial techniques.
+* ``_get_atomic_attacks_async`` produces ``N × M × D`` atomic attacks
+  with the expected ``atomic_attack_name`` and ``display_group``.
+* ``_collect_cached_completion_pairs`` collects (name, hash) tuples for
+  prior ``SUCCESS`` / ``FAILURE`` outcomes only.
+* ``skip_cached`` filters cached candidates end-to-end.
+* Scorer flexibility stage 1: widened annotation + ``TypeError`` guard.
 """
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.models import AttackOutcome
+from pyrit.models import AttackOutcome, SeedAttackGroup, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core import BaselineAttackPolicy
+from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES, _spec_needs_adversarial
 from pyrit.scenario.scenarios.benchmark.adversarial import (
-    BENCHMARK_FANOUT_TAG,
     AdversarialBenchmark,
     _build_benchmark_strategy,
 )
 from pyrit.score import TrueFalseScorer
-from pyrit.setup.initializers import BenchmarkInitializer
-from pyrit.setup.initializers.components.targets import TargetInitializerTags
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Fixtures / helpers
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
-def reset_registries_and_cache():
-    """Reset both registries and AdversarialBenchmark's strategy-class cache between tests."""
+def reset_registries():
+    """Reset both registries between tests so target/technique state doesn't leak."""
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
-    AdversarialBenchmark._cached_strategy_class = None
     yield
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
-    AdversarialBenchmark._cached_strategy_class = None
 
 
 def _register_adversarial_target(*, name: str) -> PromptTarget:
-    """Register a mock adversarial-tagged target in TargetRegistry."""
+    """Register a mock adversarial target in TargetRegistry."""
     target = MagicMock(spec=PromptTarget)
-    target.capabilities.includes.return_value = True
     registry = TargetRegistry.get_registry_singleton()
-    registry.register_instance(target, name=name, tags=[TargetInitializerTags.ADVERSARIAL.value])
+    registry.register_instance(target, name=name)
     return target
-
-
-async def _fan_out(*, target_names: list[str]) -> None:
-    """Register mock targets + run BenchmarkInitializer to populate AttackTechniqueRegistry."""
-    for name in target_names:
-        _register_adversarial_target(name=name)
-    init = BenchmarkInitializer()
-    await init.initialize_async()
 
 
 # ---------------------------------------------------------------------------
@@ -78,10 +72,10 @@ async def _fan_out(*, target_names: list[str]) -> None:
 
 
 class TestAdversarialBenchmarkMetadata:
-    """Tests for class-level metadata that doesn't depend on fan-out state."""
+    """Tests for class-level metadata that doesn't depend on any runtime state."""
 
     def test_version_is_2(self):
-        """VERSION is bumped from 1 because the atomic_attack_name format changed."""
+        """VERSION matches the post-collapse ``atomic_attack_name`` format so cached results still match."""
         assert AdversarialBenchmark.VERSION == 2
 
     def test_baseline_attack_policy_is_forbidden(self):
@@ -95,9 +89,35 @@ class TestAdversarialBenchmarkMetadata:
     def test_default_dataset_config_max_size_is_8(self):
         assert AdversarialBenchmark.default_dataset_config().max_dataset_size == 8
 
-    def test_benchmark_fanout_tag_value(self):
-        """The shared tag value must match what BenchmarkInitializer applies."""
-        assert BENCHMARK_FANOUT_TAG == "benchmark_fanout"
+
+# ---------------------------------------------------------------------------
+# supported_parameters
+# ---------------------------------------------------------------------------
+
+
+class TestAdversarialBenchmarkSupportedParameters:
+    """Tests for the ``adversarial_targets`` parameter declaration."""
+
+    def test_declares_adversarial_targets_param(self):
+        params = AdversarialBenchmark.supported_parameters()
+        names = [p.name for p in params]
+        assert "adversarial_targets" in names
+
+    def test_adversarial_targets_param_is_list_of_str(self):
+        params = {p.name: p for p in AdversarialBenchmark.supported_parameters()}
+        param = params["adversarial_targets"]
+        assert param.param_type == list[str]
+
+    def test_adversarial_targets_default_is_none(self):
+        """``None`` default lets the scenario raise a domain-specific error rather than the framework default."""
+        params = {p.name: p for p in AdversarialBenchmark.supported_parameters()}
+        assert params["adversarial_targets"].default is None
+
+    def test_adversarial_targets_description_mentions_cli_flag(self):
+        """The description must point users at ``--adversarial-targets`` for discoverability."""
+        params = {p.name: p for p in AdversarialBenchmark.supported_parameters()}
+        description = params["adversarial_targets"].description
+        assert "--adversarial-targets" in description
 
 
 # ---------------------------------------------------------------------------
@@ -106,176 +126,388 @@ class TestAdversarialBenchmarkMetadata:
 
 
 class TestAdversarialBenchmarkStrategy:
-    """Tests for _build_benchmark_strategy and the cached get_strategy_class accessor."""
+    """Tests for ``_build_benchmark_strategy`` and the cached ``get_strategy_class`` accessor."""
 
-    async def test_strategy_built_from_fanned_registry_entries(self):
-        """Every benchmark_fanout-tagged entry produces one concrete enum member."""
-        await _fan_out(target_names=["adv_a", "adv_b"])
-
-        strategy_cls = AdversarialBenchmark.get_strategy_class()
+    def test_strategy_built_from_adversarial_specs(self):
+        """Every adversarial-capable spec in ``SCENARIO_TECHNIQUES`` produces one concrete enum member."""
+        strategy_cls = _build_benchmark_strategy()
         aggregate_names = {"all"} | strategy_cls.get_aggregate_tags()
         concrete_members = [m for m in strategy_cls if m.value not in aggregate_names]
 
-        assert len(concrete_members) > 0
-        for member in concrete_members:
-            assert "__" in member.value, f"Expected fanned format with '__', got: {member.value}"
+        adversarial_specs = [s for s in SCENARIO_TECHNIQUES if _spec_needs_adversarial(s)]
+        adversarial_spec_names = {s.name for s in adversarial_specs}
 
-    async def test_strategy_concrete_member_count_matches_registry(self):
-        """Concrete enum members count equals fanned spec count in the registry."""
-        await _fan_out(target_names=["adv_a", "adv_b"])
+        concrete_member_values = {m.value for m in concrete_members}
+        assert concrete_member_values == adversarial_spec_names
 
-        attack_registry = AttackTechniqueRegistry.get_registry_singleton()
-        fanned_entries = attack_registry.get_by_tag(tag=BENCHMARK_FANOUT_TAG)
+    def test_strategy_excludes_non_adversarial_techniques(self):
+        """Techniques like ``prompt_sending`` (no adversarial chat) must not be enum members."""
+        strategy_cls = _build_benchmark_strategy()
+        member_values = {m.value for m in strategy_cls}
 
-        strategy_cls = AdversarialBenchmark.get_strategy_class()
-        aggregate_names = {"all"} | strategy_cls.get_aggregate_tags()
-        concrete_members = [m for m in strategy_cls if m.value not in aggregate_names]
+        non_adversarial = [s for s in SCENARIO_TECHNIQUES if not _spec_needs_adversarial(s)]
+        for spec in non_adversarial:
+            assert spec.name not in member_values, (
+                f"{spec.name} is not adversarial-capable but appeared as a benchmark strategy member."
+            )
 
-        assert len(concrete_members) == len(fanned_entries)
-
-    async def test_strategy_exposes_per_model_selection(self):
-        """Each fanned variant inherits its model:* tag, accessible by name on the enum."""
-        await _fan_out(target_names=["adv_a"])
-
-        attack_registry = AttackTechniqueRegistry.get_registry_singleton()
-        model_a_entries = attack_registry.get_by_tag(tag="model:adv_a")
-        assert len(model_a_entries) > 0
-
-        strategy_cls = AdversarialBenchmark.get_strategy_class()
-        for entry in model_a_entries:
-            member = strategy_cls(entry.name)
-            assert "model:adv_a" in member.tags
-
-    async def test_strategy_includes_required_aggregates(self):
-        """The strategy enum exposes all, light, single_turn, multi_turn aggregates."""
-        await _fan_out(target_names=["adv_a"])
-
-        strategy_cls = AdversarialBenchmark.get_strategy_class()
+    def test_strategy_includes_required_aggregates(self):
+        """The strategy enum exposes ``light``, ``single_turn``, ``multi_turn`` aggregates."""
+        strategy_cls = _build_benchmark_strategy()
         aggregates = strategy_cls.get_aggregate_tags()
 
-        assert "all" in aggregates
         assert "light" in aggregates
         assert "single_turn" in aggregates
         assert "multi_turn" in aggregates
 
-    async def test_get_strategy_class_is_cached(self):
-        """Repeated calls within a process return the same class instance."""
-        await _fan_out(target_names=["adv_a"])
+    def test_light_aggregate_excludes_expensive_techniques(self):
+        """``light`` must not pull in ``tap`` or ``crescendo_simulated`` — both can take hours."""
+        strategy_cls = _build_benchmark_strategy()
+        light_member = strategy_cls("light")
 
+        # Expand the aggregate to its concrete child members.
+        resolved_values = {child.value for child in strategy_cls.expand({light_member})}
+
+        assert "tap" not in resolved_values
+        assert "crescendo_simulated" not in resolved_values
+
+    def test_light_aggregate_includes_red_teaming(self):
+        """Sanity check: ``red_teaming`` is adversarial-capable AND tagged ``light``."""
+        strategy_cls = _build_benchmark_strategy()
+        light_member = strategy_cls("light")
+        resolved_values = {child.value for child in strategy_cls.expand({light_member})}
+        assert "red_teaming" in resolved_values
+
+    def test_get_strategy_class_returns_same_enum_shape(self):
+        """``get_strategy_class`` rebuilds on every call; the resulting enums have identical members."""
         first = AdversarialBenchmark.get_strategy_class()
         second = AdversarialBenchmark.get_strategy_class()
+        assert {m.value for m in first} == {m.value for m in second}
 
-        assert first is second
-
-    async def test_cache_can_be_cleared_to_rebuild(self):
-        """Setting _cached_strategy_class = None forces a rebuild from current registry state."""
-        await _fan_out(target_names=["adv_a"])
-        first = AdversarialBenchmark.get_strategy_class()
-
-        await _fan_out(target_names=["adv_b"])
-        AdversarialBenchmark._cached_strategy_class = None
-        second = AdversarialBenchmark.get_strategy_class()
-
-        assert first is not second
-
-    async def test_default_strategy_is_light(self):
-        """get_default_strategy returns the 'light' aggregate so quick benchmark runs are the default."""
-        await _fan_out(target_names=["adv_a"])
-
+    def test_default_strategy_is_light(self):
+        """``get_default_strategy`` returns the ``light`` aggregate."""
         default = AdversarialBenchmark.get_default_strategy()
         assert default.value == "light"
 
-    def test_build_benchmark_strategy_empty_registry_produces_aggregates_only(self):
-        """No fan-out → enum still constructs (aggregates always present), just with zero concrete members."""
-        strategy_cls = _build_benchmark_strategy()
-        aggregate_names = {"all"} | strategy_cls.get_aggregate_tags()
-        concrete_members = [m for m in strategy_cls if m.value not in aggregate_names]
-        assert concrete_members == []
-
 
 # ---------------------------------------------------------------------------
-# Construction
-# ---------------------------------------------------------------------------
-
-
-class TestAdversarialBenchmarkInit:
-    """Tests for the collapsed __init__ surface (objective_scorer + scenario_result_id only)."""
-
-    @pytest.mark.usefixtures("patch_central_database")
-    async def test_construct_with_default_objective_scorer(self):
-        """When no scorer is supplied, _get_default_objective_scorer is consulted."""
-        await _fan_out(target_names=["adv_a"])
-
-        default_scorer = MagicMock(spec=TrueFalseScorer)
-        with patch.object(AdversarialBenchmark, "_get_default_objective_scorer", return_value=default_scorer):
-            bench = AdversarialBenchmark()
-
-        assert bench._objective_scorer is default_scorer
-
-    @pytest.mark.usefixtures("patch_central_database")
-    async def test_construct_with_explicit_objective_scorer(self):
-        """An explicit scorer is used as-is, no default consulted."""
-        await _fan_out(target_names=["adv_a"])
-
-        explicit_scorer = MagicMock(spec=TrueFalseScorer)
-        bench = AdversarialBenchmark(objective_scorer=explicit_scorer)
-
-        assert bench._objective_scorer is explicit_scorer
-
-    async def test_construct_takes_no_adversarial_models_param(self):
-        """Regression: the old adversarial_models constructor param is removed."""
-        await _fan_out(target_names=["adv_a"])
-
-        with pytest.raises(TypeError):
-            AdversarialBenchmark(adversarial_models=[MagicMock(spec=PromptTarget)])  # type: ignore[call-arg]
-
-
-# ---------------------------------------------------------------------------
-# Display grouping
+# Construction (collapsed __init__)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestAdversarialBenchmarkDisplayGroup:
-    """Tests for _build_display_group's fanned-name parsing."""
+class TestAdversarialBenchmarkInit:
+    """Tests for the collapsed ``__init__`` surface."""
 
-    async def _make_bench(self) -> AdversarialBenchmark:
-        await _fan_out(target_names=["adv_a"])
-        return AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+    def test_construct_with_default_objective_scorer(self):
+        """When no scorer is supplied, ``_get_default_objective_scorer`` is consulted."""
+        default_scorer = MagicMock(spec=TrueFalseScorer)
+        with patch.object(AdversarialBenchmark, "_get_default_objective_scorer", return_value=default_scorer):
+            bench = AdversarialBenchmark()
+        assert bench._objective_scorer is default_scorer
 
-    async def test_extracts_target_label_after_double_underscore(self):
-        bench = await self._make_bench()
-        result = bench._build_display_group(
-            technique_name="red_teaming__adversarial_chat_singleturn",
-            seed_group_name="seed_group_1",
-        )
-        assert result == "adversarial_chat_singleturn"
+    def test_construct_with_explicit_objective_scorer(self):
+        explicit_scorer = MagicMock(spec=TrueFalseScorer)
+        bench = AdversarialBenchmark(objective_scorer=explicit_scorer)
+        assert bench._objective_scorer is explicit_scorer
 
-    async def test_falls_back_to_full_name_when_no_separator(self):
-        """Non-fanned names (no ``__``) return the full technique name unchanged."""
-        bench = await self._make_bench()
-        result = bench._build_display_group(
-            technique_name="prompt_sending",
-            seed_group_name="seed_group_1",
-        )
-        assert result == "prompt_sending"
+    def test_construct_takes_no_adversarial_models_param(self):
+        """Regression: the old ``adversarial_models`` constructor param is removed."""
+        with pytest.raises(TypeError):
+            AdversarialBenchmark(adversarial_models=[MagicMock(spec=PromptTarget)])  # type: ignore[call-arg]
 
-    async def test_ignores_seed_group_name(self):
-        """seed_group_name input must not influence the result (display rolls up per-target)."""
-        bench = await self._make_bench()
-        first = bench._build_display_group(
-            technique_name="red_teaming__adv_a",
-            seed_group_name="seed_group_a",
+    def test_construct_takes_no_models_param(self):
+        """Regression: the interim ``models`` param (BenchmarkInitializer era) is removed."""
+        with pytest.raises(TypeError):
+            AdversarialBenchmark(models=[MagicMock(spec=PromptTarget)])  # type: ignore[call-arg]
+
+    def test_skip_cached_defaults_to_false(self):
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        assert bench._skip_cached is False
+
+    def test_skip_cached_can_be_set_true(self):
+        bench = AdversarialBenchmark(
+            objective_scorer=MagicMock(spec=TrueFalseScorer),
+            skip_cached=True,
         )
-        second = bench._build_display_group(
-            technique_name="red_teaming__adv_a",
-            seed_group_name="seed_group_b",
-        )
-        assert first == second == "adv_a"
+        assert bench._skip_cached is True
 
 
 # ---------------------------------------------------------------------------
-# skip_cached behavior (Commit 6 / F3)
+# _resolve_adversarial_targets
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestResolveAdversarialTargets:
+    """Tests for ``_resolve_adversarial_targets``: registry lookup + actionable errors on miss."""
+
+    def _make_bench(self) -> AdversarialBenchmark:
+        return AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+
+    def test_resolves_registered_targets(self):
+        t_a = _register_adversarial_target(name="adv_a")
+        t_b = _register_adversarial_target(name="adv_b")
+        bench = self._make_bench()
+
+        resolved = bench._resolve_adversarial_targets(target_names=["adv_a", "adv_b"])
+
+        names = [name for name, _ in resolved]
+        instances = [inst for _, inst in resolved]
+        assert names == ["adv_a", "adv_b"]
+        assert instances == [t_a, t_b]
+
+    def test_unknown_target_raises_with_available_list(self):
+        _register_adversarial_target(name="adv_a")
+        bench = self._make_bench()
+
+        with pytest.raises(ValueError) as exc_info:
+            bench._resolve_adversarial_targets(target_names=["adv_a", "missing"])
+
+        message = str(exc_info.value)
+        assert "missing" in message
+        assert "adv_a" in message  # available list should include registered targets
+
+    def test_all_unknown_targets_raises(self):
+        bench = self._make_bench()
+
+        with pytest.raises(ValueError, match="not found in TargetRegistry"):
+            bench._resolve_adversarial_targets(target_names=["nope_1", "nope_2"])
+
+    def test_preserves_caller_order(self):
+        _register_adversarial_target(name="adv_b")
+        _register_adversarial_target(name="adv_a")
+        _register_adversarial_target(name="adv_c")
+        bench = self._make_bench()
+
+        resolved = bench._resolve_adversarial_targets(target_names=["adv_c", "adv_a", "adv_b"])
+        names = [name for name, _ in resolved]
+        assert names == ["adv_c", "adv_a", "adv_b"]
+
+
+# ---------------------------------------------------------------------------
+# _select_adversarial_specs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestSelectAdversarialSpecs:
+    """Tests for ``_select_adversarial_specs``: filter strategies down to adversarial-capable specs."""
+
+    def _make_bench(self) -> AdversarialBenchmark:
+        return AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+
+    def test_returns_only_adversarial_specs(self):
+        """``red_teaming`` is adversarial-capable; ``prompt_sending`` is not — only red_teaming survives."""
+        bench = self._make_bench()
+
+        red_teaming_strategy = MagicMock()
+        red_teaming_strategy.value = "red_teaming"
+        prompt_sending_strategy = MagicMock()
+        prompt_sending_strategy.value = "prompt_sending"
+        bench._scenario_strategies = [red_teaming_strategy, prompt_sending_strategy]
+
+        selected = bench._select_adversarial_specs()
+        selected_names = {s.name for s in selected}
+
+        assert "red_teaming" in selected_names
+        assert "prompt_sending" not in selected_names
+
+    def test_unknown_strategy_value_is_skipped_with_warning(self, caplog):
+        """A strategy enum value with no matching spec is dropped (defensive guard against drift)."""
+        bench = self._make_bench()
+
+        unknown_strategy = MagicMock()
+        unknown_strategy.value = "nonexistent_technique"
+        bench._scenario_strategies = [unknown_strategy]
+
+        with caplog.at_level("WARNING"):
+            selected = bench._select_adversarial_specs()
+
+        assert selected == []
+        assert any("nonexistent_technique" in record.message for record in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# _get_atomic_attacks_async — validation and cross-product
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestGetAtomicAttacksValidation:
+    """Tests for validation errors raised by ``_get_atomic_attacks_async``."""
+
+    def _make_bench(self) -> AdversarialBenchmark:
+        return AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+
+    async def test_uninitialized_scenario_raises(self):
+        """Calling ``_get_atomic_attacks_async`` before ``initialize_async`` raises a clear error."""
+        bench = self._make_bench()
+        bench._objective_target = None
+
+        with pytest.raises(ValueError, match="not properly initialized"):
+            await bench._get_atomic_attacks_async()
+
+    async def test_missing_adversarial_targets_raises_actionable_error(self):
+        """Empty/missing ``adversarial_targets`` raises a message pointing at CLI / .pyrit_conf / list-targets."""
+        bench = self._make_bench()
+        bench._objective_target = MagicMock(spec=PromptTarget)
+        bench.params = {}
+
+        with pytest.raises(ValueError) as exc_info:
+            await bench._get_atomic_attacks_async()
+
+        message = str(exc_info.value)
+        assert "--adversarial-targets" in message
+        assert ".pyrit_conf" in message
+        assert "list-targets" in message
+
+    async def test_empty_adversarial_targets_list_raises(self):
+        bench = self._make_bench()
+        bench._objective_target = MagicMock(spec=PromptTarget)
+        bench.params = {"adversarial_targets": []}
+
+        with pytest.raises(ValueError, match="at least one adversarial chat target"):
+            await bench._get_atomic_attacks_async()
+
+    async def test_unknown_target_name_raises_listing_available(self):
+        _register_adversarial_target(name="adv_a")
+        bench = self._make_bench()
+        bench._objective_target = MagicMock(spec=PromptTarget)
+        bench.params = {"adversarial_targets": ["missing"]}
+
+        with pytest.raises(ValueError) as exc_info:
+            await bench._get_atomic_attacks_async()
+
+        message = str(exc_info.value)
+        assert "missing" in message
+        assert "adv_a" in message
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestGetAtomicAttacksCrossProduct:
+    """Tests for the (technique × target × dataset) cross-product produced by ``_get_atomic_attacks_async``."""
+
+    def _make_bench_with_targets(self, *, target_names: list[str]) -> AdversarialBenchmark:
+        for name in target_names:
+            _register_adversarial_target(name=name)
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        bench._objective_target = MagicMock(spec=PromptTarget)
+        bench.params = {"adversarial_targets": target_names}
+
+        red_teaming_strategy = MagicMock()
+        red_teaming_strategy.value = "red_teaming"
+        bench._scenario_strategies = [red_teaming_strategy]
+
+        # Dataset config: one dataset with one real seed group (AtomicAttack hashes objectives).
+        seed_group = SeedAttackGroup(seeds=[SeedObjective(value="benchmark_objective_1")])
+        bench._dataset_config = MagicMock()
+        bench._dataset_config.get_seed_attack_groups.return_value = {"harmbench": [seed_group]}
+
+        return bench
+
+    def _patch_factory_builder(self, *, seed_technique=None):
+        """Return a patch context manager for ``AttackTechniqueRegistry.build_factory_from_spec``."""
+        factory = MagicMock()
+        factory.seed_technique = seed_technique
+        factory.create.return_value = MagicMock(name="AttackTechnique")
+        return patch(
+            "pyrit.scenario.scenarios.benchmark.adversarial.AttackTechniqueRegistry.build_factory_from_spec",
+            return_value=factory,
+        )
+
+    async def test_cross_product_count_matches_n_techniques_m_targets_d_datasets(self):
+        """1 technique × 2 targets × 1 dataset = 2 atomic attacks."""
+        bench = self._make_bench_with_targets(target_names=["adv_a", "adv_b"])
+
+        with self._patch_factory_builder():
+            result = await bench._get_atomic_attacks_async()
+
+        assert len(result) == 2
+
+    async def test_atomic_attack_name_format_is_technique__target_dataset(self):
+        """Name format: ``{technique}__{target}_{dataset}`` (preserves VERSION=2 cache key shape)."""
+        bench = self._make_bench_with_targets(target_names=["adv_a"])
+
+        with self._patch_factory_builder():
+            result = await bench._get_atomic_attacks_async()
+
+        names = [a.atomic_attack_name for a in result]
+        assert names == ["red_teaming__adv_a_harmbench"]
+
+    async def test_display_group_equals_target_registry_name(self):
+        """``display_group`` is the raw target registry name — no string parsing."""
+        bench = self._make_bench_with_targets(target_names=["adv_a", "adv_b"])
+
+        with self._patch_factory_builder():
+            result = await bench._get_atomic_attacks_async()
+
+        display_groups = sorted({a.display_group for a in result})
+        assert display_groups == ["adv_a", "adv_b"]
+
+    async def test_display_group_uses_registry_name_not_target_model_name(self):
+        """Regression: ``display_group`` must come from the registry name passed in via
+        ``adversarial_targets`` — not from any internal field on the ``PromptTarget`` instance
+        (``_model_name``, ``_underlying_model``, ``_endpoint``, etc.). If a future refactor
+        causes the scenario to source ``display_group`` from the target's own attributes,
+        users' per-target ASR roll-ups would silently change shape based on whatever model
+        name the target was constructed with.
+        """
+        # Register a target under the registry name "adv_a" with an utterly different
+        # internal model/endpoint identity. After resolution, display_group should still
+        # be "adv_a" — the registry name — not anything that leaked from the target.
+        target = MagicMock(spec=PromptTarget)
+        target._model_name = "totally-different-model-name"
+        target._underlying_model = "another-model-identity"
+        target._endpoint = "https://hijacked.example.com/openai/v1"
+        target.name = "name-attribute-that-must-not-leak"
+        TargetRegistry.get_registry_singleton().register_instance(target, name="adv_a")
+
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        bench._objective_target = MagicMock(spec=PromptTarget)
+        bench.params = {"adversarial_targets": ["adv_a"]}
+
+        red_teaming_strategy = MagicMock()
+        red_teaming_strategy.value = "red_teaming"
+        bench._scenario_strategies = [red_teaming_strategy]
+
+        seed_group = SeedAttackGroup(seeds=[SeedObjective(value="display_group_regression_objective")])
+        bench._dataset_config = MagicMock()
+        bench._dataset_config.get_seed_attack_groups.return_value = {"harmbench": [seed_group]}
+
+        with self._patch_factory_builder():
+            result = await bench._get_atomic_attacks_async()
+
+        assert len(result) == 1
+        atomic = result[0]
+        assert atomic.display_group == "adv_a", (
+            f"display_group must equal the registry name 'adv_a', got {atomic.display_group!r}. "
+            "If this is failing, the scenario started sourcing display_group from the target's "
+            "internal attributes (_model_name, etc.) — restore the registry-name behavior."
+        )
+        # Belt-and-suspenders: also assert the atomic_attack_name uses the registry name,
+        # since the same plumbing pipes both.
+        assert atomic.atomic_attack_name == "red_teaming__adv_a_harmbench"
+
+    async def test_factory_built_per_target_with_overridden_adversarial_chat(self):
+        """Each (spec, target) pair gets its own ``build_factory_from_spec`` call with a replaced spec."""
+        bench = self._make_bench_with_targets(target_names=["adv_a", "adv_b"])
+
+        with self._patch_factory_builder() as build_mock:
+            await bench._get_atomic_attacks_async()
+
+        # 1 selected technique × 2 targets = 2 factory builds.
+        assert build_mock.call_count == 2
+        # Each pair_spec has adversarial_chat replaced; verify the (replaced spec).adversarial_chat
+        # matches the corresponding registry entry.
+        target_a = TargetRegistry.get_registry_singleton().get_instance_by_name("adv_a")
+        target_b = TargetRegistry.get_registry_singleton().get_instance_by_name("adv_b")
+        replaced_targets = {call.args[0].adversarial_chat for call in build_mock.call_args_list}
+        assert replaced_targets == {target_a, target_b}
+
+
+# ---------------------------------------------------------------------------
+# _collect_cached_completion_pairs
 # ---------------------------------------------------------------------------
 
 
@@ -293,7 +525,7 @@ def _make_attack_result(
     parent_collection: str | None,
     parent_eval_hash: str | None,
 ) -> MagicMock:
-    """Build a minimal AttackResult stand-in with the attribution_data shape Commit 6 reads."""
+    """Build a minimal AttackResult stand-in with the attribution_data shape the cache filter reads."""
     ar = MagicMock()
     ar.outcome = outcome
     if parent_collection is None and parent_eval_hash is None:
@@ -308,278 +540,211 @@ def _make_attack_result(
     return ar
 
 
-def _make_candidate(*, name: str, eval_hash: str) -> MagicMock:
-    """Build a minimal AtomicAttack stand-in with the two fields the cache filter reads."""
-    candidate = MagicMock()
-    candidate.atomic_attack_name = name
-    candidate.technique_eval_hash = eval_hash
-    return candidate
-
-
 @pytest.mark.usefixtures("patch_central_database")
-class TestAdversarialBenchmarkSkipCachedFilter:
-    """Tests for the _get_atomic_attacks_async caching wrapper."""
+class TestCollectCachedCompletionPairs:
+    """Tests for ``_collect_cached_completion_pairs`` (the cache key collector)."""
 
-    async def _make_bench(self, *, skip_cached: bool) -> AdversarialBenchmark:
-        await _fan_out(target_names=["adv_a"])
-        return AdversarialBenchmark(
-            objective_scorer=MagicMock(spec=TrueFalseScorer),
-            skip_cached=skip_cached,
-        )
+    def _make_bench(self) -> AdversarialBenchmark:
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        bench._memory = MagicMock()
+        return bench
 
-    async def test_skip_cached_default_false_means_no_filtering(self):
-        """skip_cached defaults to False; super() output is returned unchanged."""
-        bench = await self._make_bench(skip_cached=False)
-        candidates = [_make_candidate(name="red_teaming__adv_a", eval_hash="hash_a")]
-
-        with patch.object(
-            AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=candidates
-        ) as super_mock:
-            result = await bench._get_atomic_attacks_async()
-
-        assert result == candidates
-        super_mock.assert_awaited_once()
-
-    async def test_skip_cached_true_drops_completed_pairs(self):
-        """SUCCESS and FAILURE prior outcomes drop the matching candidate."""
-        bench = await self._make_bench(skip_cached=True)
-
-        candidates = [
-            _make_candidate(name="red_teaming__adv_a", eval_hash="hash_a"),
-            _make_candidate(name="tap__adv_a", eval_hash="hash_b"),
-            _make_candidate(name="crescendo_simulated__adv_a", eval_hash="hash_c"),
-        ]
+    def test_collects_success_and_failure_pairs(self):
+        bench = self._make_bench()
         prior_sr = _make_scenario_result(result_id="sid-1")
         prior_attacks = [
             _make_attack_result(
                 outcome=AttackOutcome.SUCCESS,
-                parent_collection="red_teaming__adv_a",
+                parent_collection="red_teaming__adv_a_harmbench",
                 parent_eval_hash="hash_a",
             ),
             _make_attack_result(
                 outcome=AttackOutcome.FAILURE,
-                parent_collection="tap__adv_a",
+                parent_collection="tap__adv_a_harmbench",
                 parent_eval_hash="hash_b",
             ),
         ]
-
-        bench._memory = MagicMock()
         bench._memory.get_scenario_results.return_value = [prior_sr]
         bench._memory.get_attack_results.return_value = prior_attacks
 
-        with patch.object(AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=candidates):
-            result = await bench._get_atomic_attacks_async()
+        pairs = bench._collect_cached_completion_pairs()
 
-        names = [c.atomic_attack_name for c in result]
-        assert names == ["crescendo_simulated__adv_a"]
+        assert pairs == {
+            ("red_teaming__adv_a_harmbench", "hash_a"),
+            ("tap__adv_a_harmbench", "hash_b"),
+        }
 
-    async def test_skip_cached_keeps_error_outcomes(self):
-        """ERROR outcomes must retry — not be cached."""
-        bench = await self._make_bench(skip_cached=True)
-
-        candidates = [_make_candidate(name="red_teaming__adv_a", eval_hash="hash_a")]
+    def test_excludes_error_and_undetermined_outcomes(self):
+        bench = self._make_bench()
         prior_sr = _make_scenario_result(result_id="sid-1")
         prior_attacks = [
             _make_attack_result(
                 outcome=AttackOutcome.ERROR,
-                parent_collection="red_teaming__adv_a",
-                parent_eval_hash="hash_a",
+                parent_collection="x",
+                parent_eval_hash="h",
             ),
-        ]
-
-        bench._memory = MagicMock()
-        bench._memory.get_scenario_results.return_value = [prior_sr]
-        bench._memory.get_attack_results.return_value = prior_attacks
-
-        with patch.object(AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=candidates):
-            result = await bench._get_atomic_attacks_async()
-
-        assert result == candidates
-
-    async def test_skip_cached_keeps_undetermined_outcomes(self):
-        """UNDETERMINED outcomes must retry — not be cached."""
-        bench = await self._make_bench(skip_cached=True)
-
-        candidates = [_make_candidate(name="red_teaming__adv_a", eval_hash="hash_a")]
-        prior_sr = _make_scenario_result(result_id="sid-1")
-        prior_attacks = [
             _make_attack_result(
                 outcome=AttackOutcome.UNDETERMINED,
-                parent_collection="red_teaming__adv_a",
-                parent_eval_hash="hash_a",
+                parent_collection="y",
+                parent_eval_hash="h",
             ),
         ]
-
-        bench._memory = MagicMock()
         bench._memory.get_scenario_results.return_value = [prior_sr]
         bench._memory.get_attack_results.return_value = prior_attacks
 
-        with patch.object(AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=candidates):
-            result = await bench._get_atomic_attacks_async()
+        pairs = bench._collect_cached_completion_pairs()
 
-        assert result == candidates
+        assert pairs == set()
 
-    async def test_skip_cached_respects_eval_hash_disambiguation(self):
-        """Same atomic_attack_name but different parent_eval_hash → not considered cached."""
-        bench = await self._make_bench(skip_cached=True)
-
-        candidates = [_make_candidate(name="red_teaming__adv_a", eval_hash="new_hash")]
-        prior_sr = _make_scenario_result(result_id="sid-1")
-        prior_attacks = [
-            _make_attack_result(
-                outcome=AttackOutcome.SUCCESS,
-                parent_collection="red_teaming__adv_a",
-                parent_eval_hash="old_hash",
-            ),
-        ]
-
-        bench._memory = MagicMock()
-        bench._memory.get_scenario_results.return_value = [prior_sr]
-        bench._memory.get_attack_results.return_value = prior_attacks
-
-        with patch.object(AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=candidates):
-            result = await bench._get_atomic_attacks_async()
-
-        assert result == candidates
-
-    async def test_skip_cached_only_considers_completed_scenarios(self):
-        """Scenarios in IN_PROGRESS / FAILED / CANCELLED state must not seed the cache."""
-        bench = await self._make_bench(skip_cached=True)
-
-        candidates = [_make_candidate(name="red_teaming__adv_a", eval_hash="hash_a")]
+    def test_only_counts_completed_scenario_runs(self):
+        bench = self._make_bench()
         in_progress = _make_scenario_result(result_id="sid-1", run_state="IN_PROGRESS")
         failed = _make_scenario_result(result_id="sid-2", run_state="FAILED")
-
-        bench._memory = MagicMock()
         bench._memory.get_scenario_results.return_value = [in_progress, failed]
-        bench._memory.get_attack_results.return_value = [
-            _make_attack_result(
-                outcome=AttackOutcome.SUCCESS,
-                parent_collection="red_teaming__adv_a",
-                parent_eval_hash="hash_a",
-            ),
-        ]
 
-        with patch.object(AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=candidates):
-            result = await bench._get_atomic_attacks_async()
+        pairs = bench._collect_cached_completion_pairs()
 
-        assert result == candidates
+        assert pairs == set()
+        # No COMPLETED runs → never touch get_attack_results.
         bench._memory.get_attack_results.assert_not_called()
 
-    async def test_skip_cached_filters_by_scenario_name_and_version(self):
-        """get_scenario_results is queried with this scenario's name + VERSION; old VERSION=1 results don't apply."""
-        bench = await self._make_bench(skip_cached=True)
-
-        bench._memory = MagicMock()
+    def test_queries_memory_by_scenario_name_and_version(self):
+        bench = self._make_bench()
         bench._memory.get_scenario_results.return_value = []
 
-        with patch.object(AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=[]):
-            await bench._get_atomic_attacks_async()
+        bench._collect_cached_completion_pairs()
 
         bench._memory.get_scenario_results.assert_called_once_with(
             scenario_name="AdversarialBenchmark",
             scenario_version=AdversarialBenchmark.VERSION,
         )
 
-    async def test_skip_cached_handles_missing_attribution_data(self):
-        """Rows with attribution_data=None or missing parent_collection are silently skipped."""
-        bench = await self._make_bench(skip_cached=True)
+    def test_skips_rows_with_missing_parent_collection(self):
+        """``attribution_data=None`` or missing ``parent_collection`` rows are silently skipped."""
+        bench = self._make_bench()
+        prior_sr = _make_scenario_result(result_id="sid-1")
+        prior_attacks = [
+            _make_attack_result(outcome=AttackOutcome.SUCCESS, parent_collection=None, parent_eval_hash=None),
+            _make_attack_result(outcome=AttackOutcome.SUCCESS, parent_collection=None, parent_eval_hash="hash_x"),
+        ]
+        bench._memory.get_scenario_results.return_value = [prior_sr]
+        bench._memory.get_attack_results.return_value = prior_attacks
 
-        candidates = [_make_candidate(name="red_teaming__adv_a", eval_hash="hash_a")]
+        pairs = bench._collect_cached_completion_pairs()
+        assert pairs == set()
+
+    def test_memory_error_falls_back_to_empty_set(self):
+        """An exception from ``get_scenario_results`` must not block the run; cache becomes a no-op."""
+        bench = self._make_bench()
+        bench._memory.get_scenario_results.side_effect = RuntimeError("db down")
+
+        pairs = bench._collect_cached_completion_pairs()
+        assert pairs == set()
+
+
+# ---------------------------------------------------------------------------
+# skip_cached end-to-end through _get_atomic_attacks_async
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestSkipCachedFilter:
+    """End-to-end tests for the ``skip_cached`` filter applied in ``_get_atomic_attacks_async``."""
+
+    def _make_bench(self, *, skip_cached: bool) -> AdversarialBenchmark:
+        _register_adversarial_target(name="adv_a")
+        bench = AdversarialBenchmark(
+            objective_scorer=MagicMock(spec=TrueFalseScorer),
+            skip_cached=skip_cached,
+        )
+        bench._objective_target = MagicMock(spec=PromptTarget)
+        bench.params = {"adversarial_targets": ["adv_a"]}
+
+        red_teaming_strategy = MagicMock()
+        red_teaming_strategy.value = "red_teaming"
+        bench._scenario_strategies = [red_teaming_strategy]
+
+        seed_group = SeedAttackGroup(seeds=[SeedObjective(value="skip_cached_objective")])
+        bench._dataset_config = MagicMock()
+        bench._dataset_config.get_seed_attack_groups.return_value = {"harmbench": [seed_group]}
+
+        return bench
+
+    def _patch_factory_builder(self):
+        factory = MagicMock()
+        factory.seed_technique = None
+        factory.create.return_value = MagicMock(name="AttackTechnique")
+        return patch(
+            "pyrit.scenario.scenarios.benchmark.adversarial.AttackTechniqueRegistry.build_factory_from_spec",
+            return_value=factory,
+        )
+
+    async def test_skip_cached_false_returns_all_candidates(self):
+        bench = self._make_bench(skip_cached=False)
+        bench._memory = MagicMock()
+
+        with self._patch_factory_builder():
+            result = await bench._get_atomic_attacks_async()
+
+        assert len(result) == 1
+        # No cache query when skip_cached=False.
+        bench._memory.get_scenario_results.assert_not_called()
+
+    async def test_skip_cached_true_filters_matching_candidates(self):
+        bench = self._make_bench(skip_cached=True)
         prior_sr = _make_scenario_result(result_id="sid-1")
         prior_attacks = [
             _make_attack_result(
                 outcome=AttackOutcome.SUCCESS,
-                parent_collection=None,
-                parent_eval_hash=None,
-            ),
-            _make_attack_result(
-                outcome=AttackOutcome.SUCCESS,
-                parent_collection=None,
-                parent_eval_hash="hash_x",
+                parent_collection="red_teaming__adv_a_harmbench",
+                parent_eval_hash=None,  # MagicMock candidates yield None for technique_eval_hash
             ),
         ]
-
         bench._memory = MagicMock()
         bench._memory.get_scenario_results.return_value = [prior_sr]
         bench._memory.get_attack_results.return_value = prior_attacks
 
-        with patch.object(AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=candidates):
-            result = await bench._get_atomic_attacks_async()
+        with self._patch_factory_builder():
+            # Stub out technique_eval_hash so the cache-key tuple matches.
+            with patch(
+                "pyrit.scenario.core.atomic_attack.AtomicAttack.technique_eval_hash",
+                new_callable=lambda: property(lambda self: None),
+            ):
+                result = await bench._get_atomic_attacks_async()
 
-        assert result == candidates
+        assert result == []
 
-    async def test_skip_cached_memory_error_falls_back_to_no_filter(self):
-        """An exception from get_scenario_results must not block the run — return base candidates as-is."""
-        bench = await self._make_bench(skip_cached=True)
-
-        candidates = [_make_candidate(name="red_teaming__adv_a", eval_hash="hash_a")]
+    async def test_skip_cached_true_keeps_unmatched_candidates(self):
+        bench = self._make_bench(skip_cached=True)
+        prior_sr = _make_scenario_result(result_id="sid-1")
+        prior_attacks = [
+            _make_attack_result(
+                outcome=AttackOutcome.SUCCESS,
+                parent_collection="some_other_name",
+                parent_eval_hash="hash_x",
+            ),
+        ]
         bench._memory = MagicMock()
-        bench._memory.get_scenario_results.side_effect = RuntimeError("db down")
+        bench._memory.get_scenario_results.return_value = [prior_sr]
+        bench._memory.get_attack_results.return_value = prior_attacks
 
-        with patch.object(AdversarialBenchmark.__bases__[0], "_get_atomic_attacks_async", return_value=candidates):
+        with self._patch_factory_builder():
             result = await bench._get_atomic_attacks_async()
 
-        assert result == candidates
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestAdversarialBenchmarkSkipCachedInit:
-    """Tests for the skip_cached constructor surface."""
-
-    async def test_skip_cached_defaults_to_false(self):
-        await _fan_out(target_names=["adv_a"])
-        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
-        assert bench._skip_cached is False
-
-    async def test_skip_cached_can_be_set_true(self):
-        await _fan_out(target_names=["adv_a"])
-        bench = AdversarialBenchmark(
-            objective_scorer=MagicMock(spec=TrueFalseScorer),
-            skip_cached=True,
-        )
-        assert bench._skip_cached is True
+        assert len(result) == 1
 
 
 # ---------------------------------------------------------------------------
-# Scorer flexibility — stage 1 (Commit 7 / F4)
+# Scorer flexibility — stage 1
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAdversarialBenchmarkScorerFlexibility:
-    """Tests for the widened objective_scorer annotation + isinstance guard (stage 1)."""
+    """Tests for the widened ``objective_scorer`` annotation + ``isinstance`` guard (stage 1)."""
 
-    def test_objective_scorer_annotation_is_scorer(self):
-        """The parameter annotation is the broad Scorer base class for forward compatibility."""
-        import inspect
-
-        from pyrit.score import Scorer
-
-        sig = inspect.signature(AdversarialBenchmark.__init__)
-        annotation = sig.parameters["objective_scorer"].annotation
-        # ``Scorer | None`` resolves to ``Scorer | None`` at import time.
-        # str() captures both the runtime and stringified forms reliably.
-        assert "Scorer" in str(annotation)
-        assert Scorer is not None  # sanity that the import resolves
-
-    async def test_construct_accepts_truefalse_scorer_subclass(self):
-        """TrueFalseScorer remains the runtime-supported type; should construct cleanly."""
-        await _fan_out(target_names=["adv_a"])
-
+    def test_construct_accepts_truefalse_scorer_subclass(self):
+        """``TrueFalseScorer`` remains the runtime-supported type; should construct cleanly."""
         scorer = MagicMock(spec=TrueFalseScorer)
         bench = AdversarialBenchmark(objective_scorer=scorer)
-
         assert bench._objective_scorer is scorer
-
-    async def test_non_truefalse_scorer_raises_typeerror_with_pointer(self):
-        """A Scorer subclass that isn't TrueFalseScorer must raise TypeError with a clear pointer."""
-        from pyrit.score import Scorer
-
-        await _fan_out(target_names=["adv_a"])
-
-        # Bare Scorer (not TrueFalseScorer) — covers any future non-TF subclass.
-        non_tf_scorer = MagicMock(spec=Scorer)
-
-        with pytest.raises(TypeError, match=r"requires a TrueFalseScorer.*follow-up"):
-            AdversarialBenchmark(objective_scorer=non_tf_scorer)

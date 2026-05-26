@@ -24,11 +24,13 @@
 # for evaluating which adversarial helper models produce stronger or weaker attack success rates
 # against the same target.
 #
-# Model fan-out is owned by `BenchmarkInitializer`, which discovers every ADVERSARIAL-tagged target
-# in `TargetRegistry` (populated by `TargetInitializer` from `ADVERSARIAL_CHAT_*` env vars) and
-# registers one fanned variant per `(adversarial-capable technique, target)` pair into
-# `AttackTechniqueRegistry`. The scenario then reads those variants when it builds its strategy
-# enum.
+# Adversarial targets are user-provided via the `adversarial_targets` scenario parameter. Each name
+# must already be registered in `TargetRegistry` — typically by `TargetInitializer` from the
+# `ADVERSARIAL_CHAT_*` env vars, or programmatically via `TargetRegistry.register_instance`. At run
+# time the scenario builds the `(technique × target × dataset)` cross-product directly: for each
+# adversarial-capable technique in `SCENARIO_TECHNIQUES` and each requested target, it constructs a
+# per-pair factory with `adversarial_chat` overridden to that target. No global
+# `AttackTechniqueRegistry` state is mutated.
 #
 # ### Prerequisites
 #
@@ -47,29 +49,39 @@
 # # ADVERSARIAL_CHAT_MULTITURN_* and ADVERSARIAL_CHAT_REASONING_* follow the same pattern
 # ```
 #
-# If no adversarial-tagged target is registered, `BenchmarkInitializer.initialize_async` raises
-# `ValueError` naming the env vars to set.
+# Use `pyrit_scan list-targets` to see every target currently registered, along with its tags.
 #
 # ### CLI quickstart
 #
 # ```bash
 # pyrit_scan benchmark.adversarial \
-#   --initializers target load_default_datasets benchmark \
+#   --initializers target load_default_datasets \
 #   --target openai_chat \
+#   --adversarial-targets adversarial_chat \
 #   --max-dataset-size 4
 # ```
 #
-# **Available strategies (depend on registered adversarial targets):** `all`, `light`, `single_turn`,
-# `multi_turn`, plus one concrete member per fanned variant named
-# `f"{source_technique}__{target_name}"` (e.g. `red_teaming__adversarial_chat`,
-# `tap__adversarial_chat_singleturn`).
+# Pass multiple `--adversarial-targets` values to compare across models in a single run:
+#
+# ```bash
+# pyrit_scan benchmark.adversarial \
+#   --initializers target load_default_datasets \
+#   --target openai_chat \
+#   --adversarial-targets adversarial_chat adversarial_chat_singleturn adversarial_chat_reasoning \
+#   --max-dataset-size 4
+# ```
+#
+# **Available strategies:** `light` (the default — a quick snapshot using the cheaper techniques),
+# `single_turn`, `multi_turn`, plus one concrete member per adversarial-capable source technique
+# (e.g. `red_teaming`, `tap`, `crescendo_simulated`). The default `light` aggregate deliberately
+# excludes `tap` and `crescendo_simulated`, which can take hours on a single run.
 
 # %% [markdown]
 # ## Setup
 #
-# `BenchmarkInitializer` runs after `TargetInitializer` so adversarial-tagged targets are present
-# in the registry before the fan-out logic queries it. The initializer chain is executed in list
-# order.
+# `TargetInitializer` populates `TargetRegistry` from the `ADVERSARIAL_CHAT_*` env vars. The
+# scenario looks up adversarial targets by registry name from its `adversarial_targets` parameter,
+# so the targets must be registered before `scenario.run_async()` runs.
 
 # %%
 from pyrit.output import output_scenario_async
@@ -78,7 +90,6 @@ from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.scenarios.benchmark import AdversarialBenchmark
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import (
-    BenchmarkInitializer,
     LoadDefaultDatasets,
     ScorerInitializer,
     TargetInitializer,
@@ -90,7 +101,6 @@ await initialize_pyrit_async(  # type: ignore
         TargetInitializer(),
         ScorerInitializer(),
         LoadDefaultDatasets(),
-        BenchmarkInitializer(),
     ],
 )
 
@@ -99,14 +109,16 @@ objective_target = OpenAIChatTarget()
 # %% [markdown]
 # ## Run the benchmark
 #
-# Instantiate with no model arguments — adversarial models come from the registry via
-# `BenchmarkInitializer`. The default strategy (`light`) runs the benchmark-friendly subset of
-# fanned variants for a quick comparison.
+# Instantiate the scenario, then pass `adversarial_targets` through `initialize_async` via
+# `set_params_from_args` (programmatic equivalent of the `--adversarial-targets` CLI flag). The
+# default strategy (`light`) runs the benchmark-friendly subset of techniques for a quick
+# comparison.
 
 # %%
 dataset_config = DatasetConfiguration(dataset_names=["harmbench"], max_dataset_size=4)
 
 scenario = AdversarialBenchmark()
+scenario.set_params_from_args(args={"adversarial_targets": ["adversarial_chat"]})
 await scenario.initialize_async(  # type: ignore
     objective_target=objective_target,
     dataset_config=dataset_config,
@@ -132,10 +144,11 @@ await output_scenario_async(baseline_result)
 # Useful for:
 # * Resuming a long-running benchmark after a crash or `Ctrl-C`.
 # * Incrementally adding new adversarial targets without re-running the existing ones — the new
-#   fanned variants have new names, so they don't match any cached entry and execute fresh.
+#   `{technique}__{target}_{dataset}` names don't match any cached entry and execute fresh.
 
 # %%
 scenario_cached = AdversarialBenchmark(skip_cached=True)
+scenario_cached.set_params_from_args(args={"adversarial_targets": ["adversarial_chat"]})
 await scenario_cached.initialize_async(  # type: ignore
     objective_target=objective_target,
     dataset_config=dataset_config,
@@ -146,27 +159,11 @@ cached_result = await scenario_cached.run_async()  # type: ignore
 await output_scenario_async(cached_result)
 
 # %% [markdown]
-# ## Narrowing the fan-out
-#
-# Limit the benchmark to a specific subset of registered adversarial targets via
-# `BenchmarkInitializer`'s `target_names` parameter. Settable from `.pyrit_conf` (see next section),
-# or programmatically:
-#
-# ```python
-# narrow_init = BenchmarkInitializer()
-# narrow_init.set_params_from_args(args={"target_names": ["adversarial_chat_singleturn"]})
-# await narrow_init.initialize_async()
-# ```
-#
-# Unknown names raise `ValueError` listing both the unknowns and the discovered set, so typos fail
-# loudly rather than silently expanding the run.
-
-# %% [markdown]
 # ## Bootstrapping from `.pyrit_conf`
 #
-# For production / repeated runs, declare the full initializer chain in `.pyrit_conf`. Initializers
-# run in list order; `target` must precede `benchmark` so adversarial-tagged targets are present
-# when `BenchmarkInitializer` queries the registry.
+# For production / repeated runs, declare the initializer chain and the adversarial-target list in
+# `.pyrit_conf`. `TargetInitializer` must precede the scenario so the named targets are present in
+# `TargetRegistry` by the time the scenario builds atomic attacks.
 #
 # ```yaml
 # memory_db_type: duckdb
@@ -174,17 +171,18 @@ await output_scenario_async(cached_result)
 #   - name: target
 #   - name: scorer
 #   - name: load_default_datasets
-#   - name: benchmark
-#     args:
-#       target_names:
-#         - adversarial_chat_singleturn
-#         - adversarial_chat_reasoning
 # scenario:
 #   name: benchmark.adversarial
+#   args:
+#     adversarial_targets:
+#       - adversarial_chat
+#       - adversarial_chat_singleturn
+#       - adversarial_chat_reasoning
 # ```
 #
-# Then run `pyrit_scan --config-file .pyrit_conf` — the scenario picks up the initializer-registered
-# fan-out automatically.
+# Then run `pyrit_scan --config-file .pyrit_conf` — the scenario reads `adversarial_targets` from
+# the config and builds the cross-product automatically. Unknown names raise `ValueError` listing
+# both the unknowns and every registered target so typos fail loudly.
 
 # %% [markdown]
 # ## Scorer flexibility (forward-looking)

@@ -18,8 +18,6 @@ from pyrit.registry.object_registries.retrievable_instance_registry import (
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
-    from pyrit.registry.object_registries.base_instance_registry import RegistryEntry
-    from pyrit.registry.tag_query import TagQuery
 
 logger = logging.getLogger(__name__)
 
@@ -76,30 +74,3 @@ class TargetRegistry(RetrievableInstanceRegistry["PromptTarget"]):
             The target instance, or None if not found.
         """
         return self.get(name)
-
-    def get_by_tag_query(self, *, query: TagQuery) -> list[RegistryEntry[PromptTarget]]:
-        """
-        Get all entries whose tag keys satisfy ``query``.
-
-        ``TagQuery`` operates on a tag set, so this method matches against
-        ``entry.tags.keys()`` and ignores tag values. For value-aware
-        single-tag lookups use ``get_by_tag(*, tag, value)`` on the base
-        class.
-
-        Composite queries compose with ``&`` and ``|`` operators, e.g.
-        ``TagQuery.all("adversarial") & TagQuery.any_of("singleturn", "multiturn")``.
-
-        Args:
-            query: The tag predicate to evaluate against each entry.
-
-        Returns:
-            List of matching ``RegistryEntry`` objects sorted by registry name.
-        """
-        results: list[RegistryEntry[PromptTarget]] = []
-        # Note: this erases insertion order, but respects the base_instance_registry pattern
-        # (get_by_tag).
-        for name in sorted(self._registry_items.keys()):
-            entry = self._registry_items[name]
-            if query.matches(set(entry.tags.keys())):
-                results.append(entry)
-        return results

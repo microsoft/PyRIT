@@ -7,15 +7,15 @@ End-to-end tests for PyRIT scenarios using pyrit_scan CLI.
 These tests dynamically discover all available scenarios and run each one
 using the pyrit_scan command. Most scenarios run with the
 :data:`DEFAULT_INITIALIZERS` list; scenarios that need additional setup
-(e.g. ``benchmark.adversarial`` needs ``BenchmarkInitializer`` to fan
-adversarial techniques out across registry-discovered targets) declare
-their full initializer list in :data:`SCENARIO_INITIALIZERS`.
+declare their full initializer list in :data:`SCENARIO_INITIALIZERS` and
+extra CLI args in :data:`SCENARIO_EXTRA_ARGS`.
 
 Note: e2e tests are not part of CI; they run via ``make end-to-end-test``
 on developer machines that have the appropriate env vars set
-(``ADVERSARIAL_CHAT_*`` for the benchmark scenario, in particular).
-``BenchmarkInitializer`` surfaces a clear error pointing at the env vars
-when they are absent.
+(``ADVERSARIAL_CHAT_*`` for the benchmark scenario, in particular). The
+benchmark scenario reads its adversarial targets from ``--adversarial-targets``,
+which resolves names via ``TargetRegistry`` (populated by
+``TargetInitializer`` from those env vars).
 """
 
 from pathlib import Path
@@ -32,16 +32,19 @@ CONFIG_FILE = Path(__file__).parent / "test_config.yaml"
 #: fetches each scenario's declared default datasets into memory.
 DEFAULT_INITIALIZERS: list[str] = ["target", "load_default_datasets"]
 
-#: Per-scenario override map. A scenario named here uses this list verbatim
-#: (no implicit merge with ``DEFAULT_INITIALIZERS``); a scenario absent here
-#: falls back to ``DEFAULT_INITIALIZERS``. Keys use the dotted registry name
+#: Per-scenario override map for initializers. A scenario absent here falls back
+#: to :data:`DEFAULT_INITIALIZERS`. Keys use the dotted registry name
 #: (``<module>.<scenario>``) returned by ``ScenarioRegistry.get_names()``.
-SCENARIO_INITIALIZERS: dict[str, list[str]] = {
-    # benchmark.adversarial depends on BenchmarkInitializer to fan
-    # adversarial-capable scenario techniques out across every
-    # ADVERSARIAL-tagged target in TargetRegistry. Without the
-    # benchmark initializer, the scenario's strategy enum is empty.
-    "benchmark.adversarial": [*DEFAULT_INITIALIZERS, "benchmark"],
+SCENARIO_INITIALIZERS: dict[str, list[str]] = {}
+
+#: Per-scenario extra CLI args appended after the standard flag block. Keys use
+#: the same dotted registry name as :data:`SCENARIO_INITIALIZERS`. Values are
+#: lists already split into argv tokens.
+SCENARIO_EXTRA_ARGS: dict[str, list[str]] = {
+    # benchmark.adversarial requires --adversarial-targets at run time
+    # (see AdversarialBenchmark.supported_parameters); without it the scenario
+    # raises ValueError before any attack is built.
+    "benchmark.adversarial": ["--adversarial-targets", "adversarial_chat"],
 }
 
 
@@ -61,6 +64,11 @@ def _initializers_for(scenario_name: str) -> list[str]:
     return SCENARIO_INITIALIZERS.get(scenario_name, DEFAULT_INITIALIZERS)
 
 
+def _extra_args_for(scenario_name: str) -> list[str]:
+    """Return scenario-specific extra CLI argv tokens, defaulting to none."""
+    return SCENARIO_EXTRA_ARGS.get(scenario_name, [])
+
+
 @pytest.mark.timeout(7200)  # 2 hour timeout per scenario
 @pytest.mark.parametrize("scenario_name", get_all_scenarios())
 def test_scenario_with_pyrit_scan(scenario_name):
@@ -71,6 +79,7 @@ def test_scenario_with_pyrit_scan(scenario_name):
         scenario_name: Name of the scenario to test (dynamically discovered).
     """
     initializers = _initializers_for(scenario_name)
+    extra_args = _extra_args_for(scenario_name)
     try:
         result = pyrit_scan_main(
             [
@@ -85,6 +94,7 @@ def test_scenario_with_pyrit_scan(scenario_name):
                 "1",
                 "--log-level",
                 "WARNING",
+                *extra_args,
             ]
         )
 
