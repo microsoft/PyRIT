@@ -111,33 +111,37 @@ async def test_pretty_does_not_blur_by_default(tmp_path, patch_central_database)
     ipython_display.Image.assert_called_once_with(data=image_bytes)
 
 
-def _expected_link(path: str) -> str:
-    """Mirror ``MarkdownConversationPrinter._format_link_path`` for assertions."""
-    path_obj = Path(path)
-    try:
-        rel = str(path_obj.relative_to(Path.cwd()))
-    except ValueError:
-        rel = str(path_obj.resolve())
-    return rel.replace("\\", "/")
+def _resolved_chdir(monkeypatch, tmp_path: Path) -> Path:
+    """``chdir`` into ``tmp_path`` and return the resolved path so callers can
+    construct file paths that compare equal to ``Path.cwd()`` afterwards.
+
+    macOS's ``/var`` -> ``/private/var`` symlink causes ``os.getcwd()`` (and
+    therefore ``Path.cwd()``) to return the resolved form, so unresolved
+    ``tmp_path`` children would otherwise fail ``relative_to`` lookups.
+    """
+    work_dir = tmp_path.resolve()
+    monkeypatch.chdir(work_dir)
+    return work_dir
 
 
 # --- Markdown path ---
 
 
-def test_markdown_writes_blurred_sibling_and_links_to_it(tmp_path):
+def test_markdown_writes_blurred_sibling_and_links_to_it(tmp_path, monkeypatch):
+    work_dir = _resolved_chdir(monkeypatch, tmp_path)
     image_bytes = _make_image_bytes()
-    image_path = tmp_path / "img.png"
+    image_path = work_dir / "img.png"
     image_path.write_bytes(image_bytes)
 
     printer = _ConcreteMarkdown(blur_images=True, blur_radius=5)
     lines = printer._format_image_content(image_path=str(image_path))
 
-    blurred_path = tmp_path / "img_blurred.png"
+    blurred_path = work_dir / "img_blurred.png"
     assert blurred_path.exists()
     assert blurred_path.read_bytes() != image_bytes
 
     assert len(lines) == 1
-    assert lines[0] == f"![Image]({_expected_link(str(blurred_path))})\n"
+    assert lines[0] == "![Image](img_blurred.png)\n"
 
 
 def test_markdown_blur_is_idempotent(tmp_path):
@@ -157,29 +161,30 @@ def test_markdown_blur_is_idempotent(tmp_path):
     assert blurred_path.stat().st_mtime_ns == first_mtime
 
 
-def test_markdown_default_does_not_blur(tmp_path):
+def test_markdown_default_does_not_blur(tmp_path, monkeypatch):
+    work_dir = _resolved_chdir(monkeypatch, tmp_path)
     image_bytes = _make_image_bytes()
-    image_path = tmp_path / "img.png"
+    image_path = work_dir / "img.png"
     image_path.write_bytes(image_bytes)
 
     printer = _ConcreteMarkdown()
     lines = printer._format_image_content(image_path=str(image_path))
 
-    blurred_path = tmp_path / "img_blurred.png"
+    blurred_path = work_dir / "img_blurred.png"
     assert not blurred_path.exists()
-    assert lines[0] == f"![Image]({_expected_link(str(image_path))})\n"
+    assert lines[0] == "![Image](img.png)\n"
 
 
-def test_markdown_blur_failure_emits_text_link_to_original(tmp_path, caplog):
+def test_markdown_blur_failure_emits_text_link_to_original(tmp_path, monkeypatch, caplog):
     # Point at a path that does not exist — blurring should fail gracefully and emit
     # a text link to the original (NOT an inline image of the original).
-    bogus_path = str(tmp_path / "does_not_exist.png")
+    work_dir = _resolved_chdir(monkeypatch, tmp_path)
+    bogus_path = str(work_dir / "does_not_exist.png")
 
     printer = _ConcreteMarkdown(blur_images=True, blur_radius=5)
     lines = printer._format_image_content(image_path=bogus_path)
 
-    expected = _expected_link(bogus_path)
-    assert lines[0] == f"[image (blur failed — original)]({expected})\n"
+    assert lines[0] == "[image (blur failed — original)](does_not_exist.png)\n"
     # Crucially, no inline-image rendering of the unblurred original
     assert not lines[0].startswith("!")
 
@@ -246,12 +251,13 @@ def test_markdown_attack_result_memory_printer_forwards_blur_flag(patch_central_
 # --- Round 2: configurable destination ---
 
 
-def test_markdown_blurred_dir_redirects_output(tmp_path):
+def test_markdown_blurred_dir_redirects_output(tmp_path, monkeypatch):
+    work_dir = _resolved_chdir(monkeypatch, tmp_path)
     image_bytes = _make_image_bytes()
-    image_path = tmp_path / "src" / "img.png"
+    image_path = work_dir / "src" / "img.png"
     image_path.parent.mkdir()
     image_path.write_bytes(image_bytes)
-    blurred_dir = tmp_path / "blurred"
+    blurred_dir = work_dir / "blurred"
 
     printer = _ConcreteMarkdown(blur_images=True, blur_radius=5, blurred_dir=str(blurred_dir))
     lines = printer._format_image_content(image_path=str(image_path))
@@ -260,16 +266,16 @@ def test_markdown_blurred_dir_redirects_output(tmp_path):
     assert blurred_path.exists()
     # Original directory must not contain the blurred copy
     assert not (image_path.parent / "img_blurred.png").exists()
-    expected_rel = _expected_link(str(blurred_path))
-    assert lines[0] == f"![Image]({expected_rel})\n"
+    assert lines[0] == "![Image](blurred/img_blurred.png)\n"
 
 
 # --- Round 2: atomic write ---
 
 
-def test_markdown_atomic_write_leaves_no_temp_on_failure(tmp_path):
+def test_markdown_atomic_write_leaves_no_temp_on_failure(tmp_path, monkeypatch):
+    work_dir = _resolved_chdir(monkeypatch, tmp_path)
     image_bytes = _make_image_bytes()
-    image_path = tmp_path / "img.png"
+    image_path = work_dir / "img.png"
     image_path.write_bytes(image_bytes)
 
     printer = _ConcreteMarkdown(blur_images=True, blur_radius=5)
@@ -279,11 +285,10 @@ def test_markdown_atomic_write_leaves_no_temp_on_failure(tmp_path):
     with patch("pyrit.output.conversation.markdown.os.replace", side_effect=OSError("boom")):
         lines = printer._format_image_content(image_path=str(image_path))
 
-    expected_rel = _expected_link(str(image_path))
-    assert lines[0] == f"[image (blur failed — original)]({expected_rel})\n"
+    assert lines[0] == "[image (blur failed — original)](img.png)\n"
 
     # No temp files left behind, no blurred file produced
-    leftovers = [p.name for p in tmp_path.iterdir() if p.name != "img.png"]
+    leftovers = [p.name for p in work_dir.iterdir() if p.name != "img.png"]
     assert leftovers == [], f"Unexpected leftover files: {leftovers}"
 
 
