@@ -23,6 +23,11 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, get_origin
 
+from pyrit.common.cli_helpers import (
+    CONFIG_FILE_HELP,
+    validate_log_level,
+    validate_log_level_argparse,
+)
 from pyrit.common.parameter import Parameter, coerce_value
 
 if TYPE_CHECKING:
@@ -60,27 +65,6 @@ def validate_database(*, database: str) -> str:
     if database not in valid_databases:
         raise ValueError(f"Invalid database type: {database}. Must be one of: {', '.join(valid_databases)}")
     return database
-
-
-def validate_log_level(*, log_level: str) -> int:
-    """
-    Validate log level and convert to logging constant.
-
-    Args:
-        log_level: Log level string (case-insensitive).
-
-    Returns:
-        Validated log level as logging constant (e.g., logging.WARNING).
-
-    Raises:
-        ValueError: If log level is invalid.
-    """
-    valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-    level_upper = log_level.upper()
-    if level_upper not in valid_levels:
-        raise ValueError(f"Invalid log level: {log_level}. Must be one of: {', '.join(valid_levels)}")
-    level_value: int = getattr(logging, level_upper)
-    return level_value
 
 
 def validate_integer(value: str, *, name: str = "value", min_value: Optional[int] = None) -> int:
@@ -226,7 +210,6 @@ def resolve_env_files(*, env_file_paths: list[str]) -> list[Path]:
 # apply the min_value parameter while still allowing the decorator to work correctly.
 # ---------------------------------------------------------------------------
 validate_database_argparse = _argparse_validator(validate_database)
-validate_log_level_argparse = _argparse_validator(validate_log_level)
 positive_int = _argparse_validator(lambda v: validate_integer(v, min_value=1))
 non_negative_int = _argparse_validator(lambda v: validate_integer(v, min_value=0))
 resolve_env_files_argparse = _argparse_validator(resolve_env_files)
@@ -270,11 +253,7 @@ def parse_memory_labels(json_string: str) -> dict[str, str]:
 # Shared argument help text
 # ---------------------------------------------------------------------------
 ARG_HELP = {
-    "config_file": (
-        "Path to a YAML configuration file. Allows specifying database, initializers (with args), "
-        "initialization scripts, and env files. CLI arguments override config file values. "
-        "If not specified, ~/.pyrit/.pyrit_conf is loaded if it exists."
-    ),
+    "config_file": CONFIG_FILE_HELP,
     "initializers": (
         "Built-in initializer names to run before the scenario. "
         "Supports optional params with name:key=val syntax "
@@ -434,12 +413,10 @@ _TARGET_ARG = _ArgSpec(
 
 _RUN_ARG_SPECS: list[_ArgSpec] = [
     _INITIALIZERS_ARG,
-    _INIT_SCRIPTS_ARG,
     _STRATEGIES_ARG,
     _MAX_CONCURRENCY_ARG,
     _MAX_RETRIES_ARG,
     _MEMORY_LABELS_ARG,
-    _LOG_LEVEL_ARG,
     _DATASET_NAMES_ARG,
     _MAX_DATASET_SIZE_ARG,
     _TARGET_ARG,
@@ -596,13 +573,14 @@ def _arg_spec_from_parameter(*, param: Parameter) -> _ArgSpec:
     """
     multi = get_origin(param.param_type) is list
     parser: Callable[[str], Any] | None
-    if param.param_type is None or param.param_type is str:
-        parser = None
-    elif multi:
+    if multi:
         # Per-element coercion; v1 only ships list[str].
         parser = str
+    elif param.param_type is None or (param.param_type is str and param.choices is None):
+        # No coercion needed and no choices to enforce.
+        parser = None
     else:
-
+        # Coerce + validate (handles ints/floats/bools AND str-with-choices).
         def parser(raw: str) -> Any:
             return coerce_value(param=param, raw_value=raw)
 
@@ -663,6 +641,45 @@ def extract_scenario_args(*, parsed: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Shared argparse builder
 # ---------------------------------------------------------------------------
+
+
+def build_parameters_from_api(*, api_params: list[dict[str, Any]]) -> Optional[list[Parameter]]:
+    """
+    Build ``Parameter`` objects from a scenario catalog's ``supported_parameters``.
+
+    Maps the display ``param_type`` string ("int", "float", "bool", "str",
+    "list[...]", "any") back to a concrete ``param_type`` so the shell parser
+    can apply per-element coercion and treat list params as ``multi_value``.
+
+    Args:
+        api_params: List of parameter dicts from ``GET /api/scenarios/catalog/{name}``.
+
+    Returns:
+        Optional[list[Parameter]]: Parameter list when ``api_params`` is non-empty, else ``None``.
+    """
+    if not api_params:
+        return None
+    type_map: dict[str, Any] = {"int": int, "float": float, "bool": bool, "str": str}
+    parameters: list[Parameter] = []
+    for p in api_params:
+        type_display = p.get("param_type", "")
+        if p.get("is_list"):
+            element_type = type_map.get(type_display.removeprefix("list[").rstrip("]"), str)
+            resolved_type: Any = list[element_type]  # type: ignore[valid-type]
+        else:
+            resolved_type = type_map.get(type_display)
+        raw_choices = p.get("choices")
+        choices: Optional[tuple[Any, ...]] = tuple(raw_choices) if raw_choices else None
+        parameters.append(
+            Parameter(
+                name=p["name"],
+                description=p.get("description", ""),
+                param_type=resolved_type,
+                default=p.get("default"),
+                choices=choices,
+            )
+        )
+    return parameters
 
 
 def add_common_arguments(parser: argparse.ArgumentParser) -> None:

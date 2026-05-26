@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import {
   Button,
   Text,
-  Badge,
   Tooltip,
 } from '@fluentui/react-components'
 import { AddRegular, PanelRightRegular } from '@fluentui/react-icons'
@@ -10,6 +9,7 @@ import MessageList from './MessageList'
 import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
 import ConverterPanel from './ConverterPanel'
+import TargetBadge from './TargetBadge'
 import type { PieceConversion } from './converterTypes'
 import { PIECE_TYPE_TO_DATA_TYPE, basenameFromValue, buildMediaUrl, dataTypeToAttachmentKind, isPathDataType } from './converterTypes'
 import LabelsBar from '../Labels/LabelsBar'
@@ -553,17 +553,8 @@ export default function ChatWindow({
       <div className={styles.chatArea}>
         <div className={styles.ribbon}>
           <div className={styles.conversationInfo}>
-            <Text>PyRIT Attack</Text>
             {activeTarget ? (
-              <div className={styles.targetInfo}>
-                <Text size={200}>→</Text>
-                <Tooltip content={activeTarget.target_registry_name} relationship="label">
-                  <Badge appearance="outline" size="medium">
-                    {activeTarget.target_type}
-                    {activeTarget.model_name ? ` (${activeTarget.model_name})` : ''}
-                  </Badge>
-                </Tooltip>
-              </div>
+              <TargetBadge target={activeTarget} />
             ) : (
               <Text size={200} className={styles.noTarget}>
                 No target selected
@@ -584,15 +575,19 @@ export default function ChatWindow({
                 aria-label="Toggle conversations panel"
               />
             </Tooltip>
-            <Button
-              appearance="primary"
-              icon={<AddRegular />}
-              onClick={() => { setIsPanelOpen(false); onNewAttack() }}
-              disabled={!attackResultId}
-              data-testid="new-attack-btn"
-            >
-              New Attack
-            </Button>
+            <Tooltip content="New Attack" relationship="label">
+              <Button
+                appearance="primary"
+                icon={<AddRegular />}
+                onClick={() => { setIsPanelOpen(false); onNewAttack() }}
+                disabled={!attackResultId}
+                data-testid="new-attack-btn"
+                aria-label="New Attack"
+                className={styles.newAttackButton}
+              >
+                <span className={styles.newAttackLabel}>New Attack</span>
+              </Button>
+            </Tooltip>
           </div>
         </div>
         <MessageList

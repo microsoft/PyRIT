@@ -146,6 +146,7 @@ project:
             - file: code/targets/prompt_shield_target.ipynb
             - file: code/targets/realtime_target.ipynb
             - file: code/targets/use_huggingface_chat_target.ipynb
+            - file: code/targets/round_robin_target.ipynb
         - file: code/converters/0_converters.ipynb
           children:
             - file: code/converters/1_text_to_text_converters.ipynb
@@ -203,11 +204,11 @@ project:
       children:
         - file: api/pyrit_analytics.md
         - file: api/pyrit_auth.md
-        - file: api/pyrit_cli_frontend_core.md
-        - file: api/pyrit_cli_pyrit_backend.md
+        - file: api/pyrit_cli_api_client.md
         - file: api/pyrit_cli_pyrit_scan.md
         - file: api/pyrit_cli_pyrit_shell.md
         - file: api/pyrit_common.md
+        - file: api/pyrit_common_cli_helpers.md
         - file: api/pyrit_datasets.md
         - file: api/pyrit_embedding.md
         - file: api/pyrit_exceptions.md

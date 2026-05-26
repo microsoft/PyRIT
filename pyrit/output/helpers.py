@@ -9,6 +9,8 @@ deferred inside each ``*MemoryPrinter`` constructor, so importing this module (o
 ``pyrit.output``) does not pull in the memory stack until a memory-backed printer is instantiated.
 """
 
+import os
+
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import AttackResult, Message, Score
 from pyrit.models.scenario_result import ScenarioResult
@@ -29,6 +31,9 @@ async def output_attack_async(
     include_auxiliary_scores: bool = False,
     include_pruned_conversations: bool = False,
     include_adversarial_conversation: bool = False,
+    blur_images: bool = False,
+    blur_radius: int = 20,
+    blurred_dir: str | os.PathLike[str] | None = None,
 ) -> None:
     """
     Print an attack result in the specified format to the specified destination.
@@ -42,11 +47,35 @@ async def output_attack_async(
         include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
         include_adversarial_conversation (bool): Whether to include the adversarial conversation.
             Defaults to False.
+        blur_images (bool): If True, apply a Gaussian blur to image outputs before
+            rendering them. For "pretty" output, image bytes are blurred in-memory before
+            display. For "markdown" output, a blurred file is written to disk and the
+            markdown links to it instead of the original. The original image file is
+            **not** modified and remains accessible on disk; this flag is intended to
+            reduce reviewer exposure, not to enforce access control.
+            If blurring fails for any reason (I/O error, decode error, etc.), a warning
+            is logged and a plain-text link to the original is emitted instead of an
+            inline image — the original is not silently rendered.
+            Defaults to False.
+        blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
+            Defaults to 20.
+        blurred_dir (str | PathLike | None): For "markdown" output, directory to write
+            blurred copies into. Defaults to None (sibling of the original). Ignored
+            when ``format != "markdown"``.
     """
     if format == "markdown":
-        printer = MarkdownAttackResultMemoryPrinter(sink=sink or get_default_sink())
+        printer = MarkdownAttackResultMemoryPrinter(
+            sink=sink or get_default_sink(),
+            blur_images=blur_images,
+            blur_radius=blur_radius,
+            blurred_dir=blurred_dir,
+        )
     else:
-        printer = PrettyAttackResultMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
+        printer = PrettyAttackResultMemoryPrinter(
+            sink=sink or get_default_sink(StdoutSink),
+            blur_images=blur_images,
+            blur_radius=blur_radius,
+        )
 
     await printer.write_async(
         result,
@@ -116,6 +145,8 @@ async def output_conversation_async(
     sink: Sink | None = None,
     include_scores: bool = False,
     include_reasoning_trace: bool = False,
+    blur_images: bool = False,
+    blur_radius: int = 20,
 ) -> None:
     """
     Print a conversation message history in the specified format.
@@ -127,6 +158,15 @@ async def output_conversation_async(
             for "markdown".
         include_scores (bool): Whether to include scores. Defaults to False.
         include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
+        blur_images (bool): If True, apply a Gaussian blur to image outputs before
+            rendering them. For "pretty" output (the only format supported here),
+            image bytes are blurred in-memory before display. The original image file
+            is **not** modified; this flag is intended to reduce reviewer exposure,
+            not to enforce access control. If blurring fails for any reason, a warning
+            is logged and the original is shown (pretty path only).
+            Defaults to False.
+        blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
+            Defaults to 20.
 
     Raises:
         ValueError: If ``format`` is not a supported value.
@@ -134,7 +174,11 @@ async def output_conversation_async(
     if format != "pretty":
         raise ValueError(f"Unsupported format for conversation: {format!r}. Only 'pretty' is available.")
 
-    printer = PrettyConversationMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
+    printer = PrettyConversationMemoryPrinter(
+        sink=sink or get_default_sink(StdoutSink),
+        blur_images=blur_images,
+        blur_radius=blur_radius,
+    )
     await printer.write_async(
         messages,
         include_scores=include_scores,

@@ -21,7 +21,6 @@ from pyrit.backend.models.scenarios import (
     ListRegisteredScenariosResponse,
     RegisteredScenario,
     RunScenarioRequest,
-    ScenarioRunDetail,
     ScenarioRunListResponse,
     ScenarioRunSummary,
 )
@@ -197,24 +196,22 @@ async def cancel_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:
 
 @router.get(
     "/runs/{scenario_result_id}/results",
-    response_model=ScenarioRunDetail,
     responses={
         404: {"model": ProblemDetail, "description": "Run not found"},
         409: {"model": ProblemDetail, "description": "Run not yet completed"},
     },
 )
-async def get_scenario_run_results(scenario_result_id: str) -> ScenarioRunDetail:
+async def get_scenario_run_results(scenario_result_id: str) -> dict:
     """
     Get detailed results for a completed scenario run.
 
-    Returns per-attack outcomes including objectives, responses, scores,
-    and success/failure counts.
+    Returns the full ScenarioResult serialization.
 
     Args:
         scenario_result_id: The scenario_result_id.
 
     Returns:
-        ScenarioRunDetail: Full attack-level results.
+        dict: ScenarioResult.to_dict() payload.
     """
     service = get_scenario_run_service()
     try:
@@ -227,4 +224,4 @@ async def get_scenario_run_results(scenario_result_id: str) -> ScenarioRunDetail
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Scenario run '{scenario_result_id}' not found",
         )
-    return result
+    return result.to_dict()

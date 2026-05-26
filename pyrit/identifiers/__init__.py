@@ -15,6 +15,8 @@ from pyrit.identifiers.class_name_utils import (
 )
 from pyrit.identifiers.component_identifier import ComponentIdentifier, Identifiable, config_hash
 from pyrit.identifiers.evaluation_identifier import (
+    TARGET_EVAL_PARAM_FALLBACKS,
+    TARGET_EVAL_PARAMS,
     AtomicAttackEvaluationIdentifier,
     ChildEvalRule,
     EvaluationIdentifier,
@@ -36,6 +38,8 @@ __all__ = [
     "REGISTRY_NAME_PATTERN",
     "ScorerEvaluationIdentifier",
     "snake_case_to_class_name",
+    "TARGET_EVAL_PARAM_FALLBACKS",
+    "TARGET_EVAL_PARAMS",
     "validate_registry_name",
     "config_hash",
     "IdentifierFilter",

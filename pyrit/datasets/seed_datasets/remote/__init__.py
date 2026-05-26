@@ -19,6 +19,9 @@ from pyrit.datasets.seed_datasets.remote.babelscape_alert_dataset import (
 from pyrit.datasets.seed_datasets.remote.beaver_tails_dataset import (
     _BeaverTailsDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.categorical_harmful_qa_dataset import (
+    _CategoricalHarmfulQADataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.cbt_bench_dataset import (
     _CBTBenchDataset,
 )  # noqa: F401
@@ -152,6 +155,7 @@ __all__ = [
     "_BeaverTailsDataset",
     "_CBTBenchDataset",
     "_CCPSensitivePromptsDataset",
+    "_CategoricalHarmfulQADataset",
     "_ComicJailbreakDataset",
     "COMIC_JAILBREAK_TEMPLATES",
     "ComicJailbreakTemplateConfig",

@@ -4,256 +4,272 @@
 """
 PyRIT Shell - Interactive REPL for PyRIT.
 
-This module provides an interactive shell where PyRIT modules are loaded once
-at startup, making subsequent commands instant.
+This module provides an interactive shell that talks to the PyRIT backend
+server over HTTP. No heavy pyrit imports — all operations go through REST.
 """
 
 from __future__ import annotations
 
 import asyncio
 import cmd
+import concurrent.futures
+import contextlib
 import logging
 import sys
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
-
-if TYPE_CHECKING:
-    import types
-
-    from pyrit.cli import frontend_core
-    from pyrit.models.scenario_result import ScenarioResult
+from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
 from pyrit.cli import _banner as banner
-from pyrit.cli._cli_args import merge_config_scenario_args
-from pyrit.registry import ScenarioRegistry
+
+if TYPE_CHECKING:
+    from collections.abc import Coroutine
+
+_T = TypeVar("_T")
 
 
 class PyRITShell(cmd.Cmd):
     """
-    Interactive shell for PyRIT.
+    Interactive shell for PyRIT (thin REST client).
 
     Commands:
         list-scenarios             - List all available scenarios
         list-initializers          - List all available initializers
-        list-targets [opts]        - List all available targets from the registry
+        list-targets               - List all available targets
         run <scenario> [opts]      - Run a scenario with optional parameters
-        scenario-history           - List all previous scenario runs
-        print-scenario [N]         - Print detailed results for scenario run(s)
+        scenario-history [N]       - List the last N (default 10) scenario runs
+        print-scenario [id]        - Print detailed results for a scenario run
+        start-server               - Start a local backend server
+        stop-server                - Stop the owned backend server
         help [command]             - Show help for a command
         clear                      - Clear the screen
         exit (quit, q)             - Exit the shell
-
-    Shell Startup Options:
-        --config-file <path>    Path to config file (default: ~/.pyrit/.pyrit_conf)
-        --log-level <level>     Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) - default for all runs
-        --no-animation          Disable the animated startup banner
-
-    Run Command Options:
-        --target <name>                 Target name from the TargetRegistry (required)
-        --initializers <name> ...       Built-in initializers (supports name:key=val1,val2 syntax)
-        --initialization-scripts <...>  Custom Python scripts to run before the scenario
-        --strategies, -s <s1> ...       Strategy names to use
-        --max-concurrency <N>           Maximum concurrent operations
-        --max-retries <N>               Maximum retry attempts
-        --memory-labels <JSON>          JSON string of labels
-        --log-level <level>             Override default log level for this run
     """
 
     prompt = "pyrit> "
+
+    _TERMINAL_STATUSES = {"COMPLETED", "FAILED", "CANCELLED"}
 
     def __init__(
         self,
         *,
         no_animation: bool = False,
-        config_file: Optional[Path] = None,
-        database: Optional[str] = None,
-        initialization_scripts: Optional[list[Path]] = None,
-        initializer_names: Optional[list[Any]] = None,
-        env_files: Optional[list[Path]] = None,
-        log_level: Optional[int] = None,
+        server_url: str | None = None,
+        config_file: Path | None = None,
+        start_server: bool = False,
     ) -> None:
         """
         Initialize the PyRIT shell.
 
-        The heavy ``frontend_core`` import, ``FrontendCore`` construction, and
-        ``initialize_async`` call all happen on a background thread so the
-        shell prompt appears immediately.
-
         Args:
-            no_animation (bool): If True, skip the animated startup banner.
-            config_file (Optional[Path]): Path to a YAML configuration file.
-            database (Optional[str]): Database type (InMemory, SQLite, or AzureSQL).
-            initialization_scripts (Optional[list[Path]]): Initialization script paths.
-            initializer_names (Optional[list[Any]]): Initializer entries (names or dicts).
-            env_files (Optional[list[Path]]): Environment file paths to load in order.
-            log_level (Optional[int]): Logging level constant (e.g., ``logging.WARNING``).
+            no_animation: If True, skip the animated startup banner.
+            server_url: Optional explicit server URL.
+            config_file: Optional config file path.
+            start_server: If True, auto-start a local backend.
         """
         super().__init__()
         self._no_animation = no_animation
-        self._context_kwargs: dict[str, Any] = {
-            k: v
-            for k, v in {
-                "config_file": config_file,
-                "database": database,
-                "initialization_scripts": initialization_scripts,
-                "initializer_names": initializer_names,
-                "env_files": env_files,
-                "log_level": log_level,
-            }.items()
-            if v is not None
-        }
+        self._server_url = server_url
+        self._config_file = config_file
+        self._start_server = start_server
+        self._api_client: Any = None  # PyRITApiClient (lazy)
+        self._base_url: str | None = None
+        self._launcher: Any = None  # ServerLauncher (lazy)
 
-        # Track scenario execution history: list of (command_string, ScenarioResult) tuples
-        self._scenario_history: list[tuple[str, ScenarioResult]] = []
+        # Persistent event loop running on a background thread. All async
+        # calls (health probe, REST methods, scenario polling) are scheduled
+        # here so the shared httpx.AsyncClient stays in a single loop.
+        self._loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(target=self._loop.run_forever, name="pyrit-shell-loop", daemon=True)
+        self._loop_thread.start()
 
-        # Set by the background thread after importing frontend_core.
-        self._fc: types.ModuleType | None = None
-        self.context: frontend_core.FrontendCore | None = None
-        self.default_log_level: int | None = None
-
-        # Initialize PyRIT in background thread for faster startup.
-        self._init_thread = threading.Thread(target=self._background_init, daemon=True)
-        self._init_complete = threading.Event()
-        self._init_error: Optional[BaseException] = None
-        self._init_thread.start()
-
-    def _background_init(self) -> None:
-        """Import heavy modules and initialize PyRIT in the background."""
-        try:
-            from pyrit.cli import frontend_core as fc
-
-            self._fc = fc
-            self.context = fc.FrontendCore(**self._context_kwargs)
-            self.default_log_level = self.context._log_level
-            asyncio.run(self.context.initialize_async())
-        except BaseException as exc:
-            self._init_error = exc
-        finally:
-            self._init_complete.set()
-
-    def _raise_init_error(self) -> None:
-        """Re-raise background initialization failures on the calling thread."""
-        if self._init_error is not None:
-            raise self._init_error
-
-    def _ensure_initialized(self) -> None:
+    def _run_async(self, coro: Coroutine[Any, Any, _T], *, timeout: float | None = 120.0) -> _T:
         """
-        Wait for initialization to complete if not already done.
+        Run a coroutine on the shell's persistent loop and return its result.
+
+        Args:
+            coro: Coroutine to schedule on the background loop.
+            timeout: Maximum seconds to wait. ``None`` waits forever. Defaults to
+                120s, which comfortably covers every per-call REST request and
+                the 30s server startup probe.
+
+        Returns:
+            The coroutine's result.
 
         Raises:
-            RuntimeError: If frontend core initialization failed or is not complete.
+            TimeoutError: If the coroutine does not complete within *timeout*.
         """
-        if not self._init_complete.is_set():
-            print("Waiting for PyRIT initialization to complete...")
-            sys.stdout.flush()
-            self._init_complete.wait()
-        self._raise_init_error()
-        if self._fc is None or self.context is None:
-            raise RuntimeError("Frontend core not initialized")
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError as exc:
+            future.cancel()
+            raise TimeoutError(
+                f"Backend call did not complete within {timeout}s. The server may be hung or "
+                "unreachable; try `stop-server` and re-running."
+            ) from exc
+
+    def _shutdown_loop(self) -> None:
+        """Stop the background event loop and join the thread."""
+        if not self._loop.is_closed():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._loop_thread.join(timeout=5)
+            with contextlib.suppress(Exception):
+                self._loop.close()
+
+    def _resolve_base_url(self) -> str:
+        """
+        Determine the server base URL.
+
+        Returns:
+            str: The configured base URL, falling back to the built-in default.
+        """
+        from pyrit.cli._config_reader import DEFAULT_SERVER_URL, read_server_url
+
+        if self._server_url:
+            return self._server_url
+        return read_server_url(config_file=self._config_file) or DEFAULT_SERVER_URL
+
+    def _ensure_client(self) -> bool:
+        """
+        Ensure the API client is connected.
+
+        Returns:
+            bool: ``True`` if the client is ready, ``False`` otherwise.
+        """
+        if self._api_client is not None:
+            return True
+
+        base_url = self._base_url or self._resolve_base_url()
+
+        # Check health
+        from pyrit.cli._server_launcher import ServerLauncher
+
+        healthy = self._run_async(ServerLauncher.probe_health_async(base_url=base_url))
+
+        if not healthy and self._start_server:
+            self._launcher = ServerLauncher()
+            try:
+                base_url = self._run_async(self._launcher.start_async(config_file=self._config_file))
+                healthy = True
+            except RuntimeError as exc:
+                print(f"Error starting server: {exc}")
+                return False
+
+        if not healthy:
+            from pyrit.cli._output import print_error_with_hint
+
+            print_error_with_hint(
+                message=f"Server not available at {base_url}",
+                hint="Use 'start-server' to launch a local backend, or restart with --server-url.",
+            )
+            return False
+
+        from pyrit.cli.api_client import PyRITApiClient
+
+        self._base_url = base_url
+        self._api_client = PyRITApiClient(base_url=base_url)
+        self._run_async(self._api_client.__aenter__())
+        self._start_server = False  # only auto-start once
+        return True
 
     def cmdloop(self, intro: Optional[str] = None) -> None:
         """Override cmdloop to play animated banner before starting the REPL."""
         if intro is None:
-            # Play animation immediately while background init continues.
-            # Suppress logging during the animation so log lines don't corrupt
-            # the ANSI cursor-positioned frames.
             prev_disable = logging.root.manager.disable
             logging.disable(logging.CRITICAL)
             try:
                 intro = banner.play_animation(no_animation=self._no_animation)
             finally:
                 logging.disable(prev_disable)
-
-            # If init already failed while the animation played, surface it now.
-            if self._init_complete.is_set():
-                self._raise_init_error()
-        elif self._init_complete.is_set():
-            self._raise_init_error()
         self.intro = intro
         super().cmdloop(intro=self.intro)
 
-    def do_list_scenarios(self, arg: str) -> None:
-        """
-        List all available scenarios.
+    # ------------------------------------------------------------------
+    # List commands
+    # ------------------------------------------------------------------
 
-        Raises:
-            RuntimeError: If initialization has not completed.
-        """
+    def do_list_scenarios(self, arg: str) -> None:
+        """List all available scenarios."""
         if arg.strip():
             print(f"Error: list-scenarios does not accept arguments, got: {arg.strip()}")
             return
-        self._ensure_initialized()
-        if self._fc is None or self.context is None:
-            raise RuntimeError("Frontend core not initialized")
+        if not self._ensure_client():
+            return
+        from pyrit.cli import _output
+
         try:
-            asyncio.run(self._fc.print_scenarios_list_async(context=self.context))
+            resp = self._run_async(self._api_client.list_scenarios_async())
+            _output.print_scenario_list(items=resp.get("items", []))
         except Exception as e:
             print(f"Error listing scenarios: {e}")
 
     def do_list_initializers(self, arg: str) -> None:
-        """
-        List all available initializers.
-
-        Raises:
-            RuntimeError: If initialization has not completed.
-        """
+        """List all available initializers."""
         if arg.strip():
             print(f"Error: list-initializers does not accept arguments, got: {arg.strip()}")
             return
-        self._ensure_initialized()
-        if self._fc is None or self.context is None:
-            raise RuntimeError("Frontend core not initialized")
+        if not self._ensure_client():
+            return
+        from pyrit.cli import _output
+
         try:
-            asyncio.run(self._fc.print_initializers_list_async(context=self.context))
+            resp = self._run_async(self._api_client.list_initializers_async())
+            _output.print_initializer_list(items=resp.get("items", []))
         except Exception as e:
             print(f"Error listing initializers: {e}")
 
     def do_list_targets(self, arg: str) -> None:
-        """
-        List all available targets from the TargetRegistry.
+        """List all available targets."""
+        if arg.strip():
+            print(f"Error: list-targets does not accept arguments, got: {arg.strip()}")
+            return
+        if not self._ensure_client():
+            return
+        from pyrit.cli import _output
 
-        Usage:
-            list-targets
-            list-targets --initializers <name> [<name> ...]
-            list-targets --initialization-scripts <path> [<path> ...]
-
-        Options:
-            --initializers <name> ...       Built-in initializers to run first
-            --initialization-scripts <...>  Custom Python scripts to run first
-
-        Examples:
-            list-targets --initializers target
-            list-targets --initializers target:tags=default,scorer
-
-        Raises:
-            RuntimeError: If initialization has not completed.
-        """
-        self._ensure_initialized()
-        if self._fc is None or self.context is None:
-            raise RuntimeError("Frontend core not initialized")
         try:
-            list_targets_context = self.context
-            if arg.strip():
-                args = self._fc.parse_list_targets_arguments(args_string=arg)
-
-                resolved_scripts = None
-                if args["initialization_scripts"]:
-                    resolved_scripts = self._fc.resolve_initialization_scripts(
-                        script_paths=args["initialization_scripts"]
-                    )
-                list_targets_context = self.context.with_overrides(
-                    initialization_scripts=resolved_scripts,
-                    initializer_names=args["initializers"],
-                )
-
-            asyncio.run(self._fc.print_targets_list_async(context=list_targets_context))
-        except ValueError as e:
-            print(f"Error: {e}")
-        except FileNotFoundError as e:
-            print(f"Error: {e}")
+            resp = self._run_async(self._api_client.list_targets_async())
+            _output.print_target_list(items=resp.get("items", []))
         except Exception as e:
             print(f"Error listing targets: {e}")
+
+    def do_add_initializer(self, arg: str) -> None:
+        """
+        Register an initializer from a Python script file.
+
+        Usage:
+            add-initializer <file_path> [<file_path> ...]
+        """
+        if not self._ensure_client():
+            return
+        if not arg.strip():
+            print("Usage: add-initializer <file_path> [<file_path> ...]")
+            return
+
+        from pyrit.cli.api_client import ServerNotAvailableError
+
+        for script_path_str in arg.split():
+            script_path = Path(script_path_str).resolve()
+            if not script_path.exists():
+                print(f"Error: File not found: {script_path}")
+                return
+            try:
+                content = script_path.read_text()
+                self._run_async(
+                    self._api_client.register_initializer_async(name=script_path.stem, script_content=content)
+                )
+                print(f"Registered initializer '{script_path.stem}' from {script_path}")
+            except ServerNotAvailableError as exc:
+                print(f"Error: {exc}")
+                return
+            except Exception as exc:
+                print(f"Error registering initializer: {exc}")
+                return
+
+    # ------------------------------------------------------------------
+    # Run command
+    # ------------------------------------------------------------------
 
     def do_run(self, line: str) -> None:
         """
@@ -263,299 +279,292 @@ class PyRITShell(cmd.Cmd):
             run <scenario_name> [options]
 
         Options:
-            --target <name>                 Target name from the TargetRegistry (required)
-            --initializers <name> ...       Built-in initializers (supports name:key=val1,val2 syntax)
-            --initialization-scripts <...>  Custom Python scripts to run before the scenario
-            --strategies, -s <s1> <s2> ...  Strategy names to use
+            --target <name>                 Target name (required)
+            --initializers <name> ...       Initializer names (supports name:key=val syntax)
+            --strategies, -s <s1> <s2> ...  Strategy names
             --max-concurrency <N>           Maximum concurrent operations
             --max-retries <N>               Maximum retry attempts
-            --memory-labels <JSON>          JSON string of labels (e.g., '{"key":"value"}')
-            --log-level <level>             Override default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+            --memory-labels <JSON>          JSON string of labels
+            --dataset-names <name> ...      Override default dataset names
+            --max-dataset-size <N>          Maximum items per dataset
+            --<scenario-flag> <value>       Scenario-declared parameters (see list-scenarios)
 
-        Examples:
-            run garak.encoding --target my_target --initializers target \
-                load_default_datasets
-            run garak.encoding --target my_target --initializers target \
-                load_default_datasets --strategies base64 rot13
-            run foundry.red_team_agent --target my_target --initializers target:tags=default,scorer \
-                dataset:mode=strict --strategies base64
-            run foundry.red_team_agent --target my_target --initializers target \
-                load_default_datasets --max-concurrency 10 --max-retries 3
-            run garak.encoding --target my_target --initializers target \
-                load_default_datasets \
-                --memory-labels '{"run_id":"test123","env":"dev"}'
-            run foundry.red_team_agent --target my_target --initializers target \
-                load_default_datasets -s jailbreak crescendo
-            run garak.encoding --target my_target --initializers target \
-                load_default_datasets --log-level DEBUG
-            run foundry.red_team_agent --target my_target --initialization-scripts ./my_custom_init.py -s all
-
-        Note:
-            --target is required for every run.
-            Initializers can be specified per-run or configured in .pyrit_conf.
-            Database and env-files are configured via the config file.
-
-        Raises:
-            RuntimeError: If initialization has not completed.
+        Notes:
+            Database, env files, and initialization scripts are configured on
+            the backend via its config file. Use `add-initializer` to register
+            custom initializers on the running server.
         """
-        self._ensure_initialized()
-        if self._fc is None or self.context is None:
-            raise RuntimeError("Frontend core not initialized")
+        if not self._ensure_client():
+            return
 
         if not line.strip():
             print("Error: Specify a scenario name")
-            print("\nUsage: run <scenario_name> [options]")
-            print("\nNote: --target is required. Initializers can be specified per-run or in .pyrit_conf.")
-            print("\nOptions:")
-            print(f"  --target <name>                 {self._fc.ARG_HELP['target']}")
-            print(f"  --initializers <name> ...       {self._fc.ARG_HELP['initializers']}")
-            print(
-                f"  --initialization-scripts <...>  {self._fc.ARG_HELP['initialization_scripts']}"
-                " (alternative to --initializers)"
-            )
-            print(f"  --strategies, -s <s1> <s2> ...  {self._fc.ARG_HELP['scenario_strategies']}")
-            print(f"  --max-concurrency <N>           {self._fc.ARG_HELP['max_concurrency']}")
-            print(f"  --max-retries <N>               {self._fc.ARG_HELP['max_retries']}")
-            print(f"  --memory-labels <JSON>          {self._fc.ARG_HELP['memory_labels']}")
-            print(
-                "  --log-level <level>             Override default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
-            )
-            print("\nExample:")
-            print("  run foundry.red_team_agent --target my_target --initializers target load_default_datasets")
-            print("\nType 'help run' for more details and examples")
+            print("Usage: run <scenario_name> --target <name> [options]")
             return
 
-        # Look up declared params for the scenario so the parser can recognize
-        # scenario-specific flags. Built-in scenarios only in v1.
-        declared_params = None
-        scenario_name_token = line.split(maxsplit=1)[0] if line.strip() else ""
-        if scenario_name_token:
-            try:
-                scenario_class = ScenarioRegistry.get_registry_singleton().get_class(scenario_name_token)
-            except KeyError:
-                scenario_class = None
-            if scenario_class is not None:
-                declared_params = scenario_class.supported_parameters()
-
-        # Parse arguments using shared parser
-        try:
-            args = self._fc.parse_run_arguments(args_string=line, declared_params=declared_params)
-        except ValueError as e:
-            print(f"Error: {e}")
-            # Hint when an unknown-flag error likely stems from a user-defined scenario
-            # introduced via --initialization-scripts (not yet supported for shell augmentation).
-            if declared_params is None and "--initialization-scripts" in line:
-                print(
-                    "Note: scenario-specific flags from --initialization-scripts scenarios "
-                    "are not yet supported in pyrit_shell. Built-in scenarios only in this release."
-                )
-            return
-
-        # Resolve initialization scripts if provided
-        resolved_scripts = None
-        if args["initialization_scripts"]:
-            try:
-                resolved_scripts = self._fc.resolve_initialization_scripts(script_paths=args["initialization_scripts"])
-            except FileNotFoundError as e:
-                print(f"Error: {e}")
-                return
-
-        # Create a context for this run with per-command overrides,
-        # inheriting config_file, database, and env_files from startup.
-        run_context = self.context.with_overrides(
-            initializer_names=args["initializers"],
-            initialization_scripts=resolved_scripts,
-            log_level=args["log_level"],
+        from pyrit.cli._cli_args import build_parameters_from_api, extract_scenario_args, parse_run_arguments
+        from pyrit.cli._output import (
+            print_scenario_result_async,
+            print_scenario_run_progress,
+            print_scenario_run_summary,
         )
 
+        # Fetch scenario metadata so the parser recognizes scenario-declared flags.
+        scenario_name_token = line.split(maxsplit=1)[0]
         try:
-            # Merge config-file scenario args (CLI wins). Shell v1 requires the
-            # scenario name to be provided positionally; config-only scenarios
-            # are not supported in the shell.
-            merged_scenario_args = merge_config_scenario_args(
-                config_scenario=self.context._scenario_config,
-                effective_scenario_name=args["scenario_name"],
-                cli_args=self._fc.extract_scenario_args(parsed=args),
-            )
+            scenario_meta = self._run_async(self._api_client.get_scenario_async(scenario_name=scenario_name_token))
+        except Exception as exc:
+            print(f"Error fetching scenario metadata: {exc}")
+            return
+        if scenario_meta is None:
+            print(f"Error: Scenario '{scenario_name_token}' not found on server.")
+            return
+        declared_params = build_parameters_from_api(api_params=scenario_meta.get("supported_parameters") or [])
 
-            result = asyncio.run(
-                self._fc.run_scenario_async(
-                    scenario_name=args["scenario_name"],
-                    context=run_context,
-                    target_name=args["target"],
-                    scenario_strategies=args["scenario_strategies"],
-                    max_concurrency=args["max_concurrency"],
-                    max_retries=args["max_retries"],
-                    memory_labels=args["memory_labels"],
-                    dataset_names=args["dataset_names"],
-                    max_dataset_size=args["max_dataset_size"],
-                    scenario_args=merged_scenario_args,
-                )
-            )
-            # Store the command and result in history
-            self._scenario_history.append((line, result))
-        except KeyboardInterrupt:
-            print("\n\nScenario interrupted. Returning to shell.")
+        # Parse arguments
+        try:
+            args = parse_run_arguments(args_string=line, declared_params=declared_params)
         except ValueError as e:
             print(f"Error: {e}")
-        except Exception as e:
-            print(f"Error running scenario: {e}")
-            import traceback
+            return
 
-            traceback.print_exc()
+        scenario_name = args["scenario_name"]
+
+        # Build request
+        request: dict[str, Any] = {
+            "scenario_name": scenario_name,
+            "target_name": args.get("target") or "",
+        }
+
+        # Map initializers
+        initializers = args.get("initializers")
+        if initializers:
+            init_names: list[str] = []
+            init_args: dict[str, dict[str, Any]] = {}
+            for entry in initializers:
+                if isinstance(entry, str):
+                    init_names.append(entry)
+                elif isinstance(entry, dict):
+                    name = entry["name"]
+                    init_names.append(name)
+                    if entry.get("args"):
+                        init_args[name] = entry["args"]
+            request["initializers"] = init_names
+            if init_args:
+                request["initializer_args"] = init_args
+
+        if args.get("scenario_strategies"):
+            request["strategies"] = args["scenario_strategies"]
+        if args.get("max_concurrency") is not None:
+            request["max_concurrency"] = args["max_concurrency"]
+        if args.get("max_retries") is not None:
+            request["max_retries"] = args["max_retries"]
+        if args.get("dataset_names"):
+            request["dataset_names"] = args["dataset_names"]
+        if args.get("max_dataset_size") is not None:
+            request["max_dataset_size"] = args["max_dataset_size"]
+        if args.get("memory_labels"):
+            request["labels"] = args["memory_labels"]
+
+        scenario_params = extract_scenario_args(parsed=args)
+        if scenario_params:
+            request["scenario_params"] = scenario_params
+
+        # Start run
+        total_strategies = len(request.get("strategies") or [])
+        print(f"\nRunning scenario: {scenario_name}")
+        sys.stdout.flush()
+
+        try:
+            run = self._run_async(self._api_client.start_scenario_run_async(request=request))
+        except Exception as exc:
+            print(f"Error starting scenario: {exc}")
+            return
+
+        scenario_result_id = run.get("scenario_result_id", "")
+
+        # Poll for completion
+        import time
+
+        try:
+            while True:
+                run = self._run_async(self._api_client.get_scenario_run_async(scenario_result_id=scenario_result_id))
+                status = run.get("status", "UNKNOWN")
+                print_scenario_run_progress(run=run, total_strategies=total_strategies)
+                if status in self._TERMINAL_STATUSES:
+                    break
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            print("\n\nCancelling scenario run...")
+            try:
+                self._run_async(self._api_client.cancel_scenario_run_async(scenario_result_id=scenario_result_id))
+                print("Scenario run cancelled.")
+            except Exception:
+                print("Warning: could not cancel scenario run.")
+            print("Returning to shell.")
+            return
+
+        # Print results
+        if run.get("status") == "COMPLETED":
+            try:
+                detail = self._run_async(
+                    self._api_client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
+                )
+                self._run_async(print_scenario_result_async(result_dict=detail))
+            except Exception:
+                print_scenario_run_summary(run=run)
+        else:
+            print_scenario_run_summary(run=run)
+
+    # ------------------------------------------------------------------
+    # History commands
+    # ------------------------------------------------------------------
 
     def do_scenario_history(self, arg: str) -> None:
         """
-        Display history of scenario runs.
+        Display history of scenario runs from the server (most recent first).
 
         Usage:
-            scenario-history
-
-        Shows a numbered list of all scenario runs with the commands used.
+            scenario-history          Show the last 10 runs
+            scenario-history <N>      Show the last N runs
         """
-        if arg.strip():
-            print(f"Error: scenario-history does not accept arguments, got: {arg.strip()}")
+        arg = arg.strip()
+        limit = 10
+        if arg:
+            try:
+                limit = int(arg)
+            except ValueError:
+                limit = 0
+            if limit < 1:
+                print(f"Usage: scenario-history [N]. Got non-positive-integer argument: {arg!r}")
+                return
+        if not self._ensure_client():
             return
-        if not self._scenario_history:
-            print("No scenario runs in history.")
-            return
+        from pyrit.cli._output import print_scenario_runs_list
 
-        print("\nScenario Run History:")
-        print("=" * 80)
-        for idx, (command, _) in enumerate(self._scenario_history, start=1):
-            print(f"{idx}) {command}")
-        print("=" * 80)
-        print(f"\nTotal runs: {len(self._scenario_history)}")
-        print("\nUse 'print-scenario <number>' to view detailed results for a specific run.")
-        print("Use 'print-scenario' to view detailed results for all runs.")
+        try:
+            resp = self._run_async(self._api_client.list_scenario_runs_async(limit=limit))
+            print_scenario_runs_list(runs=resp.get("items", []))
+        except Exception as e:
+            print(f"Error: {e}")
 
     def do_print_scenario(self, arg: str) -> None:
         """
-        Print detailed results for scenario runs.
+        Print detailed results for a scenario run.
 
         Usage:
-            print-scenario          Print all scenario results
-            print-scenario <N>      Print results for scenario run number N
-
-        Examples:
-            print-scenario          Show all previous scenario results
-            print-scenario 1        Show results from first scenario run
-            print-scenario 3        Show results from third scenario run
+            print-scenario <scenario_result_id>
         """
-        if not self._scenario_history:
-            print("No scenario runs in history.")
+        if not self._ensure_client():
+            return
+        from pyrit.cli._output import print_scenario_result_async
+
+        arg = arg.strip()
+        if not arg:
+            print("Usage: print-scenario <scenario_result_id>")
+            print("Use 'scenario-history' to see available run IDs.")
             return
 
-        # Parse argument
-        arg = arg.strip()
+        try:
+            detail = self._run_async(self._api_client.get_scenario_run_results_async(scenario_result_id=arg))
+            self._run_async(print_scenario_result_async(result_dict=detail))
+        except Exception as e:
+            print(f"Error: {e}")
 
-        if not arg:
-            # Print all scenarios
-            print("\nPrinting all scenario results:")
-            print("=" * 80)
-            for idx, (command, result) in enumerate(self._scenario_history, start=1):
-                print(f"\n{'#' * 80}")
-                print(f"Scenario Run #{idx}: {command}")
-                print(f"{'#' * 80}")
-                from pyrit.output.scenario_result.pretty import (
-                    PrettyScenarioResultMemoryPrinter as ConsoleScenarioResultPrinter,
-                )
+    # ------------------------------------------------------------------
+    # Server management
+    # ------------------------------------------------------------------
 
-                printer = ConsoleScenarioResultPrinter()
-                asyncio.run(printer.print_summary_async(result))
+    def do_start_server(self, arg: str) -> None:
+        """Start a local pyrit_backend server."""
+        if arg.strip():
+            print(f"Error: start-server does not accept arguments, got: {arg.strip()}")
+            return
+        from pyrit.cli._server_launcher import ServerLauncher
+        from pyrit.cli.api_client import PyRITApiClient
+
+        base_url = self._resolve_base_url()
+
+        # Check if already running
+        if self._run_async(ServerLauncher.probe_health_async(base_url=base_url)):
+            print(f"Server already running at {base_url}")
+            if self._api_client is None:
+                self._base_url = base_url
+                self._api_client = PyRITApiClient(base_url=base_url)
+                self._run_async(self._api_client.__aenter__())
+            return
+
+        self._launcher = ServerLauncher()
+        try:
+            new_url = self._run_async(self._launcher.start_async(config_file=self._config_file))
+            self._base_url = new_url
+            # Create new client for the started server
+            if self._api_client is not None:
+                self._run_async(self._api_client.close_async())
+            self._api_client = PyRITApiClient(base_url=new_url)
+            self._run_async(self._api_client.__aenter__())
+        except RuntimeError as exc:
+            print(f"Error: {exc}")
+
+    def do_stop_server(self, arg: str) -> None:
+        """Stop the backend server."""
+        if arg.strip():
+            print(f"Error: stop-server does not accept arguments, got: {arg.strip()}")
+            return
+        from pyrit.cli._server_launcher import ServerLauncher, stop_server_on_port
+
+        # If we own the launcher, use it directly
+        if self._launcher is not None:
+            self._launcher.stop()
+            print("Server stopped.")
         else:
-            # Print specific scenario
-            try:
-                scenario_num = int(arg)
-                if scenario_num < 1 or scenario_num > len(self._scenario_history):
-                    print(f"Error: Scenario number must be between 1 and {len(self._scenario_history)}")
-                    return
+            # Find and kill by port. Probe first so we don't SIGTERM a non-pyrit
+            # process that happens to be listening on this port.
+            from urllib.parse import urlparse
 
-                command, result = self._scenario_history[scenario_num - 1]
-                print(f"\nScenario Run #{scenario_num}: {command}")
-                print("=" * 80)
-                from pyrit.output.scenario_result.pretty import (
-                    PrettyScenarioResultMemoryPrinter as ConsoleScenarioResultPrinter,
-                )
+            base_url = self._base_url or self._resolve_base_url()
+            port = urlparse(base_url).port or 8000
+            if not self._run_async(ServerLauncher.probe_health_async(base_url=base_url)):
+                print(f"No pyrit backend responding at {base_url}; not stopping anything.")
+                return
+            if stop_server_on_port(port=port):
+                print(f"Server on port {port} stopped.")
+            else:
+                print(f"No server found on port {port}.")
+                return
 
-                printer = ConsoleScenarioResultPrinter()
-                asyncio.run(printer.print_summary_async(result))
-            except ValueError:
-                print(f"Error: Invalid scenario number '{arg}'. Must be an integer.")
+        # Close the API client since the server is gone
+        if self._api_client is not None:
+            with contextlib.suppress(Exception):
+                self._run_async(self._api_client.close_async())
+            self._api_client = None
+        self._launcher = None
+
+    # ------------------------------------------------------------------
+    # Utility commands
+    # ------------------------------------------------------------------
 
     def do_help(self, arg: str) -> None:
         """Show help. Usage: help [command]."""
         if not arg:
-            from pyrit.cli._cli_args import ARG_HELP
-
-            # Show general help (no full init needed — ARG_HELP is lightweight)
             super().do_help(arg)
-            print("\n" + "=" * 70)
-            print("Shell Startup Options:")
-            print("=" * 70)
-            print("  --config-file <path>")
-            print("      Path to YAML configuration file")
-            print("      Default: ~/.pyrit/.pyrit_conf")
-            print()
-            print("  --log-level <level>")
-            print("      Default logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL")
-            print("      Default: WARNING")
-            print("      Can be overridden per-run with 'run <scenario> --log-level <level>'")
-            print()
-            print("=" * 70)
-            print("Run Command Options (specified when running scenarios):")
-            print("=" * 70)
-            print("  --target <name>  (REQUIRED)")
-            print(f"      {ARG_HELP['target']}")
-            print("      Example: run foundry.red_team_agent --target my_target")
-            print("               --initializers target load_default_datasets")
-            print()
-            print("  --initializers <name> [<name> ...]")
-            print(f"      {ARG_HELP['initializers']}")
-            print("      Example: run foundry.red_team_agent --target my_target")
-            print("               --initializers target load_default_datasets")
-            print("      With params: run foundry.red_team_agent --target my_target")
-            print("               --initializers target:tags=default,scorer")
-            print("      Multiple with params: run foundry.red_team_agent --target my_target")
-            print("               --initializers target:tags=default,scorer dataset:mode=strict")
-            print()
-            print("  --initialization-scripts <path> [<path> ...]  (Alternative to --initializers)")
-            print(f"      {ARG_HELP['initialization_scripts']}")
-            print("      Example: run foundry.red_team_agent --initialization-scripts ./my_init.py")
-            print()
-            print("  --strategies, -s <s1> [<s2> ...]")
-            print(f"      {ARG_HELP['scenario_strategies']}")
-            print("      Example: run garak.encoding --strategies base64 rot13")
-            print()
-            print("  --max-concurrency <N>")
-            print(f"      {ARG_HELP['max_concurrency']}")
-            print()
-            print("  --max-retries <N>")
-            print(f"      {ARG_HELP['max_retries']}")
-            print()
-            print("  --memory-labels <JSON>")
-            print(f"      {ARG_HELP['memory_labels']}")
-            print('      Example: run foundry.red_team_agent --memory-labels \'{"env":"test"}\'')
-            print()
-            print("  --log-level <level>             Override (DEBUG, INFO, WARNING, ERROR, CRITICAL)")
-            print()
-            print("  Database and env-files are configured via the config file (--config-file).")
-            print()
-            print("Start the shell like:")
-            print("  pyrit_shell")
-            print("  pyrit_shell --config-file ./my_config.yaml --log-level DEBUG")
+            print("\nUse 'help <command>' for details on a specific command.")
         else:
-            # Convert hyphens to underscores (e.g. help list-targets -> help list_targets) for command lookup
             normalized_arg = arg.replace("-", "_")
             super().do_help(normalized_arg)
 
     def do_exit(self, arg: str) -> bool:
         """
-        Exit the shell. Aliases: quit, q.
+        Exit the shell.
 
         Returns:
-            bool: True to exit the shell.
+            bool: Always ``True`` to signal the ``cmd`` loop to terminate.
         """
+        if self._api_client is not None:
+            with contextlib.suppress(Exception):
+                self._run_async(self._api_client.close_async())
+            self._api_client = None
+        self._shutdown_loop()
         print("\nGoodbye!")
         return True
 
@@ -568,31 +577,27 @@ class PyRITShell(cmd.Cmd):
     # Shortcuts and aliases
     do_quit = do_exit
     do_q = do_exit
-    do_EOF = do_exit  # Ctrl+D on Unix, Ctrl+Z on Windows  # noqa: N815
+    do_EOF = do_exit  # noqa: N815
 
     def emptyline(self) -> bool:
         """
         Don't repeat last command on empty line.
 
         Returns:
-            bool: False to prevent repeating the last command.
+            bool: Always ``False`` so the ``cmd`` loop does not exit.
         """
         return False
 
     def default(self, line: str) -> None:
         """Handle unknown commands and convert hyphens to underscores."""
-        # Try converting hyphens to underscores for command lookup
         parts = line.split(None, 1)
         if parts:
             cmd_with_underscores = parts[0].replace("-", "_")
             method_name = f"do_{cmd_with_underscores}"
-
             if hasattr(self, method_name):
-                # Call the method with the rest of the line as argument
                 arg = parts[1] if len(parts) > 1 else ""
                 getattr(self, method_name)(arg)
                 return
-
         print(f"Unknown command: {line}")
         print("Type 'help' or '?' for available commands")
 
@@ -606,11 +611,23 @@ def main() -> int:
     """
     import argparse
 
-    from pyrit.cli._cli_args import ARG_HELP, validate_log_level
+    from pyrit.cli._cli_args import ARG_HELP
 
     parser = argparse.ArgumentParser(
         prog="pyrit_shell",
-        description="PyRIT Interactive Shell - Load modules once, run commands instantly",
+        description="PyRIT Interactive Shell - Thin REST client for the PyRIT backend",
+    )
+
+    parser.add_argument(
+        "--server-url",
+        type=str,
+        help="URL of the PyRIT backend server (default: http://localhost:8000)",
+    )
+
+    parser.add_argument(
+        "--start-server",
+        action="store_true",
+        help="Start a local pyrit_backend server if one is not already running",
     )
 
     parser.add_argument(
@@ -624,23 +641,26 @@ def main() -> int:
         type=str,
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         default="WARNING",
-        help=(
-            "Default logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
-            " (default: WARNING, can be overridden per-run)"
-        ),
+        help="Logging level (default: WARNING)",
     )
 
     parser.add_argument(
         "--no-animation",
         action="store_true",
         default=False,
-        help="Disable the animated startup banner (show static banner instead)",
+        help="Disable the animated startup banner",
     )
 
     args = parser.parse_args()
 
-    # Play the banner immediately, before heavy imports.
-    # Suppress logging so background-thread output doesn't corrupt the animation.
+    logging.basicConfig(level=getattr(logging, args.log_level))
+
+    # Surface a deprecation if the layered config has blocks the CLI ignores.
+    from pyrit.cli._config_reader import warn_on_client_ignored_blocks
+
+    warn_on_client_ignored_blocks(config_file=args.config_file)
+
+    # Play banner immediately
     prev_disable = logging.root.manager.disable
     logging.disable(logging.CRITICAL)
     try:
@@ -648,14 +668,12 @@ def main() -> int:
     finally:
         logging.disable(prev_disable)
 
-    # Create shell with deferred initialization — the background thread
-    # will import frontend_core, create the FrontendCore context, and call
-    # initialize_async while the user is already at the prompt.
     try:
         shell = PyRITShell(
             no_animation=args.no_animation,
+            server_url=args.server_url,
             config_file=args.config_file,
-            log_level=validate_log_level(log_level=args.log_level),
+            start_server=args.start_server,
         )
         shell.cmdloop(intro=intro)
         return 0
