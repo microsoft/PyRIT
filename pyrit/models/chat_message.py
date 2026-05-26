@@ -35,16 +35,6 @@ class ChatMessage(BaseModel):
     tool_calls: Optional[list[ToolCall]] = None
     tool_call_id: Optional[str] = None
 
-    def to_json(self) -> str:
-        """
-        Serialize the ChatMessage to a JSON string.
-
-        Returns:
-            A JSON string representation of the message.
-
-        """
-        return self.model_dump_json()
-
     def to_dict(self) -> dict[str, Any]:
         """
         Convert the ChatMessage to a dictionary.
@@ -54,20 +44,6 @@ class ChatMessage(BaseModel):
 
         """
         return self.model_dump(exclude_none=True)
-
-    @classmethod
-    def from_json(cls, json_str: str) -> "ChatMessage":
-        """
-        Deserialize a ChatMessage from a JSON string.
-
-        Args:
-            json_str: A JSON string representation of a ChatMessage.
-
-        Returns:
-            A ChatMessage instance.
-
-        """
-        return cls.model_validate_json(json_str)
 
 
 class ChatMessagesDataset(BaseModel):

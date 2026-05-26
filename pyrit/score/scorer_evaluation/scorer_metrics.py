@@ -26,7 +26,9 @@ class ScorerMetrics:
     """
     Base dataclass for storing scorer evaluation metrics.
 
-    This class provides methods for serializing metrics to JSON and loading them from JSON files.
+    This class provides methods for serializing metrics to JSON strings (see
+    :meth:`to_json`) and loading them from JSON files on disk (see
+    :meth:`from_json_file`).
 
     Args:
         num_responses (int): Total number of responses evaluated.
@@ -48,7 +50,12 @@ class ScorerMetrics:
 
     def to_json(self) -> str:
         """
-        Convert the metrics to a JSON string.
+        Serialize this metrics instance to a JSON string.
+
+        This is the canonical serialization entry point for ``ScorerMetrics`` and its
+        subclasses. Pair it with :meth:`from_json_file` (which reads a JSON file written
+        from this string, optionally wrapped in a ``"metrics"`` key) for round-trip
+        (de)serialization.
 
         Returns:
             str: The JSON string representation of the metrics.
@@ -56,15 +63,21 @@ class ScorerMetrics:
         return json.dumps(asdict(self))
 
     @classmethod
-    def from_json(cls: type[T], file_path: Union[str, Path]) -> T:
+    def from_json_file(cls: type[T], file_path: Union[str, Path]) -> T:
         """
-        Load the metrics from a JSON file.
+        Load a metrics instance from a JSON file on disk.
+
+        This is the canonical deserialization entry point for ``ScorerMetrics`` and its
+        subclasses. It accepts a *file path* (string or ``Path``), not a JSON string —
+        the loader opens the file, unwraps a top-level ``"metrics"`` key if present
+        (as used by evaluation result files), and filters out internal underscore-prefixed
+        fields (e.g., cached ``init=False`` attributes) before constructing the instance.
 
         Args:
             file_path (Union[str, Path]): The path to the JSON file.
 
         Returns:
-            ScorerMetrics: An instance of ScorerMetrics with the loaded data.
+            ScorerMetrics: An instance of ScorerMetrics (or subclass) with the loaded data.
 
         Raises:
             FileNotFoundError: If the specified file does not exist.
@@ -81,6 +94,29 @@ class ScorerMetrics:
         filtered_data = {k: v for k, v in metrics_data.items() if not k.startswith("_")}
 
         return cls(**filtered_data)
+
+    @classmethod
+    def from_json(cls: type[T], file_path: Union[str, Path]) -> T:
+        """
+        Load a metrics instance from a JSON file (deprecated alias for :meth:`from_json_file`).
+
+        The name ``from_json`` is misleading because it accepts a *file path*, not a JSON
+        string. Use :meth:`from_json_file` instead.
+
+        Args:
+            file_path (Union[str, Path]): The path to the JSON file.
+
+        Returns:
+            ScorerMetrics: An instance of ScorerMetrics (or subclass) with the loaded data.
+        """
+        from pyrit.common.deprecation import print_deprecation_message
+
+        print_deprecation_message(
+            old_item=f"{cls.__name__}.from_json",
+            new_item=f"{cls.__name__}.from_json_file",
+            removed_in="0.15.0",
+        )
+        return cls.from_json_file(file_path)
 
 
 @dataclass
