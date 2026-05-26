@@ -30,7 +30,7 @@ from pyrit.backend.routes import (
     targets,
     version,
 )
-from pyrit.memory import CentralMemory
+from pyrit.setup.configuration_loader import ConfigurationLoader
 
 # Check for development mode from environment variable
 DEV_MODE = os.getenv("PYRIT_DEV_MODE", "false").lower() == "true"
@@ -40,17 +40,38 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Manage application startup and shutdown lifecycle."""
-    # Initialization is handled by the pyrit_backend CLI before uvicorn starts.
-    # Running 'uvicorn pyrit.backend.main:app' directly is not supported;
-    # use 'pyrit_backend' instead.
-    try:
-        CentralMemory.get_memory_instance()
-    except ValueError:
-        logger.warning(
-            "CentralMemory is not initialized. "
-            "Start the server via 'pyrit_backend' CLI instead of running uvicorn directly."
-        )
+    """
+    Initialize PyRIT on startup using the config file, then yield.
+
+    Config resolution order:
+    1. ``PYRIT_CONFIG_FILE`` env var (if set)
+    2. ``~/.pyrit/.pyrit_conf`` (if it exists)
+    3. Built-in defaults (SQLite, no initializers)
+    """
+    config_file_env = os.getenv("PYRIT_CONFIG_FILE")
+    config_file = Path(config_file_env) if config_file_env else None
+
+    config = ConfigurationLoader.load_with_overrides(config_file=config_file)
+    await config.initialize_pyrit_async()
+
+    # Expose config values to route handlers via app.state
+    default_labels: dict[str, str] = {}
+    if config.operator:
+        default_labels["operator"] = config.operator
+    if config.operation:
+        default_labels["operation"] = config.operation
+    app.state.default_labels = default_labels
+    app.state.max_concurrent_scenario_runs = config.max_concurrent_scenario_runs
+    app.state.allow_custom_initializers = config.allow_custom_initializers
+
+    if config.allow_custom_initializers:
+        logger.warning("Custom initializer registration is ENABLED (allow_custom_initializers: true).")
+
+    # Mount the bundled frontend (or print a dev/missing-frontend notice).
+    # Done here rather than at module load so test imports of `pyrit.backend.main`
+    # don't emit noise and don't perform filesystem side effects.
+    setup_frontend()
+
     yield
 
 
@@ -124,7 +145,3 @@ def setup_frontend() -> None:
         print("   The frontend must be built and included in the package.")
         print("   Run: python build_scripts/prepare_package.py")
         print("   API endpoints will still work but the UI won't be available.")
-
-
-# Set up frontend at module load time (needed when running via uvicorn)
-setup_frontend()

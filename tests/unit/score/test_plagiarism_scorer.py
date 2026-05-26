@@ -188,8 +188,8 @@ class TestPlagiarismScorer:
             await scorer.score_async(request)
             memory.add_scores_to_memory.assert_called_once()
 
-    async def test_score_async_unsupported_data_type_returns_empty_list(self, patch_central_database):
-        """Test that unsupported data types return empty list with default settings."""
+    async def test_score_async_unsupported_data_type_returns_zero(self, patch_central_database):
+        """Unsupported data types now return a unified Score(0.0) via FloatScaleScorer's fallback."""
         reference_text = "Test reference text"
         scorer = PlagiarismScorer(reference_text=reference_text)
 
@@ -200,10 +200,12 @@ class TestPlagiarismScorer:
             converted_value_data_type="image_path",
         ).to_message()
 
-        # With raise_on_no_valid_pieces=False (default), returns empty list for unsupported data types
-        # (FloatScaleScorer does not create synthetic scores like TrueFalseScorer)
+        # Unified FloatScaleScorer fallback: returns a single Score(0.0) when all pieces are filtered
+        # out (mirrors TrueFalseScorer's no-pieces fallback).
         scores = await scorer.score_async(request)
-        assert len(scores) == 0
+        assert len(scores) == 1
+        assert scores[0].score_type == "float_scale"
+        assert scores[0].get_value() == 0.0
 
     async def test_score_text_async_integration(self):
         """Test scoring using the convenience method score_text_async."""

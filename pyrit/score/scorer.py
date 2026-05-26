@@ -245,6 +245,9 @@ class Scorer(Identifiable, abc.ABC):
             # Wrap non-PyRIT exceptions for better error tracing
             raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(e)}") from e
 
+        if not scores and scoring_message.message_pieces:
+            scores = self._build_fallback_score(message=scoring_message, objective=objective)
+
         self.validate_return_scores(scores=scores)
         self._memory.add_scores_to_memory(scores=scores)
 
@@ -364,6 +367,32 @@ class Scorer(Identifiable, abc.ABC):
         return [
             piece for piece in message.message_pieces if self._validator.is_message_piece_supported(message_piece=piece)
         ]
+
+    @abstractmethod
+    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+        """
+        Return neutral fallback ``Score`` objects when ``_score_async`` produced no scores.
+
+        Called from ``score_async`` after ``_score_async`` returns an empty list and the
+        message still has pieces (e.g. the response was blocked, had an error, or no piece
+        matched the validator). Every ``Scorer`` subclass MUST implement this so that a
+        consistent "attack did not succeed" value is always returned and downstream
+        consumers do not need to special-case error handling.
+
+        Most scorers return a single-element list (e.g. ``FloatScaleScorer`` returns
+        ``[Score(0.0)]`` and ``TrueFalseScorer`` returns ``[Score(False)]``). Scorers
+        whose normal output shape is multiple scores per message (e.g. one per category)
+        should return one fallback score per logical output slot so downstream consumers
+        iterating by shape continue to work on blocked / error input.
+
+        Args:
+            message (Message): The (possibly substituted) message that was scored.
+            objective (Optional[str]): The objective associated with this scoring call.
+
+        Returns:
+            list[Score]: One or more fallback scores. Must not be empty.
+        """
+        ...
 
     @abstractmethod
     def validate_return_scores(self, scores: list[Score]) -> None:
