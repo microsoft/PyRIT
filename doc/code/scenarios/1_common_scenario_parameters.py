@@ -121,6 +121,18 @@ baseline_result = await baseline_scenario.run_async()  # type: ignore
 await output_scenario_async(baseline_result)
 
 # %% [markdown]
+# ### Sorting the Per-Group Breakdown by Success Rate
+#
+# By default, the **Per-Group Breakdown** lists groups in the order they were executed. The baseline
+# run above produces a row for every default strategy, which makes it hard to spot the most
+# successful ones at a glance. Pass `sort_groups_by_success_rate=True` to `output_scenario_async` to
+# re-render the same result with the highest success rates at the top (groups with equal rates keep
+# their original relative order):
+
+# %%
+await output_scenario_async(baseline_result, sort_groups_by_success_rate=True)
+
+# %% [markdown]
 # To disable the automatic baseline entirely (e.g., when you only want attack strategies with no
 # comparison), pass `include_baseline=False` to `initialize_async`:
 #
@@ -160,14 +172,3 @@ await custom_scenario.initialize_async(  # type: ignore
 )
 custom_result = await custom_scenario.run_async()  # type: ignore
 await output_scenario_async(custom_result)
-
-# %% [markdown]
-# ## Sorting the Per-Group Breakdown by Success Rate
-#
-# By default, the **Per-Group Breakdown** section lists groups in the order they were executed.
-# When comparing many strategies it can be more useful to see the most successful groups first.
-# Pass `sort_groups_by_success_rate=True` to `output_scenario_async` to render the breakdown in
-# descending order of success rate (groups with equal rates keep their original relative order):
-
-# %%
-await output_scenario_async(custom_result, sort_groups_by_success_rate=True)
