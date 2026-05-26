@@ -61,6 +61,7 @@ class TestServeMedia:
         try:
             response = client.get("/api/media", params={"path": outside_path})
             assert response.status_code == 403
+            assert "outside the allowed results directory" in response.json()["detail"]
         finally:
             os.unlink(outside_path)
 
@@ -69,6 +70,7 @@ class TestServeMedia:
         traversal_path = str(_mock_memory / ".." / ".." / "etc" / "passwd")
         response = client.get("/api/media", params={"path": traversal_path})
         assert response.status_code == 403
+        assert "outside the allowed results directory" in response.json()["detail"]
 
     def test_rejects_symlink_pointing_outside_results(self, client: TestClient, _mock_memory: Path) -> None:
         """A symlink under an allowed subdirectory that points outside the results dir is rejected.
@@ -91,6 +93,9 @@ class TestServeMedia:
 
             response = client.get("/api/media", params={"path": str(symlink_path)})
             assert response.status_code == 403
+            # Confirm the rejection reason is the symlink-escape check specifically,
+            # not one of the other 403 paths (subdirectory / extension).
+            assert "outside the allowed results directory" in response.json()["detail"]
         finally:
             os.unlink(outside_target)
 

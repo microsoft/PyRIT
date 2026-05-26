@@ -198,6 +198,31 @@ def test_markdown_format_image_content_handles_cross_drive_path(tmp_path):
     assert lines[0] == f"![Image]({expected})\n"
 
 
+def test_markdown_format_link_path_falls_back_to_absolute_when_outside_cwd(tmp_path, monkeypatch):
+    """Paths that are not under cwd must render as absolute paths (with POSIX
+    separators) — ``Path.relative_to`` raises ``ValueError`` in that case and
+    ``_format_link_path`` falls back to ``Path.resolve()``.
+
+    This is a deliberate behavior change from the previous ``os.path.relpath``
+    implementation, which would have produced a ``../../...`` chain.
+    """
+    inside_cwd = tmp_path / "cwd"
+    inside_cwd.mkdir()
+    outside_dir = tmp_path / "elsewhere"
+    outside_dir.mkdir()
+    outside_path = outside_dir / "img.png"
+    outside_path.write_bytes(b"")
+
+    monkeypatch.chdir(inside_cwd)
+
+    link = MarkdownConversationPrinter._format_link_path(str(outside_path))
+
+    expected = str(outside_path.resolve()).replace("\\", "/")
+    assert link == expected
+    # Never produces ".." dot-dot relative paths in the fallback branch.
+    assert ".." not in link
+
+
 # --- Helpers / wiring ---
 
 
