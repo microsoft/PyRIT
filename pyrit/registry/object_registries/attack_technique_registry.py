@@ -177,7 +177,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         - Additional aggregate members from ``aggregate_tags`` keys.
         - One technique member per spec, with tags from the spec.
 
-        Each aggregate maps to a :class:`TagQuery` that determines which
+        Each aggregate maps to a ``TagQuery`` that determines which
         technique specs belong to it.
 
         This reads from the **spec list** (pure data), not from the mutable
@@ -186,7 +186,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         Args:
             class_name: Name for the generated enum class.
             specs: Technique specifications to include as enum members.
-            aggregate_tags: Maps aggregate member names to a :class:`TagQuery`
+            aggregate_tags: Maps aggregate member names to a ``TagQuery``
                 that selects which techniques belong to the aggregate.
                 An ``ALL`` aggregate (expanding to all techniques) is always added.
 
