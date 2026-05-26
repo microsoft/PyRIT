@@ -4,7 +4,7 @@
 """Tests for the ``blur_images`` flag across the pyrit.output module."""
 
 import io
-import os
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from PIL import Image
@@ -112,10 +112,12 @@ async def test_pretty_does_not_blur_by_default(tmp_path, patch_central_database)
 
 
 def _expected_link(path: str) -> str:
+    """Mirror ``MarkdownConversationPrinter._format_link_path`` for assertions."""
+    path_obj = Path(path)
     try:
-        rel = os.path.relpath(path)
+        rel = str(path_obj.relative_to(Path.cwd()))
     except ValueError:
-        rel = os.path.abspath(path)
+        rel = str(path_obj.resolve())
     return rel.replace("\\", "/")
 
 
@@ -183,16 +185,16 @@ def test_markdown_blur_failure_emits_text_link_to_original(tmp_path, caplog):
 
 
 def test_markdown_format_image_content_handles_cross_drive_path(tmp_path):
-    """``os.path.relpath`` raises ValueError on Windows for paths on a different
-    mount than cwd. The formatter must fall back to the absolute path instead of
-    propagating the error."""
+    """``Path.relative_to`` raises ValueError when the path is not under cwd (e.g.,
+    on Windows when paths are on a different drive). The formatter must fall back
+    to the absolute path instead of propagating the error."""
     image_path = str(tmp_path / "img.png")
 
     printer = _ConcreteMarkdown()
-    with patch("pyrit.output.conversation.markdown.os.path.relpath", side_effect=ValueError("cross-drive")):
+    with patch("pathlib.Path.relative_to", side_effect=ValueError("cross-drive")):
         lines = printer._format_image_content(image_path=image_path)
 
-    expected = os.path.abspath(image_path).replace("\\", "/")
+    expected = str(Path(image_path).resolve()).replace("\\", "/")
     assert lines[0] == f"![Image]({expected})\n"
 
 
