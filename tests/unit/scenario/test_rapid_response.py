@@ -501,6 +501,20 @@ class TestDeprecatedAliases:
         assert scenario.name == "RapidResponse"
         assert isinstance(scenario, RapidResponse)
 
+    def test_content_harms_via_airt_package_emits_deprecation_warning(self):
+        """Importing ``ContentHarms`` from the parent ``airt`` package emits the warning."""
+        with pytest.warns(DeprecationWarning, match="ContentHarms"):
+            from pyrit.scenario.scenarios.airt import ContentHarms
+
+        assert ContentHarms is RapidResponse
+
+    def test_content_harms_strategy_via_airt_package_emits_deprecation_warning(self):
+        """Importing ``ContentHarmsStrategy`` from the parent ``airt`` package emits the warning."""
+        with pytest.warns(DeprecationWarning, match="ContentHarmsStrategy"):
+            from pyrit.scenario.scenarios.airt import ContentHarmsStrategy
+
+        assert ContentHarmsStrategy is _strategy_class()
+
 
 # ===========================================================================
 # Registry integration tests
