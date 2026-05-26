@@ -214,7 +214,14 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         case_sensitive: bool = False,
     ) -> Any:
         """
-        SQLite implementation. See base class for contract.
+        Return a SQLite DB condition for matching a value at a given path within a JSON object.
+
+        Args:
+            json_column (InstrumentedAttribute[Any]): The JSON-backed model field to query.
+            property_path (str): The JSON path for the property to match.
+            value (str): The string value that must match the extracted JSON property value.
+            partial_match (bool): Whether to perform a substring match.
+            case_sensitive (bool): Whether the match should be case-sensitive. Defaults to False.
 
         Returns:
             Any: A SQLAlchemy condition for the backend-specific JSON query.
@@ -240,7 +247,19 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         match_mode: Literal["all", "any"] = "all",
     ) -> Any:
         """
-        SQLite implementation. See base class for contract.
+        Return a SQLite DB condition for matching an array at a given path within a JSON object.
+
+        Args:
+            json_column (InstrumentedAttribute[Any]): The JSON-backed SQLAlchemy field to query.
+            property_path (str): The JSON path for the target array.
+            array_element_path (Optional[str]): An optional JSON path applied to each array item before matching.
+            array_to_match (Sequence[str]): The array that must match the extracted JSON array values.
+                Combination semantics for multiple entries are controlled by ``match_mode``.
+                If ``array_to_match`` is empty, the condition matches only if the target is also an
+                empty array or None (overloaded "absence" semantics, regardless of ``match_mode``).
+            match_mode (Literal["all", "any"]): How to combine multiple entries in ``array_to_match``.
+                ``"all"`` (default) requires every listed value to be present in the JSON array.
+                ``"any"`` requires at least one listed value to be present.
 
         Returns:
             Any: A database-specific SQLAlchemy condition.
