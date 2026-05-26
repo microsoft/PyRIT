@@ -53,6 +53,57 @@ class _BargeInRunState:
 
     raw_buffer: bytearray = field(default_factory=bytearray)
     turn_tasks: list[asyncio.Task[None]] = field(default_factory=list)
+    # Session-time (in ms) at which the current buffer started accumulating. Used to
+    # convert the server's session-relative ``audio_start_ms`` into a buffer-relative
+    # offset for trimming. 0 at session start; advances by ``audio_end_ms`` of each
+    # commit, but since the server omits ``audio_end_ms`` we approximate it as
+    # ``audio_start_ms + buffer_speech_duration``. In practice we just track the most
+    # recent commit's reported start so the next turn's trim is relative to it.
+    buffer_start_session_ms: int = 0
+
+
+def _trim_snapshot_to_speech(
+    *,
+    raw_buffer: bytes,
+    sample_rate_hz: int,
+    audio_start_ms: int | None,
+    prefix_padding_ms: int,
+    sample_width_bytes: int = 2,
+    channels: int = 1,
+) -> bytes:
+    """
+    Trim leading pre-speech silence from a raw mic snapshot.
+
+    Server VAD reports where speech began via ``audio_start_ms``. The local
+    accumulator captures every chunk pushed since the last commit — including
+    seconds of pre-speech silence — so without a trim the converted audio that
+    gets swapped into the server's committed item would be much longer than
+    what the server actually committed, causing the model to hear leading silence.
+
+    Args:
+        raw_buffer: PCM16 mono audio for the current buffer (all bytes pushed since the last commit).
+        sample_rate_hz: PCM sample rate in Hz.
+        audio_start_ms: Server's ``audio_start_ms`` offset, or None when unknown.
+        prefix_padding_ms: Bytes to keep before ``audio_start_ms`` so we don't chop the speech onset
+            (typically matches server VAD's ``prefix_padding_ms``).
+        sample_width_bytes: Bytes per sample (2 for PCM16).
+        channels: Audio channels (1 for mono).
+
+    Returns:
+        The trimmed buffer; returns ``raw_buffer`` unchanged when ``audio_start_ms``
+        is None or 0, or when the computed trim would leave nothing.
+    """
+    if not audio_start_ms or audio_start_ms <= 0:
+        return raw_buffer
+    bytes_per_ms = sample_rate_hz * sample_width_bytes * channels // 1000
+    start_ms = max(0, audio_start_ms - prefix_padding_ms)
+    start_byte = start_ms * bytes_per_ms
+    # Align to sample frame boundary so the trimmed buffer doesn't start mid-sample.
+    frame_bytes = sample_width_bytes * channels
+    start_byte -= start_byte % frame_bytes
+    if start_byte >= len(raw_buffer):
+        return raw_buffer
+    return raw_buffer[start_byte:]
 
 
 class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
@@ -221,6 +272,31 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         # Snapshot the locally-accumulated raw PCM and reset for the next turn.
         snapshot = bytes(state.raw_buffer)
         state.raw_buffer.clear()
+
+        # Convert the server's session-relative audio_start_ms into a buffer-relative
+        # offset, then trim leading pre-speech silence. Without this, the converted
+        # audio that gets swapped into the server's committed item is several seconds
+        # longer than what server VAD actually committed, and the model hears the
+        # leading silence (often dominant) when converters are active.
+        bytes_per_ms = target.SAMPLE_RATE_HZ * 2 // 1000  # PCM16 mono
+        original_buffer_duration_ms = len(snapshot) // bytes_per_ms if bytes_per_ms else 0
+
+        buffer_relative_audio_start_ms: int | None = None
+        if event.audio_start_ms is not None:
+            buffer_relative_audio_start_ms = event.audio_start_ms - state.buffer_start_session_ms
+
+        server_vad = target.server_vad_config
+        prefix_padding_ms = server_vad.prefix_padding_ms if server_vad is not None else 0
+        snapshot = _trim_snapshot_to_speech(
+            raw_buffer=snapshot,
+            sample_rate_hz=target.SAMPLE_RATE_HZ,
+            audio_start_ms=buffer_relative_audio_start_ms,
+            prefix_padding_ms=prefix_padding_ms,
+        )
+
+        # Advance session-time bookkeeping for the next turn. Uses the ORIGINAL (pre-trim)
+        # buffer duration since the server saw every byte we pushed.
+        state.buffer_start_session_ms += original_buffer_duration_ms
 
         # PromptNormalizer.send_prompt_async needs an audio_path-shaped Message,
         # so persist the snapshot to a durable WAV before wrapping.

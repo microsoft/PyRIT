@@ -163,6 +163,11 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         # mode" so the target can route requests to the swap-and-respond path.
         self._streaming_state: dict[str, _StreamingConversationState] = {}
 
+    @property
+    def server_vad_config(self) -> ServerVadConfig | None:
+        """Server VAD configuration in effect for this target, or None if server VAD is disabled."""
+        return self._server_vad
+
     def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_REALTIME_MODEL"
         self.endpoint_environment_variable = "OPENAI_REALTIME_ENDPOINT"
@@ -1183,15 +1188,28 @@ class _OpenAIRealtimeDispatcher(RealtimeEventDispatcher):
         """Route an OpenAI Realtime event to the active turn or to an input-side callback."""
         event_type = getattr(event, "type", "")
 
+        # Capture audio_start_ms from speech_started for the next committed event.
+        # The server reports it reliably here but omits it from the commit event itself.
+        # Do not return — the downstream state-aware branch still needs to fire the
+        # barge-in cancel when speech starts mid-response.
+        if event_type == "input_audio_buffer.speech_started":
+            speech_start = getattr(event, "audio_start_ms", None)
+            if speech_start is not None:
+                self._pending_speech_start_ms = speech_start
+
         # Input-side events fire callbacks regardless of whether a turn is registered.
         if event_type == "input_audio_buffer.committed":
             item_id = getattr(event, "item_id", None)
             if item_id is None:
                 return
+            audio_start_ms = getattr(event, "audio_start_ms", None)
+            if audio_start_ms is None:
+                audio_start_ms = self._pending_speech_start_ms
+            self._pending_speech_start_ms = None
             self._fire_committed_callback(
                 CommittedEvent(
                     item_id=item_id,
-                    audio_start_ms=getattr(event, "audio_start_ms", None),
+                    audio_start_ms=audio_start_ms,
                 )
             )
             # Fall through: also include the bookkeeping below (none currently uses committed).

@@ -13,6 +13,7 @@ import pytest
 
 from pyrit.executor.attack import BargeInAttack, BargeInAttackContext
 from pyrit.executor.attack.core import AttackConverterConfig, AttackParameters
+from pyrit.executor.attack.streaming.barge_in import _trim_snapshot_to_speech
 from pyrit.models import AttackOutcome, Message, MessagePiece
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import RealtimeTarget
@@ -388,3 +389,199 @@ async def test_send_streaming_session_config_async_uses_system_message_from_conv
     await vad_target.send_streaming_session_config_async(connection=connection, conversation=[system_msg])
     config = connection.session.update.call_args.kwargs["session"]
     assert config["instructions"] == "You are a strict assistant."
+
+
+# ---- _trim_snapshot_to_speech (pre-speech silence trim) -------------------------------------
+
+
+def test_trim_drops_leading_silence_using_audio_start_ms():
+    """When audio_start_ms is set, everything before (audio_start_ms - prefix_padding_ms) is trimmed."""
+    # 24 kHz mono PCM16 → 48 bytes per ms. 1000 ms of silence + 100 ms of "speech".
+    silence = b"\x00" * (1000 * 48)
+    speech = b"\x11" * (100 * 48)
+    buffer = silence + speech
+
+    trimmed = _trim_snapshot_to_speech(
+        raw_buffer=buffer,
+        sample_rate_hz=24000,
+        audio_start_ms=1000,  # speech starts at 1000 ms
+        prefix_padding_ms=200,  # keep 200 ms before speech
+    )
+
+    # Expect: dropped 800 ms (1000 - 200) of silence; kept 200 ms silence + 100 ms speech.
+    assert len(trimmed) == (200 + 100) * 48
+    assert trimmed[-len(speech) :] == speech
+
+
+def test_trim_passes_through_when_audio_start_ms_missing():
+    """If the server didn't report audio_start_ms, no trim happens."""
+    buffer = b"\xff" * 480
+    assert (
+        _trim_snapshot_to_speech(
+            raw_buffer=buffer,
+            sample_rate_hz=24000,
+            audio_start_ms=None,
+            prefix_padding_ms=300,
+        )
+        is buffer
+    )
+
+
+def test_trim_passes_through_when_audio_start_ms_zero():
+    """audio_start_ms == 0 means speech started immediately; no trim."""
+    buffer = b"\xff" * 480
+    assert (
+        _trim_snapshot_to_speech(
+            raw_buffer=buffer,
+            sample_rate_hz=24000,
+            audio_start_ms=0,
+            prefix_padding_ms=300,
+        )
+        is buffer
+    )
+
+
+def test_trim_clamps_when_audio_start_ms_less_than_prefix_padding():
+    """audio_start_ms - prefix_padding_ms shouldn't go negative."""
+    buffer = b"\xab" * (500 * 48)
+    trimmed = _trim_snapshot_to_speech(
+        raw_buffer=buffer,
+        sample_rate_hz=24000,
+        audio_start_ms=100,
+        prefix_padding_ms=300,
+    )
+    # max(0, 100 - 300) = 0 → no bytes dropped.
+    assert trimmed == buffer
+
+
+def test_trim_aligns_to_sample_boundary():
+    """Trim must land on a sample-frame boundary (2 bytes for PCM16 mono) so playback isn't garbled."""
+    # Sample rate 8000 Hz → 16 bytes/ms; audio_start_ms=3, prefix=0 → start_byte=48 (aligned).
+    buffer = bytes(range(256)) * 4  # arbitrary bytes
+    trimmed = _trim_snapshot_to_speech(
+        raw_buffer=buffer,
+        sample_rate_hz=8000,
+        audio_start_ms=3,
+        prefix_padding_ms=0,
+        sample_width_bytes=2,
+        channels=1,
+    )
+    # 48 bytes is already a frame boundary (48 % 2 == 0).
+    assert len(trimmed) == len(buffer) - 48
+    # Sanity: the trim point is sample-aligned.
+    assert (len(buffer) - len(trimmed)) % 2 == 0
+
+
+def test_trim_passes_through_when_computed_start_exceeds_buffer():
+    """Safety: if audio_start_ms points past the buffer, return the buffer unchanged."""
+    buffer = b"\x00" * 480  # 10 ms at 24 kHz
+    trimmed = _trim_snapshot_to_speech(
+        raw_buffer=buffer,
+        sample_rate_hz=24000,
+        audio_start_ms=10_000,
+        prefix_padding_ms=0,
+    )
+    assert trimmed is buffer
+
+
+async def test_perform_async_trims_first_turn_using_audio_start_ms(vad_target):
+    """Turn 1: buffer_start_session_ms=0, so audio_start_ms is already buffer-relative."""
+    from pyrit.prompt_target.common.realtime_audio import ServerVadConfig
+
+    # Pin prefix_padding_ms to a known value so the expected byte count is unambiguous.
+    vad_target._server_vad = ServerVadConfig(prefix_padding_ms=300, silence_duration_ms=500)
+
+    attack = BargeInAttack(objective_target=vad_target)
+    send_mock = _stub_send_prompt(attack)
+    _setup_streaming_target(vad_target)
+    saved_pcm: list[bytes] = []
+
+    async def fake_save_audio(audio_bytes, **_):
+        saved_pcm.append(audio_bytes)
+        return "/tmp/snap.wav"
+
+    vad_target.save_audio = AsyncMock(side_effect=fake_save_audio)
+    captured: dict[str, Any] = {}
+    _capture_committed_callback(vad_target, captured)
+
+    # 1000 ms of leading silence + 100 ms speech-like payload at 24 kHz mono PCM16 → 48 bytes/ms.
+    silence = b"\x00" * (1000 * 48)
+    speech = b"\x11" * (100 * 48)
+
+    async def chunks_then_commit() -> AsyncIterator[bytes]:
+        yield silence + speech
+        # Server says speech started at 1000 ms (session-relative); with prefix_padding_ms=300, drop 700 ms.
+        await asyncio.create_task(
+            captured["on_committed"](CommittedEvent(item_id="i", audio_start_ms=1000)),
+        )
+
+    ctx = _attack_context(audio_chunks=chunks_then_commit())
+    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
+        await attack._perform_async(context=ctx)
+
+    # Expect save_audio to receive the trimmed snapshot:
+    # max(0, 1000 - 300) = 700 ms dropped; remaining = 300 ms silence + 100 ms speech = 400 ms.
+    assert len(saved_pcm) == 1
+    assert len(saved_pcm[0]) == 400 * 48
+    assert saved_pcm[0].endswith(speech)
+    send_mock.assert_awaited_once()
+
+
+async def test_perform_async_trims_second_turn_with_session_relative_offset(vad_target):
+    """Turn 2: audio_start_ms is session-relative; the attack converts it to buffer-relative.
+
+    Without the conversion, a session-relative audio_start_ms larger than the local buffer
+    would skip the trim (passthrough on out-of-range), letting silence reach the model.
+    """
+    from pyrit.prompt_target.common.realtime_audio import ServerVadConfig
+
+    vad_target._server_vad = ServerVadConfig(prefix_padding_ms=300, silence_duration_ms=500)
+
+    attack = BargeInAttack(objective_target=vad_target)
+    _stub_send_prompt(attack)
+    _setup_streaming_target(vad_target)
+    saved_pcm: list[bytes] = []
+
+    async def fake_save_audio(audio_bytes, **_):
+        saved_pcm.append(audio_bytes)
+        return "/tmp/snap.wav"
+
+    vad_target.save_audio = AsyncMock(side_effect=fake_save_audio)
+    captured: dict[str, Any] = {}
+    _capture_committed_callback(vad_target, captured)
+
+    silence_500 = b"\x00" * (500 * 48)  # 500 ms silence
+    speech_short = b"\x11" * (100 * 48)  # 100 ms speech-like
+    silence_2000 = b"\x00" * (2000 * 48)  # 2000 ms silence (between turns)
+    speech_long = b"\x22" * (300 * 48)  # 300 ms speech-like (turn 2)
+
+    async def two_turns() -> AsyncIterator[bytes]:
+        # Turn 1: 500 ms silence + 100 ms speech; total local buffer = 600 ms.
+        yield silence_500 + speech_short
+        # Server VAD fires commit at session_ms ≈ 600 with audio_start_ms = 500 (session-relative).
+        await asyncio.create_task(
+            captured["on_committed"](CommittedEvent(item_id="i1", audio_start_ms=500)),
+        )
+        # Turn 2: 2000 ms silence (since turn 1's commit) + 300 ms speech.
+        # session_ms_at_speech_start ≈ 600 + 2000 = 2600.
+        yield silence_2000 + speech_long
+        await asyncio.create_task(
+            captured["on_committed"](CommittedEvent(item_id="i2", audio_start_ms=2600)),
+        )
+
+    ctx = _attack_context(audio_chunks=two_turns())
+    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
+        await attack._perform_async(context=ctx)
+
+    assert len(saved_pcm) == 2
+
+    # Turn 1: buffer_relative_start = 500 - 0 = 500; trim = max(0, 500 - 300) = 200 ms;
+    # remaining = 300 ms pre-speech-padding + 100 ms speech = 400 ms.
+    assert len(saved_pcm[0]) == 400 * 48
+    assert saved_pcm[0].endswith(speech_short)
+
+    # Turn 2: buffer_start_session_ms advanced by 600 ms (turn 1's full buffer duration).
+    # buffer_relative_start = 2600 - 600 = 2000; trim = max(0, 2000 - 300) = 1700 ms;
+    # remaining = 300 ms pre-speech-padding + 300 ms speech = 600 ms.
+    assert len(saved_pcm[1]) == 600 * 48
+    assert saved_pcm[1].endswith(speech_long)

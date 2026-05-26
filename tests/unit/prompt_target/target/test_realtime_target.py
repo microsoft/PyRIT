@@ -961,6 +961,73 @@ async def test_route_event_committed_event_without_callback_is_noop():
     )
 
 
+async def test_route_event_speech_started_audio_start_propagates_to_commit():
+    """speech_started's audio_start_ms is captured and attached to the next CommittedEvent.
+
+    The OpenAI Realtime server omits audio_start_ms from the input_audio_buffer.committed
+    event but reports it on speech_started. The dispatcher bridges the two so callbacks
+    receive the value reliably.
+    """
+    received: list[CommittedEvent] = []
+
+    async def on_committed(event: CommittedEvent) -> None:
+        received.append(event)
+
+    connection = AsyncMock()
+    dispatcher = _OpenAIRealtimeDispatcher(connection=connection, on_user_audio_committed=on_committed)
+
+    await dispatcher._route_event(
+        event=_scripted_event("input_audio_buffer.speech_started", audio_start_ms=8536),
+        state=None,
+    )
+    await dispatcher._route_event(
+        event=_scripted_event("input_audio_buffer.committed", item_id="raw_99", audio_start_ms=None),
+        state=None,
+    )
+    for _ in range(20):
+        if received:
+            break
+        await asyncio.sleep(0.01)
+
+    assert len(received) == 1
+    assert received[0].item_id == "raw_99"
+    assert received[0].audio_start_ms == 8536
+
+
+async def test_route_event_pending_speech_start_resets_after_commit():
+    """After commit fires, the dispatcher clears its captured speech_start so a later
+    commit (e.g. for a turn whose speech_started never fired) doesn't see stale data."""
+    received: list[CommittedEvent] = []
+
+    async def on_committed(event: CommittedEvent) -> None:
+        received.append(event)
+
+    connection = AsyncMock()
+    dispatcher = _OpenAIRealtimeDispatcher(connection=connection, on_user_audio_committed=on_committed)
+
+    await dispatcher._route_event(
+        event=_scripted_event("input_audio_buffer.speech_started", audio_start_ms=500),
+        state=None,
+    )
+    await dispatcher._route_event(
+        event=_scripted_event("input_audio_buffer.committed", item_id="i1", audio_start_ms=None),
+        state=None,
+    )
+    # Second commit without a prior speech_started: must NOT reuse the 500 captured above.
+    await dispatcher._route_event(
+        event=_scripted_event("input_audio_buffer.committed", item_id="i2", audio_start_ms=None),
+        state=None,
+    )
+    for _ in range(20):
+        if len(received) >= 2:
+            break
+        await asyncio.sleep(0.01)
+
+    assert len(received) == 2
+    assert received[0].audio_start_ms == 500
+    assert received[1].audio_start_ms is None
+
+
 # Placeholder for R2 tests
 
 
@@ -1069,6 +1136,21 @@ async def test_request_response_async_propagates_register_turn_failure(target):
 def test_sample_rate_hz_class_constant():
     """SAMPLE_RATE_HZ is the single source of truth for the realtime PCM sample rate."""
     assert RealtimeTarget.SAMPLE_RATE_HZ == 24000
+
+
+def test_server_vad_config_returns_config_when_enabled(target):
+    """server_vad_config exposes the underlying ServerVadConfig when server VAD is enabled."""
+    target._server_vad = ServerVadConfig(prefix_padding_ms=250, silence_duration_ms=400)
+    cfg = target.server_vad_config
+    assert cfg is not None
+    assert cfg.prefix_padding_ms == 250
+    assert cfg.silence_duration_ms == 400
+
+
+def test_server_vad_config_returns_none_when_disabled(target):
+    """server_vad_config is None when server VAD is disabled."""
+    target._server_vad = None
+    assert target.server_vad_config is None
 
 
 async def test_subscribe_events_async_registers_streaming_state(target):

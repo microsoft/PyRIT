@@ -99,6 +99,10 @@ class RealtimeEventDispatcher(ABC):
         self._task: asyncio.Task[None] | None = None
         self._callback_tasks: set[asyncio.Task[None]] = set()
         self._failure: BaseException | None = None
+        # Server VAD reports audio_start_ms on speech_started but omits it from
+        # input_audio_buffer.committed. Concrete subclasses capture it here when
+        # speech_started fires and read it back on commit.
+        self._pending_speech_start_ms: int | None = None
 
     @property
     def failure(self) -> BaseException | None:
