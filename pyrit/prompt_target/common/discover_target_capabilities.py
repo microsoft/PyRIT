@@ -6,14 +6,14 @@ Runtime capability and modality discovery for prompt targets.
 
 This module exposes two complementary probes:
 
-* :func:`_discover_capability_flags_async` discovers the boolean capability flags
-  defined on :class:`TargetCapabilities` (e.g. ``supports_system_prompt``,
+* ``_discover_capability_flags_async`` discovers the boolean capability flags
+  defined on ``TargetCapabilities`` (e.g. ``supports_system_prompt``,
   ``supports_multi_message_pieces``). For each capability that has a probe
   defined, a minimal request is sent to the target. If the request succeeds,
     the capability is included in the returned set. Capabilities without a
     registered probe fall back to the target's declared native support from
     ``target.capabilities``.
-* :func:`_discover_input_modalities_async` discovers which input modality
+* ``_discover_input_modalities_async`` discovers which input modality
   combinations a target actually supports by sending a minimal test request
   for each combination declared in ``TargetCapabilities.input_modalities``.
 
@@ -120,7 +120,7 @@ def _permissive_configuration(
     Temporarily replace ``target``'s configuration with one that declares every
     boolean capability as natively supported.
 
-    This bypasses :meth:`PromptTarget._validate_request`, which would otherwise
+    This bypasses ``PromptTarget._validate_request``, which would otherwise
     short-circuit probes for capabilities the target declares as unsupported
     before any API call is made. The original configuration is restored on exit.
 
@@ -182,9 +182,9 @@ def _probe_metadata(extra: dict[str, str | int] | None = None) -> dict[str, str 
 
 def _user_text_piece(*, value: str, conversation_id: str) -> MessagePiece:
     """
-    Build a single user-role text :class:`MessagePiece` for use in a probe.
+    Build a single user-role text ``MessagePiece`` for use in a probe.
 
-    The piece's ``prompt_metadata`` is tagged with :data:`PROBE_METADATA_KEY`
+    The piece's ``prompt_metadata`` is tagged with ``PROBE_METADATA_KEY``
     so that consumers aggregating memory can filter out probe-written rows.
 
     Args:
@@ -229,7 +229,7 @@ async def _send_and_check_async(
         retries (int): Number of additional attempts after the first failure.
             Only transient errors are retried; non-retryable errors and
             non-error responses are final. Retry attempts use exponential
-            backoff starting at :data:`DEFAULT_PROBE_RETRY_BACKOFF_SECONDS`.
+            backoff starting at ``DEFAULT_PROBE_RETRY_BACKOFF_SECONDS``.
             Defaults to 1.
         label (str): Short label used in log messages. Defaults to
             ``"Capability probe"``.
@@ -291,8 +291,8 @@ async def _probe_system_prompt_async(target: PromptTarget, timeout_s: float, ret
     """
     Probe whether ``target`` accepts a system prompt followed by a user message.
 
-    Writes a system-role :class:`MessagePiece` directly to ``target._memory``
-    rather than calling :meth:`pyrit.prompt_target.PromptChatTarget.set_system_prompt`
+    Writes a system-role ``MessagePiece`` directly to ``target._memory``
+    rather than calling ``pyrit.prompt_target.PromptChatTarget.set_system_prompt``
     (which is only defined on ``PromptChatTarget`` subclasses anyway).
     ``set_system_prompt`` can be overridden by subclasses (e.g. mocks) to do
     nothing or to perform extra work, which would mask whether the underlying
@@ -526,10 +526,10 @@ async def _discover_capability_flags_async(
     Args:
         target (PromptTarget): The target to probe.
         capabilities (Iterable[CapabilityName] | None): Capabilities to check.
-            Defaults to every member of :class:`CapabilityName`.
+            Defaults to every member of ``CapabilityName``.
         per_probe_timeout_s (float): Per-attempt timeout (seconds) applied to
             each probe request. Defaults to
-            :data:`DEFAULT_PROBE_TIMEOUT_SECONDS`.
+            ``DEFAULT_PROBE_TIMEOUT_SECONDS``.
         retries (int): Number of additional attempts after the first failure
             for each probe. Only exceptions/timeouts are retried; an explicit
             error response is final. Set to ``0`` to disable retries.
@@ -593,7 +593,7 @@ async def _discover_capability_flags_async(
 
 # Default mapping of non-text modalities to packaged probe assets. Callers can
 # override via the ``test_assets`` parameter of
-# :func:`_discover_input_modalities_async`. Modalities whose assets do not exist
+# ``_discover_input_modalities_async``. Modalities whose assets do not exist
 # on disk are skipped (logged and excluded from the result).
 DEFAULT_TEST_ASSETS: dict[PromptDataType, str] = {
     "audio_path": str(_TARGET_CAPABILITIES_DATASET_PATH / "probe_audio.wav"),
@@ -622,11 +622,11 @@ async def _discover_input_modalities_async(
             declared in ``target.capabilities.input_modalities``.
         test_assets (dict[PromptDataType, str] | None): Mapping from
             non-text modality to a file path used as the probe payload.
-            Defaults to :data:`DEFAULT_TEST_ASSETS`. Combinations whose
+            Defaults to ``DEFAULT_TEST_ASSETS``. Combinations whose
             non-text assets are missing on disk are skipped.
         per_probe_timeout_s (float): Per-attempt timeout (seconds) applied to
             each probe request. Defaults to
-            :data:`DEFAULT_PROBE_TIMEOUT_SECONDS`.
+            ``DEFAULT_PROBE_TIMEOUT_SECONDS``.
         retries (int): Number of additional attempts after the first failure
             for each probe. Only exceptions/timeouts are retried; an explicit
             error response is final. Set to ``0`` to disable retries.
@@ -685,7 +685,7 @@ async def discover_target_capabilities_async(
     """
     Probe both the boolean capability flags and the input modality combinations
     that ``target`` accepts, and return a merged best-effort
-    :class:`TargetCapabilities`.
+    ``TargetCapabilities``.
 
     Boolean capabilities with a registered probe are checked with live
     requests; capabilities without a probe fall back to the target's
@@ -704,17 +704,17 @@ async def discover_target_capabilities_async(
             the target's declared support.
         test_assets (dict[PromptDataType, str] | None): Mapping from non-text
             modality to a file path used as the probe payload. Defaults to
-            :data:`DEFAULT_TEST_ASSETS`. Combinations whose non-text assets
+            ``DEFAULT_TEST_ASSETS``. Combinations whose non-text assets
             are missing on disk are skipped.
         capabilities (Iterable[CapabilityName] | None): Capabilities to probe.
-            Defaults to every member of :class:`CapabilityName`. Capabilities
+            Defaults to every member of ``CapabilityName``. Capabilities
             not listed here fall back to the target's declared support.
         retries (int): Number of additional attempts after the first failure
             for each probe. Only exceptions/timeouts are retried; an explicit
             error response is final. Set to ``0`` to disable retries.
             Defaults to 1.
         apply (bool): If True, install the discovered capabilities on ``target``
-            via :meth:`PromptTarget.apply_capabilities` before returning.
+            via ``PromptTarget.apply_capabilities`` before returning.
              Probe results are an upper bound (the request was accepted, not
             necessarily honored), so leave this False when you want to inspect
             or diff the result before committing to it. Defaults to False.
@@ -790,7 +790,7 @@ def _create_test_message(
     test_assets: dict[PromptDataType, str],
 ) -> Message:
     """
-    Build a minimal :class:`Message` that exercises ``modalities``.
+    Build a minimal ``Message`` that exercises ``modalities``.
 
     Args:
         modalities (frozenset[PromptDataType]): The modalities to include.
