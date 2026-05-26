@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-import warnings
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Literal, Optional
 
@@ -11,6 +10,7 @@ if TYPE_CHECKING:
 
 from pyrit.auth.azure_auth import get_speech_config_async
 from pyrit.common import default_values
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, data_serializer_factory
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
@@ -82,12 +82,14 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
             ValueError: If the required environment variables or parameters are not set.
         """
         if use_entra_auth is not None:
-            warnings.warn(
-                "'use_entra_auth' is deprecated and will be removed in v0.15.0. "
-                "Authentication is now auto-detected: pass a key string for key auth, "
-                "a callable token provider for token auth, or omit for automatic Entra ID auth.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="AzureSpeechTextToAudioConverter(use_entra_auth=...)",
+                new_item=(
+                    "AzureSpeechTextToAudioConverter(...) with automatic auth detection: "
+                    "pass a key string for key auth, a callable token provider for token auth, "
+                    "or omit for automatic Entra ID auth"
+                ),
+                removed_in="0.15.0",
             )
 
         self._azure_speech_region: str = default_values.get_required_value(

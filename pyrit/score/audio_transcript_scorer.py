@@ -5,11 +5,11 @@ import logging
 import os
 import tempfile
 import uuid
-import warnings
 from typing import Optional
 
 import av
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory
 from pyrit.models import MessagePiece, Score
 from pyrit.prompt_converter import AzureSpeechAudioToTextConverter
@@ -121,11 +121,13 @@ class AudioTranscriptHelper:  # noqa: B024
             ValueError: If text_capable_scorer does not support text data type.
         """
         if use_entra_auth is not None:
-            warnings.warn(
-                "'use_entra_auth' is deprecated and will be removed in v0.15.0. "
-                "Authentication is now auto-detected by the underlying AzureSpeechAudioToTextConverter.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="AudioTranscriptHelper(use_entra_auth=...)",
+                new_item=(
+                    "AudioTranscriptHelper(...) (authentication is now auto-detected "
+                    "by the underlying AzureSpeechAudioToTextConverter)"
+                ),
+                removed_in="0.15.0",
             )
         self._validate_text_scorer(text_capable_scorer)
         self.text_scorer = text_capable_scorer

@@ -2,12 +2,12 @@
 # Licensed under the MIT license.
 
 import logging
-import warnings
 from typing import Any
 
 from httpx import HTTPStatusError
 
 from pyrit.common import default_values, net_utility
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     EmptyResponseException,
     RateLimitException,
@@ -122,11 +122,10 @@ class AzureMLChatTarget(PromptTarget):
                     "Use 'custom_configuration' only; 'message_normalizer' is deprecated and "
                     "will be removed in v0.15.0."
                 )
-            warnings.warn(
-                "Passing message_normalizer is deprecated. Use custom_configuration with "
-                "CapabilityHandlingPolicy instead. Will be removed in v0.15.0.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="AzureMLChatTarget(message_normalizer=...)",
+                new_item="AzureMLChatTarget(custom_configuration=...)",
+                removed_in="0.15.0",
             )
             # The legacy message_normalizer was primarily used to handle system prompts
             # for models that don't support them (e.g. GenericSystemSquashNormalizer).

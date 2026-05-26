@@ -64,7 +64,7 @@ class HuggingFaceEndpointTarget(PromptTarget):
         print_deprecation_message(
             old_item=HuggingFaceEndpointTarget,
             new_item="OpenAIChatTarget with endpoint='https://router.huggingface.co/v1'",
-            removed_in="v0.15.0",
+            removed_in="0.15.0",
         )
 
         super().__init__(
