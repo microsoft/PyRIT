@@ -215,7 +215,7 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         lines.append(self._render_section_header("Per-Group Breakdown"))
         display_groups = result.get_display_groups()
 
-        group_summaries: list[tuple[str, list, int]] = []
+        group_summaries: list[tuple[str, int, int]] = []
         for group_name, group_results in display_groups.items():
             total_group = len(group_results)
             if total_group == 0:
@@ -223,14 +223,13 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
             else:
                 successful = sum(1 for r in group_results if r.outcome == AttackOutcome.SUCCESS)
                 group_rate = int((successful / total_group) * 100)
-            group_summaries.append((group_name, group_results, group_rate))
+            group_summaries.append((group_name, total_group, group_rate))
 
         if self._sort_groups_by_success_rate:
             # Stable sort so groups with equal rates retain their original relative order.
             group_summaries.sort(key=lambda item: item[2], reverse=True)
 
-        for group_name, group_results, group_rate in group_summaries:
-            total_group = len(group_results)
+        for group_name, total_group, group_rate in group_summaries:
             lines.append("\n")
             lines.append(self._format_colored(f"{self._indent}🔸 Group: {group_name}", Style.BRIGHT))
             lines.append(self._format_colored(f"{self._indent * 2}• Number of Results: {total_group}", Fore.YELLOW))
