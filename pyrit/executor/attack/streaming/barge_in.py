@@ -41,11 +41,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class BargeInAttackContext(AttackContext[AttackParamsT]):
-    """Context for a streaming barge-in attack with audio chunk source and session config."""
+    """Context for a streaming barge-in attack with an audio chunk source."""
 
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     audio_chunks: AsyncIterator[bytes] | None = None
-    system_prompt: str = "You are a helpful AI assistant"
 
 
 @dataclass
@@ -178,7 +177,9 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         )
 
         try:
-            await target.send_streaming_session_config_async(connection=connection, system_prompt=context.system_prompt)
+            await target.send_streaming_session_config_async(
+                connection=connection, conversation=context.prepended_conversation
+            )
 
             async for chunk in context.audio_chunks:
                 if chunk:

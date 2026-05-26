@@ -355,7 +355,7 @@ async def test_perform_async_swallows_callback_exception(vad_target):
 async def test_send_streaming_session_config_async_emits_create_response_false(vad_target):
     """The streaming session config must flip create_response to False on turn_detection."""
     connection = _mock_connection()
-    await vad_target.send_streaming_session_config_async(connection=connection, system_prompt="hi")
+    await vad_target.send_streaming_session_config_async(connection=connection)
     connection.session.update.assert_awaited_once()
     config = connection.session.update.call_args.kwargs["session"]
     assert config["audio"]["input"]["turn_detection"]["create_response"] is False
@@ -367,4 +367,24 @@ async def test_send_streaming_session_config_async_requires_server_vad(sqlite_in
     no_vad = RealtimeTarget(api_key="k", endpoint="wss://test_url", model_name="test")
     connection = _mock_connection()
     with pytest.raises(ValueError, match="server VAD"):
-        await no_vad.send_streaming_session_config_async(connection=connection, system_prompt="hi")
+        await no_vad.send_streaming_session_config_async(connection=connection)
+
+
+async def test_send_streaming_session_config_async_uses_system_message_from_conversation(vad_target):
+    """If the prepended conversation begins with a system message, it becomes session instructions."""
+    connection = _mock_connection()
+    system_msg = Message(
+        message_pieces=[
+            MessagePiece(
+                role="system",
+                original_value="You are a strict assistant.",
+                original_value_data_type="text",
+                converted_value="You are a strict assistant.",
+                converted_value_data_type="text",
+                conversation_id="x",
+            )
+        ]
+    )
+    await vad_target.send_streaming_session_config_async(connection=connection, conversation=[system_msg])
+    config = connection.session.update.call_args.kwargs["session"]
+    assert config["instructions"] == "You are a strict assistant."

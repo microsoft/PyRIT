@@ -202,5 +202,7 @@ await target2.cleanup_target()  # type: ignore
 # - **TTS converter**: generate audio from text prompts dynamically
 # - **Live microphone**: use `sounddevice` or similar; yield what the mic produces
 #
-# For adaptive attacks (e.g., score-driven strategies), subclass `BargeInAttack` and override
-# `_perform_async` to interleave turn observation with chunk generation.
+# For feedback-driven attacks — for example, scoring each assistant turn and choosing
+# to barge in with follow-up audio only when the response shows incomplete refusal —
+# subclass `BargeInAttack` and override `_perform_async` to interleave turn observation
+# with chunk generation.

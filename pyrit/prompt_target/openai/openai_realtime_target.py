@@ -771,7 +771,9 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         await connection.response.create()
         return state.completion
 
-    async def send_streaming_session_config_async(self, *, connection: Any, system_prompt: str) -> None:
+    async def send_streaming_session_config_async(
+        self, *, connection: Any, conversation: list[Message] | None = None
+    ) -> None:
         """
         Configure the realtime session for streaming use: server VAD with manual response creation.
 
@@ -781,7 +783,9 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
 
         Args:
             connection: Active Realtime API connection.
-            system_prompt: System prompt for the realtime session.
+            conversation: Optional conversation history; if its first message is a system
+                message, its text becomes the session's instructions. Defaults to None,
+                in which case the default system prompt is used.
 
         Raises:
             ValueError: If the target was constructed without server VAD.
@@ -791,6 +795,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
                 "send_streaming_session_config_async requires server VAD; "
                 "construct RealtimeTarget(server_vad=True) or pass a ServerVadConfig."
             )
+        system_prompt = self._get_system_prompt_from_conversation(conversation=conversation or [])
         config = self._set_system_prompt_and_config_vars(system_prompt=system_prompt)
         turn_detection = config.get("audio", {}).get("input", {}).get("turn_detection")
         if turn_detection is not None:
