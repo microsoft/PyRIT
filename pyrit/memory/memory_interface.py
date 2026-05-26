@@ -238,6 +238,11 @@ class MemoryInterface(abc.ABC):
         """
         Return a database-specific condition for matching a value at a given path within a JSON object.
 
+        Concrete subclasses translate this contract into their SQL dialect (e.g. SQLite's
+        ``json_extract``, Azure SQL's ``JSON_VALUE`` + ``ISJSON``). Implementations must honor
+        ``partial_match`` and ``case_sensitive`` identically so callers can rely on consistent
+        matching semantics across backends.
+
         Args:
             json_column (InstrumentedAttribute[Any]): The JSON-backed model field to query.
             property_path (str): The JSON path for the property to match.
@@ -261,6 +266,11 @@ class MemoryInterface(abc.ABC):
     ) -> Any:
         """
         Return a database-specific condition for matching an array at a given path within a JSON object.
+
+        Concrete subclasses translate this contract into their SQL dialect (e.g. SQLite's
+        ``json_each`` + ``json_extract``, Azure SQL's ``OPENJSON`` + ``JSON_QUERY``).
+        Implementations must honor ``match_mode`` and the empty-``array_to_match`` "absence"
+        semantics identically so callers can rely on consistent matching across backends.
 
         Args:
             json_column (InstrumentedAttribute[Any]): The JSON-backed SQLAlchemy field to query.
