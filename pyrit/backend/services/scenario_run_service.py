@@ -12,15 +12,10 @@ import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from pyrit.backend.mappers.attack_mappers import retry_events_to_response
 from pyrit.backend.models.scenarios import (
-    AtomicAttackResults,
-    AttackSummary,
     RunScenarioRequest,
-    ScenarioRunDetail,
     ScenarioRunListResponse,
     ScenarioRunStatus,
     ScenarioRunSummary,
@@ -448,18 +443,15 @@ class ScenarioRunService:
             completed_at=scenario_result.completion_time,
         )
 
-    def get_run_results(self, *, scenario_result_id: str) -> ScenarioRunDetail | None:
+    def get_run_results(self, *, scenario_result_id: str) -> ScenarioResult | None:
         """
-        Get detailed results for a completed scenario run.
-
-        Retrieves the full ScenarioResult from CentralMemory and maps it
-        to a detailed response model with per-attack outcomes.
+        Get the ScenarioResult for a completed scenario run.
 
         Args:
             scenario_result_id: The scenario result ID.
 
         Returns:
-            ScenarioRunDetail if the run is completed and results exist, None if not found.
+            ScenarioResult if the run is completed and results exist, None if not found.
 
         Raises:
             ValueError: If the run is not in a completed state.
@@ -474,83 +466,7 @@ class ScenarioRunService:
         if run_response.status != ScenarioRunStatus.COMPLETED:
             raise ValueError(f"Results are only available for completed runs. Current status: '{run_response.status}'.")
 
-        # Build per-attack detail
-        attacks: list[AtomicAttackResults] = []
-        display_group_map = scenario_result.display_group_map
-        for attack_name, attack_results in scenario_result.attack_results.items():
-            details: list[AttackSummary] = []
-            success_count = 0
-            failure_count = 0
-            group_total_retries = 0
-            group_error_count = 0
-
-            for ar in attack_results:
-                score_value = None
-                if ar.last_score is not None:
-                    score_value = str(ar.last_score.get_value())
-
-                last_response_text = None
-                if ar.last_response is not None:
-                    last_response_text = str(ar.last_response)
-
-                timestamp = ar.timestamp or datetime.now(timezone.utc)
-
-                # Build retry event responses using the shared mapper
-                retry_event_responses = retry_events_to_response(ar.retry_events)
-
-                # Extract error/retry fields
-                ar_error_message = ar.error_message
-                ar_error_type = ar.error_type
-                ar_error_traceback = ar.error_traceback
-                ar_total_retries = ar.total_retries
-
-                details.append(
-                    AttackSummary(
-                        attack_result_id=ar.attack_result_id,
-                        conversation_id=ar.conversation_id,
-                        objective=ar.objective,
-                        outcome=ar.outcome.value,
-                        outcome_reason=ar.outcome_reason,
-                        last_response=last_response_text,
-                        score_value=score_value,
-                        executed_turns=ar.executed_turns,
-                        execution_time_ms=ar.execution_time_ms,
-                        created_at=timestamp,
-                        updated_at=timestamp,
-                        error_message=ar_error_message,
-                        error_type=ar_error_type,
-                        error_traceback=ar_error_traceback,
-                        total_retries=ar_total_retries,
-                        retry_events=retry_event_responses,
-                    )
-                )
-
-                if ar.outcome == AttackOutcome.SUCCESS:
-                    success_count += 1
-                elif ar.outcome == AttackOutcome.FAILURE:
-                    failure_count += 1
-
-                group_total_retries += ar_total_retries
-                if ar_error_message:
-                    group_error_count += 1
-
-            attacks.append(
-                AtomicAttackResults(
-                    atomic_attack_name=attack_name,
-                    display_group=display_group_map.get(attack_name),
-                    results=details,
-                    success_count=success_count,
-                    failure_count=failure_count,
-                    total_count=len(details),
-                    total_retries=group_total_retries,
-                    error_count=group_error_count,
-                )
-            )
-
-        return ScenarioRunDetail(
-            run=run_response,
-            attacks=attacks,
-        )
+        return scenario_result
 
 
 _service_instance: ScenarioRunService | None = None

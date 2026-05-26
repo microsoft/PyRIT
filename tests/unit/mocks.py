@@ -66,7 +66,7 @@ def get_mock_attack_identifier(name: str = "MockAttack", module: str = "tests.un
 def get_mock_target(name: str = "MockTarget") -> MagicMock:
     """
     Returns a MagicMock target whose ``get_identifier()`` returns a real
-    :class:`ComponentIdentifier`. Use this wherever a ``MagicMock(spec=PromptTarget)``
+    ``ComponentIdentifier``. Use this wherever a ``MagicMock(spec=PromptTarget)``
     is needed as an ``objective_target``.
 
     Args:

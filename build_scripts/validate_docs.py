@@ -33,14 +33,21 @@ def parse_toc_files(toc_entries: list, files: set | None = None) -> set[str]:
 
 
 def validate_toc_files(toc_files: set[str], doc_root: Path) -> list[str]:
-    """Check that all files referenced in the TOC exist."""
-    # Directories with auto-generated content (gitignored, created during build)
-    generated_dirs = {"api/", "api\\"}
+    """Check that all files referenced in the TOC exist.
+
+    Auto-generated ``api/*.md`` pages are produced by
+    ``build_scripts/gen_api_md.py`` and are gitignored, so they are skipped
+    while the ``doc/api/`` directory has not been generated yet (e.g. during
+    pre-commit). Once that directory exists (i.e. after a docs build), the
+    api/ entries are validated like any other file so the TOC stays in sync
+    with the generator output.
+    """
+    skip_generated_api = not (doc_root / "api").exists()
+    api_prefixes = ("api/", "api\\")
 
     errors = []
     for file_ref in toc_files:
-        # Skip files in auto-generated directories
-        if any(file_ref.startswith(d) for d in generated_dirs):
+        if skip_generated_api and file_ref.startswith(api_prefixes):
             continue
         file_path = doc_root / file_ref
         if not file_path.exists():
@@ -49,17 +56,24 @@ def validate_toc_files(toc_files: set[str], doc_root: Path) -> list[str]:
 
 
 def find_orphaned_files(toc_files: set[str], doc_root: Path) -> list[str]:
-    """Find documentation files not referenced in the TOC."""
+    """Find documentation files not referenced in the TOC.
+
+    ``doc/api/`` holds auto-generated reference pages. They are skipped while
+    the directory does not yet exist (pre-commit, before any docs build), but
+    once present they are checked for orphans so the TOC reflects exactly the
+    set of files produced by ``build_scripts/gen_api_md.py``.
+    """
     skip_dirs = {
         "_build",
         "_api",
-        "api",
         "css",
         ".ipynb_checkpoints",
         "__pycache__",
         "playwright_demo",
         "generate_docs",
     }
+    if not (doc_root / "api").exists():
+        skip_dirs.add("api")
     skip_files = {
         "myst.yml",
         "roakey.png",

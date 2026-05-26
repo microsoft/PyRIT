@@ -129,7 +129,7 @@ async def download_files_async(
 
 
 async def download_specific_files(model_id: str, file_patterns: list[str] | None, token: str, cache_dir: Path) -> None:
-    """Delegate to :func:`download_specific_files_async` (deprecated alias)."""
+    """Delegate to ``download_specific_files_async`` (deprecated alias)."""
     print_deprecation_message(
         old_item="pyrit.common.download_hf_model.download_specific_files",
         new_item="pyrit.common.download_hf_model.download_specific_files_async",
@@ -140,7 +140,7 @@ async def download_specific_files(model_id: str, file_patterns: list[str] | None
 
 async def download_chunk(url: str, headers: dict[str, str], start: int, end: int, client: httpx.AsyncClient) -> bytes:
     """
-    Delegate to :func:`download_chunk_async` (deprecated alias).
+    Delegate to ``download_chunk_async`` (deprecated alias).
 
     Returns:
         The content of the downloaded chunk.
@@ -154,7 +154,7 @@ async def download_chunk(url: str, headers: dict[str, str], start: int, end: int
 
 
 async def download_file(url: str, token: str, download_dir: Path, num_splits: int) -> None:
-    """Delegate to :func:`download_file_async` (deprecated alias)."""
+    """Delegate to ``download_file_async`` (deprecated alias)."""
     print_deprecation_message(
         old_item="pyrit.common.download_hf_model.download_file",
         new_item="pyrit.common.download_hf_model.download_file_async",
@@ -166,7 +166,7 @@ async def download_file(url: str, token: str, download_dir: Path, num_splits: in
 async def download_files(
     urls: list[str], token: str, download_dir: Path, num_splits: int = 3, parallel_downloads: int = 4
 ) -> None:
-    """Delegate to :func:`download_files_async` (deprecated alias)."""
+    """Delegate to ``download_files_async`` (deprecated alias)."""
     print_deprecation_message(
         old_item="pyrit.common.download_hf_model.download_files",
         new_item="pyrit.common.download_hf_model.download_files_async",

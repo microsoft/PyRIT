@@ -7,31 +7,74 @@ Tests for the FastAPI application entry point (main.py).
 Covers the lifespan manager and setup_frontend function.
 """
 
+import logging
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from pyrit.backend.main import app, lifespan, setup_frontend
+from pyrit.setup.configuration_loader import ConfigurationLoader
 
 
 class TestLifespan:
     """Tests for the application lifespan context manager."""
 
     async def test_lifespan_yields(self) -> None:
-        """Test that lifespan yields without performing initialization (handled by CLI)."""
-        with patch("pyrit.memory.CentralMemory._memory_instance", MagicMock()):
-            async with lifespan(app):
-                pass  # Should complete without error
-
-    async def test_lifespan_warns_when_memory_not_initialized(self) -> None:
-        """Test that lifespan logs a warning when CentralMemory is not set."""
+        """Test that lifespan delegates to ConfigurationLoader and yields."""
+        fake_config = ConfigurationLoader()
         with (
-            patch("pyrit.memory.CentralMemory._memory_instance", None),
-            patch("logging.Logger.warning") as mock_warning,
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()) as init_mock,
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            async with lifespan(app):
+                pass
+
+            init_mock.assert_awaited_once()
+            assert app.state.default_labels == {}
+            assert app.state.max_concurrent_scenario_runs == fake_config.max_concurrent_scenario_runs
+            assert app.state.allow_custom_initializers is False
+
+    async def test_lifespan_warns_when_custom_initializers_allowed(self) -> None:
+        """Test that lifespan logs a warning when allow_custom_initializers is enabled."""
+        fake_config = ConfigurationLoader(allow_custom_initializers=True)
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.setup_frontend"),
+            patch.object(logging.getLogger("pyrit.backend.main"), "warning") as mock_warning,
         ):
             async with lifespan(app):
                 pass
 
             mock_warning.assert_called_once()
+
+    async def test_lifespan_populates_default_labels_from_operator_and_operation(self) -> None:
+        """Test that operator and operation are exposed as default_labels."""
+        fake_config = ConfigurationLoader(operator="alice", operation="op-42")
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            async with lifespan(app):
+                pass
+
+            assert app.state.default_labels == {"operator": "alice", "operation": "op-42"}
+
+    async def test_lifespan_reads_config_file_env_var(self) -> None:
+        """Test that PYRIT_CONFIG_FILE is forwarded to ConfigurationLoader.load_with_overrides."""
+        fake_config = ConfigurationLoader()
+        with (
+            patch.dict(os.environ, {"PYRIT_CONFIG_FILE": "/tmp/foo.yaml"}, clear=False),
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config) as load_mock,
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            async with lifespan(app):
+                pass
+
+            call_kwargs = load_mock.call_args.kwargs
+            assert str(call_kwargs["config_file"]).endswith("foo.yaml")
 
 
 class TestSetupFrontend:
