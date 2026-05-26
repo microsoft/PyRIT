@@ -22,14 +22,19 @@ import {
 import { targetsApi } from '@/services/api'
 import { useCreateTargetDialogStyles } from './CreateTargetDialog.styles'
 
-const TARGET_TYPE_CONFIG: Record<string, 'openai' | 'azureml'> = {
-  OpenAIChatTarget: 'openai',
-  OpenAICompletionTarget: 'openai',
-  OpenAIImageTarget: 'openai',
-  OpenAIVideoTarget: 'openai',
-  OpenAITTSTarget: 'openai',
-  OpenAIResponseTarget: 'openai',
-  AzureMLChatTarget: 'azureml',
+interface TargetTypeConfig {
+  readonly kind: 'openai' | 'azureml'
+  readonly supportsEntra: boolean
+}
+
+const TARGET_TYPE_CONFIG: Record<string, TargetTypeConfig> = {
+  OpenAIChatTarget: { kind: 'openai', supportsEntra: true },
+  OpenAICompletionTarget: { kind: 'openai', supportsEntra: true },
+  OpenAIImageTarget: { kind: 'openai', supportsEntra: true },
+  OpenAIVideoTarget: { kind: 'openai', supportsEntra: true },
+  OpenAITTSTarget: { kind: 'openai', supportsEntra: true },
+  OpenAIResponseTarget: { kind: 'openai', supportsEntra: true },
+  AzureMLChatTarget: { kind: 'azureml', supportsEntra: true },
 }
 
 const SUPPORTED_TARGET_TYPES = Object.keys(TARGET_TYPE_CONFIG)
@@ -45,10 +50,24 @@ const AZURE_OPENAI_HOSTNAME_SUFFIXES = [
   '.cognitiveservices.azure.com',
 ]
 
+// Mirrors backend's hostname-suffix check for Azure ML managed online endpoints
+// (list in target_service.py). Used to warn the user when Microsoft Entra
+// authentication is selected with a non-AML endpoint for AzureMLChatTarget.
+const AZURE_ML_HOSTNAME_SUFFIXES = ['.inference.ml.azure.com']
+
 function isAzureOpenAiEndpoint(endpoint: string): boolean {
   try {
     const host = new URL(endpoint).hostname.toLowerCase()
     return AZURE_OPENAI_HOSTNAME_SUFFIXES.some((s) => host.endsWith(s))
+  } catch {
+    return false
+  }
+}
+
+function isAzureMlEndpoint(endpoint: string): boolean {
+  try {
+    const host = new URL(endpoint).hostname.toLowerCase()
+    return AZURE_ML_HOSTNAME_SUFFIXES.some((s) => host.endsWith(s))
   } catch {
     return false
   }
@@ -77,11 +96,23 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
   const [error, setError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<{ targetType?: string; endpoint?: string }>({})
 
-  const targetKind = TARGET_TYPE_CONFIG[targetType]
-  const isAzureML = targetKind === 'azureml'
-  const isOpenAi = targetKind === 'openai'
-  const isEntra = authMode === 'entra'
-  const showNonAzureEntraWarning = isEntra && isOpenAi && endpoint !== '' && !isAzureOpenAiEndpoint(endpoint)
+  const targetConfig = TARGET_TYPE_CONFIG[targetType]
+  const isAzureML = targetConfig?.kind === 'azureml'
+  const isOpenAi = targetConfig?.kind === 'openai'
+  const supportsEntra = targetConfig?.supportsEntra ?? false
+  const showAuthField = targetType !== '' && supportsEntra
+  const isEntra = showAuthField && authMode === 'entra'
+  const entraEndpointError: string | null = (() => {
+    if (!isEntra || endpoint === '') return null
+    if (isOpenAi && !isAzureOpenAiEndpoint(endpoint)) {
+      return 'Error: Entra auth only works with Azure OpenAI / AI Foundry endpoints (for example, *.openai.azure.com or *.ai.azure.com).'
+    }
+    if (isAzureML && !isAzureMlEndpoint(endpoint)) {
+      return 'Error: Entra auth for AzureMLChatTarget only works with Azure ML managed online endpoints (for example, *.inference.ml.azure.com).'
+    }
+    return null
+  })()
+  const showEntraEndpointError = entraEndpointError !== null
 
   const resetForm = () => {
     setTargetType('')
@@ -176,7 +207,13 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
               >
                 <Select
                   value={targetType}
-                  onChange={(_, data) => setTargetType(data.value)}
+                  onChange={(_, data) => {
+                    const next = data.value
+                    setTargetType(next)
+                    if (!(TARGET_TYPE_CONFIG[next]?.supportsEntra ?? false)) {
+                      setAuthMode('api_key')
+                    }
+                  }}
                 >
                   <option value="">Select a target type</option>
                   {SUPPORTED_TARGET_TYPES.map((type) => (
@@ -272,25 +309,26 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
                 </>
               )}
 
-              <Field label="Authentication">
-                <RadioGroup
-                  value={authMode}
-                  onChange={(_, data) => {
-                    const next = data.value as AuthMode
-                    setAuthMode(next)
-                    if (next === 'entra') setApiKey('')
-                  }}
-                >
-                  <Radio value="api_key" label="API Key" />
-                  <Radio value="entra" label="Microsoft Entra Authentication" />
-                </RadioGroup>
-              </Field>
+              {showAuthField && (
+                <Field label="Authentication">
+                  <RadioGroup
+                    value={authMode}
+                    onChange={(_, data) => {
+                      const next = data.value as AuthMode
+                      setAuthMode(next)
+                      if (next === 'entra') setApiKey('')
+                    }}
+                  >
+                    <Radio value="api_key" label="API Key" />
+                    <Radio value="entra" label="Microsoft Entra Authentication" />
+                  </RadioGroup>
+                </Field>
+              )}
 
-              {showNonAzureEntraWarning && (
-                <MessageBar intent="warning" className={styles.warningMessage}>
+              {showEntraEndpointError && (
+                <MessageBar intent="error" className={styles.warningMessage}>
                   <MessageBarBody className={styles.warningMessageBody}>
-                    Error: Entra auth only works with Azure OpenAI / AI Foundry endpoints (for example,
-                    *.openai.azure.com or *.ai.azure.com).
+                    {entraEndpointError}
                   </MessageBarBody>
                 </MessageBar>
               )}
@@ -323,7 +361,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
             <Button
               appearance="primary"
               onClick={handleSubmit}
-              disabled={submitting || !targetType || !endpoint || showNonAzureEntraWarning}
+              disabled={submitting || !targetType || !endpoint || showEntraEndpointError}
             >
               {submitting ? 'Creating...' : 'Create Target'}
             </Button>

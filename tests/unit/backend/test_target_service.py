@@ -456,6 +456,46 @@ class TestCreateTargetEntraAuth:
             assert target_obj._api_key_provider is _test_token_provider  # type: ignore[attr-defined]
             assert target_obj._api_key == ""  # type: ignore[attr-defined]
 
+    async def test_create_azureml_target_with_entra_non_aml_endpoint_raises(self, sqlite_instance) -> None:
+        """Entra ID for AzureMLChatTarget requires a known AML hostname suffix."""
+        service = TargetService()
+
+        request = CreateTargetRequest(
+            type="AzureMLChatTarget",
+            params={"endpoint": "https://example.com/score"},
+            auth_mode="entra",
+        )
+
+        with pytest.raises(ValueError, match="AML endpoint"):
+            await service.create_target_async(request=request)
+
+    async def test_create_azureml_target_with_entra_substring_lookalike_endpoint_raises(self, sqlite_instance) -> None:
+        """Substring 'inference.ml.azure.com' in the hostname must not be enough to pass AML validation."""
+        service = TargetService()
+
+        request = CreateTargetRequest(
+            type="AzureMLChatTarget",
+            # Hostname contains the AML suffix as a substring but does NOT end with it.
+            params={"endpoint": "https://evil-inference.ml.azure.com.attacker.com/score"},
+            auth_mode="entra",
+        )
+
+        with pytest.raises(ValueError, match="AML endpoint"):
+            await service.create_target_async(request=request)
+
+    async def test_create_azureml_target_with_entra_missing_endpoint_raises(self, sqlite_instance) -> None:
+        """Entra ID for AzureMLChatTarget must reject a missing endpoint with a clear error."""
+        service = TargetService()
+
+        request = CreateTargetRequest(
+            type="AzureMLChatTarget",
+            params={},
+            auth_mode="entra",
+        )
+
+        with pytest.raises(ValueError, match="endpoint"):
+            await service.create_target_async(request=request)
+
     async def test_create_target_entra_unsupported_type_raises(self, sqlite_instance) -> None:
         """Entra ID is only supported for OpenAI-family and AzureMLChatTarget."""
         service = TargetService()
@@ -468,6 +508,94 @@ class TestCreateTargetEntraAuth:
 
         with pytest.raises(ValueError, match="does not support Entra"):
             await service.create_target_async(request=request)
+
+
+class TestCreateTargetApiKeyAuth:
+    """Test that auth_mode='api_key' strictly requires a key in params or environment."""
+
+    async def test_create_openai_target_api_key_mode_without_key_raises(self, sqlite_instance) -> None:
+        """Without an api_key (params or env), OpenAITarget would silently fall back to Entra;
+        the service must reject this so the user's explicit choice is honored."""
+        service = TargetService()
+
+        request = CreateTargetRequest(
+            type="OpenAIChatTarget",
+            params={
+                "model_name": "gpt-4o",
+                "endpoint": "https://test.openai.azure.com/",
+            },
+            auth_mode="api_key",
+        )
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("OPENAI_CHAT_KEY", None)
+            with pytest.raises(ValueError, match="auth_mode='api_key' requires an API key"):
+                await service.create_target_async(request=request)
+
+    async def test_create_openai_target_api_key_mode_with_env_var_succeeds(self, sqlite_instance) -> None:
+        """An env-var-supplied key satisfies the api_key requirement."""
+        service = TargetService()
+
+        request = CreateTargetRequest(
+            type="OpenAIChatTarget",
+            params={
+                "model_name": "gpt-4o",
+                "endpoint": "https://test.openai.azure.com/",
+            },
+            auth_mode="api_key",
+        )
+
+        with patch.dict(os.environ, {"OPENAI_CHAT_KEY": "env-test-key"}):
+            result = await service.create_target_async(request=request)
+
+        assert result.target_type == "OpenAIChatTarget"
+
+    async def test_create_openai_target_api_key_mode_rejects_empty_key(self, sqlite_instance) -> None:
+        """An empty-string api_key counts as missing and must be rejected."""
+        service = TargetService()
+
+        request = CreateTargetRequest(
+            type="OpenAIChatTarget",
+            params={
+                "model_name": "gpt-4o",
+                "endpoint": "https://test.openai.azure.com/",
+                "api_key": "",
+            },
+            auth_mode="api_key",
+        )
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("OPENAI_CHAT_KEY", None)
+            with pytest.raises(ValueError, match="auth_mode='api_key' requires an API key"):
+                await service.create_target_async(request=request)
+
+    async def test_create_azureml_target_api_key_mode_without_key_raises(self, sqlite_instance) -> None:
+        """AzureMLChatTarget in api_key mode also requires an explicit key."""
+        service = TargetService()
+
+        request = CreateTargetRequest(
+            type="AzureMLChatTarget",
+            params={"endpoint": "https://my-endpoint.eastus.inference.ml.azure.com/score"},
+            auth_mode="api_key",
+        )
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AZURE_ML_KEY", None)
+            with pytest.raises(ValueError, match="auth_mode='api_key' requires an API key"):
+                await service.create_target_async(request=request)
+
+    async def test_create_text_target_api_key_mode_skips_validation(self, sqlite_instance) -> None:
+        """Targets without an api_key_environment_variable (e.g. TextTarget) are unaffected."""
+        service = TargetService()
+
+        request = CreateTargetRequest(
+            type="TextTarget",
+            params={},
+            auth_mode="api_key",
+        )
+
+        result = await service.create_target_async(request=request)
+        assert result.target_type == "TextTarget"
 
 
 class TestTargetServiceSingleton:

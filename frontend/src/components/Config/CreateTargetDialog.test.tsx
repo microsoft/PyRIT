@@ -72,6 +72,30 @@ describe("CreateTargetDialog", () => {
     expect(createButton.closest("button")).toBeDisabled();
   });
 
+  it("should hide the Authentication field until a target type is selected", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    // No type chosen yet — no auth radios visible, but plain API Key input is.
+    expect(
+      screen.queryByRole("radio", { name: /Microsoft Entra Authentication/ })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText("API key (stored in memory only)")
+    ).toBeInTheDocument();
+
+    // Selecting an Entra-capable type reveals the Authentication field.
+    await selectTargetType(user, "OpenAIChatTarget");
+    expect(
+      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+    ).toBeInTheDocument();
+  });
+
   it("should call onClose when Cancel is clicked", async () => {
     const onClose = jest.fn();
     const user = userEvent.setup();
@@ -661,6 +685,94 @@ describe("CreateTargetDialog", () => {
       "https://your-resource.openai.azure.com/"
     );
     fireEvent.change(endpointInput, { target: { value: "https://api.test.com/" } });
+
+    await user.click(
+      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+    );
+
+    const createButton = screen.getByText("Create Target").closest("button");
+    expect(createButton).toBeDisabled();
+
+    await user.click(screen.getByText("Create Target"));
+
+    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
+  });
+
+  it("should warn the user when Entra is selected for a non-AML endpoint on AzureMLChatTarget", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "AzureMLChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-model.region.inference.ml.azure.com/score"
+    );
+    fireEvent.change(endpointInput, {
+      target: { value: "https://example.com/score" },
+    });
+
+    await user.click(
+      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+    );
+
+    expect(
+      screen.getByText(
+        /Entra auth for AzureMLChatTarget only works with Azure ML managed online endpoints/
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("should NOT warn when Entra is selected for a recognized AML endpoint", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "AzureMLChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-model.region.inference.ml.azure.com/score"
+    );
+    fireEvent.change(endpointInput, {
+      target: { value: "https://my-llama.eastus.inference.ml.azure.com/score" },
+    });
+
+    await user.click(
+      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+    );
+
+    expect(
+      screen.queryByText(
+        /Entra auth for AzureMLChatTarget only works with Azure ML managed online endpoints/
+      )
+    ).not.toBeInTheDocument();
+  });
+
+  it("should disable Create Target and skip API call for Entra + non-AML endpoint on AzureMLChatTarget", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "AzureMLChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-model.region.inference.ml.azure.com/score"
+    );
+    fireEvent.change(endpointInput, {
+      target: { value: "https://api.test.com/score" },
+    });
 
     await user.click(
       screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
