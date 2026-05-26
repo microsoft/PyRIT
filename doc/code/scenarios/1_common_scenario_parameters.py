@@ -160,3 +160,14 @@ await custom_scenario.initialize_async(  # type: ignore
 )
 custom_result = await custom_scenario.run_async()  # type: ignore
 await output_scenario_async(custom_result)
+
+# %% [markdown]
+# ## Sorting the Per-Group Breakdown by Success Rate
+#
+# By default, the **Per-Group Breakdown** section lists groups in the order they were executed.
+# When comparing many strategies it can be more useful to see the most successful groups first.
+# Pass `sort_groups_by_success_rate=True` to `output_scenario_async` to render the breakdown in
+# descending order of success rate (groups with equal rates keep their original relative order):
+
+# %%
+await output_scenario_async(custom_result, sort_groups_by_success_rate=True)
