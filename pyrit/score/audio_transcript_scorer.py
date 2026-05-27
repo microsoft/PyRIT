@@ -114,8 +114,12 @@ class AudioTranscriptHelper:  # noqa: B024
         Args:
             text_capable_scorer (Scorer): A scorer capable of processing text that will be used to score
                 the transcribed audio content.
-            use_entra_auth (bool, Optional): **Deprecated.** Will be removed in v0.15.0.
-                Authentication is now auto-detected by the underlying converter.
+            use_entra_auth (bool, Optional): **Deprecated.** Will be removed in 0.15.0.
+                Authentication is now configured on the underlying
+                ``AzureSpeechAudioToTextConverter`` via its ``azure_speech_key`` parameter:
+                pass a string API key (or set ``AZURE_SPEECH_KEY``) for key auth, a callable
+                token provider for Entra ID with a custom token, or omit it to use Entra ID
+                via ``DefaultAzureCredential``.
 
         Raises:
             ValueError: If text_capable_scorer does not support text data type.
@@ -124,8 +128,8 @@ class AudioTranscriptHelper:  # noqa: B024
             print_deprecation_message(
                 old_item="AudioTranscriptHelper(use_entra_auth=...)",
                 new_item=(
-                    "AudioTranscriptHelper(...) (authentication is now auto-detected "
-                    "by the underlying AzureSpeechAudioToTextConverter)"
+                    "AudioTranscriptHelper(...) (configure auth on the underlying "
+                    "AzureSpeechAudioToTextConverter via azure_speech_key)"
                 ),
                 removed_in="0.15.0",
             )

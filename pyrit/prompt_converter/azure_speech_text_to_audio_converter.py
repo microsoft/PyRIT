@@ -70,8 +70,16 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
                 If omitted, Entra ID auth via ``DefaultAzureCredential`` is used automatically.
             azure_speech_resource_id (str, Optional): The resource ID for accessing the service when using
                 Entra ID auth. Required when using a callable token provider or when no API key is available.
-            use_entra_auth (bool, Optional): **Deprecated.** Will be removed in v0.15.0.
-                Authentication is now auto-detected from the provided credentials.
+            use_entra_auth (bool, Optional): **Deprecated.** Will be removed in 0.15.0.
+                Authentication is now selected automatically based on what you pass to
+                ``azure_speech_key`` (and ``AZURE_SPEECH_KEY`` env var):
+
+                - Pass a **string** API key (or set ``AZURE_SPEECH_KEY``) to use API-key auth.
+                - Pass a **callable token provider** (sync or async returning a token string)
+                  to use Entra ID with a custom token; ``azure_speech_resource_id`` must also
+                  be set.
+                - Omit ``azure_speech_key`` entirely to use Entra ID via
+                  ``DefaultAzureCredential``; ``azure_speech_resource_id`` must be set.
             synthesis_language (str): Synthesis voice language.
             synthesis_voice_name (str): Synthesis voice name.
                 For more details see the following link for synthesis language and synthesis voice:
@@ -85,9 +93,8 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
             print_deprecation_message(
                 old_item="AzureSpeechTextToAudioConverter(use_entra_auth=...)",
                 new_item=(
-                    "AzureSpeechTextToAudioConverter(...) with automatic auth detection: "
-                    "pass a key string for key auth, a callable token provider for token auth, "
-                    "or omit for automatic Entra ID auth"
+                    "AzureSpeechTextToAudioConverter("
+                    "azure_speech_key=<api-key-string-or-callable-token-provider-or-omit>)"
                 ),
                 removed_in="0.15.0",
             )
