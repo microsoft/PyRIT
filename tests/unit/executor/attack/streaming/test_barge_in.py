@@ -94,13 +94,6 @@ def test_constructor_accepts_custom_max_post_stream_wait_seconds(vad_target):
     assert attack._max_post_stream_wait_seconds == 120.0
 
 
-def test_realtime_target_satisfies_streaming_barge_in_protocol(vad_target):
-    """RealtimeTarget structurally implements StreamingBargeInTarget so the cast is safe."""
-    from pyrit.prompt_target.common.realtime_audio import StreamingBargeInTarget
-
-    assert isinstance(vad_target, StreamingBargeInTarget)
-
-
 # ---- Context validation ----------------------------------------------------------------------
 
 
@@ -550,24 +543,6 @@ def test_trim_raises_on_negative_audio_start_ms():
             sample_rate_hz=24000,
             audio_start_ms=-100,
             prefix_padding_ms=300,
-        )
-
-
-@pytest.mark.parametrize(
-    "sample_rate_hz, sample_width_bytes, channels",
-    [(0, 2, 1), (24000, 0, 1), (24000, 2, 0), (-100, 2, 1), (24000, -1, 1)],
-)
-def test_trim_raises_on_nonpositive_format_args(sample_rate_hz, sample_width_bytes, channels):
-    """Non-positive sample rate, width, or channel count signals a misconfiguration; raise."""
-    buffer = b"\xff" * 480
-    with pytest.raises(ValueError, match="must all be positive"):
-        _trim_snapshot_to_speech(
-            raw_buffer=buffer,
-            sample_rate_hz=sample_rate_hz,
-            audio_start_ms=100,
-            prefix_padding_ms=0,
-            sample_width_bytes=sample_width_bytes,
-            channels=channels,
         )
 
 

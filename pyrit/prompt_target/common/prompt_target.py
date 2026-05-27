@@ -3,7 +3,7 @@
 
 import abc
 import logging
-from typing import Any, Union, final
+from typing import TYPE_CHECKING, Any, ClassVar, Union, final
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.identifiers import ComponentIdentifier, Identifiable
@@ -12,6 +12,15 @@ from pyrit.models import Message, MessagePiece
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Coroutine
+
+    from pyrit.prompt_target.common.realtime_audio import (
+        CommittedEvent,
+        RealtimeEventDispatcher,
+        ServerVadConfig,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +51,11 @@ class PromptTarget(Identifiable):
     # Per-instance overrides are also possible via the ``custom_configuration``
     # constructor parameter, which takes precedence over the class-level value.
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
+
+    # Streaming-audio sample rate negotiated by a target's realtime protocol.
+    # Targets that declare ``STREAMING_BARGE_IN`` must override this. The default
+    # of ``0`` is a sentinel — any non-streaming target reading it indicates misuse.
+    SAMPLE_RATE_HZ: ClassVar[int] = 0
 
     def __init__(
         self,
@@ -481,3 +495,57 @@ class PromptTarget(Identifiable):
             raise ValueError(f"This target {target_name} does not support JSON response format.")
 
         return config
+
+    # ------------------------------------------------------------------------------------------
+    # Streaming-audio surface.
+    #
+    # The following methods/properties are the contract between streaming-audio attacks
+    # (e.g. ``BargeInAttack``) and targets that declare the ``STREAMING_BARGE_IN`` capability.
+    # The capability flag is the sole gate: when an attack accepts a ``PromptTarget`` whose
+    # capabilities include ``STREAMING_BARGE_IN``, these overrides are guaranteed to be
+    # present. Non-streaming targets inherit the default ``NotImplementedError`` bodies.
+    # ------------------------------------------------------------------------------------------
+
+    @property
+    def server_vad_config(self) -> "ServerVadConfig | None":
+        """Server VAD configuration in effect, or ``None`` if server VAD is disabled."""
+        return None
+
+    async def connect_async(self, conversation_id: str) -> Any:
+        """Open the streaming connection for ``conversation_id`` and return the connection handle."""
+        raise NotImplementedError(f"{type(self).__name__} does not support streaming connections.")
+
+    async def subscribe_events_async(
+        self,
+        *,
+        connection: Any,
+        conversation_id: str,
+        on_user_audio_committed: "Callable[[CommittedEvent], Coroutine[Any, Any, None]] | None" = None,
+    ) -> "RealtimeEventDispatcher":
+        """Spawn a background reader that routes server events and returns the dispatcher."""
+        raise NotImplementedError(f"{type(self).__name__} does not support streaming event subscription.")
+
+    async def send_streaming_session_config_async(
+        self, *, connection: Any, conversation: list[Message] | None = None
+    ) -> None:
+        """Send the initial streaming session configuration over the wire."""
+        raise NotImplementedError(f"{type(self).__name__} does not support streaming session config.")
+
+    async def push_audio_chunk_async(self, *, connection: Any, pcm_bytes: bytes) -> None:
+        """Push a PCM16 audio chunk into the server's input buffer."""
+        raise NotImplementedError(f"{type(self).__name__} does not support streaming audio input.")
+
+    async def save_audio(
+        self,
+        audio_bytes: bytes,
+        num_channels: int = 1,
+        sample_width: int = 2,
+        sample_rate: int = 16000,
+        output_filename: str | None = None,
+    ) -> str:
+        """Persist a PCM buffer to disk and return the file path."""
+        raise NotImplementedError(f"{type(self).__name__} does not support audio persistence.")
+
+    async def cleanup_conversation(self, conversation_id: str) -> None:
+        """Tear down any per-conversation state held by the target."""
+        raise NotImplementedError(f"{type(self).__name__} does not support per-conversation cleanup.")

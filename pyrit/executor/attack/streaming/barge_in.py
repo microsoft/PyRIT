@@ -9,7 +9,7 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.executor.attack.component.conversation_manager import ConversationManager
@@ -24,10 +24,7 @@ from pyrit.models import (
     MessagePiece,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target.common.realtime_audio import (
-    REALTIME_COMMITTED_ITEM_ID_KEY,
-    StreamingBargeInTarget,
-)
+from pyrit.prompt_target.common.realtime_audio import REALTIME_COMMITTED_ITEM_ID_KEY
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
@@ -106,15 +103,14 @@ def _trim_snapshot_to_speech(
         is None or 0, or when the computed trim would leave nothing.
 
     Raises:
-        ValueError: If ``audio_start_ms`` is negative, or if ``sample_rate_hz``,
-            ``sample_width_bytes``, or ``channels`` is not positive.
+        ValueError: If ``audio_start_ms`` is negative.
     """
-    if sample_rate_hz <= 0 or sample_width_bytes <= 0 or channels <= 0:
-        raise ValueError(
-            f"sample_rate_hz, sample_width_bytes, and channels must all be positive; "
-            f"got sample_rate_hz={sample_rate_hz}, sample_width_bytes={sample_width_bytes}, channels={channels}"
+    if audio_start_ms is None:
+        logger.warning(
+            "audio_start_ms missing on commit; returning full buffer (converter audio may include leading silence)."
         )
-    if audio_start_ms is None or audio_start_ms == 0:
+        return raw_buffer
+    if audio_start_ms == 0:
         return raw_buffer
     if audio_start_ms < 0:
         raise ValueError(f"audio_start_ms must be >= 0, got {audio_start_ms}")
@@ -242,10 +238,10 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         Raises:
             ValueError: If ``context.audio_chunks`` is ``None``.
         """
-        target = cast("StreamingBargeInTarget", self._objective_target)
         if context.audio_chunks is None:
             raise ValueError("BargeInAttackContext.audio_chunks must be set before executing the attack.")
 
+        target = self._objective_target
         connection = await target.connect_async(conversation_id=context.conversation_id)
         state = _BargeInRunState()
         last_response: Message | None = None
@@ -261,7 +257,6 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
                     event=event,
                     context=context,
                     state=state,
-                    target=target,
                 )
                 last_response = response
                 executed_turns += 1
@@ -303,7 +298,6 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         event: CommittedEvent,
         context: BargeInAttackContext[Any],
         state: _BargeInRunState,
-        target: StreamingBargeInTarget,
     ) -> Message:
         """
         Run one convert-and-respond turn for a VAD-committed user audio buffer.
@@ -325,6 +319,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         # audio that gets swapped into the server's committed item is several seconds
         # longer than what server VAD actually committed, and the model hears the
         # leading silence (often dominant) when converters are active.
+        target = self._objective_target
         bytes_per_ms = target.SAMPLE_RATE_HZ * 2 // 1000  # PCM16 mono
         original_buffer_duration_ms = len(snapshot) // bytes_per_ms if bytes_per_ms else 0
 

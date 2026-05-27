@@ -9,7 +9,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 #: targets read this key in their streaming branch to identify which committed item
 #: to delete when swapping in converter-transformed audio. Exposed as a public
 #: constant so attacks can reference it without reaching into target internals.
-REALTIME_COMMITTED_ITEM_ID_KEY = "_realtime_committed_item_id"
+REALTIME_COMMITTED_ITEM_ID_KEY = "realtime_committed_item_id"
 
 
 @dataclass(frozen=True)
@@ -243,62 +243,3 @@ class RealtimeEventDispatcher(ABC):
         Args:
             state (RealtimeTurnState): The turn whose response should be cancelled.
         """
-
-
-@runtime_checkable
-class StreamingBargeInTarget(Protocol):
-    """
-    Provider-agnostic surface a streaming barge-in attack requires of its target.
-
-    Captures the methods and attributes ``BargeInAttack`` reads from its objective
-    target so the attack can be typed against this Protocol rather than a concrete
-    provider class (e.g. ``RealtimeTarget``). A second realtime provider could
-    implement this Protocol without subclassing ``RealtimeTarget``.
-    """
-
-    #: PCM sample rate in Hz negotiated by the provider's realtime protocol.
-    SAMPLE_RATE_HZ: int
-
-    @property
-    def server_vad_config(self) -> "ServerVadConfig | None":
-        """Server VAD configuration in effect, or None if server VAD is disabled."""
-        ...
-
-    async def connect_async(self, conversation_id: str) -> Any:
-        """Open the realtime connection for ``conversation_id`` and return the connection handle."""
-        ...
-
-    async def subscribe_events_async(
-        self,
-        *,
-        connection: Any,
-        conversation_id: str,
-        on_user_audio_committed: Callable[[CommittedEvent], Coroutine[Any, Any, None]] | None = None,
-    ) -> "RealtimeEventDispatcher":
-        """Spawn a background reader that routes server events and returns the dispatcher."""
-        ...
-
-    async def send_streaming_session_config_async(
-        self, *, connection: Any, conversation: list[Any] | None = None
-    ) -> None:
-        """Send the initial ``session.update`` over the wire (system prompt, VAD config, etc.)."""
-        ...
-
-    async def push_audio_chunk_async(self, *, connection: Any, pcm_bytes: bytes) -> None:
-        """Push a PCM16 audio chunk into the server's input buffer."""
-        ...
-
-    async def save_audio(
-        self,
-        audio_bytes: bytes,
-        num_channels: int = 1,
-        sample_width: int = 2,
-        sample_rate: int = 16000,
-        output_filename: str | None = None,
-    ) -> str:
-        """Persist a PCM buffer to disk and return the file path."""
-        ...
-
-    async def cleanup_conversation(self, conversation_id: str) -> None:
-        """Tear down any per-conversation state held by the target."""
-        ...
