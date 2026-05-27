@@ -93,6 +93,21 @@ class MockGenericScorer(Scorer):
     def validate_return_scores(self, scores: list[Score]):
         pass
 
+    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+        return [
+            Score(
+                score_value="false",
+                score_value_description="Mock fallback",
+                score_type="true_false",
+                score_category=None,
+                score_metadata=None,
+                score_rationale="Mock fallback",
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=message.message_pieces[0].id or "test-id",
+                objective=objective,
+            )
+        ]
+
     def get_scorer_metrics(self):
         return None
 

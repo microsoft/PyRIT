@@ -14,7 +14,6 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-from pyrit.backend.models.attacks import AttackSummary
 from pyrit.backend.models.common import PaginationInfo
 
 
@@ -25,7 +24,8 @@ class ScenarioParameterSummary(BaseModel):
     description: str = Field(..., description="Human-readable description of the parameter")
     default: str | None = Field(None, description="Default value as a display string, or None if required")
     param_type: str = Field(..., description="Type of the parameter as a display string (e.g., 'int', 'str')")
-    choices: str | None = Field(None, description="Allowed values as a display string, or None if unconstrained")
+    choices: list[str] | None = Field(None, description="Allowed values as strings, or None if unconstrained")
+    is_list: bool = Field(False, description="True when the parameter accepts a list of values (e.g., list[str])")
 
 
 class RegisteredScenario(BaseModel):
@@ -124,28 +124,3 @@ class ScenarioRunListResponse(BaseModel):
     """Response for listing scenario runs."""
 
     items: list[ScenarioRunSummary] = Field(..., description="List of scenario runs")
-
-
-# ============================================================================
-# Scenario Results Detail Models
-# ============================================================================
-
-
-class AtomicAttackResults(BaseModel):
-    """Results grouped by atomic attack name."""
-
-    atomic_attack_name: str = Field(..., description="Name of the atomic attack (strategy)")
-    display_group: str | None = Field(None, description="Display group label for UI grouping")
-    results: list[AttackSummary] = Field(..., description="Individual attack results")
-    success_count: int = Field(0, ge=0, description="Number of successful attacks")
-    failure_count: int = Field(0, ge=0, description="Number of failed attacks")
-    total_count: int = Field(0, ge=0, description="Total number of attack results")
-    total_retries: int = Field(0, ge=0, description="Sum of retries across all attacks in this group")
-    error_count: int = Field(0, ge=0, description="Number of attacks with errors")
-
-
-class ScenarioRunDetail(BaseModel):
-    """Full detailed results of a scenario run."""
-
-    run: ScenarioRunSummary = Field(..., description="The scenario run summary")
-    attacks: list[AtomicAttackResults] = Field(..., description="Results grouped by atomic attack")

@@ -582,18 +582,18 @@ async def test_hashes_generated_files():
     os.remove(filename)
 
 
-async def test_memory_encoding_metadata_image(sqlite_instance):
+async def test_memory_encoding_metadata_image(tmp_path, sqlite_instance):
     mock_image = Image.new("RGB", (400, 300), (255, 255, 255))
-    mock_image.save("test.png")
+    image_path = str(tmp_path / "test.png")
+    mock_image.save(image_path)
     sp = SeedPrompt(
-        value="test.png",
+        value=image_path,
         data_type="image_path",
     )
     await sqlite_instance.add_seeds_to_memory_async(seeds=[sp], added_by="test")
     entry = sqlite_instance.get_seeds()[0]
     assert len(entry.metadata) == 1
     assert entry.metadata["format"] == "png"
-    os.remove("test.png")
 
 
 @patch("pyrit.models.seeds.seed_prompt.TinyTag")

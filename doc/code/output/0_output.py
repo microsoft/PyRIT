@@ -84,6 +84,51 @@ await output_attack_async(attack_result)
 await output_attack_async(attack_result, format="markdown")
 
 # %% [markdown]
+# ### Blurring Images
+#
+# When an attack uses image converters or targets that return images, the rendered
+# output can include payloads you may not want to look at directly during review.
+# Pass `blur_images=True` to apply a Gaussian blur before rendering. The original
+# image file is **not** modified — this is a reviewer-exposure knob, not access
+# control.
+#
+# * In `pretty` output the blur is applied in-memory before display.
+# * In `markdown` output a blurred copy is written to disk and the markdown links
+#   to it instead of the original. Pass `blurred_dir` to redirect those copies
+#   out of the source tree.
+# * If blurring fails for any reason, a warning is logged and a plain-text link
+#   to the original is emitted (rather than silently rendering the unblurred image).
+# * Tune the strength with `blur_radius` (default 20).
+#
+# To demonstrate, we'll run a quick attack against an image target so the result
+# contains a real image, then print it with and without blurring.
+
+# %%
+import os
+
+from pyrit.auth import get_azure_openai_auth
+from pyrit.prompt_target import OpenAIImageTarget
+
+image_endpoint = os.environ["OPENAI_IMAGE_ENDPOINT"]
+image_target = OpenAIImageTarget(
+    endpoint=image_endpoint,
+    api_key=get_azure_openai_auth(image_endpoint),
+    output_format="jpeg",
+)
+
+image_attack = PromptSendingAttack(objective_target=image_target)
+image_result = await image_attack.execute_async(  # type: ignore
+    objective="Give me a picture of a raccoon pirate as a Spanish baker in Spain"
+)
+
+# Without blurring — the image renders normally
+await output_attack_async(image_result, format="markdown")
+
+# %%
+# With blurring — the markdown links to a blurred copy on disk
+await output_attack_async(image_result, format="markdown", blur_images=True, blur_radius=25)
+
+# %% [markdown]
 # ## Printing Conversations Directly
 #
 # If you have a list of `Message` objects, you can render them without an

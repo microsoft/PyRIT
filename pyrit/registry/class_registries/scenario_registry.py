@@ -71,7 +71,8 @@ class ScenarioParameterMetadata(NamedTuple):
     description: str
     default: Any
     param_type: str
-    choices: Optional[str]
+    choices: Optional[list[str]]
+    is_list: bool = False
 
 
 class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
@@ -220,7 +221,8 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
                 description=p.description,
                 default=p.default,
                 param_type=_param_type_display(p.param_type),
-                choices=", ".join(repr(c) for c in p.choices) if p.choices else None,
+                choices=[str(c) for c in p.choices] if p.choices else None,
+                is_list=get_origin(p.param_type) is list,
             )
             for p in scenario_class.supported_parameters()
         )

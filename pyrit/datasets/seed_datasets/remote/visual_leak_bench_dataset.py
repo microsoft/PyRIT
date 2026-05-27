@@ -6,11 +6,13 @@ import uuid
 from enum import Enum
 from typing import Literal, Optional
 
-from pyrit.common.net_utility import make_request_and_raise_if_error_async
+from pyrit.datasets.seed_datasets.remote._image_cache import (
+    fetch_and_cache_image_async,
+)
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt, data_serializer_factory
+from pyrit.models import SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -321,23 +323,8 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         Returns:
             str: Local path to the saved image.
         """
-        filename = f"visual_leak_bench_{example_id}.png"
-        serializer = data_serializer_factory(category="seed-prompt-entries", data_type="image_path", extension="png")
-
-        # Return existing path if image already exists
-        results_path = (serializer._memory.results_path if serializer._memory is not None else None) or ""
-        serializer.value = str(results_path + serializer.data_sub_directory + f"/{filename}")
-        try:
-            if (
-                serializer._memory is not None
-                and serializer._memory.results_storage_io is not None
-                and await serializer._memory.results_storage_io.path_exists(serializer.value)
-            ):
-                return serializer.value
-        except Exception as e:
-            logger.warning(f"[VisualLeakBench] Failed to check if image {example_id} exists in cache: {e}")
-
-        response = await make_request_and_raise_if_error_async(endpoint_uri=image_url, method="GET")
-        await serializer.save_data(data=response.content, output_filename=filename.replace(".png", ""))
-
-        return str(serializer.value)
+        return await fetch_and_cache_image_async(
+            filename=f"visual_leak_bench_{example_id}.png",
+            image_url=image_url,
+            log_prefix="VisualLeakBench",
+        )

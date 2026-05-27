@@ -351,6 +351,7 @@ class TestVisualLeakBenchDataset:
 
 async def test_fetch_and_save_image_returns_cached_path():
     """Test that _fetch_and_save_image_async returns cached path when image already exists."""
+    from pathlib import Path
     from unittest.mock import AsyncMock, MagicMock
 
     mock_serializer = MagicMock()
@@ -363,7 +364,7 @@ async def test_fetch_and_save_image_returns_cached_path():
     mock_serializer.data_sub_directory = "/images"
 
     with patch(
-        "pyrit.datasets.seed_datasets.remote.visual_leak_bench_dataset.data_serializer_factory",
+        "pyrit.datasets.seed_datasets.remote._image_cache.data_serializer_factory",
         return_value=mock_serializer,
     ):
         loader = _VisualLeakBenchDataset()
@@ -371,6 +372,6 @@ async def test_fetch_and_save_image_returns_cached_path():
             image_url="https://example.com/img.png", example_id="test_001"
         )
 
-    expected_path = "/results/images/visual_leak_bench_test_001.png"
+    expected_path = str(Path("/results") / "images" / "visual_leak_bench_test_001.png")
     assert result == expected_path
     assert mock_serializer.value == expected_path

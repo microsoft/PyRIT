@@ -137,7 +137,7 @@ async function activateMockTarget(page: Page) {
 
   // Return to Chat view
   await page.getByTitle("Chat").click();
-  await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
 }
 
 // ---------------------------------------------------------------------------
@@ -153,10 +153,10 @@ test.describe("Application Smoke Tests", () => {
     await expect(page.locator("body")).toBeVisible();
   });
 
-  test("should display PyRIT header", async ({ page }) => {
+  test("should display chat ribbon", async ({ page }) => {
     await expect(page.getByTitle("Chat")).toBeVisible({ timeout: 10000 });
     await page.getByTitle("Chat").click();
-    await expect(page.getByText("PyRIT Attack")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 10000 });
   });
 
   test("should have New Attack button", async ({ page }) => {
@@ -201,8 +201,12 @@ test.describe("Chat Functionality", () => {
   });
 
   test("should display target info after activation", async ({ page }) => {
-    await expect(page.getByText("OpenAIChatTarget")).toBeVisible();
-    await expect(page.getByText(/gpt-4o-mock/)).toBeVisible();
+    // Scope queries to the badge so we don't also match the (hidden)
+    // copy of the target text that Fluent's Tooltip renders into the DOM.
+    const badge = page.getByTestId("target-badge");
+    await expect(badge).toBeVisible();
+    await expect(badge).toContainText("OpenAIChatTarget");
+    await expect(badge).toContainText(/gpt-4o-mock/);
   });
 
   test("should send a message and receive backend response", async ({ page }) => {
@@ -726,7 +730,11 @@ test.describe("Target type scenarios", () => {
 
     // Navigate to chat
     await page.getByTitle("Chat").click();
-    await expect(page.getByText("OpenAIImageTarget")).toBeVisible();
-    await expect(page.getByText(/dall-e-3/)).toBeVisible();
+    // Scope queries to the badge so we don't also match the (hidden)
+    // copy of the target text that Fluent's Tooltip renders into the DOM.
+    const badge = page.getByTestId("target-badge");
+    await expect(badge).toBeVisible();
+    await expect(badge).toContainText("OpenAIImageTarget");
+    await expect(badge).toContainText(/dall-e-3/);
   });
 });

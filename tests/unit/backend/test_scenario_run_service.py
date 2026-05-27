@@ -492,26 +492,12 @@ class TestScenarioRunServiceGetResults:
             service.get_run_results(scenario_result_id="sr-running")
 
     def test_get_results_returns_details_for_completed_run(self, mock_memory) -> None:
-        """Test that get_run_results returns full details for a completed run."""
+        """Test that get_run_results returns the ScenarioResult for a completed run."""
         from pyrit.models import AttackOutcome
 
         mock_attack_result = MagicMock()
-        mock_attack_result.attack_result_id = "ar-1"
-        mock_attack_result.conversation_id = "conv-1"
-        mock_attack_result.objective = "Extract info"
         mock_attack_result.outcome = AttackOutcome.SUCCESS
-        mock_attack_result.outcome_reason = "Model complied"
-        mock_attack_result.last_response = MagicMock(value="Here is the data")
-        mock_attack_result.last_score = MagicMock()
-        mock_attack_result.last_score.get_value.return_value = "1.0"
-        mock_attack_result.executed_turns = 3
-        mock_attack_result.execution_time_ms = 1500
-        mock_attack_result.timestamp = None
-        mock_attack_result.error_message = None
-        mock_attack_result.error_type = None
-        mock_attack_result.error_traceback = None
-        mock_attack_result.total_retries = 0
-        mock_attack_result.retry_events = []
+        mock_attack_result.objective = "Extract info"
 
         db_result = _make_db_scenario_result(
             result_id="sr-123",
@@ -522,16 +508,10 @@ class TestScenarioRunServiceGetResults:
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
-        detail = service.get_run_results(scenario_result_id="sr-123")
+        result = service.get_run_results(scenario_result_id="sr-123")
 
-        assert detail is not None
-        assert detail.run.scenario_result_id == "sr-123"
-        assert detail.run.objective_achieved_rate == 100
-        assert len(detail.attacks) == 1
-        assert detail.attacks[0].atomic_attack_name == "base64_attack"
-        assert detail.attacks[0].success_count == 1
-        assert detail.attacks[0].results[0].objective == "Extract info"
-        assert detail.attacks[0].results[0].outcome == "success"
+        assert result is db_result
+        assert result.attack_results["base64_attack"][0].outcome == AttackOutcome.SUCCESS
 
 
 class TestScenarioRunServiceProgressReporting:

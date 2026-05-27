@@ -13,12 +13,12 @@ class PromptChatTarget(PromptTarget):
     """
     .. deprecated:: 0.14.0
         ``PromptChatTarget`` is deprecated and will be removed in v0.16.0. Use
-        :class:`PromptTarget` directly with a ``TargetConfiguration`` declaring
+        ``PromptTarget`` directly with a ``TargetConfiguration`` declaring
         ``supports_multi_turn=True`` and ``supports_editable_history=True``.
 
-    Backwards-compatible alias for :class:`PromptTarget`. All chat-target functionality
-    (``set_system_prompt``, ``is_response_format_json``) lives on :class:`PromptTarget`.
-    Subclassing or instantiating this class emits a :class:`DeprecationWarning`.
+    Backwards-compatible alias for ``PromptTarget``. All chat-target functionality
+    (``set_system_prompt``, ``is_response_format_json``) lives on ``PromptTarget``.
+    Subclassing or instantiating this class emits a ``DeprecationWarning``.
     """
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(

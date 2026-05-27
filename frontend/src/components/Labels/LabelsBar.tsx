@@ -10,9 +10,9 @@ import {
   PopoverSurface,
 } from '@fluentui/react-components'
 import {
-  AddRegular,
   DismissRegular,
   WarningRegular,
+  TagRegular,
 } from '@fluentui/react-icons'
 import { labelsApi } from '../../services/api'
 import { useLabelsBarStyles } from './LabelsBar.styles'
@@ -119,43 +119,75 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   const suggestedKeys = Object.keys(existingLabels).filter(k => !(k in labels))
   const suggestedValues = (editingLabel ? existingLabels[editingLabel] : existingLabels[newKey]) || []
 
-  // Overflow detection: track which labels are visible
-  const containerRef = useRef<HTMLDivElement>(null)
+  // Layout: the labels icon (with total count badge) is always the first
+  // element on the bar. We then render as many full chips as fit, in
+  // declaration order. The icon's popover always shows the full list and
+  // the add form, so the user can reach everything regardless of how many
+  // chips are currently visible. The inline "+ Add" button is only shown
+  // when every chip already fits — otherwise the popover already covers
+  // the same flow.
+  const rootRef = useRef<HTMLDivElement>(null)
+  const measureRef = useRef<HTMLDivElement>(null)
+  const ICON_BUTTON_WIDTH_PX = 56  // labels icon + count badge + gap
+  const ADD_BUTTON_WIDTH_PX = 60   // "+ Add" button
   const [visibleCount, setVisibleCount] = useState(Infinity)
 
   const labelEntries = useMemo(() => Object.entries(labels), [labels])
 
   useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
+    const root = rootRef.current
+    const measure = measureRef.current
+    if (!root || !measure) return
 
     const check = () => {
-      const children = Array.from(el.children) as HTMLElement[]
-      if (children.length === 0) { setVisibleCount(Infinity); return }
+      const rootW = root.clientWidth
+      // jsdom and pre-layout: keep all chips so unit tests remain stable.
+      if (rootW === 0) { setVisibleCount(Infinity); return }
 
-      const containerRight = el.getBoundingClientRect().right
+      const chips = Array.from(measure.querySelectorAll('[data-label-idx]')) as HTMLElement[]
+      if (chips.length === 0) { setVisibleCount(Infinity); return }
+
+      // Sum chip widths in order until we exceed available space. We
+      // measure against the off-screen `measure` row that has the same
+      // styling as the inline row but is allowed to lay out at full
+      // width, so each chip's offsetWidth reflects its natural size.
+      const gap = 4
+      const reserved = ICON_BUTTON_WIDTH_PX + gap
+      const available = rootW - reserved
+      let used = 0
       let count = 0
-      for (const child of children) {
-        // Skip the overflow badge and add button (last elements)
-        if (child.dataset.labelIdx === undefined) continue
-        if (child.getBoundingClientRect().right <= containerRight + 2) {
-          count++
-        } else {
-          break
+      for (const chip of chips) {
+        const next = used + chip.offsetWidth + (count > 0 ? gap : 0)
+        if (next > available) break
+        used = next
+        count++
+      }
+      // If everything fits, also reserve room for the inline "+ Add"
+      // button. Drop the last chip(s) until "+ Add" fits too.
+      if (count === chips.length) {
+        const withAdd = used + gap + ADD_BUTTON_WIDTH_PX
+        if (withAdd > available) {
+          // Recompute with the +Add allowance baked in.
+          used = 0
+          count = 0
+          const availableWithAdd = available - ADD_BUTTON_WIDTH_PX - gap
+          for (const chip of chips) {
+            const next = used + chip.offsetWidth + (count > 0 ? gap : 0)
+            if (next > availableWithAdd) break
+            used = next
+            count++
+          }
         }
       }
       setVisibleCount(count)
     }
 
     const observer = new ResizeObserver(check)
-    observer.observe(el)
+    observer.observe(root)
+    if (root.parentElement) observer.observe(root.parentElement)
     check()
     return () => observer.disconnect()
   }, [labelEntries])
-
-  const overflowEntries = visibleCount < labelEntries.length
-    ? labelEntries.slice(visibleCount)
-    : []
 
   const renderLabelBadge = (key: string, value: string, idx: number) => {
     const isDummy = isDummyValue(key, value)
@@ -227,8 +259,105 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     )
   }
 
+  const renderLabelsList = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+      {labelEntries.map(([key, value]) => {
+        const isDummy = isDummyValue(key, value)
+        const isRequired = key === 'operator' || key === 'operation'
+        return (
+          <div
+            key={key}
+            className={`${styles.labelBadge} ${isDummy ? styles.labelDummy : styles.labelNormal}`}
+            onClick={() => handleStartEdit(key)}
+            data-testid={`popover-label-${key}`}
+            style={{ flexShrink: 0 }}
+          >
+            <Text size={200} weight="semibold">{key}:</Text>
+            <Text size={200}>{value}</Text>
+            {!isRequired && (
+              <Button
+                className={styles.removeBtn}
+                appearance="transparent"
+                size="small"
+                icon={<DismissRegular fontSize={12} />}
+                onClick={(e) => { e.stopPropagation(); handleRemoveLabel(key) }}
+                data-testid={`popover-remove-label-${key}`}
+              />
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+
+  const renderAddForm = () => (
+    <>
+      <div className={styles.inputRow}>
+        <Input
+          className={styles.inputField}
+          size="small"
+          placeholder="key"
+          value={newKey}
+          onChange={(_, d) => { setNewKey(d.value.toLowerCase()); setError('') }}
+          onKeyDown={handleAddKeyDown}
+          data-testid="new-label-key"
+        />
+        <Input
+          className={styles.inputField}
+          size="small"
+          placeholder="value"
+          value={newValue}
+          onChange={(_, d) => { setNewValue(d.value.toLowerCase()); setError('') }}
+          onKeyDown={handleAddKeyDown}
+          data-testid="new-label-value"
+        />
+        <Button
+          appearance="primary"
+          size="small"
+          onClick={handleAddLabel}
+          data-testid="confirm-add-label"
+        >
+          Add
+        </Button>
+      </div>
+      {suggestedKeys.length > 0 && !newKey && (
+        <>
+          <Text size={200} weight="semibold">Existing keys:</Text>
+          <div className={styles.suggestions}>
+            {suggestedKeys.slice(0, 8).map(k => (
+              <Badge
+                key={k}
+                appearance="outline"
+                size="small"
+                className={styles.suggestionChip}
+                onClick={() => setNewKey(k)}
+              >{k}</Badge>
+            ))}
+          </div>
+        </>
+      )}
+      {newKey && suggestedValues.length > 0 && (
+        <>
+          <Text size={200} weight="semibold">Existing values for "{newKey}":</Text>
+          <div className={styles.suggestions}>
+            {suggestedValues.slice(0, 8).map(v => (
+              <Badge
+                key={v}
+                appearance="outline"
+                size="small"
+                className={styles.suggestionChip}
+                onClick={() => setNewValue(v)}
+              >{v}</Badge>
+            ))}
+          </div>
+        </>
+      )}
+      {error && <Text size={200} className={styles.errorText}>{error}</Text>}
+    </>
+  )
+
   return (
-    <div className={styles.root} data-testid="labels-bar">
+    <div className={styles.root} data-testid="labels-bar" ref={rootRef}>
       {hasDummyValues && (
         <Tooltip content="Some labels have placeholder values — update them for proper tracking" relationship="description">
           <span className={styles.warningIcon} data-testid="labels-warning">
@@ -237,135 +366,72 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
         </Tooltip>
       )}
 
-      <div className={styles.labelsContainer} ref={containerRef}>
-        {labelEntries.map(([key, value], idx) => renderLabelBadge(key, value, idx))}
-
-        {overflowEntries.length > 0 && (
-          <Popover>
-            <PopoverTrigger>
-              <Badge
-                appearance="outline"
-                size="small"
-                className={styles.overflowBadge}
-                data-testid="labels-overflow"
-              >
-                +{overflowEntries.length} more
-              </Badge>
-            </PopoverTrigger>
-            <PopoverSurface>
-              <div className={styles.popoverSurface}>
-                <Text weight="semibold" size={300}>All Labels</Text>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  {labelEntries.map(([key, value]) => {
-                    const isDummy = isDummyValue(key, value)
-                    const isRequired = key === 'operator' || key === 'operation'
-                    return (
-                      <div
-                        key={key}
-                        className={`${styles.labelBadge} ${isDummy ? styles.labelDummy : styles.labelNormal}`}
-                        onClick={() => handleStartEdit(key)}
-                        style={{ flexShrink: 0 }}
-                      >
-                        <Text size={200} weight="semibold">{key}:</Text>
-                        <Text size={200}>{value}</Text>
-                        {!isRequired && (
-                          <Button
-                            className={styles.removeBtn}
-                            appearance="transparent"
-                            size="small"
-                            icon={<DismissRegular fontSize={12} />}
-                            onClick={(e) => { e.stopPropagation(); handleRemoveLabel(key) }}
-                          />
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            </PopoverSurface>
-          </Popover>
-        )}
+      {/*
+        Off-screen measurement row: contains every chip at its natural
+        width so we can compute how many fit. Hidden via CSS but laid out
+        normally; ResizeObserver triggers a re-measure on width changes.
+      */}
+      <div
+        ref={measureRef}
+        aria-hidden="true"
+        className={styles.measureRow}
+      >
+        {labelEntries.map(([key, value], idx) => (
+          <span
+            key={key}
+            data-label-idx={idx}
+            className={`${styles.labelBadge} ${isDummyValue(key, value) ? styles.labelDummy : styles.labelNormal}`}
+          >
+            <Text size={200} weight="semibold">{key}:</Text>
+            <Text size={200} style={{ whiteSpace: 'nowrap' }}>{value}</Text>
+          </span>
+        ))}
       </div>
 
+      {/*
+        Labels icon + total count. Always present, anchored leftmost.
+        Clicking opens a popover with the full label list and add form
+        — so even when every chip fits, this is still the canonical
+        entry point for editing/adding labels.
+      */}
       <Popover open={isPopoverOpen} onOpenChange={(_, d) => { setIsPopoverOpen(d.open); setError('') }}>
         <PopoverTrigger>
-          <Button
-            appearance="subtle"
-            size="small"
-            icon={<AddRegular />}
-            data-testid="add-label-btn"
-            style={{ flexShrink: 0 }}
-          >
-            Add
-          </Button>
-          </PopoverTrigger>
-          <PopoverSurface>
-            <div className={styles.popoverSurface}>
-              <Text weight="semibold" size={300}>Add Label</Text>
-              <div className={styles.inputRow}>
-                <Input
-                  className={styles.inputField}
-                  size="small"
-                  placeholder="key"
-                  value={newKey}
-                  onChange={(_, d) => { setNewKey(d.value.toLowerCase()); setError('') }}
-                  onKeyDown={handleAddKeyDown}
-                  data-testid="new-label-key"
-                />
-                <Input
-                  className={styles.inputField}
-                  size="small"
-                  placeholder="value"
-                  value={newValue}
-                  onChange={(_, d) => { setNewValue(d.value.toLowerCase()); setError('') }}
-                  onKeyDown={handleAddKeyDown}
-                  data-testid="new-label-value"
-                />
-                <Button
-                  appearance="primary"
-                  size="small"
-                  onClick={handleAddLabel}
-                  data-testid="confirm-add-label"
-                >
-                  Add
-                </Button>
+          <Tooltip
+            content={
+              <div className={styles.iconTooltipBody}>
+                {`${labelEntries.length} label${labelEntries.length === 1 ? '' : 's'} — click to view or add`}
               </div>
-              {suggestedKeys.length > 0 && !newKey && (
-                <>
-                  <Text size={200} weight="semibold">Existing keys:</Text>
-                  <div className={styles.suggestions}>
-                    {suggestedKeys.slice(0, 8).map(k => (
-                      <Badge
-                        key={k}
-                        appearance="outline"
-                        size="small"
-                        className={styles.suggestionChip}
-                        onClick={() => setNewKey(k)}
-                      >{k}</Badge>
-                    ))}
-                  </div>
-                </>
-              )}
-              {newKey && suggestedValues.length > 0 && (
-                <>
-                  <Text size={200} weight="semibold">Existing values for "{newKey}":</Text>
-                  <div className={styles.suggestions}>
-                    {suggestedValues.slice(0, 8).map(v => (
-                      <Badge
-                        key={v}
-                        appearance="outline"
-                        size="small"
-                        className={styles.suggestionChip}
-                        onClick={() => setNewValue(v)}
-                      >{v}</Badge>
-                    ))}
-                  </div>
-                </>
-              )}
-              {error && <Text size={200} className={styles.errorText}>{error}</Text>}
-            </div>
-          </PopoverSurface>
-        </Popover>
+            }
+            relationship="label"
+          >
+            <Button
+              appearance="subtle"
+              size="small"
+              icon={<TagRegular />}
+              aria-label={`Labels (${labelEntries.length})`}
+              data-testid="labels-icon-btn"
+              className={styles.iconButton}
+            >
+              <Badge appearance="filled" size="small">{labelEntries.length}</Badge>
+            </Button>
+          </Tooltip>
+        </PopoverTrigger>
+        <PopoverSurface>
+          <div className={styles.popoverSurface}>
+            <Text weight="semibold" size={300}>All Labels</Text>
+            {renderLabelsList()}
+            <div className={styles.popoverDivider} />
+            <Text weight="semibold" size={300}>Add Label</Text>
+            {renderAddForm()}
+          </div>
+        </PopoverSurface>
+      </Popover>
+
+      <div className={styles.labelsContainer}>
+        {labelEntries
+          .slice(0, visibleCount === Infinity ? labelEntries.length : visibleCount)
+          .map(([key, value], idx) => renderLabelBadge(key, value, idx))}
+      </div>
     </div>
   )
 }

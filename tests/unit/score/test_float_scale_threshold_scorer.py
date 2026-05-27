@@ -2,14 +2,17 @@
 # Licensed under the MIT license.
 
 import uuid
+from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import Score
+from pyrit.models import Message, MessagePiece, Score
 from pyrit.score import FloatScaleThresholdScorer
+from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
 def create_mock_float_scorer(score_value: float):
@@ -216,3 +219,57 @@ def test_get_chat_target_returns_none_when_wrapped_has_none():
 
     threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.5)
     assert threshold_scorer.get_chat_target() is None
+
+
+async def test_float_scale_threshold_scorer_with_real_float_scorer_on_blocked(patch_central_database):
+    """Integration test: a real FloatScaleScorer subclass returns Score(0.0) on blocked input
+    (via its unified no-pieces fallback), and the threshold wrapper correctly converts that
+    to a False true_false score.
+
+    This is the end-to-end path that replaced TAP's deleted error_score_map: the inner scorer
+    handles blocked responses itself, so wrappers like FloatScaleThresholdScorer don't need
+    any special blocked-handling logic.
+    """
+
+    class _RealFloatScaleScorer(FloatScaleScorer):
+        def __init__(self):
+            super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return self._create_identifier()
+
+        async def _score_piece_async(
+            self, message_piece: MessagePiece, *, objective: Optional[str] = None
+        ) -> list[Score]:
+            return [
+                Score(
+                    score_value="0.9",
+                    score_type="float_scale",
+                    score_category=["mock"],
+                    score_rationale="should not be hit for blocked",
+                    score_metadata=None,
+                    message_piece_id=message_piece.id,
+                    score_value_description="mock",
+                    scorer_class_identifier=self.get_identifier(),
+                )
+            ]
+
+    inner = _RealFloatScaleScorer()
+    threshold_scorer = FloatScaleThresholdScorer(scorer=inner, threshold=0.5)
+
+    blocked_piece = MessagePiece(
+        role="assistant",
+        original_value="",
+        converted_value="",
+        converted_value_data_type="error",
+        response_error="blocked",
+    )
+    blocked_message = Message(message_pieces=[blocked_piece])
+
+    scores = await threshold_scorer.score_async(blocked_message)
+
+    assert len(scores) == 1
+    binary_score = scores[0]
+    assert binary_score.score_type == "true_false"
+    assert binary_score.get_value() is False
+    assert "Normalized scale score: 0.0" in binary_score.score_rationale
