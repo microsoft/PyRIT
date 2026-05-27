@@ -84,14 +84,6 @@ _RULE_ID_TO_CATEGORY: dict[str, ATRCategory] = {
 }
 
 
-# Default upstream URL pinned to a specific commit for reproducibility, mirroring
-# the HarmBench loader convention.
-_DEFAULT_SOURCE = (
-    "https://raw.githubusercontent.com/Agent-Threat-Rule/agent-threat-rules/"
-    "db793f9/data/autoresearch/adversarial-samples.json"
-)
-
-
 class _AgentThreatRulesDataset(_RemoteDatasetLoader):
     """
     Loader for the Agent Threat Rules (ATR) adversarial payload corpus.
@@ -137,7 +129,10 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
     def __init__(
         self,
         *,
-        source: str = _DEFAULT_SOURCE,
+        source: str = (
+            "https://raw.githubusercontent.com/Agent-Threat-Rule/agent-threat-rules/"
+            "db793f9/data/autoresearch/adversarial-samples.json"
+        ),
         source_type: Literal["public_url", "file"] = "public_url",
         categories: Optional[list[ATRCategory]] = None,
         techniques: Optional[list[str]] = None,
