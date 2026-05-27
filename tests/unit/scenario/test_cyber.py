@@ -169,8 +169,10 @@ class TestCyberBasic:
     ):
         scenario = Cyber(objective_scorer=mock_objective_scorer)
         await scenario.initialize_async(objective_target=mock_objective_target)
-        # ALL expands to prompt_sending + red_teaming → 2 strategies
-        assert len(scenario._scenario_strategies) == 2
+        # ALL expands to red_teaming (the only registered Cyber technique); a
+        # PromptSendingAttack baseline is added separately via the baseline
+        # policy, not as a strategy.
+        assert len(scenario._scenario_strategies) == 1
 
     async def test_initialize_raises_when_no_datasets(self, mock_objective_target, mock_objective_scorer):
         """Dataset resolution fails from empty memory."""

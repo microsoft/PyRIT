@@ -279,7 +279,10 @@ class TestRapidResponseAttackGeneration:
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
         # Every core technique tagged ``single_turn`` in the scenario-technique catalog must appear.
-        assert {PromptSendingAttack, RolePlayAttack, ContextComplianceAttack} <= technique_classes
+        # PromptSendingAttack is intentionally excluded from the catalog (provided by the baseline
+        # policy instead) and include_baseline=False here, so it should not appear.
+        assert {RolePlayAttack, ContextComplianceAttack} <= technique_classes
+        assert PromptSendingAttack not in technique_classes
         # And no multi-turn-only attack should leak in.
         assert ManyShotJailbreakAttack not in technique_classes
         assert TreeOfAttacksWithPruningAttack not in technique_classes
@@ -303,13 +306,15 @@ class TestRapidResponseAttackGeneration:
             strategies=[_strategy_class().ALL],
         )
         technique_classes = {type(a.attack_technique.attack) for a in attacks}
-        # Should include all known core techniques
+        # Should include all known core techniques. PromptSendingAttack is intentionally
+        # excluded from the catalog (provided by the baseline policy instead) and
+        # include_baseline=False here, so it should not appear.
         assert {
-            PromptSendingAttack,
             RolePlayAttack,
             ManyShotJailbreakAttack,
             TreeOfAttacksWithPruningAttack,
         } <= technique_classes
+        assert PromptSendingAttack not in technique_classes
 
     async def test_single_technique_selection(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(

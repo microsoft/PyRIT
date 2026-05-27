@@ -46,7 +46,6 @@ def _build_cyber_strategy() -> type[ScenarioStrategy]:
         class_name="CyberStrategy",
         factories=cyber_factories,
         aggregate_tags={
-            "single_turn": TagQuery.any_of("single_turn"),
             "multi_turn": TagQuery.any_of("multi_turn"),
         },
     )
