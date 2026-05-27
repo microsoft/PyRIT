@@ -120,10 +120,16 @@ class TestLoadDefaultDatasets:
 
         # Patch OpenAIChatTarget at the fallback construction site so registry
         # introspection does not depend on OPENAI_CHAT_MODEL or other env vars.
+        from pyrit.score import TrueFalseScorer
+
         fallback_target = MagicMock()
+        fallback_scorer = MagicMock(spec=TrueFalseScorer)
         with (
             patch("pyrit.scenario.core.scenario_target_defaults.OpenAIChatTarget", return_value=fallback_target),
-            patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer", return_value=MagicMock()),
+            patch(
+                "pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer",
+                return_value=fallback_scorer,
+            ),
         ):
             registry = ScenarioRegistry.get_registry_singleton()
             registry._metadata_cache = None  # force rebuild under the patch
