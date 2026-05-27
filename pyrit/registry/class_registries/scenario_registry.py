@@ -198,9 +198,9 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
         Build metadata for a Scenario class.
 
         Instantiates the scenario with no arguments and reads the strategy/dataset
-        configuration off the instance. Falls back to a degraded metadata record
-        if instantiation fails (e.g. the scenario requires constructor arguments
-        that cannot be defaulted).
+        configuration off the instance. Every registered scenario MUST be no-arg
+        instantiable (defer required-input validation to ``initialize_async`` or
+        ``_get_atomic_attacks_async``); otherwise this raises ``TypeError``.
 
         Args:
             name: The registry name of the scenario.
@@ -208,6 +208,9 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
 
         Returns:
             ScenarioMetadata describing the scenario class.
+
+        Raises:
+            TypeError: If ``scenario_class()`` cannot be called with no arguments.
         """
         scenario_class = entry.registered_class
 
@@ -227,23 +230,21 @@ class ScenarioRegistry(BaseClassRegistry["Scenario", ScenarioMetadata]):
 
         try:
             instance = scenario_class()  # type: ignore[ty:missing-argument]
-            strategy_class = instance._strategy_class
-            default_strategy_value = instance._default_strategy.value
-            all_strategies = tuple(s.value for s in strategy_class.get_all_strategies())
-            aggregate_strategies = tuple(s.value for s in strategy_class.get_aggregate_strategies())
-            default_datasets = tuple(instance._default_dataset_config.get_default_dataset_names())
-            max_dataset_size = instance._default_dataset_config.max_dataset_size
-        except Exception as exc:
-            logger.warning(
-                "Could not instantiate scenario %s for metadata; emitting degraded metadata. Reason: %s",
-                scenario_class.__name__,
-                exc,
-            )
-            default_strategy_value = ""
-            all_strategies = ()
-            aggregate_strategies = ()
-            default_datasets = ()
-            max_dataset_size = 0
+        except TypeError as exc:
+            raise TypeError(
+                f"Scenario {scenario_class.__module__}.{scenario_class.__name__} (registered as "
+                f"{name!r}) must be instantiable with no arguments so the registry can introspect "
+                f"its strategies and default dataset config. Make all constructor parameters "
+                f"optional (defaulting to None) and defer required-input validation to "
+                f"initialize_async() or _get_atomic_attacks_async(). Original error: {exc}"
+            ) from exc
+
+        strategy_class = instance._strategy_class
+        default_strategy_value = instance._default_strategy.value
+        all_strategies = tuple(s.value for s in strategy_class.get_all_strategies())
+        aggregate_strategies = tuple(s.value for s in strategy_class.get_aggregate_strategies())
+        default_datasets = tuple(instance._default_dataset_config.get_default_dataset_names())
+        max_dataset_size = instance._default_dataset_config.max_dataset_size
 
         return ScenarioMetadata(
             class_name=scenario_class.__name__,

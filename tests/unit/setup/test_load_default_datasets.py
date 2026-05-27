@@ -118,10 +118,19 @@ class TestLoadDefaultDatasets:
         """
         available_datasets = set(await SeedDatasetProvider.get_all_dataset_names_async())
 
-        registry = ScenarioRegistry.get_registry_singleton()
+        # Patch OpenAIChatTarget at the fallback construction site so registry
+        # introspection does not depend on OPENAI_CHAT_MODEL or other env vars.
+        fallback_target = MagicMock()
+        with (
+            patch("pyrit.scenario.core.scenario_target_defaults.OpenAIChatTarget", return_value=fallback_target),
+            patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer", return_value=MagicMock()),
+        ):
+            registry = ScenarioRegistry.get_registry_singleton()
+            registry._metadata_cache = None  # force rebuild under the patch
+            metadata_list = list(registry.list_metadata())
 
         missing_datasets: list[str] = []
-        for metadata in registry.list_metadata():
+        for metadata in metadata_list:
             missing_datasets.extend(
                 f"{metadata.registry_name} requires '{dataset_name}'"
                 for dataset_name in metadata.default_datasets
