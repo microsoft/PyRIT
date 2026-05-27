@@ -30,7 +30,7 @@ class _JsonResponseConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    schema: Optional[dict[str, Any]] = None
+    json_schema: Optional[dict[str, Any]] = None
     schema_name: str = "CustomSchema"
     strict: bool = True
 
@@ -55,7 +55,7 @@ class _JsonResponseConfig(BaseModel):
 
             return cls(
                 enabled=True,
-                schema=schema,
+                json_schema=schema,
                 schema_name=metadata.get(_METADATAKEYS["JSON_SCHEMA_NAME"], "CustomSchema"),
                 strict=metadata.get(_METADATAKEYS["JSON_SCHEMA_STRICT"], True),
             )
