@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.executor.attack.component.conversation_manager import ConversationManager
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
@@ -41,7 +42,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class BargeInAttackContext(AttackContext[AttackParamsT]):
-    """Context for a streaming barge-in attack with an audio chunk source."""
+    """
+    Context for a streaming barge-in attack with an audio chunk source.
+
+    ``prepended_conversation`` (inherited from ``AttackContext``) is persisted to memory
+    on setup, but only the leading system message is propagated to the live realtime
+    session as session instructions. User / assistant turns from the prepended history
+    are not (yet) pushed through ``conversation.item.create``, so the model conditions
+    only on the system prompt plus live audio chunks. See follow-up issue for full
+    realtime-session injection.
+    """
 
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     audio_chunks: AsyncIterator[bytes] | None = None
@@ -154,6 +164,10 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         self._request_converters = attack_converter_config.request_converters
         self._response_converters = attack_converter_config.response_converters
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
+        self._conversation_manager = ConversationManager(
+            attack_identifier=self.get_identifier(),
+            prompt_normalizer=self._prompt_normalizer,
+        )
 
     def _validate_context(self, *, context: BargeInAttackContext[Any]) -> None:
         """
@@ -172,10 +186,24 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
 
     async def _setup_async(self, *, context: BargeInAttackContext[Any]) -> None:
         """
-        Set up the attack: nothing beyond ensuring a conversation id is present.
+        Set up the attack: ensure a conversation id and initialize prepended conversation.
+
+        Merges memory labels and persists ``context.prepended_conversation`` to memory via
+        ``ConversationManager`` so streaming attacks share the same memory contract as
+        non-streaming attacks. Note: prepended messages are recorded in memory but are NOT
+        pushed into the live realtime session beyond the system prompt — the model only
+        conditions on the system message and live audio chunks. Pushing prepended user /
+        assistant turns into the websocket session via ``conversation.item.create`` is
+        tracked as a follow-up.
         """
         if not context.conversation_id:
             context.conversation_id = str(uuid.uuid4())
+        await self._conversation_manager.initialize_context_async(
+            context=context,
+            target=self._objective_target,
+            conversation_id=context.conversation_id,
+            request_converters=self._request_converters,
+        )
 
     async def _teardown_async(self, *, context: BargeInAttackContext[Any]) -> None:
         """No-op teardown — connection / dispatcher are closed inside ``_perform_async``."""

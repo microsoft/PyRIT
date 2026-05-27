@@ -106,6 +106,88 @@ async def test_validate_context_requires_audio_chunks(vad_target):
         attack._validate_context(context=ctx)
 
 
+# ---- _setup_async + prepended_conversation persistence ---------------------------------------
+
+
+async def test_setup_async_persists_prepended_conversation_to_memory(vad_target):
+    """Prepended_conversation messages must be written to memory on setup like other attacks do."""
+    attack = BargeInAttack(objective_target=vad_target)
+    sys_msg = Message(
+        message_pieces=[
+            MessagePiece(
+                role="system",
+                original_value="You are a strict assistant.",
+                original_value_data_type="text",
+                converted_value="You are a strict assistant.",
+                converted_value_data_type="text",
+                conversation_id="ignored-by-setup",
+            )
+        ]
+    )
+    user_msg = Message(
+        message_pieces=[
+            MessagePiece(
+                role="user",
+                original_value="prior user turn",
+                original_value_data_type="text",
+                converted_value="prior user turn",
+                converted_value_data_type="text",
+                conversation_id="ignored-by-setup",
+            )
+        ]
+    )
+    assistant_msg = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="prior assistant turn",
+                original_value_data_type="text",
+                converted_value="prior assistant turn",
+                converted_value_data_type="text",
+                conversation_id="ignored-by-setup",
+            )
+        ]
+    )
+
+    ctx = BargeInAttackContext(
+        params=AttackParameters(
+            objective="o",
+            prepended_conversation=[sys_msg, user_msg, assistant_msg],
+        ),
+        audio_chunks=_aiter([b"\x00" * 96]),
+    )
+
+    add_calls: list[Any] = []
+    with patch.object(attack._conversation_manager._memory, "add_message_to_memory") as mock_add:
+        mock_add.side_effect = lambda **kw: add_calls.append(kw["request"])
+        await attack._setup_async(context=ctx)
+
+    # All three prepended messages should have been written to memory under the
+    # attack's conversation_id; assistant role becomes simulated_assistant on storage.
+    assert len(add_calls) == 3
+    storage_roles = [m.message_pieces[0].get_role_for_storage() for m in add_calls]
+    assert storage_roles == ["system", "user", "simulated_assistant"]
+    # All three messages share the context's conversation_id post-setup.
+    for m in add_calls:
+        assert m.message_pieces[0].conversation_id == ctx.conversation_id
+
+
+async def test_setup_async_no_op_when_prepended_conversation_empty(vad_target):
+    """Empty prepended_conversation: no memory writes, no crash."""
+    attack = BargeInAttack(objective_target=vad_target)
+    ctx = BargeInAttackContext(
+        params=AttackParameters(objective="o"),  # no prepended_conversation
+        audio_chunks=_aiter([b"\x00" * 96]),
+    )
+
+    add_calls: list[Any] = []
+    with patch.object(attack._conversation_manager._memory, "add_message_to_memory") as mock_add:
+        mock_add.side_effect = lambda **kw: add_calls.append(kw["request"])
+        await attack._setup_async(context=ctx)
+
+    assert add_calls == []
+
+
 # ---- Streaming loop end-to-end ---------------------------------------------------------------
 
 
