@@ -130,10 +130,11 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         required=frozenset({CapabilityName.STREAMING_BARGE_IN}),
     )
 
-    #: Maximum time to wait after the chunk source exhausts for any in-flight VAD-committed
-    #: turn to finish (commit → convert → response.create → response.done → persist). Acts as
-    #: a safety cap; the attack returns as soon as the last turn actually completes.
-    _MAX_POST_STREAM_WAIT_SECONDS = 30.0
+    #: Default maximum time to wait after the chunk source exhausts for any in-flight
+    #: VAD-committed turn to finish (commit → convert → response.create → response.done
+    #: → persist). Acts as a safety cap; the attack returns as soon as the last turn
+    #: actually completes. Overridable per-instance via ``max_post_stream_wait_seconds``.
+    DEFAULT_MAX_POST_STREAM_WAIT_SECONDS: ClassVar[float] = 60.0
 
     @apply_defaults
     def __init__(
@@ -142,6 +143,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_converter_config: AttackConverterConfig | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
+        max_post_stream_wait_seconds: float = DEFAULT_MAX_POST_STREAM_WAIT_SECONDS,
         params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
     ) -> None:
         """
@@ -152,6 +154,9 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             attack_converter_config: Converters applied to each committed user turn.
             prompt_normalizer: Normalizer used to apply converters and persist messages.
                 Defaults to a fresh ``PromptNormalizer``.
+            max_post_stream_wait_seconds: Safety cap on the wait between the chunk source
+                exhausting and the last in-flight turn finishing. Defaults to 60 seconds.
+                Bump if a long realtime response is being cancelled at teardown.
             params_type: Attack parameter dataclass type.
         """
         super().__init__(
@@ -168,6 +173,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             attack_identifier=self.get_identifier(),
             prompt_normalizer=self._prompt_normalizer,
         )
+        self._max_post_stream_wait_seconds = max_post_stream_wait_seconds
 
     def _validate_context(self, *, context: BargeInAttackContext[Any]) -> None:
         """
@@ -406,11 +412,11 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         try:
             await asyncio.wait_for(
                 asyncio.gather(*turn_tasks, return_exceptions=True),
-                timeout=self._MAX_POST_STREAM_WAIT_SECONDS,
+                timeout=self._max_post_stream_wait_seconds,
             )
         except asyncio.TimeoutError:
             logger.warning(
-                f"Timed out after {self._MAX_POST_STREAM_WAIT_SECONDS}s waiting for in-flight turn tasks to "
-                "finish; teardown will cancel them. Increase _MAX_POST_STREAM_WAIT_SECONDS if responses "
-                "regularly take longer."
+                f"Timed out after {self._max_post_stream_wait_seconds}s waiting for in-flight turn tasks to "
+                "finish; teardown will cancel them. Raise max_post_stream_wait_seconds on the attack "
+                "constructor if responses regularly take longer."
             )

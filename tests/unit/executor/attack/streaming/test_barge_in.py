@@ -83,6 +83,18 @@ def test_constructor_succeeds_even_without_server_vad_enabled(sqlite_instance):
     assert attack.get_objective_target() is no_vad
 
 
+def test_constructor_default_max_post_stream_wait_seconds(vad_target):
+    """When not passed, max_post_stream_wait_seconds takes the class default."""
+    attack = BargeInAttack(objective_target=vad_target)
+    assert attack._max_post_stream_wait_seconds == BargeInAttack.DEFAULT_MAX_POST_STREAM_WAIT_SECONDS
+
+
+def test_constructor_accepts_custom_max_post_stream_wait_seconds(vad_target):
+    """max_post_stream_wait_seconds is configurable per-instance."""
+    attack = BargeInAttack(objective_target=vad_target, max_post_stream_wait_seconds=120.0)
+    assert attack._max_post_stream_wait_seconds == 120.0
+
+
 # ---- Context validation ----------------------------------------------------------------------
 
 
@@ -248,7 +260,7 @@ async def test_perform_async_streams_chunks_and_tears_down(vad_target):
     chunks = [b"\x11" * 480, b"\x22" * 480, b"\x33" * 240]
     ctx = _attack_context(audio_chunks=_aiter(chunks))
 
-    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
+    with patch.object(attack, "_max_post_stream_wait_seconds", 0):
         result = await attack._perform_async(context=ctx)
 
     vad_target.connect_async.assert_awaited_once_with(conversation_id=ctx.conversation_id)
@@ -281,7 +293,7 @@ async def test_perform_async_calls_send_prompt_async_on_commit(vad_target):
 
     ctx = _attack_context(audio_chunks=chunks_then_commit())
 
-    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
+    with patch.object(attack, "_max_post_stream_wait_seconds", 0):
         result = await attack._perform_async(context=ctx)
 
     send_mock.assert_awaited_once()
@@ -313,7 +325,7 @@ async def test_perform_async_message_carries_snapshot_audio_path(vad_target):
 
     ctx = _attack_context(audio_chunks=chunks_then_commit())
 
-    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
+    with patch.object(attack, "_max_post_stream_wait_seconds", 0):
         await attack._perform_async(context=ctx)
 
     # save_audio called with the snapshot PCM; the resulting path lands on the message piece.
@@ -350,7 +362,7 @@ async def test_perform_async_clears_raw_buffer_between_commits(vad_target):
 
     ctx = _attack_context(audio_chunks=chunks_two_commits())
 
-    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
+    with patch.object(attack, "_max_post_stream_wait_seconds", 0):
         await attack._perform_async(context=ctx)
 
     assert saved_pcm == [b"\x01" * 96, b"\x02" * 96]
@@ -387,7 +399,7 @@ async def test_perform_async_tracks_last_response_and_turn_count(vad_target):
 
     ctx = _attack_context(audio_chunks=chunks_three_commits())
 
-    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
+    with patch.object(attack, "_max_post_stream_wait_seconds", 0):
         result = await attack._perform_async(context=ctx)
 
     assert result.executed_turns == 3
@@ -405,7 +417,7 @@ async def test_perform_async_cleans_up_even_on_exception(vad_target):
     ctx = _attack_context(audio_chunks=_aiter([b"\x00" * 96]))
 
     with pytest.raises(RuntimeError, match="push exploded"):
-        with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
+        with patch.object(attack, "_max_post_stream_wait_seconds", 0):
             await attack._perform_async(context=ctx)
 
     vad_target.cleanup_conversation.assert_awaited_once_with(ctx.conversation_id)
@@ -425,7 +437,7 @@ async def test_perform_async_swallows_callback_exception(vad_target):
 
     ctx = _attack_context(audio_chunks=chunks_then_commit())
 
-    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
+    with patch.object(attack, "_max_post_stream_wait_seconds", 0):
         result = await attack._perform_async(context=ctx)
 
     # The callback caught the exception; no turn counted as successful.
@@ -598,7 +610,7 @@ async def test_perform_async_trims_first_turn_using_audio_start_ms(vad_target):
         )
 
     ctx = _attack_context(audio_chunks=chunks_then_commit())
-    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
+    with patch.object(attack, "_max_post_stream_wait_seconds", 0):
         await attack._perform_async(context=ctx)
 
     # Expect save_audio to receive the trimmed snapshot:
@@ -652,7 +664,7 @@ async def test_perform_async_trims_second_turn_with_session_relative_offset(vad_
         )
 
     ctx = _attack_context(audio_chunks=two_turns())
-    with patch.object(attack, "_MAX_POST_STREAM_WAIT_SECONDS", 0):
+    with patch.object(attack, "_max_post_stream_wait_seconds", 0):
         await attack._perform_async(context=ctx)
 
     assert len(saved_pcm) == 2
