@@ -75,15 +75,15 @@ links work properly. Note: There may not be any links to update, but it is
 good practice to check in case our README changes.
 
 Replace all "main" links like
-"https://github.com/microsoft/PyRIT/blob/main/doc/index.md" with "raw" links that have
+`https://github.com/microsoft/PyRIT/blob/main/doc/index.md` with "raw" links that have
 the correct version number, i.e.,
-"https://raw.githubusercontent.com/microsoft/PyRIT/releases/vx.y.z/doc/index.md".
+`https://raw.githubusercontent.com/microsoft/PyRIT/releases/vx.y.z/doc/index.md`.
 
 For images, update using the "raw" link, e.g.,
-"https://raw.githubusercontent.com/microsoft/PyRIT/releases/vx.y.z/assets/pyrit_architecture.png".
+`https://raw.githubusercontent.com/microsoft/PyRIT/releases/vx.y.z/assets/pyrit_architecture.png`.
 
 For directories, update using the "tree" link, e.g.,
-"https://github.com/microsoft/PyRIT/tree/releases/vx.y.z/doc/code"
+`https://github.com/microsoft/PyRIT/tree/releases/vx.y.z/doc/code`
 
 This is required for the release branch because PyPI does not pick up
 other files besides the README, which results in local links breaking.

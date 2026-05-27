@@ -31,6 +31,8 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         enable_colors: bool = True,
         conversation_printer: PrettyConversationPrinter | None = None,
         score_printer: PrettyScorePrinter | None = None,
+        blur_images: bool = False,
+        blur_radius: int = 20,
     ) -> None:
         """
         Initialize the pretty printer.
@@ -44,6 +46,11 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
                 Defaults to a new PrettyConversationPrinter with matching settings.
             score_printer (PrettyScorePrinter | None): Score printer.
                 Defaults to a new PrettyScorePrinter with matching settings.
+            blur_images (bool): If True, apply a Gaussian blur to image outputs before
+                displaying them. Forwarded to the default conversation printer when one
+                is not supplied. Defaults to False.
+            blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
+                Defaults to 20.
         """
         super().__init__(sink=sink)
         self._width = width
@@ -58,6 +65,8 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             indent_size=indent_size,
             enable_colors=enable_colors,
             score_printer=self._score_printer,
+            blur_images=blur_images,
+            blur_radius=blur_radius,
         )
 
     def _format_colored(self, text: str, *colors: str) -> str:
@@ -157,6 +166,16 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             include_scores=include_scores,
             include_reasoning_trace=include_reasoning_trace,
         )
+
+    async def print_conversation_async(
+        self, result: AttackResult, *, include_scores: bool = False, include_reasoning_trace: bool = False
+    ) -> None:
+        """Use ``write_async`` instead. This method is deprecated."""
+        print_deprecation_message(old_item="print_conversation_async", new_item="write_async", removed_in="2.0")
+        content = await self._render_conversation_async(
+            result, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
+        )
+        await self._write_async(content)
 
     async def output_conversation_async(
         self, result: AttackResult, *, include_scores: bool = False, include_reasoning_trace: bool = False
@@ -439,7 +458,14 @@ class PrettyAttackResultMemoryPrinter(PrettyAttackResultPrinter):
     """
 
     def __init__(
-        self, *, sink: Sink | None = None, width: int = 100, indent_size: int = 2, enable_colors: bool = True
+        self,
+        *,
+        sink: Sink | None = None,
+        width: int = 100,
+        indent_size: int = 2,
+        enable_colors: bool = True,
+        blur_images: bool = False,
+        blur_radius: int = 20,
     ) -> None:
         """
         Initialize the pretty printer with CentralMemory data source.
@@ -449,6 +475,10 @@ class PrettyAttackResultMemoryPrinter(PrettyAttackResultPrinter):
             width (int): Maximum width for text wrapping. Defaults to 100.
             indent_size (int): Number of spaces for indentation. Defaults to 2.
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
+            blur_images (bool): If True, apply a Gaussian blur to image outputs before
+                displaying them. Defaults to False.
+            blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
+                Defaults to 20.
         """
         from pyrit.memory import CentralMemory
         from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter
@@ -460,6 +490,8 @@ class PrettyAttackResultMemoryPrinter(PrettyAttackResultPrinter):
             indent_size=indent_size,
             enable_colors=enable_colors,
             score_printer=score_printer,
+            blur_images=blur_images,
+            blur_radius=blur_radius,
         )
         super().__init__(
             sink=sink,

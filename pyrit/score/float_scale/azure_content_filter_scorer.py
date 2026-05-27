@@ -22,6 +22,7 @@ from pyrit.common import default_values
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     DataTypeSerializer,
+    Message,
     MessagePiece,
     Score,
     data_serializer_factory,
@@ -340,6 +341,66 @@ class AzureContentFilterScorer(FloatScaleScorer):
                 objective=objective,
             )
             for result in aggregated_results
+        ]
+
+    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+        """
+        Build one neutral ``0.0`` fallback score per configured harm category.
+
+        AzureContentFilterScorer's normal output is one score per category in
+        ``self._harm_categories``. To preserve that shape on blocked / error / filtered
+        input, this override emits one neutral ``0.0`` score per configured category
+        (each tagged with the category name and matching the normal-path metadata),
+        instead of the single category-less score produced by the base
+        ``FloatScaleScorer._build_fallback_score``.
+
+        Inspects the first message piece to tailor the rationale/description for
+        blocked, error, and filtered cases.
+
+        Args:
+            message (Message): The message whose first piece is inspected for status.
+            objective (Optional[str]): The objective associated with this scoring call.
+
+        Returns:
+            list[Score]: One ``0.0`` ``float_scale`` score per configured harm category,
+                each attributed to the first piece.
+
+        Raises:
+            ValueError: If the first message piece has no ``id`` or ``original_prompt_id``.
+        """
+        first_piece = message.message_pieces[0]
+        piece_id = first_piece.id or first_piece.original_prompt_id
+        if piece_id is None:
+            raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
+
+        if first_piece.is_blocked():
+            status = (
+                "The request was blocked by the target (score_blocked_content is False or no partial content available)"
+            )
+            description = "Blocked response; returning 0.0 per configured category."
+        elif first_piece.has_error():
+            status = f"Response had an error: {first_piece.response_error}"
+            description = "Error response; returning 0.0 per configured category."
+        else:
+            status = "No supported pieces to score after filtering"
+            description = "No pieces to score after filtering; returning 0.0 per configured category."
+
+        rationale = f"{status}; returning 0.0 for each configured harm category."
+        metadata: dict[str, str | int | float] = {"azure_severity": 0}
+
+        return [
+            Score(
+                score_value="0.0",
+                score_value_description=description,
+                score_type="float_scale",
+                score_category=[category.value],
+                score_metadata=metadata,
+                score_rationale=rationale,
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=piece_id,
+                objective=objective,
+            )
+            for category in self._harm_categories
         ]
 
     async def _get_base64_image_data(self, message_piece: MessagePiece) -> str:

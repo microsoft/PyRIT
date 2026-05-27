@@ -46,7 +46,34 @@ When making changes:
 
 ## Jupytext Usage Reference
 
-Generate .ipynb from .py (with execution):
+### Critical pre-execution checklist
+
+Before running `jupytext --execute`, make sure the kernel will exercise *the code in this checkout*, not some stale install:
+
+1. **Use a kernel bound to a Python env that has this worktree installed editable.**
+   Reusing an existing `pyrit` kernel is fine *only if* it points at the current
+   checkout — otherwise it will resolve imports against an unrelated copy and
+   either pass on stale code or fail on missing new symbols.
+   - Quick check: `python -c "import pyrit, pathlib; print(pathlib.Path(pyrit.__file__).resolve())"`
+   - If it doesn't match this worktree, install editable here: `pip install -e .`
+     (this rebinds the existing kernel to this checkout, no new kernel needed).
+   - Only create a new kernel (`python -m ipykernel install --user --name <name>`)
+     if you actually need an isolated env.
+2. **Credentials must be pre-configured.** Most notebooks call live targets
+   (OpenAI, Azure, etc.) and load creds from `~/.pyrit/.env`. Make sure the
+   required keys are present before executing.
+
+### Keep the cell outputs
+
+**Do not strip cell outputs from notebooks under `doc/`.** Outputs are part of the
+documentation — readers rely on seeing rendered tables, images, and printer output.
+If a notebook can't execute end-to-end, that is exactly the regression we want
+to surface in review; don't paper over it by committing an output-less notebook.
+`nbstripout` is intentionally not run against `doc/` content for this reason.
+
+### Commands
+
+Generate .ipynb from .py (with execution — preferred):
 ```bash
 jupytext --to ipynb --execute doc/path/to/your_notebook.py
 ```
@@ -54,6 +81,11 @@ jupytext --to ipynb --execute doc/path/to/your_notebook.py
 Generate .py from .ipynb:
 ```bash
 jupytext --to py:percent doc/path/to/notebook.ipynb
+```
+
+Sync structure only without executing (rarely correct — outputs will be empty):
+```bash
+jupytext --to ipynb doc/path/to/your_notebook.py
 ```
 
 ## Summary

@@ -11,6 +11,31 @@ project:
     - format: pdf
       template: plain_latex_book
       output: exports/book.pdf
+  # See https://mystmd.org/guide for error_rules schema.
+  # Rule IDs come from https://github.com/jupyter-book/mystmd
+  # (packages/myst-common/src/ruleids.ts).
+  error_rules:
+    # mystmd v2.x has no LaTeX renderer for the MyST layout directives we use
+    # extensively in the HTML site (grid, tabSet, details, mermaid). They
+    # render fine in HTML; PDF export emits "Unhandled LaTeX conversion for
+    # node of X" errors per node. Track upstream support and remove this
+    # suppression when those renderers land.
+    - rule: tex-renders
+      severity: ignore
+
+    # External APIs that require auth — always return 401/403 from CI workers
+    # and public link checkers. The URLs themselves are correct; they just
+    # can't be verified without credentials. Every other broken URL in the
+    # tree has been fixed (see PR #1745); only add to this list when a URL
+    # is genuinely unverifiable, not just inconvenient to update.
+    - rule: link-resolves
+      severity: ignore
+      keys:
+        - "https://platform.openai.com/**"
+        - "https://api.openai.com/**"
+        - "http://api.openai.com"
+        - "http://api.openai.com/**"
+        - "https://cognitiveservices.azure.com/**"
   toc:
     - file: index.md
     - file: getting_started/README.md
@@ -122,6 +147,7 @@ project:
             - file: code/targets/prompt_shield_target.ipynb
             - file: code/targets/realtime_target.ipynb
             - file: code/targets/use_huggingface_chat_target.ipynb
+            - file: code/targets/round_robin_target.ipynb
         - file: code/converters/0_converters.ipynb
           children:
             - file: code/converters/1_text_to_text_converters.ipynb
@@ -139,6 +165,7 @@ project:
             - file: code/scoring/5_refusal_scorer.ipynb
             - file: code/scoring/6_batch_scorer.ipynb
             - file: code/scoring/7_scorer_metrics.ipynb
+            - file: code/scoring/credential_leak_scorer.ipynb
             - file: code/scoring/insecure_code_scorer.ipynb
             - file: code/scoring/persuasion_full_conversation_scorer.ipynb
             - file: code/scoring/prompt_shield_scorer.ipynb
@@ -178,8 +205,7 @@ project:
       children:
         - file: api/pyrit_analytics.md
         - file: api/pyrit_auth.md
-        - file: api/pyrit_cli_frontend_core.md
-        - file: api/pyrit_cli_pyrit_backend.md
+        - file: api/pyrit_cli_api_client.md
         - file: api/pyrit_cli_pyrit_scan.md
         - file: api/pyrit_cli_pyrit_shell.md
         - file: api/pyrit_common.md
@@ -195,6 +221,7 @@ project:
         - file: api/pyrit_memory.md
         - file: api/pyrit_message_normalizer.md
         - file: api/pyrit_models.md
+        - file: api/pyrit_output.md
         - file: api/pyrit_prompt_converter.md
         - file: api/pyrit_prompt_normalizer.md
         - file: api/pyrit_prompt_target.md

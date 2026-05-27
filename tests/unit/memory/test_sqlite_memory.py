@@ -17,7 +17,8 @@ from sqlalchemy.dialects.sqlite import CHAR, JSON
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.sqltypes import NullType
 
-from pyrit.memory.memory_models import Base, EmbeddingDataEntry, PromptMemoryEntry
+from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import INITIAL_METADATA
+from pyrit.memory.memory_models import EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.memory.migration import run_schema_migrations
 from pyrit.models import MessagePiece
 from pyrit.prompt_converter.base64_converter import Base64Converter
@@ -163,7 +164,8 @@ def test_run_schema_migrations_stamps_matching_unversioned_legacy_database():
         db_path = os.path.join(temp_dir, "legacy-memory.db")
         engine = create_engine(f"sqlite:///{db_path}")
         try:
-            Base.metadata.create_all(engine, checkfirst=True)
+            initial_metadata = INITIAL_METADATA
+            initial_metadata.create_all(engine)
 
             run_schema_migrations(engine=engine)
 
@@ -183,7 +185,8 @@ def test_run_schema_migrations_stamps_unversioned_legacy_database_with_extra_tab
         db_path = os.path.join(temp_dir, "legacy-memory.db")
         engine = create_engine(f"sqlite:///{db_path}")
         try:
-            Base.metadata.create_all(engine, checkfirst=True)
+            initial_metadata = INITIAL_METADATA
+            initial_metadata.create_all(engine)
             with engine.begin() as connection:
                 connection.execute(
                     text(
@@ -215,7 +218,8 @@ def test_run_schema_migrations_fails_synthetic_unversioned_schema_with_drift():
         db_path = os.path.join(temp_dir, "legacy-memory.db")
         engine = create_engine(f"sqlite:///{db_path}")
         try:
-            Base.metadata.create_all(engine, checkfirst=True)
+            initial_metadata = INITIAL_METADATA
+            initial_metadata.create_all(engine)
             with engine.begin() as connection:
                 connection.execute(text('DROP TABLE "ScoreEntries"'))
 
@@ -281,7 +285,8 @@ def test_run_schema_migrations_isolates_foreign_alembic_version_table():
         db_path = os.path.join(temp_dir, "legacy-memory.db")
         engine = create_engine(f"sqlite:///{db_path}")
         try:
-            Base.metadata.create_all(engine, checkfirst=True)
+            initial_metadata = INITIAL_METADATA
+            initial_metadata.create_all(engine)
             with engine.begin() as connection:
                 connection.execute(text('CREATE TABLE "alembic_version" (version_num VARCHAR(32) NOT NULL)'))
 
@@ -885,8 +890,7 @@ def test_run_schema_migrations_early_return_with_existing_version_table():
         db_path = os.path.join(temp_dir, "versioned-memory.db")
         engine = create_engine(f"sqlite:///{db_path}")
         try:
-            Base.metadata.create_all(engine, checkfirst=True)
-
+            # First call on a fresh DB creates schema and stamps version
             run_schema_migrations(engine=engine)
 
             table_names = set(inspect(engine).get_table_names())
