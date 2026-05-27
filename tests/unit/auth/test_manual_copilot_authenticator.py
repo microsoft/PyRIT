@@ -9,10 +9,15 @@ import pytest
 
 from pyrit.auth.manual_copilot_authenticator import ManualCopilotAuthenticator
 
+# HS256 requires a key >= 32 bytes (RFC 7518 §3.2) to avoid PyJWT's
+# InsecureKeyLengthWarning. The authenticator decodes tokens with
+# verify_signature=False, so the key value is purely formal.
+_TEST_JWT_KEY = "a" * 32
+
 
 def _make_jwt(claims: dict) -> str:
     """Create an unsigned JWT with the given claims for testing."""
-    return pyjwt.encode(claims, key="secret", algorithm="HS256")
+    return pyjwt.encode(claims, key=_TEST_JWT_KEY, algorithm="HS256")
 
 
 VALID_CLAIMS = {"tid": "tenant-id-123", "oid": "object-id-456", "sub": "user"}

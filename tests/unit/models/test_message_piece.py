@@ -1104,6 +1104,19 @@ class TestMessagePieceDeprecationWarnings:
         assert any("labels" in str(m.message) for m in deprecation_msgs)
 
 
+class TestOriginatorTypeAliasDeprecation:
+    """Tests for the deprecated ``Originator`` module-level type alias."""
+
+    def test_originator_alias_emits_deprecation_warning(self):
+        from typing import Literal, get_args
+
+        with pytest.warns(DeprecationWarning, match="Originator"):
+            from pyrit.models.message_piece import Originator
+
+        assert get_args(Originator) == ("attack", "converter", "undefined", "scorer")
+        assert Originator is Literal["attack", "converter", "undefined", "scorer"]
+
+
 class TestCopyLineageFrom:
     """Tests for MessagePiece.copy_lineage_from."""
 

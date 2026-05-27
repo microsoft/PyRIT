@@ -192,6 +192,33 @@ def calculate_score(
     """
 ```
 
+### Code references in docstrings
+
+The PyRIT docs build uses **MyST** (Markdown-flavoured), not reStructuredText.
+Do **not** use reST cross-reference roles in docstrings or module comments —
+they render as raw text under MyST and are inconsistent with the rest of the
+codebase, which uses plain double-backtick code spans for symbol names.
+
+```python
+# WRONG — reST roles render as literal `:class:\`SeedPrompt\`` under MyST
+"""Returns a :class:`SeedPrompt` instance."""
+"""Delegate to :func:`download_files_async` (deprecated alias)."""
+"""See :meth:`PromptTarget.apply_capabilities` for details."""
+
+# CORRECT — plain double-backtick code span (matches existing convention)
+"""Returns a ``SeedPrompt`` instance."""
+"""Delegate to ``download_files_async`` (deprecated alias)."""
+"""See ``PromptTarget.apply_capabilities`` for details."""
+```
+
+Roles to avoid include `:class:`, `:func:`, `:meth:`, `:mod:`, `:attr:`,
+`:data:`, `:exc:`, `:obj:`, `:ref:`, and any `:py:*:` variants
+(e.g. `:py:class:`, `:py:func:`).
+
+If you genuinely need a Sphinx cross-reference (rare in PyRIT — most
+docstrings just name the symbol in backticks), use the MyST role syntax
+`` {class}`Name` `` instead. The default, though, is plain double-backticks.
+
 ### Class-Level Constants
 - Define constants as class attributes, not module-level
 - Use UPPER_CASE naming for constants
@@ -454,6 +481,7 @@ Before committing code, ensure:
 - [ ] All functions have complete type annotations
 - [ ] Functions with >1 parameter use keyword-only arguments
 - [ ] Docstrings include parameter types
+- [ ] Docstrings use plain double-backtick code spans for symbol references (no reST roles)
 - [ ] Enums are used instead of Literals
 - [ ] Functions are focused and under 20 lines
 - [ ] Error messages are helpful and specific
