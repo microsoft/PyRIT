@@ -4,29 +4,26 @@
 import json
 import logging
 import pathlib
-import uuid
+import warnings
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.exceptions import (
     InvalidJsonException,
-    pyrit_json_retry,
     remove_markdown_json,
 )
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     Message,
-    MessagePiece,
-    PromptDataType,
     SeedPrompt,
 )
-from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
-from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
+from pyrit.prompt_converter.llm_generic_text_converter import LLMGenericTextConverter
+from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
 
-class PersuasionConverter(PromptConverter):
+class PersuasionConverter(LLMGenericTextConverter):
     """
     Rephrases prompts using a variety of persuasion techniques.
 
@@ -45,9 +42,7 @@ class PersuasionConverter(PromptConverter):
             Presenting oneself or an issue in a way that's not genuine or true.
     """
 
-    SUPPORTED_INPUT_TYPES = ("text",)
-    SUPPORTED_OUTPUT_TYPES = ("text",)
-    TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
+    RETRY_EXCEPTIONS = (InvalidJsonException,)
 
     @apply_defaults
     def __init__(
@@ -70,19 +65,23 @@ class PersuasionConverter(PromptConverter):
             ValueError: If converter_target is not provided and no default has been configured.
             ValueError: If the persuasion technique is not supported or does not exist.
         """
-        super().__init__(converter_target=converter_target)
-        self.converter_target = converter_target
-
         try:
-            prompt_template = SeedPrompt.from_yaml_file(
+            system_prompt_template = SeedPrompt.from_yaml_file(
                 pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "persuasion" / f"{persuasion_technique}.yaml"
             )
         except FileNotFoundError:
             raise ValueError(
                 f"Persuasion technique '{persuasion_technique}' does not exist or is not supported."
             ) from None
-        self.system_prompt = str(prompt_template.value)
+
+        self.system_prompt = str(system_prompt_template.value)
         self._persuasion_technique = persuasion_technique
+
+        super().__init__(
+            converter_target=converter_target,
+            system_prompt_template=system_prompt_template,
+        )
+        self.converter_target = converter_target
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -98,77 +97,42 @@ class PersuasionConverter(PromptConverter):
             children={"converter_target": self.converter_target.get_identifier()},
         )
 
-    async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+    def _process_response(self, response_text: str) -> str:
         """
-        Convert the given prompt using the persuasion technique specified during initialization.
+        Parse the JSON response and extract the ``mutated_text`` field.
 
         Args:
-            prompt (str): The input prompt to be converted.
-            input_type (PromptDataType): The type of input data.
+            response_text (str): The raw text returned by the LLM.
 
         Returns:
-            ConverterResult: The result containing the converted prompt text.
+            str: The value of the ``mutated_text`` key.
 
         Raises:
-            ValueError: If the input type is not supported.
+            InvalidJsonException: If the response is not valid JSON or the ``mutated_text`` key is missing.
         """
-        if not self.input_supported(input_type):
-            raise ValueError("Input type not supported")
+        cleaned = remove_markdown_json(response_text)
+        try:
+            parsed = json.loads(cleaned)
+            if "mutated_text" not in parsed:
+                raise InvalidJsonException(message=f"Invalid JSON encountered; missing 'mutated_text' key: {cleaned}")
+            return str(parsed["mutated_text"])
+        except (json.JSONDecodeError, TypeError):
+            raise InvalidJsonException(message=f"Invalid JSON encountered: {cleaned}") from None
 
-        conversation_id = str(uuid.uuid4())
-
-        self.converter_target.set_system_prompt(
-            system_prompt=self.system_prompt,
-            conversation_id=conversation_id,
-            attack_identifier=None,
-        )
-
-        request = Message(
-            [
-                MessagePiece(
-                    role="user",
-                    original_value=prompt,
-                    converted_value=prompt,
-                    conversation_id=conversation_id,
-                    sequence=1,
-                    prompt_target_identifier=self.converter_target.get_identifier(),
-                    original_value_data_type=input_type,
-                    converted_value_data_type=input_type,
-                    converter_identifiers=[self.get_identifier()],
-                )
-            ]
-        )
-
-        response = await self.send_persuasion_prompt_async(request)
-
-        return ConverterResult(output_text=response, output_type="text")
-
-    @pyrit_json_retry
     async def send_persuasion_prompt_async(self, request: Message) -> str:
         """
-        Send the prompt to the converter target and process the response.
+        Delegate to the unified retry helper. Deprecated shim retained for backward compatibility.
 
         Args:
-            request (Message): The message containing the prompt to be converted.
+            request (Message): The message to send to the converter target.
 
         Returns:
-            str: The converted prompt text extracted from the response.
-
-        Raises:
-            InvalidJsonException: If the response is not valid JSON or missing expected keys.
+            str: The post-processed response text.
         """
-        response = await self.converter_target.send_prompt_async(message=request)
-
-        response_msg = response[0].get_value()
-        response_msg = remove_markdown_json(response_msg)
-
-        try:
-            parsed_response = json.loads(response_msg)
-            if "mutated_text" not in parsed_response:
-                raise InvalidJsonException(
-                    message=f"Invalid JSON encountered; missing 'mutated_text' key: {response_msg}"
-                )
-            return str(parsed_response["mutated_text"])
-
-        except json.JSONDecodeError:
-            raise InvalidJsonException(message=f"Invalid JSON encountered: {response_msg}") from None
+        warnings.warn(
+            "send_persuasion_prompt_async is deprecated; the converter now uses the unified "
+            "_send_with_retries_async helper from LLMGenericTextConverter.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return await self._send_with_retries_async(request)

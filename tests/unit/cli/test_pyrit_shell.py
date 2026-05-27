@@ -2,911 +2,781 @@
 # Licensed under the MIT license.
 
 """
-Unit tests for the pyrit_shell CLI module.
+Unit tests for the pyrit_shell CLI module (thin REST client).
 """
 
-import cmd
-import logging
-from pathlib import Path
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.cli import _banner as banner
 from pyrit.cli import pyrit_shell
 
 
 @pytest.fixture()
-def mock_fc():
-    """Patch FrontendCore so the background thread uses a controllable mock context."""
-    mock_context = MagicMock()
-    mock_context._database = "SQLite"
-    mock_context._log_level = "WARNING"
-    mock_context._env_files = None
-    mock_context._scenario_registry = MagicMock()
-    mock_context._initializer_registry = MagicMock()
-    mock_context.initialize_async = AsyncMock()
-
-    with patch("pyrit.cli.frontend_core.FrontendCore", return_value=mock_context) as mock_fc_class:
-        yield mock_context, mock_fc_class
+def mock_api_client():
+    """Create a mock PyRITApiClient with default responses."""
+    client = AsyncMock()
+    client.health_check_async.return_value = True
+    client.list_scenarios_async.return_value = {"items": [], "pagination": {"total": 0}}
+    client.list_initializers_async.return_value = {"items": [], "pagination": {"total": 0}}
+    client.list_targets_async.return_value = {"items": [], "pagination": {"total": 0}}
+    client.list_scenario_runs_async.return_value = {"items": []}
+    # Default: scenario fetch returns no declared params (back-compat for older tests)
+    client.get_scenario_async.return_value = {"scenario_name": "foo", "supported_parameters": []}
+    client.close_async = AsyncMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    return client
 
 
 @pytest.fixture()
-def shell():
-    """Create a fully-initialized PyRITShell without spawning a background thread.
-
-    Bypasses the real ``_background_init`` and wires up a mock FrontendCore
-    directly, avoiding thread + asyncio.run overhead per test.
-    """
-    mock_context = MagicMock()
-    mock_context._database = "SQLite"
-    mock_context._log_level = "WARNING"
-    mock_context._env_files = None
-    mock_context._scenario_registry = MagicMock()
-    mock_context._initializer_registry = MagicMock()
-    mock_context.initialize_async = AsyncMock()
-
-    with patch("pyrit.cli.frontend_core.FrontendCore", return_value=mock_context) as mock_fc_class:
-        with patch.object(pyrit_shell.PyRITShell, "_background_init"):
-            s = pyrit_shell.PyRITShell()
-        # Manually set the state that _background_init would have set
-        from pyrit.cli import frontend_core as fc_module
-
-        s._fc = fc_module
-        s.context = mock_context
-        s.default_log_level = mock_context._log_level
-        s._init_complete.set()
-        yield s, mock_context, mock_fc_class
+def shell(mock_api_client):
+    """Create a PyRITShell with a pre-wired mock API client."""
+    s = pyrit_shell.PyRITShell(no_animation=True)
+    s._api_client = mock_api_client
+    s._base_url = "http://localhost:8000"
+    return s, mock_api_client
 
 
 class TestPyRITShell:
     """Tests for PyRITShell class."""
 
-    def test_init(self, mock_fc):
-        """Test PyRITShell initialization."""
-        ctx, mock_fc_class = mock_fc
-
-        shell = pyrit_shell.PyRITShell()
-        shell._init_thread.join(timeout=5)
-
-        assert shell._init_complete.is_set()
-        assert shell.context is ctx
-        assert shell.default_log_level == "WARNING"
-        assert shell._scenario_history == []
-        mock_fc_class.assert_called_once_with()
-        ctx.initialize_async.assert_called_once()
-
-    def test_background_init_failure_sets_event_and_raises_in_ensure_initialized(self, mock_fc):
-        """Test failed background initialization unblocks waiters and surfaces the original error."""
-        ctx, _ = mock_fc
-        ctx.initialize_async = AsyncMock(side_effect=RuntimeError("Initialization failed"))
-
-        shell = pyrit_shell.PyRITShell()
-        shell._init_thread.join(timeout=2)
-
-        assert shell._init_complete.is_set()
-        with pytest.raises(RuntimeError, match="Initialization failed"):
-            shell._ensure_initialized()
-
-    def test_prompt_and_intro(self, shell):
-        """Test shell prompt is set and cmdloop wires play_animation to intro."""
-        s, ctx, _ = shell
-
+    def test_prompt(self, shell):
+        s, _ = shell
         assert s.prompt == "pyrit> "
 
-        # Verify that cmdloop calls play_animation and passes the result as intro
+    def test_cmdloop_plays_animation(self):
+        s = pyrit_shell.PyRITShell(no_animation=True)
         with (
-            patch("pyrit.cli._banner.play_animation", return_value="TEST_BANNER") as mock_play,
+            patch("pyrit.cli._banner.play_animation", return_value="BANNER") as mock_play,
             patch("cmd.Cmd.cmdloop") as mock_cmdloop,
         ):
             s.cmdloop()
+            mock_play.assert_called_once_with(no_animation=True)
+            mock_cmdloop.assert_called_once_with(intro="BANNER")
 
-            mock_play.assert_called_once_with(no_animation=s._no_animation)
-            mock_cmdloop.assert_called_once_with(intro="TEST_BANNER")
-
-    def test_cmdloop_honors_explicit_intro(self, shell):
-        """Test that cmdloop passes through a non-None intro without calling play_animation."""
-        s, ctx, _ = shell
-
-        with patch("pyrit.cli._banner.play_animation") as mock_play, patch("cmd.Cmd.cmdloop") as mock_cmdloop:
+    def test_cmdloop_honors_explicit_intro(self):
+        s = pyrit_shell.PyRITShell(no_animation=True)
+        with (
+            patch("pyrit.cli._banner.play_animation") as mock_play,
+            patch("cmd.Cmd.cmdloop") as mock_cmdloop,
+        ):
             s.cmdloop(intro="Custom intro")
-
             mock_play.assert_not_called()
             mock_cmdloop.assert_called_once_with(intro="Custom intro")
 
-    @patch("pyrit.cli.frontend_core.print_scenarios_list_async", new_callable=AsyncMock)
-    def test_do_list_scenarios(self, mock_print_scenarios: AsyncMock, shell):
-        """Test do_list_scenarios command."""
-        s, ctx, _ = shell
-
+    def test_do_list_scenarios(self, shell):
+        s, client = shell
         s.do_list_scenarios("")
-
-        mock_print_scenarios.assert_called_once_with(context=ctx)
-
-    @patch("pyrit.cli.frontend_core.print_scenarios_list_async", new_callable=AsyncMock)
-    def test_do_list_scenarios_with_exception(self, mock_print_scenarios: AsyncMock, shell, capsys):
-        """Test do_list_scenarios handles exceptions."""
-        s, ctx, _ = shell
-        mock_print_scenarios.side_effect = ValueError("Test error")
-
-        s.do_list_scenarios("")
-
-        captured = capsys.readouterr()
-        assert "Error listing scenarios" in captured.out
+        client.list_scenarios_async.assert_awaited_once()
 
     def test_do_list_scenarios_rejects_args(self, shell, capsys):
-        """Test do_list_scenarios rejects unexpected arguments."""
-        s, ctx, _ = shell
-
+        s, _ = shell
         s.do_list_scenarios("--unknown foo")
-
         captured = capsys.readouterr()
         assert "does not accept arguments" in captured.out
 
-    @patch("pyrit.cli.frontend_core.print_initializers_list_async", new_callable=AsyncMock)
-    def test_do_list_initializers(self, mock_print_initializers: AsyncMock, shell):
-        """Test do_list_initializers command."""
-        s, ctx, _ = shell
-
+    def test_do_list_initializers(self, shell):
+        s, client = shell
         s.do_list_initializers("")
-
-        mock_print_initializers.assert_called_once_with(context=ctx)
-
-    @patch("pyrit.cli.frontend_core.print_initializers_list_async", new_callable=AsyncMock)
-    def test_do_list_initializers_with_exception(self, mock_print_initializers: AsyncMock, shell, capsys):
-        """Test do_list_initializers handles exceptions."""
-        s, ctx, _ = shell
-        mock_print_initializers.side_effect = ValueError("Test error")
-
-        s.do_list_initializers("")
-
-        captured = capsys.readouterr()
-        assert "Error listing initializers" in captured.out
+        client.list_initializers_async.assert_awaited_once()
 
     def test_do_list_initializers_rejects_args(self, shell, capsys):
-        """Test do_list_initializers rejects unexpected arguments."""
-        s, ctx, _ = shell
-
+        s, _ = shell
         s.do_list_initializers("--unknown foo")
-
         captured = capsys.readouterr()
         assert "does not accept arguments" in captured.out
 
-    @patch("pyrit.cli.frontend_core.print_targets_list_async", new_callable=AsyncMock)
-    def test_do_list_targets_no_args(self, mock_print_targets: AsyncMock, shell):
-        """Test do_list_targets with no arguments uses the default context."""
-        s, ctx, _ = shell
-
+    def test_do_list_targets(self, shell):
+        s, client = shell
         s.do_list_targets("")
+        client.list_targets_async.assert_awaited_once()
 
-        mock_print_targets.assert_called_once_with(context=ctx)
-
-    @patch("pyrit.cli.frontend_core.print_targets_list_async", new_callable=AsyncMock)
-    @patch("pyrit.cli.frontend_core.parse_list_targets_arguments")
-    def test_do_list_targets_with_initializers(
-        self,
-        mock_parse: MagicMock,
-        mock_print_targets: AsyncMock,
-        shell,
-    ):
-        """Test do_list_targets with --initializers uses context.with_overrides."""
-        s, ctx, _ = shell
-        mock_parse.return_value = {"initializers": ["target"], "initialization_scripts": None}
-        mock_derived = MagicMock()
-        ctx.with_overrides = MagicMock(return_value=mock_derived)
-
-        s.do_list_targets("--initializers target")
-
-        mock_parse.assert_called_once_with(args_string="--initializers target")
-        ctx.with_overrides.assert_called_once_with(
-            initialization_scripts=None,
-            initializer_names=["target"],
-        )
-        mock_print_targets.assert_called_once_with(context=mock_derived)
-
-    @patch("pyrit.cli.frontend_core.print_targets_list_async", new_callable=AsyncMock)
-    def test_do_list_targets_with_exception(self, mock_print_targets: AsyncMock, shell, capsys):
-        """Test do_list_targets handles exceptions."""
-        s, ctx, _ = shell
-        mock_print_targets.side_effect = RuntimeError("Test error")
-
-        s.do_list_targets("")
-
-        captured = capsys.readouterr()
-        assert "Error listing targets" in captured.out
-
-    def test_do_list_targets_parse_error(self, shell, capsys):
-        """Test do_list_targets shows error for invalid args."""
-        s, ctx, _ = shell
-
-        s.do_list_targets("--unknown-flag")
-
-        captured = capsys.readouterr()
-        assert "Error" in captured.out
-
-    def test_do_run_empty_line(self, shell, capsys):
-        """Test do_run with empty line."""
-        s, ctx, _ = shell
-
+    def test_do_run_empty_args(self, shell, capsys):
+        s, _ = shell
         s.do_run("")
-
         captured = capsys.readouterr()
         assert "Specify a scenario name" in captured.out
 
-    @patch("pyrit.cli.pyrit_shell.asyncio.run")
-    @patch("pyrit.cli.frontend_core.run_scenario_async", new_callable=AsyncMock)
-    @patch("pyrit.cli.frontend_core.parse_run_arguments")
-    def test_do_run_basic_scenario(
-        self,
-        mock_parse_args: MagicMock,
-        _mock_run_scenario: AsyncMock,
-        mock_asyncio_run: MagicMock,
-        shell,
-    ):
-        """Test do_run with basic scenario."""
-        s, ctx, _ = shell
-
-        mock_parse_args.return_value = {
-            "scenario_name": "test_scenario",
-            "initializers": ["test_init"],
-            "initialization_scripts": None,
-            "scenario_strategies": None,
-            "max_concurrency": None,
-            "max_retries": None,
-            "memory_labels": None,
-            "log_level": None,
-            "dataset_names": None,
-            "max_dataset_size": None,
-            "target": None,
-        }
-
-        mock_result = MagicMock()
-        mock_asyncio_run.side_effect = [mock_result]
-
-        s.do_run("test_scenario --initializers test_init")
-
-        mock_parse_args.assert_called_once()
-        assert mock_asyncio_run.call_count == 1
-
-        # Verify result was stored in history
-        assert len(s._scenario_history) == 1
-        assert s._scenario_history[0][0] == "test_scenario --initializers test_init"
-        assert s._scenario_history[0][1] == mock_result
-
-    @patch("pyrit.cli.frontend_core.parse_run_arguments")
-    def test_do_run_parse_error(self, mock_parse_args: MagicMock, shell, capsys):
-        """Test do_run with parse error."""
-        s, ctx, _ = shell
-        mock_parse_args.side_effect = ValueError("Parse error")
-
-        s.do_run("test_scenario --invalid")
-
-        captured = capsys.readouterr()
-        assert "Error: Parse error" in captured.out
-
-    @patch("pyrit.cli.pyrit_shell.asyncio.run")
-    @patch("pyrit.cli.frontend_core.run_scenario_async", new_callable=AsyncMock)
-    @patch("pyrit.cli.frontend_core.parse_run_arguments")
-    @patch("pyrit.cli.frontend_core.resolve_initialization_scripts")
-    def test_do_run_with_initialization_scripts(
-        self,
-        mock_resolve_scripts: MagicMock,
-        mock_parse_args: MagicMock,
-        mock_run_scenario: AsyncMock,
-        mock_asyncio_run: MagicMock,
-        shell,
-    ):
-        """Test do_run with initialization scripts."""
-        s, ctx, _ = shell
-
-        mock_parse_args.return_value = {
-            "scenario_name": "test_scenario",
-            "initializers": None,
-            "initialization_scripts": ["script.py"],
-            "scenario_strategies": None,
-            "max_concurrency": None,
-            "max_retries": None,
-            "memory_labels": None,
-            "log_level": None,
-            "dataset_names": None,
-            "max_dataset_size": None,
-            "target": None,
-        }
-
-        mock_resolve_scripts.return_value = [Path("/test/script.py")]
-        mock_asyncio_run.side_effect = [MagicMock()]
-
-        s.do_run("test_scenario --initialization-scripts script.py")
-
-        mock_resolve_scripts.assert_called_once_with(script_paths=["script.py"])
-        assert mock_asyncio_run.call_count == 1
-
-    @patch("pyrit.cli.frontend_core.parse_run_arguments")
-    @patch("pyrit.cli.frontend_core.resolve_initialization_scripts")
-    def test_do_run_with_missing_script(
-        self,
-        mock_resolve_scripts: MagicMock,
-        mock_parse_args: MagicMock,
-        shell,
-        capsys,
-    ):
-        """Test do_run with missing initialization script."""
-        s, ctx, _ = shell
-
-        mock_parse_args.return_value = {
-            "scenario_name": "test_scenario",
-            "initializers": None,
-            "initialization_scripts": ["missing.py"],
-            "scenario_strategies": None,
-            "max_concurrency": None,
-            "max_retries": None,
-            "memory_labels": None,
-            "log_level": None,
-            "dataset_names": None,
-            "max_dataset_size": None,
-            "target": None,
-        }
-
-        mock_resolve_scripts.side_effect = FileNotFoundError("Script not found")
-
-        s.do_run("test_scenario --initialization-scripts missing.py")
-
-        captured = capsys.readouterr()
-        assert "Error: Script not found" in captured.out
-
-    @patch("pyrit.cli.pyrit_shell.asyncio.run")
-    @patch("pyrit.cli.frontend_core.parse_run_arguments")
-    def test_do_run_with_exception(
-        self,
-        mock_parse_args: MagicMock,
-        mock_asyncio_run: MagicMock,
-        shell,
-        capsys,
-    ):
-        """Test do_run handles exceptions during scenario run."""
-        s, ctx, _ = shell
-
-        mock_parse_args.return_value = {
-            "scenario_name": "test_scenario",
-            "initializers": ["test_init"],
-            "initialization_scripts": None,
-            "scenario_strategies": None,
-            "max_concurrency": None,
-            "max_retries": None,
-            "memory_labels": None,
-            "log_level": None,
-            "dataset_names": None,
-            "max_dataset_size": None,
-            "target": None,
-        }
-
-        mock_asyncio_run.side_effect = [ValueError("Test error")]
-
-        s.do_run("test_scenario --initializers test_init")
-
-        captured = capsys.readouterr()
-        assert "Error: Test error" in captured.out
-
-    @patch("pyrit.cli.pyrit_shell.asyncio.run")
-    @patch("pyrit.cli.frontend_core.parse_run_arguments")
-    def test_do_run_keyboard_interrupt_returns_to_shell(
-        self,
-        mock_parse_args: MagicMock,
-        mock_asyncio_run: MagicMock,
-        shell,
-        capsys,
-    ):
-        """Test that Ctrl+C during scenario run returns to shell instead of crashing."""
-        s, ctx, _ = shell
-
-        mock_parse_args.return_value = {
-            "scenario_name": "test_scenario",
-            "initializers": ["test_init"],
-            "initialization_scripts": None,
-            "env_files": None,
-            "scenario_strategies": None,
-            "max_concurrency": None,
-            "max_retries": None,
-            "memory_labels": None,
-            "database": None,
-            "log_level": None,
-            "dataset_names": None,
-            "max_dataset_size": None,
-            "target": None,
-        }
-
-        mock_asyncio_run.side_effect = KeyboardInterrupt()
-
-        s.do_run("test_scenario --initializers test_init")
-
-        captured = capsys.readouterr()
-        assert "interrupted" in captured.out.lower()
-        # Scenario should NOT be added to history
-        assert len(s._scenario_history) == 0
-
-    def test_do_scenario_history_empty(self, shell, capsys):
-        """Test do_scenario_history with no history."""
-        s, ctx, _ = shell
-
+    def test_do_scenario_history_default_limit(self, shell):
+        s, client = shell
+        client.list_scenario_runs_async.return_value = {"items": []}
         s.do_scenario_history("")
+        client.list_scenario_runs_async.assert_awaited_once_with(limit=10)
 
+    def test_do_scenario_history_accepts_numeric_limit(self, shell):
+        s, client = shell
+        client.list_scenario_runs_async.return_value = {"items": []}
+        s.do_scenario_history("3")
+        client.list_scenario_runs_async.assert_awaited_once_with(limit=3)
+
+    def test_do_scenario_history_rejects_non_integer(self, shell, capsys):
+        s, _ = shell
+        s.do_scenario_history("extra")
         captured = capsys.readouterr()
-        assert "No scenario runs in history" in captured.out
+        assert "Usage: scenario-history" in captured.out
 
-    def test_do_scenario_history_rejects_args(self, shell, capsys):
-        """Test do_scenario_history rejects unexpected arguments."""
-        s, ctx, _ = shell
-
-        s.do_scenario_history("--unknown foo")
-
-        captured = capsys.readouterr()
-        assert "does not accept arguments" in captured.out
-
-    def test_do_scenario_history_with_runs(self, shell, capsys):
-        """Test do_scenario_history with scenario runs."""
-        s, ctx, _ = shell
-
-        s._scenario_history = [
-            ("test_scenario1 --initializers init1", MagicMock()),
-            ("test_scenario2 --initializers init2", MagicMock()),
-        ]
-
-        s.do_scenario_history("")
-
-        captured = capsys.readouterr()
-        assert "Scenario Run History" in captured.out
-        assert "test_scenario1" in captured.out
-        assert "test_scenario2" in captured.out
-        assert "Total runs: 2" in captured.out
-
-    def test_do_print_scenario_empty(self, shell, capsys):
-        """Test do_print_scenario with no history."""
-        s, ctx, _ = shell
-
+    def test_do_print_scenario_no_args(self, shell, capsys):
+        s, _ = shell
         s.do_print_scenario("")
-
         captured = capsys.readouterr()
-        assert "No scenario runs in history" in captured.out
+        assert "Usage" in captured.out
 
-    @patch("pyrit.cli.pyrit_shell.asyncio.run")
-    @patch("pyrit.output.scenario_result.pretty.PrettyScenarioResultMemoryPrinter")
-    def test_do_print_scenario_all(
-        self,
-        mock_printer_class: MagicMock,
-        mock_asyncio_run: MagicMock,
-        shell,
-        capsys,
-    ):
-        """Test do_print_scenario without argument prints all."""
-        s, ctx, _ = shell
-        mock_printer = MagicMock()
-        mock_printer_class.return_value = mock_printer
-
-        s._scenario_history = [
-            ("test_scenario1", MagicMock()),
-            ("test_scenario2", MagicMock()),
-        ]
-
-        s.do_print_scenario("")
-
-        captured = capsys.readouterr()
-        assert "Printing all scenario results" in captured.out
-        # 2 print calls (no background init)
-        assert mock_asyncio_run.call_count == 2
-
-    @patch("pyrit.cli.pyrit_shell.asyncio.run")
-    @patch("pyrit.output.scenario_result.pretty.PrettyScenarioResultMemoryPrinter")
-    def test_do_print_scenario_specific(
-        self,
-        mock_printer_class: MagicMock,
-        mock_asyncio_run: MagicMock,
-        shell,
-        capsys,
-    ):
-        """Test do_print_scenario with specific scenario number."""
-        s, ctx, _ = shell
-        mock_printer = MagicMock()
-        mock_printer_class.return_value = mock_printer
-
-        s._scenario_history = [
-            ("test_scenario1", MagicMock()),
-            ("test_scenario2", MagicMock()),
-        ]
-
-        s.do_print_scenario("1")
-
-        captured = capsys.readouterr()
-        assert "Scenario Run #1" in captured.out
-        # 1 print call (no background init)
-        assert mock_asyncio_run.call_count == 1
-
-    def test_do_print_scenario_invalid_number(self, shell, capsys):
-        """Test do_print_scenario with invalid scenario number."""
-        s, ctx, _ = shell
-
-        s._scenario_history = [
-            ("test_scenario1", MagicMock()),
-        ]
-
-        s.do_print_scenario("5")
-
-        captured = capsys.readouterr()
-        assert "must be between 1 and 1" in captured.out
-
-    def test_do_print_scenario_non_integer(self, shell, capsys):
-        """Test do_print_scenario with non-integer argument."""
-        s, ctx, _ = shell
-
-        s._scenario_history = [
-            ("test_scenario1", MagicMock()),
-        ]
-
-        s.do_print_scenario("invalid")
-
-        captured = capsys.readouterr()
-        assert "Invalid scenario number" in captured.out
-
-    def test_do_help_without_arg(self, shell, capsys):
-        """Test do_help without argument."""
-        s, ctx, _ = shell
-
-        # Capture help output
-        with patch("cmd.Cmd.do_help"):
-            s.do_help("")
-            captured = capsys.readouterr()
-            assert "Shell Startup Options" in captured.out
-
-    def test_do_help_with_arg(self, shell):
-        """Test do_help with specific command."""
-        s, ctx, _ = shell
-
-        with patch("cmd.Cmd.do_help") as mock_parent_help:
-            s.do_help("run")
-            mock_parent_help.assert_called_with("run")
-
-    def test_do_help_with_hyphenated_arg(self, shell):
-        """Test do_help converts hyphens to underscores for command lookup."""
-        s, ctx, _ = shell
-
-        with patch("cmd.Cmd.do_help") as mock_parent_help:
-            s.do_help("list-targets")
-            mock_parent_help.assert_called_with("list_targets")
-
-    @patch.object(cmd.Cmd, "cmdloop")
-    @patch.object(banner, "play_animation")
-    def test_cmdloop_sets_intro_via_play_animation(self, mock_play: MagicMock, mock_cmdloop: MagicMock, shell):
-        """Test cmdloop wires banner.play_animation into intro and threads --no-animation."""
-        s, ctx, _ = shell
-
-        mock_play.return_value = "animated banner"
-
-        # Note: no_animation is not set because shell fixture uses default
-        s._no_animation = True
-        s.cmdloop()
-
-        mock_play.assert_called_once_with(no_animation=True)
-        assert s.intro == "animated banner"
-        mock_cmdloop.assert_called_once_with(intro="animated banner")
-
-    @patch.object(cmd.Cmd, "cmdloop")
-    def test_cmdloop_honors_explicit_intro(self, mock_cmdloop: MagicMock, shell):
-        """Test cmdloop honors a non-None intro argument without calling play_animation."""
-        s, ctx, _ = shell
-
-        s.cmdloop(intro="custom intro")
-
-        assert s.intro == "custom intro"
-        mock_cmdloop.assert_called_once_with(intro="custom intro")
-
-    def test_do_exit(self, shell, capsys):
-        """Test do_exit command."""
-        s, ctx, _ = shell
-
+    def test_do_exit(self, shell):
+        s, client = shell
         result = s.do_exit("")
-
         assert result is True
-        captured = capsys.readouterr()
-        assert "Goodbye" in captured.out
+        client.close_async.assert_awaited_once()
 
     def test_do_quit_alias(self, shell):
-        """Test do_quit is alias for do_exit."""
-        s, ctx, _ = shell
-
+        s, _ = shell
         assert s.do_quit == s.do_exit
 
     def test_do_q_alias(self, shell):
-        """Test do_q is alias for do_exit."""
-        s, ctx, _ = shell
-
+        s, _ = shell
         assert s.do_q == s.do_exit
 
-    def test_do_eof_alias(self, shell):
-        """Test do_EOF is alias for do_exit."""
-        s, ctx, _ = shell
-
-        assert s.do_EOF == s.do_exit
-
-    @patch("os.system")
-    def test_do_clear_windows(self, mock_system: MagicMock, shell):
-        """Test do_clear on Windows."""
-        s, ctx, _ = shell
-
-        with patch("os.name", "nt"):
-            s.do_clear("")
-            mock_system.assert_called_with("cls")
-
-    @patch("os.system")
-    def test_do_clear_unix(self, mock_system: MagicMock, shell):
-        """Test do_clear on Unix."""
-        s, ctx, _ = shell
-
-        with patch("os.name", "posix"):
-            s.do_clear("")
-            mock_system.assert_called_with("clear")
-
     def test_emptyline(self, shell):
-        """Test emptyline doesn't repeat last command."""
-        s, ctx, _ = shell
-
-        result = s.emptyline()
-
-        assert result is False
-
-    def test_default_with_hyphen_to_underscore(self, shell):
-        """Test default converts hyphens to underscores."""
-        s, ctx, _ = shell
-
-        # Mock a method with underscores
-        s.do_list_scenarios = MagicMock()
-
-        s.default("list-scenarios")
-
-        s.do_list_scenarios.assert_called_once_with("")
+        s, _ = shell
+        assert s.emptyline() is False
 
     def test_default_unknown_command(self, shell, capsys):
-        """Test default with unknown command."""
-        s, ctx, _ = shell
-
+        s, _ = shell
         s.default("unknown_command")
-
         captured = capsys.readouterr()
         assert "Unknown command" in captured.out
 
+    def test_default_hyphen_to_underscore(self, shell):
+        s, client = shell
+        s.default("list-scenarios")
+        client.list_scenarios_async.assert_awaited_once()
 
-class TestNullGuards:
-    """Tests for null-guard checks that raise RuntimeError when _fc or context is None."""
-
-    @pytest.fixture()
-    def uninitialized_shell(self):
-        """Create a shell where _ensure_initialized passes but _fc and context are None."""
-        with patch.object(pyrit_shell.PyRITShell, "_background_init"):
-            s = pyrit_shell.PyRITShell()
-        s._init_complete.set()
-        s._fc = None
-        s.context = None
-        return s
-
-    def test_ensure_initialized_raises_when_fc_is_none(self, uninitialized_shell):
-        """Test _ensure_initialized raises RuntimeError when _fc is None."""
-        with pytest.raises(RuntimeError, match="Frontend core not initialized"):
-            uninitialized_shell._ensure_initialized()
-
-    def test_do_list_scenarios_raises_when_fc_is_none(self, uninitialized_shell):
-        """Test do_list_scenarios raises RuntimeError when _fc is None after _ensure_initialized."""
-        with patch.object(uninitialized_shell, "_ensure_initialized"):
-            with pytest.raises(RuntimeError, match="Frontend core not initialized"):
-                uninitialized_shell.do_list_scenarios("")
-
-    def test_do_list_initializers_raises_when_fc_is_none(self, uninitialized_shell):
-        """Test do_list_initializers raises RuntimeError when _fc is None after _ensure_initialized."""
-        with patch.object(uninitialized_shell, "_ensure_initialized"):
-            with pytest.raises(RuntimeError, match="Frontend core not initialized"):
-                uninitialized_shell.do_list_initializers("")
-
-    def test_do_list_targets_raises_when_fc_is_none(self, uninitialized_shell):
-        """Test do_list_targets raises RuntimeError when _fc is None after _ensure_initialized."""
-        with patch.object(uninitialized_shell, "_ensure_initialized"):
-            with pytest.raises(RuntimeError, match="Frontend core not initialized"):
-                uninitialized_shell.do_list_targets("")
-
-    def test_do_run_raises_when_fc_is_none(self, uninitialized_shell):
-        """Test do_run raises RuntimeError when _fc is None after _ensure_initialized."""
-        with patch.object(uninitialized_shell, "_ensure_initialized"):
-            with pytest.raises(RuntimeError, match="Frontend core not initialized"):
-                uninitialized_shell.do_run("some_scenario --target t")
-
-
-class TestMain:
-    """Tests for main function."""
-
-    @patch("pyrit.cli.pyrit_shell.PyRITShell")
-    @patch("pyrit.cli._banner.play_animation", return_value="")
-    def test_main_default_args(self, mock_play: MagicMock, mock_shell_class: MagicMock):
-        """Test main with default arguments."""
-        mock_shell = MagicMock()
-        mock_shell_class.return_value = mock_shell
-
-        with patch("sys.argv", ["pyrit_shell"]):
-            result = pyrit_shell.main()
-
-        assert result == 0
-        call_kwargs = mock_shell_class.call_args[1]
-        assert call_kwargs["log_level"] == logging.WARNING
-        mock_shell.cmdloop.assert_called_once()
-
-    @patch("pyrit.cli.pyrit_shell.PyRITShell")
-    @patch("pyrit.cli._banner.play_animation", return_value="")
-    def test_main_with_config_file_arg(self, mock_play: MagicMock, mock_shell_class: MagicMock):
-        """Test main with config-file argument."""
-        mock_shell = MagicMock()
-        mock_shell_class.return_value = mock_shell
-
-        with patch("sys.argv", ["pyrit_shell", "--config-file", "my_config.yaml"]):
-            result = pyrit_shell.main()
-
-        assert result == 0
-        call_kwargs = mock_shell_class.call_args[1]
-        assert call_kwargs["config_file"] == Path("my_config.yaml")
-
-    @patch("pyrit.cli.pyrit_shell.PyRITShell")
-    @patch("pyrit.cli._banner.play_animation", return_value="")
-    def test_main_with_log_level_arg(self, mock_play: MagicMock, mock_shell_class: MagicMock):
-        """Test main with log-level argument."""
-        mock_shell = MagicMock()
-        mock_shell_class.return_value = mock_shell
-
-        with patch("sys.argv", ["pyrit_shell", "--log-level", "DEBUG"]):
-            result = pyrit_shell.main()
-
-        assert result == 0
-        call_kwargs = mock_shell_class.call_args[1]
-        assert call_kwargs["log_level"] == logging.DEBUG
-
-    @patch("pyrit.cli.pyrit_shell.PyRITShell")
-    @patch("pyrit.cli._banner.play_animation", return_value="")
-    def test_main_with_keyboard_interrupt(self, mock_play: MagicMock, mock_shell_class: MagicMock, capsys):
-        """Test main handles keyboard interrupt."""
-        mock_shell = MagicMock()
-        mock_shell.cmdloop.side_effect = KeyboardInterrupt()
-        mock_shell_class.return_value = mock_shell
-
-        with patch("sys.argv", ["pyrit_shell"]):
-            result = pyrit_shell.main()
-
-        assert result == 0
+    def test_do_stop_server_no_launcher(self, shell, capsys):
+        s, _ = shell
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch("pyrit.cli._server_launcher.stop_server_on_port", return_value=False),
+        ):
+            s.do_stop_server("")
         captured = capsys.readouterr()
-        assert "Interrupted" in captured.out
+        assert "No server found" in captured.out
 
-    @patch("pyrit.cli.pyrit_shell.PyRITShell")
-    @patch("pyrit.cli._banner.play_animation", return_value="")
-    def test_main_with_exception(self, mock_play: MagicMock, mock_shell_class: MagicMock, capsys):
-        """Test main handles exceptions."""
-        mock_shell = MagicMock()
-        mock_shell.cmdloop.side_effect = ValueError("Test error")
-        mock_shell_class.return_value = mock_shell
+    def test_ensure_client_already_connected(self, shell):
+        s, _ = shell
+        assert s._ensure_client() is True
 
-        with patch("sys.argv", ["pyrit_shell"]):
-            result = pyrit_shell.main()
-
-        assert result == 1
+    def test_ensure_client_no_server(self, capsys):
+        s = pyrit_shell.PyRITShell(no_animation=True)
+        with patch(
+            "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+            new_callable=AsyncMock,
+        ) as mock_probe:
+            mock_probe.return_value = False
+            result = s._ensure_client()
+        assert result is False
         captured = capsys.readouterr()
-        assert "Error:" in captured.out
+        assert "Server not available" in captured.out
 
-    @patch("pyrit.cli.pyrit_shell.PyRITShell")
-    @patch("pyrit.cli._banner.play_animation", return_value="")
-    def test_main_creates_context_without_initializers(self, mock_play: MagicMock, mock_shell_class: MagicMock):
-        """Test main creates context without initializers."""
-        mock_shell = MagicMock()
-        mock_shell_class.return_value = mock_shell
 
-        with patch("sys.argv", ["pyrit_shell"]):
-            pyrit_shell.main()
+class TestShellRunAsyncTimeout:
+    """Regression: _run_async must time out instead of hanging on a stuck coroutine."""
 
-        call_kwargs = mock_shell_class.call_args[1]
-        # main() should not pass initialization_scripts or initializer_names
-        assert "initialization_scripts" not in call_kwargs
-        assert "initializer_names" not in call_kwargs
+    def test_run_async_raises_timeout_error(self):
+        s = pyrit_shell.PyRITShell(no_animation=True)
+        try:
 
-    @patch("pyrit.cli.pyrit_shell.PyRITShell")
-    @patch("pyrit.cli._banner.play_animation", return_value="")
-    def test_main_with_no_animation_flag(self, mock_play: MagicMock, mock_shell_class: MagicMock):
-        """Test main passes --no-animation flag to PyRITShell."""
-        mock_shell = MagicMock()
-        mock_shell_class.return_value = mock_shell
+            async def hangs():
+                await asyncio.sleep(10)
 
-        with patch("sys.argv", ["pyrit_shell", "--no-animation"]):
+            with pytest.raises(TimeoutError, match="did not complete"):
+                s._run_async(hangs(), timeout=0.05)
+        finally:
+            s._shutdown_loop()
+
+    def test_run_async_returns_value_within_timeout(self):
+        s = pyrit_shell.PyRITShell(no_animation=True)
+        try:
+
+            async def quick():
+                return 42
+
+            assert s._run_async(quick(), timeout=5) == 42
+        finally:
+            s._shutdown_loop()
+
+
+class TestShellMain:
+    """Tests for the shell main() entry point."""
+
+    def test_main_parses_server_url(self):
+        with (
+            patch("pyrit.cli._banner.play_animation", return_value=""),
+            patch("pyrit.cli.pyrit_shell.PyRITShell") as mock_shell_class,
+        ):
+            mock_shell = MagicMock()
+            mock_shell_class.return_value = mock_shell
+
+            with patch("sys.argv", ["pyrit_shell", "--server-url", "http://remote:9000", "--no-animation"]):
+                pyrit_shell.main()
+
+            mock_shell_class.assert_called_once()
+            assert mock_shell_class.call_args.kwargs["server_url"] == "http://remote:9000"
+
+    def test_main_keyboard_interrupt(self, capsys):
+        with (
+            patch("pyrit.cli._banner.play_animation", return_value=""),
+            patch("pyrit.cli.pyrit_shell.PyRITShell") as mock_shell_class,
+            patch("sys.argv", ["pyrit_shell", "--no-animation"]),
+        ):
+            mock_shell = MagicMock()
+            mock_shell.cmdloop.side_effect = KeyboardInterrupt()
+            mock_shell_class.return_value = mock_shell
+
             result = pyrit_shell.main()
+            assert result == 0
 
-        assert result == 0
-        call_kwargs = mock_shell_class.call_args[1]
-        assert call_kwargs["no_animation"] is True
+    def test_main_generic_exception(self, capsys):
+        with (
+            patch("pyrit.cli._banner.play_animation", return_value=""),
+            patch("pyrit.cli.pyrit_shell.PyRITShell") as mock_shell_class,
+            patch("sys.argv", ["pyrit_shell", "--no-animation"]),
+        ):
+            mock_shell = MagicMock()
+            mock_shell.cmdloop.side_effect = RuntimeError("boom")
+            mock_shell_class.return_value = mock_shell
 
-    @patch("pyrit.cli.pyrit_shell.PyRITShell")
-    @patch("pyrit.cli._banner.play_animation", return_value="")
-    def test_main_default_animation_enabled(self, mock_play: MagicMock, mock_shell_class: MagicMock):
-        """Test main defaults to animation enabled (no_animation=False)."""
-        mock_shell = MagicMock()
-        mock_shell_class.return_value = mock_shell
-
-        with patch("sys.argv", ["pyrit_shell"]):
             result = pyrit_shell.main()
+            assert result == 1
+            captured = capsys.readouterr()
+            assert "boom" in captured.out
 
-        assert result == 0
-        call_kwargs = mock_shell_class.call_args[1]
-        assert call_kwargs["no_animation"] is False
+    def test_main_log_level_and_config_file(self, tmp_path):
+        with (
+            patch("pyrit.cli._banner.play_animation", return_value=""),
+            patch("pyrit.cli.pyrit_shell.PyRITShell") as mock_shell_class,
+            patch(
+                "sys.argv",
+                [
+                    "pyrit_shell",
+                    "--no-animation",
+                    "--log-level",
+                    "DEBUG",
+                    "--config-file",
+                    str(tmp_path / "conf.yaml"),
+                    "--start-server",
+                ],
+            ),
+        ):
+            mock_shell = MagicMock()
+            mock_shell_class.return_value = mock_shell
+            assert pyrit_shell.main() == 0
+            kwargs = mock_shell_class.call_args.kwargs
+            assert kwargs["start_server"] is True
+            assert kwargs["config_file"] == tmp_path / "conf.yaml"
 
 
-class TestPyRITShellRunCommand:
-    """Detailed tests for the run command."""
+class TestResolveBaseUrl:
+    def test_explicit_server_url_wins(self):
+        s = pyrit_shell.PyRITShell(no_animation=True, server_url="http://custom:1234")
+        assert s._resolve_base_url() == "http://custom:1234"
 
-    @patch("pyrit.cli.pyrit_shell.asyncio.run")
-    @patch("pyrit.cli.frontend_core.parse_run_arguments")
-    def test_run_with_all_parameters(
-        self,
-        mock_parse_args: MagicMock,
-        mock_asyncio_run: MagicMock,
-        shell,
-    ):
-        """Test run command with all parameters."""
-        s, ctx, _ = shell
+    def test_falls_back_to_config_reader(self, tmp_path):
+        s = pyrit_shell.PyRITShell(no_animation=True)
+        with patch("pyrit.cli._config_reader.read_server_url", return_value="http://from-cfg:8000"):
+            assert s._resolve_base_url() == "http://from-cfg:8000"
 
-        mock_parse_args.return_value = {
-            "scenario_name": "test_scenario",
-            "initializers": ["init1"],
-            "initialization_scripts": None,
-            "scenario_strategies": ["s1", "s2"],
-            "max_concurrency": 10,
-            "max_retries": 5,
-            "memory_labels": {"key": "value"},
-            "log_level": "DEBUG",
-            "dataset_names": None,
-            "max_dataset_size": None,
-            "target": None,
+    def test_default_when_config_returns_none(self):
+        s = pyrit_shell.PyRITShell(no_animation=True)
+        with patch("pyrit.cli._config_reader.read_server_url", return_value=None):
+            from pyrit.cli._config_reader import DEFAULT_SERVER_URL
+
+            assert s._resolve_base_url() == DEFAULT_SERVER_URL
+
+
+class TestEnsureClientStartServer:
+    def test_start_server_launches_when_not_running(self):
+        s = pyrit_shell.PyRITShell(no_animation=True, start_server=True)
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch("pyrit.cli._server_launcher.ServerLauncher.start_async", new_callable=AsyncMock) as mock_start,
+            patch("pyrit.cli.api_client.PyRITApiClient") as mock_client_class,
+        ):
+            mock_start.return_value = "http://localhost:8000"
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_class.return_value = mock_client
+            assert s._ensure_client() is True
+            assert s._api_client is mock_client
+            assert s._start_server is False  # only auto-start once
+
+    def test_start_server_failure_returns_false(self, capsys):
+        s = pyrit_shell.PyRITShell(no_animation=True, start_server=True)
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.start_async",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("nope"),
+            ),
+        ):
+            assert s._ensure_client() is False
+            assert "Error starting server: nope" in capsys.readouterr().out
+
+
+class TestDoAddInitializer:
+    def test_no_args_prints_usage(self, shell, capsys):
+        s, _ = shell
+        s.do_add_initializer("")
+        assert "Usage" in capsys.readouterr().out
+
+    def test_file_not_found(self, shell, capsys):
+        s, _ = shell
+        s.do_add_initializer("/nonexistent/_xyz_not_a_file.py")
+        assert "File not found" in capsys.readouterr().out
+
+    def test_success_path(self, shell, tmp_path, capsys):
+        s, client = shell
+        script = tmp_path / "my_init.py"
+        script.write_text("def init(): pass")
+        client.register_initializer_async = AsyncMock(return_value={"status": "ok"})
+        s.do_add_initializer(str(script))
+        assert "Registered initializer 'my_init'" in capsys.readouterr().out
+        client.register_initializer_async.assert_awaited_once()
+
+    def test_server_not_available_error(self, shell, tmp_path, capsys):
+        from pyrit.cli.api_client import ServerNotAvailableError
+
+        s, client = shell
+        script = tmp_path / "init.py"
+        script.write_text("x = 1")
+        client.register_initializer_async = AsyncMock(side_effect=ServerNotAvailableError("server gone"))
+        s.do_add_initializer(str(script))
+        assert "server gone" in capsys.readouterr().out
+
+    def test_generic_error(self, shell, tmp_path, capsys):
+        s, client = shell
+        script = tmp_path / "init.py"
+        script.write_text("x = 1")
+        client.register_initializer_async = AsyncMock(side_effect=RuntimeError("boom"))
+        s.do_add_initializer(str(script))
+        assert "Error registering initializer: boom" in capsys.readouterr().out
+
+
+class TestDoRun:
+    def _run_payload(self, status="COMPLETED"):
+        return {"scenario_result_id": "rid-1", "status": status}
+
+    def test_run_invalid_arguments(self, shell, capsys):
+        s, _ = shell
+        with patch("pyrit.cli._cli_args.parse_run_arguments", side_effect=ValueError("bad")):
+            s.do_run("foo --target t")
+        assert "Error: bad" in capsys.readouterr().out
+
+    def test_run_start_failure(self, shell, capsys):
+        s, client = shell
+        client.start_scenario_run_async = AsyncMock(side_effect=RuntimeError("nope"))
+        with patch(
+            "pyrit.cli._cli_args.parse_run_arguments",
+            return_value={"scenario_name": "foo", "target": "t"},
+        ):
+            s.do_run("foo --target t")
+        assert "Error starting scenario: nope" in capsys.readouterr().out
+
+    def test_run_completed_path_with_results(self, shell, capsys):
+        s, client = shell
+        client.start_scenario_run_async = AsyncMock(return_value=self._run_payload())
+        client.get_scenario_run_async = AsyncMock(return_value=self._run_payload("COMPLETED"))
+        client.get_scenario_run_results_async = AsyncMock(return_value={"items": []})
+        with (
+            patch(
+                "pyrit.cli._cli_args.parse_run_arguments",
+                return_value={
+                    "scenario_name": "foo",
+                    "target": "t",
+                    "initializers": ["a", {"name": "b", "args": {"x": 1}}],
+                    "scenario_strategies": ["s1"],
+                    "max_concurrency": 2,
+                    "max_retries": 3,
+                    "memory_labels": {"k": "v"},
+                    "dataset_names": ["d1"],
+                    "max_dataset_size": 5,
+                },
+            ),
+            patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock),
+            patch("pyrit.cli._output.print_scenario_run_progress"),
+            patch("pyrit.cli._output.print_scenario_run_summary"),
+            patch("time.sleep"),
+        ):
+            s.do_run("foo --target t")
+        kwargs = client.start_scenario_run_async.call_args.kwargs["request"]
+        assert kwargs["initializers"] == ["a", "b"]
+        assert kwargs["initializer_args"] == {"b": {"x": 1}}
+        assert kwargs["strategies"] == ["s1"]
+        assert kwargs["max_concurrency"] == 2
+        assert kwargs["max_retries"] == 3
+        assert kwargs["labels"] == {"k": "v"}
+        assert kwargs["dataset_names"] == ["d1"]
+        assert kwargs["max_dataset_size"] == 5
+
+    def test_run_failed_status_calls_summary(self, shell):
+        s, client = shell
+        client.start_scenario_run_async = AsyncMock(return_value=self._run_payload())
+        client.get_scenario_run_async = AsyncMock(return_value=self._run_payload("FAILED"))
+        with (
+            patch(
+                "pyrit.cli._cli_args.parse_run_arguments",
+                return_value={"scenario_name": "foo", "target": "t"},
+            ),
+            patch("pyrit.cli._output.print_scenario_run_progress"),
+            patch("pyrit.cli._output.print_scenario_run_summary") as mock_summary,
+            patch("time.sleep"),
+        ):
+            s.do_run("foo --target t")
+        mock_summary.assert_called_once()
+
+    def test_run_completed_fallback_to_summary_on_results_error(self, shell):
+        s, client = shell
+        client.start_scenario_run_async = AsyncMock(return_value=self._run_payload())
+        client.get_scenario_run_async = AsyncMock(return_value=self._run_payload("COMPLETED"))
+        client.get_scenario_run_results_async = AsyncMock(side_effect=RuntimeError("nope"))
+        with (
+            patch(
+                "pyrit.cli._cli_args.parse_run_arguments",
+                return_value={"scenario_name": "foo", "target": "t"},
+            ),
+            patch("pyrit.cli._output.print_scenario_run_progress"),
+            patch("pyrit.cli._output.print_scenario_run_summary") as mock_summary,
+            patch("time.sleep"),
+        ):
+            s.do_run("foo --target t")
+        mock_summary.assert_called_once()
+
+    def test_run_keyboard_interrupt_cancels(self, shell, capsys):
+        s, client = shell
+        client.start_scenario_run_async = AsyncMock(return_value=self._run_payload())
+        # Use MagicMock so KeyboardInterrupt raises synchronously on call —
+        # this simulates Ctrl+C arriving between polling iterations, matching
+        # how signals are delivered to the shell's main thread in production.
+        client.get_scenario_run_async = MagicMock(side_effect=KeyboardInterrupt)
+        client.cancel_scenario_run_async = AsyncMock(return_value=None)
+        with (
+            patch(
+                "pyrit.cli._cli_args.parse_run_arguments",
+                return_value={"scenario_name": "foo", "target": "t"},
+            ),
+            patch("pyrit.cli._output.print_scenario_run_progress"),
+            patch("time.sleep"),
+        ):
+            s.do_run("foo --target t")
+        client.cancel_scenario_run_async.assert_awaited_once()
+        assert "cancelled" in capsys.readouterr().out.lower()
+
+    def test_run_keyboard_interrupt_cancel_fails_warns(self, shell, capsys):
+        s, client = shell
+        client.start_scenario_run_async = AsyncMock(return_value=self._run_payload())
+        client.get_scenario_run_async = MagicMock(side_effect=KeyboardInterrupt)
+        client.cancel_scenario_run_async = AsyncMock(side_effect=RuntimeError("offline"))
+        with (
+            patch(
+                "pyrit.cli._cli_args.parse_run_arguments",
+                return_value={"scenario_name": "foo", "target": "t"},
+            ),
+            patch("pyrit.cli._output.print_scenario_run_progress"),
+            patch("time.sleep"),
+        ):
+            s.do_run("foo --target t")
+        assert "could not cancel" in capsys.readouterr().out.lower()
+
+
+class TestListErrors:
+    def test_list_scenarios_error(self, shell, capsys):
+        s, client = shell
+        client.list_scenarios_async = AsyncMock(side_effect=RuntimeError("x"))
+        s.do_list_scenarios("")
+        assert "Error listing scenarios" in capsys.readouterr().out
+
+    def test_list_initializers_error(self, shell, capsys):
+        s, client = shell
+        client.list_initializers_async = AsyncMock(side_effect=RuntimeError("x"))
+        s.do_list_initializers("")
+        assert "Error listing initializers" in capsys.readouterr().out
+
+    def test_list_targets_error(self, shell, capsys):
+        s, client = shell
+        client.list_targets_async = AsyncMock(side_effect=RuntimeError("x"))
+        s.do_list_targets("")
+        assert "Error listing targets" in capsys.readouterr().out
+
+    def test_scenario_history_error(self, shell, capsys):
+        s, client = shell
+        client.list_scenario_runs_async = AsyncMock(side_effect=RuntimeError("x"))
+        s.do_scenario_history("")
+        assert "Error" in capsys.readouterr().out
+
+
+class TestPrintScenarioAndHelp:
+    def test_print_scenario_success(self, shell):
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(return_value={"items": []})
+        with patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock) as mock_print:
+            s.do_print_scenario("rid-1")
+        mock_print.assert_awaited_once()
+
+    def test_print_scenario_error(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(side_effect=RuntimeError("oops"))
+        s.do_print_scenario("rid-1")
+        assert "Error: oops" in capsys.readouterr().out
+
+    def test_do_help_with_arg_normalizes_hyphen(self, shell):
+        s, _ = shell
+        with patch("cmd.Cmd.do_help") as mock_help:
+            s.do_help("list-scenarios")
+        mock_help.assert_called_once_with("list_scenarios")
+
+    def test_do_help_no_arg(self, shell, capsys):
+        s, _ = shell
+        with patch("cmd.Cmd.do_help"):
+            s.do_help("")
+        assert "Use 'help <command>'" in capsys.readouterr().out
+
+
+class TestServerManagement:
+    def test_start_server_already_running(self, capsys):
+        s = pyrit_shell.PyRITShell(no_animation=True)
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch("pyrit.cli.api_client.PyRITApiClient") as mock_client_class,
+        ):
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_class.return_value = mock_client
+            s.do_start_server("")
+        assert "already running" in capsys.readouterr().out
+        assert s._api_client is mock_client
+
+    def test_start_server_launch_success(self):
+        s = pyrit_shell.PyRITShell(no_animation=True)
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch("pyrit.cli._server_launcher.ServerLauncher.start_async", new_callable=AsyncMock) as mock_start,
+            patch("pyrit.cli.api_client.PyRITApiClient") as mock_client_class,
+        ):
+            mock_start.return_value = "http://localhost:8000"
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_class.return_value = mock_client
+            s.do_start_server("")
+        assert s._base_url == "http://localhost:8000"
+
+    def test_start_server_launch_replaces_existing_client(self):
+        s = pyrit_shell.PyRITShell(no_animation=True)
+        existing = AsyncMock()
+        existing.close_async = AsyncMock()
+        s._api_client = existing
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch("pyrit.cli._server_launcher.ServerLauncher.start_async", new_callable=AsyncMock) as mock_start,
+            patch("pyrit.cli.api_client.PyRITApiClient") as mock_client_class,
+        ):
+            mock_start.return_value = "http://localhost:8000"
+            new_client = AsyncMock()
+            new_client.__aenter__ = AsyncMock(return_value=new_client)
+            mock_client_class.return_value = new_client
+            s.do_start_server("")
+        existing.close_async.assert_awaited_once()
+        assert s._api_client is new_client
+
+    def test_start_server_launch_failure(self, capsys):
+        s = pyrit_shell.PyRITShell(no_animation=True)
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.start_async",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("nope"),
+            ),
+        ):
+            s.do_start_server("")
+        assert "nope" in capsys.readouterr().out
+
+    def test_stop_server_with_owned_launcher(self, shell, capsys):
+        s, client = shell
+        launcher = MagicMock()
+        s._launcher = launcher
+        s.do_stop_server("")
+        launcher.stop.assert_called_once()
+        assert "Server stopped" in capsys.readouterr().out
+        assert s._launcher is None
+        assert s._api_client is None
+
+    def test_stop_server_by_port_success(self, shell, capsys):
+        s, _ = shell
+        s._base_url = "http://localhost:8000"
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch("pyrit.cli._server_launcher.stop_server_on_port", return_value=True),
+        ):
+            s.do_stop_server("")
+        assert "stopped" in capsys.readouterr().out
+
+    def test_stop_server_by_port_skips_when_no_pyrit_backend(self, shell, capsys):
+        s, _ = shell
+        s._base_url = "http://localhost:8000"
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch("pyrit.cli._server_launcher.stop_server_on_port") as mock_stop,
+        ):
+            s.do_stop_server("")
+        mock_stop.assert_not_called()
+        assert "not stopping" in capsys.readouterr().out
+
+    def test_stop_server_close_client_swallows_errors(self, shell):
+        s, client = shell
+        launcher = MagicMock()
+        s._launcher = launcher
+        client.close_async = AsyncMock(side_effect=RuntimeError("ignored"))
+        s.do_stop_server("")
+        assert s._api_client is None
+
+
+class TestShellScenarioParamFlow:
+    """Regression tests: shell.do_run must forward scenario-declared parameters."""
+
+    def test_run_passes_scenario_declared_params(self, shell):
+        s, client = shell
+        client.get_scenario_async.return_value = {
+            "scenario_name": "foo",
+            "supported_parameters": [{"name": "max_turns", "description": "..."}],
         }
+        client.start_scenario_run_async = AsyncMock(return_value={"scenario_result_id": "rid", "status": "CREATED"})
+        client.get_scenario_run_async = AsyncMock(return_value={"scenario_result_id": "rid", "status": "COMPLETED"})
+        client.get_scenario_run_results_async = AsyncMock(return_value={"items": []})
 
-        mock_asyncio_run.side_effect = [MagicMock()]
+        with (
+            patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock),
+            patch("pyrit.cli._output.print_scenario_run_progress"),
+            patch("time.sleep"),
+        ):
+            s.do_run("foo --target t --max-turns 7")
 
-        with patch("pyrit.cli.frontend_core.FrontendCore"), patch("pyrit.cli.frontend_core.run_scenario_async"):
-            s.do_run("test_scenario --initializers init1 --strategies s1 s2 --max-concurrency 10")
+        sent_request = client.start_scenario_run_async.call_args.kwargs["request"]
+        assert sent_request["scenario_params"] == {"max_turns": "7"}
 
-            # Verify run_scenario_async was called with correct args
-            # (it's called via asyncio.run, so check the mock_asyncio_run call)
-            assert mock_asyncio_run.call_count == 1
+    def test_run_metadata_fetch_failure_aborts(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_async = AsyncMock(side_effect=RuntimeError("net down"))
+        s.do_run("foo --target t")
+        assert "Error fetching scenario metadata" in capsys.readouterr().out
 
-    @patch("pyrit.cli.pyrit_shell.asyncio.run")
-    @patch("pyrit.cli.frontend_core.parse_run_arguments")
-    def test_run_stores_result_in_history(
-        self,
-        mock_parse_args: MagicMock,
-        mock_asyncio_run: MagicMock,
-        shell,
-    ):
-        """Test run command stores result in history."""
-        s, ctx, _ = shell
+    def test_run_unknown_scenario_aborts(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_async.return_value = None
+        s.do_run("foo --target t")
+        assert "not found on server" in capsys.readouterr().out
 
-        mock_parse_args.return_value = {
-            "scenario_name": "test_scenario",
-            "initializers": ["test_init"],
-            "initialization_scripts": None,
-            "scenario_strategies": None,
-            "max_concurrency": None,
-            "max_retries": None,
-            "memory_labels": None,
-            "log_level": None,
-            "dataset_names": None,
-            "max_dataset_size": None,
-            "target": None,
+    def test_run_unknown_flag_for_scenario_with_declared_params_errors(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_async.return_value = {
+            "scenario_name": "foo",
+            "supported_parameters": [{"name": "max_turns", "description": "..."}],
         }
+        s.do_run("foo --target t --not-a-real-flag x")
+        captured = capsys.readouterr().out
+        assert "Unknown argument" in captured or "Error" in captured
 
-        mock_result1 = MagicMock()
-        mock_result2 = MagicMock()
-        mock_asyncio_run.side_effect = [mock_result1, mock_result2]
+    def test_run_fat_fingered_flag_with_no_scenario_params_errors(self, shell, capsys):
+        """Even when the scenario declares no params, unknown flags must error (no silent no-op)."""
+        s, client = shell
+        client.get_scenario_async.return_value = {"scenario_name": "foo", "supported_parameters": []}
+        s.do_run("foo --target t --initialization-scripts /nope.py")
+        captured = capsys.readouterr().out
+        assert "Unknown argument: --initialization-scripts" in captured
+        client.start_scenario_run_async.assert_not_called()
 
-        # Run two scenarios
-        s.do_run("scenario1 --initializers init1")
-        s.do_run("scenario2 --initializers init2")
+    def test_run_fat_fingered_log_level_flag_errors(self, shell, capsys):
+        """--log-level was a stale shell-only flag; passing it must now error."""
+        s, client = shell
+        client.get_scenario_async.return_value = {"scenario_name": "foo", "supported_parameters": []}
+        s.do_run("foo --target t --log-level DEBUG")
+        captured = capsys.readouterr().out
+        assert "Unknown argument: --log-level" in captured
+        client.start_scenario_run_async.assert_not_called()
 
-        # Verify both are in history
-        assert len(s._scenario_history) == 2
-        assert s._scenario_history[0][1] == mock_result1
-        assert s._scenario_history[1][1] == mock_result2
+
+class TestScenarioParamCoercionInShell:
+    """Shell-side regression tests for typed scenario params from the catalog."""
+
+    def test_shell_list_param_collects_multiple_values(self, shell):
+        s, client = shell
+        client.get_scenario_async.return_value = {
+            "scenario_name": "foo",
+            "supported_parameters": [
+                {"name": "items", "description": "list field", "param_type": "list[str]", "is_list": True}
+            ],
+        }
+        client.start_scenario_run_async = AsyncMock(return_value={"scenario_result_id": "rid", "status": "CREATED"})
+        client.get_scenario_run_async = AsyncMock(return_value={"scenario_result_id": "rid", "status": "COMPLETED"})
+        client.get_scenario_run_results_async = AsyncMock(return_value={"items": []})
+
+        with (
+            patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock),
+            patch("pyrit.cli._output.print_scenario_run_progress"),
+            patch("time.sleep"),
+        ):
+            s.do_run("foo --target t --items a b c")
+
+        sent = client.start_scenario_run_async.call_args.kwargs["request"]
+        assert sent["scenario_params"] == {"items": ["a", "b", "c"]}
+
+    def test_shell_choices_rejected_before_request(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_async.return_value = {
+            "scenario_name": "foo",
+            "supported_parameters": [
+                {"name": "mode", "description": "...", "param_type": "str", "choices": ["fast", "slow"]}
+            ],
+        }
+        s.do_run("foo --target t --mode warp")
+        out = capsys.readouterr().out
+        # Parameter.coerce_value raises ValueError on out-of-choice values;
+        # do_run surfaces these as "Error: ...".
+        assert "Error" in out
+        client.start_scenario_run_async.assert_not_called()

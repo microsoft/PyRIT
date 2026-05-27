@@ -49,6 +49,7 @@ from pyrit.prompt_target.openai.openai_video_target import OpenAIVideoTarget
 from pyrit.prompt_target.playwright_copilot_target import CopilotType, PlaywrightCopilotTarget
 from pyrit.prompt_target.playwright_target import PlaywrightTarget
 from pyrit.prompt_target.prompt_shield_target import PromptShieldTarget
+from pyrit.prompt_target.round_robin_target import RoundRobinTarget
 from pyrit.prompt_target.text_target import TextTarget
 from pyrit.prompt_target.websocket_copilot_target import WebSocketCopilotTarget
 
@@ -103,6 +104,7 @@ __all__ = [
     "PromptTarget",
     "RealtimeTarget",
     "ServerVadConfig",
+    "RoundRobinTarget",
     "TargetCapabilities",
     "TargetConfiguration",
     "TargetRequirements",

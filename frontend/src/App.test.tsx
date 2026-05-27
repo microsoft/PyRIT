@@ -61,6 +61,9 @@ jest.mock("./components/Layout/MainLayout", () => {
         <button onClick={onToggleTheme} data-testid="toggle-theme">
           Toggle Theme
         </button>
+        <button onClick={() => onNavigate("home")} data-testid="nav-home">
+          Home
+        </button>
         <button onClick={() => onNavigate("config")} data-testid="nav-config">
           Config
         </button>
@@ -188,6 +191,41 @@ jest.mock("./components/History/AttackHistory", () => {
   };
 });
 
+jest.mock("./components/Home/Home", () => {
+  const MockHome = ({
+    activeTarget,
+    onNavigate,
+    onOpenAttack,
+    labels,
+  }: {
+    activeTarget: unknown;
+    onNavigate: (view: string) => void;
+    onOpenAttack: (attackResultId: string) => void;
+    labels: Record<string, string>;
+  }) => {
+    return (
+      <div data-testid="home-view">
+        <span data-testid="home-has-target">{activeTarget ? "yes" : "no"}</span>
+        <span data-testid="home-labels-json">{JSON.stringify(labels)}</span>
+        <button onClick={() => onNavigate("config")} data-testid="home-go-config">
+          Go to config
+        </button>
+        <button
+          onClick={() => onOpenAttack("ar-home-attack")}
+          data-testid="home-open-attack"
+        >
+          Open Home Attack
+        </button>
+      </div>
+    );
+  };
+  MockHome.displayName = "MockHome";
+  return {
+    __esModule: true,
+    default: MockHome,
+  };
+});
+
 describe("App", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -197,7 +235,7 @@ describe("App", () => {
   it("renders with FluentProvider and MainLayout", () => {
     render(<App />);
     expect(screen.getByTestId("main-layout")).toBeInTheDocument();
-    expect(screen.getByTestId("chat-window")).toBeInTheDocument();
+    expect(screen.getByTestId("home-view")).toBeInTheDocument();
   });
 
   it("starts in dark mode", () => {
@@ -229,8 +267,20 @@ describe("App", () => {
     );
   });
 
-  it("starts in chat view", () => {
+  it("starts in home view", () => {
     render(<App />);
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "home"
+    );
+    expect(screen.getByTestId("home-view")).toBeInTheDocument();
+  });
+
+  it("switches to chat view", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId("nav-chat"));
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
@@ -264,6 +314,7 @@ describe("App", () => {
   it("sets conversationId from chat window", () => {
     render(<App />);
 
+    fireEvent.click(screen.getByTestId("nav-chat"));
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
 
     fireEvent.click(screen.getByTestId("set-conversation"));
@@ -273,6 +324,7 @@ describe("App", () => {
   it("clears conversationId on new attack", () => {
     render(<App />);
 
+    fireEvent.click(screen.getByTestId("nav-chat"));
     fireEvent.click(screen.getByTestId("set-conversation"));
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-123");
 
@@ -283,7 +335,8 @@ describe("App", () => {
   it("sets active target from config page and passes to chat", () => {
     render(<App />);
 
-    // No target initially
+    // Switch to chat and confirm no target initially
+    fireEvent.click(screen.getByTestId("nav-chat"));
     expect(screen.getByTestId("has-target")).toHaveTextContent("no");
 
     // Switch to config and set target
@@ -322,6 +375,36 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByTestId("conversation-id")).toHaveTextContent("attack-conv-1"));
   });
 
+  it("opens attack from home and switches to chat", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-home-attack",
+      conversation_id: "home-conv-1",
+      labels: { operator: "roakey" },
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId("home-open-attack"));
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "chat"
+    );
+    await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-home-attack"));
+    await waitFor(() => expect(screen.getByTestId("conversation-id")).toHaveTextContent("home-conv-1"));
+  });
+
+  it("navigates to config from the home view", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId("home-go-config"));
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "config"
+    );
+    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+  });
+
   it("handles failed attack open gracefully", async () => {
     mockGetAttack.mockRejectedValue(new Error("Not found"));
     render(<App />);
@@ -349,6 +432,9 @@ describe("App", () => {
       expect(mockedVersionApi.getVersion).toHaveBeenCalled();
     });
 
+    // Switch to chat to inspect labels
+    fireEvent.click(screen.getByTestId("nav-chat"));
+
     await waitFor(() => {
       expect(screen.getByTestId("labels-operator")).toHaveTextContent("default_user");
       expect(screen.getByTestId("labels-json")).toHaveTextContent('"custom":"value"');
@@ -364,9 +450,12 @@ describe("App", () => {
 
     render(<App />);
 
+    // Home receives the same labels prop — assert there to avoid racing the
+    // async initLabels effect against a view-change re-render.
     await waitFor(() => {
-      expect(screen.getByTestId("labels-operator")).toHaveTextContent("test.user");
-      expect(screen.getByTestId("labels-json")).toHaveTextContent('"custom":"value"');
+      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      expect(labels).toContain('"operator":"test.user"');
+      expect(labels).toContain('"custom":"value"');
     });
   });
 
@@ -380,8 +469,9 @@ describe("App", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("labels-operator")).toHaveTextContent("override_user");
-      expect(screen.getByTestId("labels-json")).toHaveTextContent('"custom":"value"');
+      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      expect(labels).toContain('"operator":"override_user"');
+      expect(labels).toContain('"custom":"value"');
     });
   });
 
@@ -400,6 +490,8 @@ describe("App", () => {
 
   it("sets active conversation when onSelectConversation is called", () => {
     render(<App />);
+
+    fireEvent.click(screen.getByTestId("nav-chat"));
 
     // First create a conversation to have an attack
     fireEvent.click(screen.getByTestId("set-conversation"));

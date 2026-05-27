@@ -13,7 +13,7 @@ The second way to share data is to use local SQLite Memory (see [here](../memory
 1. Export and import the database as described [here](https://dbeaver.com/docs/dbeaver/Data-transfer/). This allows a lot of flexibility and can include partial exports (for example based on labels or time):
 2. Copy the PyRIT `results/dbdata` directory over; it will contain multi-modal data that the database references.
 
-See https://dbeaver.com/docs/guides/sql_editors/sqlite.html for a more comprehensive guide on using DBeaver with SQLite.
+See https://dbeaver.com/docs/dbeaver/Database-driver-SQLite/ for a more comprehensive guide on using DBeaver with SQLite.
 
 ## Using SQLite and Excel to Query and Visualize Data
 

@@ -32,7 +32,7 @@ PyRIT ships with scenarios organized into the following families:
 
 | Family | Scenarios | Documentation |
 |--------|-----------|---------------|
-| **AIRT** | ContentHarms, Psychosocial, Cyber, Jailbreak, Leakage, Scam | [AIRT Scenarios](airt.ipynb) |
+| **AIRT** | RapidResponse, Psychosocial, Cyber, Jailbreak, Leakage, Scam | [AIRT Scenarios](airt.ipynb) |
 | **Benchmark** | AdversarialBenchmark | [Benchmark Scenarios](benchmark.ipynb) |
 | **Foundry** | RedTeamAgent | [Foundry Scenarios](foundry.ipynb) |
 | **Garak** | Encoding | [Garak Scenarios](garak.ipynb) |

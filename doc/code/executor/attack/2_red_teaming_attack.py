@@ -119,6 +119,7 @@ import os
 from pyrit.auth import get_azure_openai_auth
 from pyrit.datasets import TextJailBreak
 from pyrit.models import Message, MessagePiece
+from pyrit.prompt_target import OpenAIChatTarget
 
 jailbreak = TextJailBreak(template_file_name="dan_1.yaml")
 

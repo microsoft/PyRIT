@@ -131,6 +131,42 @@ async def test_send_prompt_async_edit(
     os.remove(image_piece.original_value)
 
 
+async def test_send_prompt_async_edit_single_image_passes_tuple_not_list(
+    image_target: OpenAIImageTarget,
+):
+    image_piece = get_image_message_piece()
+    text_piece = MessagePiece(
+        role="user",
+        conversation_id=image_piece.conversation_id,
+        original_value="edit this image",
+        converted_value="edit this image",
+        original_value_data_type="text",
+        converted_value_data_type="text",
+    )
+
+    mock_response = MagicMock()
+    mock_image = MagicMock()
+    mock_image.b64_json = "aGVsbG8="
+    mock_response.data = [mock_image]
+
+    with patch.object(image_target._async_client.images, "edit", new_callable=AsyncMock) as mock_edit:
+        mock_edit.return_value = mock_response
+
+        resp = await image_target.send_prompt_async(message=Message([text_piece, image_piece]))
+        assert resp
+
+        call_kwargs = mock_edit.call_args[1]
+        assert isinstance(call_kwargs["image"], tuple)
+        assert len(call_kwargs["image"]) == 3
+
+        path = resp[0].message_pieces[0].original_value
+        if os.path.isfile(path):
+            os.remove(path)
+
+    if os.path.isfile(image_piece.original_value):
+        os.remove(image_piece.original_value)
+
+
 async def test_send_prompt_async_edit_multiple_images(
     image_target: OpenAIImageTarget,
 ):

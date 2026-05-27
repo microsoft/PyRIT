@@ -30,12 +30,20 @@ class ConversationScorer(Scorer, ABC):
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"],
-        enforce_all_pieces_valid=True,
+        enforce_all_pieces_valid=False,
     )
 
     async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
         """
         Scores the entire conversation history by concatenating all messages and passing to the wrapped scorer.
+
+        The synthetic conversation Message is always built as ``text`` regardless of the
+        triggering piece's data type or error state. Errors from individual turns are
+        preserved within the rendered text (either as the rendered error JSON or, with
+        ``score_blocked_content`` enabled, as the partial content). This ensures the wrapped
+        scorer's text-only validator accepts the synthetic message and scores the full
+        conversation, even when the triggering turn was blocked or errored; the wrapped
+        scorer's fallback only fires when the rendered conversation is genuinely unscoreable.
 
         Args:
             message (Message): A message from the conversation to be scored.
@@ -97,9 +105,9 @@ class ConversationScorer(Scorer, ABC):
                     labels=original_piece.labels,  # deprecated
                     prompt_target_identifier=original_piece.prompt_target_identifier,
                     attack_identifier=original_piece.attack_identifier,
-                    original_value_data_type=original_piece.original_value_data_type,
-                    converted_value_data_type=original_piece.converted_value_data_type,
-                    response_error=original_piece.response_error,
+                    original_value_data_type="text",
+                    converted_value_data_type="text",
+                    response_error="none",
                     originator=original_piece.originator,
                     original_prompt_id=(
                         cast("UUID", original_piece.original_prompt_id)

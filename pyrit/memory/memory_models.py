@@ -741,6 +741,19 @@ class AttackResultEntry(Base):
     retry_events_json: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     total_retries = mapped_column(INTEGER, nullable=True, default=0)
 
+    # Attribution / parent linkage (set when the AttackResult is produced
+    # inside an orchestrator that supplies an AttackResultAttribution, e.g. a
+    # Scenario). attribution_parent_id is an indexed foreign key so per-parent
+    # hydration and resume queries are direct lookups (no JSON manifest
+    # required, no orphaning if the orchestrator is interrupted mid-run).
+    # attribution_data is a documented-fixed-schema JSON blob keyed by
+    # parent_collection (str). When the AttackResult is created outside an
+    # orchestrator both fields remain NULL.
+    attribution_parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID, ForeignKey("ScenarioResultEntries.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    attribution_data: Mapped[dict[str, Any | None]] = mapped_column(JSON, nullable=True)
+
     last_response: Mapped["PromptMemoryEntry | None"] = relationship(
         "PromptMemoryEntry",
         foreign_keys=[last_response_id],
@@ -814,6 +827,11 @@ class AttackResultEntry(Base):
             json.dumps([evt.to_dict() for evt in entry.retry_events]) if entry.retry_events else None
         )
         self.total_retries = entry.total_retries
+
+        # Attribution / parent linkage (set by the attack persistence path when
+        # an AttackResultAttribution is present on the AttackContext; otherwise None)
+        self.attribution_parent_id = uuid.UUID(entry.attribution_parent_id) if entry.attribution_parent_id else None
+        self.attribution_data = entry.attribution_data
 
     @staticmethod
     def _get_id_as_uuid(obj: Any) -> uuid.UUID | None:
@@ -927,6 +945,8 @@ class AttackResultEntry(Base):
             error_traceback=self.error_traceback,
             retry_events=retry_events,
             total_retries=self.total_retries or 0,
+            attribution_parent_id=str(self.attribution_parent_id) if self.attribution_parent_id else None,
+            attribution_data=self.attribution_data,
         )
 
 
@@ -988,12 +1008,17 @@ class ScenarioResultEntry(Base):
     completion_time = mapped_column(DateTime, nullable=False)
     timestamp = mapped_column(DateTime, nullable=False)
 
-    # Pointer to failed attack result(s) — avoids scanning all attacks for error info
-    error_attack_result_ids_json: Mapped[str | None] = mapped_column(Unicode, nullable=True)
-
     # Scenario-level error info (persisted so it survives process restarts)
     error_message: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     error_type: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Free-form JSON metadata stamped by the scenario. Currently used to record
+    # ``objective_hashes`` — the objective sha256 set chosen on the
+    # first run, replayed on resume so a fresh ``random.sample`` can't
+    # silently change which objectives the scenario operates on. Column is
+    # named ``scenario_metadata`` because SQLAlchemy's ``DeclarativeBase``
+    # reserves ``metadata`` as a class attribute on the model.
+    scenario_metadata: Mapped[dict[str, Any | None]] = mapped_column(JSON, nullable=True)
 
     def __init__(self, *, entry: ScenarioResult) -> None:
         """
@@ -1044,13 +1069,9 @@ class ScenarioResultEntry(Base):
         # Serialize display_group_map if present
         self.display_group_map_json = json.dumps(entry._display_group_map) if entry._display_group_map else None
 
-        # Serialize error_attack_result_ids if present
-        self.error_attack_result_ids_json = (
-            json.dumps(entry.error_attack_result_ids) if entry.error_attack_result_ids else None
-        )
-
         self.error_message = entry.error_message
         self.error_type = entry.error_type
+        self.scenario_metadata = entry.metadata if entry.metadata else None
 
         self.timestamp = datetime.now(tz=timezone.utc)
 
@@ -1093,11 +1114,6 @@ class ScenarioResultEntry(Base):
         if self.display_group_map_json:
             display_group_map = json.loads(self.display_group_map_json)
 
-        # Deserialize error_attack_result_ids if stored
-        error_attack_result_ids: list[str] | None = None
-        if self.error_attack_result_ids_json:
-            error_attack_result_ids = json.loads(self.error_attack_result_ids_json)
-
         return ScenarioResult(
             id=self.id,
             scenario_identifier=scenario_identifier,
@@ -1110,9 +1126,9 @@ class ScenarioResultEntry(Base):
             number_tries=self.number_tries,
             completion_time=self.completion_time,
             display_group_map=display_group_map,
-            error_attack_result_ids=error_attack_result_ids,
             error_message=self.error_message,
             error_type=self.error_type,
+            metadata=dict(self.scenario_metadata) if self.scenario_metadata else None,
         )
 
     def get_conversation_ids_by_attack_name(self) -> dict[str, list[str]]:

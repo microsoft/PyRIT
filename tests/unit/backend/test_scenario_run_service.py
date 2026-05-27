@@ -19,6 +19,7 @@ from pyrit.backend.services.scenario_run_service import (
     _DEFAULT_MAX_CONCURRENT_RUNS,
     ScenarioRunService,
 )
+from pyrit.models import AttackOutcome
 
 _REGISTRY_PATCH_BASE = "pyrit.registry"
 _MEMORY_PATCH = "pyrit.memory.CentralMemory.get_memory_instance"
@@ -74,7 +75,6 @@ def _make_db_scenario_result(
     sr.display_group_map = {}
     sr.error_message = None
     sr.error_type = None
-    sr.error_attack_result_ids = []
     return sr
 
 
@@ -83,6 +83,9 @@ def mock_memory():
     """Patch CentralMemory.get_memory_instance to return a mock."""
     mock = MagicMock()
     mock.get_scenario_results.return_value = []
+    # Default: no error AttackResults linked to any scenario. Tests that exercise
+    # the error fallback path explicitly set get_attack_results.return_value.
+    mock.get_attack_results.return_value = []
     with patch(_MEMORY_PATCH, return_value=mock):
         yield mock
 
@@ -298,9 +301,14 @@ class TestScenarioRunServiceGetRun:
         assert fetched.status == ScenarioRunStatus.IN_PROGRESS
 
     def test_get_run_falls_back_to_persisted_error(self, mock_memory) -> None:
-        """Test that get_run extracts error from persisted error AttackResult when no active task."""
+        """Test that get_run extracts error from persisted error AttackResult when no active task.
+
+        After the foreign-key-based scenario linkage refactor, error
+        AttackResults are located via
+        ``get_attack_results(scenario_result_id=..., outcome=ERROR)`` rather
+        than via a per-scenario error_attack_result_ids manifest.
+        """
         db_result = _make_db_scenario_result(result_id="sr-fail", run_state="FAILED")
-        db_result.error_attack_result_ids = ["err-ar-1"]
 
         # Mock the error AttackResult lookup
         error_ar = MagicMock()
@@ -315,7 +323,10 @@ class TestScenarioRunServiceGetRun:
         assert fetched is not None
         assert fetched.error == "Connection refused"
         assert fetched.error_type == "ConnectionError"
-        mock_memory.get_attack_results.assert_called_once_with(attack_result_ids=["err-ar-1"])
+        mock_memory.get_attack_results.assert_called_once_with(
+            scenario_result_id="sr-fail",
+            outcome=AttackOutcome.ERROR,
+        )
 
 
 class TestScenarioRunServiceListRuns:
@@ -481,26 +492,12 @@ class TestScenarioRunServiceGetResults:
             service.get_run_results(scenario_result_id="sr-running")
 
     def test_get_results_returns_details_for_completed_run(self, mock_memory) -> None:
-        """Test that get_run_results returns full details for a completed run."""
+        """Test that get_run_results returns the ScenarioResult for a completed run."""
         from pyrit.models import AttackOutcome
 
         mock_attack_result = MagicMock()
-        mock_attack_result.attack_result_id = "ar-1"
-        mock_attack_result.conversation_id = "conv-1"
-        mock_attack_result.objective = "Extract info"
         mock_attack_result.outcome = AttackOutcome.SUCCESS
-        mock_attack_result.outcome_reason = "Model complied"
-        mock_attack_result.last_response = MagicMock(value="Here is the data")
-        mock_attack_result.last_score = MagicMock()
-        mock_attack_result.last_score.get_value.return_value = "1.0"
-        mock_attack_result.executed_turns = 3
-        mock_attack_result.execution_time_ms = 1500
-        mock_attack_result.timestamp = None
-        mock_attack_result.error_message = None
-        mock_attack_result.error_type = None
-        mock_attack_result.error_traceback = None
-        mock_attack_result.total_retries = 0
-        mock_attack_result.retry_events = []
+        mock_attack_result.objective = "Extract info"
 
         db_result = _make_db_scenario_result(
             result_id="sr-123",
@@ -511,16 +508,10 @@ class TestScenarioRunServiceGetResults:
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
-        detail = service.get_run_results(scenario_result_id="sr-123")
+        result = service.get_run_results(scenario_result_id="sr-123")
 
-        assert detail is not None
-        assert detail.run.scenario_result_id == "sr-123"
-        assert detail.run.objective_achieved_rate == 100
-        assert len(detail.attacks) == 1
-        assert detail.attacks[0].atomic_attack_name == "base64_attack"
-        assert detail.attacks[0].success_count == 1
-        assert detail.attacks[0].results[0].objective == "Extract info"
-        assert detail.attacks[0].results[0].outcome == "success"
+        assert result is db_result
+        assert result.attack_results["base64_attack"][0].outcome == AttackOutcome.SUCCESS
 
 
 class TestScenarioRunServiceProgressReporting:

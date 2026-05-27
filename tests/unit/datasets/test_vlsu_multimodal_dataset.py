@@ -93,7 +93,7 @@ class TestVLSUMultimodalDataset:
 
             # Verify sequence order
             assert text_prompt.sequence == 0
-            assert image_prompt.sequence == 1
+            assert image_prompt.sequence == 0
 
             # Verify text prompt
             assert text_prompt.value == "Text that becomes unsafe with image"
@@ -382,7 +382,7 @@ async def test_fetch_and_save_image_raises_when_memory_not_configured():
     mock_serializer._memory = mock_memory
 
     with patch(
-        "pyrit.datasets.seed_datasets.remote.vlsu_multimodal_dataset.data_serializer_factory",
+        "pyrit.datasets.seed_datasets.remote._image_cache.data_serializer_factory",
         return_value=mock_serializer,
     ):
         loader = _VLSUMultimodalDataset()
@@ -392,6 +392,7 @@ async def test_fetch_and_save_image_raises_when_memory_not_configured():
 
 async def test_fetch_and_save_image_returns_cached_path():
     """Test that _fetch_and_save_image_async returns cached path when image already exists."""
+    from pathlib import Path
     from unittest.mock import AsyncMock, MagicMock
 
     mock_serializer = MagicMock()
@@ -404,7 +405,7 @@ async def test_fetch_and_save_image_returns_cached_path():
     mock_serializer.data_sub_directory = "/images"
 
     with patch(
-        "pyrit.datasets.seed_datasets.remote.vlsu_multimodal_dataset.data_serializer_factory",
+        "pyrit.datasets.seed_datasets.remote._image_cache.data_serializer_factory",
         return_value=mock_serializer,
     ):
         loader = _VLSUMultimodalDataset()
@@ -412,6 +413,6 @@ async def test_fetch_and_save_image_returns_cached_path():
             group_id="test_group", image_url="https://example.com/img.png"
         )
 
-    expected_path = "/results/images/ml_vlsu_test_group.png"
+    expected_path = str(Path("/results") / "images" / "ml_vlsu_test_group.png")
     assert result == expected_path
     assert mock_serializer.value == expected_path

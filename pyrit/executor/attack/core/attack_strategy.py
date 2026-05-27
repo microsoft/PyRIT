@@ -36,6 +36,7 @@ from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+    from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
     from pyrit.prompt_target import PromptTarget
 
 AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
@@ -70,8 +71,12 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     _prepended_conversation_override: Optional[list[Message]] = None
     _memory_labels_override: Optional[dict[str, str]] = None
 
-    # Set by the ON_ERROR handler to link error AttackResults to ScenarioResults
-    _error_attack_result_id: str | None = None
+    # Optional attribution from an upstream orchestrator (e.g. Scenario). When
+    # set, the persistence path stamps attribution_parent_id + attribution_data
+    # onto the resulting AttackResult so it can be located later for hydration
+    # and resume. Set by AttackExecutor per-task before scheduling. Stays None
+    # for ad-hoc/direct attack execution outside any orchestrator.
+    _attribution: Optional[AttackResultAttribution] = None
 
     # Convenience properties that delegate to params or overrides
     @property
@@ -223,10 +228,45 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             event_data.result.retry_events = collector.events
             event_data.result.total_retries = len(collector.events)
 
+        # Stamp attribution onto the result before persistence so the
+        # AttackResultEntry row records its lineage. Outside an orchestrator
+        # _attribution is None and both attribution fields stay None.
+        self._apply_attribution(context=event_data.context, result=event_data.result)
+
         self._logger.debug(f"Attack execution completed in {execution_time_ms}ms")
 
         self._log_attack_outcome(event_data.result)
         self._memory.add_attack_results_to_memory(attack_results=[event_data.result])
+
+    @staticmethod
+    def _apply_attribution(
+        *,
+        context: AttackStrategyContextT,
+        result: AttackResult,
+    ) -> None:
+        """
+        Copy attribution from the AttackContext onto the AttackResult.
+
+        Reads ``context._attribution`` (an ``AttackResultAttribution`` set by
+        the AttackExecutor when an upstream orchestrator supplied a factory).
+        When present, writes ``attribution_parent_id`` and a fixed-schema
+        ``attribution_data`` dict onto the result so they round-trip into
+        ``AttackResultEntry``.
+
+        Args:
+            context: The per-task AttackContext.
+            result: The AttackResult that is about to be persisted.
+        """
+        attribution = context._attribution
+        if attribution is None:
+            return
+        result.attribution_parent_id = attribution.parent_id
+        attribution_data: dict[str, Any] = {
+            "parent_collection": attribution.parent_collection,
+        }
+        if attribution.parent_eval_hash is not None:
+            attribution_data["parent_eval_hash"] = attribution.parent_eval_hash
+        result.attribution_data = attribution_data
 
     def _log_attack_outcome(self, result: AttackResult) -> None:
         """
@@ -267,9 +307,6 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         if not error or not context:
             return
 
-        # Clear any stale ID from a previous execution
-        context._error_attack_result_id = None
-
         # Collect retry events (visible via inherited ContextVar copy)
         collector = get_retry_collector()
         retry_events = collector.events if collector else []
@@ -295,10 +332,11 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         if context.start_time:
             error_result.execution_time_ms = int((end_time - context.start_time) * 1000)
 
-        # Persist first, then set the ID on the context so scenario-level code
-        # only sees the reference if the write succeeded.
+        # Stamp attribution onto the error result so it is locatable via the
+        # attribution_parent_id foreign key on resume.
+        self._apply_attribution(context=context, result=error_result)
+
         self._memory.add_attack_results_to_memory(attack_results=[error_result])
-        context._error_attack_result_id = error_result.attack_result_id
 
         self._logger.error(f"Attack failed with {type(error).__name__}: {error}")
 
