@@ -193,6 +193,17 @@ async def test_combined_filters(mock_atr_data: list[dict[str, str]]) -> None:
     assert only.metadata["variation_type"] == "original"
 
 
+async def test_filters_reducing_to_zero_raises(mock_atr_data: list[dict[str, str]]) -> None:
+    # SeedDataset's constructor enforces non-empty seeds, so the loader gets
+    # this behavior for free. Pin the invariant so a refactor that bypasses
+    # the SeedDataset check (e.g. an early return) can't silently regress.
+    loader = _AgentThreatRulesDataset(categories=[ATRCategory.MODEL_ABUSE])
+
+    with patch.object(loader, "_fetch_from_url", return_value=mock_atr_data):
+        with pytest.raises(ValueError, match="cannot be empty"):
+            await loader.fetch_dataset_async()
+
+
 def test_invalid_category_raises() -> None:
     with pytest.raises(ValueError, match="Expected ATRCategory"):
         _AgentThreatRulesDataset(categories=["prompt-injection"])  # type: ignore[list-item]
