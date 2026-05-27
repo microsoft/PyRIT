@@ -378,9 +378,7 @@ class TestScenarioExecution:
         # shared semaphore that caps total in-flight objectives.
         assert len(result.attack_results) == 3
         for run in mock_atomic_attacks:
-            run.run_async.assert_called_once_with(
-                max_concurrency=10, return_partial_on_failure=True, semaphore=ANY
-            )
+            run.run_async.assert_called_once_with(max_concurrency=10, return_partial_on_failure=True, semaphore=ANY)
 
         # Verify results are aggregated correctly by atomic attack name
         assert "attack_run_1" in result.attack_results
@@ -409,9 +407,7 @@ class TestScenarioExecution:
         # 3 atomic attacks, max_concurrency=5 -> parallel path with shared semaphore.
         # Each atomic attack still receives max_concurrency=5 (the semaphore is the real cap).
         for run in mock_atomic_attacks:
-            run.run_async.assert_called_once_with(
-                max_concurrency=5, return_partial_on_failure=True, semaphore=ANY
-            )
+            run.run_async.assert_called_once_with(max_concurrency=5, return_partial_on_failure=True, semaphore=ANY)
 
         # Verify result structure
         assert isinstance(result, ScenarioResult)
@@ -449,7 +445,7 @@ class TestScenarioExecution:
         assert len(result.attack_results["attack_run_3"]) == 1
 
     async def test_run_async_stops_on_error(self, mock_atomic_attacks, sample_attack_results, mock_objective_target):
-        """Test that sequential execution (max_concurrency=1) stops on first failure."""
+        """With max_concurrency=1 the single worker pulls one attack at a time and stops on first failure."""
         mock_atomic_attacks[0].run_async = create_mock_run_async([sample_attack_results[0]])
         mock_atomic_attacks[1].run_async = AsyncMock(side_effect=Exception("Test error"))
         mock_atomic_attacks[2].run_async = create_mock_run_async([sample_attack_results[2]])
@@ -459,7 +455,7 @@ class TestScenarioExecution:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        # Pin to sequential mode so the abort-on-first-failure semantics apply.
+        # Single worker so abort-on-first-failure is deterministic.
         await scenario.initialize_async(objective_target=mock_objective_target, max_concurrency=1)
 
         with pytest.raises(Exception, match="Test error"):
@@ -469,7 +465,7 @@ class TestScenarioExecution:
         mock_atomic_attacks[0].run_async.assert_called_once()
         # Second run should have been attempted
         mock_atomic_attacks[1].run_async.assert_called_once()
-        # Third run should not have been executed (sequential aborts on first failure)
+        # Third run should not have been executed (worker stops pulling after failure)
         mock_atomic_attacks[2].run_async.assert_not_called()
 
     async def test_run_async_fails_without_initialization(self, mock_objective_target):
@@ -1269,9 +1265,7 @@ class TestScenarioParallelExecution:
                     atomic_attack=mock_atomic_attacks[idx],
                 )
                 save_attack_results_to_memory([sample_attack_results[idx]])
-                return AttackExecutorResult(
-                    completed_results=[sample_attack_results[idx]], incomplete_objectives=[]
-                )
+                return AttackExecutorResult(completed_results=[sample_attack_results[idx]], incomplete_objectives=[])
 
             return AsyncMock(side_effect=run_async)
 
@@ -1320,9 +1314,7 @@ class TestScenarioParallelExecution:
                     atomic_attack=mock_atomic_attacks[idx],
                 )
                 save_attack_results_to_memory([sample_attack_results[idx]])
-                return AttackExecutorResult(
-                    completed_results=[sample_attack_results[idx]], incomplete_objectives=[]
-                )
+                return AttackExecutorResult(completed_results=[sample_attack_results[idx]], incomplete_objectives=[])
 
             return AsyncMock(side_effect=run_async)
 
@@ -1344,13 +1336,22 @@ class TestScenarioParallelExecution:
         assert max_in_flight == 3, f"expected all 3 atomic attacks in flight, peaked at {max_in_flight}"
         assert len(result.attack_results) == 3
 
-    async def test_failure_lets_siblings_finish(
+    async def test_failure_lets_inflight_siblings_finish_but_skips_queued(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target
     ):
-        """When one atomic attack fails in parallel mode, in-flight siblings still complete."""
+        """In-flight siblings finish so partial work persists; queued siblings don't start.
+
+        Uses max_concurrency=2 with 3 atomic attacks so the third is unambiguously queued
+        rather than already-started. attack[0] takes a slot and sleeps; attack[1] takes
+        the second slot and fails. attack[2] is queued behind them — once attack[1]'s
+        worker observes the failure and stops pulling, attack[2] must never start.
+        """
+        started_calls: list[str] = []
         completed_calls: list[str] = []
+        bad_started = asyncio.Event()
 
         async def ok_run(idx, name):
+            started_calls.append(name)
             await asyncio.sleep(0.05)
             completed_calls.append(name)
             _stamp_scenario_linkage(
@@ -1358,11 +1359,11 @@ class TestScenarioParallelExecution:
                 atomic_attack=mock_atomic_attacks[idx],
             )
             save_attack_results_to_memory([sample_attack_results[idx]])
-            return AttackExecutorResult(
-                completed_results=[sample_attack_results[idx]], incomplete_objectives=[]
-            )
+            return AttackExecutorResult(completed_results=[sample_attack_results[idx]], incomplete_objectives=[])
 
         async def bad_run(*args, **kwargs):
+            started_calls.append("attack_run_2")
+            bad_started.set()
             raise RuntimeError("boom")
 
         async def side_run_0(*a, **k):
@@ -1382,20 +1383,24 @@ class TestScenarioParallelExecution:
         )
         await scenario.initialize_async(
             objective_target=mock_objective_target,
-            max_concurrency=6,
+            max_concurrency=2,
         )
 
         with pytest.raises(RuntimeError, match="boom"):
             await scenario.run_async()
 
-        # Both non-failing siblings ran to completion before the error was raised.
+        # attack[0] was in-flight when attack[1] failed and must complete cleanly.
         assert "attack_run_1" in completed_calls
-        assert "attack_run_3" in completed_calls
+        # attack[2] was queued behind the failed one and must never have started.
+        assert "attack_run_3" not in started_calls
+        assert "attack_run_3" not in completed_calls
+        # Sanity check: the failure actually happened.
+        assert bad_started.is_set()
 
-    async def test_sequential_when_max_concurrency_is_one(
+    async def test_max_concurrency_one_serializes_via_single_worker(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target
     ):
-        """max_concurrency=1 forces sequential path; each attack gets max_concurrency=1 and no semaphore."""
+        """max_concurrency=1 reduces the worker pool to one worker; attacks still get the shared semaphore."""
         for i, run in enumerate(mock_atomic_attacks):
             run.run_async = create_mock_run_async([sample_attack_results[i]], atomic_attack=run)
 
@@ -1409,4 +1414,4 @@ class TestScenarioParallelExecution:
         await scenario.run_async()
 
         for run in mock_atomic_attacks:
-            run.run_async.assert_called_once_with(max_concurrency=1, return_partial_on_failure=True)
+            run.run_async.assert_called_once_with(max_concurrency=1, return_partial_on_failure=True, semaphore=ANY)

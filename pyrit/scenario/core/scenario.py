@@ -1234,23 +1234,17 @@ class Scenario(ABC):
         # Calculate starting index based on completed attacks
         completed_count = len(self._atomic_attacks) - len(remaining_attacks)
 
-        # When max_concurrency == 1, run atomic attacks serially with abort-on-first-failure
-        # semantics. Otherwise, run them all in parallel sharing a single objective-level
+        # Run atomic attacks through a worker pool sharing a single objective-level
         # Semaphore(max_concurrency) so the global in-flight objective budget never exceeds
         # max_concurrency regardless of how the work is distributed across atomic attacks.
+        # At max_concurrency=1 the pool reduces to a single worker, naturally giving
+        # serial execution with abort-on-first-failure.
         try:
-            if self._max_concurrency <= 1:
-                await self._execute_atomic_attacks_sequential_async(
-                    remaining_attacks=remaining_attacks,
-                    scenario_result_id=scenario_result_id,
-                    completed_count=completed_count,
-                )
-            else:
-                await self._execute_atomic_attacks_parallel_async(
-                    remaining_attacks=remaining_attacks,
-                    scenario_result_id=scenario_result_id,
-                    completed_count=completed_count,
-                )
+            await self._execute_atomic_attacks_parallel_async(
+                remaining_attacks=remaining_attacks,
+                scenario_result_id=scenario_result_id,
+                completed_count=completed_count,
+            )
 
             logger.info(f"Scenario '{self._name}' completed successfully")
 
@@ -1320,57 +1314,6 @@ class Scenario(ABC):
             error_type=type(cause).__name__,
         )
 
-    async def _execute_atomic_attacks_sequential_async(
-        self,
-        *,
-        remaining_attacks: list[AtomicAttack],
-        scenario_result_id: str,
-        completed_count: int,
-    ) -> None:
-        """
-        Execute atomic attacks one at a time. First failure marks the scenario FAILED
-        and raises immediately. This is the default behavior preserved from prior versions.
-
-        Raises:
-            ValueError: If an atomic attack returns incomplete objectives.
-            Exception: Re-raised from a failing atomic attack.
-        """
-        progress = tqdm(
-            remaining_attacks,
-            desc=f"Executing {self._name}",
-            unit="attack",
-            total=len(self._atomic_attacks),
-            initial=completed_count,
-        )
-        total = len(self._atomic_attacks)
-
-        for i, atomic_attack in enumerate(progress, start=completed_count + 1):
-            atomic_attack.set_scenario_result_id(scenario_result_id)
-            logger.info(
-                f"Executing atomic attack {i}/{total} "
-                f"('{atomic_attack.atomic_attack_name}') in scenario '{self._name}'"
-            )
-
-            try:
-                atomic_results = await atomic_attack.run_async(
-                    max_concurrency=self._max_concurrency,
-                    return_partial_on_failure=True,
-                )
-            except Exception as e:
-                logger.error(
-                    f"Atomic attack {i}/{total} "
-                    f"('{atomic_attack.atomic_attack_name}') failed in scenario '{self._name}': {str(e)}"
-                )
-                self._mark_scenario_failed(scenario_result_id=scenario_result_id, error=e)
-                raise
-
-            error = self._partial_result_to_exception(
-                atomic_attack=atomic_attack, atomic_results=atomic_results
-            )
-            if error is not None:
-                self._mark_scenario_failed(scenario_result_id=scenario_result_id, error=error)
-                raise error
-
     async def _execute_atomic_attacks_parallel_async(
         self,
         *,
@@ -1379,15 +1322,17 @@ class Scenario(ABC):
         completed_count: int,
     ) -> None:
         """
-        Execute all remaining atomic attacks concurrently. All in-flight objectives
-        across all atomic attacks share a single ``Semaphore(max_concurrency)`` so the
-        global concurrent-objective budget is bounded by ``max_concurrency`` regardless
-        of how work is distributed across atomic attacks. This means a long-running
-        atomic attack can elastically use freed slots from short ones.
+        Execute remaining atomic attacks concurrently via a worker pool.
 
-        Failure semantics differ from the sequential path: when an atomic attack fails or
-        returns ``has_incomplete``, in-flight siblings are allowed to finish (so their
-        partial work persists for resume), then the first error is re-raised.
+        At most ``max_concurrency`` atomic attacks are in-flight at any time, and all
+        of their per-objective tasks share a single ``Semaphore(max_concurrency)`` so
+        the global concurrent-objective budget never exceeds ``max_concurrency``
+        regardless of how work is distributed across atomic attacks.
+
+        Failure semantics: when an in-flight atomic attack raises or returns
+        ``has_incomplete``, the worker pool stops pulling new atomic attacks from the
+        queue. Already-started atomic attacks are allowed to finish (so their partial
+        work persists for resume), then the first observed error is re-raised.
         """
         shared_semaphore = asyncio.Semaphore(self._max_concurrency)
         pbar = tqdm(
@@ -1405,22 +1350,41 @@ class Scenario(ABC):
             f"(shared max_concurrency={self._max_concurrency}) in scenario '{self._name}'"
         )
 
-        async def run_one(atomic_attack: AtomicAttack) -> tuple[AtomicAttack, Any]:
-            try:
-                result = await atomic_attack.run_async(
-                    max_concurrency=self._max_concurrency,
-                    return_partial_on_failure=True,
-                    semaphore=shared_semaphore,
-                )
-                return atomic_attack, result
-            finally:
-                pbar.update(1)
+        queue: asyncio.Queue[AtomicAttack] = asyncio.Queue()
+        for atomic_attack in remaining_attacks:
+            queue.put_nowait(atomic_attack)
 
+        stop_event = asyncio.Event()
+        outcomes: list[tuple[AtomicAttack, Any] | BaseException] = []
+
+        async def worker() -> None:
+            while not stop_event.is_set():
+                try:
+                    atomic_attack = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                try:
+                    result = await atomic_attack.run_async(
+                        max_concurrency=self._max_concurrency,
+                        return_partial_on_failure=True,
+                        semaphore=shared_semaphore,
+                    )
+                    outcomes.append((atomic_attack, result))
+                    if result.has_incomplete:
+                        stop_event.set()
+                except Exception as exc:
+                    outcomes.append(exc)
+                    stop_event.set()
+                finally:
+                    pbar.update(1)
+
+        # Cap workers at max_concurrency: that's also the objective-budget cap, and it's
+        # the natural place to enforce "don't start new atomic attacks after a failure"
+        # without losing parallelism for the common case where remaining_attacks fits in
+        # the budget.
+        worker_count = min(self._max_concurrency, len(remaining_attacks))
         try:
-            outcomes = await asyncio.gather(
-                *(run_one(aa) for aa in remaining_attacks),
-                return_exceptions=True,
-            )
+            await asyncio.gather(*(worker() for _ in range(worker_count)))
         finally:
             pbar.close()
 
@@ -1431,9 +1395,7 @@ class Scenario(ABC):
                 error = outcome
             else:
                 atomic_attack, atomic_results = outcome
-                error = self._partial_result_to_exception(
-                    atomic_attack=atomic_attack, atomic_results=atomic_results
-                )
+                error = self._partial_result_to_exception(atomic_attack=atomic_attack, atomic_results=atomic_results)
             if error is not None and first_error is None:
                 first_error = error
 
