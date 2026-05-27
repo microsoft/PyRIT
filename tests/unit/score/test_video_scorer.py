@@ -30,9 +30,9 @@ def is_opencv_installed():
 
 
 @pytest.fixture(autouse=True)
-def video_converter_sample_video(patch_central_database):
+def video_converter_sample_video(tmp_path, patch_central_database):
     # Create a sample video file
-    video_path = "test_video.mp4"
+    video_path = str(tmp_path / "test_video.mp4")
     width, height = 512, 512
     if is_opencv_installed():
         import cv2  # noqa: F401
@@ -57,9 +57,6 @@ def video_converter_sample_video(patch_central_database):
     )
     message_piece.id = uuid.uuid4()
     yield message_piece
-    # Cleanup the sample video file
-    if os.path.exists(video_path):
-        os.remove(video_path)
 
 
 class MockTrueFalseScorer(TrueFalseScorer):
