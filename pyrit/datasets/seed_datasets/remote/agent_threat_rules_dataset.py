@@ -233,7 +233,7 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        authors = ["ATR Community"]
+        authors = ["Kuan-Hsin Lin", "ATR Community"]
         source_url = "https://github.com/Agent-Threat-Rule/agent-threat-rules"
 
         seeds: list[SeedPrompt] = []
