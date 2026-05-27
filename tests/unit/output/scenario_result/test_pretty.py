@@ -152,6 +152,66 @@ async def test_write_async_per_group_breakdown_with_empty_group(printer, capsys)
     assert "Success Rate: 0%" in out
 
 
+# --- sort_groups_by_success_rate ---
+
+
+def _group_order(out: str) -> list[str]:
+    """Return the per-group display labels in the order they appear in the output."""
+    marker = "Group: "
+    order: list[str] = []
+    for line in out.splitlines():
+        idx = line.find(marker)
+        if idx == -1:
+            continue
+        order.append(line[idx + len(marker) :].strip())
+    return order
+
+
+async def test_write_async_preserves_insertion_order_by_default(printer, capsys):
+    result = _scenario_result(
+        attack_results={
+            "low": [_attack_result(outcome=AttackOutcome.FAILURE)],
+            "high": [_attack_result(outcome=AttackOutcome.SUCCESS)],
+            "mid": [
+                _attack_result(outcome=AttackOutcome.SUCCESS),
+                _attack_result(outcome=AttackOutcome.FAILURE),
+            ],
+        },
+    )
+    await printer.write_async(result)
+    assert _group_order(capsys.readouterr().out) == ["low", "high", "mid"]
+
+
+async def test_write_async_sorts_groups_by_success_rate_descending(patch_central_database, capsys):
+    sorting_printer = PrettyScenarioResultMemoryPrinter(enable_colors=False, sort_groups_by_success_rate=True)
+    result = _scenario_result(
+        attack_results={
+            "low": [_attack_result(outcome=AttackOutcome.FAILURE)],
+            "high": [_attack_result(outcome=AttackOutcome.SUCCESS)],
+            "mid": [
+                _attack_result(outcome=AttackOutcome.SUCCESS),
+                _attack_result(outcome=AttackOutcome.FAILURE),
+            ],
+        },
+    )
+    await sorting_printer.write_async(result)
+    assert _group_order(capsys.readouterr().out) == ["high", "mid", "low"]
+
+
+async def test_write_async_sort_is_stable_for_ties(patch_central_database, capsys):
+    sorting_printer = PrettyScenarioResultMemoryPrinter(enable_colors=False, sort_groups_by_success_rate=True)
+    result = _scenario_result(
+        attack_results={
+            "first_success": [_attack_result(outcome=AttackOutcome.SUCCESS)],
+            "fail": [_attack_result(outcome=AttackOutcome.FAILURE)],
+            "second_success": [_attack_result(outcome=AttackOutcome.SUCCESS)],
+        },
+    )
+    await sorting_printer.write_async(result)
+    # Tied 100% groups retain their original relative order; 0% group goes last.
+    assert _group_order(capsys.readouterr().out) == ["first_success", "second_success", "fail"]
+
+
 # --- deprecated alias ---
 
 

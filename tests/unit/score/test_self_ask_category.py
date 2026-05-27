@@ -214,3 +214,35 @@ async def test_score_prompts_batch_async(
                     messages=[prompt, prompt2], batch_size=batch_size, objectives=["", ""]
                 )
                 assert len(results) == 2
+
+
+async def test_blocked_response_returns_false_without_invoking_llm(patch_central_database):
+    """Blocked-only responses are filtered by the text-only validator and never reach the LLM.
+
+    The unified TrueFalseScorer fallback returns Score(False) with a 'blocked' rationale.
+    """
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock()
+
+    scorer = SelfAskCategoryScorer(
+        chat_target=chat_target,
+        content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
+    )
+
+    blocked_piece = MessagePiece(
+        role="assistant",
+        original_value="",
+        converted_value="",
+        converted_value_data_type="error",
+        response_error="blocked",
+    )
+    blocked_message = Message(message_pieces=[blocked_piece])
+
+    scores = await scorer.score_async(blocked_message)
+
+    chat_target.send_prompt_async.assert_not_called()
+    assert len(scores) == 1
+    assert scores[0].score_type == "true_false"
+    assert scores[0].score_value == "false"
+    assert "blocked" in scores[0].score_rationale.lower()

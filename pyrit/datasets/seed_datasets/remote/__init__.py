@@ -34,6 +34,12 @@ from pyrit.datasets.seed_datasets.remote.cbt_bench_dataset import (
 from pyrit.datasets.seed_datasets.remote.ccp_sensitive_prompts_dataset import (
     _CCPSensitivePromptsDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.coconot_dataset import (
+    CoCoNotCategory,
+    CoCoNotSplit,
+    _CoCoNotContrastDataset,
+    _CoCoNotRefusalDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset import (
     COMIC_JAILBREAK_TEMPLATES,
     ComicJailbreakTemplateConfig,
@@ -148,6 +154,8 @@ from pyrit.datasets.seed_datasets.remote.xstest_dataset import (
 )  # noqa: F401
 
 __all__ = [
+    "CoCoNotCategory",
+    "CoCoNotSplit",
     "HiXSTestLanguage",
     "PromptIntelCategory",
     "PromptIntelSeverity",
@@ -166,6 +174,8 @@ __all__ = [
     "_CBTBenchDataset",
     "_CCPSensitivePromptsDataset",
     "_CategoricalHarmfulQADataset",
+    "_CoCoNotContrastDataset",
+    "_CoCoNotRefusalDataset",
     "_ComicJailbreakDataset",
     "COMIC_JAILBREAK_TEMPLATES",
     "ComicJailbreakTemplateConfig",

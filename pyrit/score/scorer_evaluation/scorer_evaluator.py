@@ -585,7 +585,21 @@ class HarmScorerEvaluator(ScorerEvaluator):
         diff[np.abs(diff) < 1e-10] = 0.0
 
         abs_error = np.abs(diff)
-        t_statistic, p_value = cast("tuple[float, float]", ttest_1samp(diff, 0))
+        # ttest_1samp on a zero-variance sample returns NaN and emits scipy
+        # divide-by-zero / catastrophic-cancellation warnings. Two degenerate cases
+        # warrant explicit handling (np.allclose tolerates the float noise that
+        # creeps in from `np.median(...)` differences):
+        #   - Perfect agreement (diff effectively all zeros): the null hypothesis
+        #     (mean diff = 0) is exactly satisfied, so report t=0.0, p=1.0.
+        #   - Systematic bias with no variance (constant non-zero diff): the t-test
+        #     is undefined; report NaN explicitly. MAE captures the bias magnitude.
+        if diff.size > 0 and np.allclose(diff, diff[0]):
+            if np.isclose(diff[0], 0.0):
+                t_statistic, p_value = 0.0, 1.0
+            else:
+                t_statistic, p_value = float("nan"), float("nan")
+        else:
+            t_statistic, p_value = cast("tuple[float, float]", ttest_1samp(diff, 0))
 
         num_responses = all_human_scores.shape[1]
         num_human_raters = all_human_scores.shape[0]

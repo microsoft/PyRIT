@@ -57,25 +57,33 @@ if [ "$PYRIT_MODE" = "jupyter" ]; then
     exec jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --notebook-dir=/app/notebooks
 elif [ "$PYRIT_MODE" = "gui" ]; then
     echo "Starting PyRIT GUI on port 8000..."
-    # Use Azure SQL if AZURE_SQL_SERVER is set (injected by Bicep), otherwise default to SQLite.
-    # Note: AZURE_SQL_DB_CONNECTION_STRING is in the .env file (loaded by Python dotenv),
-    # but we use AZURE_SQL_SERVER here because it's a direct env var from the Bicep template.
-    # Build CLI arguments
-    BACKEND_ARGS="--host 0.0.0.0 --port 8000"
+    # The thin backend only takes --host/--port/--config-file/--log-level.
+    # Translate AZURE_SQL_SERVER and PYRIT_INITIALIZER into a runtime config file
+    # so the FastAPI lifespan (ConfigurationLoader) picks them up on startup.
+    RUNTIME_CONFIG=/tmp/pyrit_runtime.yaml
+    {
+        if [ -n "$AZURE_SQL_SERVER" ]; then
+            echo "Using Azure SQL database (server: $AZURE_SQL_SERVER)" >&2
+            echo "memory_db_type: AzureSQL"
+        else
+            echo "Using SQLite database (AZURE_SQL_SERVER not set)" >&2
+            echo "memory_db_type: SQLite"
+        fi
+        if [ -n "$PYRIT_INITIALIZER" ]; then
+            echo "Using initializer: $PYRIT_INITIALIZER" >&2
+            echo "initializers:"
+            # Split comma-separated initializer names into a YAML list.
+            IFS=',' read -ra INIT_NAMES <<<"$PYRIT_INITIALIZER"
+            for name in "${INIT_NAMES[@]}"; do
+                echo "  - $(echo "$name" | xargs)"
+            done
+        fi
+    } >"$RUNTIME_CONFIG"
 
-    if [ -n "$AZURE_SQL_SERVER" ]; then
-        echo "Using Azure SQL database (server: $AZURE_SQL_SERVER)"
-        BACKEND_ARGS="$BACKEND_ARGS --database AzureSQL"
-    else
-        echo "Using SQLite database (AZURE_SQL_SERVER not set)"
-    fi
-
-    if [ -n "$PYRIT_INITIALIZER" ]; then
-        echo "Using initializer: $PYRIT_INITIALIZER"
-        BACKEND_ARGS="$BACKEND_ARGS --initializers $PYRIT_INITIALIZER"
-    fi
-
-    exec python -m pyrit.cli.pyrit_backend $BACKEND_ARGS
+    exec python -m pyrit.backend.pyrit_backend \
+        --host 0.0.0.0 \
+        --port 8000 \
+        --config-file "$RUNTIME_CONFIG"
 else
     echo "ERROR: Invalid PYRIT_MODE '$PYRIT_MODE'. Must be 'jupyter' or 'gui'"
     exit 1

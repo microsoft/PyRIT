@@ -135,9 +135,9 @@ class TargetConfiguration:
     def as_identifier_params(self) -> dict[str, Any]:
         """
         Return a deterministic, serializable representation of this configuration
-        suitable for inclusion in a :class:`ComponentIdentifier`.
+        suitable for inclusion in a ``ComponentIdentifier``.
 
-        The returned dict preserves the structure of :class:`TargetConfiguration`
+        The returned dict preserves the structure of ``TargetConfiguration``
         — capabilities, policy, and pipeline are kept as nested sub-dicts rather
         than flattened into the caller — so the identifier reflects the shape of
         the object it describes.
@@ -174,8 +174,8 @@ class TargetConfiguration:
     @staticmethod
     def _capabilities_to_identifier_params(capabilities: TargetCapabilities) -> dict[str, Any]:
         """
-        Project a :class:`TargetCapabilities` instance into a deterministic dict
-        suitable for inclusion in a :class:`ComponentIdentifier`.
+        Project a ``TargetCapabilities`` instance into a deterministic dict
+        suitable for inclusion in a ``ComponentIdentifier``.
 
         Fields are discovered dynamically via ``dataclasses.fields`` so new
         capability fields are picked up automatically. Set-valued fields (e.g.,

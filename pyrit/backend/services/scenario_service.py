@@ -45,6 +45,7 @@ def _metadata_to_registered_scenario(metadata: ScenarioMetadata) -> RegisteredSc
                 default=repr(p.default) if p.default is not None else None,
                 param_type=p.param_type,
                 choices=p.choices,
+                is_list=p.is_list,
             )
             for p in metadata.supported_parameters
         ],
