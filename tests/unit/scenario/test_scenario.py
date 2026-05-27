@@ -9,6 +9,11 @@ from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
+try:
+    from builtins import ExceptionGroup  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - 3.10 only
+    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef]
+
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
@@ -1254,9 +1259,12 @@ class TestScenarioParallelExecution:
 
         def make_run_async(idx):
             async def run_async(*, executor, **kwargs):
-                # Simulate two objectives per atomic attack, each acquiring the shared executor's semaphore.
+                # Simulate two objectives per atomic attack, each acquiring the shared
+                # executor's semaphore. Use the public-ish accessor so the executor can
+                # rebind the semaphore to the currently running event loop on demand.
+                semaphore = executor._get_semaphore()
                 for _ in range(2):
-                    async with executor._semaphore:
+                    async with semaphore:
                         async with lock:
                             in_flight[0] += 1
                             peak[0] = max(peak[0], in_flight[0])
@@ -1399,6 +1407,70 @@ class TestScenarioParallelExecution:
         assert "attack_run_3" not in completed_calls
         # Sanity check: the failure actually happened.
         assert bad_started.is_set()
+
+    async def test_multiple_inflight_failures_are_grouped_into_exception_group(
+        self, mock_atomic_attacks, sample_attack_results, mock_objective_target
+    ):
+        """When multiple in-flight atomic attacks fail, all failures are surfaced via ExceptionGroup."""
+
+        # All three workers fail concurrently, so all three are in-flight when failure is
+        # observed (no queueing) and every failure should propagate.
+        def make_fail_run(name: str):
+            async def _run(*args, **kwargs):
+                await asyncio.sleep(0.01)
+                raise RuntimeError(f"{name} boom")
+
+            return AsyncMock(side_effect=_run)
+
+        mock_atomic_attacks[0].run_async = make_fail_run("a")
+        mock_atomic_attacks[1].run_async = make_fail_run("b")
+        mock_atomic_attacks[2].run_async = make_fail_run("c")
+
+        scenario = ConcreteScenario(
+            name="Test Scenario",
+            version=1,
+            atomic_attacks_to_return=mock_atomic_attacks,
+        )
+        await scenario.initialize_async(
+            objective_target=mock_objective_target,
+            max_concurrency=3,
+        )
+
+        with pytest.raises(ExceptionGroup) as exc_info:
+            await scenario.run_async()
+
+        # All three failures must be present in the group.
+        messages = sorted(str(e) for e in exc_info.value.exceptions)
+        assert messages == ["a boom", "b boom", "c boom"]
+        assert all(isinstance(e, RuntimeError) for e in exc_info.value.exceptions)
+
+    async def test_single_failure_is_raised_directly_not_wrapped(
+        self, mock_atomic_attacks, sample_attack_results, mock_objective_target
+    ):
+        """A lone failure is re-raised as-is (no ExceptionGroup wrapping for the common case)."""
+        for i in [0, 2]:
+            mock_atomic_attacks[i].run_async = create_mock_run_async(
+                [sample_attack_results[i]], atomic_attack=mock_atomic_attacks[i]
+            )
+
+        async def bad_run(*a, **k):
+            raise RuntimeError("solo boom")
+
+        mock_atomic_attacks[1].run_async = AsyncMock(side_effect=bad_run)
+
+        scenario = ConcreteScenario(
+            name="Test Scenario",
+            version=1,
+            atomic_attacks_to_return=mock_atomic_attacks,
+        )
+        await scenario.initialize_async(
+            objective_target=mock_objective_target,
+            max_concurrency=3,
+        )
+
+        # Bare RuntimeError, not ExceptionGroup.
+        with pytest.raises(RuntimeError, match="solo boom"):
+            await scenario.run_async()
 
     async def test_max_concurrency_one_serializes_via_single_worker(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target

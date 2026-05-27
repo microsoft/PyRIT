@@ -20,6 +20,13 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, cast, get_origin
 
+try:
+    # Built-in on Python 3.11+. Fall back to the ``exceptiongroup`` backport on 3.10
+    # (declared as a conditional dependency in pyproject.toml).
+    from builtins import ExceptionGroup  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - exercised only on 3.10
+    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef]
+
 from tqdm.auto import tqdm
 
 from pyrit.common import REQUIRED_VALUE, Parameter, apply_defaults
@@ -608,10 +615,14 @@ class Scenario(ABC):
             dataset_config (Optional[DatasetConfiguration]): Configuration for the dataset source.
                 Use this to specify dataset names or maximum dataset size from the CLI.
                 If not provided, scenarios use their default_dataset_config().
-            max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 1.
-                This is the total in-flight budget for the scenario, split internally across
-                concurrent atomic attacks so that the cross-atomic and intra-atomic concurrency
-                together stay approximately at this value.
+            max_concurrency (int): Maximum number of concurrent units of work for the scenario.
+                Defaults to 1. A "unit of work" is one parameter-build call (turning a seed
+                group into attack parameters) or one attack execution (running a single
+                ``objective × attack`` pair). All atomic attacks in the scenario share a
+                single ``AttackExecutor`` whose internal semaphore caps in-flight units at
+                ``max_concurrency``: e.g. ``max_concurrency=4`` means at most 4 such units
+                are in flight at any time, regardless of how many atomic attacks or
+                objectives the scenario has.
             max_retries (int): Maximum number of automatic retries if the scenario raises an exception.
                 Set to 0 (default) for no automatic retries. If set to a positive number,
                 the scenario will automatically retry up to this many times after an exception.
@@ -1334,7 +1345,9 @@ class Scenario(ABC):
         Failure semantics: when an in-flight atomic attack raises or returns
         ``has_incomplete``, the worker pool stops pulling new atomic attacks from the
         queue. Already-started atomic attacks are allowed to finish (so their partial
-        work persists for resume), then the first observed error is re-raised.
+        work persists for resume). If more than one in-flight attack ends up failing,
+        every failure is surfaced: a single failure is re-raised as-is, multiple
+        failures are wrapped in an ``ExceptionGroup`` so callers see all of them.
         """
         shared_executor = AttackExecutor(max_concurrency=self._max_concurrency)
         pbar = tqdm(
@@ -1389,7 +1402,7 @@ class Scenario(ABC):
         finally:
             pbar.close()
 
-        first_error: BaseException | None = None
+        errors: list[BaseException] = []
         for outcome in outcomes:
             if isinstance(outcome, BaseException):
                 logger.error(f"Atomic attack failed in scenario '{self._name}': {str(outcome)}")
@@ -1397,9 +1410,17 @@ class Scenario(ABC):
             else:
                 atomic_attack, atomic_results = outcome
                 error = self._partial_result_to_exception(atomic_attack=atomic_attack, atomic_results=atomic_results)
-            if error is not None and first_error is None:
-                first_error = error
+            if error is not None:
+                errors.append(error)
 
-        if first_error is not None:
-            self._mark_scenario_failed(scenario_result_id=scenario_result_id, error=first_error)
-            raise first_error
+        if errors:
+            # Single failure: re-raise as-is to keep simple cases readable. Multiple
+            # failures: wrap in ExceptionGroup so the caller sees every one — logging
+            # alone is easy to miss.
+            final_error: BaseException = (
+                errors[0]
+                if len(errors) == 1
+                else ExceptionGroup(f"Multiple atomic attacks failed in scenario '{self._name}'", errors)
+            )
+            self._mark_scenario_failed(scenario_result_id=scenario_result_id, error=final_error)
+            raise final_error

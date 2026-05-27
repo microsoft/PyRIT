@@ -14,7 +14,6 @@ have a common interface for scenarios.
 """
 
 import logging
-import warnings
 from typing import TYPE_CHECKING, Any, Optional
 
 from pyrit.common.deprecation import print_deprecation_message
@@ -304,7 +303,7 @@ class AtomicAttack:
         *,
         executor: AttackExecutor | None = None,
         return_partial_on_failure: bool = True,
-        max_concurrency: int = 1,
+        max_concurrency: int | None = None,
         **attack_params: Any,
     ) -> AttackExecutorResult[AttackResult]:
         """
@@ -332,10 +331,10 @@ class AtomicAttack:
             return_partial_on_failure (bool): If True, returns partial results even when
                 some objectives don't complete execution. If False, raises an exception on
                 any execution failure. Defaults to True.
-            max_concurrency (int): **Deprecated.** Will be removed in 0.16.0. Pass
-                ``executor=AttackExecutor(max_concurrency=...)`` instead. When
-                ``executor`` is provided this value is ignored. When ``executor`` is
-                ``None`` and this is left at the default of 1, no warning is emitted.
+            max_concurrency (int | None): **Deprecated.** Will be removed in 0.16.0. Pass
+                ``executor=AttackExecutor(max_concurrency=...)`` instead. Passing any
+                value here emits a ``DeprecationWarning``. When ``executor`` is also
+                provided, this value is silently ignored.
             **attack_params: Additional parameters to pass to the attack strategy.
 
         Returns:
@@ -345,17 +344,15 @@ class AtomicAttack:
         Raises:
             ValueError: If the attack execution fails completely and return_partial_on_failure=False.
         """
-        if max_concurrency != 1:
-            base_msg = (
-                "AtomicAttack.run_async(max_concurrency=...) is deprecated and will be "
-                "removed in 0.16.0. Pass executor=AttackExecutor(max_concurrency=...) instead."
+        if max_concurrency is not None:
+            print_deprecation_message(
+                old_item="AtomicAttack.run_async(max_concurrency=...)",
+                new_item="AtomicAttack.run_async(executor=AttackExecutor(max_concurrency=...))",
+                removed_in="0.16.0",
             )
-            if executor is not None:
-                base_msg += " The provided max_concurrency value is being ignored."
-            warnings.warn(base_msg, DeprecationWarning, stacklevel=2)
 
         if executor is None:
-            executor = AttackExecutor(max_concurrency=max_concurrency)
+            executor = AttackExecutor(max_concurrency=max_concurrency if max_concurrency is not None else 1)
 
         logger.info(
             f"Starting atomic attack execution with {len(self._seed_groups)} seed groups "
