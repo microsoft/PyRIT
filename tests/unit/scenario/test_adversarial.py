@@ -420,6 +420,19 @@ class TestBenchmarkRuntime:
             await scenario._get_atomic_attacks_async()
 
     @pytest.mark.asyncio
+    async def test_raises_when_constructed_without_adversarial_models(self, mock_objective_target):
+        """Construction with ``adversarial_models=None`` (for registry introspection) is allowed,
+        but actually running the scenario must surface a clear error."""
+        with patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer:
+            mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
+            scenario = AdversarialBenchmark()  # no adversarial_models -> introspection-only
+
+        # The validation fires the first time the scenario is asked to build attacks,
+        # which happens inside ``initialize_async``.
+        with pytest.raises(ValueError, match="adversarial_models"):
+            await scenario.initialize_async(objective_target=mock_objective_target)
+
+    @pytest.mark.asyncio
     async def test_multiple_datasets_multiplies_attacks(self, mock_objective_target, single_adversarial_model):
         """1 model x N_light_techniques x 2 datasets = 2 * N_light atomic attacks (default ``light``)."""
         two_datasets = {
