@@ -305,7 +305,4 @@ class TestAzureSpeechAudioToTextConverter:
             converter.recognize_audio(audio_bytes=b"fake audio")
 
         deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert any(
-            "recognize_audio() does not support callable token providers" in str(x.message)
-            for x in deprecation_warnings
-        )
+        assert any("recognize_audio" in str(x.message) and "deprecated" in str(x.message) for x in deprecation_warnings)

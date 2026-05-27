@@ -19,6 +19,7 @@
 #
 # Many of these datasets come from published research, including
 # Aegis [@ghosh2025aegis],
+# Agent Threat Rules [@atr2026],
 # ALERT [@tedeschi2024alert],
 # BeaverTails [@ji2023beavertails],
 # CBT-Bench [@zhang2024cbtbench],
@@ -39,6 +40,7 @@
 # PKU-SafeRLHF [@ji2024pkusaferlhf],
 # SALAD-Bench [@li2024saladbench],
 # SimpleSafetyTests [@vidgen2023simplesafetytests],
+# SIUO [@wang2025siuo],
 # SORRY-Bench [@xie2024sorrybench],
 # SOSBench [@jiang2025sosbench],
 # TDC23 [@mazeika2023tdc],
