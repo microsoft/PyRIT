@@ -24,9 +24,12 @@ from pyrit.models import (
     MessagePiece,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
+from pyrit.prompt_target.common.realtime_audio import (
+    REALTIME_COMMITTED_ITEM_ID_KEY,
+    StreamingBargeInTarget,
+)
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.prompt_target.openai.openai_realtime_target import _REALTIME_COMMITTED_ITEM_ID_KEY
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -35,7 +38,6 @@ if TYPE_CHECKING:
     from pyrit.prompt_target.common.realtime_audio import (
         CommittedEvent,
     )
-    from pyrit.prompt_target.openai.openai_realtime_target import RealtimeTarget
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +104,20 @@ def _trim_snapshot_to_speech(
     Returns:
         The trimmed buffer; returns ``raw_buffer`` unchanged when ``audio_start_ms``
         is None or 0, or when the computed trim would leave nothing.
+
+    Raises:
+        ValueError: If ``audio_start_ms`` is negative, or if ``sample_rate_hz``,
+            ``sample_width_bytes``, or ``channels`` is not positive.
     """
-    if not audio_start_ms or audio_start_ms <= 0:
+    if sample_rate_hz <= 0 or sample_width_bytes <= 0 or channels <= 0:
+        raise ValueError(
+            f"sample_rate_hz, sample_width_bytes, and channels must all be positive; "
+            f"got sample_rate_hz={sample_rate_hz}, sample_width_bytes={sample_width_bytes}, channels={channels}"
+        )
+    if audio_start_ms is None or audio_start_ms == 0:
         return raw_buffer
+    if audio_start_ms < 0:
+        raise ValueError(f"audio_start_ms must be >= 0, got {audio_start_ms}")
     bytes_per_ms = sample_rate_hz * sample_width_bytes * channels // 1000
     start_ms = max(0, audio_start_ms - prefix_padding_ms)
     start_byte = start_ms * bytes_per_ms
@@ -150,7 +163,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         Initialize the streaming barge-in attack.
 
         Args:
-            objective_target: Target to attack. Must declare ``STREAMING_BARGE_IN`` capability.
+            objective_target: Target to attack. Must support ``STREAMING_BARGE_IN`` capability.
             attack_converter_config: Converters applied to each committed user turn.
             prompt_normalizer: Normalizer used to apply converters and persist messages.
                 Defaults to a fresh ``PromptNormalizer``.
@@ -229,7 +242,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         Raises:
             ValueError: If ``context.audio_chunks`` is ``None``.
         """
-        target = cast("RealtimeTarget", self._objective_target)
+        target = cast("StreamingBargeInTarget", self._objective_target)
         if context.audio_chunks is None:
             raise ValueError("BargeInAttackContext.audio_chunks must be set before executing the attack.")
 
@@ -290,7 +303,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         event: CommittedEvent,
         context: BargeInAttackContext[Any],
         state: _BargeInRunState,
-        target: RealtimeTarget,
+        target: StreamingBargeInTarget,
     ) -> Message:
         """
         Run one convert-and-respond turn for a VAD-committed user audio buffer.
@@ -349,13 +362,13 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             converted_value=snapshot_path,
             converted_value_data_type="audio_path",
             conversation_id=context.conversation_id,
-            prompt_metadata={_REALTIME_COMMITTED_ITEM_ID_KEY: event.item_id},
+            prompt_metadata={REALTIME_COMMITTED_ITEM_ID_KEY: event.item_id},
         )
         message = Message(message_pieces=[piece])
 
         return await self._prompt_normalizer.send_prompt_async(
             message=message,
-            target=target,
+            target=self._objective_target,
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
             conversation_id=context.conversation_id,

@@ -14,12 +14,12 @@ from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import RealtimeTarget, ServerVadConfig
 from pyrit.prompt_target.common.realtime_audio import (
+    REALTIME_COMMITTED_ITEM_ID_KEY,
     CommittedEvent,
     RealtimeTargetResult,
     RealtimeTurnState,
 )
 from pyrit.prompt_target.openai.openai_realtime_target import (
-    _REALTIME_COMMITTED_ITEM_ID_KEY,
     _OpenAIRealtimeDispatcher,
     _StreamingConversationState,
 )
@@ -1264,7 +1264,7 @@ def _make_streaming_request(
     """Construct a streaming-mode request Message matching the attack's contract."""
     metadata: dict[str, Any] = {}
     if committed_item_id is not None:
-        metadata[_REALTIME_COMMITTED_ITEM_ID_KEY] = committed_item_id
+        metadata[REALTIME_COMMITTED_ITEM_ID_KEY] = committed_item_id
     piece = MessagePiece(
         role="user",
         original_value=wav_path,

@@ -17,8 +17,7 @@ from pyrit.executor.attack.streaming.barge_in import _trim_snapshot_to_speech
 from pyrit.models import AttackOutcome, Message, MessagePiece
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import RealtimeTarget
-from pyrit.prompt_target.common.realtime_audio import CommittedEvent
-from pyrit.prompt_target.openai.openai_realtime_target import _REALTIME_COMMITTED_ITEM_ID_KEY
+from pyrit.prompt_target.common.realtime_audio import REALTIME_COMMITTED_ITEM_ID_KEY, CommittedEvent
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -93,6 +92,13 @@ def test_constructor_accepts_custom_max_post_stream_wait_seconds(vad_target):
     """max_post_stream_wait_seconds is configurable per-instance."""
     attack = BargeInAttack(objective_target=vad_target, max_post_stream_wait_seconds=120.0)
     assert attack._max_post_stream_wait_seconds == 120.0
+
+
+def test_realtime_target_satisfies_streaming_barge_in_protocol(vad_target):
+    """RealtimeTarget structurally implements StreamingBargeInTarget so the cast is safe."""
+    from pyrit.prompt_target.common.realtime_audio import StreamingBargeInTarget
+
+    assert isinstance(vad_target, StreamingBargeInTarget)
 
 
 # ---- Context validation ----------------------------------------------------------------------
@@ -301,7 +307,7 @@ async def test_perform_async_calls_send_prompt_async_on_commit(vad_target):
     sent_message = kwargs["message"]
     assert sent_message.message_pieces[0].converted_value_data_type == "audio_path"
     assert sent_message.message_pieces[0].conversation_id == ctx.conversation_id
-    assert sent_message.message_pieces[0].prompt_metadata[_REALTIME_COMMITTED_ITEM_ID_KEY] == "item_42"
+    assert sent_message.message_pieces[0].prompt_metadata[REALTIME_COMMITTED_ITEM_ID_KEY] == "item_42"
     assert kwargs["target"] is vad_target
     assert kwargs["request_converter_configurations"] == attack._request_converters
     assert kwargs["conversation_id"] == ctx.conversation_id
@@ -533,6 +539,36 @@ def test_trim_passes_through_when_audio_start_ms_zero():
         )
         is buffer
     )
+
+
+def test_trim_raises_on_negative_audio_start_ms():
+    """A negative audio_start_ms is a server contract violation, not 'unknown'."""
+    buffer = b"\xff" * 480
+    with pytest.raises(ValueError, match="audio_start_ms must be >= 0"):
+        _trim_snapshot_to_speech(
+            raw_buffer=buffer,
+            sample_rate_hz=24000,
+            audio_start_ms=-100,
+            prefix_padding_ms=300,
+        )
+
+
+@pytest.mark.parametrize(
+    "sample_rate_hz, sample_width_bytes, channels",
+    [(0, 2, 1), (24000, 0, 1), (24000, 2, 0), (-100, 2, 1), (24000, -1, 1)],
+)
+def test_trim_raises_on_nonpositive_format_args(sample_rate_hz, sample_width_bytes, channels):
+    """Non-positive sample rate, width, or channel count signals a misconfiguration; raise."""
+    buffer = b"\xff" * 480
+    with pytest.raises(ValueError, match="must all be positive"):
+        _trim_snapshot_to_speech(
+            raw_buffer=buffer,
+            sample_rate_hz=sample_rate_hz,
+            audio_start_ms=100,
+            prefix_padding_ms=0,
+            sample_width_bytes=sample_width_bytes,
+            channels=channels,
+        )
 
 
 def test_trim_clamps_when_audio_start_ms_less_than_prefix_padding():

@@ -24,6 +24,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.realtime_audio import (
+    REALTIME_COMMITTED_ITEM_ID_KEY,
     CommittedEvent,
     RealtimeEventDispatcher,
     RealtimeTargetResult,
@@ -41,13 +42,6 @@ logger = logging.getLogger(__name__)
 # See: https://platform.openai.com/docs/guides/realtime-conversations#voice-options
 # For best quality, OpenAI recommends using "marin" or "cedar".
 RealTimeVoice = Literal["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"]
-
-
-#: Key under which the streaming attack stashes the server-side item id of the
-#: most recently committed user audio buffer. Read by
-#: :meth:`RealtimeTarget._send_streaming_turn_async` to identify which item to
-#: delete when swapping in converter-transformed audio.
-_REALTIME_COMMITTED_ITEM_ID_KEY = "_realtime_committed_item_id"
 
 
 @dataclass
@@ -440,11 +434,11 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
                 # Only swap when converters ran. Otherwise the server's raw committed
                 # buffer is what we want and a swap would be wasted work.
                 if request.converter_identifiers:
-                    item_id = request.prompt_metadata.get(_REALTIME_COMMITTED_ITEM_ID_KEY)
+                    item_id = request.prompt_metadata.get(REALTIME_COMMITTED_ITEM_ID_KEY)
                     if not item_id:
                         raise ValueError(
                             "Streaming request with converters requires the server's committed "
-                            f"item id in piece.prompt_metadata[{_REALTIME_COMMITTED_ITEM_ID_KEY!r}]."
+                            f"item id in piece.prompt_metadata[{REALTIME_COMMITTED_ITEM_ID_KEY!r}]."
                         )
                     await self.swap_user_audio_async(
                         connection=connection,
