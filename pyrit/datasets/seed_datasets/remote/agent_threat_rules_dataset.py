@@ -110,7 +110,7 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
     the payload targets (``user_input``, ``content``, ``tool_args``,
     ``tool_name``, ``tool_response``, ``agent_output``).
 
-    Reference: https://github.com/Agent-Threat-Rule/agent-threat-rules
+    Reference: [@atr2026].
     License: MIT.
 
     Each entry is mapped to a SeedPrompt with the payload as ``value``. The
