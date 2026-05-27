@@ -19,6 +19,7 @@ async def test_print_summary_async_emits_deprecation_warning_and_delegates():
 
     class _MinimalPrinter(ScenarioResultPrinterBase):
         def __init__(self) -> None:
+            super().__init__()
             self.write_async = AsyncMock()
 
         async def render_async(self, result: ScenarioResult) -> str:

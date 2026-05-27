@@ -64,6 +64,7 @@ def test_scorer_printer_complete_subclass_can_be_instantiated():
 def _make_complete_printer() -> ScorerPrinterBase:
     class CompletePrinter(ScorerPrinterBase):
         def __init__(self) -> None:
+            super().__init__()
             self.write_async = AsyncMock()
 
         def _get_objective_metrics(self, *, scorer_identifier: ComponentIdentifier):
