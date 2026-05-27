@@ -341,9 +341,13 @@ class Scenario(ABC):
         factories = registry.get_factories()
         if not factories:
             raise RuntimeError(
-                "AttackTechniqueRegistry is empty. Run ScenarioTechniqueInitializer "
-                "(pyrit.setup.initializers.components.scenario_techniques) before "
-                "executing scenarios."
+                "AttackTechniqueRegistry is empty. Register attack technique factories before "
+                "executing scenarios — for example by running the default "
+                "ScenarioTechniqueInitializer "
+                "(pyrit.setup.initializers.components.scenario_techniques), "
+                "running another initializer that calls "
+                "AttackTechniqueRegistry.register_from_factories(...), or registering "
+                "factories directly via AttackTechniqueRegistry.get_registry_singleton()."
             )
         return factories
 

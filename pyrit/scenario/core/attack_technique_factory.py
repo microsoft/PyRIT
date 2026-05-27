@@ -27,18 +27,20 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Union
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
+from pyrit.executor.attack import PromptSendingAttack
+from pyrit.executor.attack.core.attack_config import (
+    AttackAdversarialConfig,
+    AttackScoringConfig,
+)
 from pyrit.identifiers import ComponentIdentifier, Identifiable, build_seed_identifier
 from pyrit.models import SeedAttackTechniqueGroup, SeedSimulatedConversation
 from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemPromptPaths
 from pyrit.scenario.core.attack_technique import AttackTechnique
+from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 
 if TYPE_CHECKING:
     from pyrit.executor.attack import AttackStrategy
-    from pyrit.executor.attack.core.attack_config import (
-        AttackAdversarialConfig,
-        AttackConverterConfig,
-        AttackScoringConfig,
-    )
+    from pyrit.executor.attack.core.attack_config import AttackConverterConfig
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
@@ -166,19 +168,33 @@ class AttackTechniqueFactory(Identifiable):
                 after the simulated conversation. Defaults to
                 ``NextMessageSystemPromptPaths.DIRECT.value``.
             num_turns: Number of simulated conversation turns. Defaults to 3.
-            strategy_tags: Forwarded to ``__init__``.
-            attack_kwargs: Forwarded to ``__init__``.
-            adversarial_config: Forwarded to ``__init__``.
-            uses_adversarial: Forwarded to ``__init__``.
-            scorer_override_policy: Forwarded to ``__init__``.
+            strategy_tags: Tags controlling which ``ScenarioStrategy`` aggregates
+                include this technique (e.g. ``"single_turn"``, ``"multi_turn"``,
+                ``"default"``). Forwarded to the factory constructor.
+            attack_kwargs: Keyword arguments forwarded to the attack constructor.
+                Must not include ``objective_target`` (provided at create time)
+                or ``attack_adversarial_config`` (use ``adversarial_config``
+                instead). Forwarded to the factory constructor.
+            adversarial_config: Pre-built adversarial config injected into the
+                attack at ``create()`` time if the attack class accepts
+                ``attack_adversarial_config``. To bake in a bare
+                ``PromptTarget``, wrap it as
+                ``AttackAdversarialConfig(target=chat)``. Forwarded to the
+                factory constructor.
+            uses_adversarial: Whether this technique drives an adversarial chat
+                during execution. ``None`` auto-derives from the attack class
+                constructor signature and seed-technique shape. Forwarded to
+                the factory constructor.
+            scorer_override_policy: Policy applied when a scenario's scorer is
+                incompatible with the attack's ``attack_scoring_config`` type
+                annotation. Defaults to ``WARN``. Forwarded to the factory
+                constructor.
 
         Returns:
             AttackTechniqueFactory: A new factory whose ``seed_technique`` is the
                 wrapped simulated conversation.
         """
         if attack_class is None:
-            from pyrit.executor.attack import PromptSendingAttack
-
             attack_class = PromptSendingAttack
         if adversarial_chat_system_prompt_path is None:
             adversarial_chat_system_prompt_path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / f"{name}.yaml"
@@ -398,9 +414,6 @@ class AttackTechniqueFactory(Identifiable):
     @staticmethod
     def _resolve_default_adversarial_config() -> AttackAdversarialConfig:
         """Lazily resolve the default adversarial chat target and wrap it in a config."""
-        from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig
-        from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
-
         return AttackAdversarialConfig(target=get_default_adversarial_target())
 
     def _get_accepted_params(self) -> set[str]:
@@ -486,8 +499,6 @@ class AttackTechniqueFactory(Identifiable):
         Returns:
             The narrowed type if the annotation is narrower than the base, else None.
         """
-        from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-
         try:
             # get_type_hints resolves string annotations from __future__ annotations
             hints = typing.get_type_hints(
