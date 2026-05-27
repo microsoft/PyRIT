@@ -182,15 +182,14 @@ for p in example_declarations:
 # CLI uses is callable programmatically:
 
 # %%
-from pyrit.cli.frontend_core import format_scenario_metadata
-from pyrit.registry import ScenarioRegistry
+from pyrit.backend.services.scenario_service import get_scenario_service
+from pyrit.cli._output import print_scenario_list
 
 # Show scam (declares a parameter) and red_team_agent (none), so the
 # Supported Parameters section is visible in one and absent in the other.
 demo_names = {"airt.scam", "foundry.red_team_agent"}
-for metadata in ScenarioRegistry.get_registry_singleton().list_metadata():
-    if metadata.registry_name in demo_names:
-        format_scenario_metadata(scenario_metadata=metadata)
+response = await get_scenario_service().list_scenarios_async(limit=200)  # type: ignore
+print_scenario_list(items=[s.model_dump() for s in response.items if s.scenario_name in demo_names])
 
 # %% [markdown]
 # Notice the `Supported Parameters:` section under `airt.scam`. It's absent

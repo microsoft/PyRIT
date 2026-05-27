@@ -36,7 +36,7 @@ class SelfAskCategoryScorer(TrueFalseScorer):
     There is also a false category that is used if the MessagePiece does not fit any of the categories.
     """
 
-    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator()
+    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
     TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
     def __init__(

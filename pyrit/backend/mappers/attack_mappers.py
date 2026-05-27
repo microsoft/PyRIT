@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import logging
 import mimetypes
-import os
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional, cast
 from urllib.parse import quote, urlparse
 
@@ -178,7 +178,7 @@ def _resolve_media_url(*, value: Optional[str], data_type: str) -> Optional[str]
     if value.startswith(("http://", "https://", "data:")):
         return value
     # Local file path — construct a media endpoint URL
-    if os.path.isfile(value):
+    if Path(value).is_file():
         return f"/api/media?path={quote(str(value))}"
     return value
 
@@ -373,7 +373,7 @@ def _build_filename(
         source = value
         if source.startswith("http"):
             source = urlparse(source).path
-        ext = os.path.splitext(source)[1]  # e.g. ".png"
+        ext = Path(source).suffix  # e.g. ".png"
 
     if not ext:
         # Fallback: guess from mime type based on data type prefix

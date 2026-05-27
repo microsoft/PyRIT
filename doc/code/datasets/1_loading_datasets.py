@@ -19,9 +19,12 @@
 #
 # Many of these datasets come from published research, including
 # Aegis [@ghosh2025aegis],
+# Agent Threat Rules [@atr2026],
 # ALERT [@tedeschi2024alert],
 # BeaverTails [@ji2023beavertails],
 # CBT-Bench [@zhang2024cbtbench],
+# CategoricalHarmfulQA (CatQA) [@bhardwaj2024homer],
+# CoCoNot [@brahman2024coconot],
 # DarkBench [@darkbench2025],
 # Do Anything Now [@shen2023donotanything],
 # Do-Not-Answer [@wang2023donotanswer],
