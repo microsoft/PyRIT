@@ -72,7 +72,6 @@ class AttackTechniqueFactory(Identifiable):
         attack_class: type[AttackStrategy[Any, Any]],
         strategy_tags: list[str] | None = None,
         attack_kwargs: dict[str, Any] | None = None,
-        adversarial_chat: PromptTarget | None = None,
         adversarial_config: AttackAdversarialConfig | None = None,
         seed_technique: SeedAttackTechniqueGroup | None = None,
         uses_adversarial: bool | None = None,
@@ -90,15 +89,13 @@ class AttackTechniqueFactory(Identifiable):
                 ``"multi_turn"``, ``"default"``).
             attack_kwargs: Keyword arguments to pass to the attack constructor.
                 Must not include ``objective_target`` (provided at create time)
-                or ``attack_adversarial_config`` (use ``adversarial_chat`` or
-                ``adversarial_config`` instead).
-            adversarial_chat: Convenience kwarg — adversarial chat target that
-                is wrapped into an ``AttackAdversarialConfig`` internally.
-                Mutually exclusive with ``adversarial_config``.
-            adversarial_config: Pre-built adversarial config. Mutually
-                exclusive with ``adversarial_chat``. Injected into the attack
-                at ``create()`` time if the attack class accepts
-                ``attack_adversarial_config``.
+                or ``attack_adversarial_config`` (use ``adversarial_config``
+                instead).
+            adversarial_config: Pre-built adversarial config. Injected into
+                the attack at ``create()`` time if the attack class accepts
+                ``attack_adversarial_config``. To bake in a bare
+                ``PromptTarget``, wrap it as
+                ``AttackAdversarialConfig(target=chat)``.
             seed_technique: Optional technique seed group attached to created
                 techniques.
             uses_adversarial: Whether this technique drives an adversarial
@@ -112,22 +109,16 @@ class AttackTechniqueFactory(Identifiable):
         Raises:
             TypeError: If any kwarg name is not a valid constructor parameter,
                 or if the attack class constructor uses ``**kwargs``.
-            ValueError: If both ``adversarial_chat`` and ``adversarial_config``
-                are provided, if ``objective_target`` or
+            ValueError: If ``objective_target`` or
                 ``attack_adversarial_config`` is included in ``attack_kwargs``,
-                or if ``uses_adversarial=False`` while an adversarial chat is
-                wired.
+                or if ``uses_adversarial=False`` while an adversarial config
+                is wired.
         """
-        if adversarial_chat is not None and adversarial_config is not None:
-            raise ValueError(
-                f"Factory '{name}': adversarial_chat and adversarial_config are mutually exclusive."
-            )
-
         self._name = name
         self._attack_class = attack_class
         self._strategy_tags = list(strategy_tags) if strategy_tags else []
         self._attack_kwargs = dict(attack_kwargs) if attack_kwargs else {}
-        self._adversarial_config = adversarial_config or self._build_adversarial_config(adversarial_chat)
+        self._adversarial_config = adversarial_config
         self._adversarial_config_was_explicit = self._adversarial_config is not None
         self._seed_technique = seed_technique
         self._scorer_override_policy = scorer_override_policy
@@ -150,7 +141,6 @@ class AttackTechniqueFactory(Identifiable):
         num_turns: int = 3,
         strategy_tags: list[str] | None = None,
         attack_kwargs: dict[str, Any] | None = None,
-        adversarial_chat: PromptTarget | None = None,
         adversarial_config: AttackAdversarialConfig | None = None,
         uses_adversarial: bool | None = None,
         scorer_override_policy: ScorerOverridePolicy = ScorerOverridePolicy.WARN,
@@ -178,7 +168,6 @@ class AttackTechniqueFactory(Identifiable):
             num_turns: Number of simulated conversation turns. Defaults to 3.
             strategy_tags: Forwarded to ``__init__``.
             attack_kwargs: Forwarded to ``__init__``.
-            adversarial_chat: Forwarded to ``__init__``.
             adversarial_config: Forwarded to ``__init__``.
             uses_adversarial: Forwarded to ``__init__``.
             scorer_override_policy: Forwarded to ``__init__``.
@@ -210,23 +199,11 @@ class AttackTechniqueFactory(Identifiable):
             attack_class=attack_class,
             strategy_tags=strategy_tags,
             attack_kwargs=attack_kwargs,
-            adversarial_chat=adversarial_chat,
             adversarial_config=adversarial_config,
             seed_technique=seed_technique,
             uses_adversarial=uses_adversarial,
             scorer_override_policy=scorer_override_policy,
         )
-
-    @staticmethod
-    def _build_adversarial_config(
-        adversarial_chat: PromptTarget | None,
-    ) -> AttackAdversarialConfig | None:
-        """Wrap a bare ``PromptTarget`` into an ``AttackAdversarialConfig``."""
-        if adversarial_chat is None:
-            return None
-        from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig
-
-        return AttackAdversarialConfig(target=adversarial_chat)
 
     def _derive_uses_adversarial(self) -> bool:
         """
@@ -243,14 +220,14 @@ class AttackTechniqueFactory(Identifiable):
 
     def _validate_adversarial_flags(self) -> None:
         """
-        Validate that ``uses_adversarial`` and ``adversarial_chat`` are coherent.
+        Validate that ``uses_adversarial`` and ``adversarial_config`` are coherent.
 
         Raises:
-            ValueError: If an adversarial chat is wired but ``uses_adversarial=False``.
+            ValueError: If an adversarial config is wired but ``uses_adversarial=False``.
         """
         if not self._uses_adversarial and self._adversarial_config is not None:
             raise ValueError(
-                f"Factory '{self._name}': adversarial_chat is set but uses_adversarial=False. "
+                f"Factory '{self._name}': adversarial_config is set but uses_adversarial=False. "
                 f"A technique that doesn't use an adversarial chat must not have one wired."
             )
 
@@ -272,8 +249,7 @@ class AttackTechniqueFactory(Identifiable):
             raise ValueError("objective_target must not be in attack_kwargs — it is provided at create() time.")
         if "attack_adversarial_config" in self._attack_kwargs:
             raise ValueError(
-                "attack_adversarial_config must not be in attack_kwargs — use adversarial_chat or "
-                "adversarial_config instead."
+                "attack_adversarial_config must not be in attack_kwargs — use adversarial_config instead."
             )
 
         sig = inspect.signature(self._attack_class.__init__)

@@ -167,7 +167,6 @@ AttackTechniqueFactory(
     attack_class=PromptSendingAttack,
     strategy_tags=["core", "single_turn", "default"],
     attack_kwargs={"max_turns": 5},
-    adversarial_chat=None,                  # mutually exclusive with adversarial_config
     adversarial_config=None,
     seed_technique=None,
     uses_adversarial=None,                  # None = auto-derive from attack signature/seeds
