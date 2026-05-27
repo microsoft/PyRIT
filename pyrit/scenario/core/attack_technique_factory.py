@@ -125,9 +125,7 @@ class AttackTechniqueFactory(Identifiable):
         self._seed_technique = seed_technique
         self._scorer_override_policy = scorer_override_policy
 
-        self._uses_adversarial = (
-            uses_adversarial if uses_adversarial is not None else self._derive_uses_adversarial()
-        )
+        self._uses_adversarial = uses_adversarial if uses_adversarial is not None else self._derive_uses_adversarial()
 
         self._validate_kwargs()
         self._validate_adversarial_flags()
@@ -264,9 +262,7 @@ class AttackTechniqueFactory(Identifiable):
         if "objective_target" in self._attack_kwargs:
             raise ValueError("objective_target must not be in attack_kwargs — it is provided at create() time.")
         if "attack_adversarial_config" in self._attack_kwargs:
-            raise ValueError(
-                "attack_adversarial_config must not be in attack_kwargs — use adversarial_config instead."
-            )
+            raise ValueError("attack_adversarial_config must not be in attack_kwargs — use adversarial_config instead.")
 
         sig = inspect.signature(self._attack_class.__init__)
 
@@ -384,11 +380,7 @@ class AttackTechniqueFactory(Identifiable):
                 f"cannot supply attack_adversarial_config_override."
             )
 
-        if (
-            self._uses_adversarial
-            and self._adversarial_config is None
-            and attack_adversarial_config_override is None
-        ):
+        if self._uses_adversarial and self._adversarial_config is None and attack_adversarial_config_override is None:
             self._adversarial_config = self._resolve_default_adversarial_config()
 
         kwargs = dict(self._attack_kwargs)
@@ -413,7 +405,12 @@ class AttackTechniqueFactory(Identifiable):
 
     @staticmethod
     def _resolve_default_adversarial_config() -> AttackAdversarialConfig:
-        """Lazily resolve the default adversarial chat target and wrap it in a config."""
+        """
+        Lazily resolve the default adversarial chat target and wrap it in a config.
+
+        Returns:
+            AttackAdversarialConfig: Config wrapping the default adversarial chat target.
+        """
         return AttackAdversarialConfig(target=get_default_adversarial_target())
 
     def _get_accepted_params(self) -> set[str]:

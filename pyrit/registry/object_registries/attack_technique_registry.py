@@ -126,9 +126,7 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         # Technique members from factories — assign aggregate tags based on TagQuery matching
         for factory in factories:
             factory_tags = set(factory.strategy_tags)
-            matched_agg_tags = {
-                agg_name for agg_name, query in aggregate_tags.items() if query.matches(factory_tags)
-            }
+            matched_agg_tags = {agg_name for agg_name, query in aggregate_tags.items() if query.matches(factory_tags)}
             members[factory.name] = (factory.name, factory_tags | matched_agg_tags)
 
         # Build the enum class dynamically
@@ -166,4 +164,3 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
                 )
 
         logger.debug("Technique registration complete (%d total in registry)", len(self))
-

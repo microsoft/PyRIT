@@ -35,7 +35,8 @@ logger = logging.getLogger(__name__)
 
 
 def build_scenario_technique_factories() -> list[AttackTechniqueFactory]:
-    """Build the canonical scenario technique factories.
+    """
+    Build the canonical scenario technique factories.
 
     Factories that need an adversarial chat target do not bake one in; the
     default adversarial target is resolved lazily inside
@@ -99,7 +100,8 @@ def build_scenario_technique_factories() -> list[AttackTechniqueFactory]:
 
 
 class ScenarioTechniqueInitializer(PyRITInitializer):
-    """Register the canonical scenario attack technique factories.
+    """
+    Register the canonical scenario attack technique factories.
 
     Builds and registers the 6 core techniques (``role_play``, ``many_shot``,
     ``tap``, ``crescendo_simulated``, ``red_teaming``, ``context_compliance``)

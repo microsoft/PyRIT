@@ -44,9 +44,7 @@ def _build_benchmarkable_factories_snapshot() -> list:
         factories = build_scenario_technique_factories()
     finally:
         TargetRegistry.reset_instance()
-    return [
-        f for f in factories if f.uses_adversarial and "core" in f.strategy_tags
-    ]
+    return [f for f in factories if f.uses_adversarial and "core" in f.strategy_tags]
 
 
 # Self-pinned: any change to ``_get_benchmarkable_factories`` (or to the ``light`` tag

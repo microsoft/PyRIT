@@ -72,7 +72,8 @@ class TestFactoryInit:
     def test_validate_kwargs_accepts_valid_params(self):
         """All valid kwarg names should pass without error."""
         factory = AttackTechniqueFactory(
-            name="test", attack_class=_StubAttack,
+            name="test",
+            attack_class=_StubAttack,
             attack_kwargs={"max_turns": 10, "attack_scoring_config": None},
         )
         assert factory.attack_class is _StubAttack
@@ -81,7 +82,8 @@ class TestFactoryInit:
         """Typo or nonexistent kwarg should raise TypeError immediately."""
         with pytest.raises(TypeError, match="Invalid kwargs.*max_turn"):
             AttackTechniqueFactory(
-                name="test", attack_class=_StubAttack,
+                name="test",
+                attack_class=_StubAttack,
                 attack_kwargs={"max_turn": 10},  # typo: should be max_turns
             )
 
@@ -90,7 +92,8 @@ class TestFactoryInit:
         target = MagicMock(spec=PromptTarget)
         with pytest.raises(ValueError, match="objective_target must not be in attack_kwargs"):
             AttackTechniqueFactory(
-                name="test", attack_class=_StubAttack,
+                name="test",
+                attack_class=_StubAttack,
                 attack_kwargs={"objective_target": target},
             )
 
@@ -98,7 +101,8 @@ class TestFactoryInit:
         """Multiple bad kwargs should all be reported."""
         with pytest.raises(TypeError, match="Invalid kwargs"):
             AttackTechniqueFactory(
-                name="test", attack_class=_StubAttack,
+                name="test",
+                attack_class=_StubAttack,
                 attack_kwargs={"bad_param_1": 1, "bad_param_2": 2},
             )
 
@@ -121,7 +125,8 @@ class TestFactoryInit:
 
         with pytest.raises(TypeError, match="accepts \\*\\*kwargs"):
             AttackTechniqueFactory(
-                name="test", attack_class=_MixedAttack,
+                name="test",
+                attack_class=_MixedAttack,
                 attack_kwargs={"max_turns": 10},
             )
 
@@ -138,7 +143,8 @@ class TestFactoryInit:
         """A typo kwarg should be caught even through @apply_defaults."""
         with pytest.raises(TypeError, match="Invalid kwargs.*nonexistent_param"):
             AttackTechniqueFactory(
-                name="test", attack_class=PromptSendingAttack,
+                name="test",
+                attack_class=PromptSendingAttack,
                 attack_kwargs={"nonexistent_param": 42},
             )
 
@@ -161,7 +167,8 @@ class TestFactoryCreate:
 
     def test_create_passes_frozen_kwargs(self):
         factory = AttackTechniqueFactory(
-            name="test", attack_class=_StubAttack,
+            name="test",
+            attack_class=_StubAttack,
             attack_kwargs={"max_turns": 42},
         )
         target = MagicMock(spec=PromptTarget)
@@ -183,7 +190,8 @@ class TestFactoryCreate:
         """Create-time scoring config should override the frozen one."""
         frozen_scoring = MagicMock(spec=AttackScoringConfig)
         factory = AttackTechniqueFactory(
-            name="test", attack_class=_StubAttack,
+            name="test",
+            attack_class=_StubAttack,
             attack_kwargs={"attack_scoring_config": frozen_scoring},
         )
         target = MagicMock(spec=PromptTarget)
@@ -206,7 +214,8 @@ class TestFactoryCreate:
     def test_create_produces_independent_instances(self):
         """Two create() calls should produce fully independent attack instances."""
         factory = AttackTechniqueFactory(
-            name="test", attack_class=_StubAttack,
+            name="test",
+            attack_class=_StubAttack,
             attack_kwargs={"max_turns": 10},
         )
         target1 = MagicMock(spec=PromptTarget)
@@ -233,7 +242,8 @@ class TestFactoryCreate:
                 return ComponentIdentifier(class_name="_ListAttack", class_module="test")
 
         factory = AttackTechniqueFactory(
-            name="test", attack_class=_ListAttack,
+            name="test",
+            attack_class=_ListAttack,
             attack_kwargs={"items": mutable_list},
         )
         target = MagicMock(spec=PromptTarget)
@@ -266,9 +276,7 @@ class TestFactoryCreate:
             def get_identifier(self):
                 return ComponentIdentifier(class_name="_SentinelAttack", class_module="test")
 
-        factory = AttackTechniqueFactory(
-            name="test", attack_class=_SentinelAttack, uses_adversarial=False
-        )
+        factory = AttackTechniqueFactory(name="test", attack_class=_SentinelAttack, uses_adversarial=False)
         target = MagicMock(spec=PromptTarget)
         technique = factory.create(objective_target=target, attack_scoring_config=self._scoring())
 
@@ -290,7 +298,8 @@ class TestFactoryIdentifier:
 
     def test_identifier_includes_kwargs_with_values(self):
         factory = AttackTechniqueFactory(
-            name="test", attack_class=_StubAttack,
+            name="test",
+            attack_class=_StubAttack,
             attack_kwargs={"max_turns": 10, "attack_scoring_config": None},
         )
 
@@ -308,11 +317,13 @@ class TestFactoryIdentifier:
     def test_same_keys_different_values_produce_different_hashes(self):
         """Two factories with max_turns=5 vs max_turns=50 must have different hashes."""
         factory1 = AttackTechniqueFactory(
-            name="test", attack_class=_StubAttack,
+            name="test",
+            attack_class=_StubAttack,
             attack_kwargs={"max_turns": 5},
         )
         factory2 = AttackTechniqueFactory(
-            name="test", attack_class=_StubAttack,
+            name="test",
+            attack_class=_StubAttack,
             attack_kwargs={"max_turns": 50},
         )
 
@@ -320,11 +331,13 @@ class TestFactoryIdentifier:
 
     def test_different_kwargs_keys_produce_different_hashes(self):
         factory1 = AttackTechniqueFactory(
-            name="test", attack_class=_StubAttack,
+            name="test",
+            attack_class=_StubAttack,
             attack_kwargs={"max_turns": 10},
         )
         factory2 = AttackTechniqueFactory(
-            name="test", attack_class=_StubAttack,
+            name="test",
+            attack_class=_StubAttack,
             attack_kwargs={"max_turns": 10, "attack_scoring_config": None},
         )
 
@@ -348,7 +361,8 @@ class TestFactoryIdentifier:
                 return ComponentIdentifier(class_name="_IdentifiableParamAttack", class_module="test")
 
         factory = AttackTechniqueFactory(
-            name="test", attack_class=_IdentifiableParamAttack,
+            name="test",
+            attack_class=_IdentifiableParamAttack,
             attack_kwargs={"config": mock_identifiable},
         )
 
@@ -424,7 +438,8 @@ class TestScorerPolicy:
                 return ComponentIdentifier(class_name="_NoScoringAttack", class_module="test")
 
         factory = AttackTechniqueFactory(
-            name="test", attack_class=_NoScoringAttack,
+            name="test",
+            attack_class=_NoScoringAttack,
             scorer_override_policy=ScorerOverridePolicy.SKIP,
         )
         config = MagicMock(spec=AttackScoringConfig)
@@ -450,7 +465,8 @@ class TestScorerPolicy:
                 return ComponentIdentifier(class_name="_NarrowedAttack", class_module="test")
 
         factory = AttackTechniqueFactory(
-            name="test", attack_class=_NarrowedAttack,
+            name="test",
+            attack_class=_NarrowedAttack,
             scorer_override_policy=ScorerOverridePolicy.WARN,
         )
         config = MagicMock(spec=AttackScoringConfig)
@@ -477,7 +493,8 @@ class TestScorerPolicy:
                 return ComponentIdentifier(class_name="_NarrowedAttack", class_module="test")
 
         factory = AttackTechniqueFactory(
-            name="test", attack_class=_NarrowedAttack,
+            name="test",
+            attack_class=_NarrowedAttack,
             scorer_override_policy=ScorerOverridePolicy.RAISE,
         )
         config = MagicMock(spec=AttackScoringConfig)
@@ -502,7 +519,8 @@ class TestScorerPolicy:
                 return ComponentIdentifier(class_name="_NarrowedAttack", class_module="test")
 
         factory = AttackTechniqueFactory(
-            name="test", attack_class=_NarrowedAttack,
+            name="test",
+            attack_class=_NarrowedAttack,
             scorer_override_policy=ScorerOverridePolicy.RAISE,
         )
         config = MagicMock(spec=_NarrowedScoringConfig)
@@ -517,7 +535,8 @@ class TestScorerPolicy:
     def test_apply_scorer_policy_skip_is_silent(self, caplog):
         """SKIP policy should not log or raise."""
         factory = AttackTechniqueFactory(
-            name="test", attack_class=_StubAttack,
+            name="test",
+            attack_class=_StubAttack,
             scorer_override_policy=ScorerOverridePolicy.SKIP,
         )
 
@@ -528,7 +547,8 @@ class TestScorerPolicy:
     def test_apply_scorer_policy_warn_logs(self, caplog):
         """WARN policy should log a warning."""
         factory = AttackTechniqueFactory(
-            name="test", attack_class=_StubAttack,
+            name="test",
+            attack_class=_StubAttack,
             scorer_override_policy=ScorerOverridePolicy.WARN,
         )
 
@@ -539,7 +559,8 @@ class TestScorerPolicy:
     def test_apply_scorer_policy_raise_raises(self):
         """RAISE policy should raise ValueError with the message."""
         factory = AttackTechniqueFactory(
-            name="test", attack_class=_StubAttack,
+            name="test",
+            attack_class=_StubAttack,
             scorer_override_policy=ScorerOverridePolicy.RAISE,
         )
 

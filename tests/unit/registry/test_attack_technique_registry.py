@@ -187,9 +187,7 @@ class TestAttackTechniqueRegistryInherited:
 
     def test_tag_based_queries(self):
         factory1 = AttackTechniqueFactory(name="f1", attack_class=_StubAttack)
-        factory2 = AttackTechniqueFactory(
-            name="f2", attack_class=_StubAttack, attack_kwargs={"max_turns": 20}
-        )
+        factory2 = AttackTechniqueFactory(name="f2", attack_class=_StubAttack, attack_kwargs={"max_turns": 20})
 
         self.registry.register_technique(name="f1", factory=factory1, tags=["multi_turn"])
         self.registry.register_technique(name="f2", factory=factory2, tags=["single_turn"])
@@ -212,9 +210,7 @@ class TestAttackTechniqueRegistryInherited:
 
     def test_get_factories_returns_dict_mapping(self):
         factory_a = AttackTechniqueFactory(name="alpha", attack_class=_StubAttack)
-        factory_b = AttackTechniqueFactory(
-            name="beta", attack_class=_StubAttack, attack_kwargs={"max_turns": 5}
-        )
+        factory_b = AttackTechniqueFactory(name="beta", attack_class=_StubAttack, attack_kwargs={"max_turns": 5})
         self.registry.register_technique(name="alpha", factory=factory_a)
         self.registry.register_technique(name="beta", factory=factory_b)
 
@@ -251,9 +247,7 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
 
     def test_policy_passed_to_factories_via_register_from_factories(self):
         """Factories registered via register_from_factories inherit the registry's default policy."""
-        factory = AttackTechniqueFactory(
-            name="stub_policy", attack_class=_StubAttack, strategy_tags=["test"]
-        )
+        factory = AttackTechniqueFactory(name="stub_policy", attack_class=_StubAttack, strategy_tags=["test"])
         self.registry.register_from_factories([factory])
 
         stored = self.registry._registry_items["stub_policy"].instance
@@ -297,9 +291,7 @@ class TestScenarioTechniqueFactoriesValid:
     def test_factory_names_are_unique(self):
         """No two factories should share the same name."""
         names = [f.name for f in _scenario_factories()]
-        assert len(names) == len(set(names)), (
-            f"Duplicate factory names: {[n for n in names if names.count(n) > 1]}"
-        )
+        assert len(names) == len(set(names)), f"Duplicate factory names: {[n for n in names if names.count(n) > 1]}"
 
 
 class TestScorerOverrideTypeInference:

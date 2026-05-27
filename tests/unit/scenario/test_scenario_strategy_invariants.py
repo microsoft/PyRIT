@@ -46,9 +46,7 @@ def _reset_registries():
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
     TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
-    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(
-        build_scenario_technique_factories()
-    )
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_scenario_technique_factories())
     yield
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()

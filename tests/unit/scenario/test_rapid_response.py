@@ -640,9 +640,7 @@ class TestAttackTechniqueFactoryBasics:
     """Tests for the AttackTechniqueFactory construction surface."""
 
     def test_simple_factory(self):
-        factory = AttackTechniqueFactory(
-            name="test", attack_class=PromptSendingAttack, strategy_tags=["single_turn"]
-        )
+        factory = AttackTechniqueFactory(name="test", attack_class=PromptSendingAttack, strategy_tags=["single_turn"])
         assert factory.name == "test"
         assert factory.attack_class is PromptSendingAttack
         assert factory.strategy_tags == ["single_turn"]

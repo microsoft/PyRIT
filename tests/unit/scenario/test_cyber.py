@@ -235,9 +235,7 @@ class TestCyberAttackGeneration:
             await scenario.initialize_async(**init_kwargs)
             return await scenario._get_atomic_attacks_async()
 
-    async def test_all_strategy_produces_red_teaming(
-        self, mock_objective_target, mock_objective_scorer
-    ):
+    async def test_all_strategy_produces_red_teaming(self, mock_objective_target, mock_objective_scorer):
         attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             mock_objective_scorer=mock_objective_scorer,
