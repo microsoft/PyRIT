@@ -37,24 +37,12 @@ class PAIRAttack(TreeOfAttacksWithPruningAttack):
     refinement, with no tree expansion and no off-topic pruning. PyRIT
     implements PAIR as a thin subclass of
     :class:`TreeOfAttacksWithPruningAttack` that hardcodes the two
-    definitional structural parameters and reuses TAP's adversarial system
-    prompt. The remaining configuration (target, scoring, converters,
-    width and depth budget) is exposed exactly as on TAP, with TAP's
-    defaults preserved for ``tree_width`` and ``tree_depth``.
-
-    PAIR ↔ TAP parameter mapping:
-
-    +-----------------------------+-------------------------------+------------------------+
-    | PAIR concept                | TAP parameter                 | PAIRAttack handling    |
-    +=============================+===============================+========================+
-    | N parallel streams          | ``tree_width``                | exposed, default 3     |
-    +-----------------------------+-------------------------------+------------------------+
-    | K refinement iterations     | ``tree_depth``                | exposed, default 5     |
-    +-----------------------------+-------------------------------+------------------------+
-    | no tree expansion           | ``branching_factor``          | hardcoded to 1         |
-    +-----------------------------+-------------------------------+------------------------+
-    | no off-topic pruning        | ``on_topic_checking_enabled`` | hardcoded to ``False`` |
-    +-----------------------------+-------------------------------+------------------------+
+    definitional structural parameters (``branching_factor=1`` and
+    ``on_topic_checking_enabled=False``) and reuses TAP's adversarial system
+    prompt. The remaining configuration (target, scoring, converters, width
+    and depth budget) is exposed exactly as on TAP, with TAP's defaults
+    preserved for ``tree_width`` (number of parallel streams) and
+    ``tree_depth`` (refinement iterations per stream).
 
     References:
         Jailbreaking Black Box Large Language Models in Twenty Queries
