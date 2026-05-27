@@ -208,7 +208,6 @@ project:
         - file: api/pyrit_cli_pyrit_scan.md
         - file: api/pyrit_cli_pyrit_shell.md
         - file: api/pyrit_common.md
-        - file: api/pyrit_common_cli_helpers.md
         - file: api/pyrit_datasets.md
         - file: api/pyrit_embedding.md
         - file: api/pyrit_exceptions.md
@@ -221,6 +220,7 @@ project:
         - file: api/pyrit_memory.md
         - file: api/pyrit_message_normalizer.md
         - file: api/pyrit_models.md
+        - file: api/pyrit_output.md
         - file: api/pyrit_prompt_converter.md
         - file: api/pyrit_prompt_normalizer.md
         - file: api/pyrit_prompt_target.md

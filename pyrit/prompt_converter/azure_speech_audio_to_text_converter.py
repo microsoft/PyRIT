@@ -176,7 +176,7 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
         Recognize audio file and return transcribed text.
 
         .. deprecated::
-            Use :meth:`convert_async` instead, which resolves token providers correctly.
+            Use ``convert_async`` instead, which resolves token providers correctly.
             This method does not support callable token providers.
 
         Args:

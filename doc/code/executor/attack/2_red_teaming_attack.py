@@ -57,6 +57,7 @@
 #
 # Note that for this to succeed, the `AttackAdversarialConfig` requires an LLM endpoint without serious content moderation or other kinds of safety filtering mechanisms. Success depends on the model and may not be achieved every time.
 #
+# %%
 import logging
 
 from pyrit.executor.attack import (
@@ -293,9 +294,7 @@ red_teaming_attack = RedTeamingAttack(
 )
 
 result = await red_teaming_attack.execute_async(objective=objective, memory_labels={"harm_category": "illegal"})  # type: ignore
-await output_attack_async().print_result_async(  # type: ignore
-    result=result, include_adversarial_conversation=True
-)
+await output_attack_async(result, include_adversarial_conversation=True)
 
 # %% [markdown]
 # ## Displaying Results with Better Formatting

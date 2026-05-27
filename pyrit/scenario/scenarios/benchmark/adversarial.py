@@ -89,7 +89,7 @@ class AdversarialBenchmark(Scenario):
 
         Args:
             adversarial_models: A non-empty list of ``PromptTarget`` instances
-                that each satisfy :data:`CHAT_TARGET_REQUIREMENTS` (multi-turn
+                that each satisfy ``CHAT_TARGET_REQUIREMENTS`` (multi-turn
                 with editable history).  Individual techniques selected at
                 run time may impose stricter capability requirements which are
                 enforced when their attack instances are constructed.
@@ -106,7 +106,7 @@ class AdversarialBenchmark(Scenario):
         Raises:
             ValueError: If ``adversarial_models`` is empty, not a list, or
                 contains a target that does not satisfy
-                :data:`CHAT_TARGET_REQUIREMENTS`.
+                ``CHAT_TARGET_REQUIREMENTS``.
         """
         if not adversarial_models:
             raise ValueError("adversarial_models must be a non-empty list of PromptTarget instances.")

@@ -99,13 +99,13 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         - Additional aggregate members from ``aggregate_tags`` keys.
         - One technique member per factory, with tags from the factory.
 
-        Each aggregate maps to a :class:`TagQuery` that determines which
+        Each aggregate maps to a ``TagQuery`` that determines which
         technique factories belong to it.
 
         Args:
             class_name: Name for the generated enum class.
             factories: Technique factories to include as enum members.
-            aggregate_tags: Maps aggregate member names to a :class:`TagQuery`
+            aggregate_tags: Maps aggregate member names to a ``TagQuery``
                 that selects which techniques belong to the aggregate.
                 An ``ALL`` aggregate (expanding to all techniques) is always added.
 
