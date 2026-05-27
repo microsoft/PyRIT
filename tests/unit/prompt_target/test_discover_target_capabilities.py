@@ -799,7 +799,7 @@ class TestVerifyTargetAsync:
     async def test_returns_target_capabilities_assembled_from_probes(self) -> None:
         """
         ``discover_target_capabilities_async`` runs both the capability and modality probes
-        and assembles a :class:`TargetCapabilities` populated from the
+        and assembles a ``TargetCapabilities`` populated from the
         queried results, copying ``output_modalities`` from the target's
         declared capabilities and deriving editable history conservatively.
         """
