@@ -81,7 +81,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    // No type chosen yet — no auth radios visible, but plain API Key input is.
+    // No type is chosen yet, so authentication option is not visible yet, but plain API Key input is.
     expect(
       screen.queryByRole("radio", { name: /Microsoft Entra Authentication/ })
     ).not.toBeInTheDocument();
@@ -89,7 +89,7 @@ describe("CreateTargetDialog", () => {
       screen.getByPlaceholderText("API key (stored in memory only)")
     ).toBeInTheDocument();
 
-    // Selecting an Entra-capable type reveals the Authentication field.
+    // Selecting an Entra-capable type should reveal the Authentication field.
     await selectTargetType(user, "OpenAIChatTarget");
     expect(
       screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
@@ -128,14 +128,12 @@ describe("CreateTargetDialog", () => {
     // Select target type
     await selectTargetType(user, "OpenAIChatTarget");
 
-    // Fill endpoint — use fireEvent.change because userEvent.type truncates
-    // URLs containing periods in FluentUI Input under jsdom.
+    // Fill the endpoint & model names
     const endpointInput = screen.getByPlaceholderText(
       "https://your-resource.openai.azure.com/"
     );
     fireEvent.change(endpointInput, { target: { value: "https://api.openai.com" } });
 
-    // Fill model name — use fireEvent.change for consistency (same reason as endpoint)
     const modelInput = screen.getByPlaceholderText("e.g. gpt-4o, my-deployment");
     fireEvent.change(modelInput, { target: { value: "gpt-4" } });
 
@@ -171,13 +169,12 @@ describe("CreateTargetDialog", () => {
     // Select target type
     await selectTargetType(user, "OpenAIChatTarget");
 
-    // Fill endpoint
+    // Fill endpoint & model names
     const endpointInput = screen.getByPlaceholderText(
       "https://your-resource.openai.azure.com/"
     );
     fireEvent.change(endpointInput, { target: { value: "https://api.azure.com" } });
 
-    // Fill model name
     const modelInput = screen.getByPlaceholderText("e.g. gpt-4o, my-deployment");
     fireEvent.change(modelInput, { target: { value: "my-gpt4o-deployment" } });
 

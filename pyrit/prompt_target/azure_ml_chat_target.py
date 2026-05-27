@@ -341,43 +341,21 @@ class AzureMLChatTarget(PromptTarget):
             }
         }
 
-    def _get_headers(self) -> dict[str, str]:
-        """
-        Headers for accessing inference endpoint deployed in AML using a static API key.
-
-        Only valid when this target was configured with a string ``api_key``.
-        When an Entra ID token provider supplied, callers must use ``_get_headers_async``
-        instead, because the token must be fetched asynchronously and refreshed on each request.
-
-        Returns:
-            headers(dict): contains bearer token as AML key and content-type: JSON
-
-        Raises:
-            ValueError: If this target was configured with a token-provider callable.
-        """
-        if self._api_key_provider is not None:
-            raise ValueError(
-                "AzureMLChatTarget was configured with an Entra ID token provider. "
-                "Use _get_headers_async() instead of _get_headers()."
-            )
-        return {
-            "Content-Type": "application/json",
-            "Authorization": ("Bearer " + self._api_key),
-        }
-
     async def _get_headers_async(self) -> dict[str, str]:
         """
-        Headers for accessing the AML inference endpoint, resolving the bearer token from the
-        configured Entra ID token provider when one is set.
+        Headers for accessing the AML inference endpoint.
+
+        Resolves the bearer token from the configured Entra ID token provider when one
+        is set; otherwise uses the static API key supplied at construction.
 
         Returns:
-            headers(dict): contains bearer token (static key or freshly-acquired Entra token) and
-            content-type: JSON.
+            headers(dict): contains bearer token (static key or freshly-acquired Entra
+            token) and content-type: JSON.
         """
         if self._api_key_provider is None:
-            return self._get_headers()
-
-        token = await self._api_key_provider()
+            token = self._api_key
+        else:
+            token = await self._api_key_provider()
         return {
             "Content-Type": "application/json",
             "Authorization": "Bearer " + token,

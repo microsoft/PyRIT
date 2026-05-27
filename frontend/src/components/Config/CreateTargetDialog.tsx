@@ -105,10 +105,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
   const entraEndpointError: string | null = (() => {
     if (!isEntra || endpoint === '') return null
     if (isOpenAi && !isAzureOpenAiEndpoint(endpoint)) {
-      return 'Error: Entra auth only works with Azure OpenAI / AI Foundry endpoints (for example, *.openai.azure.com or *.ai.azure.com).'
+      return 'Entra auth only works with Azure OpenAI / AI Foundry endpoints (for example, *.openai.azure.com or *.ai.azure.com).'
     }
     if (isAzureML && !isAzureMlEndpoint(endpoint)) {
-      return 'Error: Entra auth for AzureMLChatTarget only works with Azure ML managed online endpoints (for example, *.inference.ml.azure.com).'
+      return 'Entra auth for AzureMLChatTarget only works with Azure ML managed online endpoints (for example, *.inference.ml.azure.com).'
     }
     return null
   })()
