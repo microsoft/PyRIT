@@ -196,28 +196,43 @@ def calculate_score(
 
 The PyRIT docs build uses **MyST** (Markdown-flavoured), not reStructuredText.
 Do **not** use reST cross-reference roles in docstrings or module comments —
-they render as raw text under MyST and are inconsistent with the rest of the
-codebase, which uses plain double-backtick code spans for symbol names.
+they render as raw text under MyST. A pre-commit hook
+(`check_no_rest_roles`) blocks new ones from landing.
+
+Use plain double-backticks for symbol references. The API page generator
+(`build_scripts/gen_api_md.py`) automatically rewrites known PyRIT symbol
+names into MyST cross-reference links at build time, so you get clickable
+navigation in the rendered docs without any extra markup.
 
 ```python
-# WRONG — reST roles render as literal `:class:\`SeedPrompt\`` under MyST
+# WRONG — reST roles render as literal `:class:\`SeedPrompt\`` under MyST,
+# and the pre-commit guard will reject them
 """Returns a :class:`SeedPrompt` instance."""
 """Delegate to :func:`download_files_async` (deprecated alias)."""
 """See :meth:`PromptTarget.apply_capabilities` for details."""
 
-# CORRECT — plain double-backtick code span (matches existing convention)
+# CORRECT — plain double-backticks; gen_api_md.py auto-links these
 """Returns a ``SeedPrompt`` instance."""
 """Delegate to ``download_files_async`` (deprecated alias)."""
 """See ``PromptTarget.apply_capabilities`` for details."""
 ```
 
-Roles to avoid include `:class:`, `:func:`, `:meth:`, `:mod:`, `:attr:`,
-`:data:`, `:exc:`, `:obj:`, `:ref:`, and any `:py:*:` variants
-(e.g. `:py:class:`, `:py:func:`).
+The auto-linker resolves:
 
-If you genuinely need a Sphinx cross-reference (rare in PyRIT — most
-docstrings just name the symbol in backticks), use the MyST role syntax
-`` {class}`Name` `` instead. The default, though, is plain double-backticks.
+- bare class/function names (`` ``SeedPrompt`` ``)
+- `Class.method` references (`` ``PromptTarget.apply_capabilities`` ``)
+- fully-qualified paths (`` ``pyrit.models.SeedPrompt`` ``)
+- bare method names when the docstring is on the owning class
+  (`` ``send_prompt_async`` `` inside `PromptTarget`)
+
+Ambiguous short names (e.g. two unrelated classes both called `Scorer`)
+are left as plain code-spans; spell out the FQN when you need a stable
+cross-reference. Unknown names also stay as plain code-spans, so
+docstrings remain safe to write without consulting the symbol index.
+
+If you need an explicit MyST link in markdown documentation, use the
+standard syntax `` [`Name`](#api-pyrit_module-Name) `` — but inside
+Python docstrings this should be rare; plain backticks are the default.
 
 ### Class-Level Constants
 - Define constants as class attributes, not module-level
