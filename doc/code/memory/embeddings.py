@@ -40,7 +40,7 @@ pprint(embedding_response, width=280, compact=True)
 # To view the json of an embedding
 
 # %%
-embedding_response.to_json()
+embedding_response.model_dump_json()
 
 # %% [markdown]
 # To save an embedding to disk

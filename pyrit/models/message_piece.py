@@ -17,8 +17,31 @@ from pyrit.models.score import Score
 if TYPE_CHECKING:
     from pyrit.models.message import Message
 
-Originator = Literal["attack", "converter", "undefined", "scorer"]
-"""Deprecated: The Originator type alias will be removed in a future release."""
+    Originator = Literal["attack", "converter", "undefined", "scorer"]
+
+
+def __getattr__(name: str) -> Any:
+    """
+    Lazily resolve deprecated module-level aliases.
+
+    Returns:
+        Any: The resolved deprecated alias.
+
+    Raises:
+        AttributeError: If the attribute name is not recognized.
+    """
+    if name == "Originator":
+        print_deprecation_message(
+            old_item="pyrit.models.message_piece.Originator",
+            new_item=(
+                "inline Literal['attack', 'converter', 'undefined', 'scorer'] "
+                "(the type alias is being removed; the originator field itself is "
+                "deprecated and will be removed in 0.15.0)"
+            ),
+            removed_in="0.15.0",
+        )
+        return Literal["attack", "converter", "undefined", "scorer"]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class MessagePiece:
@@ -50,7 +73,7 @@ class MessagePiece:
         original_value_data_type: PromptDataType = "text",
         converted_value_data_type: Optional[PromptDataType] = None,
         response_error: PromptResponseError = "none",
-        originator: Originator = "undefined",
+        originator: Literal["attack", "converter", "undefined", "scorer"] = "undefined",
         original_prompt_id: Optional[uuid.UUID] = None,
         timestamp: Optional[datetime] = None,
         scores: Optional[list[Score]] = None,

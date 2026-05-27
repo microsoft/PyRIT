@@ -10,6 +10,12 @@ Import concrete implementations to trigger registration.
 from pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset import (
     _AegisContentSafetyDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset import (
+    ATRCategory,
+    ATRDetectionField,
+    ATRVariationType,
+    _AgentThreatRulesDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.aya_redteaming_dataset import (
     _AyaRedteamingDataset,
 )  # noqa: F401
@@ -158,6 +164,10 @@ __all__ = [
     "VLGuardSubcategory",
     "VLGuardSubset",
     "_AegisContentSafetyDataset",
+    "ATRCategory",
+    "ATRDetectionField",
+    "ATRVariationType",
+    "_AgentThreatRulesDataset",
     "_AyaRedteamingDataset",
     "_BabelscapeAlertDataset",
     "_BeaverTailsDataset",
