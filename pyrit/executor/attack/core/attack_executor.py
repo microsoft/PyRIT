@@ -120,19 +120,16 @@ class AttackExecutor:
     from seed groups.
     """
 
-    def __init__(self, *, max_concurrency: int = 1, semaphore: Optional[asyncio.Semaphore] = None) -> None:
+    def __init__(self, *, max_concurrency: int = 1) -> None:
         """
         Initialize the attack executor with configurable concurrency control.
 
         Args:
             max_concurrency: Maximum number of concurrent attack executions (default: 1).
-                Ignored when ``semaphore`` is provided.
-            semaphore: Optional externally-owned ``asyncio.Semaphore`` used to gate
-                concurrent objective execution. When provided, all concurrency control
-                (both seed-group parameter building and attack execution) is delegated
-                to this semaphore, allowing a parent (e.g., a Scenario) to share a
-                single budget across many executors. When ``None`` (default), a new
-                semaphore is created from ``max_concurrency``.
+                A single ``asyncio.Semaphore`` of this size is used internally to gate
+                both parameter-building (``from_seed_group_async``) and execution.
+                Sharing one ``AttackExecutor`` across multiple call sites therefore
+                shares a single concurrency budget across all of them.
 
         Raises:
             ValueError: If max_concurrency is not a positive integer.
@@ -140,13 +137,7 @@ class AttackExecutor:
         if max_concurrency <= 0:
             raise ValueError(f"max_concurrency must be a positive integer, got {max_concurrency}")
         self._max_concurrency = max_concurrency
-        self._external_semaphore = semaphore
-
-    def _get_semaphore(self) -> asyncio.Semaphore:
-        """Return the externally-supplied semaphore, or a fresh one sized to max_concurrency."""
-        if self._external_semaphore is not None:
-            return self._external_semaphore
-        return asyncio.Semaphore(self._max_concurrency)
+        self._semaphore = asyncio.Semaphore(max_concurrency)
 
     async def execute_attack_from_seed_groups_async(
         self,
@@ -207,7 +198,7 @@ class AttackExecutor:
 
         # Build params list using from_seed_group_async with concurrency control
         # This can take time if the SeedSimulatedConversation generation is included
-        semaphore = self._get_semaphore()
+        semaphore = self._semaphore
 
         async def build_params(i: int, sg: SeedAttackGroup) -> AttackParameters:
             async with semaphore:
@@ -323,7 +314,7 @@ class AttackExecutor:
         Returns:
             AttackExecutorResult with completed results and any incomplete objectives.
         """
-        semaphore = self._get_semaphore()
+        semaphore = self._semaphore
 
         async def run_one(index: int, params: AttackParameters) -> AttackStrategyResultT:
             async with semaphore:

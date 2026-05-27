@@ -13,8 +13,8 @@ times when that may not be possible or make sense. So this class exists to
 have a common interface for scenarios.
 """
 
-import asyncio
 import logging
+import warnings
 from typing import TYPE_CHECKING, Any, Optional
 
 from pyrit.common.deprecation import print_deprecation_message
@@ -302,16 +302,18 @@ class AtomicAttack:
     async def run_async(
         self,
         *,
-        max_concurrency: int = 1,
+        executor: AttackExecutor | None = None,
         return_partial_on_failure: bool = True,
-        semaphore: asyncio.Semaphore | None = None,
+        max_concurrency: int = 1,
         **attack_params: Any,
     ) -> AttackExecutorResult[AttackResult]:
         """
         Execute the atomic attack against all seed groups.
 
-        This method uses AttackExecutor to run the configured attack against
-        all seed groups.
+        This method uses ``AttackExecutor`` to run the configured attack against
+        all seed groups. Concurrency is owned by the executor: pass a shared
+        ``AttackExecutor`` instance to share a single budget across multiple
+        atomic attacks (this is how ``Scenario`` parallelizes them).
 
         When return_partial_on_failure=True (default), this method will return
         an AttackExecutorResult containing both completed results and incomplete
@@ -322,17 +324,18 @@ class AtomicAttack:
         was achieved. "incomplete" means execution didn't finish (threw an exception).
 
         Args:
-            max_concurrency (int): Maximum number of concurrent attack executions.
-                Defaults to 1 for sequential execution. Ignored when ``semaphore``
-                is provided.
+            executor (AttackExecutor | None): Optional ``AttackExecutor`` to run the
+                attack with. When provided, its concurrency budget is used and is
+                shared with anything else holding a reference to it. When ``None``,
+                a fresh ``AttackExecutor(max_concurrency=max_concurrency)`` is created
+                for this call.
             return_partial_on_failure (bool): If True, returns partial results even when
                 some objectives don't complete execution. If False, raises an exception on
                 any execution failure. Defaults to True.
-            semaphore (asyncio.Semaphore | None): Optional externally-owned semaphore
-                used to gate objective execution. Allows a parent (e.g., a Scenario
-                running multiple atomic attacks in parallel) to share a single
-                concurrency budget across all of them. When provided, takes precedence
-                over ``max_concurrency``.
+            max_concurrency (int): **Deprecated.** Will be removed in 0.16.0. Pass
+                ``executor=AttackExecutor(max_concurrency=...)`` instead. When
+                ``executor`` is provided this value is ignored. When ``executor`` is
+                ``None`` and this is left at the default of 1, no warning is emitted.
             **attack_params: Additional parameters to pass to the attack strategy.
 
         Returns:
@@ -342,11 +345,21 @@ class AtomicAttack:
         Raises:
             ValueError: If the attack execution fails completely and return_partial_on_failure=False.
         """
-        executor = AttackExecutor(max_concurrency=max_concurrency, semaphore=semaphore)
+        if max_concurrency != 1:
+            base_msg = (
+                "AtomicAttack.run_async(max_concurrency=...) is deprecated and will be "
+                "removed in 0.16.0. Pass executor=AttackExecutor(max_concurrency=...) instead."
+            )
+            if executor is not None:
+                base_msg += " The provided max_concurrency value is being ignored."
+            warnings.warn(base_msg, DeprecationWarning, stacklevel=2)
+
+        if executor is None:
+            executor = AttackExecutor(max_concurrency=max_concurrency)
 
         logger.info(
             f"Starting atomic attack execution with {len(self._seed_groups)} seed groups "
-            f"and max_concurrency={max_concurrency}"
+            f"(executor max_concurrency={getattr(executor, '_max_concurrency', '?')})"
         )
 
         try:

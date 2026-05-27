@@ -378,7 +378,7 @@ class TestScenarioExecution:
         # shared semaphore that caps total in-flight objectives.
         assert len(result.attack_results) == 3
         for run in mock_atomic_attacks:
-            run.run_async.assert_called_once_with(max_concurrency=10, return_partial_on_failure=True, semaphore=ANY)
+            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True)
 
         # Verify results are aggregated correctly by atomic attack name
         assert "attack_run_1" in result.attack_results
@@ -404,10 +404,10 @@ class TestScenarioExecution:
 
         result = await scenario.run_async()
 
-        # 3 atomic attacks, max_concurrency=5 -> parallel path with shared semaphore.
-        # Each atomic attack still receives max_concurrency=5 (the semaphore is the real cap).
+        # 3 atomic attacks, max_concurrency=5 -> parallel path with a shared AttackExecutor.
+        # Each atomic attack receives the same executor instance.
         for run in mock_atomic_attacks:
-            run.run_async.assert_called_once_with(max_concurrency=5, return_partial_on_failure=True, semaphore=ANY)
+            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True)
 
         # Verify result structure
         assert isinstance(result, ScenarioResult)
@@ -1205,10 +1205,12 @@ class TestScenarioResumption:
 class TestScenarioParallelExecution:
     """Tests for parallel atomic-attack execution sharing a single max_concurrency budget."""
 
-    async def test_atomic_attacks_share_one_semaphore(
+    async def test_atomic_attacks_share_one_executor(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target
     ):
-        """All atomic attacks in parallel mode receive the same shared semaphore."""
+        """All atomic attacks in parallel mode receive the same shared AttackExecutor instance."""
+        from pyrit.executor.attack import AttackExecutor
+
         for i, run in enumerate(mock_atomic_attacks):
             run.run_async = create_mock_run_async([sample_attack_results[i]], atomic_attack=run)
 
@@ -1224,36 +1226,37 @@ class TestScenarioParallelExecution:
 
         await scenario.run_async()
 
-        # Each atomic attack got max_concurrency=4 and a semaphore kwarg, and it's the
-        # same Semaphore instance across all three.
-        semaphores_seen = []
+        # Each atomic attack got an executor kwarg, and it's the SAME AttackExecutor instance,
+        # sized to max_concurrency=4.
+        executors_seen = []
         for run in mock_atomic_attacks:
             assert run.run_async.call_count == 1
             kwargs = run.run_async.call_args.kwargs
-            assert kwargs["max_concurrency"] == 4
             assert kwargs["return_partial_on_failure"] is True
-            assert isinstance(kwargs["semaphore"], asyncio.Semaphore)
-            semaphores_seen.append(kwargs["semaphore"])
-        assert semaphores_seen[0] is semaphores_seen[1] is semaphores_seen[2]
+            assert isinstance(kwargs["executor"], AttackExecutor)
+            executors_seen.append(kwargs["executor"])
+        assert executors_seen[0] is executors_seen[1] is executors_seen[2]
+        assert executors_seen[0]._max_concurrency == 4
 
-    async def test_shared_semaphore_bounds_global_concurrency(
+    async def test_shared_executor_bounds_global_concurrency(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target
     ):
         """Total in-flight objectives across all atomic attacks never exceeds max_concurrency.
 
-        Simulates each atomic attack 'using' the semaphore for two objectives. With
-        max_concurrency=2 and 3 atomic attacks (= 6 objectives total), peak in-flight
-        objective count must stay <= 2 even though all three atomic attacks are launched.
+        Simulates each atomic attack 'using' the executor's internal semaphore for two
+        objectives. With max_concurrency=2 and 3 atomic attacks (= 6 objectives total),
+        peak in-flight objective count must stay <= 2 even though all three atomic
+        attacks are launched.
         """
         peak = [0]
         in_flight = [0]
         lock = asyncio.Lock()
 
         def make_run_async(idx):
-            async def run_async(*, semaphore, **kwargs):
-                # Simulate two objectives per atomic attack, each acquiring the shared sem.
+            async def run_async(*, executor, **kwargs):
+                # Simulate two objectives per atomic attack, each acquiring the shared executor's semaphore.
                 for _ in range(2):
-                    async with semaphore:
+                    async with executor._semaphore:
                         async with lock:
                             in_flight[0] += 1
                             peak[0] = max(peak[0], in_flight[0])
@@ -1284,7 +1287,7 @@ class TestScenarioParallelExecution:
 
         await scenario.run_async()
 
-        assert peak[0] <= 2, f"shared semaphore violated: peak in-flight was {peak[0]}"
+        assert peak[0] <= 2, f"shared executor budget violated: peak in-flight was {peak[0]}"
         assert peak[0] == 2, f"expected to saturate budget of 2, peaked at {peak[0]}"
 
     async def test_atomic_attacks_run_concurrently(
@@ -1400,7 +1403,7 @@ class TestScenarioParallelExecution:
     async def test_max_concurrency_one_serializes_via_single_worker(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target
     ):
-        """max_concurrency=1 reduces the worker pool to one worker; attacks still get the shared semaphore."""
+        """max_concurrency=1 reduces the worker pool to one worker; attacks still get the shared executor."""
         for i, run in enumerate(mock_atomic_attacks):
             run.run_async = create_mock_run_async([sample_attack_results[i]], atomic_attack=run)
 
@@ -1414,4 +1417,4 @@ class TestScenarioParallelExecution:
         await scenario.run_async()
 
         for run in mock_atomic_attacks:
-            run.run_async.assert_called_once_with(max_concurrency=1, return_partial_on_failure=True, semaphore=ANY)
+            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True)

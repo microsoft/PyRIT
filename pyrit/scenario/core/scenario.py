@@ -26,6 +26,7 @@ from pyrit.common import REQUIRED_VALUE, Parameter, apply_defaults
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.parameter import coerce_value, validate_param_type
 from pyrit.common.utils import to_sha256
+from pyrit.executor.attack import AttackExecutor
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
@@ -1325,16 +1326,17 @@ class Scenario(ABC):
         Execute remaining atomic attacks concurrently via a worker pool.
 
         At most ``max_concurrency`` atomic attacks are in-flight at any time, and all
-        of their per-objective tasks share a single ``Semaphore(max_concurrency)`` so
-        the global concurrent-objective budget never exceeds ``max_concurrency``
-        regardless of how work is distributed across atomic attacks.
+        of their per-objective tasks share a single ``AttackExecutor`` (and therefore a
+        single internal ``Semaphore(max_concurrency)``) so the global concurrent-objective
+        budget never exceeds ``max_concurrency`` regardless of how work is distributed
+        across atomic attacks.
 
         Failure semantics: when an in-flight atomic attack raises or returns
         ``has_incomplete``, the worker pool stops pulling new atomic attacks from the
         queue. Already-started atomic attacks are allowed to finish (so their partial
         work persists for resume), then the first observed error is re-raised.
         """
-        shared_semaphore = asyncio.Semaphore(self._max_concurrency)
+        shared_executor = AttackExecutor(max_concurrency=self._max_concurrency)
         pbar = tqdm(
             desc=f"Executing {self._name}",
             unit="attack",
@@ -1365,9 +1367,8 @@ class Scenario(ABC):
                     return
                 try:
                     result = await atomic_attack.run_async(
-                        max_concurrency=self._max_concurrency,
+                        executor=shared_executor,
                         return_partial_on_failure=True,
-                        semaphore=shared_semaphore,
                     )
                     outcomes.append((atomic_attack, result))
                     if result.has_incomplete:
