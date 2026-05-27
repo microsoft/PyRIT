@@ -84,7 +84,7 @@ class AdversarialBenchmark(Scenario):
             objective_scorer if objective_scorer else self._get_default_objective_scorer()
         )
 
-        strategy_class = AdversarialBenchmark._build_benchmark_strategy()
+        strategy_class = _build_benchmark_strategy()
 
         super().__init__(
             version=self.VERSION,
@@ -246,20 +246,6 @@ class AdversarialBenchmark(Scenario):
             seen_keys[suffixed] = dedupe_key
 
         return result
-
-    @staticmethod
-    def _build_benchmark_strategy() -> type[ScenarioStrategy]:
-        """
-        Build the BenchmarkStrategy enum from adversarial-capable ``SCENARIO_TECHNIQUES``.
-
-        Returns a strategy class whose concrete members are adversarial-capable
-        techniques (no baked-in adversarial chat) and whose aggregates allow
-        selecting by turn style.
-
-        Returns:
-            type[ScenarioStrategy]: The dynamically generated strategy enum class.
-        """
-        return _build_benchmark_strategy()
 
     @staticmethod
     def _get_benchmarkable_specs() -> list[AttackTechniqueSpec]:
