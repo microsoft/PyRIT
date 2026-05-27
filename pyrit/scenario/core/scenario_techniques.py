@@ -28,6 +28,7 @@ from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
     ContextComplianceAttack,
     ManyShotJailbreakAttack,
+    PAIRAttack,
     PromptSendingAttack,
     RedTeamingAttack,
     RolePlayAttack,
@@ -76,6 +77,11 @@ SCENARIO_TECHNIQUES: list[AttackTechniqueSpec] = [
     AttackTechniqueSpec(
         name="tap",
         attack_class=TreeOfAttacksWithPruningAttack,
+        strategy_tags=["core", "multi_turn"],
+    ),
+    AttackTechniqueSpec(
+        name="pair",
+        attack_class=PAIRAttack,
         strategy_tags=["core", "multi_turn"],
     ),
     AttackTechniqueSpec(

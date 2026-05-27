@@ -14,6 +14,7 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     MultiTurnAttackContext,
     MultiTurnAttackStrategy,
 )
+from pyrit.executor.attack.multi_turn.pair import PAIRAttack
 from pyrit.executor.attack.multi_turn.red_teaming import RedTeamingAttack, RTASystemPromptPaths
 from pyrit.executor.attack.multi_turn.simulated_conversation import (
     generate_simulated_conversation_async,
@@ -34,6 +35,7 @@ __all__ = [
     "ChunkedRequestAttackContext",
     "MultiPromptSendingAttack",
     "MultiPromptSendingAttackParameters",
+    "PAIRAttack",
     "CrescendoAttack",
     "CrescendoAttackContext",
     "CrescendoAttackResult",

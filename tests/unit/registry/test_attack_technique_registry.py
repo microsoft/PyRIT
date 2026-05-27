@@ -279,6 +279,20 @@ class TestScenarioTechniqueSpecsValid:
         )
 
 
+class TestPairTechniqueRegistration:
+    """Targeted tests for the PAIR technique spec in SCENARIO_TECHNIQUES."""
+
+    def test_pair_spec_registered_with_pair_attack_class(self):
+        from pyrit.executor.attack import PAIRAttack
+
+        pair_specs = [s for s in SCENARIO_TECHNIQUES if s.name == "pair"]
+        assert len(pair_specs) == 1, "Expected exactly one 'pair' spec in SCENARIO_TECHNIQUES"
+        spec = pair_specs[0]
+        assert spec.attack_class is PAIRAttack
+        assert set(spec.strategy_tags) >= {"core", "multi_turn"}
+        assert not spec.extra_kwargs, "PAIR defaults are encoded on PAIRAttack itself, not via extra_kwargs"
+
+
 class TestScorerOverrideTypeInference:
     """
     Tests verifying scorer compatibility type inference for real attack classes.
