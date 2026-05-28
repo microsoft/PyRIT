@@ -34,8 +34,12 @@ class AudioTrueFalseScorer(TrueFalseScorer):
             text_capable_scorer: A TrueFalseScorer capable of processing text.
                 This scorer will be used to evaluate the transcribed audio content.
             validator: Validator for the scorer. Defaults to audio_path data type validator.
-            use_entra_auth: **Deprecated.** Will be removed in v0.15.0.
-                Authentication is now auto-detected by the underlying converter.
+            use_entra_auth: **Deprecated.** Will be removed in 0.15.0.
+                Authentication is now configured on the underlying
+                ``AzureSpeechAudioToTextConverter`` via its ``azure_speech_key`` parameter:
+                pass a string API key (or set ``AZURE_SPEECH_KEY``) for key auth, a callable
+                token provider for Entra ID with a custom token, or omit it to use Entra ID
+                via ``DefaultAzureCredential``.
 
         Raises:
             ValueError: If text_capable_scorer does not support text data type.

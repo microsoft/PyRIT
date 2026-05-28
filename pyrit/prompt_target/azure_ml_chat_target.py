@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-import warnings
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -10,6 +9,7 @@ from httpx import HTTPStatusError
 
 from pyrit.auth import ensure_async_token_provider
 from pyrit.common import default_values, net_utility
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     EmptyResponseException,
     RateLimitException,
@@ -91,7 +91,7 @@ class AzureMLChatTarget(PromptTarget):
             message_normalizer (MessageListNormalizer[Any] | None): **Deprecated.** Use
                 ``custom_configuration`` with ``CapabilityHandlingPolicy`` instead. Previously used for
                 models that do not allow system prompts.
-                Will be removed in v0.15.0.
+                Will be removed in 0.15.0.
             max_new_tokens (int): The maximum number of tokens to generate in the response.
                 Defaults to 400.
             temperature (float): The temperature for generating diverse responses. 1.0 is most random,
@@ -126,13 +126,12 @@ class AzureMLChatTarget(PromptTarget):
                 raise ValueError(
                     "Cannot specify both 'message_normalizer' and 'custom_configuration'. "
                     "Use 'custom_configuration' only; 'message_normalizer' is deprecated and "
-                    "will be removed in v0.15.0."
+                    "will be removed in 0.15.0."
                 )
-            warnings.warn(
-                "Passing message_normalizer is deprecated. Use custom_configuration with "
-                "CapabilityHandlingPolicy instead. Will be removed in v0.15.0.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="AzureMLChatTarget(message_normalizer=...)",
+                new_item="AzureMLChatTarget(custom_configuration=...)",
+                removed_in="0.15.0",
             )
             # The legacy message_normalizer was primarily used to handle system prompts
             # for models that don't support them (e.g. GenericSystemSquashNormalizer).
