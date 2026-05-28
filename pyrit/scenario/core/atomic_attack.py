@@ -356,7 +356,7 @@ class AtomicAttack:
 
         logger.info(
             f"Starting atomic attack execution with {len(self._seed_groups)} seed groups "
-            f"(executor max_concurrency={getattr(executor, '_max_concurrency', '?')})"
+            f"(executor max_concurrency={getattr(executor, '_max_concurrency', 'unknown')})"
         )
 
         try:

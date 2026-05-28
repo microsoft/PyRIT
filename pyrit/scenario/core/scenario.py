@@ -1246,11 +1246,12 @@ class Scenario(ABC):
         # Calculate starting index based on completed attacks
         completed_count = len(self._atomic_attacks) - len(remaining_attacks)
 
-        # Run atomic attacks through a worker pool sharing a single objective-level
-        # Semaphore(max_concurrency) so the global in-flight objective budget never exceeds
-        # max_concurrency regardless of how the work is distributed across atomic attacks.
-        # At max_concurrency=1 the pool reduces to a single worker, naturally giving
-        # serial execution with abort-on-first-failure.
+        # Run atomic attacks through a worker pool sharing a single AttackExecutor-level
+        # Semaphore(max_concurrency) so the global in-flight budget (parameter-build +
+        # attack-execution units of work) never exceeds max_concurrency, regardless of
+        # how work is distributed across atomic attacks. At max_concurrency=1 the pool
+        # reduces to a single worker, naturally giving serial execution with
+        # abort-on-first-failure.
         try:
             await self._execute_atomic_attacks_parallel_async(
                 remaining_attacks=remaining_attacks,
@@ -1407,17 +1408,7 @@ class Scenario(ABC):
         finally:
             pbar.close()
 
-        errors: list[BaseException] = []
-        for outcome in outcomes:
-            if isinstance(outcome, BaseException):
-                logger.error(f"Atomic attack failed in scenario '{self._name}': {str(outcome)}")
-                error = outcome
-            else:
-                atomic_attack, atomic_results = outcome
-                error = self._partial_result_to_exception(atomic_attack=atomic_attack, atomic_results=atomic_results)
-            if error is not None:
-                errors.append(error)
-
+        errors = self._collect_errors_from_outcomes(outcomes=outcomes)
         if errors:
             # Single failure: re-raise as-is to keep simple cases readable. Multiple
             # failures: wrap in ExceptionGroup so the caller sees every one — logging
@@ -1429,3 +1420,34 @@ class Scenario(ABC):
             )
             self._mark_scenario_failed(scenario_result_id=scenario_result_id, error=final_error)
             raise final_error
+
+    def _collect_errors_from_outcomes(
+        self,
+        *,
+        outcomes: list[tuple[AtomicAttack, Any] | BaseException],
+    ) -> list[BaseException]:
+        """
+        Convert worker outcomes into a flat list of errors for the caller to raise.
+
+        Each outcome is either:
+            - ``BaseException``: the atomic attack raised; log and surface as-is.
+            - ``(AtomicAttack, result)``: ran to completion. If the result reports
+              incomplete objectives, ``_partial_result_to_exception`` produces a
+              synthetic ``ValueError`` so partial failures are surfaced the same
+              way as raised exceptions.
+
+        Returns:
+            list[BaseException]: One exception per failed atomic attack, preserving
+                worker-completion order. Empty if every atomic attack succeeded.
+        """
+        errors: list[BaseException] = []
+        for outcome in outcomes:
+            if isinstance(outcome, BaseException):
+                logger.error(f"Atomic attack failed in scenario '{self._name}': {str(outcome)}")
+                error: Optional[BaseException] = outcome
+            else:
+                atomic_attack, atomic_results = outcome
+                error = self._partial_result_to_exception(atomic_attack=atomic_attack, atomic_results=atomic_results)
+            if error is not None:
+                errors.append(error)
+        return errors
