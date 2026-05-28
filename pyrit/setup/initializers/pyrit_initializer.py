@@ -24,7 +24,7 @@ def __getattr__(name: str) -> type:
         print_deprecation_message(
             old_item="pyrit.setup.initializers.pyrit_initializer.InitializerParameter",
             new_item=Parameter,
-            removed_in="v0.16.0",
+            removed_in="0.16.0",
         )
         return Parameter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

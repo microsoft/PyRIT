@@ -51,30 +51,30 @@ async def test_disk_storage_io_path_exists():
     storage = DiskStorageIO()
     path = "sample.txt"
 
-    with patch("os.path.exists", return_value=True) as mock_exists:
+    with patch("pathlib.Path.exists", return_value=True) as mock_exists:
         result = await storage.path_exists(path)
         assert result is True
-        mock_exists.assert_called_once_with(Path(path))
+        mock_exists.assert_called_once()
 
 
 async def test_disk_storage_io_is_file():
     storage = DiskStorageIO()
     path = "sample.txt"
 
-    with patch("os.path.isfile", return_value=True) as mock_isfile:
+    with patch("pathlib.Path.is_file", return_value=True) as mock_isfile:
         result = await storage.is_file(path)
         assert result is True
-        mock_isfile.assert_called_once_with(Path(path))
+        mock_isfile.assert_called_once()
 
 
 async def test_disk_storage_io_create_directory_if_not_exists():
     storage = DiskStorageIO()
     directory_path = "sample_dir"
 
-    with patch("os.makedirs") as mock_mkdir, patch("pathlib.Path.exists", return_value=False) as mock_exists:
+    with patch("pathlib.Path.mkdir") as mock_mkdir, patch("pathlib.Path.exists", return_value=False) as mock_exists:
         await storage.create_directory_if_not_exists(directory_path)
         mock_exists.assert_called_once()
-        mock_mkdir.assert_called_once_with(Path(directory_path), exist_ok=True)
+        mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
 
 
 async def test_azure_blob_storage_io_read_file(azure_blob_storage_io):

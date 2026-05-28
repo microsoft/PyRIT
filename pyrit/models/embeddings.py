@@ -70,12 +70,19 @@ class EmbeddingResponse(BaseModel):
 
     def to_json(self) -> str:
         """
-        Serialize this embedding response to JSON.
+        Serialize this embedding response to JSON (deprecated, use ``model_dump_json`` instead).
 
         Returns:
             str: JSON-encoded embedding response.
 
         """
+        from pyrit.common.deprecation import print_deprecation_message
+
+        print_deprecation_message(
+            old_item="EmbeddingResponse.to_json",
+            new_item="EmbeddingResponse.model_dump_json",
+            removed_in="0.15.0",
+        )
         return self.model_dump_json()
 
 
