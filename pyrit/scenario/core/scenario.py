@@ -217,7 +217,7 @@ class Scenario(ABC):
         self._objective_target: Optional[PromptTarget] = None
         self._objective_target_identifier: Optional[ComponentIdentifier] = None
         self._memory_labels: dict[str, str] = {}
-        self._max_concurrency: int = 1
+        self._max_concurrency: Optional[int] = None
         self._max_retries: int = 0
 
         self._objective_scorer = objective_scorer
@@ -591,7 +591,7 @@ class Scenario(ABC):
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         scenario_strategies: Optional[Sequence[ScenarioStrategy]] = None,
         dataset_config: Optional[DatasetConfiguration] = None,
-        max_concurrency: int = 10,
+        max_concurrency: int = 4,
         max_retries: int = 0,
         memory_labels: Optional[dict[str, str]] = None,
         include_baseline: bool | None = None,
@@ -616,7 +616,7 @@ class Scenario(ABC):
                 Use this to specify dataset names or maximum dataset size from the CLI.
                 If not provided, scenarios use their default_dataset_config().
             max_concurrency (int): Maximum number of concurrent units of work for the scenario.
-                Defaults to 1. A "unit of work" is one parameter-build call (turning a seed
+                Defaults to 4. A "unit of work" is one parameter-build call (turning a seed
                 group into attack parameters) or one attack execution (running a single
                 ``objective × attack`` pair). All atomic attacks in the scenario share a
                 single ``AttackExecutor`` whose internal semaphore caps in-flight units at
@@ -1349,7 +1349,12 @@ class Scenario(ABC):
         every failure is surfaced: a single failure is re-raised as-is, multiple
         failures are wrapped in an ``ExceptionGroup`` so callers see all of them.
         """
-        shared_executor = AttackExecutor(max_concurrency=self._max_concurrency)
+        # Type narrowing: initialize_async always sets _max_concurrency to an int. We hold
+        # the narrowed value in a local so the type checker can verify all uses below.
+        assert self._max_concurrency is not None, "Scenario not initialized; call initialize_async first."
+        max_concurrency: int = self._max_concurrency
+
+        shared_executor = AttackExecutor(max_concurrency=max_concurrency)
         pbar = tqdm(
             desc=f"Executing {self._name}",
             unit="attack",
@@ -1362,7 +1367,7 @@ class Scenario(ABC):
 
         logger.info(
             f"Launching {len(remaining_attacks)} atomic attacks in parallel "
-            f"(shared max_concurrency={self._max_concurrency}) in scenario '{self._name}'"
+            f"(shared max_concurrency={max_concurrency}) in scenario '{self._name}'"
         )
 
         queue: asyncio.Queue[AtomicAttack] = asyncio.Queue()
@@ -1396,7 +1401,7 @@ class Scenario(ABC):
         # the natural place to enforce "don't start new atomic attacks after a failure"
         # without losing parallelism for the common case where remaining_attacks fits in
         # the budget.
-        worker_count = min(self._max_concurrency, len(remaining_attacks))
+        worker_count = min(max_concurrency, len(remaining_attacks))
         try:
             await asyncio.gather(*(worker() for _ in range(worker_count)))
         finally:

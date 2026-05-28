@@ -208,7 +208,7 @@ class TestScenarioInitialization:
         assert scenario._identifier.name == "ConcreteScenario"
         assert scenario._identifier.version == 1
         assert scenario._memory_labels == {}
-        assert scenario._max_concurrency == 1
+        assert scenario._max_concurrency is None
         assert scenario._max_retries == 0  # Default value
         assert scenario.atomic_attack_count == 0  # Not initialized yet
 
@@ -322,7 +322,7 @@ class TestScenarioInitialization2:
         await scenario.initialize_async(objective_target=mock_objective_target)
 
         assert scenario._max_retries == 0
-        assert scenario._max_concurrency == 10
+        assert scenario._max_concurrency == 4
         assert scenario._memory_labels == {}
 
     @pytest.mark.asyncio
@@ -378,9 +378,9 @@ class TestScenarioExecution:
         # Verify return type is ScenarioResult
         assert isinstance(result, ScenarioResult)
 
-        # Verify all runs were executed. Default max_concurrency=10 with 3 atomic attacks
-        # means parallel path: each atomic attack receives max_concurrency=10 and a
-        # shared semaphore that caps total in-flight objectives.
+        # Verify all runs were executed. Default max_concurrency=4 with 3 atomic attacks
+        # means parallel path: each atomic attack receives the shared executor whose
+        # internal semaphore caps total in-flight objectives at 4.
         assert len(result.attack_results) == 3
         for run in mock_atomic_attacks:
             run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True)
