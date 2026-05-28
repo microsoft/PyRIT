@@ -20,8 +20,10 @@ These tests cover the new contract:
 * ``_resolve_adversarial_targets`` raises with available names on typos.
 * ``_get_atomic_attacks_async`` produces ``N × M × D`` atomic attacks
   with the expected ``atomic_attack_name`` and ``display_group``.
-* ``_collect_cached_completion_pairs`` collects (name, hash) tuples for
-  prior ``SUCCESS`` / ``FAILURE`` outcomes only.
+* ``_collect_cached_completion_pairs`` delegates to
+  ``pyrit.analytics.get_cached_results_for_technique`` per unique
+  technique hash and returns the set of technique hashes with at least
+  one ``SUCCESS`` / ``FAILURE`` match for the scenario's objective target.
 * ``skip_cached`` filters cached candidates end-to-end.
 """
 
@@ -466,135 +468,203 @@ class TestGetAtomicAttacksCrossProduct:
 # ---------------------------------------------------------------------------
 
 
-def _make_scenario_result(*, result_id: str, run_state: str = "COMPLETED") -> MagicMock:
-    """Build a minimal ScenarioResult stand-in for cache-key tests."""
-    sr = MagicMock()
-    sr.id = result_id
-    sr.scenario_run_state = run_state
-    return sr
+def _make_attack_result_with_outcome(outcome: AttackOutcome) -> MagicMock:
+    """Build a minimal ``AttackResult`` stand-in for cache-hit tests.
 
-
-def _make_attack_result(
-    *,
-    outcome: AttackOutcome,
-    parent_collection: str | None,
-    parent_eval_hash: str | None,
-) -> MagicMock:
-    """Build a minimal AttackResult stand-in with the attribution_data shape the cache filter reads."""
+    The new analytics-backed cache filter only reads ``outcome`` off each
+    match — the (technique × objective target) keying is done by the
+    analytics lookup parameters, not by introspecting result fields.
+    """
     ar = MagicMock()
     ar.outcome = outcome
-    if parent_collection is None and parent_eval_hash is None:
-        ar.attribution_data = None
-    else:
-        data: dict[str, str] = {}
-        if parent_collection is not None:
-            data["parent_collection"] = parent_collection
-        if parent_eval_hash is not None:
-            data["parent_eval_hash"] = parent_eval_hash
-        ar.attribution_data = data
     return ar
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestCollectCachedCompletionPairs:
-    """Tests for ``_collect_cached_completion_pairs`` (the cache key collector)."""
+    """Tests for ``_collect_cached_completion_pairs`` — now delegates to ``pyrit.analytics``."""
 
-    def _make_bench(self) -> AdversarialBenchmark:
+    _ANALYTICS_PATH = "pyrit.scenario.scenarios.benchmark.adversarial.get_cached_results_for_technique"
+    _IDENTIFIER_PATH = "pyrit.scenario.scenarios.benchmark.adversarial.ObjectiveTargetEvaluationIdentifier"
+
+    def _make_bench(self, *, with_target_identifier: bool = True) -> AdversarialBenchmark:
         bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
         bench._memory = MagicMock()
+        bench._objective_target_identifier = MagicMock() if with_target_identifier else None
         return bench
 
-    def test_collects_success_and_failure_pairs(self):
+    def _make_candidate(self, *, technique_eval_hash: str | None) -> MagicMock:
+        candidate = MagicMock()
+        candidate.technique_eval_hash = technique_eval_hash
+        return candidate
+
+    def _patch_identifier(self, eval_hash: str = "obj_target_hash"):
+        """Patch ``ObjectiveTargetEvaluationIdentifier`` so we don't need a real ComponentIdentifier."""
+        identifier_instance = MagicMock()
+        identifier_instance.eval_hash = eval_hash
+        return patch(self._IDENTIFIER_PATH, return_value=identifier_instance)
+
+    def test_returns_empty_when_no_objective_target_identifier(self):
+        """Pre-``initialize_async`` state: no identifier means the cache filter is a no-op."""
+        bench = self._make_bench(with_target_identifier=False)
+        candidates = [self._make_candidate(technique_eval_hash="hash_a")]
+
+        with patch(self._ANALYTICS_PATH) as analytics_mock:
+            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+
+        assert cached == set()
+        analytics_mock.assert_not_called()
+
+    def test_returns_empty_when_no_atomic_attacks(self):
+        """No candidates → no analytics calls and an empty result."""
         bench = self._make_bench()
-        prior_sr = _make_scenario_result(result_id="sid-1")
-        prior_attacks = [
-            _make_attack_result(
-                outcome=AttackOutcome.SUCCESS,
-                parent_collection="red_teaming__adv_a_harmbench",
-                parent_eval_hash="hash_a",
+        with self._patch_identifier(), patch(self._ANALYTICS_PATH) as analytics_mock:
+            cached = bench._collect_cached_completion_pairs(atomic_attacks=[])
+
+        assert cached == set()
+        analytics_mock.assert_not_called()
+
+    def test_returns_hash_when_success_match_exists(self):
+        bench = self._make_bench()
+        candidates = [self._make_candidate(technique_eval_hash="hash_a")]
+
+        with (
+            self._patch_identifier(eval_hash="obj_hash"),
+            patch(
+                self._ANALYTICS_PATH,
+                return_value=[_make_attack_result_with_outcome(AttackOutcome.SUCCESS)],
             ),
-            _make_attack_result(
-                outcome=AttackOutcome.FAILURE,
-                parent_collection="tap__adv_a_harmbench",
-                parent_eval_hash="hash_b",
+        ):
+            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+
+        assert cached == {"hash_a"}
+
+    def test_returns_hash_when_failure_match_exists(self):
+        bench = self._make_bench()
+        candidates = [self._make_candidate(technique_eval_hash="hash_a")]
+
+        with (
+            self._patch_identifier(),
+            patch(
+                self._ANALYTICS_PATH,
+                return_value=[_make_attack_result_with_outcome(AttackOutcome.FAILURE)],
             ),
+        ):
+            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+
+        assert cached == {"hash_a"}
+
+    def test_excludes_hash_when_only_error_or_undetermined_matches(self):
+        """ERROR / UNDETERMINED outcomes must NOT count as cached so transient failures retry."""
+        bench = self._make_bench()
+        candidates = [self._make_candidate(technique_eval_hash="hash_a")]
+
+        with (
+            self._patch_identifier(),
+            patch(
+                self._ANALYTICS_PATH,
+                return_value=[
+                    _make_attack_result_with_outcome(AttackOutcome.ERROR),
+                    _make_attack_result_with_outcome(AttackOutcome.UNDETERMINED),
+                ],
+            ),
+        ):
+            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+
+        assert cached == set()
+
+    def test_excludes_hash_when_no_matches(self):
+        bench = self._make_bench()
+        candidates = [self._make_candidate(technique_eval_hash="hash_a")]
+
+        with self._patch_identifier(), patch(self._ANALYTICS_PATH, return_value=[]):
+            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+
+        assert cached == set()
+
+    def test_dedupes_unique_technique_hashes_across_candidates(self):
+        """Three candidates sharing two unique hashes → analytics called twice, not three times."""
+        bench = self._make_bench()
+        candidates = [
+            self._make_candidate(technique_eval_hash="hash_a"),
+            self._make_candidate(technique_eval_hash="hash_b"),
+            self._make_candidate(technique_eval_hash="hash_a"),  # duplicate
         ]
-        bench._memory.get_scenario_results.return_value = [prior_sr]
-        bench._memory.get_attack_results.return_value = prior_attacks
 
-        pairs = bench._collect_cached_completion_pairs()
+        with (
+            self._patch_identifier(eval_hash="obj_hash"),
+            patch(
+                self._ANALYTICS_PATH,
+                return_value=[_make_attack_result_with_outcome(AttackOutcome.SUCCESS)],
+            ) as analytics_mock,
+        ):
+            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
 
-        assert pairs == {
-            ("red_teaming__adv_a_harmbench", "hash_a"),
-            ("tap__adv_a_harmbench", "hash_b"),
-        }
+        assert cached == {"hash_a", "hash_b"}
+        assert analytics_mock.call_count == 2
+        called_technique_hashes = {call.kwargs["technique_eval_hash"] for call in analytics_mock.call_args_list}
+        assert called_technique_hashes == {"hash_a", "hash_b"}
 
-    def test_excludes_error_and_undetermined_outcomes(self):
+    def test_delegates_with_memory_and_objective_target_hash(self):
+        """Each analytics call passes the scenario's memory + the computed objective target hash."""
         bench = self._make_bench()
-        prior_sr = _make_scenario_result(result_id="sid-1")
-        prior_attacks = [
-            _make_attack_result(
-                outcome=AttackOutcome.ERROR,
-                parent_collection="x",
-                parent_eval_hash="h",
-            ),
-            _make_attack_result(
-                outcome=AttackOutcome.UNDETERMINED,
-                parent_collection="y",
-                parent_eval_hash="h",
-            ),
-        ]
-        bench._memory.get_scenario_results.return_value = [prior_sr]
-        bench._memory.get_attack_results.return_value = prior_attacks
+        candidates = [self._make_candidate(technique_eval_hash="hash_a")]
 
-        pairs = bench._collect_cached_completion_pairs()
+        with (
+            self._patch_identifier(eval_hash="my_obj_target_hash"),
+            patch(self._ANALYTICS_PATH, return_value=[]) as analytics_mock,
+        ):
+            bench._collect_cached_completion_pairs(atomic_attacks=candidates)
 
-        assert pairs == set()
-
-    def test_only_counts_completed_scenario_runs(self):
-        bench = self._make_bench()
-        in_progress = _make_scenario_result(result_id="sid-1", run_state="IN_PROGRESS")
-        failed = _make_scenario_result(result_id="sid-2", run_state="FAILED")
-        bench._memory.get_scenario_results.return_value = [in_progress, failed]
-
-        pairs = bench._collect_cached_completion_pairs()
-
-        assert pairs == set()
-        # No COMPLETED runs → never touch get_attack_results.
-        bench._memory.get_attack_results.assert_not_called()
-
-    def test_queries_memory_by_scenario_name_and_version(self):
-        bench = self._make_bench()
-        bench._memory.get_scenario_results.return_value = []
-
-        bench._collect_cached_completion_pairs()
-
-        bench._memory.get_scenario_results.assert_called_once_with(
-            scenario_name="AdversarialBenchmark",
-            scenario_version=AdversarialBenchmark.VERSION,
+        analytics_mock.assert_called_once_with(
+            bench._memory,
+            technique_eval_hash="hash_a",
+            objective_target_eval_hash="my_obj_target_hash",
         )
 
-    def test_skips_rows_with_missing_parent_collection(self):
-        """``attribution_data=None`` or missing ``parent_collection`` rows are silently skipped."""
+    def test_skips_candidates_with_no_technique_eval_hash(self):
+        """A candidate whose ``technique_eval_hash`` is ``None`` is silently ignored."""
         bench = self._make_bench()
-        prior_sr = _make_scenario_result(result_id="sid-1")
-        prior_attacks = [
-            _make_attack_result(outcome=AttackOutcome.SUCCESS, parent_collection=None, parent_eval_hash=None),
-            _make_attack_result(outcome=AttackOutcome.SUCCESS, parent_collection=None, parent_eval_hash="hash_x"),
+        candidates = [self._make_candidate(technique_eval_hash=None)]
+
+        with self._patch_identifier(), patch(self._ANALYTICS_PATH) as analytics_mock:
+            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+
+        assert cached == set()
+        analytics_mock.assert_not_called()
+
+    def test_analytics_lookup_exception_is_swallowed_per_hash(self):
+        """A failing analytics lookup for one hash must not block the others — that hash is not cached."""
+        bench = self._make_bench()
+        candidates = [
+            self._make_candidate(technique_eval_hash="hash_a"),
+            self._make_candidate(technique_eval_hash="hash_b"),
         ]
-        bench._memory.get_scenario_results.return_value = [prior_sr]
-        bench._memory.get_attack_results.return_value = prior_attacks
 
-        pairs = bench._collect_cached_completion_pairs()
-        assert pairs == set()
+        def fake_analytics(_memory, *, technique_eval_hash, objective_target_eval_hash):
+            if technique_eval_hash == "hash_a":
+                raise RuntimeError("analytics blew up")
+            return [_make_attack_result_with_outcome(AttackOutcome.SUCCESS)]
 
-    def test_memory_error_falls_back_to_empty_set(self):
-        """An exception from ``get_scenario_results`` must not block the run; cache becomes a no-op."""
+        with self._patch_identifier(), patch(self._ANALYTICS_PATH, side_effect=fake_analytics):
+            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+
+        # hash_a was the failed lookup → not cached (will retry). hash_b succeeded → cached.
+        assert cached == {"hash_b"}
+
+    def test_identifier_construction_failure_falls_back_to_empty(self):
+        """If ``ObjectiveTargetEvaluationIdentifier`` raises, cache becomes a no-op rather than blocking."""
         bench = self._make_bench()
-        bench._memory.get_scenario_results.side_effect = RuntimeError("db down")
+        candidates = [self._make_candidate(technique_eval_hash="hash_a")]
 
-        pairs = bench._collect_cached_completion_pairs()
-        assert pairs == set()
+        with (
+            patch(self._IDENTIFIER_PATH, side_effect=RuntimeError("bad identifier")),
+            patch(self._ANALYTICS_PATH) as analytics_mock,
+        ):
+            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+
+        assert cached == set()
+        analytics_mock.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -606,6 +676,9 @@ class TestCollectCachedCompletionPairs:
 class TestSkipCachedFilter:
     """End-to-end tests for the ``skip_cached`` filter applied in ``_get_atomic_attacks_async``."""
 
+    _ANALYTICS_PATH = "pyrit.scenario.scenarios.benchmark.adversarial.get_cached_results_for_technique"
+    _IDENTIFIER_PATH = "pyrit.scenario.scenarios.benchmark.adversarial.ObjectiveTargetEvaluationIdentifier"
+
     def _make_bench(self, *, skip_cached: bool) -> AdversarialBenchmark:
         _register_adversarial_target(name="adv_a")
         bench = AdversarialBenchmark(
@@ -613,6 +686,7 @@ class TestSkipCachedFilter:
             skip_cached=skip_cached,
         )
         bench._objective_target = MagicMock(spec=PromptTarget)
+        bench._objective_target_identifier = MagicMock()
         bench.params = {"adversarial_targets": ["adv_a"]}
 
         red_teaming_strategy = MagicMock()
@@ -634,56 +708,50 @@ class TestSkipCachedFilter:
             return_value=factory,
         )
 
-    async def test_skip_cached_false_returns_all_candidates(self):
-        bench = self._make_bench(skip_cached=False)
-        bench._memory = MagicMock()
+    def _patch_identifier(self, eval_hash: str = "obj_hash"):
+        identifier_instance = MagicMock()
+        identifier_instance.eval_hash = eval_hash
+        return patch(self._IDENTIFIER_PATH, return_value=identifier_instance)
 
-        with self._patch_factory_builder():
+    async def test_skip_cached_false_returns_all_candidates_without_analytics_call(self):
+        bench = self._make_bench(skip_cached=False)
+
+        with self._patch_factory_builder(), patch(self._ANALYTICS_PATH) as analytics_mock:
             result = await bench._get_atomic_attacks_async()
 
         assert len(result) == 1
-        # No cache query when skip_cached=False.
-        bench._memory.get_scenario_results.assert_not_called()
+        analytics_mock.assert_not_called()
 
     async def test_skip_cached_true_filters_matching_candidates(self):
         bench = self._make_bench(skip_cached=True)
-        prior_sr = _make_scenario_result(result_id="sid-1")
-        prior_attacks = [
-            _make_attack_result(
-                outcome=AttackOutcome.SUCCESS,
-                parent_collection="red_teaming__adv_a_harmbench",
-                parent_eval_hash=None,  # MagicMock candidates yield None for technique_eval_hash
-            ),
-        ]
-        bench._memory = MagicMock()
-        bench._memory.get_scenario_results.return_value = [prior_sr]
-        bench._memory.get_attack_results.return_value = prior_attacks
 
-        with self._patch_factory_builder():
-            # Stub out technique_eval_hash so the cache-key tuple matches.
-            with patch(
+        # Stub every candidate's technique_eval_hash to a known value so the analytics
+        # lookup key matches the cached set.
+        with (
+            self._patch_factory_builder(),
+            self._patch_identifier(),
+            patch(
                 "pyrit.scenario.core.atomic_attack.AtomicAttack.technique_eval_hash",
-                new_callable=lambda: property(lambda self: None),
-            ):
-                result = await bench._get_atomic_attacks_async()
+                new_callable=lambda: property(lambda self: "cached_hash"),
+            ),
+            patch(
+                self._ANALYTICS_PATH,
+                return_value=[_make_attack_result_with_outcome(AttackOutcome.SUCCESS)],
+            ),
+        ):
+            result = await bench._get_atomic_attacks_async()
 
         assert result == []
 
     async def test_skip_cached_true_keeps_unmatched_candidates(self):
         bench = self._make_bench(skip_cached=True)
-        prior_sr = _make_scenario_result(result_id="sid-1")
-        prior_attacks = [
-            _make_attack_result(
-                outcome=AttackOutcome.SUCCESS,
-                parent_collection="some_other_name",
-                parent_eval_hash="hash_x",
-            ),
-        ]
-        bench._memory = MagicMock()
-        bench._memory.get_scenario_results.return_value = [prior_sr]
-        bench._memory.get_attack_results.return_value = prior_attacks
 
-        with self._patch_factory_builder():
+        # Analytics returns no matches → no candidate is cached, so all pass through.
+        with (
+            self._patch_factory_builder(),
+            self._patch_identifier(),
+            patch(self._ANALYTICS_PATH, return_value=[]),
+        ):
             result = await bench._get_atomic_attacks_async()
 
         assert len(result) == 1

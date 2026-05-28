@@ -9,8 +9,10 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING, ClassVar
 
+from pyrit.analytics import get_cached_results_for_technique
 from pyrit.common import Parameter, apply_defaults
 from pyrit.executor.attack import AttackScoringConfig
+from pyrit.identifiers import ObjectiveTargetEvaluationIdentifier
 from pyrit.models import AttackOutcome, SeedAttackGroup
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.registry.tag_query import TagQuery
@@ -189,15 +191,16 @@ class AdversarialBenchmark(Scenario):
                 support (covering ``FloatScaleScorer``, etc.) is tracked
                 as a follow-up.
             skip_cached: When ``True``, ``_get_atomic_attacks_async`` filters
-                out atomic attacks whose ``(atomic_attack_name,
-                technique_eval_hash)`` tuple already appears in a prior
-                ``COMPLETED`` ``ScenarioResult`` for the same scenario name
-                and version with outcome ``SUCCESS`` or ``FAILURE``.
-                ``ERROR`` and ``UNDETERMINED`` outcomes always retry. Cache
-                identity is content-derived via
-                ``AtomicAttack.technique_eval_hash``, so two atomic attacks
-                with the same name but different technique configurations
-                (e.g. different scorer) do not cross-pollinate.
+                out atomic attacks for which the live behavioral cache
+                (``pyrit.analytics.get_cached_results_for_technique``) has
+                already returned at least one ``SUCCESS`` or ``FAILURE``
+                ``AttackResult`` for the matching
+                ``(technique_eval_hash × objective_target_eval_hash)``
+                pair. ``ERROR`` and ``UNDETERMINED`` outcomes never count
+                as cache hits. The cache spans every prior run that
+                produced the same (technique × objective target)
+                combination — it is intentionally not scoped to this
+                scenario name or ``VERSION``.
             scenario_result_id: Optional ID of an existing scenario result
                 to resume.
         """
@@ -225,8 +228,10 @@ class AdversarialBenchmark(Scenario):
         ``AttackTechniqueRegistry.build_factory_from_spec`` with
         ``adversarial_chat`` overridden to the resolved target — no global
         registry state is touched. When ``self._skip_cached`` is set, the
-        final candidate list is then filtered against prior completed
-        ``(atomic_attack_name, technique_eval_hash)`` tuples.
+        final candidate list is then filtered against the live behavioral
+        cache via ``_collect_cached_completion_pairs``, which delegates to
+        ``pyrit.analytics.get_cached_results_for_technique`` for each
+        unique ``(technique_eval_hash, objective_target_eval_hash)`` pair.
 
         Returns:
             list[AtomicAttack]: The atomic attacks to actually execute on
@@ -319,12 +324,13 @@ class AdversarialBenchmark(Scenario):
         if not self._skip_cached:
             return atomic_attacks
 
-        cached_pairs = self._collect_cached_completion_pairs()
-        filtered = [c for c in atomic_attacks if (c.atomic_attack_name, c.technique_eval_hash) not in cached_pairs]
+        cached_technique_hashes = self._collect_cached_completion_pairs(atomic_attacks=atomic_attacks)
+        filtered = [c for c in atomic_attacks if c.technique_eval_hash not in cached_technique_hashes]
         skipped = len(atomic_attacks) - len(filtered)
         if skipped > 0:
             logger.info(
-                "skip_cached=True: dropping %d/%d atomic attack(s) already completed in prior runs.",
+                "skip_cached=True: dropping %d/%d atomic attack(s) already completed for the "
+                "current objective target (matched by technique_eval_hash × objective_target_eval_hash).",
                 skipped,
                 len(atomic_attacks),
             )
@@ -366,68 +372,71 @@ class AdversarialBenchmark(Scenario):
 
         return resolved
 
-    def _collect_cached_completion_pairs(self) -> set[tuple[str, str | None]]:
+    def _collect_cached_completion_pairs(self, *, atomic_attacks: list[AtomicAttack]) -> set[str]:
         """
-        Collect cache keys for atomic attacks that completed in any prior run of this scenario.
+        Return the set of ``technique_eval_hash`` values already cached for this scenario's objective target.
 
-        Walks ``ScenarioResult`` rows for the same scenario name and
-        ``VERSION``, restricts to ``scenario_run_state == "COMPLETED"``,
-        then walks the linked ``AttackResult`` rows (joined via
-        ``AttackResultEntry.attribution_parent_id``) and records the
-        ``(atomic_attack_name, parent_eval_hash)`` tuple for every
-        ``SUCCESS`` or ``FAILURE`` outcome. The pair shape mirrors the
-        ``(atomic_attack_name, technique_eval_hash)`` tuple used by
-        ``_get_atomic_attacks_async`` so a direct ``in`` check filters
-        candidates without further key construction.
+        Delegates to ``pyrit.analytics.get_cached_results_for_technique`` for
+        each unique technique hash among ``atomic_attacks``. A technique is
+        considered cached when the analytics helper returns at least one
+        ``AttackResult`` with outcome ``SUCCESS`` or ``FAILURE`` for the
+        ``(technique_eval_hash × objective_target_eval_hash)`` pair —
+        ``ERROR`` and ``UNDETERMINED`` outcomes are ignored so transient
+        failures retry on the next run.
 
-        Resilient to attribution-data variation: rows whose
-        ``attribution_data`` is ``None`` or missing ``parent_collection``
-        are skipped. Rows without ``parent_eval_hash`` enter the cache with
-        ``None`` in that slot, so they only match candidates whose
-        ``technique_eval_hash`` also resolves to ``None`` (currently never,
-        since ``AtomicAttack.technique_eval_hash`` is always populated post-#1758).
+        The objective-target eval hash is computed once from
+        ``self._objective_target_identifier`` (populated by the base
+        ``Scenario.initialize_async``) via
+        ``ObjectiveTargetEvaluationIdentifier``. The cache is intentionally
+        scenario-agnostic: any prior run that produced a matching (technique
+        × objective target) result counts as a hit, regardless of scenario
+        name or ``VERSION``.
+
+        Args:
+            atomic_attacks: The candidate atomic attacks built earlier in
+                ``_get_atomic_attacks_async``. Only their
+                ``technique_eval_hash`` values are read.
 
         Returns:
-            set[tuple[str, str | None]]: Cache keys for already-completed
-            atomic attacks. Empty set on any unexpected error (logged at
-            warning level) — caching becomes a no-op rather than blocking
-            the run.
+            set[str]: ``technique_eval_hash`` values that have at least one
+            qualifying cached ``AttackResult``. Empty set when the scenario
+            has no objective target identifier or every analytics lookup
+            fails (logged at warning level) — caching becomes a no-op rather
+            than blocking the run.
         """
-        scenario_name = type(self).__name__
-        cached_pairs: set[tuple[str, str | None]] = set()
+        cached_hashes: set[str] = set()
+
+        if self._objective_target_identifier is None:
+            return cached_hashes
 
         try:
-            prior_results = self._memory.get_scenario_results(
-                scenario_name=scenario_name,
-                scenario_version=self.VERSION,
-            )
+            objective_target_eval_hash = ObjectiveTargetEvaluationIdentifier(
+                self._objective_target_identifier
+            ).eval_hash
         except Exception as exc:
-            logger.warning("skip_cached: failed to query prior scenario results (%s); skipping cache filter.", exc)
-            return cached_pairs
+            logger.warning(
+                "skip_cached: failed to compute objective_target eval hash (%s); skipping cache filter.",
+                exc,
+            )
+            return cached_hashes
 
-        for scenario_result in prior_results:
-            if scenario_result.scenario_run_state != "COMPLETED":
-                continue
-            if scenario_result.id is None:
-                continue
+        unique_technique_hashes = {c.technique_eval_hash for c in atomic_attacks if c.technique_eval_hash}
+
+        for technique_eval_hash in unique_technique_hashes:
             try:
-                attack_results = self._memory.get_attack_results(scenario_result_id=str(scenario_result.id))
+                matches = get_cached_results_for_technique(
+                    self._memory,
+                    technique_eval_hash=technique_eval_hash,
+                    objective_target_eval_hash=objective_target_eval_hash,
+                )
             except Exception as exc:
                 logger.warning(
-                    "skip_cached: failed to load attack results for scenario %s (%s); skipping that run.",
-                    scenario_result.id,
+                    "skip_cached: analytics lookup failed for technique_eval_hash=%s (%s); not treating it as cached.",
+                    technique_eval_hash,
                     exc,
                 )
                 continue
+            if any(m.outcome in (AttackOutcome.SUCCESS, AttackOutcome.FAILURE) for m in matches):
+                cached_hashes.add(technique_eval_hash)
 
-            for ar in attack_results:
-                if ar.outcome not in (AttackOutcome.SUCCESS, AttackOutcome.FAILURE):
-                    continue
-                data = ar.attribution_data or {}
-                atomic_attack_name = data.get("parent_collection")
-                if not atomic_attack_name:
-                    continue
-                parent_eval_hash = data.get("parent_eval_hash")
-                cached_pairs.add((atomic_attack_name, parent_eval_hash))
-
-        return cached_pairs
+        return cached_hashes
