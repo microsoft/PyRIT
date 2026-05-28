@@ -5,7 +5,7 @@
 
 PyRIT docs render docstrings through MyST (jupyter-book 2), not Sphinx, so
 reST roles like ``:class:`Foo``` show up as raw literal text in the built
-site. The standing convention (style-guide.instructions.md, PR #1782) is to
+site. The standing convention (style-guide.instructions.md) is to
 use plain double-backticks; ``build_scripts/gen_api_md.py`` then auto-links
 known PyRIT symbols at render time.
 
