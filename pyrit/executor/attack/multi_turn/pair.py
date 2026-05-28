@@ -91,9 +91,6 @@ class PAIRAttack(TreeOfAttacksWithPruningAttack):
                 Defaults to 10.
             prepended_conversation_config (PrependedConversationConfig | None):
                 Configuration for prepended-conversation handling. Defaults to None.
-
-        Raises:
-            ValueError: Same conditions as TreeOfAttacksWithPruningAttack.
         """
         super().__init__(
             objective_target=objective_target,
