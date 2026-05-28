@@ -6,13 +6,13 @@
 from pyrit.executor.attack.compound.sequential_attack import (
     SequenceMode,
     SequentialAttack,
-    SequentialAttackItem,
     SequentialAttackResult,
+    SequentialAttackStep,
 )
 
 __all__ = [
     "SequenceMode",
     "SequentialAttack",
-    "SequentialAttackItem",
     "SequentialAttackResult",
+    "SequentialAttackStep",
 ]

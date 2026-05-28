@@ -11,8 +11,8 @@ from pyrit.executor.attack.component import (
 from pyrit.executor.attack.compound import (
     SequenceMode,
     SequentialAttack,
-    SequentialAttackItem,
     SequentialAttackResult,
+    SequentialAttackStep,
 )
 from pyrit.executor.attack.core import (
     AttackAdversarialConfig,
@@ -105,7 +105,7 @@ __all__ = [
     "PrependedConversationConfig",
     "SequenceMode",
     "SequentialAttack",
-    "SequentialAttackItem",
     "SequentialAttackResult",
+    "SequentialAttackStep",
     "generate_simulated_conversation_async",
 ]

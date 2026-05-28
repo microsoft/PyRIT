@@ -3,13 +3,13 @@
 
 """
 ``SequentialAttack`` — runs a sequence of inner ``AttackStrategy``
-items against a single objective, controlled by a ``SequenceMode``.
+steps against a single objective, controlled by a ``SequenceMode``.
 
 The compound preserves the one-objective → one-``AttackResult`` invariant:
 each invocation returns one ``SequentialAttackResult`` whose outcome
 reflects the sequence according to the chosen ``SequenceMode``.
 
-Each inner item is dispatched through ``AttackExecutor``, so it
+Each inner step is dispatched through ``AttackExecutor``, so it
 persists as its own first-class ``AttackResult`` row. The envelope result
 records the inner ``attack_result_id`` of every attempt under
 ``metadata["attempt_result_ids"]`` so callers can fetch the per-attempt
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 class SequenceMode(str, Enum):
     """
-    How a ``SequentialAttack`` iterates and aggregates its items.
+    How a ``SequentialAttack`` iterates and aggregates its steps.
 
     Each mode bundles a stop condition (when to halt iteration) and an
     outcome rule (how to derive the envelope's outcome from the inner
@@ -50,43 +50,43 @@ class SequenceMode(str, Enum):
 
     FIRST_SUCCESS = "first_success"
     """Stop on the first ``AttackOutcome.SUCCESS``; continue past ERROR and FAILURE.
-    Outcome: SUCCESS if any item succeeded, ERROR if every item errored, else FAILURE.
+    Outcome: SUCCESS if any step succeeded, ERROR if every step errored, else FAILURE.
     Resilient adaptive default — keep trying other strategies past transient errors."""
 
     FIRST_DECISIVE = "first_decisive"
     """Stop on the first ``AttackOutcome.SUCCESS`` or ``AttackOutcome.ERROR``;
-    continue past FAILURE. Outcome: SUCCESS if any item succeeded, ERROR if every
-    item errored, else FAILURE. Use when ERRORs should short-circuit the sequence."""
+    continue past FAILURE. Outcome: SUCCESS if any step succeeded, ERROR if every
+    step errored, else FAILURE. Use when ERRORs should short-circuit the sequence."""
 
     STRICT_ALL = "strict_all"
-    """Stop on the first non-SUCCESS. Outcome: SUCCESS only if every item succeeded,
-    ERROR if any item errored, else FAILURE. Pipeline semantics — each item is a
-    required step."""
+    """Stop on the first non-SUCCESS. Outcome: SUCCESS only if every step succeeded,
+    ERROR if any step errored, else FAILURE. Pipeline semantics — each step is
+    required."""
 
     EXHAUSTIVE = "exhaustive"
-    """Run every item regardless of intermediate outcomes. Outcome: SUCCESS if any
-    item succeeded, ERROR if every item errored, else FAILURE. Use for evaluation
+    """Run every step regardless of intermediate outcomes. Outcome: SUCCESS if any
+    step succeeded, ERROR if every step errored, else FAILURE. Use for evaluation
     sweeps where you want to try everything."""
 
     LAST_RESULT = "last_result"
-    """Run every item; inherit the last item's outcome verbatim. Use for chained
+    """Run every step; inherit the last step's outcome verbatim. Use for chained
     refinement where the final attempt is canonical."""
 
 
 @dataclass(frozen=True)
-class SequentialAttackItem:
+class SequentialAttackStep:
     """
-    One item in a ``SequentialAttack``.
+    One step in a ``SequentialAttack``.
 
-    Each item bundles an ``AttackStrategy`` with the inputs that the
+    Each step bundles an ``AttackStrategy`` with the inputs that the
     compound forwards to ``AttackExecutor`` when dispatching it.
-    ``seed_group`` is required per item so callers compose seed groups up
+    ``seed_group`` is required per step so callers compose seed groups up
     front (e.g. merging per-technique ``SeedAttackTechniqueGroup`` objects
     into a shared base) without any implicit fallback at the compound
     layer.
 
     Attributes:
-        strategy (AttackStrategy): The inner attack to run for this item.
+        strategy (AttackStrategy): The inner attack to run for this step.
         seed_group (SeedAttackGroup): The seed group dispatched to the
             inner attack. Must carry the objective.
         adversarial_chat (PromptTarget | None): Forwarded to the executor
@@ -95,7 +95,7 @@ class SequentialAttackItem:
             configs).
         objective_scorer (TrueFalseScorer | None): Forwarded to the
             executor for inner attacks that need an objective scorer.
-        memory_labels (Mapping[str, str]): Per-item labels merged on top
+        memory_labels (Mapping[str, str]): Per-step labels merged on top
             of the compound's ``context.memory_labels`` for this call.
     """
 
@@ -124,13 +124,13 @@ class SequentialAttackResult(AttackResult):
 
 class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], SequentialAttackResult]):
     """
-    Run a sequence of ``AttackStrategy`` items against one objective.
+    Run a sequence of ``AttackStrategy`` steps against one objective.
 
     Use this when an objective should be attacked by several techniques in
     sequence — for example "try Crescendo first, fall back to
     PromptSending" — without breaking the one-objective →
     one-``AttackResult`` invariant or pushing branching logic up to the
-    Scenario layer. Each inner item runs as a real attack through
+    Scenario layer. Each inner step runs as a real attack through
     ``AttackExecutor`` and persists its own row; the compound returns
     one ``SequentialAttackResult`` whose iteration and aggregation are
     controlled by ``SequenceMode``.
@@ -146,9 +146,9 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
 
         sequential = SequentialAttack(
             objective_target=target,
-            items=[
-                SequentialAttackItem(strategy=crescendo, seed_group=sg),
-                SequentialAttackItem(strategy=prompt_sending, seed_group=sg),
+            steps=[
+                SequentialAttackStep(strategy=crescendo, seed_group=sg),
+                SequentialAttackStep(strategy=prompt_sending, seed_group=sg),
             ],
         )
         result = await sequential.execute_async(objective="...")
@@ -161,36 +161,36 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         self,
         *,
         objective_target: PromptTarget,
-        items: Sequence[SequentialAttackItem],
+        steps: Sequence[SequentialAttackStep],
         mode: SequenceMode = SequenceMode.FIRST_SUCCESS,
     ) -> None:
         """
         Args:
             objective_target (PromptTarget): Target the compound is
                 nominally bound to (forwarded to ``AttackStrategy``
-                for identifier construction). Each inner item runs against
+                for identifier construction). Each inner step runs against
                 whatever target its own strategy is configured with.
-            items (Sequence[SequentialAttackItem]): Items to run, in
+            steps (Sequence[SequentialAttackStep]): Steps to run, in
                 order. Must be non-empty.
             mode (SequenceMode): Iteration + aggregation mode. Defaults to
                 ``SequenceMode.FIRST_SUCCESS`` (resilient adaptive).
 
         Raises:
-            ValueError: If ``items`` is empty.
+            ValueError: If ``steps`` is empty.
         """
-        if not items:
-            raise ValueError("items must contain at least one SequentialAttackItem")
+        if not steps:
+            raise ValueError("steps must contain at least one SequentialAttackStep")
 
         super().__init__(
             objective_target=objective_target,
             context_type=AttackContext,
-            # Inner items expand their own next_message / prepended_conversation
+            # Inner steps expand their own next_message / prepended_conversation
             # via their own params_type; the compound takes no per-call message
             # overrides.
             params_type=AttackParameters.excluding("next_message", "prepended_conversation"),
             logger=logger,
         )
-        self._items: list[SequentialAttackItem] = list(items)
+        self._steps: list[SequentialAttackStep] = list(steps)
         self._mode = mode
         self._executor = AttackExecutor(max_concurrency=1)
 
@@ -199,17 +199,17 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             raise ValueError("Attack objective must be provided and non-empty")
 
     async def _setup_async(self, *, context: AttackContext[AttackParameters]) -> None:
-        """No-op: per-item setup is owned by each inner strategy's executor."""
+        """No-op: per-step setup is owned by each inner strategy's executor."""
 
     async def _teardown_async(self, *, context: AttackContext[AttackParameters]) -> None:
-        """No-op: per-item teardown is owned by each inner strategy's executor."""
+        """No-op: per-step teardown is owned by each inner strategy's executor."""
 
     async def _perform_async(self, *, context: AttackContext[AttackParameters]) -> SequentialAttackResult:
         results: list[AttackResult] = []
 
-        for item in self._items:
-            labels = {**context.memory_labels, **dict(item.memory_labels)}
-            result = await self._run_item_async(item=item, memory_labels=labels)
+        for step in self._steps:
+            labels = {**context.memory_labels, **dict(step.memory_labels)}
+            result = await self._run_step_async(step=step, memory_labels=labels)
             results.append(result)
             if self._should_stop_after(result=result):
                 break
@@ -231,21 +231,21 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             },
         )
 
-    async def _run_item_async(
+    async def _run_step_async(
         self,
         *,
-        item: SequentialAttackItem,
+        step: SequentialAttackStep,
         memory_labels: dict[str, str],
     ) -> AttackResult:
         """
-        Execute one item via ``AttackExecutor`` and return its result.
+        Execute one step via ``AttackExecutor`` and return its result.
 
-        Isolated as a method so tests can patch the per-item call surface
+        Isolated as a method so tests can patch the per-step call surface
         without monkey-patching ``AttackExecutor``.
 
         Returns:
             AttackResult: The ``AttackResult`` produced by the inner
-            attack for ``item.seed_group``.
+            attack for ``step.seed_group``.
 
         Raises:
             BaseException: Re-raised from
@@ -255,10 +255,10 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 result nor an incomplete objective (defensive guard).
         """
         executor_result = await self._executor.execute_attack_from_seed_groups_async(
-            attack=item.strategy,
-            seed_groups=[item.seed_group],
-            adversarial_chat=item.adversarial_chat,
-            objective_scorer=item.objective_scorer,
+            attack=step.strategy,
+            seed_groups=[step.seed_group],
+            adversarial_chat=step.adversarial_chat,
+            objective_scorer=step.objective_scorer,
             memory_labels=memory_labels,
         )
         if executor_result.completed_results:
@@ -276,7 +276,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             return result.outcome in (AttackOutcome.SUCCESS, AttackOutcome.ERROR)
         if self._mode is SequenceMode.STRICT_ALL:
             return result.outcome is not AttackOutcome.SUCCESS
-        # EXHAUSTIVE and LAST_RESULT run every item to completion.
+        # EXHAUSTIVE and LAST_RESULT run every step to completion.
         return False
 
     def _compute_outcome(self, *, results: list[AttackResult]) -> AttackOutcome:

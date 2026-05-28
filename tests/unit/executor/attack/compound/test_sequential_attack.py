@@ -11,8 +11,8 @@ import pytest
 from pyrit.executor.attack.compound import (
     SequenceMode,
     SequentialAttack,
-    SequentialAttackItem,
     SequentialAttackResult,
+    SequentialAttackStep,
 )
 from pyrit.executor.attack.core.attack_executor import AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
@@ -41,30 +41,30 @@ def _make_context(
     return AttackContext(params=params_type(objective=objective, memory_labels=labels or {}))
 
 
-def _patch_run_item(*, strategies_by_id: dict[int, MagicMock]):
+def _patch_run_step(*, strategies_by_id: dict[int, MagicMock]):
     """
-    Patch ``SequentialAttack._run_item_async`` to return results driven by
+    Patch ``SequentialAttack._run_step_async`` to return results driven by
     each strategy's ``_outcomes`` list (one outcome per invocation).
 
     Records every call onto a ``calls`` list so tests can assert on the
-    ``item`` that was dispatched and the ``memory_labels`` that were applied.
+    ``step`` that was dispatched and the ``memory_labels`` that were applied.
     """
     counters: dict[int, int] = dict.fromkeys(strategies_by_id, 0)
     calls: list[dict] = []
 
-    async def _stub(self, *, item, memory_labels):
-        sid = id(item.strategy)
+    async def _stub(self, *, step, memory_labels):
+        sid = id(step.strategy)
         idx = counters[sid]
         counters[sid] = idx + 1
-        outcome = item.strategy._outcomes[idx]
-        calls.append({"item": item, "memory_labels": dict(memory_labels)})
+        outcome = step.strategy._outcomes[idx]
+        calls.append({"step": step, "memory_labels": dict(memory_labels)})
         return AttackResult(
-            conversation_id=f"conv-{item.strategy._name}-{idx}",
+            conversation_id=f"conv-{step.strategy._name}-{idx}",
             objective="obj",
             outcome=outcome,
         )
 
-    patcher = patch.object(SequentialAttack, "_run_item_async", _stub)
+    patcher = patch.object(SequentialAttack, "_run_step_async", _stub)
     return patcher, calls
 
 
@@ -80,20 +80,20 @@ def seed_group() -> SeedAttackGroup:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestInit:
-    def test_init_rejects_empty_items(self, target):
+    def test_init_rejects_empty_steps(self, target):
         with pytest.raises(ValueError, match="at least one"):
-            SequentialAttack(objective_target=target, items=[])
+            SequentialAttack(objective_target=target, steps=[])
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestValidate:
     @pytest.mark.parametrize("bad_objective", ["", "   ", "\n\t"])
     def test_validate_rejects_empty_objective(self, target, seed_group, bad_objective):
-        item = SequentialAttackItem(
+        step = SequentialAttackStep(
             strategy=_make_strategy(outcomes=[AttackOutcome.SUCCESS]),
             seed_group=seed_group,
         )
-        compound = SequentialAttack(objective_target=target, items=[item])
+        compound = SequentialAttack(objective_target=target, steps=[step])
         with pytest.raises(ValueError, match="objective"):
             compound._validate_context(context=_make_context(objective=bad_objective))
 
@@ -103,12 +103,12 @@ class TestFirstSuccess:
     async def test_stops_on_first_success(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
-        items = [
-            SequentialAttackItem(strategy=a, seed_group=seed_group),
-            SequentialAttackItem(strategy=b, seed_group=seed_group),
+        steps = [
+            SequentialAttackStep(strategy=a, seed_group=seed_group),
+            SequentialAttackStep(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, items=items)
-        patcher, calls = _patch_run_item(strategies_by_id={id(a): a, id(b): b})
+        compound = SequentialAttack(objective_target=target, steps=steps)
+        patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -120,9 +120,9 @@ class TestFirstSuccess:
         a = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="b")
         c = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="c")
-        items = [SequentialAttackItem(strategy=s, seed_group=seed_group) for s in (a, b, c)]
-        compound = SequentialAttack(objective_target=target, items=items, mode=SequenceMode.FIRST_SUCCESS)
-        patcher, calls = _patch_run_item(strategies_by_id={id(a): a, id(b): b, id(c): c})
+        steps = [SequentialAttackStep(strategy=s, seed_group=seed_group) for s in (a, b, c)]
+        compound = SequentialAttack(objective_target=target, steps=steps, mode=SequenceMode.FIRST_SUCCESS)
+        patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b, id(c): c})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -133,12 +133,12 @@ class TestFirstSuccess:
     async def test_undetermined_outcome_does_not_stop(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.UNDETERMINED], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
-        items = [
-            SequentialAttackItem(strategy=a, seed_group=seed_group),
-            SequentialAttackItem(strategy=b, seed_group=seed_group),
+        steps = [
+            SequentialAttackStep(strategy=a, seed_group=seed_group),
+            SequentialAttackStep(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, items=items)
-        patcher, calls = _patch_run_item(strategies_by_id={id(a): a, id(b): b})
+        compound = SequentialAttack(objective_target=target, steps=steps)
+        patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -150,12 +150,12 @@ class TestFirstSuccess:
         """FIRST_SUCCESS is resilient: a transient ERROR should not abort the sequence."""
         a = _make_strategy(outcomes=[AttackOutcome.ERROR], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
-        items = [
-            SequentialAttackItem(strategy=a, seed_group=seed_group),
-            SequentialAttackItem(strategy=b, seed_group=seed_group),
+        steps = [
+            SequentialAttackStep(strategy=a, seed_group=seed_group),
+            SequentialAttackStep(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, items=items)
-        patcher, calls = _patch_run_item(strategies_by_id={id(a): a, id(b): b})
+        compound = SequentialAttack(objective_target=target, steps=steps)
+        patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -169,12 +169,12 @@ class TestFirstDecisive:
     async def test_stops_on_error(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.ERROR], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
-        items = [
-            SequentialAttackItem(strategy=a, seed_group=seed_group),
-            SequentialAttackItem(strategy=b, seed_group=seed_group),
+        steps = [
+            SequentialAttackStep(strategy=a, seed_group=seed_group),
+            SequentialAttackStep(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, items=items, mode=SequenceMode.FIRST_DECISIVE)
-        patcher, calls = _patch_run_item(strategies_by_id={id(a): a, id(b): b})
+        compound = SequentialAttack(objective_target=target, steps=steps, mode=SequenceMode.FIRST_DECISIVE)
+        patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -185,12 +185,12 @@ class TestFirstDecisive:
     async def test_does_not_stop_on_failure(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
-        items = [
-            SequentialAttackItem(strategy=a, seed_group=seed_group),
-            SequentialAttackItem(strategy=b, seed_group=seed_group),
+        steps = [
+            SequentialAttackStep(strategy=a, seed_group=seed_group),
+            SequentialAttackStep(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, items=items, mode=SequenceMode.FIRST_DECISIVE)
-        patcher, calls = _patch_run_item(strategies_by_id={id(a): a, id(b): b})
+        compound = SequentialAttack(objective_target=target, steps=steps, mode=SequenceMode.FIRST_DECISIVE)
+        patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -201,12 +201,12 @@ class TestFirstDecisive:
     async def test_does_not_stop_on_undetermined(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.UNDETERMINED], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
-        items = [
-            SequentialAttackItem(strategy=a, seed_group=seed_group),
-            SequentialAttackItem(strategy=b, seed_group=seed_group),
+        steps = [
+            SequentialAttackStep(strategy=a, seed_group=seed_group),
+            SequentialAttackStep(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, items=items, mode=SequenceMode.FIRST_DECISIVE)
-        patcher, calls = _patch_run_item(strategies_by_id={id(a): a, id(b): b})
+        compound = SequentialAttack(objective_target=target, steps=steps, mode=SequenceMode.FIRST_DECISIVE)
+        patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -217,15 +217,15 @@ class TestFirstDecisive:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestExhaustive:
-    async def test_runs_every_item(self, target, seed_group):
+    async def test_runs_every_step(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="b")
-        items = [
-            SequentialAttackItem(strategy=a, seed_group=seed_group),
-            SequentialAttackItem(strategy=b, seed_group=seed_group),
+        steps = [
+            SequentialAttackStep(strategy=a, seed_group=seed_group),
+            SequentialAttackStep(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, items=items, mode=SequenceMode.EXHAUSTIVE)
-        patcher, calls = _patch_run_item(strategies_by_id={id(a): a, id(b): b})
+        compound = SequentialAttack(objective_target=target, steps=steps, mode=SequenceMode.EXHAUSTIVE)
+        patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -240,7 +240,7 @@ class TestOutcomeDerivation:
     @pytest.mark.parametrize(
         ("mode", "outcomes", "expected"),
         [
-            # EXHAUSTIVE: any-success aggregation over every item.
+            # EXHAUSTIVE: any-success aggregation over every step.
             (SequenceMode.EXHAUSTIVE, [AttackOutcome.SUCCESS], AttackOutcome.SUCCESS),
             (
                 SequenceMode.EXHAUSTIVE,
@@ -272,7 +272,7 @@ class TestOutcomeDerivation:
                 [AttackOutcome.UNDETERMINED, AttackOutcome.FAILURE],
                 AttackOutcome.FAILURE,
             ),
-            # STRICT_ALL: SUCCESS only if every executed item succeeded, ERROR if any errored,
+            # STRICT_ALL: SUCCESS only if every executed step succeeded, ERROR if any errored,
             # else FAILURE. Short-circuits on the first non-SUCCESS.
             (
                 SequenceMode.STRICT_ALL,
@@ -299,7 +299,7 @@ class TestOutcomeDerivation:
                 [AttackOutcome.ERROR, AttackOutcome.ERROR],
                 AttackOutcome.ERROR,
             ),
-            # LAST_RESULT: pass through the last executed item's outcome verbatim.
+            # LAST_RESULT: pass through the last executed step's outcome verbatim.
             (
                 SequenceMode.LAST_RESULT,
                 [AttackOutcome.SUCCESS, AttackOutcome.FAILURE],
@@ -320,9 +320,9 @@ class TestOutcomeDerivation:
     )
     async def test_outcome_aggregation(self, target, seed_group, mode, outcomes, expected):
         strategies = [_make_strategy(outcomes=[o], name=f"s{i}") for i, o in enumerate(outcomes)]
-        items = [SequentialAttackItem(strategy=s, seed_group=seed_group) for s in strategies]
-        compound = SequentialAttack(objective_target=target, items=items, mode=mode)
-        patcher, _ = _patch_run_item(strategies_by_id={id(s): s for s in strategies})
+        steps = [SequentialAttackStep(strategy=s, seed_group=seed_group) for s in strategies]
+        compound = SequentialAttack(objective_target=target, steps=steps, mode=mode)
+        patcher, _ = _patch_run_step(strategies_by_id={id(s): s for s in strategies})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -332,12 +332,12 @@ class TestOutcomeDerivation:
     async def test_default_mode_is_first_success(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
-        items = [
-            SequentialAttackItem(strategy=a, seed_group=seed_group),
-            SequentialAttackItem(strategy=b, seed_group=seed_group),
+        steps = [
+            SequentialAttackStep(strategy=a, seed_group=seed_group),
+            SequentialAttackStep(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, items=items)
-        patcher, _ = _patch_run_item(strategies_by_id={id(a): a, id(b): b})
+        compound = SequentialAttack(objective_target=target, steps=steps)
+        patcher, _ = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -349,26 +349,26 @@ class TestOutcomeDerivation:
 class TestLabels:
     async def test_context_labels_passed_through(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
-        items = [SequentialAttackItem(strategy=a, seed_group=seed_group)]
-        compound = SequentialAttack(objective_target=target, items=items)
-        patcher, calls = _patch_run_item(strategies_by_id={id(a): a})
+        steps = [SequentialAttackStep(strategy=a, seed_group=seed_group)]
+        compound = SequentialAttack(objective_target=target, steps=steps)
+        patcher, calls = _patch_run_step(strategies_by_id={id(a): a})
 
         with patcher:
             await compound._perform_async(context=_make_context(labels={"foo": "bar"}))
 
         assert calls[0]["memory_labels"]["foo"] == "bar"
 
-    async def test_item_labels_override_context_labels(self, target, seed_group):
+    async def test_step_labels_override_context_labels(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
-        items = [
-            SequentialAttackItem(
+        steps = [
+            SequentialAttackStep(
                 strategy=a,
                 seed_group=seed_group,
                 memory_labels={"foo": "override", "extra": "x"},
             ),
         ]
-        compound = SequentialAttack(objective_target=target, items=items)
-        patcher, calls = _patch_run_item(strategies_by_id={id(a): a})
+        compound = SequentialAttack(objective_target=target, steps=steps)
+        patcher, calls = _patch_run_step(strategies_by_id={id(a): a})
 
         with patcher:
             await compound._perform_async(context=_make_context(labels={"foo": "ctx"}))
@@ -379,18 +379,18 @@ class TestLabels:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestExecutorForwarding:
-    async def test_executor_receives_item_inputs(self, target, seed_group):
+    async def test_executor_receives_step_inputs(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
         adversarial = MagicMock(name="adversarial_chat")
         scorer = MagicMock(name="objective_scorer")
-        item = SequentialAttackItem(
+        step = SequentialAttackStep(
             strategy=a,
             seed_group=seed_group,
             adversarial_chat=adversarial,
             objective_scorer=scorer,
             memory_labels={"k": "v"},
         )
-        compound = SequentialAttack(objective_target=target, items=[item])
+        compound = SequentialAttack(objective_target=target, steps=[step])
 
         executor_call_kwargs: dict = {}
 
@@ -410,7 +410,7 @@ class TestExecutorForwarding:
         assert executor_call_kwargs["seed_groups"] == [seed_group]
         assert executor_call_kwargs["adversarial_chat"] is adversarial
         assert executor_call_kwargs["objective_scorer"] is scorer
-        # Context labels + item labels merged for the executor call.
+        # Context labels + step labels merged for the executor call.
         assert executor_call_kwargs["memory_labels"] == {"ctx": "1", "k": "v"}
 
 
@@ -418,9 +418,9 @@ class TestExecutorForwarding:
 class TestResultShape:
     async def test_returns_sequential_attack_result(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
-        items = [SequentialAttackItem(strategy=a, seed_group=seed_group)]
-        compound = SequentialAttack(objective_target=target, items=items)
-        patcher, _ = _patch_run_item(strategies_by_id={id(a): a})
+        steps = [SequentialAttackStep(strategy=a, seed_group=seed_group)]
+        compound = SequentialAttack(objective_target=target, steps=steps)
+        patcher, _ = _patch_run_step(strategies_by_id={id(a): a})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -431,38 +431,38 @@ class TestResultShape:
         a = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="b")
         c = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="c")
-        items = [SequentialAttackItem(strategy=s, seed_group=seed_group) for s in (a, b, c)]
-        compound = SequentialAttack(objective_target=target, items=items)
+        steps = [SequentialAttackStep(strategy=s, seed_group=seed_group) for s in (a, b, c)]
+        compound = SequentialAttack(objective_target=target, steps=steps)
 
         captured_ids: list[str] = []
 
-        async def _stub(self, *, item, memory_labels):
+        async def _stub(self, *, step, memory_labels):
             inner = AttackResult(
-                conversation_id=f"c-{item.strategy._name}",
+                conversation_id=f"c-{step.strategy._name}",
                 objective="obj",
-                outcome=item.strategy._outcomes[0],
+                outcome=step.strategy._outcomes[0],
             )
             captured_ids.append(inner.attack_result_id)
             return inner
 
-        with patch.object(SequentialAttack, "_run_item_async", _stub):
+        with patch.object(SequentialAttack, "_run_step_async", _stub):
             result = await compound._perform_async(context=_make_context())
 
         assert result.attempt_result_ids == captured_ids
 
     async def test_fresh_result_id_not_equal_to_any_inner(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
-        items = [SequentialAttackItem(strategy=a, seed_group=seed_group)]
-        compound = SequentialAttack(objective_target=target, items=items)
+        steps = [SequentialAttackStep(strategy=a, seed_group=seed_group)]
+        compound = SequentialAttack(objective_target=target, steps=steps)
 
         inner_ids: list[str] = []
 
-        async def _stub(self, *, item, memory_labels):
+        async def _stub(self, *, step, memory_labels):
             inner = AttackResult(conversation_id="c", objective="obj", outcome=AttackOutcome.SUCCESS)
             inner_ids.append(inner.attack_result_id)
             return inner
 
-        with patch.object(SequentialAttack, "_run_item_async", _stub):
+        with patch.object(SequentialAttack, "_run_step_async", _stub):
             result = await compound._perform_async(context=_make_context())
 
         assert result.attack_result_id != inner_ids[0]
