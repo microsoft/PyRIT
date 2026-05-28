@@ -8,6 +8,12 @@ from pyrit.executor.attack.component import (
     ConversationState,
     PrependedConversationConfig,
 )
+from pyrit.executor.attack.compound import (
+    SequenceCompletionPolicy,
+    SequentialAttack,
+    SequentialAttackResult,
+    SequentialChildAttack,
+)
 from pyrit.executor.attack.core import (
     AttackAdversarialConfig,
     AttackContext,
@@ -50,7 +56,7 @@ from pyrit.executor.attack.single_turn import (
     SkeletonKeyAttack,
 )
 
-# Backward-compatibility aliases — import from pyrit.output.attack_result directly.
+# Backward-compatibility aliases — import from pyrit.output.attack_result directly.
 # TODO: Remove these re-exports in two releases (target removal: 0.16.0).
 from pyrit.output.attack_result.base import AttackResultPrinterBase as AttackResultPrinter
 from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter as MarkdownAttackResultPrinter
@@ -97,5 +103,9 @@ __all__ = [
     "AttackExecutor",
     "AttackExecutorResult",
     "PrependedConversationConfig",
+    "SequenceCompletionPolicy",
+    "SequentialAttack",
+    "SequentialAttackResult",
+    "SequentialChildAttack",
     "generate_simulated_conversation_async",
 ]

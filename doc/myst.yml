@@ -104,6 +104,7 @@ project:
                 - file: code/executor/attack/1_prompt_sending_attack.ipynb
                 - file: code/executor/attack/2_red_teaming_attack.ipynb
                 - file: code/executor/attack/3_crescendo_attack.ipynb
+                - file: code/executor/attack/4_sequential_attack.ipynb
                 - file: code/executor/attack/chunked_request_attack.ipynb
                 - file: code/executor/attack/context_compliance_attack.ipynb
                 - file: code/executor/attack/flip_attack.ipynb

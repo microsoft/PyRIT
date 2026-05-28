@@ -24,6 +24,8 @@ To execute an Attack, one generally follows this pattern:
 
 - **Multi-Turn Attacks**: Multi-turn attacks introduce an iterative attack process where an adversarial chat model generates prompts to send to a target system, attempting to achieve a specified objective over multiple turns. This strategy evaluates the response using a scorer to determine if the objective has been met and continues iterating until the objective is met or a maximum numbers of turns is attempted. These types of attacks tend to work better than single-turn attacks in eliciting harm if a target endpoint keeps track of conversation history. Nonetheless, multi-turn attacks can be useful on targets that only accept individual prompts as opposed to conversations. The Tree of Attacks with Pruning [@mehrotra2023tap] strategy is a good example that was developed for this use case.
 
+- **Compound Attacks**: Compound attacks orchestrate other `AttackStrategy` objects against a single objective without breaking the one-objective → one-`AttackResult` invariant. `SequentialAttack` is the first compound primitive: it runs a sequence of inner attacks controlled by a `SequenceCompletionPolicy` (e.g., *"try Crescendo first, fall back to PromptSending"*). Each inner child attack persists as its own `AttackResult`; the envelope `SequentialAttackResult` exposes them via `child_attack_results` (live) or `child_attack_result_ids` (ID-only, for DB round-trip). See the [Sequential Attack notebook](4_sequential_attack.ipynb) for examples.
+
 Single-turn attacks differ from multi-turn attacks because:
 1. They do not require an adversarial configuration (this is where you would set the adversarial chat target in multi-turn attacks)
 2. The objective of the attack is attempted within one (additional) turn. Some attacks prepare the conversation by sending a predetermined set of messages (potentially multiple turns) that align with the attack strategy before the user's first new prompt is sent.
@@ -45,6 +47,8 @@ flowchart LR
         S_r["RedTeamingAttack"]
         s_t["TreeOfAttacksWithPruningAttack (aka TAPAttack)"]
         S_multi["MultiTurnAttackStrategy (ABC)"]
+        S_seq["SequentialAttack"]
+        S_compound["Compound Attacks"]
     end
 
     S_psa --> S_psa1
@@ -55,6 +59,7 @@ flowchart LR
     S_single --> S_psa
     S_multi --> S_c
     S_multi --> S_r
+    S_compound --> S_seq
 
 ```
 
