@@ -129,7 +129,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         include_adversarial_conversation: bool = False,
     ) -> None:
         """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_result_async", new_item="write_async", removed_in="2.0")
+        print_deprecation_message(old_item="print_result_async", new_item="write_async", removed_in="0.16.0")
         await self.write_async(
             result,
             include_auxiliary_scores=include_auxiliary_scores,
@@ -171,7 +171,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         self, result: AttackResult, *, include_scores: bool = False, include_reasoning_trace: bool = False
     ) -> None:
         """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_conversation_async", new_item="write_async", removed_in="2.0")
+        print_deprecation_message(old_item="print_conversation_async", new_item="write_async", removed_in="0.16.0")
         content = await self._render_conversation_async(
             result, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
         )
@@ -181,7 +181,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         self, result: AttackResult, *, include_scores: bool = False, include_reasoning_trace: bool = False
     ) -> None:
         """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="output_conversation_async", new_item="write_async", removed_in="2.0")
+        print_deprecation_message(old_item="output_conversation_async", new_item="write_async", removed_in="0.16.0")
         content = await self._render_conversation_async(
             result, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
         )
@@ -195,7 +195,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         include_reasoning_trace: bool = False,
     ) -> None:
         """Use the conversation printer's ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_messages_async", new_item="write_async", removed_in="2.0")
+        print_deprecation_message(old_item="print_messages_async", new_item="write_async", removed_in="0.16.0")
         content = await self._conversation_printer.render_async(
             messages, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
         )
@@ -256,7 +256,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
 
     async def print_summary_async(self, result: AttackResult) -> None:
         """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="2.0")
+        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="0.16.0")
         content = await self._render_summary_async(result)
         await self._write_async(content)
 

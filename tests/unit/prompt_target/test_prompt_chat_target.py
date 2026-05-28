@@ -79,6 +79,28 @@ def test_subclassing_prompt_chat_target_emits_deprecation_warning():
 
 
 @pytest.mark.usefixtures("patch_central_database")
+def test_instantiating_prompt_chat_target_subclass_emits_deprecation_warning():
+    """``PromptChatTarget.__init__`` is deprecated and must emit a warning when called."""
+
+    class _LegacyChatSubclassForInit(PromptChatTarget):
+        async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+            return []
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _LegacyChatSubclassForInit()
+
+    deprecation_warnings = [
+        w
+        for w in caught
+        if issubclass(w.category, DeprecationWarning)
+        and "PromptChatTarget" in str(w.message)
+        and "0.16.0" in str(w.message)
+    ]
+    assert len(deprecation_warnings) >= 1
+
+
+@pytest.mark.usefixtures("patch_central_database")
 def test_set_system_prompt_available_on_prompt_target():
     """The set_system_prompt API now lives on PromptTarget directly."""
     assert hasattr(PromptTarget, "set_system_prompt")

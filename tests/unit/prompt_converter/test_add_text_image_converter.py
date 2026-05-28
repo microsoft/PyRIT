@@ -85,18 +85,18 @@ async def test_add_text_image_converter_invalid_input_image() -> None:
         assert await converter.convert_async(prompt="mock_image.png", input_type="image_path")  # type: ignore[arg-type]
 
 
-async def test_add_text_image_converter_convert_async(sqlite_instance) -> None:
+async def test_add_text_image_converter_convert_async(tmp_path, sqlite_instance) -> None:
     converter = AddTextImageConverter(text_to_add="test")
     mock_image = Image.new("RGB", (400, 300), (255, 255, 255))
-    mock_image.save("test.png")
+    image_path = str(tmp_path / "test.png")
+    mock_image.save(image_path)
 
-    converted_image = await converter.convert_async(prompt="test.png", input_type="image_path")
+    converted_image = await converter.convert_async(prompt=image_path, input_type="image_path")
     assert converted_image
     assert converted_image.output_text
     assert converted_image.output_type == "image_path"
     assert os.path.exists(converted_image.output_text)
     os.remove(converted_image.output_text)
-    os.remove("test.png")
 
 
 def test_text_image_converter_input_supported():

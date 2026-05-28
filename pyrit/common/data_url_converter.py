@@ -47,7 +47,7 @@ async def convert_local_image_to_data_url_async(image_path: str) -> str:
 
 async def convert_local_image_to_data_url(image_path: str) -> str:
     """
-    Delegate to :func:`convert_local_image_to_data_url_async` (deprecated alias).
+    Delegate to ``convert_local_image_to_data_url_async`` (deprecated alias).
 
     Returns:
         str: A string containing the MIME type and the base64-encoded data of the image, formatted as a data URL.
