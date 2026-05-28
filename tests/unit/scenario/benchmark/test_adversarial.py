@@ -25,13 +25,22 @@ These tests cover the new contract:
   technique hash and returns the set of technique hashes with at least
   one ``SUCCESS`` / ``FAILURE`` match for the scenario's objective target.
 * ``skip_cached`` filters cached candidates end-to-end.
+* Real-memory smoke for ``_collect_cached_completion_pairs`` exercises
+  persistence -> SQL filter -> objective-target filter -> outcome filter.
 """
 
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.models import AttackOutcome, SeedAttackGroup, SeedObjective
+from pyrit.identifiers import (
+    AtomicAttackEvaluationIdentifier,
+    ComponentIdentifier,
+    ObjectiveTargetEvaluationIdentifier,
+)
+from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.models import AttackOutcome, AttackResult, SeedAttackGroup, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
@@ -755,3 +764,205 @@ class TestSkipCachedFilter:
             result = await bench._get_atomic_attacks_async()
 
         assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# Real-memory coverage for _collect_cached_completion_pairs
+# ---------------------------------------------------------------------------
+#
+# The mocked TestCollectCachedCompletionPairs class above exercises the
+# scenario-layer wiring (delegation, dedup, outcome filter, identifier
+# construction). The tests in this section exercise the *full* path through
+# real SQLite memory: AttackResult persistence (which auto-stamps
+# ``atomic_attack_identifier.eval_hash``), the
+# ``get_cached_results_for_technique`` SQL filter on ``$.eval_hash``, and
+# the python-side ``ObjectiveTargetEvaluationIdentifier`` filter inside
+# the analytics helper. They catch wiring regressions (e.g. a future
+# refactor that stops stamping ``eval_hash`` at write time) that the
+# mocked tests cannot.
+
+
+def _make_objective_target_component(
+    *,
+    model_name: str = "gpt-4o",
+    temperature: float = 0.7,
+    top_p: float = 1.0,
+) -> ComponentIdentifier:
+    return ComponentIdentifier(
+        class_name="OpenAIChatTarget",
+        class_module="pyrit.prompt_target.openai.openai_chat_target",
+        params={
+            "underlying_model_name": model_name,
+            "temperature": temperature,
+            "top_p": top_p,
+        },
+    )
+
+
+def _make_atomic_attack_identifier(target: ComponentIdentifier) -> ComponentIdentifier:
+    """Build the nested identifier tree the persistence layer expects."""
+    technique = ComponentIdentifier(
+        class_name="PromptSendingAttack",
+        class_module="pyrit.executor.attack.single_turn.prompt_sending",
+        children={"objective_target": target},
+    )
+    return ComponentIdentifier(
+        class_name="AtomicAttack",
+        class_module="pyrit.scenario.core.atomic_attack",
+        children={"attack_technique": technique},
+    )
+
+
+def _technique_eval_hash_for(target: ComponentIdentifier) -> str:
+    atomic = _make_atomic_attack_identifier(target)
+    return AtomicAttackEvaluationIdentifier(atomic).eval_hash
+
+
+def _persist_attack_result(
+    memory: MemoryInterface,
+    target: ComponentIdentifier,
+    *,
+    outcome: AttackOutcome,
+    objective: str = "probe target",
+) -> AttackResult:
+    """Persist a real AttackResult with a well-formed identifier tree."""
+    attack_result = AttackResult(
+        conversation_id=f"conv-{outcome.value}-{datetime.now(timezone.utc).timestamp()}",
+        objective=objective,
+        atomic_attack_identifier=_make_atomic_attack_identifier(target),
+        outcome=outcome,
+        timestamp=datetime.now(timezone.utc),
+    )
+    memory.add_attack_results_to_memory(attack_results=[attack_result])
+    return attack_result
+
+
+def _make_bench_with_real_memory(
+    memory: MemoryInterface,
+    objective_target: ComponentIdentifier,
+) -> AdversarialBenchmark:
+    """Build a minimal benchmark wired to a real memory backend.
+
+    Uses ``__new__`` to bypass the full ``__init__`` so we don't have to
+    register a target or build a strategy enum just to exercise the cache
+    helper. The helper only reads ``_memory`` and
+    ``_objective_target_identifier``.
+    """
+    bench = AdversarialBenchmark.__new__(AdversarialBenchmark)
+    bench._memory = memory
+    bench._objective_target_identifier = objective_target
+    return bench
+
+
+def _make_candidate(*, technique_eval_hash: str) -> MagicMock:
+    candidate = MagicMock()
+    candidate.technique_eval_hash = technique_eval_hash
+    return candidate
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestCollectCachedCompletionPairsWithRealMemory:
+    """End-to-end cache coverage through real ``SQLiteMemory``."""
+
+    def test_cold_cache_returns_empty(self, sqlite_instance):
+        target = _make_objective_target_component()
+        bench = _make_bench_with_real_memory(sqlite_instance, target)
+        candidate = _make_candidate(technique_eval_hash=_technique_eval_hash_for(target))
+
+        result = bench._collect_cached_completion_pairs(atomic_attacks=[candidate])
+
+        assert result == set()
+
+    def test_returns_hash_for_success_match_in_real_db(self, sqlite_instance):
+        target = _make_objective_target_component()
+        _persist_attack_result(sqlite_instance, target, outcome=AttackOutcome.SUCCESS)
+
+        bench = _make_bench_with_real_memory(sqlite_instance, target)
+        tech_hash = _technique_eval_hash_for(target)
+        candidate = _make_candidate(technique_eval_hash=tech_hash)
+
+        result = bench._collect_cached_completion_pairs(atomic_attacks=[candidate])
+
+        assert result == {tech_hash}
+
+    def test_returns_hash_for_failure_match_in_real_db(self, sqlite_instance):
+        target = _make_objective_target_component()
+        _persist_attack_result(sqlite_instance, target, outcome=AttackOutcome.FAILURE)
+
+        bench = _make_bench_with_real_memory(sqlite_instance, target)
+        tech_hash = _technique_eval_hash_for(target)
+        candidate = _make_candidate(technique_eval_hash=tech_hash)
+
+        result = bench._collect_cached_completion_pairs(atomic_attacks=[candidate])
+
+        assert result == {tech_hash}
+
+    def test_filters_out_persisted_results_with_different_objective_target(self, sqlite_instance):
+        """A row with a matching technique hash but a different target hash is rejected."""
+        persisted_target = _make_objective_target_component(model_name="gpt-4o", temperature=0.7)
+        bench_target = _make_objective_target_component(model_name="gpt-4o-mini", temperature=0.7)
+        # AtomicAttackEvaluationIdentifier strips non-temperature target params, so the
+        # two targets share a technique hash even though their objective-target eval
+        # hashes differ. The SQL filter on $.eval_hash will hit; the python-side target
+        # filter inside get_cached_results_for_technique must do the rejection.
+        assert _technique_eval_hash_for(persisted_target) == _technique_eval_hash_for(bench_target)
+        assert (
+            ObjectiveTargetEvaluationIdentifier(persisted_target).eval_hash
+            != ObjectiveTargetEvaluationIdentifier(bench_target).eval_hash
+        )
+
+        _persist_attack_result(sqlite_instance, persisted_target, outcome=AttackOutcome.SUCCESS)
+
+        bench = _make_bench_with_real_memory(sqlite_instance, bench_target)
+        candidate = _make_candidate(technique_eval_hash=_technique_eval_hash_for(bench_target))
+
+        result = bench._collect_cached_completion_pairs(atomic_attacks=[candidate])
+
+        assert result == set()
+
+    def test_filters_out_persisted_results_with_different_technique_hash(self, sqlite_instance):
+        """A row whose technique eval hash differs is rejected by the SQL filter."""
+        persisted_target = _make_objective_target_component(model_name="gpt-4o", temperature=0.0)
+        bench_target = _make_objective_target_component(model_name="gpt-4o", temperature=0.7)
+        # Temperature feeds into AtomicAttackEvaluationIdentifier, so the persisted
+        # row's stamped $.eval_hash is different from the candidate's technique hash
+        # and the SQL filter returns no rows.
+        assert _technique_eval_hash_for(persisted_target) != _technique_eval_hash_for(bench_target)
+
+        _persist_attack_result(sqlite_instance, persisted_target, outcome=AttackOutcome.SUCCESS)
+
+        bench = _make_bench_with_real_memory(sqlite_instance, bench_target)
+        candidate = _make_candidate(technique_eval_hash=_technique_eval_hash_for(bench_target))
+
+        result = bench._collect_cached_completion_pairs(atomic_attacks=[candidate])
+
+        assert result == set()
+
+    def test_filters_out_error_only_history(self, sqlite_instance):
+        """Outcomes other than SUCCESS / FAILURE never count as cached."""
+        target = _make_objective_target_component()
+        _persist_attack_result(sqlite_instance, target, outcome=AttackOutcome.ERROR)
+        _persist_attack_result(sqlite_instance, target, outcome=AttackOutcome.UNDETERMINED)
+
+        bench = _make_bench_with_real_memory(sqlite_instance, target)
+        candidate = _make_candidate(technique_eval_hash=_technique_eval_hash_for(target))
+
+        result = bench._collect_cached_completion_pairs(atomic_attacks=[candidate])
+
+        assert result == set()
+
+    def test_dedupes_candidates_with_same_technique_hash(self, sqlite_instance):
+        """Two candidates sharing a technique hash collapse to a single set entry."""
+        target = _make_objective_target_component()
+        _persist_attack_result(sqlite_instance, target, outcome=AttackOutcome.SUCCESS)
+
+        bench = _make_bench_with_real_memory(sqlite_instance, target)
+        tech_hash = _technique_eval_hash_for(target)
+        candidates = [
+            _make_candidate(technique_eval_hash=tech_hash),
+            _make_candidate(technique_eval_hash=tech_hash),
+        ]
+
+        result = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+
+        assert result == {tech_hash}
