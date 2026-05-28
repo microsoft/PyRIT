@@ -7,7 +7,9 @@ from build_scripts.gen_api_md import (
     _class_anchor,
     _function_anchor,
     _method_anchor,
+    _process_docstring_text,
     _rewrite_symbol_refs,
+    render_function,
 )
 
 
@@ -234,3 +236,115 @@ def test_rewrite_symbol_refs_handles_tilde_and_dotted_prefix() -> None:
 def test_rewrite_symbol_refs_empty_string_passthrough() -> None:
     assert _rewrite_symbol_refs("", {}) == ""
     assert _rewrite_symbol_refs(None, {}) is None  # type: ignore[arg-type]
+
+
+def test_process_docstring_text_protects_doctest_examples() -> None:
+    """The escape-then-rewrite order must wrap ``>>>`` blocks in fences
+    *before* the symbol rewriter runs, so a known PyRIT symbol that happens
+    to appear inside a doctest example stays as raw text instead of being
+    turned into a MyST link (which would break the code sample)."""
+    index = {
+        "SeedPrompt": [
+            SymbolEntry(
+                module="pyrit.models",
+                kind="class",
+                name="SeedPrompt",
+                qualname="SeedPrompt",
+                anchor="api-pyrit_models-SeedPrompt",
+            )
+        ]
+    }
+    text = (
+        "Returns a ``SeedPrompt`` instance.\n"
+        "\n"
+        "Example:\n"
+        "    >>> sp = SeedPrompt(value='hi')\n"
+        "    >>> assert isinstance(sp, SeedPrompt)\n"
+        "    >>> print(sp)\n"
+        "After the example, ``SeedPrompt`` is linkable again."
+    )
+    out = _process_docstring_text(text, index, current_class=None)
+    assert out is not None
+    # Prose before the doctest is linked.
+    assert "[``SeedPrompt``](#api-pyrit_models-SeedPrompt) instance." in out
+    # Doctest contents are fenced and NOT turned into MyST links.
+    assert "```python" in out
+    assert ">>> sp = SeedPrompt(value='hi')" in out
+    assert "[SeedPrompt]" not in out  # bare-word inside doctest stays bare
+    # Prose after the doctest is linked again.
+    assert out.endswith("After the example, [``SeedPrompt``](#api-pyrit_models-SeedPrompt) is linkable again.")
+
+
+def test_render_function_emits_anchor_and_links_docstring_fields() -> None:
+    """End-to-end render path: a function with a linkable name in its
+    description, parameter description, returns description, and raises
+    description should produce a unique anchor label and MyST links
+    everywhere the symbol appears."""
+    index = {
+        "PromptTarget": [
+            SymbolEntry(
+                module="pyrit.prompt_target",
+                kind="class",
+                name="PromptTarget",
+                qualname="PromptTarget",
+                anchor="api-pyrit_prompt_target-PromptTarget",
+            )
+        ]
+    }
+    func = {
+        "name": "build_target",
+        "kind": "function",
+        "is_async": False,
+        "signature": [{"name": "name", "type": "str", "kind": "positional or keyword"}],
+        "returns_annotation": "PromptTarget",
+        "docstring": {
+            "text": "Construct a ``PromptTarget`` from a name.",
+            "params": [
+                {"name": "name", "type": "str", "desc": "Identifier for the ``PromptTarget``."},
+            ],
+            "returns": [{"type": "PromptTarget", "desc": "The constructed ``PromptTarget``."}],
+            "raises": [{"type": "ValueError", "desc": "If no ``PromptTarget`` matches the name."}],
+        },
+    }
+    out = render_function(func, module="pyrit.factories", symbol_index=index)
+
+    # Anchor label is emitted for the function heading.
+    assert "(api-pyrit_factories-build_target)=" in out
+    # The function name still appears in the heading.
+    assert "### `build_target`" in out
+    # Every docstring field has been rewritten to link to the known symbol.
+    expected_link = "[``PromptTarget``](#api-pyrit_prompt_target-PromptTarget)"
+    assert out.count(expected_link) == 4
+
+
+def test_render_function_uses_method_anchor_when_class_name_given() -> None:
+    """Methods get a class-scoped anchor and the current_class context lets
+    the rewriter resolve bare same-class method references."""
+    index = {
+        "PromptTarget.send_prompt_async": [
+            SymbolEntry(
+                module="pyrit.prompt_target",
+                kind="method",
+                name="send_prompt_async",
+                qualname="PromptTarget.send_prompt_async",
+                anchor="api-pyrit_prompt_target-PromptTarget-send_prompt_async",
+            )
+        ]
+    }
+    method = {
+        "name": "validate",
+        "kind": "function",
+        "signature": [],
+        "docstring": {"text": "Then ``send_prompt_async`` is invoked by the runtime."},
+    }
+    out = render_function(
+        method,
+        heading_level="####",
+        module="pyrit.prompt_target",
+        class_name="PromptTarget",
+        symbol_index=index,
+    )
+
+    assert "(api-pyrit_prompt_target-PromptTarget-validate)=" in out
+    assert "#### `validate`" in out
+    assert "[``send_prompt_async``](#api-pyrit_prompt_target-PromptTarget-send_prompt_async)" in out
