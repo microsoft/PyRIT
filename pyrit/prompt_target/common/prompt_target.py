@@ -12,6 +12,7 @@ from pyrit.models import Message, MessagePiece
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.tools import ToolCallParser, tool_loop
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ class PromptTarget(Identifiable):
             logging.basicConfig(level=logging.INFO)
 
     @final
+    @tool_loop
     async def send_prompt_async(self, *, message: Message) -> list[Message]:
         """
         Validate, normalize, and send a prompt to the target.
@@ -96,6 +98,13 @@ class PromptTarget(Identifiable):
         2. Validates the normalized conversation against the target's capabilities.
         3. Delegates to ``_send_prompt_to_target_async`` with the normalized
            conversation.
+
+        When the target's :attr:`configuration.tool_event_policy` is set, the
+        :func:`pyrit.tools.tool_loop` decorator replaces this body with the
+        agentic loop and re-enters :meth:`_send_prompt_to_target_async`
+        repeatedly until the model issues a stop response (or the configured
+        ``max_tool_iterations`` is hit). When no policy is set, the decorator
+        is a no-op and the body below runs unchanged.
 
         Subclasses MUST NOT override this method. Override
         ``_send_prompt_to_target_async`` instead.
@@ -131,6 +140,39 @@ class PromptTarget(Identifiable):
         Returns:
             list[Message]: Response messages from the target.
         """
+
+    @property
+    def _tool_parser(self) -> ToolCallParser | None:
+        """
+        Per-target :class:`ToolCallParser` consulted by :func:`pyrit.tools.tool_loop`.
+
+        Targets that participate in the tool-use loop override this property
+        to return a parser that walks their response messages and extracts
+        :class:`~pyrit.tools.ToolCall` instances. The base default of
+        ``None`` signals "this target does not participate" -- the wrapper
+        short-circuits after the first response.
+
+        Returns:
+            ToolCallParser | None: The parser, or ``None`` for the default
+            no-tool-use behavior.
+        """
+        return None
+
+    def _tool_schemas(self) -> list[dict[str, Any]]:
+        """
+        Outbound tool-schema list sent on the next request to the model.
+
+        Targets that participate in the tool-use loop override this method
+        to translate the active :class:`~pyrit.tools.ToolBackend.schemas`
+        into the wire format their model expects (Responses API vs. Chat
+        Completions API vs. anything else). The base default returns an
+        empty list, which means no schemas are advertised.
+
+        Returns:
+            list[dict[str, Any]]: One schema per advertised tool, in the
+            target-specific wire format. Empty by default.
+        """
+        return []
 
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         """

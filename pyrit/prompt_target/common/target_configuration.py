@@ -4,7 +4,7 @@
 import logging
 from collections.abc import Mapping
 from dataclasses import fields
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pyrit.message_normalizer import MessageListNormalizer
 from pyrit.models import Message
@@ -15,6 +15,10 @@ from pyrit.prompt_target.common.target_capabilities import (
     TargetCapabilities,
     UnsupportedCapabilityBehavior,
 )
+
+if TYPE_CHECKING:
+    from pyrit.tools.backend import ToolBackend
+    from pyrit.tools.models import ToolEventPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +43,15 @@ class TargetConfiguration:
 
     Each target defines defaults; callers can override policy or individual
     normalizers at creation time.
+
+    Tool use is configured by setting :attr:`tool_event_policy` (mandatory
+    when a target's response contains tool calls; controls EXECUTE / RAISE /
+    RETURN\\_RAW behavior) and optionally :attr:`tool_backend` (required only
+    when ``tool_event_policy.behavior`` is ``EXECUTE``). Both default to
+    ``None`` and are read by :func:`pyrit.tools.tool_loop` at runtime;
+    constructing a configuration with a ``tool_backend`` on a target that
+    does not declare ``capabilities.supports_tool_use=True`` raises
+    immediately.
     """
 
     def __init__(
@@ -47,6 +60,8 @@ class TargetConfiguration:
         capabilities: TargetCapabilities,
         policy: CapabilityHandlingPolicy | None = None,
         normalizer_overrides: Mapping[CapabilityName, MessageListNormalizer[Any]] | None = None,
+        tool_event_policy: "ToolEventPolicy | None" = None,
+        tool_backend: "ToolBackend | None" = None,
     ) -> None:
         """
         Build a target configuration and resolve the normalization pipeline.
@@ -57,7 +72,25 @@ class TargetConfiguration:
                 capability. Defaults to RAISE for all adaptable capabilities.
             normalizer_overrides (Mapping[CapabilityName, MessageListNormalizer[Any]] | None):
                 Optional overrides for specific capability normalizers.
+            tool_event_policy (ToolEventPolicy | None): How
+                :func:`pyrit.tools.tool_loop` should react to a pending tool
+                call from the target. ``None`` means the loop is disabled and
+                the wrapper short-circuits.
+            tool_backend (ToolBackend | None): Dispatch table used when
+                ``tool_event_policy.behavior`` is ``EXECUTE``. ``None`` is
+                valid only for the RAISE / RETURN\\_RAW policies and the
+                no-policy passthrough.
+
+        Raises:
+            ValueError: If ``tool_backend`` is set on a target whose
+                capabilities do not include ``supports_tool_use``.
         """
+        if tool_backend is not None and not capabilities.includes(capability=CapabilityName.TOOL_USE):
+            raise ValueError(
+                "tool_backend is set but capabilities.supports_tool_use is False. "
+                "Either declare supports_tool_use=True on the target's capabilities, "
+                "or remove the tool_backend."
+            )
         self._capabilities = capabilities
         self._policy = policy or _DEFAULT_POLICY
         self._pipeline = ConversationNormalizationPipeline.from_capabilities(
@@ -65,6 +98,8 @@ class TargetConfiguration:
             policy=self._policy,
             normalizer_overrides=normalizer_overrides,
         )
+        self._tool_event_policy = tool_event_policy
+        self._tool_backend = tool_backend
 
     @property
     def capabilities(self) -> TargetCapabilities:
@@ -80,6 +115,41 @@ class TargetConfiguration:
     def pipeline(self) -> ConversationNormalizationPipeline:
         """The resolved normalization pipeline."""
         return self._pipeline
+
+    @property
+    def tool_event_policy(self) -> "ToolEventPolicy | None":
+        """The tool-use policy consulted by :func:`pyrit.tools.tool_loop`."""
+        return self._tool_event_policy
+
+    @tool_event_policy.setter
+    def tool_event_policy(self, value: "ToolEventPolicy | None") -> None:
+        """Allow runtime updates so callers can opt a configured target into tool use."""
+        self._tool_event_policy = value
+
+    @property
+    def tool_backend(self) -> "ToolBackend | None":
+        """The tool dispatch backend used when the loop's behavior is ``EXECUTE``."""
+        return self._tool_backend
+
+    @tool_backend.setter
+    def tool_backend(self, value: "ToolBackend | None") -> None:
+        """
+        Allow runtime updates to the backend.
+
+        Re-runs the ``supports_tool_use`` validator so a backend can never be
+        installed onto a configuration that does not declare the capability.
+
+        Raises:
+            ValueError: If ``value`` is not ``None`` and the configuration's
+                capabilities do not include ``supports_tool_use``.
+        """
+        if value is not None and not self._capabilities.includes(capability=CapabilityName.TOOL_USE):
+            raise ValueError(
+                "tool_backend is set but capabilities.supports_tool_use is False. "
+                "Either declare supports_tool_use=True on the target's capabilities, "
+                "or remove the tool_backend."
+            )
+        self._tool_backend = value
 
     def includes(self, *, capability: CapabilityName) -> bool:
         """

@@ -10,6 +10,8 @@ from pyrit.exceptions.exception_classes import (
     MissingPromptPlaceholderException,
     PyritException,
     RateLimitException,
+    ToolCallLoopLimitExceeded,
+    ToolCallNotSupported,
     get_retry_max_num_attempts,
     handle_bad_request_exception,
     pyrit_custom_result_retry,
@@ -59,4 +61,6 @@ __all__ = [
     "set_execution_context",
     "set_retry_collector",
     "execution_context",
+    "ToolCallLoopLimitExceeded",
+    "ToolCallNotSupported",
 ]
