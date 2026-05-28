@@ -132,7 +132,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         include_adversarial_conversation: bool = False,
     ) -> None:
         """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_result_async", new_item="write_async", removed_in="2.0")
+        print_deprecation_message(old_item="print_result_async", new_item="write_async", removed_in="0.16.0")
         await self.write_async(
             result,
             include_auxiliary_scores=include_auxiliary_scores,
@@ -142,13 +142,13 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
 
     async def output_conversation_async(self, result: AttackResult, *, include_scores: bool = False) -> None:
         """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="output_conversation_async", new_item="write_async", removed_in="2.0")
+        print_deprecation_message(old_item="output_conversation_async", new_item="write_async", removed_in="0.16.0")
         lines = await self._get_conversation_markdown_async(result=result, include_scores=include_scores)
         await self._write_async("\n".join(lines))
 
     async def print_summary_async(self, result: AttackResult) -> None:
         """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="2.0")
+        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="0.16.0")
         markdown_lines = await self._get_summary_markdown_async(result)
         await self._write_async("\n".join(markdown_lines))
 
