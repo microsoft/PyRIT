@@ -432,9 +432,9 @@ class TestTargetInitializerConfigTagPropagation:
         """Clean up after each test."""
         TargetRegistry.reset_instance()
         for var in [
-            "ADVERSARIAL_CHAT_ENDPOINT",
-            "ADVERSARIAL_CHAT_KEY",
-            "ADVERSARIAL_CHAT_MODEL",
+            "OBJECTIVE_SCORER_CHAT_ENDPOINT",
+            "OBJECTIVE_SCORER_CHAT_KEY",
+            "OBJECTIVE_SCORER_CHAT_MODEL",
             "OPENAI_CHAT_ENDPOINT",
             "OPENAI_CHAT_KEY",
             "OPENAI_CHAT_MODEL",
@@ -448,24 +448,24 @@ class TestTargetInitializerConfigTagPropagation:
         """
         from pyrit.setup.initializers.components.targets import TargetInitializerTags
 
-        os.environ["ADVERSARIAL_CHAT_ENDPOINT"] = "https://test.openai.azure.com"
-        os.environ["ADVERSARIAL_CHAT_KEY"] = "test_key"
-        os.environ["ADVERSARIAL_CHAT_MODEL"] = "gpt-4o"
+        os.environ["OBJECTIVE_SCORER_CHAT_ENDPOINT"] = "https://test.openai.azure.com"
+        os.environ["OBJECTIVE_SCORER_CHAT_KEY"] = "test_key"
+        os.environ["OBJECTIVE_SCORER_CHAT_MODEL"] = "gpt-4o"
 
         init = TargetInitializer()
         await init.initialize_async()
 
         registry = TargetRegistry.get_registry_singleton()
-        assert "adversarial_chat" in registry
+        assert "objective_scorer_chat" in registry
 
-        adversarial_entries = registry.get_by_tag(tag=TargetInitializerTags.ADVERSARIAL)
-        assert any(entry.name == "adversarial_chat" for entry in adversarial_entries), (
-            "adversarial_chat should be discoverable by the ADVERSARIAL tag after F1c"
+        scorer_entries = registry.get_by_tag(tag=TargetInitializerTags.SCORER)
+        assert any(entry.name == "objective_scorer_chat" for entry in scorer_entries), (
+            "objective_scorer_chat should be discoverable by the SCORER tag after F1c"
         )
 
         default_entries = registry.get_by_tag(tag=TargetInitializerTags.DEFAULT)
-        assert any(entry.name == "adversarial_chat" for entry in default_entries), (
-            "adversarial_chat declares both DEFAULT and ADVERSARIAL tags; both must propagate"
+        assert any(entry.name == "objective_scorer_chat" for entry in default_entries), (
+            "objective_scorer_chat declares both DEFAULT and SCORER tags; both must propagate"
         )
 
     async def test_register_target_no_tags_in_config_no_extra_add_tags(self) -> None:
@@ -554,10 +554,8 @@ class TestTargetInitializerAdversarialChatVariants:
         os.environ[f"{prefix}_MODEL"] = "deployment-name"
 
     @pytest.mark.parametrize(("registry_name", "env_prefix"), ADVERSARIAL_CHAT_VARIANTS)
-    async def test_variant_registers_with_default_and_adversarial_tags(
-        self, registry_name: str, env_prefix: str
-    ) -> None:
-        """Each variant registers with ``[DEFAULT, ADVERSARIAL]`` tags when its env vars are set."""
+    async def test_variant_registers_with_default_tag(self, registry_name: str, env_prefix: str) -> None:
+        """Each variant registers with the ``DEFAULT`` tag when its env vars are set."""
         from pyrit.setup.initializers.components.targets import TargetInitializerTags
 
         self._set_variant_env_vars(env_prefix)
@@ -567,9 +565,6 @@ class TestTargetInitializerAdversarialChatVariants:
 
         registry = TargetRegistry.get_registry_singleton()
         assert registry_name in registry
-
-        adversarial_entries = registry.get_by_tag(tag=TargetInitializerTags.ADVERSARIAL)
-        assert any(entry.name == registry_name for entry in adversarial_entries)
 
         default_entries = registry.get_by_tag(tag=TargetInitializerTags.DEFAULT)
         assert any(entry.name == registry_name for entry in default_entries)
@@ -609,33 +604,6 @@ class TestTargetInitializerAdversarialChatVariants:
             os.environ.pop(f"{env_prefix}_ENDPOINT", None)
             os.environ.pop(f"{env_prefix}_KEY", None)
 
-    async def test_all_variants_discoverable_via_adversarial_tag_query(self) -> None:
-        """End-to-end: variants + ``adversarial_chat`` are returned by adversarial-tag ``get_by_tag``."""
-        from pyrit.setup.initializers.components.targets import TargetInitializerTags
-
-        os.environ["ADVERSARIAL_CHAT_ENDPOINT"] = "https://parent.openai.azure.com/openai/v1"
-        os.environ["ADVERSARIAL_CHAT_KEY"] = "test_key"
-        os.environ["ADVERSARIAL_CHAT_MODEL"] = "deployment-name"
-
-        for _, prefix in ADVERSARIAL_CHAT_VARIANTS:
-            self._set_variant_env_vars(prefix)
-
-        try:
-            init = TargetInitializer()
-            await init.initialize_async()
-
-            registry = TargetRegistry.get_registry_singleton()
-            matches = registry.get_by_tag(tag=TargetInitializerTags.ADVERSARIAL.value)
-            match_names = {entry.name for entry in matches}
-
-            expected = {"adversarial_chat"} | {name for name, _ in ADVERSARIAL_CHAT_VARIANTS}
-            assert expected <= match_names, (
-                f"Missing variants from tag query result. Expected superset: {expected}, got: {match_names}"
-            )
-        finally:
-            for var in ("ADVERSARIAL_CHAT_ENDPOINT", "ADVERSARIAL_CHAT_KEY", "ADVERSARIAL_CHAT_MODEL"):
-                os.environ.pop(var, None)
-
     async def test_double_initialize_async_is_idempotent(self) -> None:
         """Re-running ``initialize_async`` with the same env state produces the same registry contents.
 
@@ -655,11 +623,11 @@ class TestTargetInitializerAdversarialChatVariants:
         await init.initialize_async()
         registry = TargetRegistry.get_registry_singleton()
         first_names = sorted(registry.get_names())
-        first_adversarial_count = len(registry.get_by_tag(tag=TargetInitializerTags.ADVERSARIAL))
+        first_default_count = len(registry.get_by_tag(tag=TargetInitializerTags.DEFAULT))
 
         await init.initialize_async()
         second_names = sorted(registry.get_names())
-        second_adversarial_count = len(registry.get_by_tag(tag=TargetInitializerTags.ADVERSARIAL))
+        second_default_count = len(registry.get_by_tag(tag=TargetInitializerTags.DEFAULT))
 
         assert first_names == second_names
-        assert first_adversarial_count == second_adversarial_count
+        assert first_default_count == second_default_count

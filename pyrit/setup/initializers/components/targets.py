@@ -45,7 +45,6 @@ class TargetInitializerTags(str, Enum):
     SCORER = "scorer"
     ALL = "all"
     DEFAULT_OBJECTIVE_TARGET = "default_objective_target"
-    ADVERSARIAL = "adversarial"
 
 
 @dataclass
@@ -187,7 +186,6 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         model_var="ADVERSARIAL_CHAT_MODEL",
         underlying_model_var="ADVERSARIAL_CHAT_UNDERLYING_MODEL",
         temperature=1.2,
-        tags=[TargetInitializerTags.DEFAULT, TargetInitializerTags.ADVERSARIAL],
     ),
     TargetConfig(
         registry_name="adversarial_chat_singleturn",
@@ -196,7 +194,6 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         key_var="ADVERSARIAL_CHAT_SINGLETURN_KEY",
         model_var="ADVERSARIAL_CHAT_SINGLETURN_MODEL",
         temperature=1.2,
-        tags=[TargetInitializerTags.DEFAULT, TargetInitializerTags.ADVERSARIAL],
     ),
     TargetConfig(
         registry_name="adversarial_chat_multiturn",
@@ -205,7 +202,6 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         key_var="ADVERSARIAL_CHAT_MULTITURN_KEY",
         model_var="ADVERSARIAL_CHAT_MULTITURN_MODEL",
         temperature=1.2,
-        tags=[TargetInitializerTags.DEFAULT, TargetInitializerTags.ADVERSARIAL],
     ),
     TargetConfig(
         registry_name="adversarial_chat_reasoning",
@@ -214,7 +210,6 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         key_var="ADVERSARIAL_CHAT_REASONING_KEY",
         model_var="ADVERSARIAL_CHAT_REASONING_MODEL",
         temperature=1.2,
-        tags=[TargetInitializerTags.DEFAULT, TargetInitializerTags.ADVERSARIAL],
     ),
     TargetConfig(
         registry_name="objective_scorer_chat",
