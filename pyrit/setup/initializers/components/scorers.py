@@ -79,9 +79,11 @@ class ScorerInitializerTags(str, Enum):
 MAIN_SCORER_TARGET: str = "objective_scorer_chat"
 FALLBACK_SCORER_TARGET: str = "openai_chat"
 GPT4O_TARGET: str = "azure_openai_gpt4o"
+GPT4O_RR_TARGET: str = "azure_openai_gpt4o_rr"
 GPT4O_TEMP0_TARGET: str = "azure_openai_gpt4o_temp0"
 GPT4O_TEMP9_TARGET: str = "azure_openai_gpt4o_temp9"
 GPT4O_UNSAFE_TARGET: str = "azure_gpt4o_unsafe_chat"
+GPT4O_UNSAFE_RR_TARGET: str = "azure_gpt4o_unsafe_chat_rr"
 GPT4O_UNSAFE_TEMP0_TARGET: str = "azure_gpt4o_unsafe_chat_temp0"
 GPT4O_UNSAFE_TEMP9_TARGET: str = "azure_gpt4o_unsafe_chat_temp9"
 GPT5_4_TARGET: str = "azure_openai_gpt5_4"
@@ -228,18 +230,26 @@ class ScorerInitializer(PyRITInitializer):
 
         Each variant uses the default refusal prompt (OBJECTIVE_STRICT) but
         differs in model or prompt template. All are tagged ``REFUSAL``.
+
+        Where round-robin targets are available (``GPT4O_RR_TARGET``,
+        ``GPT4O_UNSAFE_RR_TARGET``), those are preferred over individual
+        endpoints to distribute scoring LLM calls for rate-limit relief.
         """
-        gpt4o = self._get_chat_target(GPT4O_TARGET)
+        gpt4o = self._get_chat_target(GPT4O_RR_TARGET) or self._get_chat_target(GPT4O_TARGET)
+        gpt4o_target_name = GPT4O_RR_TARGET if self._get_chat_target(GPT4O_RR_TARGET) else GPT4O_TARGET
         gpt5_4 = self._get_chat_target(GPT5_4_TARGET)
         gpt5_1 = self._get_chat_target(GPT5_1_TARGET)
-        unsafe = self._get_chat_target(GPT4O_UNSAFE_TARGET)
+        unsafe = self._get_chat_target(GPT4O_UNSAFE_RR_TARGET) or self._get_chat_target(GPT4O_UNSAFE_TARGET)
+        unsafe_target_name = (
+            GPT4O_UNSAFE_RR_TARGET if self._get_chat_target(GPT4O_UNSAFE_RR_TARGET) else GPT4O_UNSAFE_TARGET
+        )
         refusal_tag = [ScorerInitializerTags.REFUSAL]
 
         # Prompt template variants (all use gpt4o)
         self._try_register(
             name=REFUSAL_GPT4O_OBJECTIVE_STRICT,
             factory=lambda: SelfAskRefusalScorer(
-                chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
+                chat_target=self._require_dependency(gpt4o, name=gpt4o_target_name),
                 refusal_system_prompt_path=RefusalScorerPaths.OBJECTIVE_STRICT,
             ),
             required_targets=[gpt4o],
@@ -248,7 +258,7 @@ class ScorerInitializer(PyRITInitializer):
         self._try_register(
             name=REFUSAL_GPT4O_OBJECTIVE_LENIENT,
             factory=lambda: SelfAskRefusalScorer(
-                chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
+                chat_target=self._require_dependency(gpt4o, name=gpt4o_target_name),
                 refusal_system_prompt_path=RefusalScorerPaths.OBJECTIVE_LENIENT,
             ),
             required_targets=[gpt4o],
@@ -257,7 +267,7 @@ class ScorerInitializer(PyRITInitializer):
         self._try_register(
             name=REFUSAL_GPT4O_NO_OBJECTIVE_STRICT,
             factory=lambda: SelfAskRefusalScorer(
-                chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
+                chat_target=self._require_dependency(gpt4o, name=gpt4o_target_name),
                 refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_STRICT,
             ),
             required_targets=[gpt4o],
@@ -266,7 +276,7 @@ class ScorerInitializer(PyRITInitializer):
         self._try_register(
             name=REFUSAL_GPT4O_NO_OBJECTIVE_LENIENT,
             factory=lambda: SelfAskRefusalScorer(
-                chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
+                chat_target=self._require_dependency(gpt4o, name=gpt4o_target_name),
                 refusal_system_prompt_path=RefusalScorerPaths.NO_OBJECTIVE_LENIENT,
             ),
             required_targets=[gpt4o],
@@ -288,9 +298,7 @@ class ScorerInitializer(PyRITInitializer):
         )
         self._try_register(
             name=REFUSAL_GPT4O_UNSAFE,
-            factory=lambda: SelfAskRefusalScorer(
-                chat_target=self._require_dependency(unsafe, name=GPT4O_UNSAFE_TARGET)
-            ),
+            factory=lambda: SelfAskRefusalScorer(chat_target=self._require_dependency(unsafe, name=unsafe_target_name)),
             required_targets=[unsafe],
             tags=refusal_tag,
         )
@@ -391,8 +399,10 @@ class ScorerInitializer(PyRITInitializer):
         Register self-ask likert scorer variants.
 
         Only scales with evaluation files are registered. All are tagged ``LIKERT``.
+        Prefers the round-robin target when available.
         """
-        gpt4o = self._get_chat_target(GPT4O_TARGET)
+        gpt4o = self._get_chat_target(GPT4O_RR_TARGET) or self._get_chat_target(GPT4O_TARGET)
+        gpt4o_target_name = GPT4O_RR_TARGET if self._get_chat_target(GPT4O_RR_TARGET) else GPT4O_TARGET
         likert_tag = [ScorerInitializerTags.LIKERT]
 
         for scale in LikertScalePaths:
@@ -401,7 +411,7 @@ class ScorerInitializer(PyRITInitializer):
                 self._try_register(
                     name=scorer_name,
                     factory=lambda s=scale: SelfAskLikertScorer(
-                        chat_target=self._require_dependency(gpt4o, name=GPT4O_TARGET),
+                        chat_target=self._require_dependency(gpt4o, name=gpt4o_target_name),
                         likert_scale=s,
                     ),
                     required_targets=[gpt4o],

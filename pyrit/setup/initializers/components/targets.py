@@ -31,6 +31,7 @@ from pyrit.prompt_target import (
     PromptShieldTarget,
     PromptTarget,
     RealtimeTarget,
+    RoundRobinTarget,
 )
 from pyrit.registry import TargetRegistry
 from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
@@ -77,6 +78,30 @@ class TargetConfig:
     default_objective_target: bool = False
 
 
+@dataclass
+class RoundRobinGroupConfig:
+    """
+    Configuration for a round-robin target group composed of already-registered targets.
+
+    Round-robin groups are registered AFTER individual targets. Each group
+    references its member targets by registry name — if all members were
+    successfully registered, a ``RoundRobinTarget`` wrapping them is created
+    and registered under ``registry_name``. If any member is missing the
+    group is silently skipped (same graceful degradation as individual targets).
+
+    Attributes:
+        registry_name: The name used to retrieve the round-robin target from the registry.
+        member_names: Registry names of the individual targets to include. Must have at least 2 entries.
+        weights: Optional per-member weights (same semantics as ``RoundRobinTarget.weights``).
+        tags: Tags for filtering which round-robin groups to register.
+    """
+
+    registry_name: str
+    member_names: list[str]
+    weights: list[int] | None = None
+    tags: list[TargetInitializerTags] = field(default_factory=lambda: [TargetInitializerTags.DEFAULT])
+
+
 # Define all supported target configurations.
 # Only PRIMARY configurations are included here - alias configurations that use ${...}
 # syntax in .env_example are excluded since they reference other primary configurations.
@@ -110,6 +135,14 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         key_var="AZURE_OPENAI_GPT4O_KEY",
         model_var="AZURE_OPENAI_GPT4O_MODEL",
         underlying_model_var="AZURE_OPENAI_GPT4O_UNDERLYING_MODEL",
+    ),
+    TargetConfig(
+        registry_name="azure_openai_gpt4o2",
+        target_class=OpenAIChatTarget,
+        endpoint_var="AZURE_OPENAI_GPT4O_ENDPOINT2",
+        key_var="AZURE_OPENAI_GPT4O_KEY2",
+        model_var="AZURE_OPENAI_GPT4O_MODEL2",
+        underlying_model_var="AZURE_OPENAI_GPT4O_UNDERLYING_MODEL2",
     ),
     TargetConfig(
         registry_name="azure_openai_integration_test",
@@ -428,6 +461,20 @@ SCORER_TARGET_CONFIGS: list[TargetConfig] = [
 # Combined list of all target configurations.
 TARGET_CONFIGS: list[TargetConfig] = ENV_TARGET_CONFIGS + SCORER_TARGET_CONFIGS
 
+# Round-robin groups that combine multiple endpoints for the same model.
+# These provide rate-limit distribution and fault tolerance across endpoints.
+# Groups are only registered when ALL member targets are successfully registered.
+ROUND_ROBIN_CONFIGS: list[RoundRobinGroupConfig] = [
+    RoundRobinGroupConfig(
+        registry_name="azure_openai_gpt4o_rr",
+        member_names=["azure_openai_gpt4o", "azure_openai_gpt4o2"],
+    ),
+    RoundRobinGroupConfig(
+        registry_name="azure_gpt4o_unsafe_chat_rr",
+        member_names=["azure_gpt4o_unsafe_chat", "azure_gpt4o_unsafe_chat2"],
+    ),
+]
+
 
 class TargetInitializer(PyRITInitializer):
     """
@@ -531,6 +578,9 @@ class TargetInitializer(PyRITInitializer):
         Scans for known endpoint environment variables and registers the
         corresponding targets into the TargetRegistry. Only targets with
         tags matching the configured tags are registered.
+
+        After individual targets are registered, round-robin groups are
+        created for any groups whose member targets are all present.
         """
         tags = self.params.get("tags", ["default"])
         if TargetInitializerTags.ALL in tags:
@@ -540,6 +590,8 @@ class TargetInitializer(PyRITInitializer):
             if not any(tag in tags for tag in config.tags):
                 continue
             self._register_target(config)
+
+        self._register_round_robin_groups(tags=tags)
 
     def _register_target(self, config: TargetConfig) -> None:
         """
@@ -603,3 +655,42 @@ class TargetInitializer(PyRITInitializer):
         if config.default_objective_target:
             registry.add_tags(name=config.registry_name, tags=[TargetInitializerTags.DEFAULT_OBJECTIVE_TARGET])
         logger.info(f"Registered target: {config.registry_name}")
+
+    def _register_round_robin_groups(self, *, tags: list[str] | list[TargetInitializerTags]) -> None:
+        """
+        Register round-robin target groups from ROUND_ROBIN_CONFIGS.
+
+        For each ``RoundRobinGroupConfig`` whose tags match the requested tags,
+        resolves member targets by name from the ``TargetRegistry``. If all
+        members are present, creates a ``RoundRobinTarget`` wrapping them and
+        registers it. If any member is missing the group is silently skipped.
+
+        Args:
+            tags: The active tag filters from ``initialize_async``.
+        """
+        registry = TargetRegistry.get_registry_singleton()
+
+        for group_config in ROUND_ROBIN_CONFIGS:
+            if not any(tag in tags for tag in group_config.tags):
+                continue
+
+            members: list[PromptTarget] = []
+            for member_name in group_config.member_names:
+                target = registry.get_instance_by_name(member_name)
+                if target is None:
+                    break
+                members.append(target)
+            else:
+                # All members resolved — create the round-robin target.
+                rr_target = RoundRobinTarget(targets=members, weights=group_config.weights)
+                registry.register_instance(rr_target, name=group_config.registry_name)
+                logger.info(
+                    f"Registered round-robin target: {group_config.registry_name} "
+                    f"(members: {group_config.member_names})"
+                )
+                continue
+
+            # At least one member missing — skip this group.
+            logger.debug(
+                f"Skipping round-robin group {group_config.registry_name}: not all member targets are registered"
+            )

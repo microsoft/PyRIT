@@ -8,7 +8,7 @@ import pytest
 
 from pyrit.registry import TargetRegistry
 from pyrit.setup.initializers import TargetInitializer
-from pyrit.setup.initializers.components.targets import TARGET_CONFIGS
+from pyrit.setup.initializers.components.targets import ROUND_ROBIN_CONFIGS, TARGET_CONFIGS
 
 
 class TestTargetInitializerBasic:
@@ -400,3 +400,144 @@ class TestTargetInitializerDefaultObjectiveTarget:
             assert config.default_objective_target is False, (
                 f"Target {config.registry_name} should not have default_objective_target=True"
             )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestTargetInitializerRoundRobin:
+    """Tests for round-robin group registration in TargetInitializer."""
+
+    # Env vars for the two unsafe-chat endpoints that form a round-robin pair.
+    UNSAFE1_ENV: dict[str, str] = {
+        "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://unsafe1.openai.azure.com",
+        "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "key1",
+        "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4o",
+        "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_UNDERLYING_MODEL": "gpt-4o",
+    }
+    UNSAFE2_ENV: dict[str, str] = {
+        "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2": "https://unsafe2.openai.azure.com",
+        "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2": "key2",
+        "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2": "gpt-4o",
+        "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_UNDERLYING_MODEL2": "gpt-4o",
+    }
+
+    # Env vars for the two regular gpt4o endpoints.
+    GPT4O_1_ENV: dict[str, str] = {
+        "AZURE_OPENAI_GPT4O_ENDPOINT": "https://gpt4o-1.openai.azure.com",
+        "AZURE_OPENAI_GPT4O_KEY": "key1",
+        "AZURE_OPENAI_GPT4O_MODEL": "gpt-4o",
+        "AZURE_OPENAI_GPT4O_UNDERLYING_MODEL": "gpt-4o",
+    }
+    GPT4O_2_ENV: dict[str, str] = {
+        "AZURE_OPENAI_GPT4O_ENDPOINT2": "https://gpt4o-2.openai.azure.com",
+        "AZURE_OPENAI_GPT4O_KEY2": "key2",
+        "AZURE_OPENAI_GPT4O_MODEL2": "gpt-4o",
+        "AZURE_OPENAI_GPT4O_UNDERLYING_MODEL2": "gpt-4o",
+    }
+
+    def setup_method(self) -> None:
+        """Reset registry and clear env vars before each test."""
+        TargetRegistry.reset_instance()
+        self._clear_env_vars()
+
+    def teardown_method(self) -> None:
+        """Clean up after each test."""
+        TargetRegistry.reset_instance()
+        self._clear_env_vars()
+
+    def _clear_env_vars(self) -> None:
+        all_vars = list(self.UNSAFE1_ENV) + list(self.UNSAFE2_ENV) + list(self.GPT4O_1_ENV) + list(self.GPT4O_2_ENV)
+        for var in all_vars:
+            os.environ.pop(var, None)
+
+    async def test_round_robin_registered_when_both_members_present(self) -> None:
+        """Test that round-robin target is created when all member targets exist."""
+        from pyrit.prompt_target import RoundRobinTarget
+
+        os.environ.update(self.UNSAFE1_ENV)
+        os.environ.update(self.UNSAFE2_ENV)
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        rr = registry.get_instance_by_name("azure_gpt4o_unsafe_chat_rr")
+        assert rr is not None
+        assert isinstance(rr, RoundRobinTarget)
+
+    async def test_round_robin_skipped_when_one_member_missing(self) -> None:
+        """Test that round-robin target is NOT registered when only one member exists."""
+        os.environ.update(self.UNSAFE1_ENV)
+        # UNSAFE2_ENV not set — second member missing
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert registry.get_instance_by_name("azure_gpt4o_unsafe_chat") is not None
+        assert registry.get_instance_by_name("azure_gpt4o_unsafe_chat_rr") is None
+
+    async def test_round_robin_skipped_when_no_members_present(self) -> None:
+        """Test that round-robin target is skipped when no member targets exist."""
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert registry.get_instance_by_name("azure_gpt4o_unsafe_chat_rr") is None
+
+    async def test_individual_members_still_registered_alongside_round_robin(self) -> None:
+        """Test that individual member targets remain accessible after round-robin creation."""
+        os.environ.update(self.UNSAFE1_ENV)
+        os.environ.update(self.UNSAFE2_ENV)
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert registry.get_instance_by_name("azure_gpt4o_unsafe_chat") is not None
+        assert registry.get_instance_by_name("azure_gpt4o_unsafe_chat2") is not None
+        assert registry.get_instance_by_name("azure_gpt4o_unsafe_chat_rr") is not None
+
+    async def test_round_robin_configs_all_have_at_least_two_members(self) -> None:
+        """Test that every RoundRobinGroupConfig has at least 2 member names."""
+        for config in ROUND_ROBIN_CONFIGS:
+            assert len(config.member_names) >= 2, (
+                f"Round-robin group {config.registry_name} must have at least 2 members"
+            )
+
+    async def test_round_robin_configs_reference_known_target_names(self) -> None:
+        """Test that every member name in ROUND_ROBIN_CONFIGS corresponds to a TARGET_CONFIGS entry."""
+        known_names = {c.registry_name for c in TARGET_CONFIGS}
+        for config in ROUND_ROBIN_CONFIGS:
+            for member in config.member_names:
+                assert member in known_names, (
+                    f"Round-robin member '{member}' in group '{config.registry_name}' is not a known target config"
+                )
+
+    async def test_gpt4o_round_robin_registered_when_both_endpoints_present(self) -> None:
+        """Test that gpt4o round-robin target is created when both gpt4o endpoints exist."""
+        from pyrit.prompt_target import RoundRobinTarget
+
+        os.environ.update(self.GPT4O_1_ENV)
+        os.environ.update(self.GPT4O_2_ENV)
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        rr = registry.get_instance_by_name("azure_openai_gpt4o_rr")
+        assert rr is not None
+        assert isinstance(rr, RoundRobinTarget)
+        # Individual members still available
+        assert registry.get_instance_by_name("azure_openai_gpt4o") is not None
+        assert registry.get_instance_by_name("azure_openai_gpt4o2") is not None
+
+    async def test_gpt4o_round_robin_skipped_when_only_one_endpoint(self) -> None:
+        """Test that gpt4o round-robin is NOT created when only one endpoint exists."""
+        os.environ.update(self.GPT4O_1_ENV)
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert registry.get_instance_by_name("azure_openai_gpt4o") is not None
+        assert registry.get_instance_by_name("azure_openai_gpt4o_rr") is None

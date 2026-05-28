@@ -11,9 +11,11 @@ from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.score import LikertScalePaths
 from pyrit.setup.initializers import ScorerInitializer
 from pyrit.setup.initializers.components.scorers import (
+    GPT4O_RR_TARGET,
     GPT4O_TARGET,
     GPT4O_TEMP0_TARGET,
     GPT4O_TEMP9_TARGET,
+    GPT4O_UNSAFE_RR_TARGET,
     GPT4O_UNSAFE_TARGET,
     GPT4O_UNSAFE_TEMP0_TARGET,
     GPT4O_UNSAFE_TEMP9_TARGET,
@@ -479,3 +481,109 @@ class TestScorerInitializerCategoryTags:
         best = registry.get_by_tag(tag=ScorerInitializerTags.BEST_ACS_THRESHOLD)
         assert len(best) == 1
         assert best[0].name == "acs_threshold_05"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestScorerInitializerRoundRobin:
+    """Tests for ScorerInitializer round-robin target preference."""
+
+    def setup_method(self) -> None:
+        ScorerRegistry.reset_instance()
+        TargetRegistry.reset_instance()
+
+    def teardown_method(self) -> None:
+        ScorerRegistry.reset_instance()
+        TargetRegistry.reset_instance()
+
+    def _register_mock_target(self, *, name: str) -> OpenAIChatTarget:
+        """Register a mock OpenAIChatTarget in the TargetRegistry."""
+        target = MagicMock(spec=OpenAIChatTarget)
+        target._temperature = None
+        target._endpoint = f"https://test-{name}.openai.azure.com"
+        target._api_key = "test_key"
+        target._model_name = "test-model"
+        target._underlying_model = "gpt-4o"
+        registry = TargetRegistry.get_registry_singleton()
+        registry.register_instance(target, name=name)
+        return target
+
+    async def test_refusal_unsafe_uses_round_robin_when_available(self) -> None:
+        """Test that refusal_gpt4o_unsafe scorer uses round-robin target when registered."""
+        self._register_mock_target(name=GPT4O_TARGET)
+        rr_mock = self._register_mock_target(name=GPT4O_UNSAFE_RR_TARGET)
+        # Also register the individual target to prove RR is preferred
+        self._register_mock_target(name=GPT4O_UNSAFE_TARGET)
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        scorer = registry.get_instance_by_name("refusal_gpt4o_unsafe")
+        assert scorer is not None
+        # The scorer's chat_target should be the round-robin target
+        assert scorer._prompt_target is rr_mock
+
+    async def test_refusal_unsafe_falls_back_to_individual_when_no_rr(self) -> None:
+        """Test that refusal_gpt4o_unsafe scorer uses individual target when RR not registered."""
+        self._register_mock_target(name=GPT4O_TARGET)
+        individual_mock = self._register_mock_target(name=GPT4O_UNSAFE_TARGET)
+        # No round-robin target registered
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        scorer = registry.get_instance_by_name("refusal_gpt4o_unsafe")
+        assert scorer is not None
+        assert scorer._prompt_target is individual_mock
+
+    async def test_refusal_unsafe_skipped_when_neither_target_available(self) -> None:
+        """Test that refusal_gpt4o_unsafe is skipped when neither RR nor individual target exists."""
+        self._register_mock_target(name=GPT4O_TARGET)
+        # Neither GPT4O_UNSAFE_TARGET nor GPT4O_UNSAFE_RR_TARGET registered
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        assert registry.get_instance_by_name("refusal_gpt4o_unsafe") is None
+
+    async def test_refusal_gpt4o_uses_round_robin_when_available(self) -> None:
+        """Test that gpt4o-based refusal scorers use round-robin target when registered."""
+        rr_mock = self._register_mock_target(name=GPT4O_RR_TARGET)
+        # Also register the individual target to prove RR is preferred
+        self._register_mock_target(name=GPT4O_TARGET)
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        scorer = registry.get_instance_by_name("refusal_gpt4o_objective_strict")
+        assert scorer is not None
+        assert scorer._prompt_target is rr_mock
+
+    async def test_refusal_gpt4o_falls_back_to_individual_when_no_rr(self) -> None:
+        """Test that gpt4o-based refusal scorers fall back to individual when RR not registered."""
+        individual_mock = self._register_mock_target(name=GPT4O_TARGET)
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        scorer = registry.get_instance_by_name("refusal_gpt4o_objective_strict")
+        assert scorer is not None
+        assert scorer._prompt_target is individual_mock
+
+    async def test_likert_scorers_use_round_robin_when_available(self) -> None:
+        """Test that likert scorers use round-robin gpt4o target when registered."""
+        rr_mock = self._register_mock_target(name=GPT4O_RR_TARGET)
+        self._register_mock_target(name=GPT4O_TARGET)
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        likert_entries = registry.get_by_tag(tag=ScorerInitializerTags.LIKERT)
+        assert len(likert_entries) > 0
+        for entry in likert_entries:
+            assert entry.instance._prompt_target is rr_mock
