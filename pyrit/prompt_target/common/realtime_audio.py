@@ -9,7 +9,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +107,10 @@ class RealtimeEventDispatcher(ABC):
         self._task: asyncio.Task[None] | None = None
         self._callback_tasks: set[asyncio.Task[None]] = set()
         self._failure: BaseException | None = None
-        # Server VAD reports audio_start_ms on speech_started but omits it from
-        # input_audio_buffer.committed. Concrete subclasses capture it here when
-        # speech_started fires and read it back on commit.
+        # Optional bridge slot for providers whose protocol reports audio_start_ms on
+        # ``speech_started`` but omits it from ``input_audio_buffer.committed``. Such
+        # subclasses capture it here when speech_started fires and read it back on commit.
+        # Providers that report audio_start_ms directly on commit can ignore this slot.
         self._pending_speech_start_ms: int | None = None
 
     @property
@@ -243,3 +244,63 @@ class RealtimeEventDispatcher(ABC):
         Args:
             state (RealtimeTurnState): The turn whose response should be cancelled.
         """
+
+
+class StreamingHandle(ABC):
+    """
+    Provider-agnostic streaming surface owned by targets that declare ``STREAMING_BARGE_IN``.
+
+    A streaming attack (e.g. ``BargeInAttack``) interacts with the target's realtime
+    transport via ``target.streaming``, not via methods on the target itself. This keeps
+    the streaming surface out of ``PromptTarget`` while giving the attack a single typed
+    contract to program against. Concrete realtime providers (OpenAI, Azure, etc.) provide
+    a concrete ``StreamingHandle`` subclass and assign it to ``self.streaming`` in their
+    target's ``__init__``.
+    """
+
+    #: PCM sample rate in Hz negotiated by the provider's realtime protocol.
+    SAMPLE_RATE_HZ: ClassVar[int]
+
+    @property
+    @abstractmethod
+    def server_vad_config(self) -> "ServerVadConfig | None":
+        """Server VAD configuration in effect, or ``None`` if server VAD is disabled."""
+
+    @abstractmethod
+    async def connect_async(self, conversation_id: str) -> Any:
+        """Open the streaming connection for ``conversation_id`` and return the connection handle."""
+
+    @abstractmethod
+    async def subscribe_events_async(
+        self,
+        *,
+        connection: Any,
+        conversation_id: str,
+        on_user_audio_committed: Callable[[CommittedEvent], Coroutine[Any, Any, None]] | None = None,
+    ) -> "RealtimeEventDispatcher":
+        """Spawn a background reader that routes server events and returns the dispatcher."""
+
+    @abstractmethod
+    async def send_streaming_session_config_async(
+        self, *, connection: Any, conversation: "list[Any] | None" = None
+    ) -> None:
+        """Send the initial streaming session configuration over the wire."""
+
+    @abstractmethod
+    async def push_audio_chunk_async(self, *, connection: Any, pcm_bytes: bytes) -> None:
+        """Push a PCM16 audio chunk into the server's input buffer."""
+
+    @abstractmethod
+    async def save_audio(
+        self,
+        audio_bytes: bytes,
+        num_channels: int = 1,
+        sample_width: int = 2,
+        sample_rate: int = 16000,
+        output_filename: str | None = None,
+    ) -> str:
+        """Persist a PCM buffer to disk and return the file path."""
+
+    @abstractmethod
+    async def cleanup_conversation(self, conversation_id: str) -> None:
+        """Tear down any per-conversation state held by the target."""

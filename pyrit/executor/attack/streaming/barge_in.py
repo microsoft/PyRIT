@@ -167,6 +167,10 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
                 exhausting and the last in-flight turn finishing. Defaults to 60 seconds.
                 Bump if a long realtime response is being cancelled at teardown.
             params_type: Attack parameter dataclass type.
+
+        Raises:
+            ValueError: If ``objective_target`` declares ``STREAMING_BARGE_IN`` but did not
+                wire its ``streaming`` attribute to a ``StreamingHandle``.
         """
         super().__init__(
             objective_target=objective_target,
@@ -174,6 +178,12 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             params_type=params_type,
             logger=logger,
         )
+        if objective_target.streaming is None:
+            raise ValueError(
+                f"{type(objective_target).__name__} declares STREAMING_BARGE_IN capability but did not "
+                f"wire `self.streaming` to a StreamingHandle. This is a target-implementation bug."
+            )
+        self._streaming = objective_target.streaming
         attack_converter_config = attack_converter_config or AttackConverterConfig()
         self._request_converters = attack_converter_config.request_converters
         self._response_converters = attack_converter_config.response_converters
@@ -241,8 +251,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         if context.audio_chunks is None:
             raise ValueError("BargeInAttackContext.audio_chunks must be set before executing the attack.")
 
-        target = self._objective_target
-        connection = await target.connect_async(conversation_id=context.conversation_id)
+        connection = await self._streaming.connect_async(conversation_id=context.conversation_id)
         state = _BargeInRunState()
         last_response: Message | None = None
         executed_turns = 0
@@ -263,28 +272,28 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             except Exception:
                 logger.exception("BargeInAttack turn failed in convert-on-commit handler.")
 
-        await target.subscribe_events_async(
+        await self._streaming.subscribe_events_async(
             connection=connection,
             conversation_id=context.conversation_id,
             on_user_audio_committed=on_committed,
         )
 
         try:
-            await target.send_streaming_session_config_async(
+            await self._streaming.send_streaming_session_config_async(
                 connection=connection, conversation=context.prepended_conversation
             )
 
             async for chunk in context.audio_chunks:
                 if chunk:
                     state.raw_buffer.extend(chunk)
-                await target.push_audio_chunk_async(connection=connection, pcm_bytes=chunk)
+                await self._streaming.push_audio_chunk_async(connection=connection, pcm_bytes=chunk)
 
             # Wait for any in-flight committed-turn tasks to finish, capped by a safety timeout.
             # The chunk source must end with enough trailing silence for server VAD's silence
             # threshold to fire commit — otherwise the last turn never enters the pipeline.
             await self._wait_for_pending_turns_async(state.turn_tasks)
         finally:
-            await target.cleanup_conversation(context.conversation_id)
+            await self._streaming.cleanup_conversation(context.conversation_id)
 
         return self._build_result(
             last_response=last_response,
@@ -310,63 +319,107 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         Returns:
             The assistant Message returned by ``send_prompt_async`` for this turn.
         """
-        # Snapshot the locally-accumulated raw PCM and reset for the next turn.
-        snapshot = bytes(state.raw_buffer)
+        snapshot, original_buffer_duration_ms = self._snapshot_and_trim(event=event, state=state)
+        # Centralize state mutations so the helpers stay pure and testable.
         state.raw_buffer.clear()
+        state.buffer_start_session_ms += original_buffer_duration_ms
 
-        # Convert the server's session-relative audio_start_ms into a buffer-relative
-        # offset, then trim leading pre-speech silence. Without this, the converted
-        # audio that gets swapped into the server's committed item is several seconds
-        # longer than what server VAD actually committed, and the model hears the
-        # leading silence (often dominant) when converters are active.
-        target = self._objective_target
-        bytes_per_ms = target.SAMPLE_RATE_HZ * 2 // 1000  # PCM16 mono
+        message = await self._build_message_for_turn(
+            snapshot=snapshot,
+            item_id=event.item_id,
+            conversation_id=context.conversation_id,
+        )
+        return await self._send_via_normalizer(message=message, conversation_id=context.conversation_id)
+
+    def _snapshot_and_trim(
+        self,
+        *,
+        event: CommittedEvent,
+        state: _BargeInRunState,
+    ) -> tuple[bytes, int]:
+        """
+        Return a trimmed PCM snapshot for the current buffer plus its original (pre-trim) duration.
+
+        Converts the server's session-relative ``audio_start_ms`` into a buffer-relative offset
+        and trims leading pre-speech silence. Without this, the converted audio that gets
+        swapped into the server's committed item would be several seconds longer than what
+        server VAD actually committed, and the model would hear the leading silence (often
+        dominant) when converters are active.
+
+        The original duration (pre-trim) is returned so the caller can advance session-time
+        bookkeeping — the server saw every byte we pushed, not just the trimmed snapshot.
+
+        Returns:
+            ``(snapshot, original_buffer_duration_ms)``. The caller is responsible for
+            clearing ``state.raw_buffer`` and advancing ``state.buffer_start_session_ms``.
+        """
+        snapshot = bytes(state.raw_buffer)
+
+        bytes_per_ms = self._streaming.SAMPLE_RATE_HZ * 2 // 1000  # PCM16 mono
         original_buffer_duration_ms = len(snapshot) // bytes_per_ms if bytes_per_ms else 0
 
         buffer_relative_audio_start_ms: int | None = None
         if event.audio_start_ms is not None:
             buffer_relative_audio_start_ms = event.audio_start_ms - state.buffer_start_session_ms
 
-        server_vad = target.server_vad_config
+        server_vad = self._streaming.server_vad_config
         prefix_padding_ms = server_vad.prefix_padding_ms if server_vad is not None else 0
         snapshot = _trim_snapshot_to_speech(
             raw_buffer=snapshot,
-            sample_rate_hz=target.SAMPLE_RATE_HZ,
+            sample_rate_hz=self._streaming.SAMPLE_RATE_HZ,
             audio_start_ms=buffer_relative_audio_start_ms,
             prefix_padding_ms=prefix_padding_ms,
         )
+        return snapshot, original_buffer_duration_ms
 
-        # Advance session-time bookkeeping for the next turn. Uses the ORIGINAL (pre-trim)
-        # buffer duration since the server saw every byte we pushed.
-        state.buffer_start_session_ms += original_buffer_duration_ms
+    async def _build_message_for_turn(
+        self,
+        *,
+        snapshot: bytes,
+        item_id: str,
+        conversation_id: str,
+    ) -> Message:
+        """
+        Persist the snapshot to disk and wrap it in an audio_path-shaped Message.
 
-        # PromptNormalizer.send_prompt_async needs an audio_path-shaped Message,
-        # so persist the snapshot to a durable WAV before wrapping.
-        snapshot_path = await target.save_audio(
+        ``send_prompt_async`` requires a file-backed Message, so the caller persists
+        the PCM bytes to a durable WAV first. The server's committed ``item_id`` is
+        stashed in ``prompt_metadata`` so the target's streaming branch can identify
+        which committed item to swap for converter-transformed audio.
+
+        Returns:
+            The constructed Message containing one ``audio_path`` MessagePiece.
+        """
+        snapshot_path = await self._streaming.save_audio(
             snapshot,
             num_channels=1,
             sample_width=2,
-            sample_rate=target.SAMPLE_RATE_HZ,
+            sample_rate=self._streaming.SAMPLE_RATE_HZ,
         )
-        # Stash the server-assigned item id so the target's streaming branch
-        # can swap the raw buffer for converter-transformed audio.
         piece = MessagePiece(
             role="user",
             original_value=snapshot_path,
             original_value_data_type="audio_path",
             converted_value=snapshot_path,
             converted_value_data_type="audio_path",
-            conversation_id=context.conversation_id,
-            prompt_metadata={REALTIME_COMMITTED_ITEM_ID_KEY: event.item_id},
+            conversation_id=conversation_id,
+            prompt_metadata={REALTIME_COMMITTED_ITEM_ID_KEY: item_id},
         )
-        message = Message(message_pieces=[piece])
+        return Message(message_pieces=[piece])
 
+    async def _send_via_normalizer(self, *, message: Message, conversation_id: str) -> Message:
+        """
+        Send a built turn-Message through the normalizer with this attack's converters.
+
+        Returns:
+            The assistant Message returned by ``PromptNormalizer.send_prompt_async``.
+        """
         return await self._prompt_normalizer.send_prompt_async(
             message=message,
             target=self._objective_target,
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
-            conversation_id=context.conversation_id,
+            conversation_id=conversation_id,
             attack_identifier=self.get_identifier(),
         )
 

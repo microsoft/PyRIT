@@ -13,7 +13,7 @@ import pytest
 
 from pyrit.executor.attack import BargeInAttack, BargeInAttackContext
 from pyrit.executor.attack.core import AttackConverterConfig, AttackParameters
-from pyrit.executor.attack.streaming.barge_in import _trim_snapshot_to_speech
+from pyrit.executor.attack.streaming.barge_in import _BargeInRunState, _trim_snapshot_to_speech
 from pyrit.models import AttackOutcome, Message, MessagePiece
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import RealtimeTarget
@@ -92,6 +92,20 @@ def test_constructor_accepts_custom_max_post_stream_wait_seconds(vad_target):
     """max_post_stream_wait_seconds is configurable per-instance."""
     attack = BargeInAttack(objective_target=vad_target, max_post_stream_wait_seconds=120.0)
     assert attack._max_post_stream_wait_seconds == 120.0
+
+
+def test_constructor_caches_streaming_handle(vad_target):
+    """BargeInAttack stashes the target's streaming handle for direct access during _setup_async."""
+    attack = BargeInAttack(objective_target=vad_target)
+    assert attack._streaming is vad_target.streaming
+
+
+def test_constructor_rejects_target_without_streaming_handle(vad_target):
+    """If a target declares STREAMING_BARGE_IN but did not wire .streaming, construction fails."""
+    # Simulate a malformed target: keeps the capability flag, drops the handle.
+    vad_target.streaming = None  # type: ignore[assignment]
+    with pytest.raises(ValueError, match="declares STREAMING_BARGE_IN.*did not wire"):
+        BargeInAttack(objective_target=vad_target)
 
 
 # ---- Context validation ----------------------------------------------------------------------
@@ -211,11 +225,11 @@ def _setup_streaming_target(vad_target, *, future_response: Message | None = Non
     be invoked mid-stream without exercising the real target machinery.
     """
     connection = _mock_connection()
-    vad_target.connect_async = AsyncMock(return_value=connection)
-    vad_target.send_streaming_session_config_async = AsyncMock()
-    vad_target.push_audio_chunk_async = AsyncMock()
-    vad_target.save_audio = AsyncMock(return_value="/tmp/snapshot.wav")
-    vad_target.cleanup_conversation = AsyncMock()
+    vad_target.streaming.connect_async = AsyncMock(return_value=connection)
+    vad_target.streaming.send_streaming_session_config_async = AsyncMock()
+    vad_target.streaming.push_audio_chunk_async = AsyncMock()
+    vad_target.streaming.save_audio = AsyncMock(return_value="/tmp/snapshot.wav")
+    vad_target.streaming.cleanup_conversation = AsyncMock()
     return connection
 
 
@@ -226,7 +240,7 @@ def _capture_committed_callback(vad_target, captured: dict[str, Any]) -> None:
         captured["on_committed"] = on_user_audio_committed
         return AsyncMock()
 
-    vad_target.subscribe_events_async = AsyncMock(side_effect=fake_subscribe)
+    vad_target.streaming.subscribe_events_async = AsyncMock(side_effect=fake_subscribe)
 
 
 def _stub_send_prompt(attack: BargeInAttack, return_value: Message | None = None) -> AsyncMock:
@@ -254,7 +268,7 @@ async def test_perform_async_streams_chunks_and_tears_down(vad_target):
     attack = BargeInAttack(objective_target=vad_target)
     connection = _setup_streaming_target(vad_target)
     dispatcher = AsyncMock()
-    vad_target.subscribe_events_async = AsyncMock(return_value=dispatcher)
+    vad_target.streaming.subscribe_events_async = AsyncMock(return_value=dispatcher)
 
     chunks = [b"\x11" * 480, b"\x22" * 480, b"\x33" * 240]
     ctx = _attack_context(audio_chunks=_aiter(chunks))
@@ -262,13 +276,13 @@ async def test_perform_async_streams_chunks_and_tears_down(vad_target):
     with patch.object(attack, "_max_post_stream_wait_seconds", 0):
         result = await attack._perform_async(context=ctx)
 
-    vad_target.connect_async.assert_awaited_once_with(conversation_id=ctx.conversation_id)
-    vad_target.send_streaming_session_config_async.assert_awaited_once()
-    vad_target.subscribe_events_async.assert_awaited_once()
-    assert vad_target.push_audio_chunk_async.await_count == len(chunks)
-    pushed = [call.kwargs["pcm_bytes"] for call in vad_target.push_audio_chunk_async.await_args_list]
+    vad_target.streaming.connect_async.assert_awaited_once_with(conversation_id=ctx.conversation_id)
+    vad_target.streaming.send_streaming_session_config_async.assert_awaited_once()
+    vad_target.streaming.subscribe_events_async.assert_awaited_once()
+    assert vad_target.streaming.push_audio_chunk_async.await_count == len(chunks)
+    pushed = [call.kwargs["pcm_bytes"] for call in vad_target.streaming.push_audio_chunk_async.await_args_list]
     assert pushed == chunks
-    vad_target.cleanup_conversation.assert_awaited_once_with(ctx.conversation_id)
+    vad_target.streaming.cleanup_conversation.assert_awaited_once_with(ctx.conversation_id)
     assert result.executed_turns == 0
     assert result.outcome == AttackOutcome.UNDETERMINED
 
@@ -312,7 +326,7 @@ async def test_perform_async_message_carries_snapshot_audio_path(vad_target):
     attack = BargeInAttack(objective_target=vad_target)
     send_mock = _stub_send_prompt(attack)
     connection = _setup_streaming_target(vad_target)
-    vad_target.save_audio = AsyncMock(return_value="/tmp/persisted_snapshot.wav")
+    vad_target.streaming.save_audio = AsyncMock(return_value="/tmp/persisted_snapshot.wav")
     captured: dict[str, Any] = {}
     _capture_committed_callback(vad_target, captured)
 
@@ -328,7 +342,7 @@ async def test_perform_async_message_carries_snapshot_audio_path(vad_target):
         await attack._perform_async(context=ctx)
 
     # save_audio called with the snapshot PCM; the resulting path lands on the message piece.
-    save_kwargs_or_args = vad_target.save_audio.call_args
+    save_kwargs_or_args = vad_target.streaming.save_audio.call_args
     saved_pcm = (
         save_kwargs_or_args.args[0] if save_kwargs_or_args.args else save_kwargs_or_args.kwargs.get("audio_bytes")
     )
@@ -349,7 +363,7 @@ async def test_perform_async_clears_raw_buffer_between_commits(vad_target):
         saved_pcm.append(audio_bytes)
         return f"/tmp/snap_{len(saved_pcm)}.wav"
 
-    vad_target.save_audio = AsyncMock(side_effect=fake_save_audio)
+    vad_target.streaming.save_audio = AsyncMock(side_effect=fake_save_audio)
     captured: dict[str, Any] = {}
     _capture_committed_callback(vad_target, captured)
 
@@ -410,8 +424,8 @@ async def test_perform_async_cleans_up_even_on_exception(vad_target):
     """If the chunk loop raises, cleanup_conversation still fires."""
     attack = BargeInAttack(objective_target=vad_target)
     _setup_streaming_target(vad_target)
-    vad_target.push_audio_chunk_async = AsyncMock(side_effect=RuntimeError("push exploded"))
-    vad_target.subscribe_events_async = AsyncMock(return_value=AsyncMock())
+    vad_target.streaming.push_audio_chunk_async = AsyncMock(side_effect=RuntimeError("push exploded"))
+    vad_target.streaming.subscribe_events_async = AsyncMock(return_value=AsyncMock())
 
     ctx = _attack_context(audio_chunks=_aiter([b"\x00" * 96]))
 
@@ -419,7 +433,7 @@ async def test_perform_async_cleans_up_even_on_exception(vad_target):
         with patch.object(attack, "_max_post_stream_wait_seconds", 0):
             await attack._perform_async(context=ctx)
 
-    vad_target.cleanup_conversation.assert_awaited_once_with(ctx.conversation_id)
+    vad_target.streaming.cleanup_conversation.assert_awaited_once_with(ctx.conversation_id)
 
 
 async def test_perform_async_swallows_callback_exception(vad_target):
@@ -449,7 +463,7 @@ async def test_perform_async_swallows_callback_exception(vad_target):
 async def test_send_streaming_session_config_async_emits_create_response_false(vad_target):
     """The streaming session config must flip create_response to False on turn_detection."""
     connection = _mock_connection()
-    await vad_target.send_streaming_session_config_async(connection=connection)
+    await vad_target.streaming.send_streaming_session_config_async(connection=connection)
     connection.session.update.assert_awaited_once()
     config = connection.session.update.call_args.kwargs["session"]
     assert config["audio"]["input"]["turn_detection"]["create_response"] is False
@@ -461,7 +475,7 @@ async def test_send_streaming_session_config_async_requires_server_vad(sqlite_in
     no_vad = RealtimeTarget(api_key="k", endpoint="wss://test_url", model_name="test")
     connection = _mock_connection()
     with pytest.raises(ValueError, match="server VAD"):
-        await no_vad.send_streaming_session_config_async(connection=connection)
+        await no_vad.streaming.send_streaming_session_config_async(connection=connection)
 
 
 async def test_send_streaming_session_config_async_uses_system_message_from_conversation(vad_target):
@@ -479,7 +493,7 @@ async def test_send_streaming_session_config_async_uses_system_message_from_conv
             )
         ]
     )
-    await vad_target.send_streaming_session_config_async(connection=connection, conversation=[system_msg])
+    await vad_target.streaming.send_streaming_session_config_async(connection=connection, conversation=[system_msg])
     config = connection.session.update.call_args.kwargs["session"]
     assert config["instructions"] == "You are a strict assistant."
 
@@ -605,7 +619,7 @@ async def test_perform_async_trims_first_turn_using_audio_start_ms(vad_target):
         saved_pcm.append(audio_bytes)
         return "/tmp/snap.wav"
 
-    vad_target.save_audio = AsyncMock(side_effect=fake_save_audio)
+    vad_target.streaming.save_audio = AsyncMock(side_effect=fake_save_audio)
     captured: dict[str, Any] = {}
     _capture_committed_callback(vad_target, captured)
 
@@ -651,7 +665,7 @@ async def test_perform_async_trims_second_turn_with_session_relative_offset(vad_
         saved_pcm.append(audio_bytes)
         return "/tmp/snap.wav"
 
-    vad_target.save_audio = AsyncMock(side_effect=fake_save_audio)
+    vad_target.streaming.save_audio = AsyncMock(side_effect=fake_save_audio)
     captured: dict[str, Any] = {}
     _capture_committed_callback(vad_target, captured)
 
@@ -690,3 +704,135 @@ async def test_perform_async_trims_second_turn_with_session_relative_offset(vad_
     # remaining = 300 ms pre-speech-padding + 300 ms speech = 600 ms.
     assert len(saved_pcm[1]) == 600 * 48
     assert saved_pcm[1].endswith(speech_long)
+
+
+# ---- _snapshot_and_trim (helper unit tests) --------------------------------------------------
+
+
+def test_snapshot_and_trim_returns_buffer_and_duration(vad_target):
+    """Helper returns the (trimmed snapshot, original-duration) pair without mutating state."""
+    from pyrit.prompt_target.common.realtime_audio import ServerVadConfig
+
+    vad_target._server_vad = ServerVadConfig(prefix_padding_ms=300, silence_duration_ms=500)
+    attack = BargeInAttack(objective_target=vad_target)
+
+    state = _BargeInRunState()
+    silence = b"\x00" * (1000 * 48)
+    speech = b"\x11" * (100 * 48)
+    state.raw_buffer.extend(silence + speech)
+    pre_call_buffer_len = len(state.raw_buffer)
+
+    event = CommittedEvent(item_id="i", audio_start_ms=1000)
+    snapshot, duration_ms = attack._snapshot_and_trim(event=event, state=state)
+
+    # Trimmed: drop max(0, 1000 - 300) = 700 ms; remaining = 300 ms pad + 100 ms speech.
+    assert len(snapshot) == 400 * 48
+    assert snapshot.endswith(speech)
+    # Original duration spans the entire pre-trim buffer (1100 ms at 48 bytes/ms).
+    assert duration_ms == 1100
+    # State is NOT mutated — caller is responsible for clearing the buffer and advancing offset.
+    assert len(state.raw_buffer) == pre_call_buffer_len
+    assert state.buffer_start_session_ms == 0
+
+
+def test_snapshot_and_trim_passes_through_when_audio_start_ms_none(vad_target):
+    """When the bridged audio_start_ms is None, the helper returns the buffer unchanged."""
+    attack = BargeInAttack(objective_target=vad_target)
+    state = _BargeInRunState()
+    raw = b"\x42" * (300 * 48)
+    state.raw_buffer.extend(raw)
+
+    event = CommittedEvent(item_id="i", audio_start_ms=None)
+    snapshot, duration_ms = attack._snapshot_and_trim(event=event, state=state)
+
+    assert snapshot == raw
+    assert duration_ms == 300
+
+
+def test_snapshot_and_trim_uses_session_relative_offset(vad_target):
+    """The helper subtracts state.buffer_start_session_ms before passing to the trim function."""
+    from pyrit.prompt_target.common.realtime_audio import ServerVadConfig
+
+    vad_target._server_vad = ServerVadConfig(prefix_padding_ms=300, silence_duration_ms=500)
+    attack = BargeInAttack(objective_target=vad_target)
+
+    state = _BargeInRunState()
+    state.buffer_start_session_ms = 1000  # turn 2: 1000 ms of prior turns
+    silence = b"\x00" * (500 * 48)
+    speech = b"\x22" * (200 * 48)
+    state.raw_buffer.extend(silence + speech)
+
+    # Server reports session-relative audio_start_ms = 1500 → buffer-relative = 500.
+    event = CommittedEvent(item_id="i", audio_start_ms=1500)
+    snapshot, _ = attack._snapshot_and_trim(event=event, state=state)
+
+    # Trim = max(0, 500 - 300) = 200 ms; remaining = 300 ms pad + 200 ms speech.
+    assert len(snapshot) == 500 * 48
+    assert snapshot.endswith(speech)
+
+
+# ---- _build_message_for_turn (helper unit tests) ---------------------------------------------
+
+
+async def test_build_message_for_turn_persists_and_wraps(vad_target):
+    """Builder calls save_audio and wraps the path in an audio_path-shaped Message."""
+    attack = BargeInAttack(objective_target=vad_target)
+    vad_target.streaming.save_audio = AsyncMock(return_value="/tmp/persisted.wav")
+
+    snapshot_bytes = b"\xaa" * 480
+    message = await attack._build_message_for_turn(
+        snapshot=snapshot_bytes,
+        item_id="server_item_xyz",
+        conversation_id="conv-1",
+    )
+
+    # save_audio receives the snapshot bytes and the streaming-handle sample rate.
+    save_call = vad_target.streaming.save_audio.await_args
+    assert save_call.args[0] == snapshot_bytes
+    assert save_call.kwargs["sample_rate"] == vad_target.streaming.SAMPLE_RATE_HZ
+
+    # Message shape: one audio_path piece pointing at the persisted file.
+    assert len(message.message_pieces) == 1
+    piece = message.message_pieces[0]
+    assert piece.original_value == "/tmp/persisted.wav"
+    assert piece.converted_value == "/tmp/persisted.wav"
+    assert piece.original_value_data_type == "audio_path"
+    assert piece.converted_value_data_type == "audio_path"
+    assert piece.conversation_id == "conv-1"
+
+
+async def test_build_message_for_turn_stashes_item_id_in_metadata(vad_target):
+    """The server's committed item_id is stashed under REALTIME_COMMITTED_ITEM_ID_KEY."""
+    attack = BargeInAttack(objective_target=vad_target)
+    vad_target.streaming.save_audio = AsyncMock(return_value="/tmp/persisted.wav")
+
+    message = await attack._build_message_for_turn(
+        snapshot=b"\x00" * 96,
+        item_id="srv_item_42",
+        conversation_id="conv-2",
+    )
+
+    assert message.message_pieces[0].prompt_metadata[REALTIME_COMMITTED_ITEM_ID_KEY] == "srv_item_42"
+
+
+# ---- _send_via_normalizer (helper unit tests) ------------------------------------------------
+
+
+async def test_send_via_normalizer_forwards_to_prompt_normalizer(vad_target):
+    """Helper hands message + converters + identifiers to PromptNormalizer.send_prompt_async."""
+    attack = BargeInAttack(objective_target=vad_target)
+    response = Message(message_pieces=[MessagePiece(role="assistant", original_value="ok")])
+    attack._prompt_normalizer.send_prompt_async = AsyncMock(return_value=response)  # type: ignore[method-assign]
+
+    request = Message(message_pieces=[MessagePiece(role="user", original_value="/tmp/r.wav")])
+    result = await attack._send_via_normalizer(message=request, conversation_id="conv-3")
+
+    assert result is response
+    call = attack._prompt_normalizer.send_prompt_async.await_args
+    assert call.kwargs["message"] is request
+    # Forwards the underlying PromptTarget (not the streaming handle).
+    assert call.kwargs["target"] is vad_target
+    assert call.kwargs["conversation_id"] == "conv-3"
+    assert call.kwargs["request_converter_configurations"] is attack._request_converters
+    assert call.kwargs["response_converter_configurations"] is attack._response_converters
+    assert call.kwargs["attack_identifier"] == attack.get_identifier()
