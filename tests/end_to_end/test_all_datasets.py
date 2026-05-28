@@ -24,6 +24,7 @@ from pyrit.datasets.seed_datasets.remote import (
     _HarmBenchMultimodalDataset,
     _PromptIntelDataset,
     _VLSUMultimodalDataset,
+    _WildGuardMixDataset,
 )
 from pyrit.models import SeedDataset
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -84,6 +85,8 @@ class TestAllDatasets:
         # Skip providers that require credentials not available in CI
         if provider_cls == _PromptIntelDataset and not os.environ.get("PROMPTINTEL_API_KEY"):
             pytest.skip("PROMPTINTEL_API_KEY not set")
+        if provider_cls == _WildGuardMixDataset and not os.environ.get("HUGGINGFACE_TOKEN"):
+            pytest.skip("HUGGINGFACE_TOKEN not set (WildGuardMix is HF-gated under AI2 Responsible Use)")
 
         logger.info(f"Testing provider: {name}")
 

@@ -123,6 +123,10 @@ from pyrit.datasets.seed_datasets.remote.toxic_chat_dataset import (
 from pyrit.datasets.seed_datasets.remote.transphobia_awareness_dataset import (  # noqa: F401
     _TransphobiaAwarenessDataset,
 )
+from pyrit.datasets.seed_datasets.remote.trustairlab_in_the_wild_jailbreak_dataset import (
+    TrustAIRLabPlatform,
+    _TrustAIRLabInTheWildJailbreakDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.visual_leak_bench_dataset import (
     VisualLeakBenchCategory,
     VisualLeakBenchPIIType,
@@ -137,6 +141,12 @@ from pyrit.datasets.seed_datasets.remote.vlguard_dataset import (
 from pyrit.datasets.seed_datasets.remote.vlsu_multimodal_dataset import (
     _VLSUMultimodalDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.wildguardmix_dataset import (
+    WildGuardMixAdversarial,
+    WildGuardMixPromptHarmLabel,
+    WildGuardMixSplit,
+    _WildGuardMixDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.xstest_dataset import (
     _XSTestDataset,
 )  # noqa: F401
@@ -146,9 +156,13 @@ __all__ = [
     "PromptIntelCategory",
     "PromptIntelSeverity",
     "SGXSTestLabel",
+    "TrustAIRLabPlatform",
     "VLGuardCategory",
     "VLGuardSubcategory",
     "VLGuardSubset",
+    "WildGuardMixAdversarial",
+    "WildGuardMixPromptHarmLabel",
+    "WildGuardMixSplit",
     "_AegisContentSafetyDataset",
     "_AyaRedteamingDataset",
     "_BabelscapeAlertDataset",
@@ -189,10 +203,12 @@ __all__ = [
     "_TDC23RedteamingDataset",
     "_ToxicChatDataset",
     "_TransphobiaAwarenessDataset",
+    "_TrustAIRLabInTheWildJailbreakDataset",
     "_VLGuardDataset",
     "_VLSUMultimodalDataset",
     "_VisualLeakBenchDataset",
     "VisualLeakBenchCategory",
     "VisualLeakBenchPIIType",
+    "_WildGuardMixDataset",
     "_XSTestDataset",
 ]
