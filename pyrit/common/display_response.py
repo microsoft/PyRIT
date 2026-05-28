@@ -58,7 +58,7 @@ async def display_image_response_async(response_piece: MessagePiece) -> None:
 
 
 async def display_image_response(response_piece: MessagePiece) -> None:
-    """Delegate to :func:`display_image_response_async` (deprecated alias)."""
+    """Delegate to ``display_image_response_async`` (deprecated alias)."""
     print_deprecation_message(
         old_item="pyrit.common.display_response.display_image_response",
         new_item="pyrit.common.display_response.display_image_response_async",

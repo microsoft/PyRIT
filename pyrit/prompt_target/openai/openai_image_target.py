@@ -2,11 +2,11 @@
 # Licensed under the MIT license.
 import base64
 import logging
-import warnings
 from typing import Any, Literal, Optional
 
 import httpx
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
@@ -124,29 +124,32 @@ class OpenAIImageTarget(OpenAITarget):
         """
         # Emit deprecation warnings for DALL-E-only parameters
         if style is not None:
-            warnings.warn(
-                "The 'style' parameter is deprecated and will be removed in v0.15.0. "
-                "It was only supported for DALL-E-3, which is being shut down on 2026-05-12.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="OpenAIImageTarget(style=...)",
+                new_item="OpenAIImageTarget(...) without style (DALL-E-3 is being shut down on 2026-05-12)",
+                removed_in="0.15.0",
             )
 
         if image_size in self._DEPRECATED_SIZES:
-            warnings.warn(
-                f"image_size='{image_size}' is a DALL-E-only value and is deprecated. "
-                f"It will be removed in v0.15.0. DALL-E models are being shut down on 2026-05-12. "
-                f"GPT image models support 'auto', '1024x1024', '1536x1024', and '1024x1536'.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item=f"OpenAIImageTarget(image_size='{image_size}')",
+                new_item=(
+                    "OpenAIImageTarget(image_size=...) with a GPT image model value "
+                    "('auto', '1024x1024', '1536x1024', or '1024x1536'); "
+                    "DALL-E models are being shut down on 2026-05-12"
+                ),
+                removed_in="0.15.0",
             )
 
         if quality is not None and quality in self._DEPRECATED_QUALITY_VALUES:
-            warnings.warn(
-                f"quality='{quality}' is a DALL-E-only value and is deprecated. "
-                f"It will be removed in v0.15.0. DALL-E models are being shut down on 2026-05-12. "
-                f"GPT image models support 'auto', 'low', 'medium', and 'high'.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item=f"OpenAIImageTarget(quality='{quality}')",
+                new_item=(
+                    "OpenAIImageTarget(quality=...) with a GPT image model value "
+                    "('auto', 'low', 'medium', or 'high'); "
+                    "DALL-E models are being shut down on 2026-05-12"
+                ),
+                removed_in="0.15.0",
             )
 
         if background == "transparent" and output_format == "jpeg":

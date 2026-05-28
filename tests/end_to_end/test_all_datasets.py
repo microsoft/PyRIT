@@ -23,6 +23,7 @@ from pyrit.datasets import SeedDatasetProvider
 from pyrit.datasets.seed_datasets.remote import (
     _HarmBenchMultimodalDataset,
     _PromptIntelDataset,
+    _SIUODataset,
     _VLSUMultimodalDataset,
 )
 from pyrit.models import SeedDataset
@@ -38,7 +39,7 @@ _RETRYABLE_ERRORS = (OSError, ConnectionError, TimeoutError)
 
 # Providers that download many remote images; each image fetch may fail
 # due to rate-limiting, so an empty result is expected in some environments.
-_IMAGE_FETCHING_PROVIDERS: set[type] = {_HarmBenchMultimodalDataset, _VLSUMultimodalDataset}
+_IMAGE_FETCHING_PROVIDERS: set[type] = {_HarmBenchMultimodalDataset, _SIUODataset, _VLSUMultimodalDataset}
 
 
 def get_dataset_providers():
