@@ -307,7 +307,7 @@ class RedTeamAgent(Scenario):
             Sequence["FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy"]
         ] = None,
         dataset_config: Optional[DatasetConfiguration] = None,
-        max_concurrency: int = 10,
+        max_concurrency: int = 4,
         max_retries: int = 0,
         memory_labels: Optional[dict[str, str]] = None,
         include_baseline: bool | None = None,
@@ -323,7 +323,7 @@ class RedTeamAgent(Scenario):
                 ScenarioCompositeStrategy is deprecated — use FoundryComposite instead.
                 If None, uses the default aggregate (EASY).
             dataset_config (Optional[DatasetConfiguration]): Configuration for the dataset source.
-            max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 10.
+            max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 4.
             max_retries (int): Maximum number of retries on failure. Defaults to 0.
             memory_labels (Optional[dict[str, str]]): Labels to attach to all memory entries.
             include_baseline (bool | None): See ``Scenario.initialize_async``.
