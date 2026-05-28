@@ -33,9 +33,9 @@ def _build_benchmark_strategy() -> type[ScenarioStrategy]:
     Build the ``BenchmarkStrategy`` enum from ``SCENARIO_TECHNIQUES``.
 
     Filters the static technique catalog to entries that require an
-    adversarial chat target (per :func:`_spec_needs_adversarial`) and passes
+    adversarial chat target (per ``_spec_needs_adversarial``) and passes
     those source specs to
-    :meth:`AttackTechniqueRegistry.build_strategy_class_from_specs`. The
+    ``AttackTechniqueRegistry.build_strategy_class_from_specs``. The
     resulting enum has one concrete member per source technique (e.g.
     ``red_teaming``, ``tap``, ``crescendo_simulated``) plus the standard
     ``all`` / ``light`` / ``single_turn`` / ``multi_turn`` aggregates inherited
@@ -43,7 +43,7 @@ def _build_benchmark_strategy() -> type[ScenarioStrategy]:
 
     The (technique × target) cross-product is no longer pre-materialized into
     enum members; per-target factories are built lazily in
-    :meth:`AdversarialBenchmark._get_atomic_attacks_async` from the
+    ``AdversarialBenchmark._get_atomic_attacks_async`` from the
     user-supplied ``adversarial_targets`` parameter.
 
     Returns:
@@ -67,30 +67,30 @@ class AdversarialBenchmark(Scenario):
     Benchmark scenario that compares the attack success rate (ASR) across adversarial models.
 
     Adversarial targets are user-supplied via the ``adversarial_targets``
-    parameter (declared in :meth:`supported_parameters`). Each target must
+    parameter (declared in ``supported_parameters``). Each target must
     already be registered in ``TargetRegistry`` — typically by
     ``TargetInitializer`` from ``ADVERSARIAL_CHAT_*`` env vars, or
     programmatically via ``TargetRegistry.register_instance``.
 
-    At run time, :meth:`_get_atomic_attacks_async` performs the
+    At run time, ``_get_atomic_attacks_async`` performs the
     ``(technique × adversarial_target × dataset)`` cross-product: for each
     selected adversarial-capable technique in ``SCENARIO_TECHNIQUES`` and
     each requested target, it constructs a per-pair
-    :class:`AttackTechniqueFactory` via
-    :meth:`AttackTechniqueRegistry.build_factory_from_spec` with
+    ``AttackTechniqueFactory`` via
+    ``AttackTechniqueRegistry.build_factory_from_spec`` with
     ``adversarial_chat`` overridden to that target — no global registry
-    mutation. The resulting :class:`AtomicAttack` is named
+    mutation. The resulting ``AtomicAttack`` is named
     ``f"{technique}__{target}_{dataset}"`` with ``display_group`` set to the
     target's registry name so per-model ASR rolls up naturally in result
     displays.
     """
 
-    #: Bumped from 1 to match the ``atomic_attack_name`` format introduced
-    #: when the scenario stopped passing target labels through its old triple
-    #: ``f"{technique}__{model}__{dataset}"`` shape. The post-collapse format
-    #: ``f"{technique}__{target}_{dataset}"`` is preserved here so cached
-    #: results from the prior collapse-era runs remain matchable by
-    #: ``skip_cached``.
+    #: Bumped from 1 → 2 by the refactor that moved adversarial targets
+    #: from a constructor parameter to the ``adversarial_targets`` scenario
+    #: parameter and changed ``atomic_attack_name`` from
+    #: ``{technique}__{model}__{dataset}`` to ``{technique}__{target}_{dataset}``.
+    #: ``skip_cached`` only matches against prior runs at the current
+    #: ``VERSION``; v1 results remain queryable but won't suppress v2 runs.
     VERSION: int = 2
 
     #: AdversarialBenchmark compares attack-success rates across adversarial models; a baseline
@@ -144,7 +144,7 @@ class AdversarialBenchmark(Scenario):
         Declare the ``adversarial_targets`` parameter.
 
         The list is treated as required at run time:
-        :meth:`_get_atomic_attacks_async` raises ``ValueError`` if
+        ``_get_atomic_attacks_async`` raises ``ValueError`` if
         ``self.params["adversarial_targets"]`` is empty or missing. The
         scenario-side error (rather than a declaration-side default) lets
         the caller raise a domain-specific message that names the CLI flag,
@@ -182,17 +182,12 @@ class AdversarialBenchmark(Scenario):
         Initialize the AdversarialBenchmark scenario.
 
         Args:
-            objective_scorer: Scorer for evaluating attack success. The
-                annotation is the broad ``Scorer`` base class for forward
-                compatibility with the planned non-``TrueFalseScorer``
-                scoring follow-up (see PR description / follow-up issue
-                tracker), but the runtime contract is currently still
-                ``TrueFalseScorer``: any other ``Scorer`` subclass raises
-                ``TypeError`` at construction with a message pointing at
-                the follow-up. Defaults to the registered default objective
+            objective_scorer: ``TrueFalseScorer`` used to evaluate attack
+                success. Defaults to the registered default objective
                 scorer (typically the composite refusal+scale scorer set
-                up by an initializer), which is always a
-                ``TrueFalseScorer``.
+                up by an initializer). Widening to general ``Scorer``
+                support (covering ``FloatScaleScorer``, etc.) is tracked
+                as a follow-up.
             skip_cached: When ``True``, ``_get_atomic_attacks_async`` filters
                 out atomic attacks whose ``(atomic_attack_name,
                 technique_eval_hash)`` tuple already appears in a prior
@@ -205,12 +200,6 @@ class AdversarialBenchmark(Scenario):
                 (e.g. different scorer) do not cross-pollinate.
             scenario_result_id: Optional ID of an existing scenario result
                 to resume.
-
-        Raises:
-            TypeError: If ``objective_scorer`` is a ``Scorer`` subclass
-                other than ``TrueFalseScorer`` (full non-true/false support
-                is tracked as a follow-up; the type annotation is widened
-                ahead of the runtime support).
         """
         self._objective_scorer: TrueFalseScorer = (
             objective_scorer if objective_scorer else self._get_default_objective_scorer()
@@ -229,11 +218,11 @@ class AdversarialBenchmark(Scenario):
         Build atomic attacks from (technique × adversarial_target × dataset), then apply caching.
 
         Reads the user-supplied ``adversarial_targets`` parameter, resolves
-        each name to a :class:`PromptTarget` via ``TargetRegistry``, and
+        each name to a ``PromptTarget`` via ``TargetRegistry``, and
         cross-products the selected adversarial-capable techniques over the
         resolved targets and configured datasets. Each pair builds a
         non-registered per-pair factory via
-        :meth:`AttackTechniqueRegistry.build_factory_from_spec` with
+        ``AttackTechniqueRegistry.build_factory_from_spec`` with
         ``adversarial_chat`` overridden to the resolved target — no global
         registry state is touched. When ``self._skip_cached`` is set, the
         final candidate list is then filtered against prior completed
@@ -263,7 +252,13 @@ class AdversarialBenchmark(Scenario):
             )
 
         resolved_targets = self._resolve_adversarial_targets(target_names=target_names)
-        selected_specs = self._select_adversarial_specs()
+        # ``BenchmarkStrategy`` is built from adversarial-capable
+        # ``SCENARIO_TECHNIQUES`` entries only (see ``_build_benchmark_strategy``),
+        # so every selected strategy resolves to exactly one spec. Drift between the
+        # enum and the catalog is silently ignored — the next strategy-class build
+        # would surface it.
+        specs_by_name = {spec.name: spec for spec in SCENARIO_TECHNIQUES}
+        selected_specs = [specs_by_name[s.value] for s in self._scenario_strategies if s.value in specs_by_name]
 
         scoring_config = AttackScoringConfig(objective_scorer=self._objective_scorer)
         seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
@@ -371,39 +366,6 @@ class AdversarialBenchmark(Scenario):
 
         return resolved
 
-    def _select_adversarial_specs(self) -> list:
-        """
-        Resolve ``self._scenario_strategies`` back to adversarial-capable source specs.
-
-        Strategies that are not adversarial-capable (i.e. don't satisfy
-        :func:`_spec_needs_adversarial`) are dropped with a warning.
-        Strategies whose name doesn't match any spec in
-        ``SCENARIO_TECHNIQUES`` are also dropped with a warning — this
-        guards against drift between the strategy enum and the technique
-        catalog.
-
-        Returns:
-            list[AttackTechniqueSpec]: The adversarial-capable specs the
-            user selected, suitable for the per-pair factory build loop.
-        """
-        specs_by_name = {spec.name: spec for spec in SCENARIO_TECHNIQUES}
-        selected_strategy_values = {s.value for s in self._scenario_strategies}
-
-        selected_specs: list = []
-        for value in selected_strategy_values:
-            spec = specs_by_name.get(value)
-            if spec is None:
-                logger.warning(f"AdversarialBenchmark: strategy '{value}' has no matching technique spec, skipping.")
-                continue
-            if not _spec_needs_adversarial(spec):
-                logger.warning(
-                    f"AdversarialBenchmark: technique '{value}' does not require an adversarial chat target, "
-                    "skipping (only adversarial-capable techniques are benchmarked)."
-                )
-                continue
-            selected_specs.append(spec)
-        return selected_specs
-
     def _collect_cached_completion_pairs(self) -> set[tuple[str, str | None]]:
         """
         Collect cache keys for atomic attacks that completed in any prior run of this scenario.
@@ -415,7 +377,7 @@ class AdversarialBenchmark(Scenario):
         ``(atomic_attack_name, parent_eval_hash)`` tuple for every
         ``SUCCESS`` or ``FAILURE`` outcome. The pair shape mirrors the
         ``(atomic_attack_name, technique_eval_hash)`` tuple used by
-        :meth:`_get_atomic_attacks_async` so a direct ``in`` check filters
+        ``_get_atomic_attacks_async`` so a direct ``in`` check filters
         candidates without further key construction.
 
         Resilient to attribution-data variation: rows whose

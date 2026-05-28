@@ -5,10 +5,10 @@
 
 AdversarialBenchmark now owns its adversarial target axis directly via
 the ``adversarial_targets`` parameter declared in
-:meth:`supported_parameters`. Targets are user-supplied registry names
+``supported_parameters``. Targets are user-supplied registry names
 that resolve to ``PromptTarget`` instances via ``TargetRegistry``. The
 ``(technique × target × dataset)`` cross-product is built lazily inside
-:meth:`_get_atomic_attacks_async` using per-pair non-registered factories;
+``_get_atomic_attacks_async`` using per-pair non-registered factories;
 no global ``AttackTechniqueRegistry`` state is mutated.
 
 These tests cover the new contract:
@@ -18,13 +18,11 @@ These tests cover the new contract:
   source ``light`` tag (excludes ``tap`` / ``crescendo_simulated``).
 * ``supported_parameters`` declares ``adversarial_targets: list[str]``.
 * ``_resolve_adversarial_targets`` raises with available names on typos.
-* ``_select_adversarial_specs`` drops non-adversarial techniques.
 * ``_get_atomic_attacks_async`` produces ``N × M × D`` atomic attacks
   with the expected ``atomic_attack_name`` and ``display_group``.
 * ``_collect_cached_completion_pairs`` collects (name, hash) tuples for
   prior ``SUCCESS`` / ``FAILURE`` outcomes only.
 * ``skip_cached`` filters cached candidates end-to-end.
-* Scorer flexibility stage 1: widened annotation + ``TypeError`` guard.
 """
 
 from unittest.mock import MagicMock, patch
@@ -283,49 +281,6 @@ class TestResolveAdversarialTargets:
         resolved = bench._resolve_adversarial_targets(target_names=["adv_c", "adv_a", "adv_b"])
         names = [name for name, _ in resolved]
         assert names == ["adv_c", "adv_a", "adv_b"]
-
-
-# ---------------------------------------------------------------------------
-# _select_adversarial_specs
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestSelectAdversarialSpecs:
-    """Tests for ``_select_adversarial_specs``: filter strategies down to adversarial-capable specs."""
-
-    def _make_bench(self) -> AdversarialBenchmark:
-        return AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
-
-    def test_returns_only_adversarial_specs(self):
-        """``red_teaming`` is adversarial-capable; ``prompt_sending`` is not — only red_teaming survives."""
-        bench = self._make_bench()
-
-        red_teaming_strategy = MagicMock()
-        red_teaming_strategy.value = "red_teaming"
-        prompt_sending_strategy = MagicMock()
-        prompt_sending_strategy.value = "prompt_sending"
-        bench._scenario_strategies = [red_teaming_strategy, prompt_sending_strategy]
-
-        selected = bench._select_adversarial_specs()
-        selected_names = {s.name for s in selected}
-
-        assert "red_teaming" in selected_names
-        assert "prompt_sending" not in selected_names
-
-    def test_unknown_strategy_value_is_skipped_with_warning(self, caplog):
-        """A strategy enum value with no matching spec is dropped (defensive guard against drift)."""
-        bench = self._make_bench()
-
-        unknown_strategy = MagicMock()
-        unknown_strategy.value = "nonexistent_technique"
-        bench._scenario_strategies = [unknown_strategy]
-
-        with caplog.at_level("WARNING"):
-            selected = bench._select_adversarial_specs()
-
-        assert selected == []
-        assert any("nonexistent_technique" in record.message for record in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -732,19 +687,3 @@ class TestSkipCachedFilter:
             result = await bench._get_atomic_attacks_async()
 
         assert len(result) == 1
-
-
-# ---------------------------------------------------------------------------
-# Scorer flexibility — stage 1
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestAdversarialBenchmarkScorerFlexibility:
-    """Tests for the widened ``objective_scorer`` annotation + ``isinstance`` guard (stage 1)."""
-
-    def test_construct_accepts_truefalse_scorer_subclass(self):
-        """``TrueFalseScorer`` remains the runtime-supported type; should construct cleanly."""
-        scorer = MagicMock(spec=TrueFalseScorer)
-        bench = AdversarialBenchmark(objective_scorer=scorer)
-        assert bench._objective_scorer is scorer

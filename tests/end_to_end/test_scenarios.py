@@ -6,9 +6,9 @@ End-to-end tests for PyRIT scenarios using pyrit_scan CLI.
 
 These tests dynamically discover all available scenarios and run each one
 using the pyrit_scan command. Most scenarios run with the
-:data:`DEFAULT_INITIALIZERS` list; scenarios that need additional setup
-declare their full initializer list in :data:`SCENARIO_INITIALIZERS` and
-extra CLI args in :data:`SCENARIO_EXTRA_ARGS`.
+``DEFAULT_INITIALIZERS`` list; scenarios that need additional setup
+declare their full initializer list in ``SCENARIO_INITIALIZERS`` and
+extra CLI args in ``SCENARIO_EXTRA_ARGS``.
 
 Note: e2e tests are not part of CI; they run via ``make end-to-end-test``
 on developer machines that have the appropriate env vars set
@@ -27,18 +27,18 @@ from pyrit.registry import ScenarioRegistry
 
 CONFIG_FILE = Path(__file__).parent / "test_config.yaml"
 
-#: Initializers run for every scenario unless overridden in :data:`SCENARIO_INITIALIZERS`.
+#: Initializers run for every scenario unless overridden in ``SCENARIO_INITIALIZERS``.
 #: ``target`` populates ``TargetRegistry`` from env vars; ``load_default_datasets``
 #: fetches each scenario's declared default datasets into memory.
 DEFAULT_INITIALIZERS: list[str] = ["target", "load_default_datasets"]
 
 #: Per-scenario override map for initializers. A scenario absent here falls back
-#: to :data:`DEFAULT_INITIALIZERS`. Keys use the dotted registry name
+#: to ``DEFAULT_INITIALIZERS``. Keys use the dotted registry name
 #: (``<module>.<scenario>``) returned by ``ScenarioRegistry.get_names()``.
 SCENARIO_INITIALIZERS: dict[str, list[str]] = {}
 
 #: Per-scenario extra CLI args appended after the standard flag block. Keys use
-#: the same dotted registry name as :data:`SCENARIO_INITIALIZERS`. Values are
+#: the same dotted registry name as ``SCENARIO_INITIALIZERS``. Values are
 #: lists already split into argv tokens.
 SCENARIO_EXTRA_ARGS: dict[str, list[str]] = {
     # benchmark.adversarial requires --adversarial-targets at run time
