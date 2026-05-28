@@ -3,11 +3,11 @@
 
 """
 ``SequentialAttack`` — runs a sequence of inner ``AttackStrategy``
-steps against a single objective, controlled by a ``SequenceMode``.
+steps against a single objective, controlled by a ``SequencePolicy``.
 
 The compound preserves the one-objective → one-``AttackResult`` invariant:
 each invocation returns one ``SequentialAttackResult`` whose outcome
-reflects the sequence according to the chosen ``SequenceMode``.
+reflects the sequence according to the chosen ``SequencePolicy``.
 
 Each inner step is dispatched through ``AttackExecutor``, so it
 persists as its own first-class ``AttackResult`` row. The envelope result
@@ -39,13 +39,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SequenceMode(str, Enum):
+class SequencePolicy(str, Enum):
     """
     How a ``SequentialAttack`` iterates and aggregates its steps.
 
-    Each mode bundles a stop condition (when to halt iteration) and an
+    Each policy bundles a stop condition (when to halt iteration) and an
     outcome rule (how to derive the envelope's outcome from the inner
-    results), chosen so each mode matches a common use case.
+    results), chosen so each policy matches a common use case.
     """
 
     FIRST_SUCCESS = "first_success"
@@ -133,11 +133,11 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
     Scenario layer. Each inner step runs as a real attack through
     ``AttackExecutor`` and persists its own row; the compound returns
     one ``SequentialAttackResult`` whose iteration and aggregation are
-    controlled by ``SequenceMode``.
+    controlled by ``SequencePolicy``.
 
-    The default ``SequenceMode.FIRST_SUCCESS`` matches the adaptive
+    The default ``SequencePolicy.FIRST_SUCCESS`` matches the adaptive
     "try strategies until one works" pattern, resilient to transient
-    inner errors. See ``SequenceMode`` for the other modes
+    inner errors. See ``SequencePolicy`` for the other policies
     (``FIRST_DECISIVE``, ``STRICT_ALL``, ``EXHAUSTIVE``, ``LAST_RESULT``).
 
     Example:
@@ -162,7 +162,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         *,
         objective_target: PromptTarget,
         steps: Sequence[SequentialAttackStep],
-        mode: SequenceMode = SequenceMode.FIRST_SUCCESS,
+        policy: SequencePolicy = SequencePolicy.FIRST_SUCCESS,
     ) -> None:
         """
         Args:
@@ -172,8 +172,8 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 whatever target its own strategy is configured with.
             steps (Sequence[SequentialAttackStep]): Steps to run, in
                 order. Must be non-empty.
-            mode (SequenceMode): Iteration + aggregation mode. Defaults to
-                ``SequenceMode.FIRST_SUCCESS`` (resilient adaptive).
+            policy (SequencePolicy): Iteration + aggregation policy. Defaults to
+                ``SequencePolicy.FIRST_SUCCESS`` (resilient adaptive).
 
         Raises:
             ValueError: If ``steps`` is empty.
@@ -191,7 +191,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             logger=logger,
         )
         self._steps: list[SequentialAttackStep] = list(steps)
-        self._mode = mode
+        self._policy = policy
         self._executor = AttackExecutor(max_concurrency=1)
 
     def _validate_context(self, *, context: AttackContext[AttackParameters]) -> None:
@@ -270,19 +270,19 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         )
 
     def _should_stop_after(self, *, result: AttackResult) -> bool:
-        if self._mode is SequenceMode.FIRST_SUCCESS:
+        if self._policy is SequencePolicy.FIRST_SUCCESS:
             return result.outcome is AttackOutcome.SUCCESS
-        if self._mode is SequenceMode.FIRST_DECISIVE:
+        if self._policy is SequencePolicy.FIRST_DECISIVE:
             return result.outcome in (AttackOutcome.SUCCESS, AttackOutcome.ERROR)
-        if self._mode is SequenceMode.STRICT_ALL:
+        if self._policy is SequencePolicy.STRICT_ALL:
             return result.outcome is not AttackOutcome.SUCCESS
         # EXHAUSTIVE and LAST_RESULT run every step to completion.
         return False
 
     def _compute_outcome(self, *, results: list[AttackResult]) -> AttackOutcome:
-        if self._mode is SequenceMode.LAST_RESULT:
+        if self._policy is SequencePolicy.LAST_RESULT:
             return results[-1].outcome
-        if self._mode is SequenceMode.STRICT_ALL:
+        if self._policy is SequencePolicy.STRICT_ALL:
             if all(r.outcome is AttackOutcome.SUCCESS for r in results):
                 return AttackOutcome.SUCCESS
             if any(r.outcome is AttackOutcome.ERROR for r in results):

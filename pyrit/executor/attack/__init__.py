@@ -9,7 +9,7 @@ from pyrit.executor.attack.component import (
     PrependedConversationConfig,
 )
 from pyrit.executor.attack.compound import (
-    SequenceMode,
+    SequencePolicy,
     SequentialAttack,
     SequentialAttackResult,
     SequentialAttackStep,
@@ -103,7 +103,7 @@ __all__ = [
     "AttackExecutor",
     "AttackExecutorResult",
     "PrependedConversationConfig",
-    "SequenceMode",
+    "SequencePolicy",
     "SequentialAttack",
     "SequentialAttackResult",
     "SequentialAttackStep",

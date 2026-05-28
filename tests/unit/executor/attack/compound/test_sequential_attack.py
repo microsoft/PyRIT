@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.executor.attack.compound import (
-    SequenceMode,
+    SequencePolicy,
     SequentialAttack,
     SequentialAttackResult,
     SequentialAttackStep,
@@ -121,7 +121,7 @@ class TestFirstSuccess:
         b = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="b")
         c = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="c")
         steps = [SequentialAttackStep(strategy=s, seed_group=seed_group) for s in (a, b, c)]
-        compound = SequentialAttack(objective_target=target, steps=steps, mode=SequenceMode.FIRST_SUCCESS)
+        compound = SequentialAttack(objective_target=target, steps=steps, policy=SequencePolicy.FIRST_SUCCESS)
         patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b, id(c): c})
 
         with patcher:
@@ -173,7 +173,7 @@ class TestFirstDecisive:
             SequentialAttackStep(strategy=a, seed_group=seed_group),
             SequentialAttackStep(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, steps=steps, mode=SequenceMode.FIRST_DECISIVE)
+        compound = SequentialAttack(objective_target=target, steps=steps, policy=SequencePolicy.FIRST_DECISIVE)
         patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
@@ -189,7 +189,7 @@ class TestFirstDecisive:
             SequentialAttackStep(strategy=a, seed_group=seed_group),
             SequentialAttackStep(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, steps=steps, mode=SequenceMode.FIRST_DECISIVE)
+        compound = SequentialAttack(objective_target=target, steps=steps, policy=SequencePolicy.FIRST_DECISIVE)
         patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
@@ -205,7 +205,7 @@ class TestFirstDecisive:
             SequentialAttackStep(strategy=a, seed_group=seed_group),
             SequentialAttackStep(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, steps=steps, mode=SequenceMode.FIRST_DECISIVE)
+        compound = SequentialAttack(objective_target=target, steps=steps, policy=SequencePolicy.FIRST_DECISIVE)
         patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
@@ -224,7 +224,7 @@ class TestExhaustive:
             SequentialAttackStep(strategy=a, seed_group=seed_group),
             SequentialAttackStep(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, steps=steps, mode=SequenceMode.EXHAUSTIVE)
+        compound = SequentialAttack(objective_target=target, steps=steps, policy=SequencePolicy.EXHAUSTIVE)
         patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
@@ -238,90 +238,90 @@ class TestExhaustive:
 @pytest.mark.usefixtures("patch_central_database")
 class TestOutcomeDerivation:
     @pytest.mark.parametrize(
-        ("mode", "outcomes", "expected"),
+        ("policy", "outcomes", "expected"),
         [
             # EXHAUSTIVE: any-success aggregation over every step.
-            (SequenceMode.EXHAUSTIVE, [AttackOutcome.SUCCESS], AttackOutcome.SUCCESS),
+            (SequencePolicy.EXHAUSTIVE, [AttackOutcome.SUCCESS], AttackOutcome.SUCCESS),
             (
-                SequenceMode.EXHAUSTIVE,
+                SequencePolicy.EXHAUSTIVE,
                 [AttackOutcome.FAILURE, AttackOutcome.SUCCESS],
                 AttackOutcome.SUCCESS,
             ),
             (
-                SequenceMode.EXHAUSTIVE,
+                SequencePolicy.EXHAUSTIVE,
                 [AttackOutcome.ERROR, AttackOutcome.ERROR],
                 AttackOutcome.ERROR,
             ),
             (
-                SequenceMode.EXHAUSTIVE,
+                SequencePolicy.EXHAUSTIVE,
                 [AttackOutcome.UNDETERMINED, AttackOutcome.UNDETERMINED],
                 AttackOutcome.FAILURE,
             ),
             (
-                SequenceMode.EXHAUSTIVE,
+                SequencePolicy.EXHAUSTIVE,
                 [AttackOutcome.FAILURE, AttackOutcome.FAILURE],
                 AttackOutcome.FAILURE,
             ),
             (
-                SequenceMode.EXHAUSTIVE,
+                SequencePolicy.EXHAUSTIVE,
                 [AttackOutcome.FAILURE, AttackOutcome.ERROR],
                 AttackOutcome.FAILURE,
             ),
             (
-                SequenceMode.EXHAUSTIVE,
+                SequencePolicy.EXHAUSTIVE,
                 [AttackOutcome.UNDETERMINED, AttackOutcome.FAILURE],
                 AttackOutcome.FAILURE,
             ),
             # STRICT_ALL: SUCCESS only if every executed step succeeded, ERROR if any errored,
             # else FAILURE. Short-circuits on the first non-SUCCESS.
             (
-                SequenceMode.STRICT_ALL,
+                SequencePolicy.STRICT_ALL,
                 [AttackOutcome.SUCCESS, AttackOutcome.SUCCESS],
                 AttackOutcome.SUCCESS,
             ),
             (
-                SequenceMode.STRICT_ALL,
+                SequencePolicy.STRICT_ALL,
                 [AttackOutcome.SUCCESS, AttackOutcome.FAILURE],
                 AttackOutcome.FAILURE,
             ),
             (
-                SequenceMode.STRICT_ALL,
+                SequencePolicy.STRICT_ALL,
                 [AttackOutcome.SUCCESS, AttackOutcome.ERROR],
                 AttackOutcome.ERROR,
             ),
             (
-                SequenceMode.STRICT_ALL,
+                SequencePolicy.STRICT_ALL,
                 [AttackOutcome.SUCCESS, AttackOutcome.UNDETERMINED],
                 AttackOutcome.FAILURE,
             ),
             (
-                SequenceMode.STRICT_ALL,
+                SequencePolicy.STRICT_ALL,
                 [AttackOutcome.ERROR, AttackOutcome.ERROR],
                 AttackOutcome.ERROR,
             ),
             # LAST_RESULT: pass through the last executed step's outcome verbatim.
             (
-                SequenceMode.LAST_RESULT,
+                SequencePolicy.LAST_RESULT,
                 [AttackOutcome.SUCCESS, AttackOutcome.FAILURE],
                 AttackOutcome.FAILURE,
             ),
             (
-                SequenceMode.LAST_RESULT,
+                SequencePolicy.LAST_RESULT,
                 [AttackOutcome.FAILURE, AttackOutcome.SUCCESS],
                 AttackOutcome.SUCCESS,
             ),
-            (SequenceMode.LAST_RESULT, [AttackOutcome.UNDETERMINED], AttackOutcome.UNDETERMINED),
+            (SequencePolicy.LAST_RESULT, [AttackOutcome.UNDETERMINED], AttackOutcome.UNDETERMINED),
             (
-                SequenceMode.LAST_RESULT,
+                SequencePolicy.LAST_RESULT,
                 [AttackOutcome.ERROR, AttackOutcome.UNDETERMINED],
                 AttackOutcome.UNDETERMINED,
             ),
         ],
     )
-    async def test_outcome_aggregation(self, target, seed_group, mode, outcomes, expected):
+    async def test_outcome_aggregation(self, target, seed_group, policy, outcomes, expected):
         strategies = [_make_strategy(outcomes=[o], name=f"s{i}") for i, o in enumerate(outcomes)]
         steps = [SequentialAttackStep(strategy=s, seed_group=seed_group) for s in strategies]
-        compound = SequentialAttack(objective_target=target, steps=steps, mode=mode)
+        compound = SequentialAttack(objective_target=target, steps=steps, policy=policy)
         patcher, _ = _patch_run_step(strategies_by_id={id(s): s for s in strategies})
 
         with patcher:
@@ -329,7 +329,7 @@ class TestOutcomeDerivation:
 
         assert result.outcome is expected
 
-    async def test_default_mode_is_first_success(self, target, seed_group):
+    async def test_default_policy_is_first_success(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
         steps = [
