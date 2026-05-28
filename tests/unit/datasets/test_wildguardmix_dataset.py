@@ -100,7 +100,7 @@ class TestWildGuardMixDataset:
         loader = _WildGuardMixDataset()
         assert loader.splits == [WildGuardMixSplit.TRAIN, WildGuardMixSplit.TEST]
         assert loader.prompt_harm_labels == [WildGuardMixPromptHarmLabel.HARMFUL]
-        assert set(loader.adversarial) == {WildGuardMixAdversarial.ADVERSARIAL, WildGuardMixAdversarial.VANILLA}
+        assert loader.adversarial == [WildGuardMixAdversarial.ADVERSARIAL]
         assert loader.prompt_only is True
 
     async def test_fetch_default_concatenates_both_splits(self):
@@ -111,10 +111,11 @@ class TestWildGuardMixDataset:
 
         assert isinstance(dataset, SeedDataset)
         assert all(isinstance(s, SeedPrompt) for s in dataset.seeds)
-        # Train: drops row[1] (unharmful) and row[2] (has response, prompt_only=True default).
-        # Keeps row[0] and row[3] => 2 train seeds.
-        # Test: drops row[2] (unharmful), keeps row[0] and row[1] => 2 test seeds.
-        assert len(dataset.seeds) == 4
+        # Defaults: harmful + adversarial + prompt_only.
+        # Train: row[0] keeps (adv+harmful+no-response); rows 1/2/3 drop.
+        # Test: row[1] keeps (adv+harmful); rows 0/2 drop (vanilla / unharmful).
+        # => 2 seeds total.
+        assert len(dataset.seeds) == 2
 
         # Both configs were fetched
         assert mock.call_count == 2
@@ -125,6 +126,7 @@ class TestWildGuardMixDataset:
 
         splits_seen = {seed.metadata["split"] for seed in dataset.seeds}
         assert splits_seen == {"wildguardtrain", "wildguardtest"}
+        assert all(seed.metadata["adversarial"] is True for seed in dataset.seeds)
 
     async def test_splits_train_only(self):
         loader = _WildGuardMixDataset(splits=[WildGuardMixSplit.TRAIN])
@@ -136,8 +138,9 @@ class TestWildGuardMixDataset:
         assert mock.call_args.kwargs["config"] == "wildguardtrain"
         assert mock.call_args.kwargs["split"] == "train"
         assert all(seed.metadata["split"] == "wildguardtrain" for seed in dataset.seeds)
-        # Only row[0] and row[3] survive (harmful + prompt_only)
-        assert len(dataset.seeds) == 2
+        # Default adversarial filter excludes vanilla rows; only row[0] survives
+        # (adversarial + harmful + no response).
+        assert len(dataset.seeds) == 1
 
     async def test_splits_test_only(self):
         loader = _WildGuardMixDataset(splits=[WildGuardMixSplit.TEST])
@@ -149,13 +152,15 @@ class TestWildGuardMixDataset:
         assert mock.call_args.kwargs["config"] == "wildguardtest"
         assert mock.call_args.kwargs["split"] == "test"
         assert all(seed.metadata["split"] == "wildguardtest" for seed in dataset.seeds)
-        # Test rows 0 and 1 are harmful => 2 seeds
-        assert len(dataset.seeds) == 2
+        # Default filter is adversarial+harmful; only test row[1] survives.
+        assert len(dataset.seeds) == 1
 
     async def test_filter_by_prompt_harm_label_unharmful(self):
+        # Use both adversarial values so we isolate the prompt_harm_label axis under test.
         loader = _WildGuardMixDataset(
             splits=[WildGuardMixSplit.TEST],
             prompt_harm_labels=[WildGuardMixPromptHarmLabel.UNHARMFUL],
+            adversarial=[WildGuardMixAdversarial.ADVERSARIAL, WildGuardMixAdversarial.VANILLA],
         )
         with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=_test_rows())):
             dataset = await loader.fetch_dataset_async()
@@ -180,8 +185,9 @@ class TestWildGuardMixDataset:
         with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=_train_rows())):
             dataset = await loader.fetch_dataset_async()
 
-        # With prompt_only=False, rows 0, 2, 3 are all harmful => 3 seeds
-        assert len(dataset.seeds) == 3
+        # Default adversarial filter keeps rows 0 and 2 (both adv+harmful); row 3 (vanilla)
+        # and row 1 (unharmful) are excluded => 2 seeds.
+        assert len(dataset.seeds) == 2
         has_response_values = {seed.metadata["has_response"] for seed in dataset.seeds}
         assert has_response_values == {True, False}
 
@@ -190,27 +196,31 @@ class TestWildGuardMixDataset:
         with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=_test_rows())):
             dataset = await loader.fetch_dataset_async()
 
-        bomb_seed = next(s for s in dataset.seeds if "bomb" in s.value)
-        assert bomb_seed.dataset_name == "wildguardmix"
-        assert bomb_seed.harm_categories == ["weapons"]
-        assert bomb_seed.source == "https://huggingface.co/datasets/allenai/wildguardmix"
-        assert "Allen Institute for AI" in bomb_seed.groups
-        assert bomb_seed.metadata == {
+        # Default adversarial filter keeps only test row[1] ("Test-only adversarial harmful.")
+        assert len(dataset.seeds) == 1
+        seed = dataset.seeds[0]
+        assert seed.dataset_name == "wildguardmix"
+        assert seed.harm_categories == ["violence"]
+        assert seed.source == "https://huggingface.co/datasets/allenai/wildguardmix"
+        assert "Allen Institute for AI" in seed.groups
+        assert seed.metadata == {
             "split": "wildguardtest",
-            "adversarial": False,
+            "adversarial": True,
             "prompt_harm_label": "harmful",
-            "response_harm_label": "unharmful",
-            "response_refusal_label": "refusal",
+            "response_harm_label": "harmful",
+            "response_refusal_label": "compliance",
             "has_response": True,
         }
 
     async def test_empty_after_filter_raises(self):
+        # Restrict to vanilla only — test rows are either vanilla+unharmful or
+        # adversarial+harmful, so vanilla+harmful matches nothing in test_rows[1:].
         loader = _WildGuardMixDataset(
             splits=[WildGuardMixSplit.TEST],
             prompt_harm_labels=[WildGuardMixPromptHarmLabel.HARMFUL],
-            adversarial=[WildGuardMixAdversarial.ADVERSARIAL],
+            adversarial=[WildGuardMixAdversarial.VANILLA],
         )
-        rows_with_no_match = [_test_rows()[0]]  # vanilla harmful — not adversarial
+        rows_with_no_match = [_test_rows()[1]]  # adversarial harmful — not vanilla
         with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows_with_no_match)):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
                 await loader.fetch_dataset_async()

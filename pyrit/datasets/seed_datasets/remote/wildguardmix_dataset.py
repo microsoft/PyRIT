@@ -119,7 +119,11 @@ class _WildGuardMixDataset(_RemoteDatasetLoader):
                 values to additionally include the benign companion prompts used for
                 over-refusal sanity checks.
             adversarial (list[WildGuardMixAdversarial] | None): Keep only rows whose
-                ``adversarial`` flag is in this list. Defaults to both.
+                ``adversarial`` flag is in this list. Defaults to ``[ADVERSARIAL]``
+                only — the `jailbreak` tag implies you want jailbreak-style prompts,
+                and vanilla (direct, no-jailbreak) harmful prompts are largely
+                covered by PyRIT's existing AdvBench loader. Pass both values to
+                additionally include the vanilla harmful prompts.
             prompt_only (bool): When True, drop rows from the train split that include
                 a response (i.e. keep only rows where ``response is None``). This makes
                 the loader semantically match "jailbreak prompts" rather than
@@ -305,11 +309,12 @@ class _WildGuardMixDataset(_RemoteDatasetLoader):
             ValueError: If ``adversarial`` is an empty list or contains non-enum values.
         """
         if adversarial is None:
-            return [WildGuardMixAdversarial.ADVERSARIAL, WildGuardMixAdversarial.VANILLA]
+            return [WildGuardMixAdversarial.ADVERSARIAL]
         if not adversarial:
             raise ValueError(
-                "WildGuardMix adversarial must not be empty. Pass None to load both values, "
-                "or supply at least one WildGuardMixAdversarial value."
+                "WildGuardMix adversarial must not be empty. Pass None to load the "
+                "adversarial (jailbreak) subset, or supply at least one "
+                "WildGuardMixAdversarial value."
             )
         _RemoteDatasetLoader._validate_enums(adversarial, WildGuardMixAdversarial, "adversarial")
         return list(adversarial)
