@@ -5,7 +5,7 @@
 Prompt Automatic Iterative Refinement (PAIR) attack.
 
 Implements PAIR (Chao et al. 2023, arXiv:2310.08419) as a thin subclass of
-:class:`TreeOfAttacksWithPruningAttack` with the PAIR-definitional structural
+TreeOfAttacksWithPruningAttack with the PAIR-definitional structural
 parameters (no tree branching, no off-topic pruning) hardcoded.
 """
 
@@ -35,14 +35,13 @@ class PAIRAttack(TreeOfAttacksWithPruningAttack):
     PAIR is a structural special case of Tree of Attacks with Pruning
     [@mehrotra2023tap]: parallel "streams" of single-branch iterative
     refinement, with no tree expansion and no off-topic pruning. PyRIT
-    implements PAIR as a thin subclass of
-    :class:`TreeOfAttacksWithPruningAttack` that hardcodes the two
-    definitional structural parameters (``branching_factor=1`` and
-    ``on_topic_checking_enabled=False``) and reuses TAP's adversarial system
+    implements PAIR as a thin subclass of TreeOfAttacksWithPruningAttack that
+    hardcodes the two definitional structural parameters (branching_factor=1
+    and on_topic_checking_enabled=False) and reuses TAP's adversarial system
     prompt. The remaining configuration (target, scoring, converters, width
     and depth budget) is exposed exactly as on TAP, with TAP's defaults
-    preserved for ``tree_width`` (number of parallel streams) and
-    ``tree_depth`` (refinement iterations per stream).
+    preserved for tree_width (number of parallel streams) and tree_depth
+    (refinement iterations per stream).
 
     References:
         Jailbreaking Black Box Large Language Models in Twenty Queries
@@ -77,9 +76,9 @@ class PAIRAttack(TreeOfAttacksWithPruningAttack):
             attack_converter_config (AttackConverterConfig | None): Configuration for
                 attack converters. Defaults to None.
             attack_scoring_config (TAPAttackScoringConfig | None): Scoring configuration.
-                The objective scorer must be a ``FloatScaleThresholdScorer``. If not
-                provided, a default ``FloatScaleThresholdScorer`` wrapping
-                ``SelfAskScaleScorer`` (threshold 0.7) is created. Defaults to None.
+                The objective scorer must be a FloatScaleThresholdScorer. If not
+                provided, a default FloatScaleThresholdScorer wrapping
+                SelfAskScaleScorer (threshold 0.7) is created. Defaults to None.
             prompt_normalizer (PromptNormalizer | None): The prompt normalizer to use.
                 Defaults to None.
             tree_width (int): Number of parallel "streams" (N in the PAIR paper).
@@ -94,7 +93,7 @@ class PAIRAttack(TreeOfAttacksWithPruningAttack):
                 Configuration for prepended-conversation handling. Defaults to None.
 
         Raises:
-            ValueError: Same conditions as :class:`TreeOfAttacksWithPruningAttack`.
+            ValueError: Same conditions as TreeOfAttacksWithPruningAttack.
         """
         super().__init__(
             objective_target=objective_target,
