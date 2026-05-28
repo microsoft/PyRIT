@@ -86,7 +86,9 @@ class _WildGuardMixDataset(_RemoteDatasetLoader):
     Warning: the corpus contains adversarial prompts on sensitive topics (violence,
     self-harm, weapons, drugs, etc.). Reader / target discretion is recommended.
 
-    License: AI2 Responsible Use Guidelines (research use; not redistributed by PyRIT).
+    License: Open Data Commons Attribution License (ODC-BY 1.0). Access is also
+    gated behind the AI2 Responsible Use Guidelines click-through on HuggingFace
+    (a separate access control, not the data license).
     Reference: [@han2024wildguard]
     HuggingFace: https://huggingface.co/datasets/allenai/wildguardmix
     """

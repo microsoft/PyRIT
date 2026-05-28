@@ -101,6 +101,11 @@ class TestAllDatasets:
             # be empty".  That is a transient environment issue, not a code bug.
             if provider_cls in _IMAGE_FETCHING_PROVIDERS and "cannot be empty" in str(e):
                 pytest.skip(f"{name}: all image downloads failed ({e})")
+            # HuggingFace-gated datasets fail loudly when the token in use hasn't
+            # accepted the dataset's terms. Skip rather than fail so CI tokens that
+            # haven't gone through the per-dataset RUG flow don't block the suite.
+            if provider_cls == _WildGuardMixDataset and "gated dataset" in str(e):
+                pytest.skip(f"{name}: HF account has not accepted AI2 Responsible Use Guidelines ({e})")
             pytest.fail(f"Failed to fetch dataset from {name}: {e}")
 
         assert isinstance(dataset, SeedDataset), f"{name} did not return a SeedDataset"
