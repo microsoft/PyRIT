@@ -10,6 +10,12 @@ Import concrete implementations to trigger registration.
 from pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset import (
     _AegisContentSafetyDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset import (
+    ATRCategory,
+    ATRDetectionField,
+    ATRVariationType,
+    _AgentThreatRulesDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.aya_redteaming_dataset import (
     _AyaRedteamingDataset,
 )  # noqa: F401
@@ -114,6 +120,10 @@ from pyrit.datasets.seed_datasets.remote.sgxstest_dataset import (
 from pyrit.datasets.seed_datasets.remote.simple_safety_tests_dataset import (
     _SimpleSafetyTestsDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.siuo_dataset import (
+    SIUOCategory,
+    _SIUODataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.sorry_bench_dataset import (
     _SorryBenchDataset,
 )  # noqa: F401
@@ -154,10 +164,15 @@ __all__ = [
     "PromptIntelCategory",
     "PromptIntelSeverity",
     "SGXSTestLabel",
+    "SIUOCategory",
     "VLGuardCategory",
     "VLGuardSubcategory",
     "VLGuardSubset",
     "_AegisContentSafetyDataset",
+    "ATRCategory",
+    "ATRDetectionField",
+    "ATRVariationType",
+    "_AgentThreatRulesDataset",
     "_AyaRedteamingDataset",
     "_BabelscapeAlertDataset",
     "_BeaverTailsDataset",
@@ -194,6 +209,7 @@ __all__ = [
     "_SGXSTestDataset",
     "_SaladBenchDataset",
     "_SimpleSafetyTestsDataset",
+    "_SIUODataset",
     "_SOSBenchDataset",
     "_SorryBenchDataset",
     "_TDC23RedteamingDataset",
