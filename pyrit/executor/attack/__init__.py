@@ -9,10 +9,10 @@ from pyrit.executor.attack.component import (
     PrependedConversationConfig,
 )
 from pyrit.executor.attack.compound import (
-    SequencePolicy,
+    SequenceCompletionPolicy,
     SequentialAttack,
     SequentialAttackResult,
-    SequentialAttackStep,
+    SequentialChildAttack,
 )
 from pyrit.executor.attack.core import (
     AttackAdversarialConfig,
@@ -103,9 +103,9 @@ __all__ = [
     "AttackExecutor",
     "AttackExecutorResult",
     "PrependedConversationConfig",
-    "SequencePolicy",
+    "SequenceCompletionPolicy",
     "SequentialAttack",
     "SequentialAttackResult",
-    "SequentialAttackStep",
+    "SequentialChildAttack",
     "generate_simulated_conversation_async",
 ]

@@ -19,17 +19,22 @@
 # to PromptSending if it fails"* — without breaking the one-objective →
 # one-`AttackResult` invariant or pushing branching logic up to the Scenario layer.
 #
-# Each inner step is dispatched through `AttackExecutor`, so it persists as its
-# own first-class `AttackResult` row. The envelope result records the inner
-# `attack_result_id` of every attempt under `metadata["attempt_result_ids"]`,
-# which the convenience property `SequentialAttackResult.attempt_result_ids`
-# surfaces directly.
+# Each child attack is dispatched through `AttackExecutor`, so it persists as its
+# own first-class `AttackResult` row. The envelope itself owns no conversation;
+# it surfaces the inner results in two ways:
+#
+# - `SequentialAttackResult.child_attack_results` — the in-memory list of inner
+#   `AttackResult` instances, populated at execute time.
+# - `SequentialAttackResult.child_attack_result_ids` — the `attack_result_id` of every
+#   inner attempt in dispatch order, derived from `child_attack_results` when
+#   populated and otherwise read from `metadata["child_attack_result_ids"]` (so it
+#   keeps working after a DB round-trip).
 #
 # The iteration and aggregation behavior is controlled by a
-# [`SequencePolicy`](#sequencepolicy-reference) enum (covered at the bottom of
-# this notebook). The default, `SequencePolicy.FIRST_SUCCESS`, matches the
-# adaptive *"try strategies until one works"* pattern and is resilient to
-# transient inner errors.
+# [`SequenceCompletionPolicy`](#sequencecompletionpolicy-reference) enum (covered
+# at the bottom of this notebook). The default,
+# `SequenceCompletionPolicy.FIRST_SUCCESS`, matches the adaptive *"try strategies
+# until one works"* pattern and is resilient to transient inner errors.
 #
 # > **Important Note:**
 # >
@@ -51,9 +56,9 @@ from pyrit.executor.attack import (
     AttackAdversarialConfig,
     CrescendoAttack,
     PromptSendingAttack,
-    SequencePolicy,
+    SequenceCompletionPolicy,
     SequentialAttack,
-    SequentialAttackStep,
+    SequentialChildAttack,
 )
 from pyrit.models import SeedAttackGroup, SeedObjective
 from pyrit.output import output_attack_async
@@ -87,8 +92,8 @@ adversarial_config = AttackAdversarialConfig(
 # then fall back to [`PromptSendingAttack`](1_prompt_sending_attack.ipynb) for a
 # simple single-turn attempt if Crescendo doesn't succeed.
 #
-# With the default `SequencePolicy.FIRST_SUCCESS`, the sequence stops as soon as
-# any step succeeds and keeps going through transient errors — exactly the
+# With the default `SequenceCompletionPolicy.FIRST_SUCCESS`, the sequence stops as soon as
+# any child attack succeeds and keeps going through transient errors — exactly the
 # behavior you want for an adaptive fallback chain.
 
 # %%
@@ -105,9 +110,9 @@ prompt_sending = PromptSendingAttack(objective_target=objective_target)
 
 sequential = SequentialAttack(
     objective_target=objective_target,
-    steps=[
-        SequentialAttackStep(strategy=crescendo, seed_group=seed_group),
-        SequentialAttackStep(strategy=prompt_sending, seed_group=seed_group),
+    child_attacks=[
+        SequentialChildAttack(strategy=crescendo, seed_group=seed_group),
+        SequentialChildAttack(strategy=prompt_sending, seed_group=seed_group),
     ],
 )
 
@@ -118,30 +123,39 @@ await output_attack_async(result)
 # %% [markdown]
 # ## Inspecting the inner attempts
 #
-# `SequentialAttackResult` is just an `AttackResult` with one extra property:
-# `attempt_result_ids`. It returns the `attack_result_id` of every inner attempt
-# in dispatch order. You can use these IDs to pull the full per-attempt rows out
-# of memory and inspect (or render) them individually.
+# `SequentialAttackResult` augments `AttackResult` with two convenience views of
+# the inner attempts:
+#
+# - `child_attack_results` — the in-memory `list[AttackResult]` populated at execute
+#   time; use this when you have the live envelope just back from `execute_async`.
+# - `child_attack_result_ids` — the IDs of each inner attempt in dispatch order, which
+#   you can pass to `CentralMemory.get_attack_results` to fetch the rows from
+#   memory (useful after a process restart or DB round-trip).
+#
+# It also exposes `completion_policy` (the active `SequenceCompletionPolicy`) so
+# downstream consumers can branch on it without re-deriving from metadata.
 
 # %%
 from pyrit.memory import CentralMemory
 
 print(f"Envelope outcome: {result.outcome}")
-print(f"Inner attempts ({len(result.attempt_result_ids)}):")
-for attempt_id in result.attempt_result_ids:
-    print(f"  - {attempt_id}")
-
-memory = CentralMemory.get_memory_instance()
-inner_results = memory.get_attack_results(attack_result_ids=result.attempt_result_ids)
-for inner in inner_results:
+print(f"Policy: {result.completion_policy}")
+print(f"Inner attempts ({len(result.child_attack_results)}):")
+for inner in result.child_attack_results:
     strategy_id = inner.get_attack_strategy_identifier()
     strategy_name = strategy_id.class_name if strategy_id is not None else "<unknown>"
-    print(f"  {strategy_name}: outcome={inner.outcome}")
+    print(f"  - {strategy_name}: outcome={inner.outcome}, id={inner.attack_result_id}")
+
+# Re-fetch from memory using the IDs — equivalent path for envelopes loaded from
+# the database where ``child_attack_results`` is empty.
+memory = CentralMemory.get_memory_instance()
+refetched = memory.get_attack_results(attack_result_ids=result.child_attack_result_ids)
+assert len(refetched) == len(result.child_attack_results)
 
 # %% [markdown]
-# ## Example 2: Per-step configuration
+# ## Example 2: Per-child-attack configuration
 #
-# Each `SequentialAttackStep` carries its own `seed_group`, plus optional
+# Each `SequentialChildAttack` carries its own `seed_group`, plus optional
 # `adversarial_chat`, `objective_scorer`, and `memory_labels`. This lets you
 # compose seed groups up front (e.g. merging per-technique
 # `SeedAttackTechniqueGroup` objects into a shared base) and give each inner
@@ -151,13 +165,13 @@ for inner in inner_results:
 # %%
 sequential_with_labels = SequentialAttack(
     objective_target=objective_target,
-    steps=[
-        SequentialAttackStep(
+    child_attacks=[
+        SequentialChildAttack(
             strategy=crescendo,
             seed_group=seed_group,
             memory_labels={"technique": "crescendo", "tier": "primary"},
         ),
-        SequentialAttackStep(
+        SequentialChildAttack(
             strategy=prompt_sending,
             seed_group=seed_group,
             memory_labels={"technique": "prompt_sending", "tier": "fallback"},
@@ -169,30 +183,30 @@ result = await sequential_with_labels.execute_async(objective=objective)  # type
 await output_attack_async(result)
 
 # %% [markdown]
-# ## SequencePolicy reference
+# ## SequenceCompletionPolicy reference
 #
-# Each `SequencePolicy` bundles a **stop condition** (when to halt iteration)
+# Each `SequenceCompletionPolicy` bundles a **stop condition** (when to halt iteration)
 # and an **outcome rule** (how the envelope's outcome is derived from the inner
 # results). Pick the policy that matches your use case:
 #
 # | Policy | Stop condition | Envelope outcome |
 # |---|---|---|
-# | `FIRST_SUCCESS` *(default)* | Stop on first `SUCCESS`; continue past `ERROR` and `FAILURE` | `SUCCESS` if any step succeeded, `ERROR` if every step errored, else `FAILURE` |
+# | `FIRST_SUCCESS` *(default)* | Stop on first `SUCCESS`; continue past `ERROR` and `FAILURE` | `SUCCESS` if any child attack succeeded, `ERROR` if every child attack errored, else `FAILURE` |
 # | `FIRST_DECISIVE` | Stop on first `SUCCESS` *or* `ERROR`; continue past `FAILURE` | Same any-success aggregation as `FIRST_SUCCESS`, but `ERROR`s short-circuit the sequence |
-# | `STRICT_ALL` | Stop on first non-`SUCCESS` | `SUCCESS` only if every step succeeded; `ERROR` if any errored; else `FAILURE` — pipeline semantics |
-# | `EXHAUSTIVE` | Run every step regardless of intermediate outcomes | Any-success aggregation — useful for evaluation sweeps |
-# | `LAST_RESULT` | Run every step | Inherit the last step's outcome verbatim — useful for chained refinement |
+# | `STRICT_ALL` | Stop on first non-`SUCCESS` | `SUCCESS` only if every child attack succeeded; `ERROR` if any errored; else `FAILURE` — pipeline semantics |
+# | `EXHAUSTIVE` | Run every child attack regardless of intermediate outcomes | Any-success aggregation — useful for evaluation sweeps |
+# | `LAST_RESULT` | Run every child attack | Inherit the last child attack's outcome verbatim — useful for chained refinement |
 #
-# To override the default, pass `policy=`:
+# To override the default, pass `completion_policy=`:
 
 # %%
 strict_pipeline = SequentialAttack(
     objective_target=objective_target,
-    steps=[
-        SequentialAttackStep(strategy=crescendo, seed_group=seed_group),
-        SequentialAttackStep(strategy=prompt_sending, seed_group=seed_group),
+    child_attacks=[
+        SequentialChildAttack(strategy=crescendo, seed_group=seed_group),
+        SequentialChildAttack(strategy=prompt_sending, seed_group=seed_group),
     ],
-    policy=SequencePolicy.STRICT_ALL,
+    completion_policy=SequenceCompletionPolicy.STRICT_ALL,
 )
 
 result = await strict_pipeline.execute_async(objective=objective)  # type: ignore

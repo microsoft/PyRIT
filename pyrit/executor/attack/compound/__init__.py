@@ -4,15 +4,15 @@
 """Compound attack strategies that orchestrate multiple inner attack strategies."""
 
 from pyrit.executor.attack.compound.sequential_attack import (
-    SequencePolicy,
+    SequenceCompletionPolicy,
     SequentialAttack,
     SequentialAttackResult,
-    SequentialAttackStep,
+    SequentialChildAttack,
 )
 
 __all__ = [
-    "SequencePolicy",
+    "SequenceCompletionPolicy",
     "SequentialAttack",
     "SequentialAttackResult",
-    "SequentialAttackStep",
+    "SequentialChildAttack",
 ]

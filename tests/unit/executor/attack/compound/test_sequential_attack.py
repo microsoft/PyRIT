@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.executor.attack.compound import (
-    SequencePolicy,
+    SequenceCompletionPolicy,
     SequentialAttack,
     SequentialAttackResult,
-    SequentialAttackStep,
+    SequentialChildAttack,
 )
 from pyrit.executor.attack.core.attack_executor import AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
@@ -41,30 +41,36 @@ def _make_context(
     return AttackContext(params=params_type(objective=objective, memory_labels=labels or {}))
 
 
-def _patch_run_step(*, strategies_by_id: dict[int, MagicMock]):
+def _patch_run_child_attack(*, strategies_by_id: dict[int, MagicMock]):
     """
-    Patch ``SequentialAttack._run_step_async`` to return results driven by
+    Patch ``SequentialAttack._run_child_attack_async`` to return results driven by
     each strategy's ``_outcomes`` list (one outcome per invocation).
 
     Records every call onto a ``calls`` list so tests can assert on the
-    ``step`` that was dispatched and the ``memory_labels`` that were applied.
+    ``child_attack`` that was dispatched and the ``memory_labels`` that were applied.
     """
     counters: dict[int, int] = dict.fromkeys(strategies_by_id, 0)
     calls: list[dict] = []
 
-    async def _stub(self, *, step, memory_labels):
-        sid = id(step.strategy)
+    async def _stub(self, *, child_attack, memory_labels, attribution=None):
+        sid = id(child_attack.strategy)
         idx = counters[sid]
         counters[sid] = idx + 1
-        outcome = step.strategy._outcomes[idx]
-        calls.append({"step": step, "memory_labels": dict(memory_labels)})
+        outcome = child_attack.strategy._outcomes[idx]
+        calls.append(
+            {
+                "child_attack": child_attack,
+                "memory_labels": dict(memory_labels),
+                "attribution": attribution,
+            }
+        )
         return AttackResult(
-            conversation_id=f"conv-{step.strategy._name}-{idx}",
+            conversation_id=f"conv-{child_attack.strategy._name}-{idx}",
             objective="obj",
             outcome=outcome,
         )
 
-    patcher = patch.object(SequentialAttack, "_run_step_async", _stub)
+    patcher = patch.object(SequentialAttack, "_run_child_attack_async", _stub)
     return patcher, calls
 
 
@@ -80,20 +86,20 @@ def seed_group() -> SeedAttackGroup:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestInit:
-    def test_init_rejects_empty_steps(self, target):
+    def test_init_rejects_empty_child_attacks(self, target):
         with pytest.raises(ValueError, match="at least one"):
-            SequentialAttack(objective_target=target, steps=[])
+            SequentialAttack(objective_target=target, child_attacks=[])
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestValidate:
     @pytest.mark.parametrize("bad_objective", ["", "   ", "\n\t"])
     def test_validate_rejects_empty_objective(self, target, seed_group, bad_objective):
-        step = SequentialAttackStep(
+        child_attack = SequentialChildAttack(
             strategy=_make_strategy(outcomes=[AttackOutcome.SUCCESS]),
             seed_group=seed_group,
         )
-        compound = SequentialAttack(objective_target=target, steps=[step])
+        compound = SequentialAttack(objective_target=target, child_attacks=[child_attack])
         with pytest.raises(ValueError, match="objective"):
             compound._validate_context(context=_make_context(objective=bad_objective))
 
@@ -103,12 +109,12 @@ class TestFirstSuccess:
     async def test_stops_on_first_success(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
-        steps = [
-            SequentialAttackStep(strategy=a, seed_group=seed_group),
-            SequentialAttackStep(strategy=b, seed_group=seed_group),
+        child_attacks = [
+            SequentialChildAttack(strategy=a, seed_group=seed_group),
+            SequentialChildAttack(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, steps=steps)
-        patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
+        compound = SequentialAttack(objective_target=target, child_attacks=child_attacks)
+        patcher, calls = _patch_run_child_attack(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -120,9 +126,13 @@ class TestFirstSuccess:
         a = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="b")
         c = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="c")
-        steps = [SequentialAttackStep(strategy=s, seed_group=seed_group) for s in (a, b, c)]
-        compound = SequentialAttack(objective_target=target, steps=steps, policy=SequencePolicy.FIRST_SUCCESS)
-        patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b, id(c): c})
+        child_attacks = [SequentialChildAttack(strategy=s, seed_group=seed_group) for s in (a, b, c)]
+        compound = SequentialAttack(
+            objective_target=target,
+            child_attacks=child_attacks,
+            completion_policy=SequenceCompletionPolicy.FIRST_SUCCESS,
+        )
+        patcher, calls = _patch_run_child_attack(strategies_by_id={id(a): a, id(b): b, id(c): c})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -133,12 +143,12 @@ class TestFirstSuccess:
     async def test_undetermined_outcome_does_not_stop(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.UNDETERMINED], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
-        steps = [
-            SequentialAttackStep(strategy=a, seed_group=seed_group),
-            SequentialAttackStep(strategy=b, seed_group=seed_group),
+        child_attacks = [
+            SequentialChildAttack(strategy=a, seed_group=seed_group),
+            SequentialChildAttack(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, steps=steps)
-        patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
+        compound = SequentialAttack(objective_target=target, child_attacks=child_attacks)
+        patcher, calls = _patch_run_child_attack(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -150,12 +160,12 @@ class TestFirstSuccess:
         """FIRST_SUCCESS is resilient: a transient ERROR should not abort the sequence."""
         a = _make_strategy(outcomes=[AttackOutcome.ERROR], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
-        steps = [
-            SequentialAttackStep(strategy=a, seed_group=seed_group),
-            SequentialAttackStep(strategy=b, seed_group=seed_group),
+        child_attacks = [
+            SequentialChildAttack(strategy=a, seed_group=seed_group),
+            SequentialChildAttack(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, steps=steps)
-        patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
+        compound = SequentialAttack(objective_target=target, child_attacks=child_attacks)
+        patcher, calls = _patch_run_child_attack(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -169,12 +179,16 @@ class TestFirstDecisive:
     async def test_stops_on_error(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.ERROR], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
-        steps = [
-            SequentialAttackStep(strategy=a, seed_group=seed_group),
-            SequentialAttackStep(strategy=b, seed_group=seed_group),
+        child_attacks = [
+            SequentialChildAttack(strategy=a, seed_group=seed_group),
+            SequentialChildAttack(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, steps=steps, policy=SequencePolicy.FIRST_DECISIVE)
-        patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
+        compound = SequentialAttack(
+            objective_target=target,
+            child_attacks=child_attacks,
+            completion_policy=SequenceCompletionPolicy.FIRST_DECISIVE,
+        )
+        patcher, calls = _patch_run_child_attack(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -185,12 +199,16 @@ class TestFirstDecisive:
     async def test_does_not_stop_on_failure(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
-        steps = [
-            SequentialAttackStep(strategy=a, seed_group=seed_group),
-            SequentialAttackStep(strategy=b, seed_group=seed_group),
+        child_attacks = [
+            SequentialChildAttack(strategy=a, seed_group=seed_group),
+            SequentialChildAttack(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, steps=steps, policy=SequencePolicy.FIRST_DECISIVE)
-        patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
+        compound = SequentialAttack(
+            objective_target=target,
+            child_attacks=child_attacks,
+            completion_policy=SequenceCompletionPolicy.FIRST_DECISIVE,
+        )
+        patcher, calls = _patch_run_child_attack(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -201,12 +219,16 @@ class TestFirstDecisive:
     async def test_does_not_stop_on_undetermined(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.UNDETERMINED], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
-        steps = [
-            SequentialAttackStep(strategy=a, seed_group=seed_group),
-            SequentialAttackStep(strategy=b, seed_group=seed_group),
+        child_attacks = [
+            SequentialChildAttack(strategy=a, seed_group=seed_group),
+            SequentialChildAttack(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, steps=steps, policy=SequencePolicy.FIRST_DECISIVE)
-        patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
+        compound = SequentialAttack(
+            objective_target=target,
+            child_attacks=child_attacks,
+            completion_policy=SequenceCompletionPolicy.FIRST_DECISIVE,
+        )
+        patcher, calls = _patch_run_child_attack(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -217,15 +239,17 @@ class TestFirstDecisive:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestExhaustive:
-    async def test_runs_every_step(self, target, seed_group):
+    async def test_runs_every_child_attack(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="b")
-        steps = [
-            SequentialAttackStep(strategy=a, seed_group=seed_group),
-            SequentialAttackStep(strategy=b, seed_group=seed_group),
+        child_attacks = [
+            SequentialChildAttack(strategy=a, seed_group=seed_group),
+            SequentialChildAttack(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, steps=steps, policy=SequencePolicy.EXHAUSTIVE)
-        patcher, calls = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
+        compound = SequentialAttack(
+            objective_target=target, child_attacks=child_attacks, completion_policy=SequenceCompletionPolicy.EXHAUSTIVE
+        )
+        patcher, calls = _patch_run_child_attack(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -238,91 +262,93 @@ class TestExhaustive:
 @pytest.mark.usefixtures("patch_central_database")
 class TestOutcomeDerivation:
     @pytest.mark.parametrize(
-        ("policy", "outcomes", "expected"),
+        ("completion_policy", "outcomes", "expected"),
         [
-            # EXHAUSTIVE: any-success aggregation over every step.
-            (SequencePolicy.EXHAUSTIVE, [AttackOutcome.SUCCESS], AttackOutcome.SUCCESS),
+            # EXHAUSTIVE: any-success aggregation over every child_attack.
+            (SequenceCompletionPolicy.EXHAUSTIVE, [AttackOutcome.SUCCESS], AttackOutcome.SUCCESS),
             (
-                SequencePolicy.EXHAUSTIVE,
+                SequenceCompletionPolicy.EXHAUSTIVE,
                 [AttackOutcome.FAILURE, AttackOutcome.SUCCESS],
                 AttackOutcome.SUCCESS,
             ),
             (
-                SequencePolicy.EXHAUSTIVE,
+                SequenceCompletionPolicy.EXHAUSTIVE,
                 [AttackOutcome.ERROR, AttackOutcome.ERROR],
                 AttackOutcome.ERROR,
             ),
             (
-                SequencePolicy.EXHAUSTIVE,
+                SequenceCompletionPolicy.EXHAUSTIVE,
                 [AttackOutcome.UNDETERMINED, AttackOutcome.UNDETERMINED],
                 AttackOutcome.FAILURE,
             ),
             (
-                SequencePolicy.EXHAUSTIVE,
+                SequenceCompletionPolicy.EXHAUSTIVE,
                 [AttackOutcome.FAILURE, AttackOutcome.FAILURE],
                 AttackOutcome.FAILURE,
             ),
             (
-                SequencePolicy.EXHAUSTIVE,
+                SequenceCompletionPolicy.EXHAUSTIVE,
                 [AttackOutcome.FAILURE, AttackOutcome.ERROR],
                 AttackOutcome.FAILURE,
             ),
             (
-                SequencePolicy.EXHAUSTIVE,
+                SequenceCompletionPolicy.EXHAUSTIVE,
                 [AttackOutcome.UNDETERMINED, AttackOutcome.FAILURE],
                 AttackOutcome.FAILURE,
             ),
-            # STRICT_ALL: SUCCESS only if every executed step succeeded, ERROR if any errored,
+            # STRICT_ALL: SUCCESS only if every executed child_attack succeeded, ERROR if any errored,
             # else FAILURE. Short-circuits on the first non-SUCCESS.
             (
-                SequencePolicy.STRICT_ALL,
+                SequenceCompletionPolicy.STRICT_ALL,
                 [AttackOutcome.SUCCESS, AttackOutcome.SUCCESS],
                 AttackOutcome.SUCCESS,
             ),
             (
-                SequencePolicy.STRICT_ALL,
+                SequenceCompletionPolicy.STRICT_ALL,
                 [AttackOutcome.SUCCESS, AttackOutcome.FAILURE],
                 AttackOutcome.FAILURE,
             ),
             (
-                SequencePolicy.STRICT_ALL,
+                SequenceCompletionPolicy.STRICT_ALL,
                 [AttackOutcome.SUCCESS, AttackOutcome.ERROR],
                 AttackOutcome.ERROR,
             ),
             (
-                SequencePolicy.STRICT_ALL,
+                SequenceCompletionPolicy.STRICT_ALL,
                 [AttackOutcome.SUCCESS, AttackOutcome.UNDETERMINED],
                 AttackOutcome.FAILURE,
             ),
             (
-                SequencePolicy.STRICT_ALL,
+                SequenceCompletionPolicy.STRICT_ALL,
                 [AttackOutcome.ERROR, AttackOutcome.ERROR],
                 AttackOutcome.ERROR,
             ),
-            # LAST_RESULT: pass through the last executed step's outcome verbatim.
+            # LAST_RESULT: pass through the last executed child_attack's outcome verbatim.
             (
-                SequencePolicy.LAST_RESULT,
+                SequenceCompletionPolicy.LAST_RESULT,
                 [AttackOutcome.SUCCESS, AttackOutcome.FAILURE],
                 AttackOutcome.FAILURE,
             ),
             (
-                SequencePolicy.LAST_RESULT,
+                SequenceCompletionPolicy.LAST_RESULT,
                 [AttackOutcome.FAILURE, AttackOutcome.SUCCESS],
                 AttackOutcome.SUCCESS,
             ),
-            (SequencePolicy.LAST_RESULT, [AttackOutcome.UNDETERMINED], AttackOutcome.UNDETERMINED),
+            (SequenceCompletionPolicy.LAST_RESULT, [AttackOutcome.UNDETERMINED], AttackOutcome.UNDETERMINED),
             (
-                SequencePolicy.LAST_RESULT,
+                SequenceCompletionPolicy.LAST_RESULT,
                 [AttackOutcome.ERROR, AttackOutcome.UNDETERMINED],
                 AttackOutcome.UNDETERMINED,
             ),
         ],
     )
-    async def test_outcome_aggregation(self, target, seed_group, policy, outcomes, expected):
+    async def test_outcome_aggregation(self, target, seed_group, completion_policy, outcomes, expected):
         strategies = [_make_strategy(outcomes=[o], name=f"s{i}") for i, o in enumerate(outcomes)]
-        steps = [SequentialAttackStep(strategy=s, seed_group=seed_group) for s in strategies]
-        compound = SequentialAttack(objective_target=target, steps=steps, policy=policy)
-        patcher, _ = _patch_run_step(strategies_by_id={id(s): s for s in strategies})
+        child_attacks = [SequentialChildAttack(strategy=s, seed_group=seed_group) for s in strategies]
+        compound = SequentialAttack(
+            objective_target=target, child_attacks=child_attacks, completion_policy=completion_policy
+        )
+        patcher, _ = _patch_run_child_attack(strategies_by_id={id(s): s for s in strategies})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -332,12 +358,12 @@ class TestOutcomeDerivation:
     async def test_default_policy_is_first_success(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
-        steps = [
-            SequentialAttackStep(strategy=a, seed_group=seed_group),
-            SequentialAttackStep(strategy=b, seed_group=seed_group),
+        child_attacks = [
+            SequentialChildAttack(strategy=a, seed_group=seed_group),
+            SequentialChildAttack(strategy=b, seed_group=seed_group),
         ]
-        compound = SequentialAttack(objective_target=target, steps=steps)
-        patcher, _ = _patch_run_step(strategies_by_id={id(a): a, id(b): b})
+        compound = SequentialAttack(objective_target=target, child_attacks=child_attacks)
+        patcher, _ = _patch_run_child_attack(strategies_by_id={id(a): a, id(b): b})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
@@ -349,26 +375,26 @@ class TestOutcomeDerivation:
 class TestLabels:
     async def test_context_labels_passed_through(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
-        steps = [SequentialAttackStep(strategy=a, seed_group=seed_group)]
-        compound = SequentialAttack(objective_target=target, steps=steps)
-        patcher, calls = _patch_run_step(strategies_by_id={id(a): a})
+        child_attacks = [SequentialChildAttack(strategy=a, seed_group=seed_group)]
+        compound = SequentialAttack(objective_target=target, child_attacks=child_attacks)
+        patcher, calls = _patch_run_child_attack(strategies_by_id={id(a): a})
 
         with patcher:
             await compound._perform_async(context=_make_context(labels={"foo": "bar"}))
 
         assert calls[0]["memory_labels"]["foo"] == "bar"
 
-    async def test_step_labels_override_context_labels(self, target, seed_group):
+    async def test_child_attack_labels_override_context_labels(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
-        steps = [
-            SequentialAttackStep(
+        child_attacks = [
+            SequentialChildAttack(
                 strategy=a,
                 seed_group=seed_group,
                 memory_labels={"foo": "override", "extra": "x"},
             ),
         ]
-        compound = SequentialAttack(objective_target=target, steps=steps)
-        patcher, calls = _patch_run_step(strategies_by_id={id(a): a})
+        compound = SequentialAttack(objective_target=target, child_attacks=child_attacks)
+        patcher, calls = _patch_run_child_attack(strategies_by_id={id(a): a})
 
         with patcher:
             await compound._perform_async(context=_make_context(labels={"foo": "ctx"}))
@@ -379,18 +405,18 @@ class TestLabels:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestExecutorForwarding:
-    async def test_executor_receives_step_inputs(self, target, seed_group):
+    async def test_executor_receives_child_attack_inputs(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
         adversarial = MagicMock(name="adversarial_chat")
         scorer = MagicMock(name="objective_scorer")
-        step = SequentialAttackStep(
+        child_attack = SequentialChildAttack(
             strategy=a,
             seed_group=seed_group,
             adversarial_chat=adversarial,
             objective_scorer=scorer,
             memory_labels={"k": "v"},
         )
-        compound = SequentialAttack(objective_target=target, steps=[step])
+        compound = SequentialAttack(objective_target=target, child_attacks=[child_attack])
 
         executor_call_kwargs: dict = {}
 
@@ -410,60 +436,185 @@ class TestExecutorForwarding:
         assert executor_call_kwargs["seed_groups"] == [seed_group]
         assert executor_call_kwargs["adversarial_chat"] is adversarial
         assert executor_call_kwargs["objective_scorer"] is scorer
-        # Context labels + step labels merged for the executor call.
+        # Context labels + child_attack labels merged for the executor call.
         assert executor_call_kwargs["memory_labels"] == {"ctx": "1", "k": "v"}
+        # No attribution on the context -> executor receives None.
+        assert executor_call_kwargs["attribution"] is None
+
+    async def test_executor_receives_context_attribution(self, target, seed_group):
+        """When the compound's context carries attribution (e.g. nested under
+        a Scenario), it must be forwarded to the executor so the inner
+        ``AttackResult`` rows can be attributed to the parent."""
+        from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
+
+        a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
+        child_attacks = [SequentialChildAttack(strategy=a, seed_group=seed_group)]
+        compound = SequentialAttack(objective_target=target, child_attacks=child_attacks)
+
+        attribution = AttackResultAttribution(parent_id="scenario-1", parent_collection="scenario_results")
+        context = _make_context()
+        context._attribution = attribution
+
+        executor_call_kwargs: dict = {}
+
+        async def _fake_execute(**kwargs):
+            executor_call_kwargs.update(kwargs)
+            return AttackExecutorResult(
+                completed_results=[AttackResult(conversation_id="c", objective="obj", outcome=AttackOutcome.SUCCESS)],
+                incomplete_objectives=[],
+            )
+
+        with patch.object(
+            AttackExecutor, "execute_attack_from_seed_groups_async", AsyncMock(side_effect=_fake_execute)
+        ):
+            await compound._perform_async(context=context)
+
+        assert executor_call_kwargs["attribution"] is attribution
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestResultShape:
     async def test_returns_sequential_attack_result(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
-        steps = [SequentialAttackStep(strategy=a, seed_group=seed_group)]
-        compound = SequentialAttack(objective_target=target, steps=steps)
-        patcher, _ = _patch_run_step(strategies_by_id={id(a): a})
+        child_attacks = [SequentialChildAttack(strategy=a, seed_group=seed_group)]
+        compound = SequentialAttack(objective_target=target, child_attacks=child_attacks)
+        patcher, _ = _patch_run_child_attack(strategies_by_id={id(a): a})
 
         with patcher:
             result = await compound._perform_async(context=_make_context())
 
         assert isinstance(result, SequentialAttackResult)
 
-    async def test_attempt_result_ids_in_order(self, target, seed_group):
+    async def test_child_attack_result_ids_in_order(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="a")
         b = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="b")
         c = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="c")
-        steps = [SequentialAttackStep(strategy=s, seed_group=seed_group) for s in (a, b, c)]
-        compound = SequentialAttack(objective_target=target, steps=steps)
+        child_attacks = [SequentialChildAttack(strategy=s, seed_group=seed_group) for s in (a, b, c)]
+        compound = SequentialAttack(objective_target=target, child_attacks=child_attacks)
 
         captured_ids: list[str] = []
 
-        async def _stub(self, *, step, memory_labels):
+        async def _stub(self, *, child_attack, memory_labels, attribution=None):
             inner = AttackResult(
-                conversation_id=f"c-{step.strategy._name}",
+                conversation_id=f"c-{child_attack.strategy._name}",
                 objective="obj",
-                outcome=step.strategy._outcomes[0],
+                outcome=child_attack.strategy._outcomes[0],
             )
             captured_ids.append(inner.attack_result_id)
             return inner
 
-        with patch.object(SequentialAttack, "_run_step_async", _stub):
+        with patch.object(SequentialAttack, "_run_child_attack_async", _stub):
             result = await compound._perform_async(context=_make_context())
 
-        assert result.attempt_result_ids == captured_ids
+        assert result.child_attack_result_ids == captured_ids
 
     async def test_fresh_result_id_not_equal_to_any_inner(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
-        steps = [SequentialAttackStep(strategy=a, seed_group=seed_group)]
-        compound = SequentialAttack(objective_target=target, steps=steps)
+        child_attacks = [SequentialChildAttack(strategy=a, seed_group=seed_group)]
+        compound = SequentialAttack(objective_target=target, child_attacks=child_attacks)
 
         inner_ids: list[str] = []
 
-        async def _stub(self, *, step, memory_labels):
+        async def _stub(self, *, child_attack, memory_labels, attribution=None):
             inner = AttackResult(conversation_id="c", objective="obj", outcome=AttackOutcome.SUCCESS)
             inner_ids.append(inner.attack_result_id)
             return inner
 
-        with patch.object(SequentialAttack, "_run_step_async", _stub):
+        with patch.object(SequentialAttack, "_run_child_attack_async", _stub):
             result = await compound._perform_async(context=_make_context())
 
         assert result.attack_result_id != inner_ids[0]
         assert result.outcome is AttackOutcome.SUCCESS
+
+    async def test_envelope_has_no_conversation_or_response(self, target, seed_group):
+        """The envelope owns no conversation/last_response/last_score —
+        those live on the inner per-child-attack rows surfaced via
+        ``child_attack_results``."""
+        a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
+        child_attacks = [SequentialChildAttack(strategy=a, seed_group=seed_group)]
+        compound = SequentialAttack(objective_target=target, child_attacks=child_attacks)
+        patcher, _ = _patch_run_child_attack(strategies_by_id={id(a): a})
+
+        with patcher:
+            result = await compound._perform_async(context=_make_context())
+
+        assert result.conversation_id == ""
+        assert result.last_response is None
+        assert result.last_score is None
+        # The envelope objective comes from the context, not the inner.
+        assert result.objective == "obj"
+
+    async def test_child_attack_results_populated_in_dispatch_order(self, target, seed_group):
+        """``child_attack_results`` holds the live inner ``AttackResult`` instances."""
+        a = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="a")
+        b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
+        child_attacks = [
+            SequentialChildAttack(strategy=a, seed_group=seed_group),
+            SequentialChildAttack(strategy=b, seed_group=seed_group),
+        ]
+        compound = SequentialAttack(objective_target=target, child_attacks=child_attacks)
+        patcher, _ = _patch_run_child_attack(strategies_by_id={id(a): a, id(b): b})
+
+        with patcher:
+            result = await compound._perform_async(context=_make_context())
+
+        assert len(result.child_attack_results) == 2
+        assert [r.outcome for r in result.child_attack_results] == [
+            AttackOutcome.FAILURE,
+            AttackOutcome.SUCCESS,
+        ]
+        # ``child_attack_result_ids`` reads from child_attack_results when populated.
+        assert result.child_attack_result_ids == [r.attack_result_id for r in result.child_attack_results]
+
+    async def test_completion_policy_saved_on_result_and_metadata(self, target, seed_group):
+        """The active ``SequenceCompletionPolicy`` is exposed both as a typed
+        field and as a string in metadata for DB round-trip."""
+        a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
+        child_attacks = [SequentialChildAttack(strategy=a, seed_group=seed_group)]
+        compound = SequentialAttack(
+            objective_target=target,
+            child_attacks=child_attacks,
+            completion_policy=SequenceCompletionPolicy.STRICT_ALL,
+        )
+        patcher, _ = _patch_run_child_attack(strategies_by_id={id(a): a})
+
+        with patcher:
+            result = await compound._perform_async(context=_make_context())
+
+        assert result.completion_policy is SequenceCompletionPolicy.STRICT_ALL
+        assert result.metadata[SequentialAttack.COMPLETION_POLICY_KEY] == "strict_all"
+        assert result.metadata[SequentialAttack.CHILD_ATTACK_RESULT_IDS_KEY] == [
+            r.attack_result_id for r in result.child_attack_results
+        ]
+
+    def test_child_attack_result_ids_falls_back_to_metadata(self):
+        """After a DB round-trip ``child_attack_results`` is empty; the
+        ``child_attack_result_ids`` property must fall back to metadata."""
+        result = SequentialAttackResult(
+            conversation_id="",
+            objective="obj",
+            outcome=AttackOutcome.SUCCESS,
+            metadata={SequentialAttack.CHILD_ATTACK_RESULT_IDS_KEY: ["a", "b", "c"]},
+        )
+        assert result.child_attack_results == []
+        assert result.child_attack_result_ids == ["a", "b", "c"]
+
+    async def test_executed_turns_sums_child_turns(self, target, seed_group):
+        """``executed_turns`` on the envelope is the sum across child attacks."""
+        a = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="a")
+        b = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="b")
+        child_attacks = [SequentialChildAttack(strategy=s, seed_group=seed_group) for s in (a, b)]
+        compound = SequentialAttack(objective_target=target, child_attacks=child_attacks)
+
+        async def _stub(self, *, child_attack, memory_labels, attribution=None):
+            return AttackResult(
+                conversation_id="c",
+                objective="obj",
+                outcome=child_attack.strategy._outcomes[0],
+                executed_turns=3,
+            )
+
+        with patch.object(SequentialAttack, "_run_child_attack_async", _stub):
+            result = await compound._perform_async(context=_make_context())
+
+        assert result.executed_turns == 6
