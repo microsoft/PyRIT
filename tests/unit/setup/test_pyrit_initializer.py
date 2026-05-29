@@ -22,13 +22,13 @@ class TestPyRITInitializerBase:
         reset_default_values()
         # Clean up any test globals
         if hasattr(sys.modules["__main__"], "test_var"):
-            delattr(sys.modules["__main__"], "test_var")
+            del sys.modules["__main__"].test_var
 
     def teardown_method(self) -> None:
         """Clean up after each test."""
         reset_default_values()
         if hasattr(sys.modules["__main__"], "test_var"):
-            delattr(sys.modules["__main__"], "test_var")
+            del sys.modules["__main__"].test_var
 
     def test_cannot_instantiate_abstract_class(self):
         """Test that PyRITInitializer cannot be instantiated directly."""
@@ -121,13 +121,13 @@ class TestInitializeWithTracking:
         """Clear default values before each test."""
         reset_default_values()
         if hasattr(sys.modules["__main__"], "tracked_var"):
-            delattr(sys.modules["__main__"], "tracked_var")
+            del sys.modules["__main__"].tracked_var
 
     def teardown_method(self) -> None:
         """Clean up after each test."""
         reset_default_values()
         if hasattr(sys.modules["__main__"], "tracked_var"):
-            delattr(sys.modules["__main__"], "tracked_var")
+            del sys.modules["__main__"].tracked_var
 
     async def test_initialize_with_tracking_calls_initialize(self):
         """Test that initialize_with_tracking_async calls initialize method."""
