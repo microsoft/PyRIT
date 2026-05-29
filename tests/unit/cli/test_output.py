@@ -339,7 +339,7 @@ async def test_print_scenario_result_async_roundtrip_with_real_payload():
     """
     from datetime import datetime, timezone
 
-    from pyrit.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
     from pyrit.models import AttackOutcome, AttackResult
     from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
 

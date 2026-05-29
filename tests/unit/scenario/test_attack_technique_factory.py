@@ -9,7 +9,7 @@ import pytest
 
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.identifiers import ComponentIdentifier, Identifiable
+from pyrit.models.identifiers import ComponentIdentifier, Identifiable
 from pyrit.models import SeedAttackTechniqueGroup, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.attack_technique import AttackTechnique

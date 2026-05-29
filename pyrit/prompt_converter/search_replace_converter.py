@@ -4,7 +4,7 @@
 import random
 import re
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 

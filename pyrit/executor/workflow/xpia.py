@@ -14,7 +14,7 @@ from pyrit.executor.workflow.core import (
     WorkflowResult,
     WorkflowStrategy,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable
+from pyrit.models.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     Message,

@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
-from pyrit.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 
 
 class ComponentRole(Enum):

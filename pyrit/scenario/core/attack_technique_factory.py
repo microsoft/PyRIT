@@ -18,7 +18,7 @@ import typing
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Union
 
-from pyrit.identifiers import ComponentIdentifier, Identifiable, build_seed_identifier
+from pyrit.models.identifiers import ComponentIdentifier, Identifiable, build_seed_identifier
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
 if TYPE_CHECKING:

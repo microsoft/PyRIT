@@ -19,7 +19,7 @@ from pyrit.executor.promptgen.core import (
     PromptGeneratorStrategyContext,
     PromptGeneratorStrategyResult,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable
+from pyrit.models.identifiers import ComponentIdentifier, Identifiable
 from pyrit.models import (
     Message,
 )

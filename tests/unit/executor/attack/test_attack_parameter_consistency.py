@@ -24,7 +24,7 @@ from pyrit.executor.attack import (
     TreeOfAttacksWithPruningAttack,
 )
 from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     ChatMessageRole,

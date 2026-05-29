@@ -3,7 +3,7 @@
 
 import pytest
 
-from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
+from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import AttackResultEntry
 

@@ -10,7 +10,7 @@ import yaml
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     PromptDataType,
     SeedPrompt,

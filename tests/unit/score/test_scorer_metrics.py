@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.score import (
     HarmScorerMetrics,
     ObjectiveScorerMetrics,

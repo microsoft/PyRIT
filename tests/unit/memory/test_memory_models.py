@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import ValidationError
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+from pyrit.models.identifiers import ComponentIdentifier
+from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory.memory_models import (
     AttackResultEntry,
     ConversationMessageWithSimilarity,

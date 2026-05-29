@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from unit.mocks import get_mock_scorer_identifier
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer

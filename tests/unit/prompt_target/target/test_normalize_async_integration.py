@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 import pytest
 from openai.types.chat import ChatCompletion
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.message_normalizer import GenericSystemSquashNormalizer
 from pyrit.models import Message, MessagePiece

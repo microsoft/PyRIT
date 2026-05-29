@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.memory.memory_models import ScoreEntry
 from pyrit.models import Score
 

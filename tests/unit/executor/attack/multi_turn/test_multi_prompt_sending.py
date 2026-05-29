@@ -15,7 +15,7 @@ from pyrit.executor.attack import (
     MultiPromptSendingAttackParameters,
     MultiTurnAttackContext,
 )
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,

@@ -11,7 +11,7 @@ from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     Message,
     construct_response_from_request,

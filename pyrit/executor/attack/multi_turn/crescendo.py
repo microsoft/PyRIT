@@ -32,7 +32,7 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     MultiTurnAttackContext,
     MultiTurnAttackStrategy,
 )
-from pyrit.identifiers import build_atomic_attack_identifier
+from pyrit.models.identifiers import build_atomic_attack_identifier
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import (

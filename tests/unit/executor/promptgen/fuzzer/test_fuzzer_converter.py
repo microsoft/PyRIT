@@ -14,7 +14,7 @@ from pyrit.executor.promptgen.fuzzer import (
     FuzzerShortenConverter,
     FuzzerSimilarConverter,
 )
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece
 
 

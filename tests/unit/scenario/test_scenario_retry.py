@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock
 import pytest
 
 from pyrit.executor.attack.core import AttackExecutorResult
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult
 from pyrit.scenario import DatasetConfiguration, ScenarioResult

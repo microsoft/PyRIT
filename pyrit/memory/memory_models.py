@@ -31,8 +31,8 @@ from sqlalchemy.types import Uuid
 
 import pyrit
 from pyrit.common.utils import to_sha256
-from pyrit.identifiers.component_identifier import ComponentIdentifier
-from pyrit.identifiers.evaluation_identifier import (
+from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models.identifiers.evaluation_identifier import (
     AtomicAttackEvaluationIdentifier,
     ScorerEvaluationIdentifier,
 )
@@ -912,7 +912,7 @@ class AttackResultEntry(Base):
             ComponentIdentifier.from_dict(self.atomic_attack_identifier) if self.atomic_attack_identifier else None
         )
         if atomic_id is None and self.attack_identifier:
-            from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+            from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 
             atomic_id = build_atomic_attack_identifier(
                 attack_identifier=ComponentIdentifier.from_dict(self.attack_identifier),

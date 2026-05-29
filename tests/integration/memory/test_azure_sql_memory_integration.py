@@ -9,7 +9,7 @@ from uuid import uuid4
 import numpy as np
 from sqlalchemy.exc import SQLAlchemyError
 
-from pyrit.identifiers import ComponentIdentifier, build_atomic_attack_identifier
+from pyrit.models.identifiers import ComponentIdentifier, build_atomic_attack_identifier
 from pyrit.memory import AzureSQLMemory
 from pyrit.memory.memory_models import (
     AttackResultEntry,

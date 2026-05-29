@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, Union
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score, SeedPrompt, UnvalidatedScore
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator

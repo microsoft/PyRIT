@@ -3,7 +3,7 @@
 
 from typing import Optional
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator

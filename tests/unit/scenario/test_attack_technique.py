@@ -6,7 +6,7 @@
 from unittest.mock import MagicMock
 
 from pyrit.executor.attack import AttackStrategy
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import SeedAttackTechniqueGroup, SeedPrompt
 from pyrit.scenario.core.attack_technique import AttackTechnique
 

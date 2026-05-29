@@ -11,7 +11,7 @@ import hashlib
 import uuid
 from unittest.mock import patch
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import PromptMemoryEntry
 from pyrit.models import AttackResult, MessagePiece, ScenarioIdentifier, ScenarioResult, Score

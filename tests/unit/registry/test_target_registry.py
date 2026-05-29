@@ -4,7 +4,7 @@
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.object_registries.target_registry import TargetRegistry

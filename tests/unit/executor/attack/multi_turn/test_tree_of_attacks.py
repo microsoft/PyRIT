@@ -26,7 +26,7 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TAPAttackScoringConfig,
     _TreeOfAttacksNode,
 )
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     ConversationReference,

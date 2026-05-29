@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import Message, PromptDataType, Score, UnvalidatedScore
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.score.scorer import Scorer

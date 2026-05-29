@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, MessagePiece, Score
 from pyrit.score import FloatScaleThresholdScorer

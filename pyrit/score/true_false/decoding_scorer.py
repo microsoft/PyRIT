@@ -4,7 +4,7 @@
 from typing import Optional
 
 from pyrit.analytics.text_matching import ExactTextMatching, TextMatching
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import MessagePiece, Score
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator

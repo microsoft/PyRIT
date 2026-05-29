@@ -7,7 +7,7 @@ from collections.abc import Callable
 from typing import Any, Literal, Optional
 
 from pyrit.common import default_values, net_utility
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     Message,
     construct_response_from_request,

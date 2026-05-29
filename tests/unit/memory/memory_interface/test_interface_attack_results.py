@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Optional
 import pytest
 
 from pyrit.common.utils import to_sha256
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
-from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
+from pyrit.models.identifiers import ComponentIdentifier
+from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import (

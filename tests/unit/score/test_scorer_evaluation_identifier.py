@@ -9,8 +9,8 @@ Covers ``ScorerEvaluationIdentifier`` ClassVar values and eval-hash delegation.
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier, Identifiable, compute_eval_hash
-from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
+from pyrit.models.identifiers import ComponentIdentifier, Identifiable, compute_eval_hash
+from pyrit.models.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
 
 
 class TestScorerEvaluationIdentifierConstants:

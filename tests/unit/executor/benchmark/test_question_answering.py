@@ -9,7 +9,7 @@ from pyrit.executor.benchmark.question_answering import (
     QuestionAnsweringBenchmark,
     QuestionAnsweringBenchmarkContext,
 )
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,

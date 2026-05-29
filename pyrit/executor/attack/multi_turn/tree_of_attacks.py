@@ -38,7 +38,7 @@ from pyrit.executor.attack.core.attack_config import (
 )
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
-from pyrit.identifiers import ComponentIdentifier, build_atomic_attack_identifier
+from pyrit.models.identifiers import ComponentIdentifier, build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,

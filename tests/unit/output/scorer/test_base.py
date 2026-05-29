@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.output.scorer.base import ScorerPrinterBase
 
 
