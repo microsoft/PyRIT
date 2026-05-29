@@ -6,7 +6,7 @@ import pathlib
 import uuid
 import zipfile
 from enum import Enum
-from typing import Dict, List, Literal, Optional
+from typing import Literal, Optional
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -58,13 +58,36 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
     before testing them with LLMs to ensure compliance and reduce potential risks.
     """
 
+    HF_DATASET_NAME: str = "JailbreakV-28K/JailBreakV-28k"
+    harm_categories: list[str] = [
+        "unethical behavior",
+        "economic harm",
+        "hate speech",
+        "government decision",
+        "physical harm",
+        "fraud",
+        "political sensitivity",
+        "malware",
+        "illegal activity",
+        "bias",
+        "violence",
+        "animal abuse",
+        "tailored unlicensed advice",
+        "privacy violation",
+        "health consultation",
+        "child abuse content",
+    ]
+    modalities: list[str] = ["text", "image"]
+    size: str = "medium"  # default mini split: ~280 examples
+    tags: set[str] = {"safety", "multimodal", "jailbreak"}
+
     def __init__(
         self,
         *,
         source: str = "JailbreakV-28K/JailBreakV-28k",
         zip_dir: str = str(pathlib.Path.home()),
         split: Literal["JailBreakV_28K", "mini_JailBreakV_28K"] = "mini_JailBreakV_28K",
-        harm_categories: Optional[List[_HarmCategory]] = None,
+        harm_categories: Optional[list[_HarmCategory]] = None,
     ) -> None:
         """
         Initialize the JailBreakV-28K dataset loader.
@@ -84,14 +107,14 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
         self.source = source
         self.zip_dir = pathlib.Path(zip_dir)
         self.split = split
-        self.harm_categories = harm_categories
+        self.filter_categories = harm_categories
 
         # Validate harm categories if provided
         if harm_categories is not None:
             valid_categories = {category.value for category in _HarmCategory}
-            invalid_categories = (
-                set(cat.value if isinstance(cat, _HarmCategory) else cat for cat in harm_categories) - valid_categories
-            )
+            invalid_categories = {
+                cat.value if isinstance(cat, _HarmCategory) else cat for cat in harm_categories
+            } - valid_categories
             if invalid_categories:
                 raise ValueError(f"Invalid harm categories: {', '.join(invalid_categories)}")
 
@@ -100,7 +123,7 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "jailbreakv_28k"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch JailBreakV-28K dataset and return as SeedDataset.
 
@@ -149,14 +172,14 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
             # Normalize the harm categories for filtering
             harm_categories_normalized = (
                 None
-                if self.harm_categories is None
-                else [self._normalize_policy(cat.value) for cat in self.harm_categories]
+                if self.filter_categories is None
+                else [self._normalize_policy(cat.value) for cat in self.filter_categories]
             )
 
             seed_prompts = []
             missing_images = 0
             total_items_processed = 0
-            per_call_cache: Dict[str, str] = {}
+            per_call_cache: dict[str, str] = {}
 
             for item in data:
                 policy = self._normalize_policy(item.get("policy", ""))
@@ -186,9 +209,20 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
                 # Create linked text and image prompts
                 group_id = uuid.uuid4()
 
+                # Preserve source row trace-back fields (rom Jan 4 review comment)
+                # NB: avoid the bare key "format" because SeedPrompt.set_encoding_metadata
+                # writes "format" for media files and would overwrite the source value.
+                row_metadata: dict[str, str | int] = {
+                    "source_format": item.get("format", ""),
+                    "transfer_attack_type": item.get("transfer_attack_type", ""),
+                    "policy": item.get("policy", ""),
+                    "image_path_raw": image_rel_path,
+                }
+                if "id" in item and item["id"] is not None:
+                    row_metadata["row_id"] = str(item["id"])
+
                 seed_objective = SeedObjective(
                     value=item.get("redteam_query", ""),
-                    data_type="text",
                     name="JailBreakV-28K",
                     dataset_name=self.dataset_name,
                     harm_categories=[policy],
@@ -200,6 +234,7 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
                     groups=["The Ohio State University", "Peking University", "University of Wisconsin-Madison"],
                     source="https://huggingface.co/datasets/JailbreakV-28K/JailBreakV-28k",
                     prompt_group_id=group_id,
+                    metadata=dict(row_metadata),
                 )
 
                 text_seed_prompt = SeedPrompt(
@@ -217,6 +252,7 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
                     source="https://huggingface.co/datasets/JailbreakV-28K/JailBreakV-28k",
                     prompt_group_id=group_id,
                     sequence=0,
+                    metadata=dict(row_metadata),
                 )
 
                 image_seed_prompt = SeedPrompt(
@@ -234,6 +270,7 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
                     source="https://huggingface.co/datasets/JailbreakV-28K/JailBreakV-28k",
                     prompt_group_id=group_id,
                     sequence=0,
+                    metadata=dict(row_metadata),
                 )
 
                 seed_prompts.append(seed_objective)
@@ -293,7 +330,7 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
         *,
         rel_path: str,
         local_directory: pathlib.Path,
-        call_cache: Dict[str, str],
+        call_cache: dict[str, str],
     ) -> str:
         """
         Resolve a repository-relative image path to a local absolute path.
