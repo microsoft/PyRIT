@@ -121,7 +121,6 @@ class AttackTechniqueFactory(Identifiable):
         self._strategy_tags = list(strategy_tags) if strategy_tags else []
         self._attack_kwargs = dict(attack_kwargs) if attack_kwargs else {}
         self._adversarial_config = adversarial_config
-        self._adversarial_config_was_explicit = self._adversarial_config is not None
         self._seed_technique = seed_technique
         self._scorer_override_policy = scorer_override_policy
 
@@ -374,14 +373,15 @@ class AttackTechniqueFactory(Identifiable):
                 construction time, or if ``scorer_override_policy`` is RAISE and
                 the override config is incompatible with the attack's type annotation.
         """
-        if attack_adversarial_config_override is not None and self._adversarial_config_was_explicit:
+        if attack_adversarial_config_override is not None and self._adversarial_config is not None:
             raise ValueError(
                 f"Factory '{self._name}': adversarial config was baked in at construction; "
                 f"cannot supply attack_adversarial_config_override."
             )
 
-        if self._uses_adversarial and self._adversarial_config is None and attack_adversarial_config_override is None:
-            self._adversarial_config = self._resolve_default_adversarial_config()
+        adversarial_config = self._adversarial_config
+        if self._uses_adversarial and adversarial_config is None and attack_adversarial_config_override is None:
+            adversarial_config = self._resolve_default_adversarial_config()
 
         kwargs = dict(self._attack_kwargs)
         kwargs["objective_target"] = objective_target
@@ -395,8 +395,8 @@ class AttackTechniqueFactory(Identifiable):
         if "attack_adversarial_config" in accepted_params:
             if attack_adversarial_config_override is not None:
                 kwargs["attack_adversarial_config"] = attack_adversarial_config_override
-            elif self._adversarial_config is not None:
-                kwargs["attack_adversarial_config"] = self._adversarial_config
+            elif adversarial_config is not None:
+                kwargs["attack_adversarial_config"] = adversarial_config
         if attack_converter_config_override is not None and "attack_converter_config" in accepted_params:
             kwargs["attack_converter_config"] = attack_converter_config_override
 

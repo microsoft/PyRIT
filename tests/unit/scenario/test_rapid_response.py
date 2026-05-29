@@ -484,8 +484,6 @@ class TestCoreTechniques:
 
         assert factories["role_play"]._adversarial_config is None
         assert factories["tap"]._adversarial_config is None
-        assert factories["role_play"]._adversarial_config_was_explicit is False
-        assert factories["tap"]._adversarial_config_was_explicit is False
 
 
 # ===========================================================================
