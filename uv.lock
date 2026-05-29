@@ -39,15 +39,6 @@ constraints = [
 ]
 
 [[package]]
-name = "absl-py"
-version = "2.3.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/10/2a/c93173ffa1b39c1d0395b7e842bbdc62e556ca9d8d3b5572926f3e4ca752/absl_py-2.3.1.tar.gz", hash = "sha256:a97820526f7fbfd2ec1bce83f3f25e3a14840dac0d8e02a0b71cd75db3f77fc9", size = 116588, upload-time = "2025-07-03T09:31:44.05Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8f/aa/ba0014cc4659328dc818a28827be78e6d97312ab0cb98105a770924dc11e/absl_py-2.3.1-py3-none-any.whl", hash = "sha256:eeecf07f0c2a93ace0772c92e596ace6d3d3996c042b2128459aaae2a76de11d", size = 135811, upload-time = "2025-07-03T09:31:42.253Z" },
-]
-
-[[package]]
 name = "accelerate"
 version = "1.12.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3227,19 +3218,6 @@ wheels = [
 ]
 
 [[package]]
-name = "ml-collections"
-version = "1.1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "absl-py" },
-    { name = "pyyaml" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b8/f8/1a9ae6696dbb6bc9c44ddf5c5e84710d77fe9a35a57e8a06722e1836a4a6/ml_collections-1.1.0.tar.gz", hash = "sha256:0ac1ac6511b9f1566863e0bb0afad0c64e906ea278ad3f4d2144a55322671f6f", size = 61356, upload-time = "2025-04-17T08:25:02.247Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ab/8a/18d4ff2c7bd83f30d6924bd4ad97abf418488c3f908dea228d6f0961ad68/ml_collections-1.1.0-py3-none-any.whl", hash = "sha256:23b6fa4772aac1ae745a96044b925a5746145a70734f087eaca6626e92c05cbc", size = 76707, upload-time = "2025-04-17T08:24:59.038Z" },
-]
-
-[[package]]
 name = "mock-alchemy"
 version = "0.2.6"
 source = { registry = "https://pypi.org/simple" }
@@ -5168,6 +5146,7 @@ dependencies = [
     { name = "confusables" },
     { name = "datasets" },
     { name = "ecoji" },
+    { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "fastapi" },
     { name = "httpx", extra = ["http2"] },
     { name = "jinja2" },
@@ -5207,7 +5186,6 @@ all = [
     { name = "flask" },
     { name = "ipykernel" },
     { name = "jupyter" },
-    { name = "ml-collections" },
     { name = "ollama" },
     { name = "opencv-python" },
     { name = "playwright" },
@@ -5222,7 +5200,6 @@ fairness-bias = [
 gcg = [
     { name = "accelerate" },
     { name = "azure-ai-ml" },
-    { name = "ml-collections" },
     { name = "pyarrow", version = "22.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
     { name = "sentencepiece" },
     { name = "torch" },
@@ -5301,6 +5278,7 @@ requires-dist = [
     { name = "confusables", specifier = ">=1.2.0" },
     { name = "datasets", specifier = ">=4.8.0" },
     { name = "ecoji", specifier = ">=0.1.1" },
+    { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.0" },
     { name = "fastapi", specifier = ">=0.133.0" },
     { name = "flask", marker = "extra == 'all'", specifier = ">=3.1.3" },
     { name = "flask", marker = "extra == 'playwright'", specifier = ">=3.1.3" },
@@ -5308,8 +5286,6 @@ requires-dist = [
     { name = "ipykernel", marker = "extra == 'all'", specifier = ">=6.29.5" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "jupyter", marker = "extra == 'all'", specifier = ">=1.1.1" },
-    { name = "ml-collections", marker = "extra == 'all'", specifier = ">=1.1.0" },
-    { name = "ml-collections", marker = "extra == 'gcg'", specifier = ">=1.1.0" },
     { name = "numpy", marker = "python_full_version < '3.14'", specifier = ">=1.26.0" },
     { name = "numpy", marker = "python_full_version >= '3.14'", specifier = ">=2.3.0" },
     { name = "ollama", marker = "extra == 'all'", specifier = ">=0.5.1" },

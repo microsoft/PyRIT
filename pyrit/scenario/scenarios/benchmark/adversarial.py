@@ -7,22 +7,34 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+from functools import cache
 from typing import TYPE_CHECKING, ClassVar
 
+<<<<<<< HEAD
 from pyrit.analytics import get_cached_results_for_technique
 from pyrit.common import Parameter, apply_defaults
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.identifiers import ObjectiveTargetEvaluationIdentifier
 from pyrit.models import AttackOutcome, SeedAttackGroup
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
+=======
+from pyrit.common import apply_defaults
+from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig
+from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
+from pyrit.registry import AttackTechniqueRegistry
+>>>>>>> 4cf9ff5de64017ce09cbe9eeb653a35a9983cab4
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
+<<<<<<< HEAD
 from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES, _spec_needs_adversarial
+=======
+>>>>>>> 4cf9ff5de64017ce09cbe9eeb653a35a9983cab4
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
+    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
     from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -87,6 +99,7 @@ class AdversarialBenchmark(Scenario):
     displays.
     """
 
+<<<<<<< HEAD
     #: Bumped from 1 → 2 by the refactor that moved adversarial targets
     #: from a constructor parameter to the ``adversarial_targets`` scenario
     #: parameter and changed ``atomic_attack_name`` from
@@ -94,11 +107,15 @@ class AdversarialBenchmark(Scenario):
     #: ``skip_cached`` only matches against prior runs at the current
     #: ``VERSION``; v1 results remain queryable but won't suppress v2 runs.
     VERSION: int = 2
+=======
+    VERSION: int = 1
+>>>>>>> 4cf9ff5de64017ce09cbe9eeb653a35a9983cab4
 
     #: AdversarialBenchmark compares attack-success rates across adversarial models; a baseline
     #: attack would be model-independent and contribute no signal to the comparison.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
+<<<<<<< HEAD
     @classmethod
     def get_strategy_class(cls) -> type[ScenarioStrategy]:
         """
@@ -172,10 +189,16 @@ class AdversarialBenchmark(Scenario):
             ),
         ]
 
+=======
+>>>>>>> 4cf9ff5de64017ce09cbe9eeb653a35a9983cab4
     @apply_defaults
     def __init__(
         self,
         *,
+<<<<<<< HEAD
+=======
+        adversarial_models: list[PromptTarget] | None = None,
+>>>>>>> 4cf9ff5de64017ce09cbe9eeb653a35a9983cab4
         objective_scorer: TrueFalseScorer | None = None,
         skip_cached: bool = False,
         scenario_result_id: str | None = None,
@@ -184,6 +207,7 @@ class AdversarialBenchmark(Scenario):
         Initialize the AdversarialBenchmark scenario.
 
         Args:
+<<<<<<< HEAD
             objective_scorer: ``TrueFalseScorer`` used to evaluate attack
                 success. Defaults to the registered default objective
                 scorer (typically the composite refusal+scale scorer set
@@ -215,11 +239,92 @@ class AdversarialBenchmark(Scenario):
             strategy_class=self.get_strategy_class(),
             scenario_result_id=scenario_result_id,
         )
+=======
+            adversarial_models: A non-empty list of ``PromptTarget`` instances
+                that each satisfy ``CHAT_TARGET_REQUIREMENTS`` (multi-turn
+                with editable history).  Individual techniques selected at
+                run time may impose stricter capability requirements which are
+                enforced when their attack instances are constructed.
+                Labels are inferred from each target's identifier (preferring
+                ``underlying_model_name`` over ``model_name`` over the class
+                name).  Identical targets are silently deduped and distinct
+                targets whose inferred names collide are suffixed (``_2``,
+                ``_3``, …) with a warning.
+                May be ``None`` at construction so the scenario can be
+                introspected (e.g. for ``--list-scenarios`` metadata); the
+                non-empty / capability validation is then deferred to
+                ``initialize_async``.
+            objective_scorer: Scorer for evaluating attack success.
+                Defaults to the registered default objective scorer.
+            scenario_result_id: Optional ID of an existing scenario
+                result to resume.
+
+        Raises:
+            ValueError: If ``adversarial_models`` is provided and is empty,
+                not a list, or contains a target that does not satisfy
+                :data:`CHAT_TARGET_REQUIREMENTS`.
+        """
+        if adversarial_models is not None:
+            self._adversarial_configs = self._build_adversarial_configs(adversarial_models)
+        else:
+            self._adversarial_configs = {}
+
+        self._objective_scorer: TrueFalseScorer = (
+            objective_scorer if objective_scorer else self._get_default_objective_scorer()
+        )
+
+        strategy_class = _build_benchmark_strategy()
+
+        super().__init__(
+            version=self.VERSION,
+            objective_scorer=self._objective_scorer,
+            strategy_class=strategy_class,
+            default_strategy=strategy_class("light"),
+            default_dataset_config=DatasetConfiguration(
+                dataset_names=["harmbench"],
+                max_dataset_size=8,
+            ),
+            scenario_result_id=scenario_result_id,
+        )
+
+    @staticmethod
+    def _build_adversarial_configs(
+        adversarial_models: list[PromptTarget],
+    ) -> dict[str, AttackAdversarialConfig]:
+        """
+        Validate ``adversarial_models`` and wrap each into an ``AttackAdversarialConfig``.
+
+        Returns:
+            dict[str, AttackAdversarialConfig]: Adversarial configs keyed by inferred model label.
+
+        Raises:
+            ValueError: If the list is empty, not a list, or contains a target
+                that does not satisfy :data:`CHAT_TARGET_REQUIREMENTS`.
+        """
+        if not adversarial_models:
+            raise ValueError("adversarial_models must be a non-empty list of PromptTarget instances.")
+
+        if not isinstance(adversarial_models, list):
+            raise ValueError("adversarial_models must be a list of PromptTarget instances.")
+
+        for target in adversarial_models:
+            try:
+                CHAT_TARGET_REQUIREMENTS.validate(target=target)
+            except ValueError as exc:
+                raise ValueError(
+                    f"adversarial_models entry {type(target).__name__} does not satisfy "
+                    f"the chat-target capability requirements: {exc}"
+                ) from exc
+
+        labeled_targets = AdversarialBenchmark._infer_labels(items=adversarial_models)
+        return {label: AttackAdversarialConfig(target=target) for label, target in labeled_targets.items()}
+>>>>>>> 4cf9ff5de64017ce09cbe9eeb653a35a9983cab4
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
         Build atomic attacks from (technique × adversarial_target × dataset), then apply caching.
 
+<<<<<<< HEAD
         Reads the user-supplied ``adversarial_targets`` parameter, resolves
         each name to a ``PromptTarget`` via ``TargetRegistry``, and
         cross-products the selected adversarial-capable techniques over the
@@ -232,6 +337,11 @@ class AdversarialBenchmark(Scenario):
         cache via ``_collect_cached_completion_pairs``, which delegates to
         ``pyrit.analytics.get_cached_results_for_technique`` for each
         unique ``(technique_eval_hash, objective_target_eval_hash)`` pair.
+=======
+        Factories are read from the singleton ``AttackTechniqueRegistry`` and
+        narrowed to adversarial-capable ones. Each model is injected at
+        create-time via ``attack_adversarial_config_override``.
+>>>>>>> 4cf9ff5de64017ce09cbe9eeb653a35a9983cab4
 
         Returns:
             list[AtomicAttack]: The atomic attacks to actually execute on
@@ -247,6 +357,7 @@ class AdversarialBenchmark(Scenario):
                 "Scenario not properly initialized. Call await scenario.initialize_async() before running."
             )
 
+<<<<<<< HEAD
         target_names = self.params.get("adversarial_targets")
         if not target_names:
             raise ValueError(
@@ -264,6 +375,16 @@ class AdversarialBenchmark(Scenario):
         # would surface it.
         specs_by_name = {spec.name: spec for spec in SCENARIO_TECHNIQUES}
         selected_specs = [specs_by_name[s.value] for s in self._scenario_strategies if s.value in specs_by_name]
+=======
+        if not self._adversarial_configs:
+            raise ValueError(
+                "AdversarialBenchmark requires adversarial_models to be passed at construction "
+                "(non-empty list of chat-capable PromptTarget instances)."
+            )
+
+        benchmarkable_factories = AdversarialBenchmark._get_benchmarkable_factories()
+        local_factories = {factory.name: factory for factory in benchmarkable_factories}
+>>>>>>> 4cf9ff5de64017ce09cbe9eeb653a35a9983cab4
 
         scoring_config = AttackScoringConfig(objective_scorer=self._objective_scorer)
         seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
@@ -372,6 +493,7 @@ class AdversarialBenchmark(Scenario):
 
         return resolved
 
+<<<<<<< HEAD
     def _collect_cached_completion_pairs(self, *, atomic_attacks: list[AtomicAttack]) -> set[str]:
         """
         Return the set of ``technique_eval_hash`` values already cached for this scenario's objective target.
@@ -440,3 +562,44 @@ class AdversarialBenchmark(Scenario):
                 cached_hashes.add(technique_eval_hash)
 
         return cached_hashes
+=======
+    @staticmethod
+    def _get_benchmarkable_factories() -> list[AttackTechniqueFactory]:
+        """
+        Return ``core`` factories that drive an adversarial chat.
+
+        Every benchmark technique must accept an adversarial-config override at
+        ``create()`` time so the scenario can inject one chat per benchmark
+        model. We narrow to the ``core`` tag to exclude experimental / persona
+        variants.
+
+        Returns:
+            list[AttackTechniqueFactory]: Filtered core, adversarial-capable factories.
+        """
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        return [
+            factory
+            for factory in registry.get_factories_or_raise().values()
+            if factory.uses_adversarial and "core" in factory.strategy_tags
+        ]
+
+
+@cache
+def _build_benchmark_strategy() -> type[ScenarioStrategy]:
+    """
+    Module-level cached builder so all callers share the same strategy enum class.
+
+    Returns:
+        type[ScenarioStrategy]: The dynamically generated BenchmarkStrategy enum class.
+    """
+    return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[ty:invalid-return-type]
+        class_name="BenchmarkStrategy",
+        factories=AdversarialBenchmark._get_benchmarkable_factories(),
+        aggregate_tags={
+            "default": TagQuery.any_of("default"),
+            "single_turn": TagQuery.any_of("single_turn"),
+            "multi_turn": TagQuery.any_of("multi_turn"),
+            "light": TagQuery.any_of("light"),
+        },
+    )
+>>>>>>> 4cf9ff5de64017ce09cbe9eeb653a35a9983cab4
