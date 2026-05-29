@@ -310,6 +310,21 @@ class TestScenarioTechniqueFactoriesValid:
         assert len(names) == len(set(names)), f"Duplicate factory names: {[n for n in names if names.count(n) > 1]}"
 
 
+class TestPairTechniqueRegistration:
+    """Targeted tests for the PAIR technique factory in build_scenario_technique_factories()."""
+
+    def test_pair_factory_registered_with_pair_attack_class(self):
+        from pyrit.executor.attack import PAIRAttack
+
+        factories = build_scenario_technique_factories()
+        pair_factories = [f for f in factories if f.name == "pair"]
+        assert len(pair_factories) == 1, "Expected exactly one 'pair' factory"
+        factory = pair_factories[0]
+        assert factory.attack_class is PAIRAttack
+        assert set(factory.strategy_tags) >= {"core", "multi_turn"}
+        assert not factory._attack_kwargs, "PAIR defaults are encoded on PAIRAttack itself, not via attack_kwargs"
+
+
 class TestScorerOverrideTypeInference:
     """
     Tests verifying scorer compatibility type inference for real attack classes.

@@ -20,6 +20,7 @@ import logging
 from pyrit.executor.attack import (
     ContextComplianceAttack,
     ManyShotJailbreakAttack,
+    PAIRAttack,
     RedTeamingAttack,
     RolePlayAttack,
     RolePlayPaths,
@@ -68,6 +69,11 @@ def build_scenario_technique_factories() -> list[AttackTechniqueFactory]:
         AttackTechniqueFactory(
             name="tap",
             attack_class=TreeOfAttacksWithPruningAttack,
+            strategy_tags=["core", "multi_turn"],
+        ),
+        AttackTechniqueFactory(
+            name="pair",
+            attack_class=PAIRAttack,
             strategy_tags=["core", "multi_turn"],
         ),
         AttackTechniqueFactory.with_simulated_conversation(
