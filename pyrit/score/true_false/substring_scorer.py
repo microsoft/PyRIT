@@ -4,8 +4,8 @@
 from typing import Optional
 
 from pyrit.analytics.text_matching import ExactTextMatching, TextMatching
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,

@@ -11,7 +11,6 @@ from pyrit.executor.attack import AttackConverterConfig, RTASystemPromptPaths
 from pyrit.executor.attack.multi_turn.simulated_conversation import (
     generate_simulated_conversation_async,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -22,6 +21,7 @@ from pyrit.models import (
     SeedPrompt,
     SimulatedTargetSystemPromptPaths,
 )
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import TrueFalseScorer
 

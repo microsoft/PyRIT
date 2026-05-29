@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_converter import Base64Converter
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetConfiguration

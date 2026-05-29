@@ -15,8 +15,8 @@ from pyrit.executor.attack import (
     RolePlayAttack,
 )
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import SeedAttackGroup, SeedDataset, SeedGroup, SeedObjective
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.scenarios.airt.scam import Scam, ScamStrategy

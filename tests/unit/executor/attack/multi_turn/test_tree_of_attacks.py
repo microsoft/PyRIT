@@ -26,7 +26,6 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TAPAttackScoringConfig,
     _TreeOfAttacksNode,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     ConversationReference,
@@ -36,6 +35,7 @@ from pyrit.models import (
     Score,
     SeedPrompt,
 )
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, Scorer, TrueFalseScorer

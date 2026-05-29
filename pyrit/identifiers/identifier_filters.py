@@ -3,6 +3,8 @@
 
 """Deprecation shim — moved to pyrit.models.identifiers.identifier_filters in 0.14."""
 
+from typing import Any
+
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers import identifier_filters as _new
 
@@ -11,7 +13,7 @@ __all__ = ["IdentifierFilter", "IdentifierType"]
 _warned: set[str] = set()
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name not in __all__:
         raise AttributeError(
             f"module 'pyrit.identifiers.identifier_filters' has no attribute {name!r}"

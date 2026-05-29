@@ -12,8 +12,8 @@ from pyrit.executor.workflow.xpia import (
     XPIAStatus,
     XPIAWorkflow,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece, Score
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer

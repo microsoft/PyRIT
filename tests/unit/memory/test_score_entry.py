@@ -5,9 +5,9 @@ import uuid
 
 import pytest
 
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.memory.memory_models import ScoreEntry
 from pyrit.models import Score
+from pyrit.models.identifiers import ComponentIdentifier
 
 
 @pytest.mark.usefixtures("patch_central_database")

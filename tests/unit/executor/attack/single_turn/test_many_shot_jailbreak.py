@@ -13,12 +13,12 @@ from pyrit.executor.attack import (
     ManyShotJailbreakAttack,
     SingleTurnAttackContext,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
     SeedPrompt,
 )
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_converter import Base64Converter
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget

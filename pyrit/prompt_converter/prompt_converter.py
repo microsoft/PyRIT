@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, get_args
 
 from pyrit import prompt_converter
-from pyrit.models.identifiers import ComponentIdentifier, Identifiable
 from pyrit.models import PromptDataType
+from pyrit.models.identifiers import ComponentIdentifier, Identifiable
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:

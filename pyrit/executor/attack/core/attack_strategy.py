@@ -24,7 +24,6 @@ from pyrit.executor.core import (
     StrategyEventData,
     StrategyEventHandler,
 )
-from pyrit.models.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -32,6 +31,7 @@ from pyrit.models import (
     ConversationReference,
     Message,
 )
+from pyrit.models.identifiers import ComponentIdentifier, Identifiable
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:

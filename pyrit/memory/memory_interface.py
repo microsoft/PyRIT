@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory.memory_exporter import MemoryExporter
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -51,6 +50,7 @@ from pyrit.models import (
     group_conversation_message_pieces_by_sequence,
     sort_message_pieces,
 )
+from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 
 if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement

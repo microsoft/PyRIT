@@ -5,11 +5,11 @@ import uuid
 
 import pytest
 
-from pyrit.models.identifiers import ComponentIdentifier
-from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory import MemoryInterface
 from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, MessagePiece, Score
 from pyrit.models.conversation_reference import ConversationReference
+from pyrit.models.identifiers import ComponentIdentifier
+from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 
 

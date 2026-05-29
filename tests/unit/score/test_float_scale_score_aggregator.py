@@ -3,8 +3,8 @@
 
 from typing import Optional
 
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import Score
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScoreAggregator,
     FloatScaleScorerAllCategories,

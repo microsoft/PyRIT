@@ -9,13 +9,13 @@ from pyrit.executor.benchmark.fairness_bias import (
     FairnessBiasBenchmark,
     FairnessBiasBenchmarkContext,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
     Message,
     MessagePiece,
 )
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 
 

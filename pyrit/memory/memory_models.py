@@ -31,11 +31,6 @@ from sqlalchemy.types import Uuid
 
 import pyrit
 from pyrit.common.utils import to_sha256
-from pyrit.models.identifiers.component_identifier import ComponentIdentifier
-from pyrit.models.identifiers.evaluation_identifier import (
-    AtomicAttackEvaluationIdentifier,
-    ScorerEvaluationIdentifier,
-)
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -52,6 +47,11 @@ from pyrit.models import (
     SeedPrompt,
     SeedSimulatedConversation,
     SeedType,
+)
+from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models.identifiers.evaluation_identifier import (
+    AtomicAttackEvaluationIdentifier,
+    ScorerEvaluationIdentifier,
 )
 
 logger = logging.getLogger(__name__)

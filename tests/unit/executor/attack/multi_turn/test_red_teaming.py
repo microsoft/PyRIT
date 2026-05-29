@@ -19,7 +19,6 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     RTASystemPromptPaths,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -30,6 +29,7 @@ from pyrit.models import (
     Score,
     SeedPrompt,
 )
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer

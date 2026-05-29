@@ -9,8 +9,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, data_serializer_factory
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)

@@ -7,9 +7,9 @@ from io import BytesIO
 
 from PIL import Image
 
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, data_serializer_factory
 from pyrit.models.data_type_serializer import DataTypeSerializer
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)

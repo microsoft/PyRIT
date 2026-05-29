@@ -20,13 +20,13 @@ from pyrit.exceptions import (
     PyritException,
     pyrit_target_retry,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
     PromptResponseError,
 )
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities

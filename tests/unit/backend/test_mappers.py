@@ -31,9 +31,9 @@ from pyrit.backend.mappers.attack_mappers import (
 )
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import AttackOutcome, AttackResult
 from pyrit.models.conversation_stats import ConversationStats
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget, TargetCapabilities
 
 # ============================================================================

@@ -9,6 +9,8 @@ access of each public symbol and returns the symbol from its new location.
 The shim will be removed in 0.16.0.
 """
 
+from typing import Any
+
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import identifiers as _new
 
@@ -36,7 +38,7 @@ __all__ = [
 _warned: set[str] = set()
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name not in __all__:
         raise AttributeError(f"module 'pyrit.identifiers' has no attribute {name!r}")
     if name not in _warned:

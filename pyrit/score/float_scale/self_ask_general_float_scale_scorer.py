@@ -10,8 +10,8 @@ from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
-    from pyrit.models.identifiers import ComponentIdentifier
     from pyrit.models import MessagePiece, Score, UnvalidatedScore
+    from pyrit.models.identifiers import ComponentIdentifier
     from pyrit.prompt_target import PromptTarget
 
 

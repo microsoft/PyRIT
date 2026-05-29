@@ -10,12 +10,12 @@ from typing import Any, Optional
 
 import httpx
 
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     Message,
     MessagePiece,
     construct_response_from_request,
 )
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute

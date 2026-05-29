@@ -16,8 +16,8 @@ from pyrit.executor.attack import (
     RolePlayAttack,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry, AttackTechniqueSpec
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory

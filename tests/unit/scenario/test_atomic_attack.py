@@ -11,8 +11,6 @@ import pytest
 
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core import AttackExecutorResult
-from pyrit.models.identifiers import ComponentIdentifier
-from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -21,6 +19,8 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
 )
+from pyrit.models.identifiers import ComponentIdentifier
+from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.scenario import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 

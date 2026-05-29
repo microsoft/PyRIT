@@ -24,7 +24,6 @@ from pyrit.executor.attack import (
     CrescendoAttackContext,
     CrescendoAttackResult,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     ChatMessageRole,
@@ -34,6 +33,7 @@ from pyrit.models import (
     Score,
     ScoreType,
 )
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, SelfAskRefusalScorer, TrueFalseScorer

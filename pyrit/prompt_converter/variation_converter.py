@@ -12,11 +12,11 @@ from pyrit.exceptions import (
     InvalidJsonException,
     remove_markdown_json,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     Message,
     SeedPrompt,
 )
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.llm_generic_text_converter import LLMGenericTextConverter
 from pyrit.prompt_target import PromptTarget
 

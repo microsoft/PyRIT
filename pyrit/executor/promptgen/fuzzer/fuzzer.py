@@ -23,7 +23,6 @@ from pyrit.executor.promptgen.core.prompt_generator_strategy import (
     PromptGeneratorStrategyContext,
     PromptGeneratorStrategyResult,
 )
-from pyrit.models.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     Message,
@@ -31,6 +30,7 @@ from pyrit.models import (
     SeedGroup,
     SeedPrompt,
 )
+from pyrit.models.identifiers import ComponentIdentifier, Identifiable
 from pyrit.prompt_normalizer import NormalizerRequest, PromptNormalizer
 from pyrit.score import FloatScaleThresholdScorer, Scorer, SelfAskScaleScorer
 

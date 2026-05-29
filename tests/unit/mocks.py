@@ -10,9 +10,9 @@ from contextlib import AbstractAsyncContextManager
 from typing import Optional
 from unittest.mock import MagicMock, patch
 
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.memory import AzureSQLMemory, CentralMemory, PromptMemoryEntry
 from pyrit.models import Message, MessagePiece
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, limit_requests_per_minute
 
 

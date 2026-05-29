@@ -3,8 +3,8 @@
 
 from typing import Optional
 
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator

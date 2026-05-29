@@ -3,6 +3,8 @@
 
 """Deprecation shim — moved to pyrit.models.identifiers.evaluation_identifier in 0.14."""
 
+from typing import Any
+
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers import evaluation_identifier as _new
 
@@ -19,7 +21,7 @@ __all__ = [
 _warned: set[str] = set()
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name not in __all__:
         raise AttributeError(
             f"module 'pyrit.identifiers.evaluation_identifier' has no attribute {name!r}"

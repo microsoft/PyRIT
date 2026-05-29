@@ -7,8 +7,6 @@ from typing import Optional
 import pytest
 from unit.mocks import get_mock_scorer_identifier
 
-from pyrit.models.identifiers import ComponentIdentifier
-from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AttackOutcome,
@@ -16,6 +14,8 @@ from pyrit.models import (
     ScenarioIdentifier,
     ScenarioResult,
 )
+from pyrit.models.identifiers import ComponentIdentifier
+from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 
 
 @pytest.fixture

@@ -24,7 +24,6 @@ from pyrit.exceptions import (
     pyrit_json_retry,
     remove_markdown_json,
 )
-from pyrit.models.identifiers import ComponentIdentifier, Identifiable, ScorerEvaluationIdentifier
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     ChatMessageRole,
@@ -35,6 +34,7 @@ from pyrit.models import (
     ScoreType,
     UnvalidatedScore,
 )
+from pyrit.models.identifiers import ComponentIdentifier, Identifiable, ScorerEvaluationIdentifier
 from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 

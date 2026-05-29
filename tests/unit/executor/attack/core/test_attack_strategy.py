@@ -14,13 +14,13 @@ from pyrit.executor.attack.core.attack_strategy import (
     _DefaultAttackStrategyEventHandler,
 )
 from pyrit.executor.core import StrategyEvent, StrategyEventData
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
     Message,
 )
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models.retry_event import RetryEvent
 from pyrit.prompt_target import PromptTarget
 

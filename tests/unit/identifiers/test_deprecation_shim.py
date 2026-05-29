@@ -84,7 +84,7 @@ def test_top_level_shim_emits_one_warning_per_name(name):
 
 def test_top_level_shim_attribute_error_for_unknown_name():
     with pytest.raises(AttributeError, match="has no attribute 'definitely_not_a_real_name'"):
-        getattr(shim, "definitely_not_a_real_name")
+        _ = shim.definitely_not_a_real_name
 
 
 def test_top_level_shim_dir_returns_all_public_names():
@@ -123,7 +123,7 @@ def test_submodule_shim_warns_once_per_name(shim_mod, _new_mod, label):
 @pytest.mark.parametrize("shim_mod, _new_mod, label", SUBMODULE_PAIRS)
 def test_submodule_shim_attribute_error_for_unknown_name(shim_mod, _new_mod, label):
     with pytest.raises(AttributeError, match=f"'pyrit.identifiers.{label}'"):
-        getattr(shim_mod, "definitely_not_a_real_name")
+        _ = shim_mod.definitely_not_a_real_name
 
 
 def test_submodule_shim_from_import_style_returns_new_class():

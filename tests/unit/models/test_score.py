@@ -4,8 +4,8 @@
 import uuid
 from datetime import datetime, timezone
 
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import Score
+from pyrit.models.identifiers import ComponentIdentifier
 
 
 async def test_score_to_dict():

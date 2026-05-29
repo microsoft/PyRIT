@@ -5,8 +5,8 @@ import itertools
 import logging
 from typing import Any
 
-from pyrit.models.identifiers import TARGET_EVAL_PARAM_FALLBACKS, TARGET_EVAL_PARAMS, ComponentIdentifier
 from pyrit.models import Message
+from pyrit.models.identifiers import TARGET_EVAL_PARAM_FALLBACKS, TARGET_EVAL_PARAMS, ComponentIdentifier
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS
 

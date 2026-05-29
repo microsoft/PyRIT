@@ -5,8 +5,8 @@ import pathlib
 import string
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, SeedPrompt
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 

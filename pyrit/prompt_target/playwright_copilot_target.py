@@ -9,13 +9,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     Message,
     MessagePiece,
     construct_response_from_request,
     data_serializer_factory,
 )
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models.literals import PromptDataType
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities

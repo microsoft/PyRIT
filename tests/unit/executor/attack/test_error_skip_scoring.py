@@ -21,8 +21,8 @@ from pyrit.executor.attack import (
 )
 from pyrit.executor.attack.core import AttackAdversarialConfig, AttackScoringConfig
 from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece, SeedGroup, SeedPrompt
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
 

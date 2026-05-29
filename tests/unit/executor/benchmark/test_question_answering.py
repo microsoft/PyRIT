@@ -9,7 +9,6 @@ from pyrit.executor.benchmark.question_answering import (
     QuestionAnsweringBenchmark,
     QuestionAnsweringBenchmarkContext,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -18,6 +17,7 @@ from pyrit.models import (
     QuestionAnsweringEntry,
     QuestionChoice,
 )
+from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 
 # Fixtures at the top of the file
