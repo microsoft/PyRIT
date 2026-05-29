@@ -83,8 +83,8 @@ class AttackTechniqueFactory(Identifiable):
         Initialize the factory with a technique-specific configuration.
 
         Args:
-            name: Registry name for this technique. Must match the strategy
-                enum value used by scenarios.
+            name: Registry name for this technique. This is used as the
+                scenario strategy name.
             attack_class: The AttackStrategy subclass to instantiate.
             strategy_tags: Tags controlling which ``ScenarioStrategy``
                 aggregates include this technique (e.g. ``"single_turn"``,
