@@ -12,7 +12,7 @@ from pyrit.executor.promptgen.fuzzer.fuzzer_converter_base import (
 )
 from pyrit.models import Message, MessagePiece, PromptDataType, SeedPrompt
 from pyrit.prompt_converter.prompt_converter import ConverterResult
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 
 
 class FuzzerExpandConverter(FuzzerConverter):
@@ -24,9 +24,9 @@ class FuzzerExpandConverter(FuzzerConverter):
     def __init__(
         self,
         *,
-        converter_target: Optional[PromptChatTarget] = None,
+        converter_target: Optional[PromptTarget] = None,
         prompt_template: Optional[SeedPrompt] = None,
-    ):
+    ) -> None:
         """Initialize the expand converter with optional chat target and prompt template."""
         prompt_template = (
             prompt_template

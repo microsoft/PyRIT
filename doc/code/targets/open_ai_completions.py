@@ -6,18 +6,16 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.19.0
 # ---
-
 # %% [markdown]
 # # OpenAI Completions - optional
 #
-# Before you begin, ensure you are setup with the correct version of PyRIT and have the applicable secrets configured as described [here](../../setup/populating_secrets.md).
 #
 # Once you are configured, then you will be able to get completions for your text.
-
 # %%
-from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
+from pyrit.executor.attack import PromptSendingAttack
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAICompletionTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -28,4 +26,4 @@ target = OpenAICompletionTarget(max_tokens=2048)
 
 attack = PromptSendingAttack(objective_target=target)
 result = await attack.execute_async(objective="Hello! Who are you?")  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await output_attack_async(result)

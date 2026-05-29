@@ -9,7 +9,7 @@ import uuid
 import jsonschema
 import pytest
 
-# from pyrit.auth import get_azure_openai_auth
+from pyrit.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models import MessagePiece
 from pyrit.prompt_target import OpenAIResponseTarget
 
@@ -21,11 +21,9 @@ def gpt5_args():
         "endpoint": endpoint_value,
         "model_name": os.getenv("AZURE_OPENAI_GPT5_MODEL"),
         "api_key": os.getenv("AZURE_OPENAI_GPT5_KEY"),
-        # "api_key": get_azure_openai_auth(endpoint_value),
     }
 
 
-@pytest.mark.asyncio
 async def test_openai_responses_gpt5(sqlite_instance, gpt5_args):
     target = OpenAIResponseTarget(**gpt5_args)
 
@@ -36,7 +34,7 @@ async def test_openai_responses_gpt5(sqlite_instance, gpt5_args):
         original_value="You are a helpful assistant.",
         original_value_data_type="text",
         conversation_id=conv_id,
-        attack_identifier={"id": str(uuid.uuid4())},
+        attack_identifier=ComponentIdentifier.from_dict({"id": str(uuid.uuid4())}),
     )
     sqlite_instance.add_message_to_memory(request=developer_piece.to_message())
 
@@ -51,13 +49,12 @@ async def test_openai_responses_gpt5(sqlite_instance, gpt5_args):
     assert result is not None
     assert len(result) == 1
     assert len(result[0].message_pieces) == 2
-    assert result[0].message_pieces[0].role == "assistant"
-    assert result[0].message_pieces[1].role == "assistant"
+    assert result[0].message_pieces[0].api_role == "assistant"
+    assert result[0].message_pieces[1].api_role == "assistant"
     # Hope that the model manages to give the correct answer somewhere (GPT-5 really should)
     assert "Paris" in result[0].message_pieces[1].converted_value
 
 
-@pytest.mark.asyncio
 async def test_openai_responses_gpt5_json_schema(sqlite_instance, gpt5_args):
     target = OpenAIResponseTarget(**gpt5_args)
 
@@ -68,7 +65,7 @@ async def test_openai_responses_gpt5_json_schema(sqlite_instance, gpt5_args):
         original_value="You are an expert in the lore of cats.",
         original_value_data_type="text",
         conversation_id=conv_id,
-        attack_identifier={"id": str(uuid.uuid4())},
+        attack_identifier=ComponentIdentifier.from_dict({"id": str(uuid.uuid4())}),
     )
     sqlite_instance.add_message_to_memory(request=developer_piece.to_message())
 
@@ -104,12 +101,11 @@ async def test_openai_responses_gpt5_json_schema(sqlite_instance, gpt5_args):
     assert len(response) == 1
     assert len(response[0].message_pieces) == 2
     response_piece = response[0].message_pieces[1]
-    assert response_piece.role == "assistant"
+    assert response_piece.api_role == "assistant"
     response_json = json.loads(response_piece.converted_value)
     jsonschema.validate(instance=response_json, schema=cat_schema)
 
 
-@pytest.mark.asyncio
 async def test_openai_responses_gpt5_json_object(sqlite_instance, gpt5_args):
     target = OpenAIResponseTarget(**gpt5_args)
 
@@ -120,7 +116,7 @@ async def test_openai_responses_gpt5_json_object(sqlite_instance, gpt5_args):
         original_value="You are an expert in the lore of cats.",
         original_value_data_type="text",
         conversation_id=conv_id,
-        attack_identifier={"id": str(uuid.uuid4())},
+        attack_identifier=ComponentIdentifier.from_dict({"id": str(uuid.uuid4())}),
     )
 
     sqlite_instance.add_message_to_memory(request=developer_piece.to_message())
@@ -140,6 +136,42 @@ async def test_openai_responses_gpt5_json_object(sqlite_instance, gpt5_args):
     assert len(response) == 1
     assert len(response[0].message_pieces) == 2
     response_piece = response[0].message_pieces[1]
-    assert response_piece.role == "assistant"
+    assert response_piece.api_role == "assistant"
     _ = json.loads(response_piece.converted_value)
     # Can't assert more, since the failure could be due to a bad generation by the model
+
+
+async def test_openai_responses_gpt5_reasoning_effort(sqlite_instance, gpt5_args):
+    target = OpenAIResponseTarget(**gpt5_args, reasoning_effort="low")
+
+    conv_id = str(uuid.uuid4())
+
+    user_piece = MessagePiece(
+        role="user",
+        original_value="What is 2 + 2?",
+        original_value_data_type="text",
+        conversation_id=conv_id,
+    )
+
+    result = await target.send_prompt_async(message=user_piece.to_message())
+    assert result is not None
+    assert len(result) == 1
+    assert any(p.converted_value_data_type == "text" for p in result[0].message_pieces)
+
+
+async def test_openai_responses_gpt5_reasoning_summary(sqlite_instance, gpt5_args):
+    target = OpenAIResponseTarget(**gpt5_args, reasoning_effort="low", reasoning_summary="auto")
+
+    conv_id = str(uuid.uuid4())
+
+    user_piece = MessagePiece(
+        role="user",
+        original_value="What is 2 + 2?",
+        original_value_data_type="text",
+        conversation_id=conv_id,
+    )
+
+    result = await target.send_prompt_async(message=user_piece.to_message())
+    assert result is not None
+    assert len(result) == 1
+    assert any(p.converted_value_data_type == "text" for p in result[0].message_pieces)

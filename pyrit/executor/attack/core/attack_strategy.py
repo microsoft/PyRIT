@@ -4,14 +4,18 @@
 from __future__ import annotations
 
 import dataclasses
-import logging
+import logging  # noqa: TC003
 import time
+import traceback
+import uuid
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import Dict, Generic, List, Optional, Type, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Optional, TypeVar, Union, overload
 
 from pyrit.common.logger import logger
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+from pyrit.exceptions.retry_collector import (
+    get_retry_collector,
+)
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
 from pyrit.executor.core import (
     Strategy,
@@ -20,6 +24,7 @@ from pyrit.executor.core import (
     StrategyEventData,
     StrategyEventHandler,
 )
+from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -27,9 +32,14 @@ from pyrit.models import (
     ConversationReference,
     Message,
 )
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
-AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext")
+if TYPE_CHECKING:
+    from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+    from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
+    from pyrit.prompt_target import PromptTarget
+
+AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
 AttackStrategyResultT = TypeVar("AttackStrategyResultT", bound="AttackResult")
 
 
@@ -58,8 +68,15 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
 
     # Mutable overrides for attacks that generate these values internally
     _next_message_override: Optional[Message] = None
-    _prepended_conversation_override: Optional[List[Message]] = None
-    _memory_labels_override: Optional[Dict[str, str]] = None
+    _prepended_conversation_override: Optional[list[Message]] = None
+    _memory_labels_override: Optional[dict[str, str]] = None
+
+    # Optional attribution from an upstream orchestrator (e.g. Scenario). When
+    # set, the persistence path stamps attribution_parent_id + attribution_data
+    # onto the resulting AttackResult so it can be located later for hydration
+    # and resume. Set by AttackExecutor per-task before scheduling. Stays None
+    # for ad-hoc/direct attack execution outside any orchestrator.
+    _attribution: Optional[AttackResultAttribution] = None
 
     # Convenience properties that delegate to params or overrides
     @property
@@ -68,7 +85,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         return self.params.objective
 
     @property
-    def memory_labels(self) -> Dict[str, str]:
+    def memory_labels(self) -> dict[str, str]:
         """Additional labels that can be applied to the prompts throughout the attack."""
         # Check override first (for attacks that merge labels)
         if self._memory_labels_override is not None:
@@ -76,12 +93,12 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         return self.params.memory_labels or {}
 
     @memory_labels.setter
-    def memory_labels(self, value: Dict[str, str]) -> None:
+    def memory_labels(self, value: dict[str, str]) -> None:
         """Set the memory labels (for attacks that merge strategy + context labels)."""
         self._memory_labels_override = value
 
     @property
-    def prepended_conversation(self) -> List[Message]:
+    def prepended_conversation(self) -> list[Message]:
         """Conversation that is automatically prepended to the target model."""
         # Check override first (for attacks that generate internally)
         if self._prepended_conversation_override is not None:
@@ -92,7 +109,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         return []
 
     @prepended_conversation.setter
-    def prepended_conversation(self, value: List[Message]) -> None:
+    def prepended_conversation(self, value: list[Message]) -> None:
         """Set the prepended conversation (for attacks that generate internally)."""
         self._prepended_conversation_override = value
 
@@ -119,7 +136,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
     Handles events during the execution of an attack strategy.
     """
 
-    def __init__(self, logger: logging.Logger = logger):
+    def __init__(self, logger: logging.Logger = logger) -> None:
         """
         Initialize the default event handler with a logger.
 
@@ -130,6 +147,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         self._events = {
             StrategyEvent.ON_PRE_EXECUTE: self._on_pre_execute,
             StrategyEvent.ON_POST_EXECUTE: self._on_post_execute,
+            StrategyEvent.ON_ERROR: self._on_error_async,
         }
         self._memory = CentralMemory.get_memory_instance()
 
@@ -163,6 +181,9 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         """
         Handle pre-execution logic before the attack strategy runs.
 
+        Sets up execution timing and starts a RetryCollector to capture
+        retry events during execution.
+
         Args:
             event_data (StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]): The event data containing
                 context and result.
@@ -185,6 +206,8 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         """
         Handle post-execution logic after the attack strategy has run.
 
+        Attaches retry events to the result and persists it to memory.
+
         Args:
             event_data (StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]): The event data containing
                 context and result.
@@ -199,10 +222,51 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         execution_time_ms = int((end_time - event_data.context.start_time) * 1000)
         event_data.result.execution_time_ms = execution_time_ms
 
+        # Attach collected retry events to the result
+        collector = get_retry_collector()
+        if collector and collector.events:
+            event_data.result.retry_events = collector.events
+            event_data.result.total_retries = len(collector.events)
+
+        # Stamp attribution onto the result before persistence so the
+        # AttackResultEntry row records its lineage. Outside an orchestrator
+        # _attribution is None and both attribution fields stay None.
+        self._apply_attribution(context=event_data.context, result=event_data.result)
+
         self._logger.debug(f"Attack execution completed in {execution_time_ms}ms")
 
         self._log_attack_outcome(event_data.result)
         self._memory.add_attack_results_to_memory(attack_results=[event_data.result])
+
+    @staticmethod
+    def _apply_attribution(
+        *,
+        context: AttackStrategyContextT,
+        result: AttackResult,
+    ) -> None:
+        """
+        Copy attribution from the AttackContext onto the AttackResult.
+
+        Reads ``context._attribution`` (an ``AttackResultAttribution`` set by
+        the AttackExecutor when an upstream orchestrator supplied a factory).
+        When present, writes ``attribution_parent_id`` and a fixed-schema
+        ``attribution_data`` dict onto the result so they round-trip into
+        ``AttackResultEntry``.
+
+        Args:
+            context: The per-task AttackContext.
+            result: The AttackResult that is about to be persisted.
+        """
+        attribution = context._attribution
+        if attribution is None:
+            return
+        result.attribution_parent_id = attribution.parent_id
+        attribution_data: dict[str, Any] = {
+            "parent_collection": attribution.parent_collection,
+        }
+        if attribution.parent_eval_hash is not None:
+            attribution_data["parent_eval_hash"] = attribution.parent_eval_hash
+        result.attribution_data = attribution_data
 
     def _log_attack_outcome(self, result: AttackResult) -> None:
         """
@@ -218,26 +282,83 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             message = f"{attack_name} achieved the objective. {reason}"
         elif result.outcome == AttackOutcome.UNDETERMINED:
             message = f"{attack_name} outcome is undetermined. {reason}"
+        elif result.outcome == AttackOutcome.ERROR:
+            message = f"{attack_name} failed with an error. {reason}"
         else:
             message = f"{attack_name} did not achieve the objective. {reason}"
 
         self._logger.info(message)
 
+    async def _on_error_async(
+        self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]
+    ) -> None:
+        """
+        Handle error during attack execution.
 
-class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], ABC):
+        Creates an error AttackResult with error details and any retry events
+        collected during execution, then persists it to memory.
+
+        Args:
+            event_data (StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]): The event data containing
+                context, result, and error.
+        """
+        error = event_data.error
+        context = event_data.context
+        if not error or not context:
+            return
+
+        # Collect retry events (visible via inherited ContextVar copy)
+        collector = get_retry_collector()
+        retry_events = collector.events if collector else []
+
+        # Build a conversation_id — use context's if available, otherwise generate one
+        conversation_id = getattr(context, "conversation_id", None) or str(uuid.uuid4())
+
+        error_result = AttackResult(
+            conversation_id=conversation_id,
+            objective=context.objective,
+            outcome=AttackOutcome.ERROR,
+            outcome_reason=f"Exception: {type(error).__name__}: {str(error)}",
+            labels=context.memory_labels,
+            related_conversations=context.related_conversations,
+            error_message=str(error),
+            error_type=type(error).__name__,
+            error_traceback="".join(traceback.format_exception(type(error), error, error.__traceback__)),
+            retry_events=retry_events,
+            total_retries=len(retry_events),
+        )
+
+        end_time = time.perf_counter()
+        if context.start_time:
+            error_result.execution_time_ms = int((end_time - context.start_time) * 1000)
+
+        # Stamp attribution onto the error result so it is locatable via the
+        # attribution_parent_id foreign key on resume.
+        self._apply_attribution(context=context, result=error_result)
+
+        self._memory.add_attack_results_to_memory(attack_results=[error_result])
+
+        self._logger.error(f"Attack failed with {type(error).__name__}: {error}")
+
+
+class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Identifiable, ABC):
     """
     Abstract base class for attack strategies.
     Defines the interface for executing attacks and handling results.
     """
+
+    #: Capability requirements placed on ``objective_target``. Subclasses
+    #: override to declare what the attack needs. Validated in ``__init__``.
+    TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
     def __init__(
         self,
         *,
         objective_target: PromptTarget,
         context_type: type[AttackStrategyContextT],
-        params_type: Type[AttackParamsT] = AttackParameters,  # type: ignore[assignment]
+        params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
         logger: logging.Logger = logger,
-    ):
+    ) -> None:
         """
         Initialize the attack strategy with a specific context type and logger.
 
@@ -256,11 +377,77 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], AB
             ),
             logger=logger,
         )
+        type(self).TARGET_REQUIREMENTS.validate(target=objective_target)
         self._objective_target = objective_target
         self._params_type = params_type
+        # Guard so subclasses that set converters before calling super() aren't clobbered
+        if not hasattr(self, "_request_converters"):
+            self._request_converters: list[Any] = []
+        if not hasattr(self, "_response_converters"):
+            self._response_converters: list[Any] = []
+
+    def _create_identifier(
+        self,
+        *,
+        params: Optional[dict[str, Any]] = None,
+        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+    ) -> ComponentIdentifier:
+        """
+        Construct the attack strategy identifier.
+
+        Builds a ComponentIdentifier with the objective target, optional scorer,
+        and converter pipeline as children. Subclasses can extend by passing
+        additional params or children.
+
+        Args:
+            params (Optional[Dict[str, Any]]): Additional behavioral parameters from
+                the subclass.
+            children (Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]]):
+                Named child component identifiers.
+
+        Returns:
+            ComponentIdentifier: The identifier for this attack strategy.
+        """
+        all_children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = {
+            "objective_target": self.get_objective_target().get_identifier(),
+        }
+
+        # Add scorer if present
+        scoring_config = self.get_attack_scoring_config()
+        if scoring_config and scoring_config.objective_scorer:
+            all_children["objective_scorer"] = scoring_config.objective_scorer.get_identifier()
+
+        # Add request converter identifiers if present
+        if self._request_converters:
+            all_children["request_converters"] = [
+                converter.get_identifier() for config in self._request_converters for converter in config.converters
+            ]
+
+        # Add response converter identifiers if present
+        if self._response_converters:
+            all_children["response_converters"] = [
+                converter.get_identifier() for config in self._response_converters for converter in config.converters
+            ]
+
+        if children:
+            all_children.update(children)
+
+        return ComponentIdentifier.of(self, params=params, children=all_children)
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier for this attack strategy.
+
+        Subclasses can override this method to call _create_identifier() with
+        their specific params and children.
+
+        Returns:
+            ComponentIdentifier: The identifier for this attack strategy.
+        """
+        return self._create_identifier()
 
     @property
-    def params_type(self) -> Type[AttackParameters]:
+    def params_type(self) -> type[AttackParameters]:
         """
         Get the parameters type for this attack strategy.
 
@@ -291,26 +478,35 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], AB
         """
         return None
 
+    def get_request_converters(self) -> list[Any]:
+        """
+        Get request converter configurations used by this strategy.
+
+        Returns:
+            list[Any]: The list of request PromptConverterConfiguration objects.
+        """
+        return self._request_converters
+
     @overload
     async def execute_async(
         self,
         *,
         objective: str,
         next_message: Optional[Message] = None,
-        prepended_conversation: Optional[List[Message]] = None,
+        prepended_conversation: Optional[list[Message]] = None,
         memory_labels: Optional[dict[str, str]] = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> AttackStrategyResultT: ...
 
     @overload
     async def execute_async(
         self,
-        **kwargs,
+        **kwargs: Any,
     ) -> AttackStrategyResultT: ...
 
     async def execute_async(
         self,
-        **kwargs,
+        **kwargs: Any,
     ) -> AttackStrategyResultT:
         """
         Execute the attack strategy asynchronously with the provided parameters.
@@ -370,6 +566,6 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], AB
         # Create context with params and context-specific kwargs
         # Note: We use cast here because the type checker doesn't know that _context_type
         # (which is AttackContext or a subclass) always accepts 'params' as a keyword argument.
-        context = cast(AttackStrategyContextT, self._context_type(params=params, **context_kwargs))  # type: ignore[call-arg]
+        context = self._context_type(params=params, **context_kwargs)
 
         return await self.execute_with_context_async(context=context)

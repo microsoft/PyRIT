@@ -22,6 +22,10 @@ concurrency:
   group: "pages"
   cancel-in-progress: false
 
+env:
+  # BASE_URL determines the website path prefix, including CSS & JS assets
+  BASE_URL: /${{ github.event.repository.name }}
+
 # This job installs dependencies, builds the book, and pushes it to `gh-pages`
 jobs:
   deploy-book:
@@ -49,12 +53,26 @@ jobs:
           **/uv.lock
 
     - name: Install PyRIT with uv
-      run: uv sync --extra dev --extra all
+      run: uv sync --extra all
 
-    # Build the book
+    # LaTeX toolchain needed for the PDF export (jupyter-book --pdf via xelatex).
+    # Mirrors the ReadTheDocs build so CI catches PDF-only issues (e.g. broken
+    # image paths) instead of letting them silently break the RTD build.
+    - name: Install LaTeX (for PDF export)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          texlive-xetex \
+          texlive-fonts-recommended \
+          texlive-fonts-extra \
+          texlive-plain-generic \
+          texlive-latex-extra \
+          latexmk
+
+    # Build the book (HTML site + PDF export)
     - name: Build the book
       run: |
-        make docs-build
+        make docs-build-all
     # Upload the book's HTML as an artifact
     - name: Upload artifact
       uses: actions/upload-pages-artifact@v3

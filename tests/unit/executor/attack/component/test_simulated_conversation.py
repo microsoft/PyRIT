@@ -11,6 +11,7 @@ from pyrit.executor.attack import AttackConverterConfig, RTASystemPromptPaths
 from pyrit.executor.attack.multi_turn.simulated_conversation import (
     generate_simulated_conversation_async,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -21,17 +22,33 @@ from pyrit.models import (
     SeedPrompt,
     SimulatedTargetSystemPromptPaths,
 )
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import TrueFalseScorer
+
+
+def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
+
+
+def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
 
 
 @pytest.fixture
 def mock_adversarial_chat() -> MagicMock:
     """Create a mock adversarial chat target for testing."""
-    chat = MagicMock(spec=PromptChatTarget)
+    chat = MagicMock(spec=PromptTarget)
     chat.send_prompt_async = AsyncMock()
     chat.set_system_prompt = MagicMock()
-    chat.get_identifier.return_value = {"__type__": "MockAdversarialChat", "__module__": "test_module"}
+    chat.get_identifier.return_value = _mock_target_id("MockAdversarialChat")
     return chat
 
 
@@ -40,7 +57,7 @@ def mock_objective_scorer() -> MagicMock:
     """Create a mock objective scorer for testing."""
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_async = AsyncMock()
-    scorer.get_identifier.return_value = {"__type__": "MockScorer", "__module__": "test_module"}
+    scorer.get_identifier.return_value = _mock_scorer_id("MockScorer")
     return scorer
 
 
@@ -97,7 +114,6 @@ class TestSimulatedTargetSystemPromptPaths:
 class TestGenerateSimulatedConversationAsync:
     """Tests for generate_simulated_conversation_async function."""
 
-    @pytest.mark.asyncio
     async def test_raises_error_for_zero_turns(
         self,
         mock_adversarial_chat: MagicMock,
@@ -114,7 +130,6 @@ class TestGenerateSimulatedConversationAsync:
                 num_turns=0,
             )
 
-    @pytest.mark.asyncio
     async def test_raises_error_for_negative_turns(
         self,
         mock_adversarial_chat: MagicMock,
@@ -131,7 +146,6 @@ class TestGenerateSimulatedConversationAsync:
                 num_turns=-1,
             )
 
-    @pytest.mark.asyncio
     async def test_uses_adversarial_chat_as_simulated_target(
         self,
         mock_adversarial_chat: MagicMock,
@@ -143,10 +157,14 @@ class TestGenerateSimulatedConversationAsync:
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             # Configure the mock attack
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=str(uuid.uuid4()),
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -173,7 +191,6 @@ class TestGenerateSimulatedConversationAsync:
                 call_kwargs = mock_attack_class.call_args.kwargs
                 assert call_kwargs["objective_target"] == mock_adversarial_chat
 
-    @pytest.mark.asyncio
     async def test_creates_attack_with_score_last_turn_only_true(
         self,
         mock_adversarial_chat: MagicMock,
@@ -184,10 +201,14 @@ class TestGenerateSimulatedConversationAsync:
         """Test that the attack is created with score_last_turn_only=True."""
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=str(uuid.uuid4()),
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -213,7 +234,6 @@ class TestGenerateSimulatedConversationAsync:
                 call_kwargs = mock_attack_class.call_args.kwargs
                 assert call_kwargs["score_last_turn_only"] is True
 
-    @pytest.mark.asyncio
     async def test_creates_attack_with_correct_max_turns(
         self,
         mock_adversarial_chat: MagicMock,
@@ -224,10 +244,14 @@ class TestGenerateSimulatedConversationAsync:
         """Test that the attack is created with the specified num_turns as max_turns."""
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=str(uuid.uuid4()),
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -253,7 +277,6 @@ class TestGenerateSimulatedConversationAsync:
                 call_kwargs = mock_attack_class.call_args.kwargs
                 assert call_kwargs["max_turns"] == 5
 
-    @pytest.mark.asyncio
     async def test_returns_simulated_conversation_result(
         self,
         mock_adversarial_chat: MagicMock,
@@ -267,10 +290,14 @@ class TestGenerateSimulatedConversationAsync:
 
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=conversation_id,
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -302,7 +329,6 @@ class TestGenerateSimulatedConversationAsync:
                 for seed_prompt in result:
                     assert isinstance(seed_prompt, SeedPrompt)
 
-    @pytest.mark.asyncio
     async def test_passes_system_prompt_via_prepended_conversation(
         self,
         mock_adversarial_chat: MagicMock,
@@ -313,10 +339,14 @@ class TestGenerateSimulatedConversationAsync:
         """Test that the simulated target system prompt is passed via prepended_conversation."""
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=str(uuid.uuid4()),
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -346,9 +376,8 @@ class TestGenerateSimulatedConversationAsync:
                 assert "prepended_conversation" in call_kwargs
                 prepended = call_kwargs["prepended_conversation"]
                 assert len(prepended) == 1
-                assert prepended[0].role == "system"
+                assert prepended[0].api_role == "system"
 
-    @pytest.mark.asyncio
     async def test_passes_memory_labels_to_execute(
         self,
         mock_adversarial_chat: MagicMock,
@@ -361,10 +390,14 @@ class TestGenerateSimulatedConversationAsync:
 
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=str(uuid.uuid4()),
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -391,7 +424,6 @@ class TestGenerateSimulatedConversationAsync:
                 execute_kwargs = mock_attack.execute_async.call_args.kwargs
                 assert execute_kwargs["memory_labels"] == memory_labels
 
-    @pytest.mark.asyncio
     async def test_passes_converter_config_to_attack(
         self,
         mock_adversarial_chat: MagicMock,
@@ -404,10 +436,14 @@ class TestGenerateSimulatedConversationAsync:
 
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=str(uuid.uuid4()),
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -434,7 +470,6 @@ class TestGenerateSimulatedConversationAsync:
                 call_kwargs = mock_attack_class.call_args.kwargs
                 assert call_kwargs["attack_converter_config"] == converter_config
 
-    @pytest.mark.asyncio
     async def test_prepends_system_message_to_conversation(
         self,
         mock_adversarial_chat: MagicMock,
@@ -445,10 +480,14 @@ class TestGenerateSimulatedConversationAsync:
         """Test that a system message is prepended when executing the attack."""
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=str(uuid.uuid4()),
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -477,9 +516,8 @@ class TestGenerateSimulatedConversationAsync:
                 assert "prepended_conversation" in execute_kwargs
                 prepended = execute_kwargs["prepended_conversation"]
                 assert len(prepended) == 1
-                assert prepended[0].message_pieces[0].role == "system"
+                assert prepended[0].message_pieces[0].api_role == "system"
 
-    @pytest.mark.asyncio
     async def test_uses_default_num_turns_of_3(
         self,
         mock_adversarial_chat: MagicMock,
@@ -490,10 +528,14 @@ class TestGenerateSimulatedConversationAsync:
         """Test that default num_turns is 3."""
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=str(uuid.uuid4()),
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -519,7 +561,6 @@ class TestGenerateSimulatedConversationAsync:
                 call_kwargs = mock_attack_class.call_args.kwargs
                 assert call_kwargs["max_turns"] == 3
 
-    @pytest.mark.asyncio
     async def test_next_message_system_prompt_path_generates_final_user_message(
         self,
         mock_adversarial_chat: MagicMock,
@@ -545,10 +586,14 @@ class TestGenerateSimulatedConversationAsync:
 
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=conversation_id,
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -585,7 +630,6 @@ class TestGenerateSimulatedConversationAsync:
                 assert result[-1].value == "Generated next user message"
                 assert result[-1].role == "user"
 
-    @pytest.mark.asyncio
     async def test_next_message_system_prompt_path_sets_system_prompt(
         self,
         mock_adversarial_chat: MagicMock,
@@ -611,10 +655,14 @@ class TestGenerateSimulatedConversationAsync:
 
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=conversation_id,
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
@@ -642,7 +690,6 @@ class TestGenerateSimulatedConversationAsync:
                 # Verify set_system_prompt was called on adversarial_chat
                 mock_adversarial_chat.set_system_prompt.assert_called()
 
-    @pytest.mark.asyncio
     async def test_starting_sequence_sets_first_sequence_number(
         self,
         mock_adversarial_chat: MagicMock,
@@ -655,10 +702,14 @@ class TestGenerateSimulatedConversationAsync:
 
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
-            mock_attack.get_identifier.return_value = {"__type__": "RedTeamingAttack", "__module__": "pyrit"}
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier={"__type__": "RedTeamingAttack"},
+                    attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
                     conversation_id=conversation_id,
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,

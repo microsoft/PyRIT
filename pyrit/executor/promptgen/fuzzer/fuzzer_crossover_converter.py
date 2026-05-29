@@ -4,7 +4,7 @@
 import pathlib
 import random
 import uuid
-from typing import List, Optional
+from typing import Any, Optional
 
 from pyrit.common.apply_defaults import apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
@@ -13,7 +13,7 @@ from pyrit.executor.promptgen.fuzzer.fuzzer_converter_base import (
 )
 from pyrit.models import Message, MessagePiece, PromptDataType, SeedPrompt
 from pyrit.prompt_converter.prompt_converter import ConverterResult
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 
 
 class FuzzerCrossOverConverter(FuzzerConverter):
@@ -25,15 +25,15 @@ class FuzzerCrossOverConverter(FuzzerConverter):
     def __init__(
         self,
         *,
-        converter_target: Optional[PromptChatTarget] = None,
+        converter_target: Optional[PromptTarget] = None,
         prompt_template: Optional[SeedPrompt] = None,
-        prompt_templates: Optional[List[str]] = None,
-    ):
+        prompt_templates: Optional[list[str]] = None,
+    ) -> None:
         """
         Initialize the converter with the specified chat target and prompt templates.
 
         Args:
-            converter_target (PromptChatTarget): Chat target used to perform fuzzing on user prompt.
+            converter_target (PromptTarget): Chat target used to perform fuzzing on user prompt.
                 Can be omitted if a default has been configured via PyRIT initialization.
             prompt_template (SeedPrompt, Optional): Template to be used instead of the default system prompt with
                 instructions for the chat target.
@@ -50,7 +50,7 @@ class FuzzerCrossOverConverter(FuzzerConverter):
         self.prompt_templates = prompt_templates or []
         self.template_label = "TEMPLATE 1"
 
-    def update(self, **kwargs) -> None:
+    def update(self, **kwargs: Any) -> None:
         """Update the converter with new prompt templates."""
         if "prompt_templates" in kwargs:
             self.prompt_templates = kwargs["prompt_templates"]

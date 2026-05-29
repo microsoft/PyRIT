@@ -1,27 +1,67 @@
+# NOTE: You must build the devcontainer base image first:
+#   docker build -f .devcontainer/Dockerfile -t pyrit-devcontainer .devcontainer
+# Or use: python docker/build_pyrit_docker.py --source local
+#
+# Environment files: ~/.pyrit/.env and ~/.pyrit/.env.local are mounted to the container.
+
 services:
-  pyrit:
+  pyrit-jupyter:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        BASE_IMAGE: pyrit-devcontainer
+        PYRIT_SOURCE: local
     image: pyrit:latest
     container_name: pyrit-jupyter
     ports:
-      - "8888:8888"
+      - "127.0.0.1:8888:8888"
     volumes:
       - notebooks:/app/notebooks
       - data:/app/data
       - ../assets:/app/assets
-    env_file:
-      - ~/.pyrit/.env
-      - ~/.pyrit/.env.local
-      - .env.container.settings
+      - ~/.pyrit/.env:/home/vscode/.pyrit/.env:ro
+      - ~/.pyrit/.env.local:/home/vscode/.pyrit/.env.local:ro
+    environment:
+      - PYRIT_MODE=jupyter
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8888 || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8888/api/status || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+    profiles:
+      - jupyter
+
+  pyrit-gui:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        BASE_IMAGE: pyrit-devcontainer
+        PYRIT_SOURCE: local
+    image: pyrit:latest
+    container_name: pyrit-gui
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../assets:/app/assets
+      - ~/.pyrit/.env:/home/vscode/.pyrit/.env:ro
+      - ~/.pyrit/.env.local:/home/vscode/.pyrit/.env.local:ro
+      - ~/.pyrit/.pyrit_conf:/home/vscode/.pyrit/.pyrit_conf:ro
+      - ~/.azure:/home/vscode/.azure
+    environment:
+      - PYRIT_MODE=gui
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    profiles:
+      - gui
 
 volumes:
   notebooks:

@@ -14,7 +14,7 @@ build/
 **/*.py[cod]
 **/*$py.class
 **/.pytest_cache/
-**/.mypy_cache/
+**/.ty_cache/
 
 # Environment files with secrets
 .env

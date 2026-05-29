@@ -5,7 +5,8 @@ import json
 import logging
 import os
 from abc import ABC
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any, Optional
 
 from openai import RateLimitError
 from tenacity import (
@@ -26,22 +27,46 @@ logger = logging.getLogger(__name__)
 
 
 def _get_custom_result_retry_max_num_attempts() -> int:
-    """Get the maximum number of retry attempts for custom result retry decorator."""
+    """
+    Get the maximum number of retry attempts for custom result retry decorator.
+
+    Returns:
+        int: Maximum retry attempts.
+
+    """
     return int(os.getenv("CUSTOM_RESULT_RETRY_MAX_NUM_ATTEMPTS", 10))
 
 
-def _get_retry_max_num_attempts() -> int:
-    """Get the maximum number of retry attempts."""
+def get_retry_max_num_attempts() -> int:
+    """
+    Get the maximum number of retry attempts.
+
+    Returns:
+        int: Maximum retry attempts.
+
+    """
     return int(os.getenv("RETRY_MAX_NUM_ATTEMPTS", 10))
 
 
 def _get_retry_wait_min_seconds() -> int:
-    """Get the minimum wait time in seconds between retries."""
+    """
+    Get the minimum wait time in seconds between retries.
+
+    Returns:
+        int: Minimum wait duration in seconds.
+
+    """
     return int(os.getenv("RETRY_WAIT_MIN_SECONDS", 5))
 
 
 def _get_retry_wait_max_seconds() -> int:
-    """Get the maximum wait time in seconds between retries."""
+    """
+    Get the maximum wait time in seconds between retries.
+
+    Returns:
+        int: Maximum wait duration in seconds.
+
+    """
     return int(os.getenv("RETRY_WAIT_MAX_SECONDS", 220))
 
 
@@ -88,15 +113,29 @@ class _DynamicWaitRandomExponential(wait_base):
         return wait_strategy(retry_state)
 
 
-class PyritException(Exception, ABC):
+class PyritException(Exception, ABC):  # noqa: N818
+    """Base exception class for PyRIT components."""
+
     def __init__(self, *, status_code: int = 500, message: str = "An error occurred") -> None:
+        """
+        Initialize a PyritException.
+
+        Args:
+            status_code (int): HTTP-style status code associated with the error.
+            message (str): Human-readable error description.
+
+        """
         self.status_code = status_code
         self.message = message
         super().__init__(f"Status Code: {status_code}, Message: {message}")
 
     def process_exception(self) -> str:
         """
-        Logs and returns a string representation of the exception.
+        Log and return a JSON string representation of the exception.
+
+        Returns:
+            str: Serialized status code and message.
+
         """
         log_message = f"{self.__class__.__name__} encountered: Status Code: {self.status_code}, Message: {self.message}"
         logger.error(log_message)
@@ -108,6 +147,14 @@ class BadRequestException(PyritException):
     """Exception class for bad client requests."""
 
     def __init__(self, *, status_code: int = 400, message: str = "Bad Request") -> None:
+        """
+        Initialize a bad request exception.
+
+        Args:
+            status_code (int): Status code for the error.
+            message (str): Error message.
+
+        """
         super().__init__(status_code=status_code, message=message)
 
 
@@ -115,6 +162,14 @@ class RateLimitException(PyritException):
     """Exception class for authentication errors."""
 
     def __init__(self, *, status_code: int = 429, message: str = "Rate Limit Exception") -> None:
+        """
+        Initialize a rate limit exception.
+
+        Args:
+            status_code (int): Status code for the error.
+            message (str): Error message.
+
+        """
         super().__init__(status_code=status_code, message=message)
 
 
@@ -122,6 +177,15 @@ class ServerErrorException(PyritException):
     """Exception class for opaque 5xx errors returned by the server."""
 
     def __init__(self, *, status_code: int = 500, message: str = "Server Error", body: Optional[str] = None) -> None:
+        """
+        Initialize a server error exception.
+
+        Args:
+            status_code (int): Status code for the error.
+            message (str): Error message.
+            body (Optional[str]): Optional raw server response body.
+
+        """
         super().__init__(status_code=status_code, message=message)
         self.body = body
 
@@ -130,6 +194,14 @@ class EmptyResponseException(BadRequestException):
     """Exception class for empty response errors."""
 
     def __init__(self, *, status_code: int = 204, message: str = "No Content") -> None:
+        """
+        Initialize an empty response exception.
+
+        Args:
+            status_code (int): Status code for the error.
+            message (str): Error message.
+
+        """
         super().__init__(status_code=status_code, message=message)
 
 
@@ -137,6 +209,13 @@ class InvalidJsonException(PyritException):
     """Exception class for blocked content errors."""
 
     def __init__(self, *, message: str = "Invalid JSON Response") -> None:
+        """
+        Initialize an invalid JSON exception.
+
+        Args:
+            message (str): Error message.
+
+        """
         super().__init__(message=message)
 
 
@@ -144,14 +223,34 @@ class MissingPromptPlaceholderException(PyritException):
     """Exception class for missing prompt placeholder errors."""
 
     def __init__(self, *, message: str = "No prompt placeholder") -> None:
+        """
+        Initialize a missing placeholder exception.
+
+        Args:
+            message (str): Error message.
+
+        """
         super().__init__(message=message)
+
+
+class ExperimentalWarning(FutureWarning):
+    """
+    Warning category for experimental PyRIT modules whose APIs may change at any time.
+
+    Modules emitting this warning are not covered by PyRIT's normal deprecation policy.
+    To silence it, filter the category before importing the experimental module::
+
+        import warnings
+        from pyrit.exceptions import ExperimentalWarning
+        warnings.filterwarnings("ignore", category=ExperimentalWarning)
+    """
 
 
 def pyrit_custom_result_retry(
     retry_function: Callable[..., bool], retry_max_num_attempts: Optional[int] = None
 ) -> Callable[..., Any]:
     """
-    A decorator to apply retry logic with exponential backoff to a function.
+    Apply retry logic with exponential backoff to a function.
 
     Retries the function if the result of the retry_function is True,
     with a wait time between retries that follows an exponential backoff strategy.
@@ -162,10 +261,10 @@ def pyrit_custom_result_retry(
             on the result of the decorated function.
         retry_max_num_attempts (Optional, int): The maximum number of retry attempts. Defaults to
             environment variable CUSTOM_RESULT_RETRY_MAX_NUM_ATTEMPTS or 10.
-        func (Callable): The function to be decorated.
 
     Returns:
         Callable: The decorated function with retry logic applied.
+
     """
 
     def inner_retry(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -189,7 +288,7 @@ def pyrit_custom_result_retry(
 
 def pyrit_target_retry(func: Callable[..., Any]) -> Callable[..., Any]:
     """
-    A decorator to apply retry logic with exponential backoff to a function.
+    Apply retry logic with exponential backoff to a function.
 
     Retries the function if it raises RateLimitError or EmptyResponseException,
     with a wait time between retries that follows an exponential backoff strategy.
@@ -200,6 +299,7 @@ def pyrit_target_retry(func: Callable[..., Any]) -> Callable[..., Any]:
 
     Returns:
         Callable: The decorated function with retry logic applied.
+
     """
     return retry(
         reraise=True,
@@ -208,13 +308,13 @@ def pyrit_target_retry(func: Callable[..., Any]) -> Callable[..., Any]:
         | retry_if_exception_type(RateLimitException),
         wait=_DynamicWaitRandomExponential(_get_retry_wait_min_seconds, _get_retry_wait_max_seconds),
         after=log_exception,
-        stop=_DynamicStopAfterAttempt(_get_retry_max_num_attempts),
+        stop=_DynamicStopAfterAttempt(get_retry_max_num_attempts),
     )(func)
 
 
 def pyrit_json_retry(func: Callable[..., Any]) -> Callable[..., Any]:
     """
-    A decorator to apply retry logic to a function.
+    Apply retry logic to a function.
 
     Retries the function if it raises a JSON error.
     Logs retry attempts at the INFO level and stops after a maximum number of attempts.
@@ -224,18 +324,19 @@ def pyrit_json_retry(func: Callable[..., Any]) -> Callable[..., Any]:
 
     Returns:
         Callable: The decorated function with retry logic applied.
+
     """
     return retry(
         reraise=True,
         retry=retry_if_exception_type(InvalidJsonException),
         after=log_exception,
-        stop=_DynamicStopAfterAttempt(_get_retry_max_num_attempts),
+        stop=_DynamicStopAfterAttempt(get_retry_max_num_attempts),
     )(func)
 
 
 def pyrit_placeholder_retry(func: Callable[..., Any]) -> Callable[..., Any]:
     """
-    A decorator to apply retry logic.
+    Apply retry logic.
 
     Retries the function if it raises MissingPromptPlaceholderException.
     Logs retry attempts at the INFO level and stops after a maximum number of attempts.
@@ -245,12 +346,13 @@ def pyrit_placeholder_retry(func: Callable[..., Any]) -> Callable[..., Any]:
 
     Returns:
         Callable: The decorated function with retry logic applied.
+
     """
     return retry(
         reraise=True,
         retry=retry_if_exception_type(MissingPromptPlaceholderException),
         after=log_exception,
-        stop=_DynamicStopAfterAttempt(_get_retry_max_num_attempts),
+        stop=_DynamicStopAfterAttempt(get_retry_max_num_attempts),
     )(func)
 
 
@@ -260,6 +362,22 @@ def handle_bad_request_exception(
     is_content_filter: bool = False,
     error_code: int = 400,
 ) -> Message:
+    """
+    Handle bad request responses and map them to standardized error messages.
+
+    Args:
+        response_text (str): Raw response text from the target.
+        request (MessagePiece): Original request piece that caused the error.
+        is_content_filter (bool): Whether the response is known to be content-filtered.
+        error_code (int): Status code to include in the generated error payload.
+
+    Returns:
+        Message: A constructed error response message.
+
+    Raises:
+        RuntimeError: If the response does not match bad-request content-filter conditions.
+
+    """
     if (
         "content_filter" in response_text
         or "Invalid prompt: your prompt was flagged as potentially violating our usage policy." in response_text
@@ -272,6 +390,6 @@ def handle_bad_request_exception(
             request=request, response_text_pieces=[resp_text], response_type="error", error="blocked"
         )
     else:
-        raise
+        raise  # noqa: PLE0704
 
     return response_entry

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from pyrit.models import ChatMessage, ChatMessageListDictContent, ChatMessagesDataset
+from pyrit.models import ChatMessage, ChatMessagesDataset
 
 
 def test_chat_messages_dataset_values_properly_set() -> None:
@@ -63,7 +63,7 @@ def test_chat_message_creation():
 
 
 def test_chat_message_list_content_creation():
-    message_list_content = ChatMessageListDictContent(role="user", content=[{"key": "value"}])
+    message_list_content = ChatMessage(role="user", content=[{"key": "value"}])
     assert message_list_content.role == "user"
     assert message_list_content.content == [{"key": "value"}]
     assert message_list_content.name is None

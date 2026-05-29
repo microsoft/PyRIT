@@ -1,246 +1,162 @@
-# PyRIT
+---
+title: PyRIT — Python Risk Identification Tool
+site:
+  hide_title_block: true
+  hide_toc: true
+  hide_outline: true
+---
 
-Welcome to the Python Risk Identification Tool for generative AI (PyRIT)! PyRIT is designed to be a flexible and extensible tool that can be used to assess the security and safety issues of generative AI systems in a variety of ways.
++++ { "kind": "split-image" }
 
-Before starting with AI Red Teaming, we recommend reading the following article from Microsoft:
-["Planning red teaming for large language models (LLMs) and their applications"](https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/red-teaming).
+PyRIT
 
-Generative AI systems introduce many categories of risk, which can be difficult to mitigate even with a red teaming
-plan in place. To quote the article above, "with LLMs, both benign and adversarial usage can produce
-potentially harmful outputs, which can take many forms, including harmful content such as hate speech,
-incitement or glorification of violence, or sexual content." Additionally, a variety of security risks
-can be introduced by the deployment of an AI system.
+## Python Risk Identification Tool
 
-## Installation Guide
+Automated and human-led AI red teaming — a flexible, extensible framework for assessing the security and safety of generative AI systems at scale.
 
-PyRIT offers flexible installation options to suit different needs. Choose the path that best fits your use case:
+![](banner.png)
 
-```{important}
-**Version Compatibility:**
-- **User installations** (Docker, Pip/Conda) install the **latest stable release** from PyPI
-- **Contributor installations** (DevContainers, Local Development) use the **latest development code** from the `main` branch
-- Always match your notebooks to your PyRIT version - download from the corresponding release branch if using a stable release
++++ { "kind": "justified" }
+
+What PyRIT Offers
+
+## Key Capabilities
+
+:::::{grid} 1 2 3 3
+
+::::{card}
+🎯 **Automated Red Teaming**
+
+Run multi-turn attack strategies like Crescendo, TAP, and Skeleton Key against AI systems with minimal setup. Single-turn and multi-turn attacks supported out of the box.
+::::
+
+::::{card}
+📦 **Scenario Framework**
+
+Run standardized evaluation scenarios at large scale — covering content harms, psychosocial risks, data leakage, and more. Compose strategies and datasets for repeatable, comprehensive assessments across hundreds of objectives.
+::::
+
+::::{card}
+🖥️ **CoPyRIT**
+
+A graphical user interface for human-led red teaming. Interact with AI systems directly, track findings, and collaborate with your team — all from a modern web UI.
+::::
+
+::::{card}
+🔌 **Any Target**
+
+Test OpenAI, Azure, Anthropic, Google, HuggingFace, custom HTTP endpoints or WebSockets, web app targets with Playwright, or build your own with a simple interface.
+::::
+
+::::{card}
+💾 **Built-in Memory**
+
+Track all conversations, scores, and attack results with SQLite or Azure SQL. Export, analyze, and share results with your team.
+::::
+
+::::{card}
+📊 **Flexible Scoring**
+
+Evaluate AI responses with true/false, Likert scale, classification, and custom scorers — powered by LLMs, Azure AI Content Safety, or your own logic.
+::::
+
+:::::
+
+---
+
+## Getting Started
+1. Install PyRIT and verify installation.\
+For more details and alternative installation methods, see the [Install PyRIT](getting_started/install) page
+```bash
+# note: for local installation, python version 3.13 is recommended: https://www.python.org/downloads/latest/python3.13
+pip install pyrit
+python -c "import pyrit; print(f'PyRIT version installed: {pyrit.__version__}')"
 ```
 
-::::{grid} 1 1 2 2
-:gutter: 3
+2. Create and populate endpoint and startup configuration files in `~/.pyrit/.env` and `~/.pyrit/.pyrit_conf` with minimal content below.\
+For more details, see the [Configure PyRIT](getting_started/configuration) page.
 
-:::{grid-item-card} 🐋 Docker Installation
-:link: setup/1b_install_docker
-:shadow: md
-:class-header: bg-light
-:link-type: doc
+:::::{grid} 1 1 2 2
 
-**For Users - Quick Start** ⭐
-
-^^^
-
-Get started immediately with a pre-configured environment:
-
-- ✅ All dependencies included
-- ✅ No Python setup needed
-- ✅ JupyterLab built-in
-- ✅ Works on all platforms
-
-+++
-
-**Best for:** First-time users who want to start quickly without environment setup.
-
-:::
-
-:::{grid-item-card} 🐍 Local Pip/uv Installation
-:link: setup/1a_install_uv
-:shadow: md
-:class-header: bg-light
-:link-type: doc
-
-**For Users - Custom Setup**
-
-^^^
-
-Install PyRIT directly on your machine:
-
-- ✅ Full Python environment control
-- ✅ Lighter weight installation
-- ✅ Easy integration with existing workflows
-- ✅ Direct system access
-
-+++
-
-**Best for:** Users comfortable with Python environments or integrating PyRIT into existing projects.
-
-:::
-
-:::{grid-item-card} 🐋 DevContainers in VS Code
-:link: contributing/1b_install_devcontainers
-:shadow: md
-:class-header: bg-light
-:link-type: doc
-
-**For Contributors** ⭐
-
-^^^
-
-Standardized development environment:
-
-- ✅ Pre-configured VS Code setup
-- ✅ Consistent across all contributors
-- ✅ All extensions pre-installed
-- ✅ Zero configuration needed
-
-+++
-
-**Best for:** Contributors using VS Code who want a ready-to-go development environment.
-
-:::
-
-:::{grid-item-card} 🐍 Local uv Development
-:link: contributing/1a_install_uv
-:shadow: md
-:class-header: bg-light
-:link-type: doc
-
-**For Contributors - Custom Dev Setup**
-
-^^^
-
-Install from source in editable mode:
-
-- ✅ Full development control
-- ✅ Use any IDE or editor
-- ✅ Customize environment
-- ✅ Advanced configuration options
-
-+++
-
-**Best for:** Contributors who prefer custom development setups or don't use VS Code.
-
-:::
-
+::::{card} 🔑 ~/.pyrit/.env
+```bash
+# example OPENAI_CHAT_ENDPOINT values:
+# "https://api.openai.com/v1"
+# "https://<project>.cognitiveservices.azure.com/openai/v1/"
+# "https://<project>.services.ai.azure.com/openai/v1"
+OPENAI_CHAT_ENDPOINT="<open-ai-chat-endpoint>"
+OPENAI_CHAT_KEY="<your-api-key>"
+OPENAI_CHAT_MODEL="<model-name>"
+```
 ::::
 
-## Recommended Docs Reading Order
+::::{card} 📄 ~/.pyrit/.pyrit_conf
+```yaml
+memory_db_type: in_memory
 
-There is no single way to read the documentation, and it's perfectly fine to jump around. However, here is a recommended reading order. Note that in many sections there are numbered documentation pages. If there is no number attached, it is supplemental and the recommended reading order would be to skip it on a first pass.
-
-::::{grid} 1
-:gutter: 2
-
-:::{grid-item-card} 1️⃣ Cookbooks
-:link: cookbooks/README
-:shadow: md
-:class-header: bg-light
-:link-type: doc
-
-This provides an overview of PyRIT in action. A great place to see practical examples and get started quickly.
-
-:::
-
-:::{grid-item-card} 2️⃣ Architecture
-:link: code/architecture
-:shadow: md
-:class-header: bg-light
-:link-type: doc
-
-High-level overview of all PyRIT components. Understanding any single component is easier with knowledge of the others.
-
-:::
-
-:::{grid-item-card} 3️⃣ Attacks
-:link: code/executor/0_executor
-:shadow: md
-:class-header: bg-light
-:link-type: doc
-
-Top-level components implementing end-to-end attack techniques. Shows how all PyRIT components fit together.
-
-:::
-
-:::{grid-item-card} 4️⃣ Datasets
-:link: code/datasets/0_dataset
-:shadow: md
-:class-header: bg-light
-:link-type: doc
-
-Building attacks using seed prompts and fetching datasets. The foundation for creating test scenarios.
-
-:::
-
-:::{grid-item-card} 5️⃣ Targets
-:link: code/targets/0_prompt_targets
-:shadow: md
-:class-header: bg-light
-:link-type: doc
-
-Endpoints that PyRIT sends prompts to. Essential for nearly any PyRIT scenario - learn what targets are available.
-
-:::
-
-:::{grid-item-card} 6️⃣ Converters
-:link: code/converters/0_converters
-:shadow: md
-:class-header: bg-light
-:link-type: doc
-
-Transform prompts from one format to another. One of the most powerful capabilities within PyRIT.
-
-:::
-
-:::{grid-item-card} 7️⃣ Scorers
-:link: code/scoring/0_scoring
-:shadow: md
-:class-header: bg-light
-:link-type: doc
-
-How PyRIT makes decisions and records output. Essential for evaluating AI system responses.
-
-:::
-
-:::{grid-item-card} 8️⃣ Memory
-:link: code/memory/0_memory
-:shadow: md
-:class-header: bg-light
-:link-type: doc
-
-How PyRIT components communicate state information. Understand the data flow and storage mechanisms.
-
-:::
-
-:::{grid-item-card} 9️⃣ Auxiliary Attacks (Optional)
-:link: code/auxiliary_attacks/0_auxiliary_attacks
-:shadow: md
-:class-header: bg-light
-:link-type: doc
-
-Attacks and techniques that don't fit into core PyRIT functionality. Advanced and specialized methods.
-
-:::
-
+initializers:
+  - name: target
+    args:
+      tags:
+        - default
+        - scorer
+  - name: scorer
+  - name: load_default_datasets
+```
 ::::
 
-### Additional Resources
+:::::
 
-::::{grid} 1 1 2 2
-:gutter: 2
+3. Use PyRIT in any mode that best fits your use case: Scanner, GUI, or Framework.
 
-:::{grid-item-card} 🚀 Deployment
-:link: deployment/README
-:shadow: md
-:class-header: bg-light
-:link-type: doc
+::::{tab-set}
 
-Code to download, deploy, and score open-source models (such as Hugging Face) on Azure.
+:::{tab-item}🔍 Scanner
+Run security assessments from the command line with `pyrit_scan` or the interactive `pyrit_shell`. Execute built-in scenarios against your AI targets.
 
+```bash
+pyrit_scan airt.scam --target openai_chat
+```
+
+![scanner-demo](scanner-demo.png)
+
+Use `pyrit_scan --help` to learn more about what else `pyrit_scan` can do.
+For more details, see the [Scanner](scanner/0_scanner) page.
 :::
 
-:::{grid-item-card} 📰 Blog
-:link: blog/README
-:shadow: md
-:class-header: bg-light
-:link-type: doc
+:::{tab-item}🖥️ GUI
+Use CoPyRIT's graphical interface for interactive red teaming. Chat with AI systems, track findings, and collaborate with your team.
 
-Notable new changes and updates. Stay current with the latest PyRIT developments.
+Start the local web app and give it a try:
 
+```bash
+pyrit_backend # serves webapp on http://localhost:8000/
+```
+![copyrit-demo](copyrit-demo.png)
+
+For more details, see the [GUI](gui/0_gui) page.
 :::
 
+:::{tab-item}🧩 Framework
+Dive into PyRIT's modular components — targets, converters, scorers, memory, and more. Create custom attacks and extend the framework.
+
+```python
+from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
+from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+
+await initialize_pyrit_async(memory_db_type=IN_MEMORY)
+
+target = OpenAIChatTarget()
+attack = PromptSendingAttack(objective_target=target)
+result = await attack.execute_async(objective="What model exactly are you? be concise.")
+
+printer = ConsoleAttackResultPrinter()
+await printer.print_conversation_async(result=result)
+```
+
+![framework-demo](framework-demo.png)
+:::
+
+For more details, see the [Framework](code/framework) page.
 ::::

@@ -3,8 +3,9 @@
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Optional, Sequence
+from typing import Optional
 
 from pyrit.memory import CentralMemory
 from pyrit.models import (
@@ -103,6 +104,8 @@ class BatchScorer:
 
         if not message_pieces:
             raise ValueError("No entries match the provided filters. Please check your filters.")
+
+        message_pieces = self._remove_duplicates(message_pieces)
 
         # Group pieces by conversation
         conversations = group_message_pieces_into_conversations(message_pieces)

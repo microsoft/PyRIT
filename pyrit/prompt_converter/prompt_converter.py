@@ -6,10 +6,15 @@ import asyncio
 import inspect
 import re
 from dataclasses import dataclass
-from typing import get_args
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, get_args
 
 from pyrit import prompt_converter
-from pyrit.models import Identifier, PromptDataType
+from pyrit.identifiers import ComponentIdentifier, Identifiable
+from pyrit.models import PromptDataType
+from pyrit.prompt_target.common.target_requirements import TargetRequirements
+
+if TYPE_CHECKING:
+    from pyrit.prompt_target import PromptTarget
 
 
 @dataclass
@@ -21,11 +26,17 @@ class ConverterResult:
     #: The data type of the converted output. Indicates the format/type of the ``output_text``.
     output_type: PromptDataType
 
-    def __str__(self):
+    def __str__(self) -> str:
+        """
+        Representation of the ConverterResult.
+
+        Returns:
+            str: A string representation showing the output type and text.
+        """
         return f"{self.output_type}: {self.output_text}"
 
 
-class PromptConverter(abc.ABC, Identifier):
+class PromptConverter(Identifiable):
     """
     Base class for converters that transform prompts into a different representation or format.
 
@@ -41,9 +52,16 @@ class PromptConverter(abc.ABC, Identifier):
     #: Tuple of output modalities supported by this converter. Subclasses must override this.
     SUPPORTED_OUTPUT_TYPES: tuple[PromptDataType, ...] = ()
 
-    def __init_subclass__(cls, **kwargs) -> None:
+    #: Capability requirements placed on the converter's target (if any).
+    #: Subclasses that use a target should override this and pass the target to
+    #: ``super().__init__(converter_target=...)`` so the base class can validate it.
+    TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+
+    _identifier: Optional[ComponentIdentifier] = None
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
         """
-        Validates that concrete subclasses define required class attributes.
+        Validate that concrete subclasses define required class attributes.
 
         Args:
             **kwargs: Additional keyword arguments passed to the superclass.
@@ -66,16 +84,22 @@ class PromptConverter(abc.ABC, Identifier):
                     f"Declare the output modalities this converter produces."
                 )
 
-    def __init__(self):
+    def __init__(self, *, converter_target: Optional["PromptTarget"] = None) -> None:
         """
-        Initializes the prompt converter.
+        Initialize the prompt converter.
+
+        Args:
+            converter_target (Optional[PromptTarget]): Target used by the converter, if any. When
+                provided, it is validated against ``TARGET_REQUIREMENTS``.
         """
         super().__init__()
+        if converter_target is not None:
+            type(self).TARGET_REQUIREMENTS.validate(target=converter_target)
 
     @abc.abstractmethod
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt into the target format supported by the converter.
+        Convert the given prompt into the target format supported by the converter.
 
         Args:
             prompt (str): The prompt to be converted.
@@ -87,7 +111,7 @@ class PromptConverter(abc.ABC, Identifier):
 
     def input_supported(self, input_type: PromptDataType) -> bool:
         """
-        Checks if the input type is supported by the converter.
+        Check if the input type is supported by the converter.
 
         Args:
             input_type (PromptDataType): The input type to check.
@@ -99,7 +123,7 @@ class PromptConverter(abc.ABC, Identifier):
 
     def output_supported(self, output_type: PromptDataType) -> bool:
         """
-        Checks if the output type is supported by the converter.
+        Check if the output type is supported by the converter.
 
         Args:
             output_type (PromptDataType): The output type to check.
@@ -113,7 +137,7 @@ class PromptConverter(abc.ABC, Identifier):
         self, *, prompt: str, input_type: PromptDataType = "text", start_token: str = "⟪", end_token: str = "⟫"
     ) -> ConverterResult:
         """
-        Converts substrings within a prompt that are enclosed by specified start and end tokens. If there are no tokens
+        Convert substrings within a prompt that are enclosed by specified start and end tokens. If there are no tokens
         present, the entire prompt is converted.
 
         Args:
@@ -147,26 +171,61 @@ class PromptConverter(abc.ABC, Identifier):
         tasks = [self._replace_text_match(match) for match in matches]
         converted_parts = await asyncio.gather(*tasks)
 
-        for original, converted in zip(matches, converted_parts):
+        for original, converted in zip(matches, converted_parts, strict=False):
             prompt = prompt.replace(f"{start_token}{original}{end_token}", converted.output_text, 1)
 
         return ConverterResult(output_text=prompt, output_type="text")
 
-    async def _replace_text_match(self, match):
-        result = await self.convert_async(prompt=match, input_type="text")
-        return result
+    async def _replace_text_match(self, match: str) -> ConverterResult:
+        return await self.convert_async(prompt=match, input_type="text")
 
-    def get_identifier(self) -> dict[str, str]:
+    def _build_identifier(self) -> ComponentIdentifier:
         """
-        Returns an identifier dictionary for the converter.
+        Build and return the identifier for this converter.
+
+        Subclasses can override this method to add converter-specific parameters
+        by calling _create_identifier with additional arguments.
+
+        The default implementation calls _create_identifier with no extra parameters.
 
         Returns:
-            dict: The identifier dictionary.
+            ComponentIdentifier: The constructed identifier.
         """
-        public_attributes = {}
-        public_attributes["__type__"] = self.__class__.__name__
-        public_attributes["__module__"] = self.__class__.__module__
-        return public_attributes
+        return self._create_identifier()
+
+    def _create_identifier(
+        self,
+        *,
+        params: Optional[dict[str, Any]] = None,
+        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+    ) -> ComponentIdentifier:
+        """
+        Construct and return the converter identifier.
+
+        Builds a ComponentIdentifier with the base converter parameters
+        (supported_input_types, supported_output_types) and merges in any
+        additional params or children provided by subclasses.
+
+        Subclasses should call this method in their _build_identifier() implementation
+        to set the identifier with their specific parameters.
+
+        Args:
+            params (Optional[Dict[str, Any]]): Additional behavioral parameters from
+                the subclass (e.g., font, encoding_func). Merged into the base params.
+            children (Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]]):
+                Named child component identifiers (e.g., sub-converters, converter targets).
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        all_params: dict[str, Any] = {
+            "supported_input_types": self.SUPPORTED_INPUT_TYPES,
+            "supported_output_types": self.SUPPORTED_OUTPUT_TYPES,
+        }
+        if params:
+            all_params.update(params)
+
+        return ComponentIdentifier.of(self, params=all_params, children=children)
 
     @property
     def supported_input_types(self) -> list[PromptDataType]:
@@ -191,7 +250,7 @@ class PromptConverter(abc.ABC, Identifier):
 
 def get_converter_modalities() -> list[tuple[str, list[PromptDataType], list[PromptDataType]]]:
     """
-    Retrieves a list of all converter classes and their supported input/output modalities
+    Retrieve a list of all converter classes and their supported input/output modalities
     by reading the SUPPORTED_INPUT_TYPES and SUPPORTED_OUTPUT_TYPES class attributes.
 
     Returns:

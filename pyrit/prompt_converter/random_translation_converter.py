@@ -4,7 +4,7 @@
 import logging
 import random
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH, DATASETS_PATH
@@ -13,7 +13,7 @@ from pyrit.prompt_converter.llm_generic_text_converter import LLMGenericTextConv
 from pyrit.prompt_converter.prompt_converter import ConverterResult
 from pyrit.prompt_converter.text_selection_strategy import WordSelectionStrategy
 from pyrit.prompt_converter.word_level_converter import WordLevelConverter
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
     """
     Translates each individual word in a prompt to a random language using an LLM.
 
-    An existing ``PromptChatTarget`` is used to perform the translation (like Azure OpenAI).
+    An existing ``PromptTarget`` is used to perform the translation (like Azure OpenAI).
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)
@@ -35,16 +35,16 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         system_prompt_template: Optional[SeedPrompt] = None,
-        languages: Optional[List[str]] = None,
+        languages: Optional[list[str]] = None,
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
-    ):
+    ) -> None:
         """
-        Initializes the converter with a target, an optional system prompt template, and language options.
+        Initialize the converter with a target, an optional system prompt template, and language options.
 
         Args:
-            converter_target (PromptChatTarget): The target for the prompt conversion.
+            converter_target (PromptTarget): The target for the prompt conversion.
                 Can be omitted if a default has been configured via PyRIT initialization.
             system_prompt_template (Optional[SeedPrompt]): The system prompt template to use for the conversion.
                 If not provided, a default template will be used.
@@ -86,7 +86,7 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt into the target format supported by the converter.
+        Convert the given prompt into the target format supported by the converter.
 
         Args:
             prompt (str): The prompt to be converted.
@@ -112,7 +112,7 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
 
     async def convert_word_async(self, word: str) -> str:
         """
-        Converts a single word into the target format supported by the converter.
+        Convert a single word into the target format supported by the converter.
 
         Args:
             word (str): The word to be converted.

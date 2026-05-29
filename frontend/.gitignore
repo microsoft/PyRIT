@@ -26,3 +26,8 @@ dist-ssr/
 .env
 .env.local
 .env.*.local
+
+# Testing
+coverage/
+playwright-report/
+test-results/

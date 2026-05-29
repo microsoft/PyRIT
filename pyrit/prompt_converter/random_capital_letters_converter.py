@@ -4,6 +4,7 @@
 import logging
 import random
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
@@ -18,7 +19,7 @@ class RandomCapitalLettersConverter(PromptConverter):
 
     def __init__(self, percentage: float = 100.0) -> None:
         """
-        Initializes the converter with the specified percentage of randomization.
+        Initialize the converter with the specified percentage of randomization.
 
         Args:
             percentage (float): The percentage of characters to capitalize in the prompt. Must be between 1 and 100.
@@ -26,20 +27,49 @@ class RandomCapitalLettersConverter(PromptConverter):
         """
         self.percentage = percentage
 
-    def is_lowercase_letter(self, char):
-        """Checks if the given character is a lowercase letter."""
-        return char.islower()
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build identifier with random capital letters parameters.
 
-    def is_percentage(self, input_string):
-        """Checks if the input string is a valid percentage between 1 and 100."""
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "percentage": self.percentage,
+            }
+        )
+
+    def is_percentage(self, input_string: float) -> bool:
+        """
+        Check if the input string is a valid percentage between 1 and 100.
+
+        Args:
+            input_string (str): The input string to check.
+
+        Returns:
+            bool: True if the input string is a valid percentage, False otherwise.
+        """
         try:
             number = float(input_string)
             return 1 <= number <= 100
         except ValueError:
             return False
 
-    def generate_random_positions(self, total_length, set_number):
-        """Generates a list of unique random positions within the range of `total_length`."""
+    def generate_random_positions(self, total_length: int, set_number: int) -> list[int]:
+        """
+        Generate a list of unique random positions within the range of `total_length`.
+
+        Args:
+            total_length (int): The total length of the string.
+            set_number (int): The number of unique random positions to generate.
+
+        Returns:
+            list: A list of unique random positions.
+
+        Raises:
+            ValueError: If `set_number` is greater than `total_length`.
+        """
         # Ensure the set number is not greater than the total length
         if set_number > total_length:
             logger.error(f"Set number {set_number} cannot be greater than the total length which is {total_length}.")
@@ -48,12 +78,22 @@ class RandomCapitalLettersConverter(PromptConverter):
             )
 
         # Generate a list of unique random positions
-        random_positions = random.sample(range(total_length), set_number)
+        return random.sample(range(total_length), set_number)
 
-        return random_positions
+    def string_to_upper_case_by_percentage(self, percentage: float, prompt: str) -> str:
+        """
+        Convert a string by randomly capitalizing a percentage of its characters.
 
-    def string_to_upper_case_by_percentage(self, percentage, prompt):
-        """Converts a string by randomly capitalizing a percentage of its characters."""
+        Args:
+            percentage (float): The percentage of characters to capitalize.
+            prompt (str): The input string to be converted.
+
+        Returns:
+            str: The converted string with randomly capitalized characters.
+
+        Raises:
+            ValueError: If the percentage is not between 1 and 100.
+        """
         if not self.is_percentage(percentage):
             logger.error(f"Percentage number {percentage} cannot be higher than 100 and lower than 1.")
             raise ValueError(f"Percentage number {percentage} cannot be higher than 100 and lower than 1.")
@@ -61,13 +101,23 @@ class RandomCapitalLettersConverter(PromptConverter):
         random_positions = self.generate_random_positions(len(prompt), target_count)
         output = list(prompt)
         for pos in random_positions:
-            if self.is_lowercase_letter(prompt[pos]):
+            if prompt[pos].islower():
                 output[pos] = prompt[pos].upper()
         return "".join(output)
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt by randomly capitalizing a percentage of its characters.
+        Convert the given prompt by randomly capitalizing a percentage of its characters.
+
+        Args:
+            prompt (str): The input text prompt to be converted.
+            input_type (PromptDataType): The type of input data.
+
+        Returns:
+            ConverterResult: The result containing the converted text.
+
+        Raises:
+            ValueError: If the input type is not supported.
         """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")

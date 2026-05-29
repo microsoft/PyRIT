@@ -18,21 +18,19 @@
 # In order to use this API, you need to configure a few environment variables:
 #
 # - AZURE_CONTENT_SAFETY_API_ENDPOINT: The endpoint for the Azure Content Safety API
-# - AZURE_CONTENT_SAFETY_API_KEY: The API key for the Azure Content Safety API (if not using Entra Auth)
 #
-# As an alternative to key-based authentication, you can use Entra ID (identity-based) authentication.
-# Use get_azure_token_provider() from pyrit.auth.azure_auth and pass it as the api_key parameter.
-# Example:
+# Authentication uses Entra ID (identity-based) via `az login`. Make sure you have the
+# appropriate role (e.g., Cognitive Services User) on the resource.
 # from pyrit.auth.azure_auth import get_azure_token_provider
 # api_key = get_azure_token_provider("https://cognitiveservices.azure.com/.default")
 #
 # Note that this api returns a value between 0 and 7. This is different from likert scales, which return a value between 1 and 5. Because both are `float_scale` scores, these values are all normalized to floating point values between 0.0 and 1.0 and can be directly compared. This is sometimes interesting as an operator e.g. if there are scenarios where a `SelfAskLikertScorer` and `AzureContentFilterScorer` produce very different values.
 #
-# Before you begin, ensure you are setup with the correct version of PyRIT installed and have secrets configured as described [here](../../setup/populating_secrets.md).
 
 # %%
 import os
 
+from pyrit.auth import get_azure_token_provider
 from pyrit.memory import CentralMemory
 from pyrit.models import Message, MessagePiece
 from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
@@ -40,18 +38,15 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-
 # Set up the Azure Content Filter
 azure_content_filter = AzureContentFilterScorer(
-    api_key=os.environ.get("AZURE_CONTENT_SAFETY_API_KEY"),
+    api_key=get_azure_token_provider("https://cognitiveservices.azure.com/.default"),
     endpoint=os.environ.get("AZURE_CONTENT_SAFETY_API_ENDPOINT"),
 )
-# For Entra ID authentication:
-# from pyrit.auth import get_azure_token_provider
-# endpoint = os.environ.get("AZURE_CONTENT_SAFETY_API_ENDPOINT")
+# For API key authentication (if local auth is enabled on the resource):
 # azure_content_filter = AzureContentFilterScorer(
-#     api_key=get_azure_token_provider("https://cognitiveservices.azure.com/.default"),
-#     endpoint=endpoint,
+#     api_key=os.environ.get("AZURE_CONTENT_SAFETY_API_KEY"),
+#     endpoint=os.environ.get("AZURE_CONTENT_SAFETY_API_ENDPOINT"),
 # )
 
 response = Message(

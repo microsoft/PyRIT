@@ -12,17 +12,36 @@ from pyrit.executor.workflow.xpia import (
     XPIAStatus,
     XPIAWorkflow,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece, Score
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer
 
-
 # Shared fixtures for all test classes
+
+
+def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
+
+
+def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
+
+
 @pytest.fixture
 def mock_attack_setup_target() -> MagicMock:
     """Create a mock attack setup target."""
     target = MagicMock(spec=PromptTarget)
+    target.get_identifier.return_value = _mock_target_id("mock_attack_setup_target")
     return target
 
 
@@ -31,6 +50,7 @@ def mock_scorer() -> MagicMock:
     """Create a mock scorer."""
     scorer = MagicMock(spec=Scorer)
     scorer.score_text_async = AsyncMock()
+    scorer.get_identifier.return_value = _mock_scorer_id()
     return scorer
 
 
@@ -71,9 +91,11 @@ def workflow(
     mock_attack_setup_target: MagicMock, mock_scorer: MagicMock, mock_prompt_normalizer: MagicMock
 ) -> XPIAWorkflow:
     """Create an XPIA workflow instance for testing."""
-    return XPIAWorkflow(
+    workflow = XPIAWorkflow(
         attack_setup_target=mock_attack_setup_target, scorer=mock_scorer, prompt_normalizer=mock_prompt_normalizer
     )
+    workflow._memory = MagicMock()
+    return workflow
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -89,7 +111,7 @@ class TestXPIAWorkflowValidation:
         self, workflow: XPIAWorkflow, mock_processing_callback: AsyncMock
     ) -> None:
         """Test that validation fails when attack_content is None."""
-        context = XPIAContext(attack_content=None, processing_callback=mock_processing_callback)  # type: ignore
+        context = XPIAContext(attack_content=None, processing_callback=mock_processing_callback)  # type: ignore[arg-type]
 
         with pytest.raises(ValueError, match="attack_content: Message must be provided"):
             workflow._validate_context(context=context)
@@ -98,7 +120,7 @@ class TestXPIAWorkflowValidation:
         self, workflow: XPIAWorkflow, mock_processing_callback: AsyncMock
     ) -> None:
         """Test that validation fails when message has no pieces."""
-        context = XPIAContext(attack_content=None, processing_callback=mock_processing_callback)  # type: ignore
+        context = XPIAContext(attack_content=None, processing_callback=mock_processing_callback)  # type: ignore[arg-type]
 
         with pytest.raises(ValueError, match="attack_content: Message must be provided"):
             workflow._validate_context(context=context)
@@ -142,7 +164,7 @@ class TestXPIAWorkflowValidation:
         self, workflow: XPIAWorkflow, valid_message: Message
     ) -> None:
         """Test that validation fails when processing_callback is None."""
-        context = XPIAContext(attack_content=valid_message, processing_callback=None)  # type: ignore
+        context = XPIAContext(attack_content=valid_message, processing_callback=None)  # type: ignore[arg-type]
 
         with pytest.raises(ValueError, match="processing_callback is required"):
             workflow._validate_context(context=context)
@@ -152,7 +174,6 @@ class TestXPIAWorkflowValidation:
 class TestXPIAWorkflowPerform:
     """Test class for XPIA workflow perform method."""
 
-    @pytest.mark.asyncio
     async def test_perform_async_complete_workflow_with_scorer(
         self,
         workflow: XPIAWorkflow,
@@ -196,7 +217,6 @@ class TestXPIAWorkflowPerform:
         mock_processing_callback.assert_called_once()
         mock_scorer.score_text_async.assert_called_once_with("Processing response")
 
-    @pytest.mark.asyncio
     async def test_perform_async_workflow_without_scorer(
         self,
         mock_attack_setup_target: MagicMock,
@@ -219,6 +239,7 @@ class TestXPIAWorkflowPerform:
         workflow = XPIAWorkflow(
             attack_setup_target=mock_attack_setup_target, scorer=None, prompt_normalizer=mock_prompt_normalizer
         )
+        workflow._memory = MagicMock()
 
         # Setup mock responses
         mock_response = MagicMock()
@@ -239,7 +260,6 @@ class TestXPIAWorkflowPerform:
         mock_prompt_normalizer.send_prompt_async.assert_called_once()
         mock_processing_callback.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_perform_async_scorer_returns_empty_list(
         self,
         workflow: XPIAWorkflow,
@@ -265,7 +285,6 @@ class TestXPIAWorkflowPerform:
         assert result.score is None
         assert result.attack_setup_response == "Attack setup response"
 
-    @pytest.mark.asyncio
     async def test_perform_async_scorer_raises_exception(
         self,
         workflow: XPIAWorkflow,
@@ -291,7 +310,6 @@ class TestXPIAWorkflowPerform:
         assert result.score is None
         assert result.attack_setup_response == "Attack setup response"
 
-    @pytest.mark.asyncio
     async def test_setup_attack_async_calls_prompt_normalizer_correctly(
         self, workflow: XPIAWorkflow, valid_context: XPIAContext, mock_prompt_normalizer: MagicMock
     ) -> None:
@@ -315,7 +333,6 @@ class TestXPIAWorkflowPerform:
         assert call_args.kwargs["labels"] == valid_context.memory_labels
         assert call_args.kwargs["conversation_id"] == valid_context.attack_setup_target_conversation_id
 
-    @pytest.mark.asyncio
     @patch("pyrit.executor.workflow.xpia.CentralMemory")
     async def test_execute_processing_async_adds_to_memory(
         self, mock_memory_class: MagicMock, workflow: XPIAWorkflow, valid_context: XPIAContext
@@ -340,7 +357,6 @@ class TestXPIAWorkflowPerform:
         assert call_args.kwargs["request"] is not None
         assert isinstance(call_args.kwargs["request"], Message)
 
-    @pytest.mark.asyncio
     async def test_score_response_async_with_no_scorer(
         self, mock_attack_setup_target: MagicMock, mock_prompt_normalizer: MagicMock
     ) -> None:
@@ -358,7 +374,6 @@ class TestXPIAWorkflowPerform:
 class TestXPIAWorkflowExecution:
     """Test class for XPIA workflow execution methods."""
 
-    @pytest.mark.asyncio
     async def test_execute_async_with_valid_parameters(
         self,
         mock_attack_setup_target: MagicMock,
@@ -406,7 +421,6 @@ class TestXPIAWorkflowExecution:
                 mock_perform.assert_called_once()
                 mock_teardown.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_execute_async_invalid_attack_content_type_raises_error(
         self, mock_attack_setup_target: MagicMock, mock_scorer: MagicMock, mock_processing_callback: AsyncMock
     ) -> None:
@@ -425,7 +439,6 @@ class TestXPIAWorkflowExecution:
                     processing_callback=mock_processing_callback,
                 )
 
-    @pytest.mark.asyncio
     async def test_execute_async_invalid_processing_callback_type_raises_error(
         self, mock_attack_setup_target: MagicMock, mock_scorer: MagicMock, valid_message: Message
     ) -> None:
@@ -444,7 +457,6 @@ class TestXPIAWorkflowExecution:
                     processing_callback="not_callable",  # Should be callable
                 )
 
-    @pytest.mark.asyncio
     async def test_execute_async_invalid_memory_labels_type_raises_error(
         self,
         mock_attack_setup_target: MagicMock,
@@ -468,7 +480,6 @@ class TestXPIAWorkflowExecution:
                     memory_labels="invalid_type",  # Should be dict
                 )
 
-    @pytest.mark.asyncio
     async def test_execute_async_missing_required_attack_content_raises_error(
         self, mock_attack_setup_target: MagicMock, mock_scorer: MagicMock, mock_processing_callback: AsyncMock
     ) -> None:
@@ -487,7 +498,6 @@ class TestXPIAWorkflowExecution:
                     # attack_content is required but missing
                 )
 
-    @pytest.mark.asyncio
     async def test_setup_async_generates_conversation_ids(
         self, workflow: XPIAWorkflow, valid_message: Message, mock_processing_callback: AsyncMock
     ) -> None:
@@ -515,7 +525,6 @@ class TestXPIAWorkflowExecution:
         # Verify memory labels were combined
         assert "test" in context.memory_labels
 
-    @pytest.mark.asyncio
     async def test_teardown_async_completes_successfully(
         self, workflow: XPIAWorkflow, valid_message: Message, mock_processing_callback: AsyncMock
     ) -> None:
@@ -595,3 +604,76 @@ class TestXPIAResult:
         result = XPIAResult(processing_conversation_id="test-id", processing_response="test response", score=None)
 
         assert result.status == XPIAStatus.UNKNOWN
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestXPIAGuards:
+    """Tests for type-narrowing guards in XPIA workflow."""
+
+    async def test_execute_processing_raises_when_callback_is_none(
+        self,
+    ) -> None:
+        """Test that _execute_processing_async raises ValueError when processing_callback is None."""
+        mock_target = MagicMock(spec=PromptTarget)
+        mock_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockTarget", class_module="test_module"
+        )
+        workflow = XPIAWorkflow(attack_setup_target=mock_target)
+
+        attack_msg = Message(message_pieces=[MessagePiece(role="user", original_value="attack content")])
+        context = XPIAContext(attack_content=attack_msg, processing_callback=None)
+
+        with pytest.raises(ValueError, match="processing_callback is not set"):
+            await workflow._execute_processing_async(context=context)
+
+    async def test_execute_processing_raises_when_memory_is_none(
+        self,
+    ) -> None:
+        """Test that _execute_processing_async raises RuntimeError when memory is None."""
+        mock_target = MagicMock(spec=PromptTarget)
+        mock_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockTarget", class_module="test_module"
+        )
+        workflow = XPIAWorkflow(attack_setup_target=mock_target)
+        workflow._memory = None
+
+        mock_callback = AsyncMock(return_value="response")
+        attack_msg = Message(message_pieces=[MessagePiece(role="user", original_value="attack content")])
+        context = XPIAContext(attack_content=attack_msg, processing_callback=mock_callback)
+
+        with pytest.raises(RuntimeError, match="Memory not initialized"):
+            await workflow._execute_processing_async(context=context)
+
+    async def test_xpia_test_setup_raises_when_processing_prompt_is_none(
+        self,
+    ) -> None:
+        """Test that the process_async closure raises RuntimeError when processing_prompt is None."""
+        from pyrit.executor.workflow.xpia import XPIATestWorkflow
+
+        mock_target = MagicMock(spec=PromptTarget)
+        mock_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockTarget", class_module="test_module"
+        )
+        mock_processing_target = MagicMock(spec=PromptTarget)
+        mock_processing_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockProcessingTarget", class_module="test_module"
+        )
+        mock_scorer = MagicMock(spec=Scorer)
+        mock_scorer.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockScorer", class_module="test_module"
+        )
+        workflow = XPIATestWorkflow(
+            attack_setup_target=mock_target,
+            processing_target=mock_processing_target,
+            scorer=mock_scorer,
+        )
+
+        attack_msg = Message(message_pieces=[MessagePiece(role="user", original_value="attack content")])
+        context = XPIAContext(attack_content=attack_msg, processing_prompt=None)
+
+        await workflow._setup_async(context=context)
+
+        # The processing_callback should be set after _setup_async
+        assert context.processing_callback is not None
+        with pytest.raises(RuntimeError, match="context.processing_prompt is not initialized"):
+            await context.processing_callback()

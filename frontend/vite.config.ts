@@ -1,9 +1,26 @@
-import { defineConfig } from 'vite'
+import { createLogger, defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
+// Suppress noisy ECONNREFUSED proxy errors while the backend is starting.
+// Without this, Vite logs dozens of "http proxy error" stack traces.
+const logger = createLogger()
+const originalError = logger.error
+let proxyWarned = false
+logger.error = (msg, options) => {
+  if (typeof msg === 'string' && msg.includes('http proxy error')) {
+    if (!proxyWarned) {
+      console.log('[vite] Waiting for backend on port 8000...')
+      proxyWarned = true
+    }
+    return
+  }
+  originalError(msg, options)
+}
+
 // https://vitejs.dev/config/
 export default defineConfig({
+  customLogger: logger,
   plugins: [react()],
   resolve: {
     alias: {
@@ -22,8 +39,19 @@ export default defineConfig({
     cors: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        // Use 127.0.0.1 to avoid Node.js 17+ resolving localhost to IPv6 ::1
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
+        // Return 502 on proxy errors so in-flight requests fail fast
+        // instead of hanging until the backend comes up.
+        configure: (proxy) => {
+          proxy.on('error', (_err, _req, res) => {
+            if (res && 'writeHead' in res && !res.headersSent) {
+              (res as import('http').ServerResponse).writeHead(502);
+              (res as import('http').ServerResponse).end();
+            }
+          });
+        },
       },
     },
     watch: {

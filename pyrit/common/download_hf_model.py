@@ -9,10 +9,12 @@ from pathlib import Path
 import httpx
 from huggingface_hub import HfApi
 
+from pyrit.common.deprecation import print_deprecation_message
+
 logger = logging.getLogger(__name__)
 
 
-def get_available_files(model_id: str, token: str):
+def get_available_files(model_id: str, token: str) -> list[str]:
     """
     Fetch available files for a model from the Hugging Face repository.
 
@@ -25,7 +27,7 @@ def get_available_files(model_id: str, token: str):
     api = HfApi()
     try:
         model_info = api.model_info(model_id, token=token)
-        available_files = [file.rfilename for file in model_info.siblings]
+        available_files = [file.rfilename for file in (model_info.siblings or [])]
 
         # Perform simple validation: raise a ValueError if no files are available
         if not len(available_files):
@@ -37,7 +39,9 @@ def get_available_files(model_id: str, token: str):
         return []
 
 
-async def download_specific_files(model_id: str, file_patterns: list, token: str, cache_dir: Path):
+async def download_specific_files_async(
+    model_id: str, file_patterns: list[str] | None, token: str, cache_dir: Path
+) -> None:
     """
     Download specific files from a Hugging Face model repository.
     If file_patterns is None, downloads all files.
@@ -61,10 +65,12 @@ async def download_specific_files(model_id: str, file_patterns: list, token: str
     urls = [base_url + file for file in files_to_download]
 
     # Download the files
-    await download_files(urls, token, cache_dir)
+    await download_files_async(urls, token, cache_dir)
 
 
-async def download_chunk(url, headers, start, end, client):
+async def download_chunk_async(
+    url: str, headers: dict[str, str], start: int, end: int, client: httpx.AsyncClient
+) -> bytes:
     """
     Download a chunk of the file with a specified byte range.
 
@@ -77,7 +83,7 @@ async def download_chunk(url, headers, start, end, client):
     return response.content
 
 
-async def download_file(url, token, download_dir, num_splits):
+async def download_file_async(url: str, token: str, download_dir: Path, num_splits: int) -> None:
     """Download a file in multiple segments (splits) using byte-range requests."""
     headers = {"Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient(follow_redirects=True) as client:
@@ -95,7 +101,7 @@ async def download_file(url, token, download_dir, num_splits):
         for i in range(num_splits):
             start = i * chunk_size
             end = start + chunk_size - 1 if i < num_splits - 1 else file_size - 1
-            tasks.append(download_chunk(url, headers, start, end, client))
+            tasks.append(download_chunk_async(url, headers, start, end, client))
 
         # Download all chunks concurrently
         chunks = await asyncio.gather(*tasks)
@@ -107,14 +113,63 @@ async def download_file(url, token, download_dir, num_splits):
         logger.info(f"Downloaded {file_name} to {file_path}")
 
 
-async def download_files(urls: list[str], token: str, download_dir: Path, num_splits=3, parallel_downloads=4):
+async def download_files_async(
+    urls: list[str], token: str, download_dir: Path, num_splits: int = 3, parallel_downloads: int = 4
+) -> None:
     """Download multiple files with parallel downloads and segmented downloading."""
     # Limit the number of parallel downloads
     semaphore = asyncio.Semaphore(parallel_downloads)
 
-    async def download_with_limit(url):
+    async def download_with_limit_async(url: str) -> None:
         async with semaphore:
-            await download_file(url, token, download_dir, num_splits)
+            await download_file_async(url, token, download_dir, num_splits)
 
     # Run downloads concurrently, but limit to parallel_downloads at a time
-    await asyncio.gather(*(download_with_limit(url) for url in urls))
+    await asyncio.gather(*(download_with_limit_async(url) for url in urls))
+
+
+async def download_specific_files(model_id: str, file_patterns: list[str] | None, token: str, cache_dir: Path) -> None:
+    """Delegate to ``download_specific_files_async`` (deprecated alias)."""
+    print_deprecation_message(
+        old_item="pyrit.common.download_hf_model.download_specific_files",
+        new_item="pyrit.common.download_hf_model.download_specific_files_async",
+        removed_in="0.16.0",
+    )
+    await download_specific_files_async(model_id, file_patterns, token, cache_dir)
+
+
+async def download_chunk(url: str, headers: dict[str, str], start: int, end: int, client: httpx.AsyncClient) -> bytes:
+    """
+    Delegate to ``download_chunk_async`` (deprecated alias).
+
+    Returns:
+        The content of the downloaded chunk.
+    """
+    print_deprecation_message(
+        old_item="pyrit.common.download_hf_model.download_chunk",
+        new_item="pyrit.common.download_hf_model.download_chunk_async",
+        removed_in="0.16.0",
+    )
+    return await download_chunk_async(url, headers, start, end, client)
+
+
+async def download_file(url: str, token: str, download_dir: Path, num_splits: int) -> None:
+    """Delegate to ``download_file_async`` (deprecated alias)."""
+    print_deprecation_message(
+        old_item="pyrit.common.download_hf_model.download_file",
+        new_item="pyrit.common.download_hf_model.download_file_async",
+        removed_in="0.16.0",
+    )
+    await download_file_async(url, token, download_dir, num_splits)
+
+
+async def download_files(
+    urls: list[str], token: str, download_dir: Path, num_splits: int = 3, parallel_downloads: int = 4
+) -> None:
+    """Delegate to ``download_files_async`` (deprecated alias)."""
+    print_deprecation_message(
+        old_item="pyrit.common.download_hf_model.download_files",
+        new_item="pyrit.common.download_hf_model.download_files_async",
+        removed_in="0.16.0",
+    )
+    await download_files_async(urls, token, download_dir, num_splits, parallel_downloads)

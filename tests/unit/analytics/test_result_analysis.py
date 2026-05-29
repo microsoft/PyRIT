@@ -1,24 +1,27 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from typing import Optional
+
 import pytest
 
 from pyrit.analytics.result_analysis import AttackStats, analyze_results
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import AttackOutcome, AttackResult
 
 
 # helpers
 def make_attack(
     outcome: AttackOutcome,
-    attack_type: str | None = "default",
+    attack_type: Optional[str] = "default",
     conversation_id: str = "conv-1",
 ) -> AttackResult:
     """
     Minimal valid AttackResult for analytics tests.
     """
-    attack_identifier: dict[str, str] = {}
+    attack_identifier: Optional[ComponentIdentifier] = None
     if attack_type is not None:
-        attack_identifier["type"] = attack_type
+        attack_identifier = ComponentIdentifier(class_name=attack_type, class_module="tests.unit.analytics")
 
     return AttackResult(
         conversation_id=conversation_id,
@@ -39,20 +42,35 @@ def test_analyze_results_raises_on_invalid_object():
 
 
 @pytest.mark.parametrize(
-    "outcomes, expected_successes, expected_failures, expected_undetermined, expected_rate",
+    "outcomes, expected_successes, expected_failures, expected_undetermined, expected_errors, expected_rate",
     [
         # all successes
-        ([AttackOutcome.SUCCESS, AttackOutcome.SUCCESS], 2, 0, 0, 1.0),
+        ([AttackOutcome.SUCCESS, AttackOutcome.SUCCESS], 2, 0, 0, 0, 1.0),
         # all failures
-        ([AttackOutcome.FAILURE, AttackOutcome.FAILURE], 0, 2, 0, 0.0),
+        ([AttackOutcome.FAILURE, AttackOutcome.FAILURE], 0, 2, 0, 0, 0.0),
         # mixed decided
-        ([AttackOutcome.SUCCESS, AttackOutcome.FAILURE], 1, 1, 0, 0.5),
+        ([AttackOutcome.SUCCESS, AttackOutcome.FAILURE], 1, 1, 0, 0, 0.5),
         # include undetermined (excluded from denominator)
-        ([AttackOutcome.SUCCESS, AttackOutcome.UNDETERMINED], 1, 0, 1, 1.0),
-        ([AttackOutcome.FAILURE, AttackOutcome.UNDETERMINED], 0, 1, 1, 0.0),
+        ([AttackOutcome.SUCCESS, AttackOutcome.UNDETERMINED], 1, 0, 1, 0, 1.0),
+        ([AttackOutcome.FAILURE, AttackOutcome.UNDETERMINED], 0, 1, 1, 0, 0.0),
         # multiple with undetermined
         (
             [AttackOutcome.SUCCESS, AttackOutcome.FAILURE, AttackOutcome.UNDETERMINED],
+            1,
+            1,
+            1,
+            0,
+            0.5,
+        ),
+        # error excluded from denominator (like undetermined)
+        ([AttackOutcome.SUCCESS, AttackOutcome.ERROR], 1, 0, 0, 1, 1.0),
+        ([AttackOutcome.FAILURE, AttackOutcome.ERROR], 0, 1, 0, 1, 0.0),
+        # all errors
+        ([AttackOutcome.ERROR, AttackOutcome.ERROR], 0, 0, 0, 2, None),
+        # mixed with error and undetermined
+        (
+            [AttackOutcome.SUCCESS, AttackOutcome.FAILURE, AttackOutcome.ERROR, AttackOutcome.UNDETERMINED],
+            1,
             1,
             1,
             1,
@@ -61,7 +79,7 @@ def test_analyze_results_raises_on_invalid_object():
     ],
 )
 def test_overall_success_rate_parametrized(
-    outcomes, expected_successes, expected_failures, expected_undetermined, expected_rate
+    outcomes, expected_successes, expected_failures, expected_undetermined, expected_errors, expected_rate
 ):
     attacks = [make_attack(o) for o in outcomes]
     result = analyze_results(attacks)
@@ -71,6 +89,7 @@ def test_overall_success_rate_parametrized(
     assert overall.successes == expected_successes
     assert overall.failures == expected_failures
     assert overall.undetermined == expected_undetermined
+    assert overall.errors == expected_errors
     assert overall.total_decided == expected_successes + expected_failures
     assert overall.success_rate == expected_rate
 

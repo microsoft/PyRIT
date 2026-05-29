@@ -1,61 +1,101 @@
-# Base image from Microsoft Azure with Python 3.12
-FROM mcr.microsoft.com/azureml/minimal-py312-inference:20250310.v1
-LABEL description="Docker container for PyRIT with Jupyter Notebook integration"
+# syntax=docker/dockerfile:1.4
+# ============================================================================
+# PyRIT Production Dockerfile
+#
+# This Dockerfile builds on top of the devcontainer base image to avoid
+# duplication. The devcontainer is built first and used as the base.
+#
+# Build with:
+#   python docker/build_pyrit_docker.py --source local
+#   python docker/build_pyrit_docker.py --source pypi --version 0.10.0
+# ============================================================================
 
-# Set environment variables
+# No default — callers must pass --build-arg BASE_IMAGE=... (see infra/README.md).
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE} AS production
+
+LABEL description="Docker container for PyRIT with Jupyter Notebook and GUI support"
+
+# Build arguments for version tracking
+ARG PYRIT_SOURCE=pypi
+ARG PYRIT_VERSION=""
+ARG GIT_COMMIT=""
+ARG GIT_MODIFIED=false
+
+# Production environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV DEBIAN_FRONTEND=noninteractive
+ENV JUPYTER_ENABLE_LAB=yes
+ENV CUDA_VISIBLE_DEVICES=-1
+ENV ENABLE_GPU=false
+ENV HOME=/home/vscode
 
-# Switch to root user to install packages
 USER root
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    curl \
-    wget \
-    build-essential \
-    ca-certificates \
-    unixodbc \
-    libgl1-mesa-glx \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# Ensure we use the venv from the devcontainer base
+ENV PATH="/opt/venv/bin:$PATH"
+ENV VIRTUAL_ENV="/opt/venv"
 
 # Set up working directory
 WORKDIR /app
 
-# Copy requirements file
-COPY requirements.txt /app/
+# For local: copy source, install editable, and build frontend
+COPY --chown=vscode:vscode pyproject.toml MANIFEST.in README.md LICENSE /app/
+COPY --chown=vscode:vscode pyrit/ /app/pyrit/
+COPY --chown=vscode:vscode frontend/ /app/frontend/
+COPY --chown=vscode:vscode build_scripts/ /app/build_scripts/
+COPY --chown=vscode:vscode doc/ /app/doc/
 
-# Install torch, torchvision, torchaudio from PyTorch with CUDA 11.8 support
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu118 torch==2.6.0+cu118 torchvision==0.21.0+cu118 torchaudio==2.6.0+cu118
-# Install all Python dependencies at once with pinned versions
-RUN pip install --no-cache-dir -r requirements.txt
+# Install PyRIT and create build info (combined to ensure dependencies are available)
+# Note: We use 'uv pip' because the devcontainer creates venv with uv (no pip by default)
+RUN if [ "$PYRIT_SOURCE" = "pypi" ]; then \
+        echo "Installing PyRIT from PyPI version: $PYRIT_VERSION"; \
+        uv pip install --python /opt/venv/bin/python pyrit[speech,opencv,fairness_bias,fastapi,playwright]==$PYRIT_VERSION; \
+    elif [ "$PYRIT_SOURCE" = "local" ]; then \
+        echo "Installing PyRIT from local source"; \
+        uv pip install --python /opt/venv/bin/python -e .[speech,opencv,fairness_bias,fastapi,playwright]; \
+        echo "Building frontend..."; \
+        /opt/venv/bin/python build_scripts/prepare_package.py; \
+    fi && \
+    echo "Creating build info..." && \
+    /opt/venv/bin/python -c "import json; import pyrit; \
+info = { \
+    'source': '$PYRIT_SOURCE', \
+    'version': pyrit.__version__, \
+    'commit': '$GIT_COMMIT' if '$GIT_COMMIT' else None, \
+    'modified': '$GIT_MODIFIED' == 'true', \
+    'display': '$PYRIT_VERSION' if '$PYRIT_SOURCE' == 'pypi' else ('$GIT_COMMIT' + (' + local changes' if '$GIT_MODIFIED' == 'true' else '') if '$GIT_COMMIT' else pyrit.__version__) \
+}; \
+f = open('/app/build_info.json', 'w'); json.dump(info, f); f.close(); \
+print(f'PyRIT version: {pyrit.__version__}')"
 
-# Install PyRIT from PyPI (the official way)
-RUN pip install --no-cache-dir pyrit[dev,all]
-
-
-# Create a directory for notebooks and data
+# Create directories for notebooks and data
 RUN mkdir -p /app/notebooks /app/data /app/assets && \
     chmod -R 777 /app/notebooks /app/data /app/assets
 
-# Check PyRIT version
-RUN python -c "import pyrit; print(f'PyRIT version: {pyrit.__version__}')"
+# Create PyRIT config directory for env files (will be mounted at runtime)
+RUN mkdir -p /home/vscode/.pyrit && \
+    chown -R vscode:vscode /home/vscode/.pyrit
 
-RUN chown -R dockeruser:dockeruser /app
+# ipykernel and jupyter are in the dev dependency-group (not pip extras), so install them explicitly
+RUN uv pip install --python /opt/venv/bin/python ipykernel jupyter
+
+# Register the Jupyter kernel for the venv
+RUN /opt/venv/bin/python -m ipykernel install --user --name pyrit --display-name "PyRIT"
+
+# Copy doc to notebooks for Jupyter mode
+RUN if [ -d "/app/doc" ]; then \
+        cp -r /app/doc/* /app/notebooks/ || true; \
+    fi
+
+RUN chown -R vscode:vscode /app
 
 # Create and set permissions for the startup script
-COPY start.sh /app/start.sh
+COPY docker/start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
-# Switch to non-root user
-USER dockeruser
+# Expose ports for JupyterLab (8888) and GUI (8000)
+EXPOSE 8888 8000
 
-# Expose port for JupyterLab
-EXPOSE 8888
-
-# Set the entrypoint to the startup script and default command to launch JupyterLab
+# Set the entrypoint to the startup script (mode determined by PYRIT_MODE env var)
 ENTRYPOINT ["/app/start.sh"]
-CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root", "--NotebookApp.token=''", "--NotebookApp.password=''", "--notebook-dir=/app/notebooks"]

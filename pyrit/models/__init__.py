@@ -1,26 +1,37 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+"""
+Public model exports for PyRIT core data structures and helpers.
+
+``pyrit.models`` is the canonical data layer. Files in this package must
+import only from the standard library, ``pydantic``,
+``pyrit.common.deprecation``, and other ``pyrit.models.*`` submodules. The
+CI test ``tests/unit/models/test_import_boundary.py`` enforces this. See
+``.github/instructions/models.instructions.md`` for the rule.
+"""
+
 from pyrit.models.attack_result import AttackOutcome, AttackResult, AttackResultT
 from pyrit.models.chat_message import (
     ALLOWED_CHAT_MESSAGE_ROLES,
     ChatMessage,
-    ChatMessageListDictContent,
     ChatMessagesDataset,
 )
 from pyrit.models.conversation_reference import ConversationReference, ConversationType
+from pyrit.models.conversation_stats import ConversationStats
 from pyrit.models.data_type_serializer import (
     AllowedCategories,
     AudioPathDataTypeSerializer,
+    BinaryPathDataTypeSerializer,
     DataTypeSerializer,
     ErrorDataTypeSerializer,
     ImagePathDataTypeSerializer,
     TextDataTypeSerializer,
+    VideoPathDataTypeSerializer,
     data_serializer_factory,
 )
 from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
 from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
-from pyrit.models.identifiers import Identifier
 from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptResponseError, SeedType
 from pyrit.models.message import (
     Message,
@@ -30,6 +41,7 @@ from pyrit.models.message import (
 )
 from pyrit.models.message_piece import MessagePiece, sort_message_pieces
 from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
+from pyrit.models.retry_event import RetryEvent
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
 from pyrit.models.score import Score, ScoreType, UnvalidatedScore
 
@@ -39,6 +51,7 @@ from pyrit.models.seeds import (
     NextMessageSystemPromptPaths,
     Seed,
     SeedAttackGroup,
+    SeedAttackTechniqueGroup,
     SeedDataset,
     SeedGroup,
     SeedObjective,
@@ -60,11 +73,12 @@ __all__ = [
     "AttackOutcome",
     "AudioPathDataTypeSerializer",
     "AzureBlobStorageIO",
+    "BinaryPathDataTypeSerializer",
     "ChatMessage",
     "ChatMessagesDataset",
     "ChatMessageRole",
-    "ChatMessageListDictContent",
     "ConversationReference",
+    "ConversationStats",
     "ConversationType",
     "construct_response_from_request",
     "DataTypeSerializer",
@@ -79,7 +93,6 @@ __all__ = [
     "group_conversation_message_pieces_by_sequence",
     "group_message_pieces_into_conversations",
     "HarmDefinition",
-    "Identifier",
     "ImagePathDataTypeSerializer",
     "Message",
     "MessagePiece",
@@ -96,6 +109,7 @@ __all__ = [
     "ScenarioResult",
     "Seed",
     "SeedAttackGroup",
+    "SeedAttackTechniqueGroup",
     "SeedObjective",
     "SeedPrompt",
     "SeedDataset",
@@ -109,4 +123,6 @@ __all__ = [
     "StrategyResultT",
     "TextDataTypeSerializer",
     "UnvalidatedScore",
+    "VideoPathDataTypeSerializer",
+    "RetryEvent",
 ]

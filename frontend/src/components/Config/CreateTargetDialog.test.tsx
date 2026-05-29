@@ -1,0 +1,785 @@
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { FluentProvider, webLightTheme } from "@fluentui/react-components";
+import CreateTargetDialog from "./CreateTargetDialog";
+import { targetsApi } from "@/services/api";
+
+jest.mock("@/services/api", () => ({
+  targetsApi: {
+    createTarget: jest.fn(),
+  },
+}));
+
+const mockedTargetsApi = targetsApi as jest.Mocked<typeof targetsApi>;
+
+const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => <FluentProvider theme={webLightTheme}>{children}</FluentProvider>;
+
+/**
+ * Helper to select a target type from the native select element.
+ * Uses selectOptions from userEvent which works with native select.
+ */
+async function selectTargetType(
+  user: ReturnType<typeof userEvent.setup>,
+  value: string
+) {
+  const select = screen.getByRole("combobox");
+  await user.selectOptions(select, value);
+}
+
+describe("CreateTargetDialog", () => {
+  const defaultProps = {
+    open: true,
+    onClose: jest.fn(),
+    onCreated: jest.fn(),
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("should render dialog when open", () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    expect(screen.getByText("Create New Target")).toBeInTheDocument();
+    expect(screen.getByText("Create Target")).toBeInTheDocument();
+    expect(screen.getByText("Cancel")).toBeInTheDocument();
+  });
+
+  it("should not render when closed", () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} open={false} />
+      </TestWrapper>
+    );
+
+    expect(screen.queryByText("Create New Target")).not.toBeInTheDocument();
+  });
+
+  it("should have Create button disabled until type and endpoint filled", () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    const createButton = screen.getByText("Create Target");
+    expect(createButton.closest("button")).toBeDisabled();
+  });
+
+  it("should hide the Authentication field until a target type is selected", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    // No type is chosen yet, so authentication option is not visible yet, but plain API Key input is.
+    expect(
+      screen.queryByRole("radio", { name: /Microsoft Entra Authentication/ })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText("API key (stored in memory only)")
+    ).toBeInTheDocument();
+
+    // Selecting an Entra-capable type should reveal the Authentication field.
+    await selectTargetType(user, "OpenAIChatTarget");
+    expect(
+      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+    ).toBeInTheDocument();
+  });
+
+  it("should call onClose when Cancel is clicked", async () => {
+    const onClose = jest.fn();
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onClose={onClose} />
+      </TestWrapper>
+    );
+
+    await user.click(screen.getByText("Cancel"));
+
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("should create target and call onCreated on successful submit", async () => {
+    const onCreated = jest.fn();
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "openai_chat_new",
+      target_type: "OpenAIChatTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onCreated={onCreated} />
+      </TestWrapper>
+    );
+
+    // Select target type
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    // Fill the endpoint & model names
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, { target: { value: "https://api.openai.com" } });
+
+    const modelInput = screen.getByPlaceholderText("e.g. gpt-4o, my-deployment");
+    fireEvent.change(modelInput, { target: { value: "gpt-4" } });
+
+    // Submit
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIChatTarget",
+        params: {
+          endpoint: "https://api.openai.com",
+          model_name: "gpt-4",
+        },
+      });
+      expect(onCreated).toHaveBeenCalled();
+    });
+  });
+
+  it("should send underlying_model when toggle is enabled", async () => {
+    const onCreated = jest.fn();
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "azure_deployment",
+      target_type: "OpenAIChatTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onCreated={onCreated} />
+      </TestWrapper>
+    );
+
+    // Select target type
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    // Fill endpoint & model names
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, { target: { value: "https://api.azure.com" } });
+
+    const modelInput = screen.getByPlaceholderText("e.g. gpt-4o, my-deployment");
+    fireEvent.change(modelInput, { target: { value: "my-gpt4o-deployment" } });
+
+    // Toggle underlying model switch
+    await user.click(screen.getByRole("switch"));
+
+    // Fill underlying model
+    const underlyingInput = screen.getByPlaceholderText("e.g. gpt-4o-2024-08-06");
+    fireEvent.change(underlyingInput, { target: { value: "gpt-4o" } });
+
+    // Submit
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIChatTarget",
+        params: {
+          endpoint: "https://api.azure.com",
+          model_name: "my-gpt4o-deployment",
+          underlying_model: "gpt-4o",
+        },
+      });
+      expect(onCreated).toHaveBeenCalled();
+    });
+  });
+
+  it("should not send underlying_model when toggle is off", async () => {
+    const onCreated = jest.fn();
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "simple_target",
+      target_type: "OpenAIChatTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onCreated={onCreated} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, { target: { value: "https://api.openai.com" } });
+
+    const modelInput = screen.getByPlaceholderText("e.g. gpt-4o, my-deployment");
+    fireEvent.change(modelInput, { target: { value: "gpt-4o" } });
+
+    // Do NOT toggle the underlying model switch
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIChatTarget",
+        params: {
+          endpoint: "https://api.openai.com",
+          model_name: "gpt-4o",
+        },
+      });
+    });
+  });
+
+  it("should show error when createTarget fails", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockRejectedValue(
+      new Error("Invalid API key")
+    );
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    // Select target type
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    // Fill endpoint
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, { target: { value: "https://example.com" } });
+
+    // Submit
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Invalid API key")).toBeInTheDocument();
+    });
+  });
+
+  it("should include API key in params when provided", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "openai_chat_keyed",
+      target_type: "OpenAIChatTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    // Select target type
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    // Fill endpoint — use fireEvent.change because userEvent.type truncates
+    // URLs containing periods in FluentUI Input under jsdom.
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, { target: { value: "https://api.openai.com" } });
+
+    // Fill API key — use fireEvent.change for the same reason as endpoint input.
+    fireEvent.change(screen.getByPlaceholderText("API key (stored in memory only)"), {
+      target: { value: "sk-test-key-123" },
+    });
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith(
+        expect.objectContaining({
+          params: expect.objectContaining({
+            api_key: "sk-test-key-123",
+          }),
+        })
+      );
+    });
+  });
+
+  it("should display pyrit_conf hint text", () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    expect(
+      screen.getByText(/auto-populated by adding an initializer/)
+    ).toBeInTheDocument();
+  });
+
+  it("should show field validation errors when submitting form without endpoint", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    // Select target type but leave endpoint empty
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    // Submit via form (bypass disabled button by submitting the form directly)
+    const form = screen.getByText("Create New Target").closest("form") ??
+      document.querySelector("form");
+    if (form) {
+      fireEvent.submit(form);
+    }
+
+    await waitFor(() => {
+      expect(screen.getByText("Please provide an endpoint URL")).toBeInTheDocument();
+    });
+  });
+
+  it("should show generic error for non-Error exceptions", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockRejectedValue("string error");
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, { target: { value: "https://example.com" } });
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Failed to create target")).toBeInTheDocument();
+    });
+  });
+
+  it("should create AzureMLChatTarget with AzureML-specific params", async () => {
+    const onCreated = jest.fn();
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "azure_ml_llama",
+      target_type: "AzureMLChatTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onCreated={onCreated} />
+      </TestWrapper>
+    );
+
+    // Select AzureMLChatTarget type
+    await selectTargetType(user, "AzureMLChatTarget");
+
+    // Fill endpoint
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-model.region.inference.ml.azure.com/score"
+    );
+    fireEvent.change(endpointInput, {
+      target: { value: "https://my-llama.eastus.inference.ml.azure.com/score" },
+    });
+
+    // Fill model name
+    const modelInput = screen.getByPlaceholderText("e.g. Llama-3.2-3B-Instruct");
+    fireEvent.change(modelInput, { target: { value: "Llama-3.2-3B-Instruct" } });
+
+    // Submit (uses defaults for max_new_tokens, temperature, top_p, repetition_penalty)
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "AzureMLChatTarget",
+        params: {
+          endpoint: "https://my-llama.eastus.inference.ml.azure.com/score",
+          model_name: "Llama-3.2-3B-Instruct",
+          max_new_tokens: 400,
+          temperature: 1.0,
+          top_p: 1.0,
+          repetition_penalty: 1.0,
+        },
+      });
+      expect(onCreated).toHaveBeenCalled();
+    });
+  });
+
+  it("should show AzureML fields and hide OpenAI fields when AzureMLChatTarget selected", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "AzureMLChatTarget");
+
+    // AzureML-specific fields should be visible
+    expect(screen.getByText("Max New Tokens")).toBeInTheDocument();
+    expect(screen.getByText("Temperature")).toBeInTheDocument();
+    expect(screen.getByText("Top P")).toBeInTheDocument();
+    expect(screen.getByText("Repetition Penalty")).toBeInTheDocument();
+
+    // OpenAI-specific fields should NOT be visible, but underlying model switch should be
+    expect(screen.getByRole("switch")).toBeInTheDocument();
+  });
+
+  it("should send custom AzureML params when fields are modified", async () => {
+    const onCreated = jest.fn();
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "azure_ml_custom",
+      target_type: "AzureMLChatTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onCreated={onCreated} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "AzureMLChatTarget");
+
+    // Fill endpoint — use fireEvent.change because userEvent.type truncates
+    // URLs containing periods in FluentUI Input under jsdom.
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-model.region.inference.ml.azure.com/score"
+    );
+    fireEvent.change(endpointInput, {
+      target: { value: "https://my-model.eastus.inference.ml.azure.com/score" },
+    });
+
+    // Modify AzureML-specific fields to non-default values via label queries
+    // Use fireEvent.change for the same jsdom/FluentUI reason as endpoint input.
+    fireEvent.change(screen.getByLabelText("Max New Tokens"), {
+      target: { value: "512" },
+    });
+    fireEvent.change(screen.getByLabelText("Temperature"), {
+      target: { value: "0.7" },
+    });
+    fireEvent.change(screen.getByLabelText("Top P"), {
+      target: { value: "0.9" },
+    });
+    fireEvent.change(screen.getByLabelText("Repetition Penalty"), {
+      target: { value: "1.2" },
+    });
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "AzureMLChatTarget",
+        params: {
+          endpoint: "https://my-model.eastus.inference.ml.azure.com/score",
+          max_new_tokens: 512,
+          temperature: 0.7,
+          top_p: 0.9,
+          repetition_penalty: 1.2,
+        },
+      });
+      expect(onCreated).toHaveBeenCalled();
+    });
+  });
+
+  it("should reset form when dialog is closed via onOpenChange", () => {
+    const onClose = jest.fn();
+
+    const { rerender } = render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onClose={onClose} />
+      </TestWrapper>
+    );
+
+    // Simulate Dialog's onOpenChange with open=false
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toBeInTheDocument();
+
+    // Close the dialog by re-rendering with open=false
+    rerender(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} open={false} onClose={onClose} />
+      </TestWrapper>
+    );
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("should hide the API Key field and omit api_key/include auth_mode when Entra is selected", async () => {
+    const onCreated = jest.fn();
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "openai_chat_entra",
+      target_type: "OpenAIChatTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onCreated={onCreated} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, {
+      target: { value: "https://my-resource.openai.azure.com/" },
+    });
+
+    // check that API Key field is visible by default.
+    expect(
+      screen.getByPlaceholderText("API key (stored in memory only)")
+    ).toBeInTheDocument();
+
+    // Select Entra option.
+    await user.click(
+      screen.getByRole("radio", {
+        name: /Microsoft Entra Authentication/,
+      })
+    );
+
+    // check that API Key field is hidden when Entra mode is selected.
+    expect(
+      screen.queryByPlaceholderText("API key (stored in memory only)")
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIChatTarget",
+        params: {
+          endpoint: "https://my-resource.openai.azure.com/",
+        },
+        auth_mode: "entra",
+      });
+      expect(onCreated).toHaveBeenCalled();
+    });
+  });
+
+  it("should clear a previously-typed API key when switching to Entra", async () => {
+    const onCreated = jest.fn();
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "openai_chat_entra",
+      target_type: "OpenAIChatTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onCreated={onCreated} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, {
+      target: { value: "https://my-resource.openai.azure.com/" },
+    });
+
+    // Type a key, then switch to Entra option.
+    fireEvent.change(
+      screen.getByPlaceholderText("API key (stored in memory only)"),
+      { target: { value: "sk-typed-before-switch" } }
+    );
+
+    await user.click(
+      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+    );
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      const call = mockedTargetsApi.createTarget.mock.calls[0][0];
+      expect(call.auth_mode).toBe("entra");
+      expect(call.params).not.toHaveProperty("api_key");
+    });
+  });
+
+  it("should warn the user when Entra is selected for a non-Azure OpenAI endpoint", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, { target: { value: "https://api.openai.com/" } });
+
+    await user.click(
+      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+    );
+
+    expect(
+      screen.getByText(/Entra auth only works with Azure OpenAI/)
+    ).toBeInTheDocument();
+  });
+
+  it("should NOT warn when Entra is selected for a recognized Azure endpoint", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, {
+      target: { value: "https://my-resource.openai.azure.com/" },
+    });
+
+    await user.click(
+      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+    );
+
+    expect(
+      screen.queryByText(/Entra auth only works with Azure OpenAI/)
+    ).not.toBeInTheDocument();
+  });
+
+  it("should disable Create Target and skip API call for Entra + non-Azure OpenAI endpoint", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-resource.openai.azure.com/"
+    );
+    fireEvent.change(endpointInput, { target: { value: "https://api.test.com/" } });
+
+    await user.click(
+      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+    );
+
+    const createButton = screen.getByText("Create Target").closest("button");
+    expect(createButton).toBeDisabled();
+
+    await user.click(screen.getByText("Create Target"));
+
+    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
+  });
+
+  it("should warn the user when Entra is selected for a non-AML endpoint on AzureMLChatTarget", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "AzureMLChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-model.region.inference.ml.azure.com/score"
+    );
+    fireEvent.change(endpointInput, {
+      target: { value: "https://example.com/score" },
+    });
+
+    await user.click(
+      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+    );
+
+    expect(
+      screen.getByText(
+        /Entra auth for AzureMLChatTarget only works with Azure ML managed online endpoints/
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("should NOT warn when Entra is selected for a recognized AML endpoint", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "AzureMLChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-model.region.inference.ml.azure.com/score"
+    );
+    fireEvent.change(endpointInput, {
+      target: { value: "https://my-llama.eastus.inference.ml.azure.com/score" },
+    });
+
+    await user.click(
+      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+    );
+
+    expect(
+      screen.queryByText(
+        /Entra auth for AzureMLChatTarget only works with Azure ML managed online endpoints/
+      )
+    ).not.toBeInTheDocument();
+  });
+
+  it("should disable Create Target and skip API call for Entra + non-AML endpoint on AzureMLChatTarget", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "AzureMLChatTarget");
+
+    const endpointInput = screen.getByPlaceholderText(
+      "https://your-model.region.inference.ml.azure.com/score"
+    );
+    fireEvent.change(endpointInput, {
+      target: { value: "https://api.test.com/score" },
+    });
+
+    await user.click(
+      screen.getByRole("radio", { name: /Microsoft Entra Authentication/ })
+    );
+
+    const createButton = screen.getByText("Create Target").closest("button");
+    expect(createButton).toBeDisabled();
+
+    await user.click(screen.getByText("Create Target"));
+
+    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
+  });
+});

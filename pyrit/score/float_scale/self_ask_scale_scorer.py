@@ -3,14 +3,15 @@
 
 import enum
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 import yaml
 
 from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_SCALES_PATH
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score, SeedPrompt, UnvalidatedScore
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -34,15 +35,16 @@ class SelfAskScaleScorer(FloatScaleScorer):
         RED_TEAMER_SYSTEM_PROMPT = Path(SCORER_SCALES_PATH, "red_teamer_system_prompt.yaml").resolve()
         CRITERIA_SYSTEM_PROMPT = Path(SCORER_SCALES_PATH, "criteria_system_prompt.yaml").resolve()
 
-    _default_validator: ScorerPromptValidator = ScorerPromptValidator(
+    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"],
         is_objective_required=True,
     )
+    TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
     def __init__(
         self,
         *,
-        chat_target: PromptChatTarget,
+        chat_target: PromptTarget,
         scale_arguments_path: Optional[Union[Path, str]] = None,
         system_prompt_path: Optional[Union[Path, str]] = None,
         validator: Optional[ScorerPromptValidator] = None,
@@ -51,14 +53,14 @@ class SelfAskScaleScorer(FloatScaleScorer):
         Initialize the SelfAskScaleScorer.
 
         Args:
-            chat_target (PromptChatTarget): The chat target to use for scoring.
+            chat_target (PromptTarget): The chat target to use for scoring.
             scale_arguments_path (Optional[Union[Path, str]]): Path to the YAML file containing scale definitions.
                 Defaults to TREE_OF_ATTACKS_SCALE if not provided.
             system_prompt_path (Optional[Union[Path, str]]): Path to the YAML file containing the system prompt.
                 Defaults to GENERAL_SYSTEM_PROMPT if not provided.
             validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
         """
-        super().__init__(validator=validator or self._default_validator)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
 
         self._prompt_target = chat_target
 
@@ -83,12 +85,21 @@ class SelfAskScaleScorer(FloatScaleScorer):
 
         self._system_prompt = scoring_instructions_template.render_template_value(**scale_args)
 
-    def _build_scorer_identifier(self) -> None:
-        """Build the scorer evaluation identifier for this scorer."""
-        self._set_scorer_identifier(
-            system_prompt_template=self._system_prompt,
-            user_prompt_template="objective: {objective}\nresponse: {response}",
-            prompt_target=self._prompt_target,
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier for this scorer.
+
+        Returns:
+            ComponentIdentifier: The identifier for this scorer.
+        """
+        return self._create_identifier(
+            params={
+                "system_prompt_template": self._system_prompt,
+                "user_prompt_template": "objective: {objective}\nresponse: {response}",
+            },
+            children={
+                "prompt_target": self._prompt_target.get_identifier(),
+            },
         )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
@@ -96,24 +107,39 @@ class SelfAskScaleScorer(FloatScaleScorer):
         Scores the given message_piece using "self-ask" for the chat target.
 
         Args:
-            message_piece (MessagePiece): The message piece containing the text to be scored.
-            objective (str): The task based on which the text should be scored (the original
+            message_piece (MessagePiece): The message piece containing the content to be scored.
+                Supports text and non-text types (e.g., image_path). For non-text content,
+                the objective context is sent as a prepended text piece alongside the raw content.
+            objective (str): The objective based on which the content should be scored (the original
                 attacker model's objective).
 
         Returns:
             list[Score]: The message piece's score.
                          The score_value is a value from [0,1] that is scaled based on the scorer's scale.
         """
-        scoring_prompt = f"objective: {objective}\nresponse: {message_piece.converted_value}"
+        # For non-text content (images, audio, etc.), send the raw content with its original
+        # data type and prepend the objective as a text piece. This allows multimodal LLMs
+        # to evaluate the content directly (e.g., viewing an image to assess it).
+        is_non_text = message_piece.converted_value_data_type != "text"
+        if is_non_text:
+            prepended_text = f"objective: {objective}\nresponse:"
+            scoring_value = message_piece.converted_value
+            scoring_data_type = message_piece.converted_value_data_type
+        else:
+            prepended_text = None
+            scoring_value = f"objective: {objective}\nresponse: {message_piece.converted_value}"
+            scoring_data_type = "text"
 
         unvalidated_score: UnvalidatedScore = await self._score_value_with_llm(
             prompt_target=self._prompt_target,
             system_prompt=self._system_prompt,
-            message_value=scoring_prompt,
-            message_data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,
+            message_value=scoring_value,
+            message_data_type=scoring_data_type,
+            scored_prompt_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+            prepended_text_message_piece=prepended_text,
             category=self._category,
             objective=objective,
+            attack_identifier=message_piece.attack_identifier,
         )
 
         score = unvalidated_score.to_score(
@@ -127,7 +153,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
 
         return [score]
 
-    def _validate_scale_arguments_set(self, scale_args: dict):
+    def _validate_scale_arguments_set(self, scale_args: dict[str, Any]) -> None:
         try:
             minimum_value = scale_args["minimum_value"]
             maximum_value = scale_args["maximum_value"]

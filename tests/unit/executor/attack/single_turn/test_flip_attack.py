@@ -13,22 +13,39 @@ from pyrit.executor.attack import (
     FlipAttack,
     SingleTurnAttackContext,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
 )
 from pyrit.prompt_converter import FlipConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import TrueFalseScorer
+
+
+def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
+
+
+def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
 
 
 @pytest.fixture
 def mock_objective_target():
-    """Create a mock PromptChatTarget for testing"""
-    target = MagicMock(spec=PromptChatTarget)
+    """Create a mock PromptTarget for testing"""
+    target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock()
-    target.get_identifier.return_value = {"id": "mock_target_id"}
+    target.get_identifier.return_value = _mock_target_id("MockTarget")
     return target
 
 
@@ -43,6 +60,7 @@ def mock_scorer():
     """Create a mock true/false scorer"""
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_text_async = AsyncMock()
+    scorer.get_identifier.return_value = _mock_scorer_id()
     return scorer
 
 
@@ -65,7 +83,7 @@ class TestFlipAttackInitialization:
 
         assert attack._system_prompt is not None
         assert len(attack._system_prompt.message_pieces) == 1
-        assert attack._system_prompt.message_pieces[0].role == "system"
+        assert attack._system_prompt.message_pieces[0].api_role == "system"
         assert "flipping each word" in attack._system_prompt.message_pieces[0].original_value
 
     def test_init_adds_flip_converter_to_request_converters(self, mock_objective_target):
@@ -148,7 +166,6 @@ class TestFlipAttackParamsType:
 class TestFlipAttackSetup:
     """Tests for the setup phase"""
 
-    @pytest.mark.asyncio
     async def test_setup_adds_system_prompt_to_context(self, flip_attack, basic_context):
         """Test that setup adds the system prompt to prepended conversation"""
         flip_attack._conversation_manager = MagicMock()
@@ -160,11 +177,11 @@ class TestFlipAttackSetup:
         assert len(basic_context.prepended_conversation) == 1
         assert basic_context.prepended_conversation[0] == flip_attack._system_prompt
 
-    @pytest.mark.asyncio
     async def test_setup_updates_conversation_without_converters(self, flip_attack, basic_context):
         """Test that conversation state is updated without converters for system prompt"""
         flip_attack._conversation_manager = MagicMock()
         flip_attack._conversation_manager.initialize_context_async = AsyncMock()
+        flip_attack._memory_labels = {}
 
         await flip_attack._setup_async(context=basic_context)
 
@@ -185,7 +202,6 @@ class TestFlipAttackSetup:
 class TestFlipAttackExecution:
     """Tests for attack execution"""
 
-    @pytest.mark.asyncio
     async def test_perform_attack_formats_objective_correctly(self, flip_attack, basic_context):
         """Test that the objective is formatted with the special TASK format"""
         # basic_context fixture already has objective="How can I kill a Python process?"
@@ -200,7 +216,6 @@ class TestFlipAttackExecution:
             mock_result = AttackResult(
                 conversation_id=basic_context.conversation_id,
                 objective=basic_context.objective,
-                attack_identifier=flip_attack.get_identifier(),
                 outcome=AttackOutcome.SUCCESS,
             )
             mock_perform.return_value = mock_result
@@ -222,7 +237,6 @@ class TestFlipAttackExecution:
 class TestAttackLifecycle:
     """Tests for the complete FlipAttack lifecycle (execute_async)"""
 
-    @pytest.mark.asyncio
     async def test_execute_async_successful_lifecycle(self, mock_objective_target, basic_context):
         attack = FlipAttack(objective_target=mock_objective_target)
 
@@ -232,7 +246,6 @@ class TestAttackLifecycle:
         mock_result = AttackResult(
             conversation_id=basic_context.conversation_id,
             objective=basic_context.objective,
-            attack_identifier=attack.get_identifier(),
             outcome=AttackOutcome.SUCCESS,
         )
         attack._perform_async = AsyncMock(return_value=mock_result)

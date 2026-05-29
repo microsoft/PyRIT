@@ -14,7 +14,19 @@ class FlipConverter(PromptConverter):
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
-        """Converts the given prompt by reversing the text."""
+        """
+        Convert the given prompt by reversing the text.
+
+        Args:
+            prompt: The prompt to be converted.
+            input_type: Type of data.
+
+        Returns:
+            The converted text representation of the original prompt with characters reversed.
+
+        Raises:
+            ValueError: If the input type is not supported.
+        """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 

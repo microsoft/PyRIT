@@ -44,6 +44,15 @@ class EmojiConverter(WordLevelConverter):
     }
 
     async def convert_word_async(self, word: str) -> str:
+        """
+        Convert a single word into the target format supported by the converter.
+
+        Args:
+            word (str): The word to be converted.
+
+        Returns:
+            str: The converted word.
+        """
         word = word.lower()
         result = []
         for char in word:

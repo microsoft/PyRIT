@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Optional
+
+from pydantic import BaseModel, ConfigDict
 
 # Would prefer StrEnum, but.... Python 3.10
 _METADATAKEYS = {
@@ -16,8 +17,7 @@ _METADATAKEYS = {
 }
 
 
-@dataclass
-class _JsonResponseConfig:
+class _JsonResponseConfig(BaseModel):
     """
     Configuration for JSON responses (with OpenAI).
 
@@ -27,13 +27,15 @@ class _JsonResponseConfig:
     https://platform.openai.com/docs/api-reference/responses/create#responses_create-text
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = False
-    schema: Optional[Dict[str, Any]] = None
+    json_schema: Optional[dict[str, Any]] = None
     schema_name: str = "CustomSchema"
     strict: bool = True
 
     @classmethod
-    def from_metadata(cls, *, metadata: Optional[Dict[str, Any]]) -> _JsonResponseConfig:
+    def from_metadata(cls, *, metadata: Optional[dict[str, Any]]) -> _JsonResponseConfig:
         if not metadata:
             return cls(enabled=False)
 
@@ -42,18 +44,18 @@ class _JsonResponseConfig:
             return cls(enabled=False)
 
         schema_val = metadata.get(_METADATAKEYS["JSON_SCHEMA"])
-        if schema_val:
+        if schema_val is not None:
             if isinstance(schema_val, str):
                 try:
                     schema = json.loads(schema_val) if schema_val else None
-                except json.JSONDecodeError:
-                    raise ValueError(f"Invalid JSON schema provided: {schema_val}")
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Invalid JSON schema provided: {schema_val}") from e
             else:
                 schema = schema_val
 
             return cls(
                 enabled=True,
-                schema=schema,
+                json_schema=schema,
                 schema_name=metadata.get(_METADATAKEYS["JSON_SCHEMA_NAME"], "CustomSchema"),
                 strict=metadata.get(_METADATAKEYS["JSON_SCHEMA_STRICT"], True),
             )

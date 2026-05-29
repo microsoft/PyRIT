@@ -2,17 +2,25 @@
 # Licensed under the MIT license.
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+from typing import Optional
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import Score
-from pyrit.score import FloatScaleThresholdScorer, ScorerIdentifier
+from pyrit.models import Message, MessagePiece, Score
+from pyrit.score import FloatScaleThresholdScorer
+from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
 def create_mock_float_scorer(score_value: float):
-    """Helper to create a mock float scale scorer with proper scorer_identifier."""
+    """Helper to create a mock float scale scorer with proper identifier."""
+    mock_identifier = ComponentIdentifier(
+        class_name="MockScorer",
+        class_module="test.mock",
+    )
     scorer = AsyncMock()
     scorer.score_async = AsyncMock(
         return_value=[
@@ -24,22 +32,18 @@ def create_mock_float_scorer(score_value: float):
                 score_metadata=None,
                 message_piece_id=uuid.uuid4(),
                 score_value_description="A mock description",
+                scorer_class_identifier=mock_identifier,
                 id=uuid.uuid4(),
             )
         ]
     )
-    scorer.get_identifier = MagicMock(return_value={"__type__": "MockScorer", "__module__": "test.mock"})
-    # Add mock scorer_identifier
-    mock_identifier = ScorerIdentifier(
-        type="MockScorer",
-    )
-    type(scorer).scorer_identifier = PropertyMock(return_value=mock_identifier)
+    # Add mock identifier - get_identifier() returns a ComponentIdentifier
+    scorer.get_identifier = MagicMock(return_value=mock_identifier)
     return scorer
 
 
 @pytest.mark.parametrize("threshold", [0.3, 0.5, 0.7])
 @pytest.mark.parametrize("score_value", [0.1, 0.3, 0.5, 0.7, 0.9])
-@pytest.mark.asyncio
 async def test_float_scale_threshold_scorer_adds_to_memory(threshold, score_value):
     memory = MagicMock(MemoryInterface)
 
@@ -55,7 +59,6 @@ async def test_float_scale_threshold_scorer_adds_to_memory(threshold, score_valu
         memory.add_scores_to_memory.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_float_scale_threshold_scorer_returns_single_score_with_multi_category_scorer():
     """
     Test that FloatScaleThresholdScorer returns exactly one score even when the underlying scorer
@@ -63,6 +66,12 @@ async def test_float_scale_threshold_scorer_returns_single_score_with_multi_cate
     """
 
     memory = MagicMock(MemoryInterface)
+
+    # get_identifier() returns a ComponentIdentifier
+    mock_identifier = ComponentIdentifier(
+        class_name="MockScorer",
+        class_module="test.mock",
+    )
 
     # Mock a scorer that returns multiple scores (like AzureContentFilterScorer)
     scorer = AsyncMock()
@@ -77,6 +86,7 @@ async def test_float_scale_threshold_scorer_returns_single_score_with_multi_cate
                 score_metadata={"azure_severity": 2},
                 message_piece_id=prompt_id,
                 score_value_description="",
+                scorer_class_identifier=mock_identifier,
                 id=uuid.uuid4(),
             ),
             Score(
@@ -87,6 +97,7 @@ async def test_float_scale_threshold_scorer_returns_single_score_with_multi_cate
                 score_metadata={"azure_severity": 0},
                 message_piece_id=prompt_id,
                 score_value_description="",
+                scorer_class_identifier=mock_identifier,
                 id=uuid.uuid4(),
             ),
             Score(
@@ -97,14 +108,12 @@ async def test_float_scale_threshold_scorer_returns_single_score_with_multi_cate
                 score_metadata={"azure_severity": 6},
                 message_piece_id=prompt_id,
                 score_value_description="",
+                scorer_class_identifier=mock_identifier,
                 id=uuid.uuid4(),
             ),
         ]
     )
-    scorer.get_identifier = MagicMock(return_value={"__type__": "MockScorer", "__module__": "test.mock"})
-    # Add mock scorer_identifier
-    mock_identifier = ScorerIdentifier(type="MockScorer")
-    type(scorer).scorer_identifier = PropertyMock(return_value=mock_identifier)
+    scorer.get_identifier = MagicMock(return_value=mock_identifier)
 
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         float_scale_threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.5)
@@ -125,7 +134,6 @@ async def test_float_scale_threshold_scorer_returns_single_score_with_multi_cate
         assert len(added_scores) == 1
 
 
-@pytest.mark.asyncio
 async def test_float_scale_threshold_scorer_handles_empty_scores():
     """
     Test that FloatScaleThresholdScorer gracefully handles when the underlying scorer
@@ -136,10 +144,12 @@ async def test_float_scale_threshold_scorer_handles_empty_scores():
     # Mock a scorer that returns empty list (all pieces filtered)
     scorer = AsyncMock()
     scorer.score_async = AsyncMock(return_value=[])
-    scorer.get_identifier = MagicMock(return_value={"__type__": "MockScorer", "__module__": "test.mock"})
-    # Add mock scorer_identifier
-    mock_identifier = ScorerIdentifier(type="MockScorer")
-    type(scorer).scorer_identifier = PropertyMock(return_value=mock_identifier)
+    # get_identifier() returns a ComponentIdentifier
+    mock_identifier = ComponentIdentifier(
+        class_name="MockScorer",
+        class_module="test.mock",
+    )
+    scorer.get_identifier = MagicMock(return_value=mock_identifier)
 
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         float_scale_threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.5)
@@ -157,7 +167,6 @@ async def test_float_scale_threshold_scorer_handles_empty_scores():
         memory.add_scores_to_memory.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_float_scale_threshold_scorer_with_raise_on_empty_aggregator():
     """
     Test that FloatScaleThresholdScorer raises ValueError when using RAISE_ON_EMPTY aggregator
@@ -172,10 +181,12 @@ async def test_float_scale_threshold_scorer_with_raise_on_empty_aggregator():
     # Mock a scorer that returns empty list (all pieces filtered)
     scorer = AsyncMock()
     scorer.score_async = AsyncMock(return_value=[])
-    scorer.get_identifier = MagicMock(return_value={"__type__": "MockScorer", "__module__": "test.mock"})
-    # Add mock scorer_identifier
-    mock_identifier = ScorerIdentifier(type="MockScorer")
-    type(scorer).scorer_identifier = PropertyMock(return_value=mock_identifier)
+    # get_identifier() returns a ComponentIdentifier
+    mock_identifier = ComponentIdentifier(
+        class_name="MockScorer",
+        class_module="test.mock",
+    )
+    scorer.get_identifier = MagicMock(return_value=mock_identifier)
 
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         float_scale_threshold_scorer = FloatScaleThresholdScorer(
@@ -187,3 +198,78 @@ async def test_float_scale_threshold_scorer_with_raise_on_empty_aggregator():
             RuntimeError, match="Error in scorer FloatScaleThresholdScorer.*No scores available for aggregation"
         ):
             await float_scale_threshold_scorer.score_text_async(text="mock example")
+
+
+def test_get_chat_target_delegates_to_wrapped_scorer():
+    """get_chat_target returns the chat target from the wrapped scorer."""
+    mock_target = MagicMock()
+    scorer = MagicMock()
+    scorer.get_chat_target.return_value = mock_target
+    scorer.get_identifier = MagicMock(return_value=ComponentIdentifier(class_name="Mock", class_module="test"))
+
+    threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.5)
+    assert threshold_scorer.get_chat_target() is mock_target
+
+
+def test_get_chat_target_returns_none_when_wrapped_has_none():
+    """get_chat_target returns None when the wrapped scorer has no chat target."""
+    scorer = MagicMock()
+    scorer.get_chat_target.return_value = None
+    scorer.get_identifier = MagicMock(return_value=ComponentIdentifier(class_name="Mock", class_module="test"))
+
+    threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.5)
+    assert threshold_scorer.get_chat_target() is None
+
+
+async def test_float_scale_threshold_scorer_with_real_float_scorer_on_blocked(patch_central_database):
+    """Integration test: a real FloatScaleScorer subclass returns Score(0.0) on blocked input
+    (via its unified no-pieces fallback), and the threshold wrapper correctly converts that
+    to a False true_false score.
+
+    This is the end-to-end path that replaced TAP's deleted error_score_map: the inner scorer
+    handles blocked responses itself, so wrappers like FloatScaleThresholdScorer don't need
+    any special blocked-handling logic.
+    """
+
+    class _RealFloatScaleScorer(FloatScaleScorer):
+        def __init__(self):
+            super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return self._create_identifier()
+
+        async def _score_piece_async(
+            self, message_piece: MessagePiece, *, objective: Optional[str] = None
+        ) -> list[Score]:
+            return [
+                Score(
+                    score_value="0.9",
+                    score_type="float_scale",
+                    score_category=["mock"],
+                    score_rationale="should not be hit for blocked",
+                    score_metadata=None,
+                    message_piece_id=message_piece.id,
+                    score_value_description="mock",
+                    scorer_class_identifier=self.get_identifier(),
+                )
+            ]
+
+    inner = _RealFloatScaleScorer()
+    threshold_scorer = FloatScaleThresholdScorer(scorer=inner, threshold=0.5)
+
+    blocked_piece = MessagePiece(
+        role="assistant",
+        original_value="",
+        converted_value="",
+        converted_value_data_type="error",
+        response_error="blocked",
+    )
+    blocked_message = Message(message_pieces=[blocked_piece])
+
+    scores = await threshold_scorer.score_async(blocked_message)
+
+    assert len(scores) == 1
+    binary_score = scores[0]
+    assert binary_score.score_type == "true_false"
+    assert binary_score.get_value() is False
+    assert "Normalized scale score: 0.0" in binary_score.score_rationale

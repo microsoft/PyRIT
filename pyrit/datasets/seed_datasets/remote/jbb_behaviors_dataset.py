@@ -17,7 +17,7 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
 
     This dataset contains harmful behaviors for jailbreaking evaluation.
 
-    Reference: https://arxiv.org/abs/2404.01318
+    Reference: [@chao2024jailbreakbench]
 
     Content Warning: This dataset contains prompts aimed at provoking harmful responses
     and may contain offensive content. Users should check with their legal department
@@ -29,7 +29,7 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
         *,
         source: str = "JailbreakBench/JBB-Behaviors",
         split: str = "behaviors",
-    ):
+    ) -> None:
         """
         Initialize the JBB-Behaviors dataset loader.
 
@@ -45,7 +45,7 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "jbb_behaviors"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch JBB-Behaviors dataset and return as SeedDataset.
 
@@ -107,7 +107,7 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
                         "jbb_category": category,
                         "original_source": "JailbreakBench",
                     },
-                    **common_metadata,  # type: ignore[arg-type]
+                    **common_metadata,  # type: ignore[ty:invalid-argument-type]
                 )
 
                 seed_prompts.append(seed_prompt)
@@ -121,7 +121,7 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
 
         except Exception as e:
             logger.error(f"Failed to load JBB-Behaviors dataset: {str(e)}")
-            raise Exception(f"Error loading JBB-Behaviors dataset: {str(e)}")
+            raise Exception(f"Error loading JBB-Behaviors dataset: {str(e)}") from e
 
     def _map_jbb_category_to_harm_category(self, jbb_category: str) -> list[str]:
         """
@@ -210,13 +210,13 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
         # Special handling for common patterns
         if any(term in jbb_category_lower for term in ["violent", "kill", "murder", "bomb"]):
             return ["violence"]
-        elif any(term in jbb_category_lower for term in ["hate", "racist", "sexist"]):
+        if any(term in jbb_category_lower for term in ["hate", "racist", "sexist"]):
             return ["hate", "discrimination"]
-        elif any(term in jbb_category_lower for term in ["sexual", "porn", "nsfw"]):
+        if any(term in jbb_category_lower for term in ["sexual", "porn", "nsfw"]):
             return ["sexual"]
-        elif any(term in jbb_category_lower for term in ["illegal", "crime", "criminal"]):
+        if any(term in jbb_category_lower for term in ["illegal", "crime", "criminal"]):
             return ["criminal_planning", "illegal_activity"]
-        elif any(term in jbb_category_lower for term in ["harm", "hurt", "damage"]):
+        if any(term in jbb_category_lower for term in ["harm", "hurt", "damage"]):
             return ["violence", "harm"]
 
         # Default: use the original JBB category

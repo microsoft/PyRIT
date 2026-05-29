@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import uuid
-from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,24 +12,35 @@ from pyrit.executor.promptgen.anecdoctor import (
     AnecdoctorGenerator,
     AnecdoctorResult,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
+
+
+def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
 
 
 @pytest.fixture
-def mock_objective_target() -> PromptChatTarget:
+def mock_objective_target() -> PromptTarget:
     """Create a mock objective target for testing."""
-    mock_target = MagicMock(spec=PromptChatTarget)
+    mock_target = MagicMock(spec=PromptTarget)
     mock_target.set_system_prompt = MagicMock()
+    mock_target.get_identifier.return_value = _mock_target_id("mock_objective_target")
     return mock_target
 
 
 @pytest.fixture
-def mock_processing_model() -> PromptChatTarget:
+def mock_processing_model() -> PromptTarget:
     """Create a mock processing model for testing."""
-    mock_model = MagicMock(spec=PromptChatTarget)
+    mock_model = MagicMock(spec=PromptTarget)
     mock_model.set_system_prompt = MagicMock()
+    mock_model.get_identifier.return_value = _mock_target_id("MockProcessingModel")
     return mock_model
 
 
@@ -43,7 +53,7 @@ def mock_prompt_normalizer() -> PromptNormalizer:
 
 
 @pytest.fixture
-def sample_evaluation_data() -> List[str]:
+def sample_evaluation_data() -> list[str]:
     """Sample evaluation data for testing."""
     return [
         "Claim: The earth is flat. Review: FALSE",
@@ -200,7 +210,6 @@ class TestAnecdoctorGeneratorValidation:
 class TestAnecdoctorGeneratorSetup:
     """Tests for generator setup."""
 
-    @pytest.mark.asyncio
     async def test_setup_generates_conversation_id(self, mock_objective_target, sample_context):
         """Test setup generates a new conversation ID."""
         generator = AnecdoctorGenerator(objective_target=mock_objective_target)
@@ -212,7 +221,6 @@ class TestAnecdoctorGeneratorSetup:
         assert sample_context.conversation_id != original_id
         assert isinstance(sample_context.conversation_id, str)
 
-    @pytest.mark.asyncio
     async def test_setup_combines_memory_labels(self, mock_objective_target, sample_context):
         """Test setup combines memory labels from generator and context."""
         generator = AnecdoctorGenerator(objective_target=mock_objective_target)
@@ -226,7 +234,6 @@ class TestAnecdoctorGeneratorSetup:
         expected_labels = {**generator._memory_labels, **original_labels}
         assert sample_context.memory_labels == expected_labels
 
-    @pytest.mark.asyncio
     async def test_setup_formats_system_prompt(self, mock_objective_target, sample_context):
         """Test setup formats system prompt with language and content type."""
         generator = AnecdoctorGenerator(objective_target=mock_objective_target)
@@ -247,7 +254,6 @@ class TestAnecdoctorGeneratorSetup:
 class TestAnecdoctorGeneratorExecution:
     """Tests for the main generator execution flow."""
 
-    @pytest.mark.asyncio
     async def test_perform_strategy_without_processing_model(
         self, mock_objective_target, sample_context, mock_response
     ):
@@ -273,7 +279,6 @@ class TestAnecdoctorGeneratorExecution:
             assert isinstance(result, AnecdoctorResult)
             assert result.generated_content == mock_response
 
-    @pytest.mark.asyncio
     async def test_perform_strategy_with_processing_model(
         self, mock_objective_target, mock_processing_model, sample_context, mock_response
     ):
@@ -297,7 +302,6 @@ class TestAnecdoctorGeneratorExecution:
             assert isinstance(result, AnecdoctorResult)
             assert result.generated_content == mock_response
 
-    @pytest.mark.asyncio
     async def test_perform_strategy_no_response(self, mock_objective_target, sample_context):
         """Test generator execution when no response is received."""
         generator = AnecdoctorGenerator(objective_target=mock_objective_target)
@@ -312,7 +316,6 @@ class TestAnecdoctorGeneratorExecution:
             with pytest.raises(RuntimeError, match="Failed to get response from target model"):
                 await generator._perform_async(context=sample_context)
 
-    @pytest.mark.asyncio
     async def test_execute_with_context_full_flow(self, mock_objective_target, sample_context, mock_response):
         """Test full execution flow with context management."""
         generator = AnecdoctorGenerator(objective_target=mock_objective_target)
@@ -359,7 +362,6 @@ class TestAnecdoctorGeneratorHelperMethods:
             result = generator._load_prompt_from_yaml(yaml_filename="anecdoctor_use_fewshot.yaml")
             assert result == "Test prompt template: {language} {type}"
 
-    @pytest.mark.asyncio
     async def test_prepare_examples_without_processing_model(self, mock_objective_target, sample_context):
         """Test example preparation without processing model."""
         generator = AnecdoctorGenerator(objective_target=mock_objective_target)
@@ -372,7 +374,6 @@ class TestAnecdoctorGeneratorHelperMethods:
             mock_format.assert_called_once_with(evaluation_data=sample_context.evaluation_data)
             assert result == "Formatted examples"
 
-    @pytest.mark.asyncio
     async def test_prepare_examples_with_processing_model(
         self, mock_objective_target, mock_processing_model, sample_context
     ):
@@ -387,7 +388,6 @@ class TestAnecdoctorGeneratorHelperMethods:
             mock_extract.assert_called_once_with(context=sample_context)
             assert result == "Knowledge graph"
 
-    @pytest.mark.asyncio
     async def test_send_examples_to_target_success(self, mock_objective_target, sample_context, mock_response):
         """Test successful sending of examples to target."""
         generator = AnecdoctorGenerator(objective_target=mock_objective_target)
@@ -402,7 +402,6 @@ class TestAnecdoctorGeneratorHelperMethods:
             assert result == mock_response
             mock_send.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_extract_knowledge_graph(self, mock_objective_target, mock_processing_model, sample_context):
         """Test knowledge graph extraction."""
         generator = AnecdoctorGenerator(objective_target=mock_objective_target, processing_model=mock_processing_model)
@@ -423,7 +422,6 @@ class TestAnecdoctorGeneratorHelperMethods:
 class TestAnecdoctorGeneratorTeardown:
     """Tests for teardown functionality."""
 
-    @pytest.mark.asyncio
     async def test_teardown_async(self, mock_objective_target, sample_context):
         """Test teardown functionality."""
         generator = AnecdoctorGenerator(objective_target=mock_objective_target)
@@ -436,7 +434,6 @@ class TestAnecdoctorGeneratorTeardown:
 class TestAnecdoctorGeneratorExecuteAsync:
     """Tests for execute_async overloads."""
 
-    @pytest.mark.asyncio
     async def test_execute_async_with_kwargs(self, mock_objective_target, sample_evaluation_data, mock_response):
         """Test execute_async with keyword arguments."""
         generator = AnecdoctorGenerator(objective_target=mock_objective_target)
@@ -461,7 +458,6 @@ class TestAnecdoctorGeneratorExecuteAsync:
 class TestAnecdoctorGeneratorErrorHandling:
     """Tests for error handling scenarios."""
 
-    @pytest.mark.asyncio
     async def test_send_examples_failure(self, mock_objective_target, sample_context):
         """Test error handling when sending examples fails."""
         generator = AnecdoctorGenerator(objective_target=mock_objective_target)
@@ -474,7 +470,6 @@ class TestAnecdoctorGeneratorErrorHandling:
                     formatted_examples="Test examples", context=sample_context
                 )
 
-    @pytest.mark.asyncio
     async def test_knowledge_graph_extraction_failure(
         self, mock_objective_target, mock_processing_model, sample_context
     ):
@@ -487,7 +482,6 @@ class TestAnecdoctorGeneratorErrorHandling:
             with pytest.raises(Exception, match="Processing error"):
                 await generator._extract_knowledge_graph_async(context=sample_context)
 
-    @pytest.mark.asyncio
     async def test_validation_error_during_execution(self, mock_objective_target, sample_context):
         """Test validation error during execution."""
         generator = AnecdoctorGenerator(objective_target=mock_objective_target)
@@ -528,3 +522,22 @@ class TestAnecdoctorGeneratorEdgeCases:
         result = generator._format_few_shot_examples(evaluation_data=evaluation_data)
         for data in evaluation_data:
             assert data in result
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_extract_knowledge_graph_raises_when_processing_model_is_none():
+    """Test that _extract_knowledge_graph_async raises ValueError when processing model is None."""
+    mock_target = MagicMock(spec=PromptTarget)
+    mock_target.get_identifier.return_value = ComponentIdentifier(class_name="MockTarget", class_module="test_module")
+    generator = AnecdoctorGenerator(objective_target=mock_target)
+    # Ensure processing model is explicitly None
+    assert generator._processing_model is None
+
+    context = AnecdoctorContext(
+        evaluation_data=["sample data"],
+        language="english",
+        content_type="viral tweet",
+    )
+
+    with pytest.raises(ValueError, match="self._processing_model is not initialized"):
+        await generator._extract_knowledge_graph_async(context=context)

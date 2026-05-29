@@ -5,6 +5,7 @@ import logging
 import random
 from typing import Optional
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
@@ -87,6 +88,20 @@ class MathObfuscationConverter(PromptConverter):
         self._hint = hint if hint is not None else self.DEFAULT_HINT
         self._suffix = suffix if suffix is not None else self.DEFAULT_SUFFIX
         self._rng = rng or random.Random()
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build identifier with math obfuscation parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "min_n": self._min_n,
+                "max_n": self._max_n,
+            }
+        )
 
     async def convert_async(
         self,

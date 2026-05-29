@@ -4,6 +4,7 @@
 import pathlib
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, SeedPrompt
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
@@ -21,7 +22,7 @@ class MorseConverter(PromptConverter):
 
     def __init__(self, *, append_description: bool = False) -> None:
         """
-        Initializes the converter with an option to append a description to the prompt.
+        Initialize the converter with an option to append a description to the prompt.
 
         Args:
             append_description (bool): Append plaintext "expert" text to the prompt. Includes instructions to only
@@ -34,9 +35,32 @@ class MorseConverter(PromptConverter):
             "then use the chainsaw to cut down the stop sign."
         )
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build identifier with morse converter parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "append_description": self.append_description,
+            }
+        )
+
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt to morse code.
+        Convert the given prompt to morse code.
+
+        Args:
+            prompt (str): The prompt to be converted.
+            input_type (PromptDataType, optional): Type of input data. Defaults to "text".
+
+        Returns:
+            ConverterResult: The result containing the morse code representation of the prompt.
+
+        Raises:
+            ValueError: If the input type is not supported.
         """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
@@ -141,9 +165,9 @@ class MorseConverter(PromptConverter):
             "Ź": "--..-.",
             "Ż": "--..-",
         }
-        EXTENDED_CHAR_SUPPORT = True
+        extended_char_support = True
         supported_charset = "".join(morse_mapping.keys())
-        if EXTENDED_CHAR_SUPPORT:
+        if extended_char_support:
             supported_charset += "".join(extended_mapping.keys())
             morse_mapping = {**morse_mapping, **extended_mapping}
         error_char = "........"

@@ -2,9 +2,11 @@
 # Licensed under the MIT license.
 
 import base64
-from typing import TYPE_CHECKING, Awaitable, Callable, Optional
+import logging
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Optional
 
-from azure.ai.contentsafety import ContentSafetyClient
+from azure.ai.contentsafety.aio import ContentSafetyClient
 from azure.ai.contentsafety.models import (
     AnalyzeImageOptions,
     AnalyzeImageResult,
@@ -15,10 +17,12 @@ from azure.ai.contentsafety.models import (
 )
 from azure.core.credentials import AzureKeyCredential
 
-from pyrit.auth import TokenProviderCredential
+from pyrit.auth import AsyncTokenProviderCredential, ensure_async_token_provider, get_azure_async_token_provider
 from pyrit.common import default_values
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     DataTypeSerializer,
+    Message,
     MessagePiece,
     Score,
     data_serializer_factory,
@@ -34,6 +38,8 @@ if TYPE_CHECKING:
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
 
+logger = logging.getLogger(__name__)
+
 
 class AzureContentFilterScorer(FloatScaleScorer):
     """
@@ -46,7 +52,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
 
     MAX_TEXT_LENGTH = 10000  # Azure Content Safety API limit
 
-    _default_validator: ScorerPromptValidator = ScorerPromptValidator(
+    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text", "image_path"],
     )
 
@@ -102,16 +108,18 @@ class AzureContentFilterScorer(FloatScaleScorer):
                 Defaults to the `ENDPOINT_URI_ENVIRONMENT_VARIABLE` environment variable.
             api_key (Optional[str | Callable[[], str | Awaitable[str]] | None]):
                 The API key for accessing the Azure Content Safety service,
-                or a callable that returns an access token. For Azure endpoints with Entra authentication,
-                pass a token provider from pyrit.auth
-                (e.g., get_azure_token_provider('https://cognitiveservices.azure.com/.default')).
+                or a callable that returns an access token. Both synchronous and asynchronous
+                token providers are supported. Sync providers are automatically wrapped for
+                async compatibility. If not provided (via parameter or environment variable),
+                Entra ID authentication is used automatically.
                 Defaults to the `API_KEY_ENVIRONMENT_VARIABLE` environment variable.
             harm_categories (Optional[list[TextCategory]]): The harm categories you want to query for as
                 defined in azure.ai.contentsafety.models.TextCategory. If not provided, defaults to all categories.
             validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
 
         Raises:
-            ValueError: If neither API key nor endpoint is provided, or if both are missing.
+            ValueError: If no endpoint is provided.
+            RuntimeError: If the API key is not a string when validation is performed.
         """
         if harm_categories:
             self._harm_categories = harm_categories
@@ -122,36 +130,53 @@ class AzureContentFilterScorer(FloatScaleScorer):
             env_var_name=self.ENDPOINT_URI_ENVIRONMENT_VARIABLE, passed_value=endpoint or ""
         )
 
-        # API key is required - either from parameter or environment variable
-        self._api_key = default_values.get_required_value(  # type: ignore[assignment]
-            env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
-        )
+        # API key: use passed value, env var, or fall back to Entra ID for Azure endpoints
+        resolved_api_key: str | Callable[[], str | Awaitable[str]]
+        if api_key is not None and callable(api_key):
+            resolved_api_key = api_key
+        else:
+            api_key_value = default_values.get_non_required_value(
+                env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
+            )
+            resolved_api_key = api_key_value or get_azure_async_token_provider(
+                "https://cognitiveservices.azure.com/.default"
+            )
+
+        # Ensure api_key is async-compatible (wrap sync token providers if needed)
+        self._api_key = ensure_async_token_provider(resolved_api_key)
 
         # Create ContentSafetyClient with appropriate credential
-        if self._api_key is not None and self._endpoint is not None:
+        if self._endpoint is not None:
             if callable(self._api_key):
-                # Token provider - create a TokenCredential wrapper
-                credential = TokenProviderCredential(self._api_key)
+                # Token provider - create an AsyncTokenCredential wrapper
+                credential = AsyncTokenProviderCredential(self._api_key)  # type: ignore[ty:invalid-argument-type]
                 self._azure_cf_client = ContentSafetyClient(self._endpoint, credential=credential)
             else:
                 # String API key
+                if not isinstance(self._api_key, str):
+                    raise RuntimeError("Expected string API key")
                 self._azure_cf_client = ContentSafetyClient(self._endpoint, AzureKeyCredential(self._api_key))
         else:
-            raise ValueError("Please provide the Azure Content Safety endpoint and api_key")
+            raise ValueError("Please provide the Azure Content Safety endpoint")
 
-        super().__init__(validator=validator or self._default_validator)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 
     @property
     def _category_values(self) -> list[str]:
         """Get the string values of the configured harm categories for API calls."""
         return [category.value for category in self._harm_categories]
 
-    def _build_scorer_identifier(self) -> None:
-        """Build the scorer evaluation identifier for this scorer."""
-        self._set_scorer_identifier(
-            scorer_specific_params={
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier for this scorer.
+
+        Returns:
+            ComponentIdentifier: The identifier for this scorer.
+        """
+        return self._create_identifier(
+            params={
                 "score_categories": self._category_values,
-            }
+            },
         )
 
     async def evaluate_async(
@@ -159,7 +184,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
         file_mapping: Optional["ScorerEvalDatasetFiles"] = None,
         *,
         num_scorer_trials: int = 3,
-        update_registry_behavior: "RegistryUpdateBehavior" = None,  # type: ignore[assignment]
+        update_registry_behavior: "RegistryUpdateBehavior | None" = None,
         max_concurrency: int = 10,
     ) -> Optional["ScorerMetrics"]:
         """
@@ -259,8 +284,8 @@ class AzureContentFilterScorer(FloatScaleScorer):
                     categories=self._category_values,
                     output_type="EightSeverityLevels",
                 )
-                filter_result = self._azure_cf_client.analyze_text(text_request_options)  # type: ignore
-                filter_results.append(filter_result)
+                text_result = await self._azure_cf_client.analyze_text(text_request_options)
+                filter_results.append(text_result)
 
         elif message_piece.converted_value_data_type == "image_path":
             base64_encoded_data = await self._get_base64_image_data(message_piece)
@@ -269,12 +294,12 @@ class AzureContentFilterScorer(FloatScaleScorer):
             image_request_options = AnalyzeImageOptions(
                 image=image_data, categories=self._category_values, output_type="FourSeverityLevels"
             )
-            filter_result = self._azure_cf_client.analyze_image(image_request_options)  # type: ignore
-            filter_results.append(filter_result)
+            image_result = await self._azure_cf_client.analyze_image(image_request_options)
+            filter_results.append(image_result)
 
         # Collect all scores from all chunks/images
         all_scores = []
-        for filter_result in filter_results:  # type: ignore[assignment]
+        for filter_result in filter_results:
             for score in filter_result["categoriesAnalysis"]:
                 value = score["severity"]
                 category = score["category"]
@@ -282,7 +307,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
 
                 # Severity as defined here
                 # https://learn.microsoft.com/en-us/azure/ai-services/content-safety/concepts/harm-categories?tabs=definitions#severity-levels
-                metadata: dict[str, str | int] = {"azure_severity": int(value)}
+                metadata: dict[str, str | int | float] = {"azure_severity": int(value)}
 
                 score_obj = Score(
                     score_type="float_scale",
@@ -292,7 +317,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
                     score_metadata=metadata,
                     score_rationale="",
                     scorer_class_identifier=self.get_identifier(),
-                    message_piece_id=message_piece.id,
+                    message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
                     objective=objective,
                 )
                 all_scores.append(score_obj)
@@ -312,10 +337,70 @@ class AzureContentFilterScorer(FloatScaleScorer):
                 score_metadata=result.metadata,
                 score_rationale=result.rationale,
                 scorer_class_identifier=self.get_identifier(),
-                message_piece_id=message_piece.id,
+                message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
                 objective=objective,
             )
             for result in aggregated_results
+        ]
+
+    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+        """
+        Build one neutral ``0.0`` fallback score per configured harm category.
+
+        AzureContentFilterScorer's normal output is one score per category in
+        ``self._harm_categories``. To preserve that shape on blocked / error / filtered
+        input, this override emits one neutral ``0.0`` score per configured category
+        (each tagged with the category name and matching the normal-path metadata),
+        instead of the single category-less score produced by the base
+        ``FloatScaleScorer._build_fallback_score``.
+
+        Inspects the first message piece to tailor the rationale/description for
+        blocked, error, and filtered cases.
+
+        Args:
+            message (Message): The message whose first piece is inspected for status.
+            objective (Optional[str]): The objective associated with this scoring call.
+
+        Returns:
+            list[Score]: One ``0.0`` ``float_scale`` score per configured harm category,
+                each attributed to the first piece.
+
+        Raises:
+            ValueError: If the first message piece has no ``id`` or ``original_prompt_id``.
+        """
+        first_piece = message.message_pieces[0]
+        piece_id = first_piece.id or first_piece.original_prompt_id
+        if piece_id is None:
+            raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
+
+        if first_piece.is_blocked():
+            status = (
+                "The request was blocked by the target (score_blocked_content is False or no partial content available)"
+            )
+            description = "Blocked response; returning 0.0 per configured category."
+        elif first_piece.has_error():
+            status = f"Response had an error: {first_piece.response_error}"
+            description = "Error response; returning 0.0 per configured category."
+        else:
+            status = "No supported pieces to score after filtering"
+            description = "No pieces to score after filtering; returning 0.0 per configured category."
+
+        rationale = f"{status}; returning 0.0 for each configured harm category."
+        metadata: dict[str, str | int | float] = {"azure_severity": 0}
+
+        return [
+            Score(
+                score_value="0.0",
+                score_value_description=description,
+                score_type="float_scale",
+                score_category=[category.value],
+                score_metadata=metadata,
+                score_rationale=rationale,
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=piece_id,
+                objective=objective,
+            )
+            for category in self._harm_categories
         ]
 
     async def _get_base64_image_data(self, message_piece: MessagePiece) -> str:
@@ -333,5 +418,4 @@ class AzureContentFilterScorer(FloatScaleScorer):
         image_serializer = data_serializer_factory(
             category="prompt-memory-entries", value=image_path, data_type="image_path", extension=ext
         )
-        base64_encoded_data = await image_serializer.read_data_base64()
-        return base64_encoded_data
+        return await image_serializer.read_data_base64()

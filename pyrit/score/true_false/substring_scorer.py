@@ -4,6 +4,7 @@
 from typing import Optional
 
 from pyrit.analytics.text_matching import ExactTextMatching, TextMatching
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
@@ -21,7 +22,7 @@ class SubStringScorer(TrueFalseScorer):
     Supports both exact substring matching and approximate matching.
     """
 
-    _default_validator: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
+    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
 
     def __init__(
         self,
@@ -48,13 +49,18 @@ class SubStringScorer(TrueFalseScorer):
         self._text_matcher = text_matcher if text_matcher else ExactTextMatching(case_sensitive=False)
         self._score_categories = categories if categories else []
 
-        super().__init__(score_aggregator=aggregator, validator=validator or self._default_validator)
+        super().__init__(score_aggregator=aggregator, validator=validator or self._DEFAULT_VALIDATOR)
 
-    def _build_scorer_identifier(self) -> None:
-        """Build the scorer evaluation identifier for this scorer."""
-        self._set_scorer_identifier(
-            score_aggregator=self._score_aggregator.__name__,
-            scorer_specific_params={
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier for this scorer.
+
+        Returns:
+            ComponentIdentifier: The identifier for this scorer.
+        """
+        return self._create_identifier(
+            params={
+                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
                 "substring": self._substring,
                 "text_matcher": self._text_matcher.__class__.__name__,
             },
@@ -75,7 +81,7 @@ class SubStringScorer(TrueFalseScorer):
         """
         substring_present = self._text_matcher.is_match(target=self._substring, text=message_piece.converted_value)
 
-        score = [
+        return [
             Score(
                 score_value=str(substring_present),
                 score_value_description="",
@@ -84,9 +90,7 @@ class SubStringScorer(TrueFalseScorer):
                 score_category=self._score_categories,
                 score_rationale="",
                 scorer_class_identifier=self.get_identifier(),
-                message_piece_id=message_piece.id,
+                message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
                 objective=objective,
             )
         ]
-
-        return score

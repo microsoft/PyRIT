@@ -5,6 +5,7 @@ from typing import Optional
 
 import segno
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, data_serializer_factory
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
@@ -19,16 +20,16 @@ class QRCodeConverter(PromptConverter):
         self,
         scale: int = 3,
         border: int = 4,
-        dark_color: tuple = (0, 0, 0),
-        light_color: tuple = (255, 255, 255),
-        data_dark_color: Optional[tuple] = None,
-        data_light_color: Optional[tuple] = None,
-        finder_dark_color: Optional[tuple] = None,
-        finder_light_color: Optional[tuple] = None,
-        border_color: Optional[tuple] = None,
-    ):
+        dark_color: tuple[int, int, int] = (0, 0, 0),
+        light_color: tuple[int, int, int] = (255, 255, 255),
+        data_dark_color: Optional[tuple[int, int, int]] = None,
+        data_light_color: Optional[tuple[int, int, int]] = None,
+        finder_dark_color: Optional[tuple[int, int, int]] = None,
+        finder_light_color: Optional[tuple[int, int, int]] = None,
+        border_color: Optional[tuple[int, int, int]] = None,
+    ) -> None:
         """
-        Initializes the converter with specified parameters for QR code generation.
+        Initialize the converter with specified parameters for QR code generation.
 
         Args:
             scale (int, Optional): Scaling factor that determines the width/height in pixels of each
@@ -60,9 +61,25 @@ class QRCodeConverter(PromptConverter):
         self._border_color = border_color or light_color
         self._img_serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build identifier with QR code parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "scale": self._scale,
+                "border": self._border,
+                "dark_color": self._dark_color,
+                "light_color": self._light_color,
+            }
+        )
+
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt to a QR code image.
+        Convert the given prompt to a QR code image.
 
         Args:
             prompt (str): The prompt to be converted.

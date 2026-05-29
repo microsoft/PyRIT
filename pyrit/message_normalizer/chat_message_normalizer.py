@@ -4,17 +4,20 @@
 import base64
 import json
 import os
-from typing import Any, List, Union, cast
+from typing import TYPE_CHECKING, Any, Union
 
-from pyrit.common import convert_local_image_to_data_url
+from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.message_normalizer.message_normalizer import (
     MessageListNormalizer,
     MessageStringNormalizer,
     SystemMessageBehavior,
     apply_system_message_behavior,
 )
-from pyrit.models import ChatMessage, ChatMessageRole, DataTypeSerializer, Message
+from pyrit.models import ChatMessage, DataTypeSerializer, Message
 from pyrit.models.message_piece import MessagePiece
+
+if TYPE_CHECKING:
+    from pyrit.models.literals import ChatMessageRole
 
 # Supported audio formats for OpenAI input_audio
 # https://platform.openai.com/docs/guides/audio
@@ -55,7 +58,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
         self.use_developer_role = use_developer_role
         self.system_message_behavior = system_message_behavior
 
-    async def normalize_async(self, messages: List[Message]) -> List[ChatMessage]:
+    async def normalize_async(self, messages: list[Message]) -> list[ChatMessage]:
         """
         Convert a list of Messages to a list of ChatMessages.
 
@@ -77,10 +80,10 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
         # Apply system message preprocessing
         processed_messages = await apply_system_message_behavior(messages, self.system_message_behavior)
 
-        chat_messages: List[ChatMessage] = []
+        chat_messages: list[ChatMessage] = []
         for message in processed_messages:
             pieces = message.message_pieces
-            role = cast(ChatMessageRole, pieces[0].api_role)
+            role: ChatMessageRole = pieces[0].api_role
 
             # Translate system -> developer for newer OpenAI models
             if self.use_developer_role and role == "system":
@@ -88,7 +91,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
 
             # Use simple string for single text piece, otherwise use content list
             if len(pieces) == 1 and pieces[0].converted_value_data_type == "text":
-                content: Union[str, List[dict[str, Any]]] = pieces[0].converted_value
+                content: Union[str, list[dict[str, Any]]] = pieces[0].converted_value
             else:
                 content = [await self._piece_to_content_dict_async(piece) for piece in pieces]
 
@@ -96,7 +99,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
 
         return chat_messages
 
-    async def normalize_string_async(self, messages: List[Message]) -> str:
+    async def normalize_string_async(self, messages: list[Message]) -> str:
         """
         Convert a list of Messages to a JSON string representation.
 
@@ -135,18 +138,17 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
 
         if data_type == "text":
             return {"type": "text", "text": content}
-        elif data_type == "image_path":
+        if data_type == "image_path":
             # Convert local image to base64 data URL
-            data_url = await convert_local_image_to_data_url(content)
+            data_url = await convert_local_image_to_data_url_async(content)
             return {"type": "image_url", "image_url": {"url": data_url}}
-        elif data_type == "audio_path":
+        if data_type == "audio_path":
             # Convert local audio to base64 for input_audio format
             return await self._convert_audio_to_input_audio(content)
-        elif data_type == "url":
+        if data_type == "url":
             # Direct URL (typically for images)
             return {"type": "image_url", "image_url": {"url": content}}
-        else:
-            raise ValueError(f"Data type '{data_type}' is not yet supported for chat message content.")
+        raise ValueError(f"Data type '{data_type}' is not yet supported for chat message content.")
 
     async def _convert_audio_to_input_audio(self, audio_path: str) -> dict[str, Any]:
         """
@@ -162,7 +164,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
             ValueError: If the audio format is not supported.
             FileNotFoundError: If the audio file does not exist.
         """
-        ext = DataTypeSerializer.get_extension(audio_path).lower()
+        ext = (DataTypeSerializer.get_extension(audio_path) or "").lower()
         if ext not in SUPPORTED_AUDIO_FORMATS:
             raise ValueError(
                 f"Unsupported audio format: {ext}. Supported formats are: {list(SUPPORTED_AUDIO_FORMATS.keys())}"

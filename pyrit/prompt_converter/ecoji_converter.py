@@ -25,7 +25,6 @@ class EcojiConverter(PromptConverter):
 
     def __init__(self) -> None:
         """Initialize the Ecoji converter."""
-        pass
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """

@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import warnings
 from typing import Any, Optional, Union
 
 from pydantic import BaseModel, ConfigDict
@@ -12,6 +11,8 @@ ALLOWED_CHAT_MESSAGE_ROLES = ["system", "user", "assistant", "simulated_assistan
 
 
 class ToolCall(BaseModel):
+    """Represents a tool invocation requested by the assistant."""
+
     model_config = ConfigDict(extra="forbid")
     id: str
     type: str
@@ -34,63 +35,58 @@ class ChatMessage(BaseModel):
     tool_calls: Optional[list[ToolCall]] = None
     tool_call_id: Optional[str] = None
 
-    def to_json(self) -> str:
-        """
-        Serialize the ChatMessage to a JSON string.
-
-        Returns:
-            A JSON string representation of the message.
-        """
-        return self.model_dump_json()
-
     def to_dict(self) -> dict[str, Any]:
         """
         Convert the ChatMessage to a dictionary.
 
         Returns:
             A dictionary representation of the message, excluding None values.
+
         """
         return self.model_dump(exclude_none=True)
+
+    def to_json(self) -> str:
+        """
+        Serialize the ChatMessage to a JSON string (deprecated, use ``model_dump_json`` instead).
+
+        Returns:
+            A JSON string representation of the message.
+
+        """
+        from pyrit.common.deprecation import print_deprecation_message
+
+        print_deprecation_message(
+            old_item="ChatMessage.to_json",
+            new_item="ChatMessage.model_dump_json",
+            removed_in="0.15.0",
+        )
+        return self.model_dump_json()
 
     @classmethod
     def from_json(cls, json_str: str) -> "ChatMessage":
         """
-        Deserialize a ChatMessage from a JSON string.
+        Deserialize a ChatMessage from a JSON string (deprecated, use ``model_validate_json`` instead).
 
         Args:
             json_str: A JSON string representation of a ChatMessage.
 
         Returns:
             A ChatMessage instance.
+
         """
-        return cls.model_validate_json(json_str)
+        from pyrit.common.deprecation import print_deprecation_message
 
-
-class ChatMessageListDictContent(ChatMessage):
-    """
-    Deprecated: Use ChatMessage instead.
-
-    This class exists for backward compatibility and will be removed in a future version.
-    """
-
-    def __init__(self, **data: Any) -> None:
-        warnings.warn(
-            "ChatMessageListDictContent is deprecated and will be removed in 0.13.0. Use ChatMessage instead.",
-            DeprecationWarning,
-            stacklevel=2,
+        print_deprecation_message(
+            old_item="ChatMessage.from_json",
+            new_item="ChatMessage.model_validate_json",
+            removed_in="0.15.0",
         )
-        super().__init__(**data)
+        return cls.model_validate_json(json_str)
 
 
 class ChatMessagesDataset(BaseModel):
     """
     Represents a dataset of chat messages.
-
-    Parameters:
-        model_config (ConfigDict): The model configuration.
-        name (str): The name of the dataset.
-        description (str): The description of the dataset.
-        list_of_chat_messages (list[list[ChatMessage]]): A list of chat messages.
     """
 
     model_config = ConfigDict(extra="forbid")

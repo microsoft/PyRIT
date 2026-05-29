@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
-from typing import MutableSequence, Sequence
+from collections.abc import MutableSequence, Sequence
 
 import pytest
 
@@ -52,7 +52,6 @@ def memory_encoder_w_mock_embedding_generator():
     return MemoryEmbedding(embedding_model=MockEmbeddingGenerator())
 
 
-@pytest.mark.asyncio
 async def test_memory_encoding_chat_message(
     memory_encoder_w_mock_embedding_generator: MemoryEmbedding,
     sample_conversation_entries: MutableSequence[PromptMemoryEntry],

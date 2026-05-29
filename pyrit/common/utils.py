@@ -1,12 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import hashlib
 import logging
 import math
 import random
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Type, TypeVar, Union
+from typing import Any, Optional, TypeVar, Union
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +39,9 @@ def verify_and_resolve_path(path: Union[str, Path]) -> Path:
     return path_obj
 
 
-def combine_dict(existing_dict: Optional[dict] = None, new_dict: Optional[dict] = None) -> dict:
+def combine_dict(
+    existing_dict: Optional[dict[str, Any]] = None, new_dict: Optional[dict[str, Any]] = None
+) -> dict[str, Any]:
     """
     Combine two dictionaries containing string keys and values into one.
 
@@ -54,7 +58,7 @@ def combine_dict(existing_dict: Optional[dict] = None, new_dict: Optional[dict] 
     return result
 
 
-def combine_list(list1: Union[str, List[str]], list2: Union[str, List[str]]) -> list:
+def combine_list(list1: Union[str, list[str]], list2: Union[str, list[str]]) -> list[str]:
     """
     Combine two lists or strings into a single list with unique values.
 
@@ -71,11 +75,10 @@ def combine_list(list1: Union[str, List[str]], list2: Union[str, List[str]]) -> 
         list2 = [list2]
 
     # Merge and keep only unique values
-    combined = list(set(list1 + list2))
-    return combined
+    return list(set(list1 + list2))
 
 
-def get_random_indices(*, start: int, size: int, proportion: float) -> List[int]:
+def get_random_indices(*, start: int, size: int, proportion: float) -> list[int]:
     """
     Generate a list of random indices based on the specified proportion of a given size.
     The indices are selected from the range [start, start + size).
@@ -123,7 +126,7 @@ def to_sha256(data: str) -> str:
 
 
 def warn_if_set(
-    *, config: Any, unused_fields: List[str], log: Union[logging.Logger, logging.LoggerAdapter] = logger
+    *, config: Any, unused_fields: list[str], log: Union[logging.Logger, logging.LoggerAdapter[logging.Logger]] = logger
 ) -> None:
     """
     Warn about unused parameters in configurations.
@@ -151,10 +154,7 @@ def warn_if_set(
         is_set = False
         if param_value is not None:
             # For collections, also check if they are not empty
-            if hasattr(param_value, "__len__"):
-                is_set = len(param_value) > 0
-            else:
-                is_set = True
+            is_set = len(param_value) > 0 if hasattr(param_value, "__len__") else True
 
         if is_set:
             log.warning(f"{field_name} was provided in {config_name} but is not used. This parameter will be ignored.")
@@ -165,9 +165,9 @@ _T = TypeVar("_T")
 
 def get_kwarg_param(
     *,
-    kwargs: Dict[str, Any],
+    kwargs: dict[str, Any],
     param_name: str,
-    expected_type: Type[_T],
+    expected_type: type[_T],
     required: bool = True,
     default_value: Optional[_T] = None,
 ) -> Optional[_T]:

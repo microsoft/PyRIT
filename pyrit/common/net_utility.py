@@ -1,14 +1,28 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, cast, overload
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 
-def get_httpx_client(use_async: bool = False, debug: bool = False, **httpx_client_kwargs: Optional[Any]):
+@overload
+def get_httpx_client(
+    use_async: Literal[True], debug: bool = False, **httpx_client_kwargs: Any
+) -> httpx.AsyncClient: ...
+
+
+@overload
+def get_httpx_client(
+    use_async: Literal[False] = False, debug: bool = False, **httpx_client_kwargs: Any
+) -> httpx.Client: ...
+
+
+def get_httpx_client(
+    use_async: bool = False, debug: bool = False, **httpx_client_kwargs: Any
+) -> httpx.Client | httpx.AsyncClient:
     """
     Get the httpx client for making requests.
 
@@ -18,10 +32,10 @@ def get_httpx_client(use_async: bool = False, debug: bool = False, **httpx_clien
     client_class = httpx.AsyncClient if use_async else httpx.Client
     proxy = "http://localhost:8080" if debug else None
 
-    proxy = httpx_client_kwargs.pop("proxy", proxy)
-    verify_certs = httpx_client_kwargs.pop("verify", not debug)
+    proxy = cast("str | None", httpx_client_kwargs.pop("proxy", proxy))
+    verify_certs = cast("bool", httpx_client_kwargs.pop("verify", not debug))
     # fun notes; httpx default is 5 seconds, httpclient is 100, urllib in indefinite
-    timeout = httpx_client_kwargs.pop("timeout", 60.0)
+    timeout = cast("float", httpx_client_kwargs.pop("timeout", 60.0))
 
     return client_class(proxy=proxy, verify=verify_certs, timeout=timeout, **httpx_client_kwargs)
 
@@ -37,7 +51,7 @@ def extract_url_parameters(url: str) -> dict[str, str]:
         dict[str, str]: Dictionary of query parameters (flattened from lists).
     """
     parsed_url = urlparse(url)
-    url_params = parse_qs(parsed_url.query)
+    url_params = parse_qs(parsed_url.query, keep_blank_values=True)
     # Flatten params (parse_qs returns lists)
     return {k: v[0] if isinstance(v, list) and len(v) > 0 else "" for k, v in url_params.items()}
 
@@ -76,9 +90,9 @@ async def make_request_and_raise_if_error_async(
     debug: bool = False,
     extra_url_parameters: Optional[dict[str, str]] = None,
     request_body: Optional[dict[str, object]] = None,
-    files: Optional[dict[str, tuple]] = None,
+    files: Optional[dict[str, tuple[str, bytes, str]]] = None,
     headers: Optional[dict[str, str]] = None,
-    **httpx_client_kwargs: Optional[Any],
+    **httpx_client_kwargs: Any,
 ) -> httpx.Response:
     """
     Make a request and raise an exception if it fails.
@@ -105,7 +119,7 @@ async def make_request_and_raise_if_error_async(
     # Get clean URL without query string (we'll pass params separately to httpx)
     clean_url = remove_url_parameters(endpoint_uri)
 
-    async with get_httpx_client(debug=debug, use_async=True, **httpx_client_kwargs) as async_client:
+    async with get_httpx_client(use_async=True, debug=debug, **httpx_client_kwargs) as async_client:
         response = await async_client.request(
             method=method,
             params=merged_params if merged_params else None,

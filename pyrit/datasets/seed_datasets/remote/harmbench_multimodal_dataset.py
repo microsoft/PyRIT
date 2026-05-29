@@ -4,13 +4,15 @@
 import logging
 import uuid
 from enum import Enum
-from typing import List, Literal, Optional
+from typing import Literal, Optional
 
-from pyrit.common.net_utility import make_request_and_raise_if_error_async
+from pyrit.datasets.seed_datasets.remote._image_cache import (
+    fetch_and_cache_image_async,
+)
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt, data_serializer_factory
+from pyrit.models import SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +40,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
     Subsequent calls will be faster since images are cached locally.
 
     Reference: https://www.harmbench.org/
-    Paper: https://arxiv.org/abs/2402.04249
+    Paper: [@mazeika2024harmbench]
     """
 
     def __init__(
@@ -49,8 +51,8 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
             "harmbench_behaviors_multimodal_all.csv"
         ),
         source_type: Literal["public_url", "file"] = "public_url",
-        categories: Optional[List[SemanticCategory]] = None,
-    ):
+        categories: Optional[list[SemanticCategory]] = None,
+    ) -> None:
         """
         Initialize the HarmBench multimodal dataset loader.
 
@@ -67,21 +69,15 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
         self.source_type: Literal["public_url", "file"] = source_type
         self.categories = categories
 
-        # Validate categories if provided
         if categories is not None:
-            valid_categories = {category.value for category in SemanticCategory}
-            invalid_categories = (
-                set(cat.value if isinstance(cat, SemanticCategory) else cat for cat in categories) - valid_categories
-            )
-            if invalid_categories:
-                raise ValueError(f"Invalid semantic categories: {', '.join(invalid_categories)}")
+            self._validate_enums(categories, SemanticCategory, "semantic category")
 
     @property
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "harmbench_multimodal"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch HarmBench multimodal examples and return as SeedDataset.
 
@@ -227,19 +223,12 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
 
         Returns:
             Local path to the saved image.
+
+        Raises:
+            RuntimeError: If the serializer memory is not properly configured.
         """
-        filename = f"harmbench_{behavior_id}.png"
-        serializer = data_serializer_factory(category="seed-prompt-entries", data_type="image_path", extension="png")
-
-        # Return existing path if image already exists for this BehaviorID
-        serializer.value = str(serializer._memory.results_path + serializer.data_sub_directory + f"/{filename}")
-        try:
-            if await serializer._memory.results_storage_io.path_exists(serializer.value):
-                return serializer.value
-        except Exception as e:
-            logger.warning(f"[HarmBench-Multimodal] Failed to check if image for {behavior_id} exists in cache: {e}")
-
-        response = await make_request_and_raise_if_error_async(endpoint_uri=image_url, method="GET")
-        await serializer.save_data(data=response.content, output_filename=filename.replace(".png", ""))
-
-        return str(serializer.value)
+        return await fetch_and_cache_image_async(
+            filename=f"harmbench_{behavior_id}.png",
+            image_url=image_url,
+            log_prefix="HarmBench-Multimodal",
+        )

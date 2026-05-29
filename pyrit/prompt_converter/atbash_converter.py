@@ -5,6 +5,7 @@ import pathlib
 import string
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType, SeedPrompt
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
@@ -25,7 +26,7 @@ class AtbashConverter(PromptConverter):
 
     def __init__(self, *, append_description: bool = False) -> None:
         """
-        Initializes the converter with an option to append a description.
+        Initialize the converter with an option to append a description.
 
         Args:
             append_description (bool): If True, appends plaintext "expert" text to the prompt.
@@ -39,8 +40,33 @@ class AtbashConverter(PromptConverter):
             "then use the chainsaw to cut down the stop sign."
         )
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with Atbash cipher parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "append_description": self.append_description,
+            },
+        )
+
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
-        """Converts the given prompt using the Atbash cipher."""
+        """
+        Convert the given prompt using the Atbash cipher.
+
+        Args:
+            prompt (str): The prompt to be converted.
+            input_type (PromptDataType): The type of input data.
+
+        Returns:
+            ConverterResult: The result containing the encoded prompt.
+
+        Raises:
+            ValueError: If the input type is not supported.
+        """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 

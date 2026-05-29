@@ -9,33 +9,32 @@ Harm definitions provide the scale descriptions used for evaluating harm categor
 
 import logging
 import re
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Optional, Union
 
 import yaml
+from pydantic import BaseModel, Field
 
 from pyrit.common.path import HARM_DEFINITION_PATH
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ScaleDescription:
+class ScaleDescription(BaseModel):
     """
     A single scale description entry from a harm definition.
 
     Args:
         score_value: The score value (e.g., "1", "2", etc.)
         description: The description for this score level.
+
     """
 
     score_value: str
     description: str
 
 
-@dataclass
-class HarmDefinition:
+class HarmDefinition(BaseModel):
     """
     A harm definition loaded from a YAML file.
 
@@ -48,12 +47,13 @@ class HarmDefinition:
         category: The harm category name (e.g., "violence", "hate_speech").
         scale_descriptions: List of scale descriptions defining score levels.
         source_path: The path to the YAML file this was loaded from.
+
     """
 
     version: str
     category: str
-    scale_descriptions: List[ScaleDescription] = field(default_factory=list)
-    source_path: Optional[str] = field(default=None, kw_only=True)
+    scale_descriptions: list[ScaleDescription] = Field(default_factory=list)
+    source_path: Optional[str] = None
 
     def get_scale_description(self, score_value: str) -> Optional[str]:
         """
@@ -64,6 +64,7 @@ class HarmDefinition:
 
         Returns:
             The description for the score value, or None if not found.
+
         """
         for scale in self.scale_descriptions:
             if scale.score_value == score_value:
@@ -87,8 +88,8 @@ class HarmDefinition:
         Returns:
             True if the category is valid (and exists if check_exists is True),
             False otherwise.
+
         """
-        # Check if category matches pattern: only lowercase letters and underscores
         if not re.match(r"^[a-z_]+$", category):
             return False
 
@@ -119,14 +120,11 @@ class HarmDefinition:
         Raises:
             FileNotFoundError: If the harm definition file does not exist.
             ValueError: If the YAML file is invalid or missing required fields.
+
         """
         path = Path(harm_definition_path)
 
-        # If it's just a filename (no directory separators), look in the standard directory
-        if path.parent == Path("."):
-            resolved_path = HARM_DEFINITION_PATH / path
-        else:
-            resolved_path = path
+        resolved_path = HARM_DEFINITION_PATH / path if path.parent == Path(".") else path
 
         if not resolved_path.exists():
             raise FileNotFoundError(
@@ -135,15 +133,14 @@ class HarmDefinition:
             )
 
         try:
-            with open(resolved_path, "r", encoding="utf-8") as f:
+            with open(resolved_path, encoding="utf-8") as f:
                 data = yaml.safe_load(f)
         except yaml.YAMLError as e:
-            raise ValueError(f"Invalid YAML in harm definition file {resolved_path}: {e}")
+            raise ValueError(f"Invalid YAML in harm definition file {resolved_path}: {e}") from e
 
         if not isinstance(data, dict):
             raise ValueError(f"Harm definition file {resolved_path} must contain a YAML mapping/dictionary.")
 
-        # Validate required fields
         if "version" not in data:
             raise ValueError(f"Harm definition file {resolved_path} is missing required 'version' field.")
         if "category" not in data:
@@ -151,7 +148,6 @@ class HarmDefinition:
         if "scale_descriptions" not in data:
             raise ValueError(f"Harm definition file {resolved_path} is missing required 'scale_descriptions' field.")
 
-        # Parse scale descriptions
         scale_descriptions = []
         for item in data["scale_descriptions"]:
             if not isinstance(item, dict) or "score_value" not in item or "description" not in item:
@@ -173,7 +169,7 @@ class HarmDefinition:
         )
 
 
-def get_all_harm_definitions() -> Dict[str, HarmDefinition]:
+def get_all_harm_definitions() -> dict[str, HarmDefinition]:
     """
     Load all harm definitions from the standard harm_definition directory.
 
@@ -187,8 +183,9 @@ def get_all_harm_definitions() -> Dict[str, HarmDefinition]:
 
     Raises:
         ValueError: If any YAML file in the directory is invalid.
+
     """
-    harm_definitions: Dict[str, HarmDefinition] = {}
+    harm_definitions: dict[str, HarmDefinition] = {}
 
     if not HARM_DEFINITION_PATH.exists():
         logger.warning(f"Harm definition directory does not exist: {HARM_DEFINITION_PATH}")

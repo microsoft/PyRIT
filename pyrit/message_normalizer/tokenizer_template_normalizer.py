@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, ClassVar, Literal, Optional, cast
 
 from pyrit.common import get_non_required_value
 from pyrit.message_normalizer.chat_message_normalizer import ChatMessageNormalizer
@@ -48,7 +48,7 @@ class TokenizerTemplateNormalizer(MessageStringNormalizer):
     """
 
     # Alias mappings for common HuggingFace models
-    MODEL_ALIASES: ClassVar[Dict[str, TokenizerModelConfig]] = {
+    MODEL_ALIASES: ClassVar[dict[str, TokenizerModelConfig]] = {
         # No authentication required
         "chatml": TokenizerModelConfig(
             model_name="HuggingFaceH4/zephyr-7b-beta",
@@ -124,7 +124,10 @@ class TokenizerTemplateNormalizer(MessageStringNormalizer):
         """
         from transformers import AutoTokenizer
 
-        return AutoTokenizer.from_pretrained(model_name, token=token or None)
+        return cast(
+            "PreTrainedTokenizerBase",
+            AutoTokenizer.from_pretrained(model_name, token=token or None),
+        )
 
     @classmethod
     def from_model(
@@ -184,7 +187,7 @@ class TokenizerTemplateNormalizer(MessageStringNormalizer):
             ),
         )
 
-    async def normalize_string_async(self, messages: List[Message]) -> str:
+    async def normalize_string_async(self, messages: list[Message]) -> str:
         """
         Apply the chat template stored in the tokenizer to a list of messages.
 
@@ -216,11 +219,10 @@ class TokenizerTemplateNormalizer(MessageStringNormalizer):
         # Convert ChatMessage objects to dicts
         messages_list = [msg.model_dump(exclude_none=True) for msg in chat_messages]
 
-        formatted_messages = str(
+        return str(
             self.tokenizer.apply_chat_template(
                 messages_list,
                 tokenize=False,
                 add_generation_prompt=True,
             )
         )
-        return formatted_messages

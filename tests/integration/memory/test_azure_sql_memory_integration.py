@@ -1,15 +1,15 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from collections.abc import Generator
 from contextlib import closing, contextmanager
-from datetime import datetime, timedelta
-from typing import Generator, List
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import numpy as np
-import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
+from pyrit.identifiers import ComponentIdentifier, build_atomic_attack_identifier
 from pyrit.memory import AzureSQLMemory
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -36,8 +36,45 @@ def generate_test_id() -> str:
     return str(uuid4())[:8]
 
 
+def get_test_atomic_attack_identifier() -> ComponentIdentifier:
+    """
+    Returns a test atomic attack ComponentIdentifier for use in integration tests.
+
+    Returns:
+        ComponentIdentifier: A composite AtomicAttack identifier.
+    """
+    attack_strategy = ComponentIdentifier(
+        class_name="TestAttack",
+        class_module="tests.integration.memory.test_azure_sql_memory_integration",
+    )
+    return build_atomic_attack_identifier(attack_identifier=attack_strategy)
+
+
+def get_test_scorer_identifier(**kwargs) -> ComponentIdentifier:
+    """
+    Returns a test ComponentIdentifier for use in integration tests.
+
+    Args:
+        **kwargs: Optional overrides for ComponentIdentifier fields.
+
+    Returns:
+        ComponentIdentifier: A test scorer identifier with all required fields.
+    """
+    params = {
+        "class_description": kwargs.get("class_description", "Test scorer for integration testing"),
+        "identifier_type": kwargs.get("identifier_type", "instance"),
+        "scorer_type": kwargs.get("scorer_type", "true_false"),
+        "system_prompt_template": kwargs.get("system_prompt_template"),
+    }
+    return ComponentIdentifier(
+        class_name=kwargs.get("class_name", "TestScorer"),
+        class_module=kwargs.get("class_module", "tests.integration.memory.test_azure_sql_memory_integration"),
+        params={k: v for k, v in params.items() if v is not None},
+    )
+
+
 @contextmanager
-def cleanup_conversation_data(memory: AzureSQLMemory, conversation_ids: List[str]) -> Generator[None, None, None]:
+def cleanup_conversation_data(memory: AzureSQLMemory, conversation_ids: list[str]) -> Generator[None, None, None]:
     """
     Context manager to ensure cleanup of test data from attack results and message pieces.
 
@@ -143,7 +180,6 @@ def cleanup_scenario_data_by_field(
                 print(f"Cleanup failed: {e}")
 
 
-@pytest.mark.asyncio
 async def test_get_seeds_with_metadata_filter(azuresql_instance: AzureSQLMemory):
     """
     Test SQL Azure JSON filtering on seed prompt metadata.
@@ -196,7 +232,6 @@ async def test_get_seeds_with_metadata_filter(azuresql_instance: AzureSQLMemory)
     assert azuresql_instance.get_seeds(metadata={"key2": value1}, added_by=test_id) == []
 
 
-@pytest.mark.asyncio
 async def test_get_attack_results_by_harm_categories(azuresql_instance: AzureSQLMemory):
     """
     Integration test for SQL Azure JSON filtering on targeted harm categories.
@@ -240,22 +275,23 @@ async def test_get_attack_results_by_harm_categories(azuresql_instance: AzureSQL
         azuresql_instance.add_message_pieces_to_memory(message_pieces=[piece1, piece2, piece3])
 
         # Create attack results
+        atomic_id = get_test_atomic_attack_identifier()
         result1 = AttackResult(
             conversation_id=conversation_ids[0],
             objective="Test objective 1",
-            attack_identifier={"name": "test_attack"},
+            atomic_attack_identifier=atomic_id,
             outcome=AttackOutcome.SUCCESS,
         )
         result2 = AttackResult(
             conversation_id=conversation_ids[1],
             objective="Test objective 2",
-            attack_identifier={"name": "test_attack"},
+            atomic_attack_identifier=atomic_id,
             outcome=AttackOutcome.SUCCESS,
         )
         result3 = AttackResult(
             conversation_id=conversation_ids[2],
             objective="Test objective 3",
-            attack_identifier={"name": "test_attack"},
+            atomic_attack_identifier=atomic_id,
             outcome=AttackOutcome.FAILURE,
         )
 
@@ -282,7 +318,6 @@ async def test_get_attack_results_by_harm_categories(azuresql_instance: AzureSQL
         assert len(results) == 0
 
 
-@pytest.mark.asyncio
 async def test_get_attack_results_by_labels(azuresql_instance: AzureSQLMemory):
     """
     Integration test for SQL Azure JSON filtering on labels.
@@ -326,22 +361,23 @@ async def test_get_attack_results_by_labels(azuresql_instance: AzureSQLMemory):
         azuresql_instance.add_message_pieces_to_memory(message_pieces=[piece1, piece2, piece3])
 
         # Create attack results
+        atomic_id = get_test_atomic_attack_identifier()
         result1 = AttackResult(
             conversation_id=conversation_ids[0],
             objective="Test objective 1",
-            attack_identifier={"name": "test_attack"},
+            atomic_attack_identifier=atomic_id,
             outcome=AttackOutcome.SUCCESS,
         )
         result2 = AttackResult(
             conversation_id=conversation_ids[1],
             objective="Test objective 2",
-            attack_identifier={"name": "test_attack"},
+            atomic_attack_identifier=atomic_id,
             outcome=AttackOutcome.SUCCESS,
         )
         result3 = AttackResult(
             conversation_id=conversation_ids[2],
             objective="Test objective 3",
-            attack_identifier={"name": "test_attack"},
+            atomic_attack_identifier=atomic_id,
             outcome=AttackOutcome.FAILURE,
         )
 
@@ -368,7 +404,93 @@ async def test_get_attack_results_by_labels(azuresql_instance: AzureSQLMemory):
         assert len(results) == 0
 
 
-@pytest.mark.asyncio
+async def test_legacy_attack_identifier_compat(azuresql_instance: AzureSQLMemory):
+    """
+    Legacy integration test verifying the deprecated attack_identifier parameter
+    is promoted to atomic_attack_identifier via the compatibility wrapper.
+    """
+    test_id = generate_test_id()
+    conversation_ids = [f"conv_legacy_{test_id}"]
+
+    with cleanup_conversation_data(azuresql_instance, conversation_ids):
+        piece = MessagePiece(
+            conversation_id=conversation_ids[0],
+            role="user",
+            original_value="Legacy test",
+            converted_value="Legacy test",
+        )
+        azuresql_instance.add_message_pieces_to_memory(message_pieces=[piece])
+
+        legacy_id = ComponentIdentifier(
+            class_name="LegacyAttack",
+            class_module="tests.integration.memory.test_azure_sql_memory_integration",
+        )
+        result = AttackResult(
+            conversation_id=conversation_ids[0],
+            objective="Legacy objective",
+            attack_identifier=legacy_id,
+            outcome=AttackOutcome.SUCCESS,
+        )
+        # The compat wrapper should have promoted attack_identifier to atomic_attack_identifier
+        assert result.atomic_attack_identifier is not None
+        assert result.atomic_attack_identifier.class_name == "AtomicAttack"
+
+        azuresql_instance.add_attack_results_to_memory(attack_results=[result])
+
+        results = azuresql_instance.get_attack_results()
+        results = [r for r in results if test_id in r.conversation_id]
+        assert len(results) == 1
+        assert results[0].atomic_attack_identifier is not None
+
+
+async def test_scenario_result_scorer_identifier_roundtrip(azuresql_instance: AzureSQLMemory):
+    """
+    Integration test for storing and retrieving objective_scorer_identifier in ScenarioResult.
+
+    Verifies that ComponentIdentifier is correctly serialized to JSON when stored
+    and deserialized back to ComponentIdentifier when retrieved from Azure SQL.
+    """
+    test_id = generate_test_id()
+
+    with cleanup_scenario_data(azuresql_instance, test_id):
+        # Create a ComponentIdentifier with various fields
+        scorer_identifier = get_test_scorer_identifier(
+            scorer_type="true_false",
+            system_prompt_template="Test prompt template for {objective}",
+        )
+
+        # Create scenario with scorer identifier
+        scenario = ScenarioResult(
+            scenario_identifier=ScenarioIdentifier(
+                name=f"Scorer Test Scenario {test_id}",
+                scenario_version=1,
+            ),
+            objective_target_identifier=ComponentIdentifier.from_dict(
+                {"endpoint": f"https://test-{test_id}.example.com"}
+            ),
+            attack_results={},
+            objective_scorer_identifier=scorer_identifier,
+            labels={"test_id": test_id},
+        )
+
+        azuresql_instance.add_scenario_results_to_memory(scenario_results=[scenario])
+
+        # Retrieve and verify
+        results = azuresql_instance.get_scenario_results(labels={"test_id": test_id})
+        assert len(results) == 1
+
+        retrieved = results[0]
+        assert retrieved.objective_scorer_identifier is not None
+        assert isinstance(retrieved.objective_scorer_identifier, ComponentIdentifier)
+        assert retrieved.objective_scorer_identifier.params["scorer_type"] == "true_false"
+        assert (
+            retrieved.objective_scorer_identifier.params["system_prompt_template"]
+            == "Test prompt template for {objective}"
+        )
+        assert retrieved.objective_scorer_identifier.class_name == scorer_identifier.class_name
+        assert retrieved.objective_scorer_identifier.hash == scorer_identifier.hash
+
+
 async def test_get_scenario_results_by_labels(azuresql_instance: AzureSQLMemory):
     """
     Integration test for SQL Azure JSON filtering on scenario result labels.
@@ -381,22 +503,26 @@ async def test_get_scenario_results_by_labels(azuresql_instance: AzureSQLMemory)
 
     with cleanup_scenario_data(azuresql_instance, test_id):
         # Create scenario results with labels
+        scorer_id = get_test_scorer_identifier()
         scenario1 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"Test Scenario 1 {test_id}", scenario_version=1),
-            objective_target_identifier={"endpoint": "https://api.openai.com"},
+            objective_target_identifier=ComponentIdentifier.from_dict({"endpoint": "https://api.openai.com"}),
             attack_results={},
+            objective_scorer_identifier=scorer_id,
             labels={"environment": "test", "priority": "high", "team": "red", "test_id": test_id},
         )
         scenario2 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"Test Scenario 2 {test_id}", scenario_version=1),
-            objective_target_identifier={"endpoint": "https://api.azure.com"},
+            objective_target_identifier=ComponentIdentifier.from_dict({"endpoint": "https://api.azure.com"}),
             attack_results={},
+            objective_scorer_identifier=scorer_id,
             labels={"environment": "test", "priority": "high", "test_id": test_id},
         )
         scenario3 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"Test Scenario 3 {test_id}", scenario_version=1),
-            objective_target_identifier={"endpoint": "https://api.anthropic.com"},
+            objective_target_identifier=ComponentIdentifier.from_dict({"endpoint": "https://api.anthropic.com"}),
             attack_results={},
+            objective_scorer_identifier=scorer_id,
             labels={"environment": "prod", "test_id": test_id},
         )
 
@@ -426,7 +552,6 @@ async def test_get_scenario_results_by_labels(azuresql_instance: AzureSQLMemory)
         assert len(results) == 0
 
 
-@pytest.mark.asyncio
 async def test_get_scenario_results_by_target_endpoint(azuresql_instance: AzureSQLMemory):
     """
     Integration test for SQL Azure case-insensitive endpoint filtering.
@@ -439,25 +564,38 @@ async def test_get_scenario_results_by_target_endpoint(azuresql_instance: AzureS
 
     with cleanup_scenario_data_by_field(azuresql_instance, test_id, "endpoint"):
         # Create scenario results with different endpoints
+        scorer_id = get_test_scorer_identifier()
         scenario1 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"OpenAI Test {test_id}", scenario_version=1),
-            objective_target_identifier={"endpoint": f"https://api-{test_id}.openai.com/v1/chat"},
+            objective_target_identifier=ComponentIdentifier.from_dict(
+                {"endpoint": f"https://api-{test_id}.openai.com/v1/chat"}
+            ),
             attack_results={},
+            objective_scorer_identifier=scorer_id,
         )
         scenario2 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"Azure OpenAI Test {test_id}", scenario_version=1),
-            objective_target_identifier={"endpoint": f"https://myresource-{test_id}.openai.azure.com/openai"},
+            objective_target_identifier=ComponentIdentifier.from_dict(
+                {"endpoint": f"https://myresource-{test_id}.openai.azure.com/openai"}
+            ),
             attack_results={},
+            objective_scorer_identifier=scorer_id,
         )
         scenario3 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"Anthropic Test {test_id}", scenario_version=1),
-            objective_target_identifier={"endpoint": f"https://api-{test_id}.anthropic.com/v1/messages"},
+            objective_target_identifier=ComponentIdentifier.from_dict(
+                {"endpoint": f"https://api-{test_id}.anthropic.com/v1/messages"}
+            ),
             attack_results={},
+            objective_scorer_identifier=scorer_id,
         )
         scenario4 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"Azure Other {test_id}", scenario_version=1),
-            objective_target_identifier={"endpoint": f"https://myresource-{test_id}.cognitiveservices.azure.com"},
+            objective_target_identifier=ComponentIdentifier.from_dict(
+                {"endpoint": f"https://myresource-{test_id}.cognitiveservices.azure.com"}
+            ),
             attack_results={},
+            objective_scorer_identifier=scorer_id,
         )
 
         azuresql_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2, scenario3, scenario4])
@@ -491,7 +629,6 @@ async def test_get_scenario_results_by_target_endpoint(azuresql_instance: AzureS
         assert results[0].scenario_identifier.name == f"Azure Other {test_id}"
 
 
-@pytest.mark.asyncio
 async def test_get_scenario_results_by_target_model_name(azuresql_instance: AzureSQLMemory):
     """
     Integration test for SQL Azure case-insensitive model name filtering.
@@ -504,25 +641,30 @@ async def test_get_scenario_results_by_target_model_name(azuresql_instance: Azur
 
     with cleanup_scenario_data_by_field(azuresql_instance, test_id, "model_name"):
         # Create scenario results with different model names
+        scorer_id = get_test_scorer_identifier()
         scenario1 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"GPT-4 Test {test_id}", scenario_version=1),
-            objective_target_identifier={"model_name": f"gpt-4-turbo-{test_id}"},
+            objective_target_identifier=ComponentIdentifier.from_dict({"model_name": f"gpt-4-turbo-{test_id}"}),
             attack_results={},
+            objective_scorer_identifier=scorer_id,
         )
         scenario2 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"GPT-4 Omni Test {test_id}", scenario_version=1),
-            objective_target_identifier={"model_name": f"gpt-4o-{test_id}"},
+            objective_target_identifier=ComponentIdentifier.from_dict({"model_name": f"gpt-4o-{test_id}"}),
             attack_results={},
+            objective_scorer_identifier=scorer_id,
         )
         scenario3 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"GPT-3.5 Test {test_id}", scenario_version=1),
-            objective_target_identifier={"model_name": f"gpt-3.5-turbo-{test_id}"},
+            objective_target_identifier=ComponentIdentifier.from_dict({"model_name": f"gpt-3.5-turbo-{test_id}"}),
             attack_results={},
+            objective_scorer_identifier=scorer_id,
         )
         scenario4 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(name=f"Claude Test {test_id}", scenario_version=1),
-            objective_target_identifier={"model_name": f"claude-3-opus-{test_id}"},
+            objective_target_identifier=ComponentIdentifier.from_dict({"model_name": f"claude-3-opus-{test_id}"}),
             attack_results={},
+            objective_scorer_identifier=scorer_id,
         )
 
         azuresql_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2, scenario3, scenario4])
@@ -559,7 +701,6 @@ async def test_get_scenario_results_by_target_model_name(azuresql_instance: Azur
         assert f"GPT-3.5 Test {test_id}" in names
 
 
-@pytest.mark.asyncio
 async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQLMemory):
     """
     Integration test for combining multiple SQL Azure JSON filters.
@@ -569,20 +710,24 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
     """
     # Use unique identifiers to avoid test pollution
     test_id = generate_test_id()
-    now = datetime.utcnow()
+    now = datetime.now(tz=timezone.utc)
     yesterday = now - timedelta(days=1)
 
     with cleanup_scenario_data(azuresql_instance, test_id):
         # Create scenario results with various attributes
+        scorer_id = get_test_scorer_identifier()
         scenario1 = ScenarioResult(
             scenario_identifier=ScenarioIdentifier(
                 name=f"Production Test {test_id}", scenario_version=1, pyrit_version="0.4.0"
             ),
-            objective_target_identifier={
-                "endpoint": f"https://api-{test_id}.openai.com",
-                "model_name": f"gpt-4-turbo-{test_id}",
-            },
+            objective_target_identifier=ComponentIdentifier.from_dict(
+                {
+                    "endpoint": f"https://api-{test_id}.openai.com",
+                    "model_name": f"gpt-4-turbo-{test_id}",
+                }
+            ),
             attack_results={},
+            objective_scorer_identifier=scorer_id,
             labels={"environment": "prod", "priority": "high", "test_id": test_id},
             completion_time=now,
         )
@@ -590,11 +735,14 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
             scenario_identifier=ScenarioIdentifier(
                 name=f"Test Environment {test_id}", scenario_version=1, pyrit_version="0.4.0"
             ),
-            objective_target_identifier={
-                "endpoint": f"https://test-{test_id}.openai.com",
-                "model_name": f"gpt-4-turbo-{test_id}",
-            },
+            objective_target_identifier=ComponentIdentifier.from_dict(
+                {
+                    "endpoint": f"https://test-{test_id}.openai.com",
+                    "model_name": f"gpt-4-turbo-{test_id}",
+                }
+            ),
             attack_results={},
+            objective_scorer_identifier=scorer_id,
             labels={"environment": "test", "priority": "low", "test_id": test_id},
             completion_time=yesterday,
         )
@@ -602,11 +750,14 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
             scenario_identifier=ScenarioIdentifier(
                 name=f"Old Version Test {test_id}", scenario_version=1, pyrit_version="0.3.0"
             ),
-            objective_target_identifier={
-                "endpoint": f"https://api-{test_id}.openai.com",
-                "model_name": f"gpt-3.5-turbo-{test_id}",
-            },
+            objective_target_identifier=ComponentIdentifier.from_dict(
+                {
+                    "endpoint": f"https://api-{test_id}.openai.com",
+                    "model_name": f"gpt-3.5-turbo-{test_id}",
+                }
+            ),
             attack_results={},
+            objective_scorer_identifier=scorer_id,
             labels={"environment": "prod", "test_id": test_id},
             completion_time=yesterday,
         )

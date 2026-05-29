@@ -12,17 +12,30 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, AsyncIterator, Dict, Generic, MutableMapping, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
 
 from pyrit.common import default_values
 from pyrit.common.logger import logger
+from pyrit.exceptions import clear_execution_context, get_execution_context
+from pyrit.exceptions.retry_collector import (
+    RetryCollector,
+    clear_retry_collector,
+    set_retry_collector,
+)
 from pyrit.models import StrategyResultT
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, MutableMapping
 
 StrategyContextT = TypeVar("StrategyContextT", bound="StrategyContext")
 
 
+class _StrategyRuntimeError(RuntimeError):
+    """RuntimeError subclass for strategy execution failures."""
+
+
 @dataclass
-class StrategyContext(ABC):
+class StrategyContext(ABC):  # noqa: B024
     """Base class for all strategy contexts."""
 
     def duplicate(self: StrategyContextT) -> StrategyContextT:
@@ -95,7 +108,6 @@ class StrategyEventHandler(ABC, Generic[StrategyContextT, StrategyResultT]):
         Args:
             event_data: Data about the event that occurred.
         """
-        pass
 
 
 class StrategyLogAdapter(logging.LoggerAdapter):
@@ -147,7 +159,7 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         context_type: type[StrategyContextT],
         event_handler: Optional[StrategyEventHandler[StrategyContextT, StrategyResultT]] = None,
         logger: logging.Logger = logger,
-    ):
+    ) -> None:
         """
         Initialize the strategy with a context type and logger.
 
@@ -159,7 +171,7 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         """
         self._id = uuid.uuid4()
         self._context_type = context_type
-        self._event_handlers: Dict[str, StrategyEventHandler[StrategyContextT, StrategyResultT]] = {}
+        self._event_handlers: dict[str, StrategyEventHandler[StrategyContextT, StrategyResultT]] = {}
 
         if event_handler is not None:
             self._register_event_handler(event_handler)
@@ -171,22 +183,9 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
                 StrategyLogAdapter._STRATEGY_ID_KEY: str(self._id)[:8],
             },
         )
-        self._memory_labels: Dict[str, str] = ast.literal_eval(
+        self._memory_labels: dict[str, str] = ast.literal_eval(
             default_values.get_non_required_value(env_var_name="GLOBAL_MEMORY_LABELS") or "{}"
         )
-
-    def get_identifier(self):
-        """
-        Get a serializable identifier for the strategy instance.
-
-        Returns:
-            dict: A dictionary containing the type, module, and unique ID of the strategy.
-        """
-        return {
-            "__type__": self.__class__.__name__,
-            "__module__": self.__class__.__module__,
-            "id": str(self._id),
-        }
 
     def _register_event_handler(self, event_handler: StrategyEventHandler[StrategyContextT, StrategyResultT]) -> None:
         """
@@ -210,7 +209,6 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         Raises:
             Exception: If the context is invalid for this strategy.
         """
-        pass
 
     @abstractmethod
     async def _setup_async(self, *, context: StrategyContextT) -> None:
@@ -222,7 +220,6 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         Args:
             context (StrategyContextT): The context for the strategy.
         """
-        pass
 
     @abstractmethod
     async def _perform_async(self, *, context: StrategyContextT) -> StrategyResultT:
@@ -236,7 +233,6 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         Returns:
             StrategyResultT: The result of the strategy execution.
         """
-        pass
 
     @abstractmethod
     async def _teardown_async(self, *, context: StrategyContextT) -> None:
@@ -248,7 +244,6 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         Args:
             context (StrategyContextT): The context for the strategy.
         """
-        pass
 
     async def _handle_event(
         self,
@@ -342,16 +337,55 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         try:
             async with self._execution_context(context):
                 await self._handle_event(event=StrategyEvent.ON_PRE_EXECUTE, context=context)
+
+                # Set up RetryCollector in the parent task so it is visible to
+                # Tenacity callbacks that fire during _perform_async.  Event
+                # handlers run in child tasks (asyncio.create_task) which
+                # inherit a *copy* of the parent's ContextVar — setting the
+                # collector here ensures both the execution path and the event
+                # handlers can see it.
+                collector = RetryCollector()
+                set_retry_collector(collector)
+
                 result = await self._perform_async(context=context)
                 await self._handle_event(event=StrategyEvent.ON_POST_EXECUTE, context=context, result=result)
+                clear_retry_collector()
                 return result
         except Exception as e:
             # Notify error event
             await self._handle_event(event=StrategyEvent.ON_ERROR, context=context, error=e)
-            # Raise a specific execution error
-            raise RuntimeError(f"Strategy execution failed for {self.__class__.__name__}: {str(e)}") from e
+            clear_retry_collector()
 
-    async def execute_async(self, **kwargs) -> StrategyResultT:
+            # Build enhanced error message with execution context if available
+            # Note: The context is preserved on exception by ExecutionContextManager
+            exec_context = get_execution_context()
+            if exec_context:
+                error_details = exec_context.get_exception_details()
+
+                # Extract the root cause exception for better diagnostics
+                root_cause: BaseException = e
+                while root_cause.__cause__ is not None:
+                    root_cause = root_cause.__cause__
+
+                # Include root cause type and message if different from the immediate exception
+                if root_cause is not e:
+                    root_cause_info = f"\n\nRoot cause: {type(root_cause).__name__}: {str(root_cause)}"
+                else:
+                    root_cause_info = ""
+
+                error_message = (
+                    f"Strategy execution failed for {exec_context.component_role.value} "
+                    f"in {self.__class__.__name__}: {str(e)}{root_cause_info}\n\nDetails:\n{error_details}"
+                )
+                # Clear the context now that we've read it
+                clear_execution_context()
+            else:
+                error_message = f"Strategy execution failed for {self.__class__.__name__}: {str(e)}"
+
+            runtime_error = _StrategyRuntimeError(error_message)
+            raise runtime_error from e
+
+    async def execute_async(self, **kwargs: Any) -> StrategyResultT:
         """
         Execute the strategy asynchronously with the given keyword arguments.
 

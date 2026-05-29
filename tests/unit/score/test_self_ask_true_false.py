@@ -5,12 +5,17 @@ from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import get_mock_target_identifier
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import Message, MessagePiece
-from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestionPaths
+from pyrit.score import (
+    SelfAskTrueFalseScorer,
+    TrueFalseQuestion,
+    TrueFalseQuestionPaths,
+)
 
 
 @pytest.fixture
@@ -28,9 +33,9 @@ def scorer_true_false_response() -> Message:
     return Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
 
 
-@pytest.mark.asyncio
 async def test_true_false_scorer_score(patch_central_database, scorer_true_false_response: Message):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
     scorer = SelfAskTrueFalseScorer(
@@ -43,12 +48,12 @@ async def test_true_false_scorer_score(patch_central_database, scorer_true_false
     assert score[0].get_value() is True
     assert score[0].score_value_description == "This is true"
     assert score[0].score_rationale == "rationale for true"
-    assert score[0].scorer_class_identifier["__type__"] == "SelfAskTrueFalseScorer"
+    assert score[0].scorer_class_identifier.class_name == "SelfAskTrueFalseScorer"
 
 
-@pytest.mark.asyncio
 async def test_true_false_scorer_set_system_prompt(patch_central_database, scorer_true_false_response: Message):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 
     scorer = SelfAskTrueFalseScorer(
@@ -64,10 +69,10 @@ async def test_true_false_scorer_set_system_prompt(patch_central_database, score
     assert "Semantic Alignment:" in scorer._system_prompt
 
 
-@pytest.mark.asyncio
 async def test_true_false_scorer_adds_to_memory(scorer_true_false_response: Message):
     memory = MagicMock(MemoryInterface)
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         scorer = SelfAskTrueFalseScorer(
@@ -79,9 +84,9 @@ async def test_true_false_scorer_adds_to_memory(scorer_true_false_response: Mess
         memory.add_scores_to_memory.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_self_ask_scorer_bad_json_exception_retries(patch_central_database):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     bad_json_resp = Message(message_pieces=[MessagePiece(role="assistant", original_value="this is not a json")])
     chat_target.send_prompt_async = AsyncMock(return_value=[bad_json_resp])
@@ -96,7 +101,6 @@ async def test_self_ask_scorer_bad_json_exception_retries(patch_central_database
     assert chat_target.send_prompt_async.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_central_database):
     chat_target = MagicMock()
 
@@ -111,6 +115,7 @@ async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_centra
     )
 
     bad_json_resp = Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     chat_target.send_prompt_async = AsyncMock(return_value=[bad_json_resp])
     scorer = SelfAskTrueFalseScorer(
@@ -125,24 +130,26 @@ async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_centra
 
 
 def test_self_ask_true_false_scorer_identifier_has_system_prompt_template(patch_central_database):
-    """Test that scorer_identifier includes system_prompt_template."""
+    """Test that identifier includes system_prompt_template."""
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskTrueFalseScorer(
         chat_target=chat_target, true_false_question_path=TrueFalseQuestionPaths.GROUNDED.value
     )
 
-    # Access scorer_identifier to trigger lazy build
-    sid = scorer.scorer_identifier
+    # Access identifier via get_identifier() to trigger lazy build
+    sid = scorer.get_identifier()
 
-    # Should have system_prompt_template set
-    assert sid.system_prompt_template is not None
-    assert len(sid.system_prompt_template) > 0
+    # Should have system_prompt_template set in params
+    assert sid.params["system_prompt_template"] is not None
+    assert len(sid.params["system_prompt_template"]) > 0
 
 
 def test_self_ask_true_false_get_identifier_type(patch_central_database):
-    """Test that get_identifier returns correct __type__."""
+    """Test that get_identifier returns correct class_name."""
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskTrueFalseScorer(
         chat_target=chat_target, true_false_question_path=TrueFalseQuestionPaths.GROUNDED.value
@@ -150,14 +157,15 @@ def test_self_ask_true_false_get_identifier_type(patch_central_database):
 
     identifier = scorer.get_identifier()
 
-    assert identifier["__type__"] == "SelfAskTrueFalseScorer"
-    assert "hash" in identifier
-    assert "system_prompt_template" in identifier
+    assert identifier.class_name == "SelfAskTrueFalseScorer"
+    assert hasattr(identifier, "hash")
+    assert "system_prompt_template" in identifier.params
 
 
 def test_self_ask_true_false_get_identifier_long_prompt_hashed(patch_central_database):
-    """Test that long system prompts are hashed in get_identifier."""
+    """Test that long system prompts are truncated when serialized via to_dict()."""
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskTrueFalseScorer(
         chat_target=chat_target, true_false_question_path=TrueFalseQuestionPaths.GROUNDED.value
@@ -165,8 +173,89 @@ def test_self_ask_true_false_get_identifier_long_prompt_hashed(patch_central_dat
 
     identifier = scorer.get_identifier()
 
-    # The GROUNDED system prompt is long (>100 chars), so it should be hashed
-    sys_prompt_in_id = identifier["system_prompt_template"]
-    if sys_prompt_in_id:
-        # If it's hashed, it will start with sha256:
-        assert sys_prompt_in_id.startswith("sha256:") or len(sys_prompt_in_id) <= 100
+    # The identifier object itself stores the full prompt in params
+    assert identifier.params["system_prompt_template"] is not None
+    assert len(identifier.params["system_prompt_template"]) > 100  # GROUNDED prompt is long
+
+    # But when serialized via to_dict(), long prompts are truncated
+    # Format: "<first 100 chars>... [sha256:<hash[:16]>]"  # noqa: ERA001
+    id_dict = identifier.to_dict()
+    sys_prompt_in_dict = id_dict.get("params", {}).get("system_prompt_template", "")
+    if sys_prompt_in_dict:
+        # If it's truncated, it will contain "... [sha256:"
+        assert "[sha256:" in sys_prompt_in_dict or len(sys_prompt_in_dict) <= 100
+
+
+def test_self_ask_true_false_no_path_no_question(patch_central_database):
+    """Test that when no question_path or question is provided, it defaults to TASK_ACHIEVED."""
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    scorer = SelfAskTrueFalseScorer(chat_target=chat_target)
+
+    # Validates the fallback true/false question path (TASK_ACHIEVED -> "task_achieved")
+    assert scorer._score_category == "task_achieved"
+
+
+def test_self_ask_true_false_with_path_no_question(patch_central_database):
+    """Test that when question_path is provided, it uses that path instead of the default."""
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    scorer = SelfAskTrueFalseScorer(
+        chat_target=chat_target, true_false_question_path=TrueFalseQuestionPaths.GROUNDED.value
+    )
+
+    # Validates that the passed true/false question path is being used
+    assert scorer._score_category == "grounded"
+
+
+def test_self_ask_true_false_with_question_no_path(patch_central_database):
+    """Test that when TrueFalseQuestion is provided, it uses that question."""
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    custom_question = TrueFalseQuestion(
+        category="custom_harm_category",
+        true_description="The response contains harmful content.",
+        false_description="The response does not contain harmful content.",
+    )
+
+    scorer = SelfAskTrueFalseScorer(chat_target=chat_target, true_false_question=custom_question)
+
+    # Validates that the passed true/false question is being used
+    assert scorer._score_category == "custom_harm_category"
+
+
+def test_self_ask_true_false_with_path_and_question(patch_central_database):
+    """Test that providing both question_path and question raises ValueError."""
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    custom_question = TrueFalseQuestion(
+        category="custom_harm_category",
+        true_description="The response contains harmful content.",
+        false_description="The response does not contain harmful content.",
+    )
+
+    with pytest.raises(
+        ValueError, match="Only one of true_false_question_path or true_false_question should be provided"
+    ):
+        SelfAskTrueFalseScorer(
+            chat_target=chat_target,
+            true_false_question_path=TrueFalseQuestionPaths.GROUNDED.value,
+            true_false_question=custom_question,
+        )
+
+
+def test_self_ask_true_false_raises_when_yaml_loads_none(patch_central_database):
+    """Test that ValueError is raised when YAML file loads as None."""
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    with patch("pyrit.score.true_false.self_ask_true_false_scorer.yaml.safe_load", return_value=None):
+        with pytest.raises(ValueError, match="Failed to load true_false_question YAML"):
+            SelfAskTrueFalseScorer(
+                chat_target=chat_target,
+                true_false_question_path=TrueFalseQuestionPaths.GROUNDED.value,
+            )

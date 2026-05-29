@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from enum import Enum
-from typing import Any, Dict
+from typing import Any
 
 
 class OpenAIToolType(str, Enum):
@@ -13,16 +13,16 @@ class OpenAIToolType(str, Enum):
     FILE_SEARCH = "file_search"
 
 
-def web_search_tool() -> Dict[str, Any]:
+def web_search_tool() -> dict[str, Any]:
     """Return the configuration for OpenAI's web search tool."""
     return {"type": OpenAIToolType.WEB_SEARCH_PREVIEW.value}
 
 
-def code_interpreter_tool() -> Dict[str, Any]:
+def code_interpreter_tool() -> dict[str, Any]:
     """Return the configuration for OpenAI's code interpreter tool."""
     return {"type": OpenAIToolType.CODE_INTERPRETER.value}
 
 
-def file_search_tool() -> Dict[str, Any]:
+def file_search_tool() -> dict[str, Any]:
     """Return the configuration for OpenAI's file search tool."""
     return {"type": OpenAIToolType.FILE_SEARCH.value}

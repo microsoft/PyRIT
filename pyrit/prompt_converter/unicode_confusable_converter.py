@@ -9,6 +9,8 @@ from typing import Literal
 from confusable_homoglyphs.confusables import is_confusable
 from confusables import confusable_characters
 
+from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)
@@ -28,9 +30,9 @@ class UnicodeConfusableConverter(PromptConverter):
         *,
         source_package: Literal["confusable_homoglyphs", "confusables"] = "confusable_homoglyphs",
         deterministic: bool = False,
-    ):
+    ) -> None:
         """
-        Initializes the converter with the specified source package for homoglyph generation.
+        Initialize the converter with the specified source package for homoglyph generation.
 
         Args:
             source_package (Literal["confusable_homoglyphs", "confusables"]):
@@ -45,6 +47,9 @@ class UnicodeConfusableConverter(PromptConverter):
                         Provides additional methods of matching characters (not just Unicode list),
                         so each character has more possible substitutions.
             deterministic (bool): This argument is for unittesting only.
+
+        Raises:
+            ValueError: If an invalid source package is provided.
         """
         if source_package not in ["confusable_homoglyphs", "confusables"]:
             raise ValueError(
@@ -54,9 +59,23 @@ class UnicodeConfusableConverter(PromptConverter):
         self._source_package = source_package
         self._deterministic = deterministic
 
-    async def convert_async(self, *, prompt: str, input_type="text") -> ConverterResult:
+    def _build_identifier(self) -> ComponentIdentifier:
         """
-        Converts the given prompt by applying confusable substitutions. This leads to a prompt that looks similar,
+        Build the converter identifier with unicode confusable parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "source_package": self._source_package,
+                "deterministic": self._deterministic,
+            },
+        )
+
+    async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+        """
+        Convert the given prompt by applying confusable substitutions. This leads to a prompt that looks similar,
         but is actually different (e.g., replacing a Latin 'a' with a Cyrillic 'а').
 
         Args:
@@ -79,9 +98,9 @@ class UnicodeConfusableConverter(PromptConverter):
 
         return ConverterResult(output_text=converted_prompt, output_type="text")
 
-    def _get_homoglyph_variants(self, word: str) -> list:
+    def _get_homoglyph_variants(self, word: str) -> list[str]:
         """
-        Retrieves homoglyph variants for a given word using the "confusable_homoglyphs" package.
+        Retrieve homoglyph variants for a given word using the "confusable_homoglyphs" package.
 
         Args:
             word (str): The word to find homoglyphs for.
@@ -104,7 +123,7 @@ class UnicodeConfusableConverter(PromptConverter):
 
     def _generate_perturbed_prompts(self, prompt: str) -> str:
         """
-        Generates a perturbed prompt by substituting characters with their homoglyph variants using the
+        Generate a perturbed prompt by substituting characters with their homoglyph variants using the
         "confusable_homoglyphs" package.
 
         Args:
@@ -139,7 +158,7 @@ class UnicodeConfusableConverter(PromptConverter):
 
     def _confusable(self, char: str) -> str:
         """
-        Picks a confusable character for the given character using the "confusables" package.
+        Pick a confusable character for the given character using the "confusables" package.
 
         Args:
             char (str): The character to be replaced.
@@ -150,7 +169,6 @@ class UnicodeConfusableConverter(PromptConverter):
         confusable_options = confusable_characters(char)
         if not confusable_options or char == " ":
             return char
-        elif self._deterministic or len(confusable_options) == 1:
-            return confusable_options[-1]
-        else:
-            return random.choice(confusable_options)
+        if self._deterministic or len(confusable_options) == 1:
+            return str(confusable_options[-1])
+        return str(random.choice(confusable_options))

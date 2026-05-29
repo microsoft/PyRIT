@@ -1,5 +1,5 @@
 ---
-applyTo: 'doc/code/**/*.{py,ipynb}'
+applyTo: 'doc/**/*.{py,ipynb}'
 ---
 
 # Documentation File Synchronization
@@ -8,7 +8,7 @@ applyTo: 'doc/code/**/*.{py,ipynb}'
 
 All Jupyter notebooks (.ipynb) in the `doc/` directory have corresponding Python (.py) files that are **tightly synchronized**. These files MUST always match exactly in content. They represent the same documentation in different formats.
 
-**Locations:** `doc/code/**/*.ipynb` and `doc/code/**/*.py`
+**Locations:** `doc/**/*.ipynb` and `doc/**/*.py`
 
 ## Editing Guidelines
 
@@ -44,9 +44,37 @@ When making changes:
    - Variable names and values
 4. After editing, verify the changes are truly equivalent
 
+
 ## Jupytext Usage Reference
 
-Generate .ipynb from .py (with execution):
+### Critical pre-execution checklist
+
+Before running `jupytext --execute`, make sure the kernel will exercise *the code in this checkout*, not some stale install:
+
+1. **Use a kernel bound to a Python env that has this worktree installed editable.**
+   Reusing an existing `pyrit` kernel is fine *only if* it points at the current
+   checkout — otherwise it will resolve imports against an unrelated copy and
+   either pass on stale code or fail on missing new symbols.
+   - Quick check: `python -c "import pyrit, pathlib; print(pathlib.Path(pyrit.__file__).resolve())"`
+   - If it doesn't match this worktree, install editable here: `pip install -e .`
+     (this rebinds the existing kernel to this checkout, no new kernel needed).
+   - Only create a new kernel (`python -m ipykernel install --user --name <name>`)
+     if you actually need an isolated env.
+2. **Credentials must be pre-configured.** Most notebooks call live targets
+   (OpenAI, Azure, etc.) and load creds from `~/.pyrit/.env`. Make sure the
+   required keys are present before executing.
+
+### Keep the cell outputs
+
+**Do not strip cell outputs from notebooks under `doc/`.** Outputs are part of the
+documentation — readers rely on seeing rendered tables, images, and printer output.
+If a notebook can't execute end-to-end, that is exactly the regression we want
+to surface in review; don't paper over it by committing an output-less notebook.
+`nbstripout` is intentionally not run against `doc/` content for this reason.
+
+### Commands
+
+Generate .ipynb from .py (with execution — if it fails it means there are errors):
 ```bash
 jupytext --to ipynb --execute doc/path/to/your_notebook.py
 ```
@@ -55,6 +83,10 @@ Generate .py from .ipynb:
 ```bash
 jupytext --to py:percent doc/path/to/notebook.ipynb
 ```
+
+If a `doc/**/*.py` notebook fails during `jupytext --execute` with errors that look like uninitialized state (missing env vars, undefined names, `initialize_pyrit_async` apparently not run, failing cell shows `Cell In[1]` despite earlier code), **check the `# %%` cell separators in the .py file first**.
+
+A missing `# %%` between a `# %% [markdown]` block and the following code causes jupytext to silently absorb the code into the markdown cell, so it never executes. Symptoms in isolation (small repro scripts) will work fine — the bug is purely in the cell structure of the .py file. Do not chase env-loading or runtime issues until cell markers are verified.
 
 ## Summary
 - **Default strategy**: Update both files inline for simple changes

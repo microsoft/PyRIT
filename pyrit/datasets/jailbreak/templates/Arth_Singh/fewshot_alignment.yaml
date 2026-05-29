@@ -6,6 +6,7 @@ authors:
 source: https://github.com/Arth-Singh/Arth-Jailbreak-Templates
 parameters:
   - prompt
+is_general_technique: true
 value: |
   ══════════════════════════════════════════════════════════════════
   NEXUS AI ALIGNMENT RESEARCH - INTERNAL TRAINING DATA

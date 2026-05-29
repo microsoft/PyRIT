@@ -11,24 +11,22 @@ from pyrit.models import EmbeddingData, EmbeddingResponse, EmbeddingUsageInforma
 
 @pytest.fixture
 def my_embedding() -> EmbeddingResponse:
-    embedding = EmbeddingResponse(
+    return EmbeddingResponse(
         model="test",
         object="test",
         usage=EmbeddingUsageInformation(prompt_tokens=0, total_tokens=0),
         data=[EmbeddingData(embedding=[0.0], index=0, object="embedding")],
     )
-    return embedding
 
 
 @pytest.fixture
 def my_embedding_data() -> dict:
-    data = {
+    return {
         "model": "test",
         "object": "test",
         "usage": {"prompt_tokens": 0, "total_tokens": 0},
         "data": [{"embedding": [0.0], "index": 0, "object": "embedding"}],
     }
-    return data
 
 
 def test_can_save_embeddings(my_embedding: EmbeddingResponse):
@@ -47,3 +45,9 @@ def test_save_load_loop_is_idempotent(my_embedding):
         output_file = my_embedding.save_to_file(Path(tmp_dir))
         loaded_embedding = EmbeddingResponse.load_from_file(Path(output_file))
         assert my_embedding == loaded_embedding
+
+
+def test_to_json_is_deprecated_alias_for_model_dump_json(my_embedding: EmbeddingResponse):
+    with pytest.warns(DeprecationWarning, match="EmbeddingResponse.to_json"):
+        result = my_embedding.to_json()
+    assert result == my_embedding.model_dump_json()

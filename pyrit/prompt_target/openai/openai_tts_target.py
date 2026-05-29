@@ -7,11 +7,14 @@ from typing import Any, Literal, Optional
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     Message,
     construct_response_from_request,
     data_serializer_factory,
 )
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
@@ -25,6 +28,12 @@ TTSResponseFormat = Literal["flac", "mp3", "mp4", "mpeg", "mpga", "m4a", "ogg", 
 class OpenAITTSTarget(OpenAITarget):
     """A prompt target for OpenAI Text-to-Speech (TTS) endpoints."""
 
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            output_modalities=frozenset({frozenset(["audio_path"])}),
+        )
+    )
+
     def __init__(
         self,
         *,
@@ -32,8 +41,9 @@ class OpenAITTSTarget(OpenAITarget):
         response_format: TTSResponseFormat = "mp3",
         language: str = "en",
         speed: Optional[float] = None,
-        **kwargs,
-    ):
+        custom_configuration: Optional[TargetConfiguration] = None,
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize the TTS target with specified parameters.
 
@@ -53,22 +63,23 @@ class OpenAITTSTarget(OpenAITarget):
             response_format (str, Optional): The format of the audio response. Defaults to "mp3".
             language (str): The language for TTS. Defaults to "en".
             speed (float, Optional): The speed of the TTS. Select a value from 0.25 to 4.0. 1.0 is normal.
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
+                this target instance. Defaults to None.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
         """
-        super().__init__(**kwargs)
+        super().__init__(custom_configuration=custom_configuration, **kwargs)
 
         self._voice = voice
         self._response_format = response_format
         self._language = language
         self._speed = speed
 
-    def _set_openai_env_configuration_vars(self):
+    def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_TTS_MODEL"
         self.endpoint_environment_variable = "OPENAI_TTS_ENDPOINT"
         self.api_key_environment_variable = "OPENAI_TTS_KEY"
-        self.underlying_model_environment_variable = "OPENAI_TTS_UNDERLYING_MODEL"
 
     def _get_target_api_paths(self) -> list[str]:
         """Return API paths that should not be in the URL."""
@@ -81,19 +92,37 @@ class OpenAITTSTarget(OpenAITarget):
             "api.openai.com": "https://api.openai.com/v1",
         }
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier with TTS-specific parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this target instance.
+        """
+        return self._create_identifier(
+            params={
+                "voice": self._voice,
+                "response_format": self._response_format,
+                "language": self._language,
+                "speed": self._speed,
+            },
+        )
+
     @limit_requests_per_minute
     @pyrit_target_retry
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously send a message to the OpenAI TTS target.
 
         Args:
-            message (Message): The message object containing the prompt to send.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the audio response from the prompt target.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
         message_piece = message.message_pieces[0]
 
         logger.info(f"Sending the following prompt to the prompt target: {message_piece}")
@@ -112,12 +141,12 @@ class OpenAITTSTarget(OpenAITarget):
 
         # Use unified error handler for consistent error handling
         response = await self._handle_openai_request(
-            api_call=lambda: self._async_client.audio.speech.create(
-                model=body_parameters["model"],  # type: ignore[arg-type]
-                voice=body_parameters["voice"],  # type: ignore[arg-type]
-                input=body_parameters["input"],  # type: ignore[arg-type]
-                response_format=body_parameters.get("response_format"),  # type: ignore[arg-type]
-                speed=body_parameters.get("speed"),  # type: ignore[arg-type]
+            api_call=lambda: self._client.audio.speech.create(
+                model=str(body_parameters["model"]),
+                voice=str(body_parameters["voice"]),
+                input=str(body_parameters["input"]),
+                response_format=body_parameters.get("response_format"),
+                speed=body_parameters.get("speed"),
             ),
             request=message,
         )
@@ -147,31 +176,3 @@ class OpenAITTSTarget(OpenAITarget):
         return construct_response_from_request(
             request=request, response_text_pieces=[str(audio_response.value)], response_type="audio_path"
         )
-
-    def _validate_request(self, *, message: Message) -> None:
-        n_pieces = len(message.message_pieces)
-        if n_pieces != 1:
-            raise ValueError(f"This target only supports a single message piece. Received: {n_pieces} pieces.")
-
-        piece_type = message.message_pieces[0].converted_value_data_type
-        if piece_type != "text":
-            raise ValueError(f"This target only supports text prompt input. Received: {piece_type}.")
-
-        request = message.message_pieces[0]
-        messages = self._memory.get_conversation(conversation_id=request.conversation_id)
-
-        n_messages = len(messages)
-        if n_messages > 0:
-            raise ValueError(
-                "This target only supports a single turn conversation. "
-                f"Received: {n_messages} messages which indicates a prior turn."
-            )
-
-    def is_json_response_supported(self) -> bool:
-        """
-        Check if the target supports JSON as a response format.
-
-        Returns:
-            bool: True if JSON response is supported, False otherwise.
-        """
-        return False

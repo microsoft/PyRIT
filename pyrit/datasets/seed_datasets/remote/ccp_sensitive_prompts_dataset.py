@@ -18,14 +18,14 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
     This dataset contains prompts covering topics sensitive to the Chinese Communist Party (CCP).
     These prompts are likely to be censored by certain models.
 
-    Reference: https://huggingface.co/datasets/promptfoo/CCP-sensitive-prompts
+    Reference: [@promptfoo2025ccp]
     """
 
     def __init__(
         self,
         *,
         source: str = "promptfoo/CCP-sensitive-prompts",
-    ):
+    ) -> None:
         """
         Initialize the CCP-sensitive prompts dataset loader.
 
@@ -39,7 +39,7 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "ccp_sensitive_prompts"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch CCP-sensitive prompts dataset and return as SeedDataset.
 

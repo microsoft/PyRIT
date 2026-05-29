@@ -5,10 +5,13 @@ import asyncio
 import inspect
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, Type
+from dataclasses import fields as dc_fields
+from typing import Any, Optional
 
 from tqdm import tqdm
 
+from pyrit.common.deprecation import print_deprecation_message
+from pyrit.datasets.seed_datasets.seed_metadata import SeedDatasetFilter, SeedDatasetLoadTime, SeedDatasetMetadata
 from pyrit.models.seeds import SeedDataset
 
 logger = logging.getLogger(__name__)
@@ -23,20 +26,35 @@ class SeedDatasetProvider(ABC):
     both local and remote dataset providers.
 
     Subclasses must implement:
-    - fetch_dataset(): Fetch and return the dataset as a SeedDataset
+    - fetch_dataset_async(): Fetch and return the dataset as a SeedDataset
     - dataset_name property: Human-readable name for the dataset
+
+    All subclasses also have a _metadata property that is optional to make
+    dataset addition easier, but failing to complete it makes downstream
+    analysis more difficult.
     """
 
-    _registry: Dict[str, Type["SeedDatasetProvider"]] = {}
+    _registry: dict[str, type["SeedDatasetProvider"]] = {}
+    load_time: SeedDatasetLoadTime = SeedDatasetLoadTime.UNINITIALIZED
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
         Automatically register non-abstract subclasses.
 
-        This is called when a class inherits from SeedDatasetProvider.
+        This is called when a class inherits from SeedDatasetProvider. A
+        deprecation warning is emitted for subclasses that still override the
+        legacy ``fetch_dataset`` instead of ``fetch_dataset_async``.
         """
         super().__init_subclass__(**kwargs)
-        # Only register concrete (non-abstract) classes
+        if not inspect.isabstract(cls) and (
+            cls.fetch_dataset is not SeedDatasetProvider.fetch_dataset
+            and cls.fetch_dataset_async is SeedDatasetProvider.fetch_dataset_async
+        ):
+            print_deprecation_message(
+                old_item=f"{cls.__name__}.fetch_dataset",
+                new_item=f"{cls.__name__}.fetch_dataset_async",
+                removed_in="0.16.0",
+            )
         if not inspect.isabstract(cls) and getattr(cls, "should_register", True):
             SeedDatasetProvider._registry[cls.__name__] = cls
             logger.debug(f"Registered dataset provider: {cls.__name__}")
@@ -50,12 +68,15 @@ class SeedDatasetProvider(ABC):
         Returns:
             str: The dataset name (e.g., "HarmBench", "JailbreakBench JBB-Behaviors")
         """
-        pass
 
-    @abstractmethod
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the dataset and return as a SeedDataset.
+
+        Subclasses MUST override this method. The default implementation exists
+        only to provide a deprecation bridge for legacy subclasses that override
+        the old ``fetch_dataset`` name; in that case it dispatches to the legacy
+        method and emits a DeprecationWarning.
 
         Args:
             cache: Whether to cache the fetched dataset. Defaults to True.
@@ -65,12 +86,55 @@ class SeedDatasetProvider(ABC):
             SeedDataset: The fetched dataset with prompts.
 
         Raises:
+            NotImplementedError: If the subclass overrides neither
+                ``fetch_dataset_async`` nor the legacy ``fetch_dataset``.
             Exception: If the dataset cannot be fetched or processed.
         """
-        pass
+        cls = type(self)
+        if cls.fetch_dataset is SeedDatasetProvider.fetch_dataset:
+            raise NotImplementedError(f"{cls.__name__} must implement fetch_dataset_async.")
+        print_deprecation_message(
+            old_item=f"{cls.__name__}.fetch_dataset",
+            new_item=f"{cls.__name__}.fetch_dataset_async",
+            removed_in="0.16.0",
+        )
+        return await self.fetch_dataset(cache=cache)
+
+    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+        """
+        Fetch the dataset (deprecated alias of ``fetch_dataset_async``).
+
+        Kept as a backward-compatibility shim for callers of the public API.
+        Emits a DeprecationWarning and delegates to ``fetch_dataset_async``.
+
+        Args:
+            cache: Whether to cache the fetched dataset. Defaults to True.
+
+        Returns:
+            SeedDataset: The fetched dataset with prompts.
+        """
+        print_deprecation_message(
+            old_item="SeedDatasetProvider.fetch_dataset",
+            new_item="SeedDatasetProvider.fetch_dataset_async",
+            removed_in="0.16.0",
+        )
+        return await self.fetch_dataset_async(cache=cache)
+
+    async def _parse_metadata(self) -> Optional[SeedDatasetMetadata]:
+        """
+        Parse provider-specific metadata into the shared schema.
+
+        Subclasses can override this to source metadata from class attributes,
+        prompt files, or any other backing format. The default implementation
+        returns None, which means metadata is not available for this provider.
+
+        Returns:
+            Optional[SeedDatasetMetadata]: Parsed metadata for this provider, or None.
+        """
+        return None
 
     @classmethod
-    def get_all_providers(cls) -> Dict[str, Type["SeedDatasetProvider"]]:
+    def get_all_providers(cls) -> dict[str, type["SeedDatasetProvider"]]:
         """
         Get all registered dataset provider classes.
 
@@ -80,9 +144,12 @@ class SeedDatasetProvider(ABC):
         return cls._registry.copy()
 
     @classmethod
-    def get_all_dataset_names(cls) -> List[str]:
+    async def get_all_dataset_names_async(cls, filters: Optional[SeedDatasetFilter] = None) -> list[str]:
         """
         Get the names of all registered datasets.
+
+        Args:
+            filters (Optional[SeedDatasetFilter]): List of filters to apply.
 
         Returns:
             List[str]: List of dataset names from all registered providers.
@@ -91,7 +158,7 @@ class SeedDatasetProvider(ABC):
             ValueError: If no providers are registered or if providers cannot be instantiated.
 
         Example:
-            >>> names = SeedDatasetProvider.get_all_dataset_names()
+            >>> names = await SeedDatasetProvider.get_all_dataset_names_async()
             >>> print(f"Available datasets: {', '.join(names)}")
         """
         dataset_names = set()
@@ -99,16 +166,114 @@ class SeedDatasetProvider(ABC):
             try:
                 # Instantiate to get dataset name
                 provider = provider_class()
+
+                # Parser ensures a standard metadata format
+                metadata = await provider._parse_metadata()
+
+                if filters:
+                    # "all" bypasses metadata filtering and returns every dataset
+                    if filters.has_all_tag:
+                        dataset_names.add(provider.dataset_name)
+                        continue
+
+                    # Datasets without metadata are skipped for all other filters
+                    if not metadata:
+                        continue
+
+                    # Filters detected but no match -> don't add this dataset
+                    if not cls._match_filter_to_metadata(metadata=metadata, dataset_filter=filters):
+                        continue
+
                 dataset_names.add(provider.dataset_name)
             except Exception as e:
-                raise ValueError(f"Could not get dataset name from {provider_class.__name__}: {e}")
-        return sorted(list(dataset_names))
+                raise ValueError(f"Could not get dataset name from {provider_class.__name__}: {e}") from e
+        return sorted(dataset_names)
+
+    @classmethod
+    def _match_filter_to_metadata(cls, metadata: SeedDatasetMetadata, dataset_filter: SeedDatasetFilter) -> bool:
+        """
+        Match a dataset's metadata against filter criteria.
+
+        A dataset matches if ANY criterion in filters.criteria matches (OR across
+        criteria). Within each criterion, ALL specified fields must match (AND
+        across fields). Within each field:
+        - strict_match=False: any overlap suffices (set intersection)
+        - strict_match=True: all filter values must be present (filter is subset)
+
+        Special tags:
+        - "all": bypasses all filtering, returns True immediately.
+        - "default": without strict_match, matches if the dataset has "default" tag.
+
+        Args:
+            metadata: The dataset's metadata.
+            dataset_filter: The user-provided filter.
+
+        Returns:
+            Whether the metadata matches any criterion.
+        """
+        # "all" always bypasses
+        if dataset_filter.has_all_tag:
+            return True
+
+        return any(
+            cls._match_single_criterion(metadata=metadata, criterion=c, strict_match=dataset_filter.strict_match)
+            for c in dataset_filter.criteria
+        )
+
+    @classmethod
+    def _match_single_criterion(
+        cls,
+        *,
+        metadata: SeedDatasetMetadata,
+        criterion: SeedDatasetMetadata,
+        strict_match: bool,
+    ) -> bool:
+        """
+        Match a single SeedDatasetMetadata criterion against dataset metadata.
+
+        Args:
+            metadata: The dataset's real metadata.
+            criterion: A single filter criterion.
+            strict_match: Whether to require all filter values (AND) vs any overlap (OR).
+
+        Returns:
+            Whether the metadata satisfies this criterion.
+        """
+        # "default" shortcut (only without strict_match):
+        # When the filter asks for "default" and the dataset has "default" in its
+        # tags, match immediately. This lets "default" act as a curated-set marker
+        # that bypasses other filter axes. With strict_match, "default" is treated
+        # as a normal tag and must satisfy the full subset check.
+        if (
+            not strict_match
+            and criterion.tags
+            and "default" in criterion.tags
+            and metadata.tags
+            and "default" in metadata.tags
+        ):
+            return True
+
+        for field in dc_fields(SeedDatasetMetadata):
+            filter_vals = getattr(criterion, field.name)
+            meta_vals = getattr(metadata, field.name)
+
+            if filter_vals is None or meta_vals is None:
+                continue
+
+            if strict_match:
+                if filter_vals - meta_vals:
+                    return False
+            else:
+                if not (filter_vals & meta_vals):
+                    return False
+
+        return True
 
     @classmethod
     async def fetch_datasets_async(
         cls,
         *,
-        dataset_names: Optional[List[str]] = None,
+        dataset_names: Optional[list[str]] = None,
         cache: bool = True,
         max_concurrency: int = 5,
     ) -> list[SeedDataset]:
@@ -143,14 +308,14 @@ class SeedDatasetProvider(ABC):
         """
         # Validate dataset names if specified
         if dataset_names is not None:
-            available_names = cls.get_all_dataset_names()
+            available_names = await cls.get_all_dataset_names_async()
             invalid_names = [name for name in dataset_names if name not in available_names]
             if invalid_names:
                 raise ValueError(f"Dataset(s) not found: {invalid_names}. Available datasets: {available_names}")
 
         async def fetch_single_dataset(
-            provider_name: str, provider_class: Type["SeedDatasetProvider"]
-        ) -> Optional[Tuple[str, SeedDataset]]:
+            provider_name: str, provider_class: type["SeedDatasetProvider"]
+        ) -> Optional[tuple[str, SeedDataset]]:
             """
             Fetch a single dataset with error handling.
 
@@ -160,12 +325,11 @@ class SeedDatasetProvider(ABC):
             provider = provider_class()
 
             # Apply dataset name filter if specified
-            if dataset_names is not None:
-                if provider.dataset_name not in dataset_names:
-                    logger.debug(f"Skipping {provider_name} - not in filter list")
-                    return None
+            if dataset_names is not None and provider.dataset_name not in dataset_names:
+                logger.debug(f"Skipping {provider_name} - not in filter list")
+                return None
 
-            dataset = await provider.fetch_dataset(cache=cache)
+            dataset = await provider.fetch_dataset_async(cache=cache)
             return (provider.dataset_name, dataset)
 
         # Create semaphore to limit concurrency
@@ -176,8 +340,8 @@ class SeedDatasetProvider(ABC):
         pbar = tqdm(total=total_count, desc="Loading datasets - this can take a few minutes", unit="dataset")
 
         async def fetch_with_semaphore(
-            provider_name: str, provider_class: Type["SeedDatasetProvider"]
-        ) -> Optional[Tuple[str, SeedDataset]]:
+            provider_name: str, provider_class: type["SeedDatasetProvider"]
+        ) -> Optional[tuple[str, SeedDataset]]:
             """
             Enforce concurrency limit and update progress during dataset fetch.
 
@@ -199,7 +363,7 @@ class SeedDatasetProvider(ABC):
         pbar.close()
 
         # Merge datasets with the same name
-        datasets: Dict[str, SeedDataset] = {}
+        datasets: dict[str, SeedDataset] = {}
         for result in results:
             # Skip None results (filtered datasets)
             if result is None:

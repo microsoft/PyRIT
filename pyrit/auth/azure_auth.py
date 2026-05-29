@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Callable, Union, cast
-from urllib.parse import urlparse
+from typing import TYPE_CHECKING, Any, Union, cast
 
 import msal
 from azure.core.credentials import AccessToken
@@ -23,6 +23,8 @@ from azure.identity.aio import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     import azure.cognitiveservices.speech as speechsdk
 
 from pyrit.auth.auth_config import REFRESH_TOKEN_BEFORE_MSEC
@@ -65,6 +67,103 @@ class TokenProviderCredential:
         return AccessToken(str(token), expires_on)
 
 
+class AsyncTokenProviderCredential:
+    """
+    Async wrapper to convert a token provider callable into an Azure AsyncTokenCredential.
+
+    This class bridges the gap between token provider functions (sync or async) and Azure SDK
+    async clients that require an AsyncTokenCredential object (with async def get_token).
+    """
+
+    def __init__(self, token_provider: Callable[[], Union[str, Awaitable[str]]]) -> None:
+        """
+        Initialize AsyncTokenProviderCredential.
+
+        Args:
+            token_provider: A callable that returns a token string (sync) or an awaitable that
+                returns a token string (async). Both are supported transparently.
+        """
+        self._token_provider = token_provider
+
+    async def get_token(self, *scopes: str, **kwargs: Any) -> AccessToken:
+        """
+        Get an access token asynchronously.
+
+        Args:
+            scopes: Token scopes (ignored as the scope is already configured in the token provider).
+            kwargs: Additional arguments (ignored).
+
+        Returns:
+            AccessToken: The access token with expiration time.
+        """
+        result = self._token_provider()
+        if inspect.isawaitable(result):
+            token = await result
+        else:
+            token = result
+        expires_on = int(time.time()) + 3600
+        return AccessToken(str(token), expires_on)
+
+    async def close(self) -> None:
+        """No-op close for protocol compliance. The callable provider does not hold resources."""
+
+    async def __aenter__(self) -> AsyncTokenProviderCredential:
+        """
+        Enter the async context manager.
+
+        Returns:
+            AsyncTokenProviderCredential: This credential instance.
+        """
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        """Exit the async context manager."""
+        await self.close()
+
+
+def ensure_async_token_provider(
+    api_key: str | Callable[[], str | Awaitable[str]] | None,
+) -> str | Callable[[], Awaitable[str]] | None:
+    """
+    Ensure the api_key is either a string or an async callable.
+
+    If a synchronous callable token provider is provided, it's automatically wrapped
+    in an async function to make it compatible with async Azure SDK clients.
+
+    Args:
+        api_key: Either a string API key or a callable that returns a token (sync or async).
+
+    Returns:
+        Either a string API key or an async callable that returns a token.
+    """
+    if api_key is None or isinstance(api_key, str) or not callable(api_key):
+        return api_key
+
+    # Check if the callable is already async
+    if inspect.iscoroutinefunction(api_key):
+        return api_key
+
+    # Wrap synchronous token provider in async function
+    logger.debug(
+        "Detected synchronous token provider."
+        " Automatically wrapping in async function for compatibility with async client."
+    )
+
+    async def async_token_provider() -> str:
+        """
+        Async wrapper for synchronous token provider.
+
+        Returns:
+            str: The token string from the synchronous provider.
+        """
+        result = api_key()
+        if inspect.isawaitable(result):
+            return await result  # type: ignore[ty:invalid-return-type]
+        return result
+
+    return async_token_provider
+
+
 class AzureAuth(Authenticator):
     """
     Azure CLI Authentication.
@@ -73,7 +172,7 @@ class AzureAuth(Authenticator):
     access_token: AccessToken
     _token_scope: str
 
-    def __init__(self, token_scope: str, tenant_id: str = ""):
+    def __init__(self, token_scope: str, tenant_id: str = "") -> None:
         """
         Initialize Azure authentication.
 
@@ -135,7 +234,7 @@ def get_access_token_from_azure_cli(*, scope: str, tenant_id: str = "") -> str:
     try:
         credential = AzureCliCredential(tenant_id=tenant_id)
         token = credential.get_token(scope)
-        return cast(str, token.token)
+        return cast("str", token.token)
     except Exception as e:
         logger.error(f"Failed to obtain token for '{scope}' with tenant ID '{tenant_id}': {e}")
         raise
@@ -157,7 +256,7 @@ def get_access_token_from_azure_msi(*, client_id: str, scope: str) -> str:
     try:
         credential = ManagedIdentityCredential(client_id=client_id)
         token = credential.get_token(scope)
-        return cast(str, token.token)
+        return cast("str", token.token)
     except Exception as e:
         logger.error(f"Failed to obtain token for '{scope}' with client ID '{client_id}': {e}")
         raise
@@ -178,7 +277,7 @@ def get_access_token_from_msa_public_client(*, client_id: str, scope: str) -> st
     try:
         app = msal.PublicClientApplication(client_id)
         result = app.acquire_token_interactive(scopes=[scope])
-        return cast(str, result["access_token"])
+        return cast("str", result["access_token"])
     except Exception as e:
         logger.error(f"Failed to obtain token for '{scope}' with client ID '{client_id}': {e}")
         raise
@@ -197,7 +296,7 @@ def get_access_token_from_interactive_login(scope: str) -> str:
     """
     try:
         token_provider = get_bearer_token_provider(InteractiveBrowserCredential(), scope)
-        return token_provider()
+        return str(token_provider())
     except Exception as e:
         logger.error(f"Failed to obtain token for '{scope}': {e}")
         raise
@@ -221,14 +320,13 @@ def get_azure_token_provider(scope: str) -> Callable[[], str]:
         >>> token = token_provider()  # Get current token
     """
     try:
-        token_provider = get_bearer_token_provider(DefaultAzureCredential(), scope)
-        return token_provider
+        return get_bearer_token_provider(DefaultAzureCredential(), scope)
     except Exception as e:
         logger.error(f"Failed to obtain token provider for '{scope}': {e}")
         raise
 
 
-def get_azure_async_token_provider(scope: str):  # type: ignore[no-untyped-def]
+def get_azure_async_token_provider(scope: str) -> Callable[[], Awaitable[str]]:
     """
     Get an asynchronous Azure token provider using AsyncDefaultAzureCredential.
 
@@ -246,8 +344,7 @@ def get_azure_async_token_provider(scope: str):  # type: ignore[no-untyped-def]
         >>> token = await token_provider()  # Get current token (in async context)
     """
     try:
-        token_provider = get_async_bearer_token_provider(AsyncDefaultAzureCredential(), scope)
-        return token_provider
+        return get_async_bearer_token_provider(AsyncDefaultAzureCredential(), scope)
     except Exception as e:
         logger.error(f"Failed to obtain async token provider for '{scope}': {e}")
         raise
@@ -257,29 +354,23 @@ def get_default_azure_scope(endpoint: str) -> str:
     """
     Determine the appropriate Azure token scope based on the endpoint URL.
 
+    The Cognitive Services scope is accepted by all Azure AI endpoints including
+    Azure OpenAI (*.openai.azure.com) and AI Foundry (*.ai.azure.com).
+
     Args:
         endpoint (str): The Azure endpoint URL.
 
     Returns:
-        str: The appropriate token scope for the endpoint.
-            - 'https://ml.azure.com/.default' for AI Foundry endpoints (*.ai.azure.com)
-            - 'https://cognitiveservices.azure.com/.default' for other Azure endpoints
+        str: The token scope 'https://cognitiveservices.azure.com/.default'.
 
     Example:
         >>> scope = get_default_azure_scope('https://myresource.openai.azure.com')
         >>> # Returns 'https://cognitiveservices.azure.com/.default'
     """
-    try:
-        parsed_uri = urlparse(endpoint)
-        if parsed_uri.hostname and parsed_uri.hostname.lower().endswith(".ai.azure.com"):
-            return "https://ml.azure.com/.default"
-    except Exception:
-        pass
-
     return "https://cognitiveservices.azure.com/.default"
 
 
-def get_azure_openai_auth(endpoint: str):  # type: ignore[no-untyped-def]
+def get_azure_openai_auth(endpoint: str) -> Callable[[], Awaitable[str]]:
     """
     Get an async Azure token provider for OpenAI endpoints.
 
@@ -325,7 +416,7 @@ def get_speech_config(resource_id: Union[str, None], key: Union[str, None], regi
     except ModuleNotFoundError as e:
         logger.error(
             "Could not import azure.cognitiveservices.speech. "
-            + "You may need to install it via 'pip install pyrit[speech]'"
+            "You may need to install it via 'pip install pyrit[speech]'"
         )
         raise e
 
@@ -334,13 +425,59 @@ def get_speech_config(resource_id: Union[str, None], key: Union[str, None], regi
             subscription=key,
             region=region,
         )
-    elif resource_id and region:
+    if resource_id and region:
         return get_speech_config_from_default_azure_credential(
             resource_id=resource_id,
             region=region,
         )
-    else:
-        raise ValueError("Insufficient information provided for Azure Speech service.")
+    raise ValueError("Insufficient information provided for Azure Speech service.")
+
+
+async def get_speech_config_async(
+    *,
+    token_provider: Callable[[], str | Awaitable[str]] | None,
+    resource_id: Union[str, None],
+    key: Union[str, None],
+    region: str,
+) -> speechsdk.SpeechConfig:
+    """
+    Get the speech config, resolving a callable token provider if one is provided.
+
+    This is the async counterpart to ``get_speech_config``. When a callable
+    ``token_provider`` is supplied, it is invoked (and awaited if async) to obtain
+    a token, which is then used with the ``aad#{resource_id}#{token}`` auth format.
+    Otherwise, it delegates to the synchronous ``get_speech_config``.
+
+    Args:
+        token_provider (Callable | None): An optional sync or async callable that returns a token string.
+        resource_id (str | None): The resource ID for Entra ID auth.
+        key (str | None): The Azure Speech API key.
+        region (str): The Azure region.
+
+    Returns:
+        speechsdk.SpeechConfig: The speech config based on passed in args.
+
+    Raises:
+        ModuleNotFoundError: If azure.cognitiveservices.speech is not installed.
+        ValueError: If neither key/region nor resource_id/region is provided and no token_provider is given.
+    """
+    if token_provider:
+        try:
+            import azure.cognitiveservices.speech as speechsdk  # noqa: F811
+        except ModuleNotFoundError as e:
+            logger.error(
+                "Could not import azure.cognitiveservices.speech. "
+                "You may need to install it via 'pip install pyrit[speech]'"
+            )
+            raise e
+
+        token = token_provider()
+        if inspect.isawaitable(token):
+            token = await token
+        auth_token = f"aad#{resource_id}#{token}"
+        return speechsdk.SpeechConfig(auth_token=auth_token, region=region)
+
+    return get_speech_config(resource_id=resource_id, key=key, region=region)
 
 
 def get_speech_config_from_default_azure_credential(resource_id: str, region: str) -> speechsdk.SpeechConfig:
@@ -362,7 +499,7 @@ def get_speech_config_from_default_azure_credential(resource_id: str, region: st
     except ModuleNotFoundError as e:
         logger.error(
             "Could not import azure.cognitiveservices.speech. "
-            + "You may need to install it via 'pip install pyrit[speech]'"
+            "You may need to install it via 'pip install pyrit[speech]'"
         )
         raise e
 
@@ -370,11 +507,10 @@ def get_speech_config_from_default_azure_credential(resource_id: str, region: st
         azure_auth = AzureAuth(token_scope=get_default_azure_scope(""))
         token = azure_auth.get_token()
         authorization_token = "aad#" + resource_id + "#" + token
-        speech_config = speechsdk.SpeechConfig(
+        return speechsdk.SpeechConfig(
             auth_token=authorization_token,
             region=region,
         )
-        return speech_config
     except Exception as e:
         logger.error(f"Failed to get speech config for resource ID '{resource_id}' and region '{region}': {e}")
         raise

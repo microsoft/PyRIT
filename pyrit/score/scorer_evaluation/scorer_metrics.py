@@ -5,16 +5,17 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Generic, Optional, Type, TypeVar, Union
-
-import numpy as np
+from typing import TYPE_CHECKING, Generic, Optional, TypeVar, Union
 
 from pyrit.common.utils import verify_and_resolve_path
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    import numpy as np
+
+    from pyrit.identifiers import ComponentIdentifier
     from pyrit.models.harm_definition import HarmDefinition
-    from pyrit.score.scorer_identifier import ScorerIdentifier
 
 T = TypeVar("T", bound="ScorerMetrics")
 M = TypeVar("M", bound="ScorerMetrics")
@@ -25,7 +26,9 @@ class ScorerMetrics:
     """
     Base dataclass for storing scorer evaluation metrics.
 
-    This class provides methods for serializing metrics to JSON and loading them from JSON files.
+    This class provides methods for serializing metrics to JSON strings (see
+    :meth:`to_json`) and loading them from JSON files on disk (see
+    :meth:`from_json_file`).
 
     Args:
         num_responses (int): Total number of responses evaluated.
@@ -47,7 +50,12 @@ class ScorerMetrics:
 
     def to_json(self) -> str:
         """
-        Convert the metrics to a JSON string.
+        Serialize this metrics instance to a JSON string.
+
+        This is the canonical serialization entry point for ``ScorerMetrics`` and its
+        subclasses. Pair it with :meth:`from_json_file` (which reads a JSON file written
+        from this string, optionally wrapped in a ``"metrics"`` key) for round-trip
+        (de)serialization.
 
         Returns:
             str: The JSON string representation of the metrics.
@@ -55,21 +63,27 @@ class ScorerMetrics:
         return json.dumps(asdict(self))
 
     @classmethod
-    def from_json(cls: Type[T], file_path: Union[str, Path]) -> T:
+    def from_json_file(cls: type[T], file_path: Union[str, Path]) -> T:
         """
-        Load the metrics from a JSON file.
+        Load a metrics instance from a JSON file on disk.
+
+        This is the canonical deserialization entry point for ``ScorerMetrics`` and its
+        subclasses. It accepts a *file path* (string or ``Path``), not a JSON string —
+        the loader opens the file, unwraps a top-level ``"metrics"`` key if present
+        (as used by evaluation result files), and filters out internal underscore-prefixed
+        fields (e.g., cached ``init=False`` attributes) before constructing the instance.
 
         Args:
             file_path (Union[str, Path]): The path to the JSON file.
 
         Returns:
-            ScorerMetrics: An instance of ScorerMetrics with the loaded data.
+            ScorerMetrics: An instance of ScorerMetrics (or subclass) with the loaded data.
 
         Raises:
             FileNotFoundError: If the specified file does not exist.
         """
         file_path = verify_and_resolve_path(file_path)
-        with open(file_path, "r") as f:
+        with open(file_path) as f:
             data = json.load(f)
 
         # Extract metrics from nested structure (always under "metrics" key in evaluation result files)
@@ -80,6 +94,29 @@ class ScorerMetrics:
         filtered_data = {k: v for k, v in metrics_data.items() if not k.startswith("_")}
 
         return cls(**filtered_data)
+
+    @classmethod
+    def from_json(cls: type[T], file_path: Union[str, Path]) -> T:
+        """
+        Load a metrics instance from a JSON file (deprecated alias for :meth:`from_json_file`).
+
+        The name ``from_json`` is misleading because it accepts a *file path*, not a JSON
+        string. Use :meth:`from_json_file` instead.
+
+        Args:
+            file_path (Union[str, Path]): The path to the JSON file.
+
+        Returns:
+            ScorerMetrics: An instance of ScorerMetrics (or subclass) with the loaded data.
+        """
+        from pyrit.common.deprecation import print_deprecation_message
+
+        print_deprecation_message(
+            old_item=f"{cls.__name__}.from_json",
+            new_item=f"{cls.__name__}.from_json_file",
+            removed_in="0.15.0",
+        )
+        return cls.from_json_file(file_path)
 
 
 @dataclass
@@ -93,9 +130,13 @@ class HarmScorerMetrics(ScorerMetrics):
             a confidence interval for the mean absolute error.
         t_statistic (float): The t-statistic for the one-sample t-test comparing model scores to human scores with a
             null hypothesis that the mean difference is 0. A high positive t-statistic (along with a low p-value)
-            indicates that the model scores are typically higher than the human scores.
+            indicates that the model scores are typically higher than the human scores. When the model perfectly
+            agrees with the gold labels (zero difference everywhere), this is reported as 0.0. When all differences
+            are equal and non-zero (a systematic constant bias with no variance), the t-test is undefined and this
+            is reported as NaN; consult `mean_absolute_error` for the bias magnitude in that case.
         p_value (float): The p-value for the one-sample t-test above. It represents the probability of obtaining a
             difference in means as extreme as the observed difference, assuming the null hypothesis is true.
+            Reported as 1.0 on perfect agreement and NaN on the constant-non-zero-bias case (see `t_statistic`).
         krippendorff_alpha_combined (float): Krippendorff's alpha for the reliability data, which includes both
             human and model scores. This measures the agreement between all the human raters and model scoring trials
             and ranges between -1.0 to 1.0 where 1.0 indicates perfect agreement, 0.0 indicates no agreement, and
@@ -121,9 +162,9 @@ class HarmScorerMetrics(ScorerMetrics):
     harm_definition_version: Optional[str] = field(default=None, kw_only=True)
     krippendorff_alpha_humans: Optional[float] = None
     krippendorff_alpha_model: Optional[float] = None
-    _harm_definition_obj: Optional["HarmDefinition"] = field(default=None, init=False, repr=False)
+    _harm_definition_obj: Optional[HarmDefinition] = field(default=None, init=False, repr=False)
 
-    def get_harm_definition(self) -> Optional["HarmDefinition"]:
+    def get_harm_definition(self) -> Optional[HarmDefinition]:
         """
         Load and return the HarmDefinition object for this metrics instance.
 
@@ -188,15 +229,15 @@ class ScorerMetricsWithIdentity(Generic[M]):
     - ScorerMetricsWithIdentity[HarmScorerMetrics] has metrics: HarmScorerMetrics
 
     Args:
-        scorer_identifier (ScorerIdentifier): The scorer's configuration identifier.
+        scorer_identifier (ComponentIdentifier): The scorer's configuration identifier.
         metrics (M): The evaluation metrics (ObjectiveScorerMetrics or HarmScorerMetrics).
     """
 
-    scorer_identifier: "ScorerIdentifier"
+    scorer_identifier: ComponentIdentifier
     metrics: M
 
     def __repr__(self) -> str:
         """Return a string representation of the ScorerMetricsWithIdentity."""
         metrics_type = type(self.metrics).__name__
-        scorer_type = self.scorer_identifier.type
+        scorer_type = self.scorer_identifier.class_name
         return f"ScorerMetricsWithIdentity(scorer={scorer_type}, metrics_type={metrics_type})"

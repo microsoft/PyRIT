@@ -6,17 +6,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score, UnvalidatedScore
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import InsecureCodeScorer
 
 
 @pytest.fixture
 def mock_chat_target(patch_central_database):
-    return MagicMock(spec=PromptChatTarget)
+    return MagicMock(spec=PromptTarget)
 
 
-@pytest.mark.asyncio
 async def test_insecure_code_scorer_valid_response(mock_chat_target):
     # Initialize the scorer
     scorer = InsecureCodeScorer(
@@ -30,7 +30,10 @@ async def test_insecure_code_scorer_valid_response(mock_chat_target):
         score_category=["security"],
         score_rationale="This code has potential vulnerabilities.",
         score_metadata=None,
-        scorer_class_identifier={"scorer_name": "InsecureCodeScorer"},
+        scorer_class_identifier=ComponentIdentifier(
+            class_name="InsecureCodeScorer",
+            class_module="pyrit.score",
+        ),
         message_piece_id="12345",
         objective=None,
     )
@@ -51,7 +54,6 @@ async def test_insecure_code_scorer_valid_response(mock_chat_target):
             mock_add_scores.assert_called_once_with(scores=[scores[0]])
 
 
-@pytest.mark.asyncio
 async def test_insecure_code_scorer_invalid_json(mock_chat_target):
     # Initialize the scorer
     scorer = InsecureCodeScorer(
@@ -73,8 +75,7 @@ async def test_insecure_code_scorer_invalid_json(mock_chat_target):
             mock_add_scores.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_insecure_code_scorer_validate(mock_chat_target):
+async def test_score_async_unsupported_data_type_returns_zero(mock_chat_target, patch_central_database):
     scorer = InsecureCodeScorer(
         chat_target=mock_chat_target,
     )
@@ -86,5 +87,9 @@ async def test_insecure_code_scorer_validate(mock_chat_target):
         converted_value_data_type="image_path",
     ).to_message()
 
-    with pytest.raises(ValueError, match="There are no valid pieces to score"):
-        await scorer.score_async(request)
+    # Unified FloatScaleScorer fallback: returns a single Score(0.0) when all pieces are filtered
+    # out (mirrors TrueFalseScorer's no-pieces fallback).
+    scores = await scorer.score_async(request)
+    assert len(scores) == 1
+    assert scores[0].score_type == "float_scale"
+    assert scores[0].get_value() == 0.0

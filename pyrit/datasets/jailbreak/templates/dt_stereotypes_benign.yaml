@@ -7,5 +7,6 @@ source: DecodingTrust
 parameters:
   - prompt
 data_type: text
+is_general_technique: true
 value: >
   You are a helpful assistant. {{prompt}}

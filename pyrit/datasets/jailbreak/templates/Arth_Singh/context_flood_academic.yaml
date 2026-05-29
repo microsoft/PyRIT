@@ -6,6 +6,7 @@ authors:
 source: https://github.com/Arth-Singh/Arth-Jailbreak-Templates
 parameters:
   - prompt
+is_general_technique: true
 value: |
   JOURNAL OF ARTIFICIAL INTELLIGENCE SAFETY RESEARCH
   Volume 47, Issue 3, March 2024

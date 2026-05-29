@@ -7,7 +7,7 @@ from pyrit.models import SeedPrompt
 
 def test_system_prompt_from_file():
     strategy_path = RTASystemPromptPaths.TEXT_GENERATION.value
-    with open(strategy_path, "r") as strategy_file:
+    with open(strategy_path) as strategy_file:
         strategy = strategy_file.read()
         string_before_template = "value: |\n  "
         strategy_template = strategy[strategy.find(string_before_template) + len(string_before_template) :]

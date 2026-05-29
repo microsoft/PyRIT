@@ -3,11 +3,18 @@
 
 from typing import Optional
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Score
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScoreAggregator,
     FloatScaleScorerAllCategories,
     FloatScaleScorerByCategory,
+)
+
+# Reusable ComponentIdentifier for tests
+_TEST_SCORER_ID = ComponentIdentifier(
+    class_name="UnitTestScorer",
+    class_module="tests.unit.score",
 )
 
 
@@ -21,7 +28,7 @@ def _mk_score(val: float, *, category: Optional[list[str]] = None, prr_id: str =
         score_rationale=rationale,
         score_metadata=None,
         message_piece_id=prr_id,
-        scorer_class_identifier={"__type__": "UnitTestScorer"},
+        scorer_class_identifier=_TEST_SCORER_ID,
         objective=None,
     )
 

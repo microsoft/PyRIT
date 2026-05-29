@@ -3,7 +3,7 @@
 
 import logging
 import os
-from typing import List, Optional
+from typing import Optional
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -20,7 +20,7 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
     This dataset contains adversarial prompts designed to test LLM safety
     across 44 categories with 21 different prompt styles (base + 20 linguistic mutations).
 
-    Reference: https://arxiv.org/abs/2406.14598
+    Reference: [@xie2024sorrybench]
     """
 
     VALID_CATEGORIES = [
@@ -98,10 +98,10 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
         self,
         *,
         source: str = "sorry-bench/sorry-bench-202503",
-        categories: Optional[List[str]] = None,
+        categories: Optional[list[str]] = None,
         prompt_style: Optional[str] = None,
         token: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Initialize the Sorry-Bench dataset loader.
 
@@ -140,7 +140,7 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "sorry_bench"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Sorry-Bench dataset and return as SeedDataset.
 
@@ -205,7 +205,7 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                         "prompt_style": item_prompt_style,
                         "question_id": question_id,
                     },
-                    **common_metadata,  # type: ignore[arg-type]
+                    **common_metadata,  # type: ignore[ty:invalid-argument-type]
                 )
 
                 seed_prompts.append(seed_prompt)

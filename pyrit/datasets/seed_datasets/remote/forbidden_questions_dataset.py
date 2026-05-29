@@ -20,7 +20,7 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
     Physical Harm, Economic Harm, Fraud, Pornography, Political Lobbying, Privacy Violence,
     Legal Opinion, Financial Advice, Health Consultation, and Government Decision.
 
-    Reference: https://arxiv.org/abs/2308.03825
+    Reference: [@shen2023donotanything]
     GitHub: https://github.com/verazuo/jailbreak_llms/
     Website: https://jailbreak-llms.xinyueshen.me/
     """
@@ -30,7 +30,7 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
         *,
         source: str = "TrustAIRLab/forbidden_question_set",
         split: str = "default",
-    ):
+    ) -> None:
         """
         Initialize the Forbidden Questions dataset loader.
 
@@ -46,7 +46,7 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "forbidden_questions"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Forbidden Questions dataset and return as SeedDataset.
 

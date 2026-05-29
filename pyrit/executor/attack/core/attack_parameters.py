@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, TypeVar
+from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
 from pyrit.models import Message, SeedAttackGroup, SeedGroup
 
 if TYPE_CHECKING:
-    from pyrit.prompt_target import PromptChatTarget
+    from pyrit.prompt_target import PromptTarget
     from pyrit.score import TrueFalseScorer
 
 AttackParamsT = TypeVar("AttackParamsT", bound="AttackParameters")
@@ -36,10 +36,10 @@ class AttackParameters:
     next_message: Optional[Message] = None
 
     # Conversation that is automatically prepended to the target model
-    prepended_conversation: Optional[List[Message]] = None
+    prepended_conversation: Optional[list[Message]] = None
 
     # Additional labels that can be applied to the prompts throughout the attack
-    memory_labels: Optional[Dict[str, str]] = field(default_factory=dict)
+    memory_labels: Optional[dict[str, str]] = field(default_factory=dict)
 
     def __str__(self) -> str:
         """Return a nicely formatted string representation of the attack parameters."""
@@ -75,11 +75,11 @@ class AttackParameters:
 
     @classmethod
     async def from_seed_group_async(
-        cls: Type[AttackParamsT],
+        cls: type[AttackParamsT],
         *,
         seed_group: SeedAttackGroup,
-        adversarial_chat: Optional["PromptChatTarget"] = None,
-        objective_scorer: Optional["TrueFalseScorer"] = None,
+        adversarial_chat: Optional[PromptTarget] = None,
+        objective_scorer: Optional[TrueFalseScorer] = None,
         **overrides: Any,
     ) -> AttackParamsT:
         """
@@ -123,10 +123,11 @@ class AttackParameters:
         seed_group.validate()
 
         # SeedAttackGroup validates in __init__ that objective is set
-        assert seed_group.objective is not None
+        if seed_group.objective is None:
+            raise ValueError("seed_group.objective is not initialized")
 
         # Build params dict, only including fields this class accepts
-        params: Dict[str, Any] = {}
+        params: dict[str, Any] = {}
 
         if "objective" in valid_fields:
             params["objective"] = seed_group.objective.value
@@ -181,7 +182,7 @@ class AttackParameters:
         return cls(**params)
 
     @classmethod
-    def excluding(cls, *field_names: str) -> Type["AttackParameters"]:
+    def excluding(cls, *field_names: str) -> type[AttackParameters]:
         """
         Create a new AttackParameters subclass that excludes the specified fields.
 
@@ -208,7 +209,7 @@ class AttackParameters:
             raise ValueError(f"Cannot exclude non-existent fields: {invalid}. Valid fields: {current_fields}")
 
         # Build new fields list excluding the specified ones
-        new_fields: List[tuple] = []
+        new_fields: list[Any] = []
         for f in dataclasses.fields(cls):
             if f.name not in field_names:
                 # Preserve field defaults
@@ -238,11 +239,13 @@ class AttackParameters:
         _classmethod_descriptor = cls.__dict__["from_seed_group_async"]
         original_method = _classmethod_descriptor.__func__
 
-        async def from_seed_group_async_wrapper(c, *, seed_group, adversarial_chat=None, objective_scorer=None, **ov):
+        async def from_seed_group_async_wrapper(
+            c: Any, /, *, seed_group: Any, adversarial_chat: Any = None, objective_scorer: Any = None, **ov: Any
+        ) -> Any:
             return await original_method(
                 c, seed_group=seed_group, adversarial_chat=adversarial_chat, objective_scorer=objective_scorer, **ov
             )
 
-        new_cls.from_seed_group_async = classmethod(from_seed_group_async_wrapper)  # type: ignore[attr-defined]
+        new_cls.from_seed_group_async = classmethod(from_seed_group_async_wrapper)  # type: ignore[ty:unresolved-attribute]
 
-        return new_cls  # type: ignore[return-value]
+        return new_cls  # type: ignore[ty:invalid-return-type]

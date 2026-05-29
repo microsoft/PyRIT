@@ -14,6 +14,7 @@ from pyrit.executor.promptgen.fuzzer import (
     FuzzerShortenConverter,
     FuzzerSimilarConverter,
 )
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece
 
 
@@ -48,7 +49,6 @@ def test_converter_init_templates_not_null(converter_class, sqlite_instance) -> 
     assert converter.system_prompt
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "converted_value",
     [
@@ -90,8 +90,8 @@ async def test_converter_send_prompt_async_bad_json_exception_retries(
                     converted_value=converted_value,
                     original_value_data_type="text",
                     converted_value_data_type="text",
-                    prompt_target_identifier={"target": "target-identifier"},
-                    attack_identifier={"test": "test"},
+                    prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
+                    attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                     labels={"test": "test"},
                 )
             ]

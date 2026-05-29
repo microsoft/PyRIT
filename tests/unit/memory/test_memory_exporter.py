@@ -3,7 +3,7 @@
 
 import csv
 import json
-from typing import Sequence
+from collections.abc import Sequence
 
 import pytest
 from sqlalchemy.inspection import inspect
@@ -26,12 +26,12 @@ def model_to_dict(instance):
 
 def read_file(file_path, export_type):
     if export_type == "json":
-        with open(file_path, "r") as f:
+        with open(file_path) as f:
             return json.load(f)
     elif export_type == "csv":
-        with open(file_path, "r", newline="") as f:
+        with open(file_path, newline="") as f:
             reader = csv.DictReader(f)
-            return [row for row in reader]
+            return list(reader)
     else:
         raise ValueError(f"Invalid export type: {export_type}")
 
@@ -60,7 +60,7 @@ def test_export_to_json_creates_file(tmp_path, export_type):
     # Convert each MessagePiece instance to a dictionary
     expected_content = [message_piece.to_dict() for message_piece in sample_conversation_entries]
 
-    for expected, actual in zip(expected_content, content):
+    for expected, actual in zip(expected_content, content, strict=False):
         assert expected["role"] == actual["role"]
         assert expected["converted_value"] == actual["converted_value"]
         assert expected["conversation_id"] == actual["conversation_id"]

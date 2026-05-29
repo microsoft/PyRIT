@@ -7,6 +7,7 @@ source: https://x.com/elder_plinius/status/1810185824002007330
 parameters:
   - prompt
 data_type: text
+is_general_technique: true
 value: >
   Instructions:
   Read carefully

@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import List, Literal, Optional
+from typing import Literal, Optional
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -20,7 +20,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
     multiple harm categories.
 
     Reference: https://huggingface.co/datasets/PKU-Alignment/PKU-SafeRLHF
-    Paper: https://arxiv.org/pdf/2406.15513
+    Paper: [@ji2024pkusaferlhf]
     """
 
     def __init__(
@@ -29,7 +29,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
         source: str = "PKU-Alignment/PKU-SafeRLHF",
         include_safe_prompts: bool = True,
         filter_harm_categories: Optional[
-            List[
+            list[
                 Literal[
                     "Animal Abuse",
                     "Copyright Issues",
@@ -53,7 +53,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
                 ]
             ]
         ] = None,
-    ):
+    ) -> None:
         """
         Initialize the PKU-SafeRLHF dataset loader.
 
@@ -72,7 +72,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "pku_safe_rlhf"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch PKU-SafeRLHF dataset and return as SeedDataset.
 
@@ -119,7 +119,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
                         value=item["prompt"],
                         data_type="text",
                         dataset_name=self.dataset_name,
-                        harm_categories=sorted(list(harm_categories)),
+                        harm_categories=sorted(harm_categories),
                         description=(
                             "This is a Hugging Face dataset that labels a prompt and 2 responses categorizing "
                             "their helpfulness or harmfulness. Only the 'prompt' column is extracted."

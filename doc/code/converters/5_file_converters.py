@@ -8,7 +8,6 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.17.3
 # ---
-
 # %% [markdown]
 # # 5. File Converters
 #
@@ -19,7 +18,7 @@
 # This notebook covers:
 #
 # - **PDFConverter**: Convert text to PDF documents with templates or direct generation
-
+# - **WordDocConverter**: Convert text to Word (.docx) documents with optional placeholder injection
 # %% [markdown]
 # ## PDFConverter
 #
@@ -28,22 +27,20 @@
 # 1. **Template-Based PDF Generation**: Use YAML templates to render dynamic content into PDFs
 # 2. **Direct Prompt PDF Generation**: Convert plain text strings into PDFs without templates
 # 3. **Modify Existing PDFs**: Inject text into existing PDF documents
-
 # %% [markdown]
 # ### Template-Based PDF Generation
 #
 # This mode populates placeholders in a YAML-based template and converts the rendered content into a PDF.
-
 # %%
 import pathlib
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
     AttackConverterConfig,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 from pyrit.models import SeedPrompt
+from pyrit.output import output_attack_async
 from pyrit.prompt_converter import PDFConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import TextTarget
@@ -97,7 +94,7 @@ attack = PromptSendingAttack(
 )
 
 result = await attack.execute_async(objective=prompt)  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await output_attack_async(result)
 
 # %% [markdown]
 # ### Direct Prompt PDF Generation (No Template)
@@ -132,7 +129,7 @@ attack = PromptSendingAttack(
 )
 
 result = await attack.execute_async(objective=prompt)  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await output_attack_async(result)
 
 # %% [markdown]
 # ### Modifying Existing PDFs with Injection Items
@@ -146,7 +143,9 @@ from pathlib import Path
 import requests
 
 # Download a sample PDF
-url = "https://raw.githubusercontent.com/Azure/PyRIT/main/pyrit/datasets/prompt_converters/pdf_converters/fake_CV.pdf"
+url = (
+    "https://raw.githubusercontent.com/microsoft/PyRIT/main/pyrit/datasets/prompt_converters/pdf_converters/fake_CV.pdf"
+)
 
 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
     response = requests.get(url)
@@ -202,4 +201,77 @@ attack = PromptSendingAttack(
 )
 
 result = await attack.execute_async(objective="Modify existing PDF")  # type: ignore
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await output_attack_async(result)
+
+# %% [markdown]
+# ## WordDocConverter
+#
+# The `WordDocConverter` generates Word (.docx) documents from text. It supports two main modes:
+#
+# 1. **New Document Generation**: Convert plain text strings into Word documents
+# 2. **Placeholder-Based Injection**: Replace a placeholder in an existing `.docx` document with rendered content
+#
+# Placeholders must be fully contained within a single run in the document. If a placeholder spans
+# multiple runs (e.g., due to mixed formatting), it will not be replaced.
+
+# %% [markdown]
+# ### Direct Word Document Generation (No Template)
+#
+# This mode converts plain text strings directly into `.docx` files.
+
+# %%
+from pyrit.prompt_converter import WordDocConverter
+
+word_doc_converter = PromptConverterConfiguration.from_converters(converters=[WordDocConverter()])
+
+converter_config = AttackConverterConfig(
+    request_converters=word_doc_converter,
+)
+
+attack = PromptSendingAttack(
+    objective_target=prompt_target,
+    attack_converter_config=converter_config,
+)
+
+result = await attack.execute_async(objective="This is a simple test string for Word document generation.")  # type: ignore
+await output_attack_async(result)
+
+# %% [markdown]
+# ### Placeholder-Based Injection into Existing Word Documents
+#
+# This mode replaces a literal placeholder string in an existing `.docx` file with the prompt content.
+
+# %%
+import tempfile
+
+from docx import Document  # type: ignore[import-untyped]
+
+# Create a sample Word document with a placeholder
+with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_file:
+    doc = Document()
+    doc.add_paragraph("Dear Hiring Manager,")
+    doc.add_paragraph("I am writing to apply for the {{INJECTION_PLACEHOLDER}} position.")
+    doc.add_paragraph("Sincerely, Applicant")
+    doc.save(tmp_file.name)
+    template_docx_path = Path(tmp_file.name)
+
+word_doc_converter = PromptConverterConfiguration.from_converters(
+    converters=[
+        WordDocConverter(
+            existing_docx=template_docx_path,
+            placeholder="{{INJECTION_PLACEHOLDER}}",
+        )
+    ]
+)
+
+converter_config = AttackConverterConfig(
+    request_converters=word_doc_converter,
+)
+
+attack = PromptSendingAttack(
+    objective_target=prompt_target,
+    attack_converter_config=converter_config,
+)
+
+result = await attack.execute_async(objective="AI Red Team Engineer")  # type: ignore
+await output_attack_async(result)

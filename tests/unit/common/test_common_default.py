@@ -21,4 +21,4 @@ def test_get_required_value_uses_default():
 def test_get_required_value_throws_if_not_set():
     os.environ["TEST_ENV_VAR"] = ""
     with pytest.raises(ValueError):
-        default_values.get_required_value(env_var_name="TEST_ENV_VAR", passed_value="") == "default"
+        default_values.get_required_value(env_var_name="TEST_ENV_VAR", passed_value="")

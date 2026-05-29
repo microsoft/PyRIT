@@ -2,8 +2,12 @@
 # Licensed under the MIT license.
 
 import asyncio
-from typing import List, Optional
+from typing import TYPE_CHECKING, Optional
 
+if TYPE_CHECKING:
+    from pyrit.prompt_target import PromptTarget
+
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import ChatMessageRole, Message, MessagePiece, Score
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
@@ -24,7 +28,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         self,
         *,
         aggregator: TrueFalseAggregatorFunc,
-        scorers: List[TrueFalseScorer],
+        scorers: list[TrueFalseScorer],
     ) -> None:
         """
         Initialize the composite scorer.
@@ -52,12 +56,29 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
 
         self._scorers = scorers
 
-    def _build_scorer_identifier(self) -> None:
-        """Build the scorer evaluation identifier for this scorer."""
-        self._set_scorer_identifier(
-            sub_scorers=self._scorers,
-            score_aggregator=self._score_aggregator.__name__,
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier for this scorer.
+
+        Returns:
+            ComponentIdentifier: The identifier for this scorer.
+        """
+        return self._create_identifier(
+            params={
+                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            },
+            children={
+                "sub_scorers": [s.get_identifier() for s in self._scorers],
+            },
         )
+
+    def get_chat_target(self) -> Optional["PromptTarget"]:
+        """Return the chat target from the first sub-scorer that has one."""
+        for scorer in self._scorers:
+            target = scorer.get_chat_target()
+            if target is not None:
+                return target
+        return None
 
     async def _score_async(
         self,
@@ -103,7 +124,8 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
 
         # Ensure the message piece has an ID
         piece_id = message.message_pieces[0].id
-        assert piece_id is not None, "Message piece must have an ID"
+        if piece_id is None:
+            raise ValueError("Message piece must have an ID")
 
         return_score = Score(
             score_value=str(result.value),

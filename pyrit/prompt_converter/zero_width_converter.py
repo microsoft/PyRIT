@@ -18,7 +18,7 @@ class ZeroWidthConverter(PromptConverter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt by injecting zero-width spaces between each character.
+        Convert the given prompt by injecting zero-width spaces between each character.
 
         Args:
             prompt (str): The prompt to be converted.

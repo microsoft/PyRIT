@@ -3,12 +3,11 @@
 
 import uuid
 from abc import ABC, abstractmethod
-from typing import Optional, Type, cast
+from typing import Optional, cast
 from uuid import UUID
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece, Score
-from pyrit.models.literals import PromptResponseError
-from pyrit.models.message_piece import Originator
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -29,14 +28,22 @@ class ConversationScorer(Scorer, ABC):
     Note: This class cannot be instantiated directly. Use create_conversation_scorer() factory instead.
     """
 
-    _default_validator: ScorerPromptValidator = ScorerPromptValidator(
+    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"],
-        enforce_all_pieces_valid=True,
+        enforce_all_pieces_valid=False,
     )
 
     async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
         """
         Scores the entire conversation history by concatenating all messages and passing to the wrapped scorer.
+
+        The synthetic conversation Message is always built as ``text`` regardless of the
+        triggering piece's data type or error state. Errors from individual turns are
+        preserved within the rendered text (either as the rendered error JSON or, with
+        ``score_blocked_content`` enabled, as the partial content). This ensures the wrapped
+        scorer's text-only validator accepts the synthetic message and scores the full
+        conversation, even when the triggering turn was blocked or errored; the wrapped
+        scorer's fallback only fires when the rendered conversation is genuinely unscoreable.
 
         Args:
             message (Message): A message from the conversation to be scored.
@@ -72,7 +79,17 @@ class ConversationScorer(Scorer, ABC):
                 # Only include user and assistant messages in the conversation text
                 if piece.api_role in ["user", "assistant", "tool"]:
                     role_display = "Assistant (simulated)" if piece.is_simulated else piece.api_role.capitalize()
-                    conversation_text += f"{role_display}: {piece.converted_value}\n"
+                    # For blocked pieces with partial content, use the partial content
+                    # instead of the error JSON when score_blocked_content is enabled
+                    if (
+                        self.score_blocked_content
+                        and piece.is_blocked()
+                        and piece.prompt_metadata.get("partial_content")
+                    ):
+                        text = str(piece.prompt_metadata["partial_content"])
+                    else:
+                        text = piece.converted_value
+                    conversation_text += f"{role_display}: {text}\n"
 
         # Create a new message with the concatenated conversation text
         # Preserve the original message piece metadata
@@ -85,15 +102,15 @@ class ConversationScorer(Scorer, ABC):
                     converted_value=conversation_text,
                     id=original_piece.id,
                     conversation_id=original_piece.conversation_id,
-                    labels=original_piece.labels,
+                    labels=original_piece.labels,  # deprecated
                     prompt_target_identifier=original_piece.prompt_target_identifier,
                     attack_identifier=original_piece.attack_identifier,
-                    original_value_data_type=original_piece.original_value_data_type,
-                    converted_value_data_type=original_piece.converted_value_data_type,
-                    response_error=cast(PromptResponseError, original_piece.response_error),
-                    originator=cast(Originator, original_piece.originator),
+                    original_value_data_type="text",
+                    converted_value_data_type="text",
+                    response_error="none",
+                    originator=original_piece.originator,
                     original_prompt_id=(
-                        cast(UUID, original_piece.original_prompt_id)
+                        cast("UUID", original_piece.original_prompt_id)
                         if isinstance(original_piece.original_prompt_id, str)
                         else original_piece.original_prompt_id
                     ),
@@ -128,7 +145,6 @@ class ConversationScorer(Scorer, ABC):
 
         This must be implemented by the factory-created subclass.
         """
-        pass
 
     def validate_return_scores(self, scores: list[Score]) -> None:
         """
@@ -172,7 +188,7 @@ def create_conversation_scorer(
         >>> isinstance(conversation_scorer, ConversationScorer)  # True
     """
     # Determine the base class of the wrapped scorer
-    scorer_base_class: Optional[Type[Scorer]] = None
+    scorer_base_class: Optional[type[Scorer]] = None
 
     if isinstance(scorer, FloatScaleScorer):
         scorer_base_class = FloatScaleScorer
@@ -185,22 +201,29 @@ def create_conversation_scorer(
         )
 
     # Dynamically create a class that inherits from both ConversationScorer and the scorer's base class
-    class DynamicConversationScorer(ConversationScorer, scorer_base_class):  # type: ignore
+    class DynamicConversationScorer(ConversationScorer, scorer_base_class):  # type: ignore[valid-type]  # type: ignore[ty:unsupported-base]
         """Dynamic ConversationScorer that inherits from both ConversationScorer and the wrapped scorer's base class."""
 
-        def __init__(self):
+        def __init__(self) -> None:
             # Initialize with the validator and wrapped scorer
-            Scorer.__init__(self, validator=validator or ConversationScorer._default_validator)
+            Scorer.__init__(self, validator=validator or ConversationScorer._DEFAULT_VALIDATOR)
             self._wrapped_scorer = scorer
 
         def _get_wrapped_scorer(self) -> Scorer:
             """Return the wrapped scorer."""
             return self._wrapped_scorer
 
-        def _build_scorer_identifier(self) -> None:
-            """Build the scorer evaluation identifier for this conversation scorer."""
-            self._set_scorer_identifier(
-                sub_scorers=[self._wrapped_scorer],
+        def _build_identifier(self) -> ComponentIdentifier:
+            """
+            Build the scorer evaluation identifier for this conversation scorer.
+
+            Returns:
+                ComponentIdentifier: The identifier for this scorer.
+            """
+            return self._create_identifier(
+                children={
+                    "sub_scorers": [self._wrapped_scorer.get_identifier()],
+                },
             )
 
     return DynamicConversationScorer()

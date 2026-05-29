@@ -2,9 +2,8 @@
 # Licensed under the MIT license.
 import logging
 import pathlib
-
-# Import PyRITInitializer for type checking (with TYPE_CHECKING to avoid circular imports)
-from typing import TYPE_CHECKING, Any, Literal, Optional, Sequence, Union, get_args
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 
 import dotenv
 
@@ -156,7 +155,12 @@ def _load_initializers_from_scripts(
                 obj = getattr(module, name)
                 # Check if it's a class, is a subclass of PyRITInitializer,
                 # and is not the base class itself
-                if isinstance(obj, type) and issubclass(obj, PyRITInitializer) and obj is not PyRITInitializer:
+                if (
+                    isinstance(obj, type)
+                    and issubclass(obj, PyRITInitializer)
+                    and obj is not PyRITInitializer
+                    and obj.__module__ == module.__name__
+                ):
                     try:
                         # Instantiate the initializer class
                         initializer = obj()
@@ -184,10 +188,9 @@ def _load_initializers_from_scripts(
 
 async def _execute_initializers_async(*, initializers: Sequence["PyRITInitializer"]) -> None:
     """
-    Execute PyRITInitializer instances in execution order.
+    Execute PyRITInitializer instances in the order provided.
 
-    Initializers are sorted by their execution_order property before execution.
-    Lower execution_order values run first.
+    Initializers are executed in the order they appear in the sequence.
 
     Args:
         initializers: Sequence of PyRITInitializer instances to execute.
@@ -199,18 +202,15 @@ async def _execute_initializers_async(*, initializers: Sequence["PyRITInitialize
     # Import here to avoid circular imports
     from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
-    # Validate all initializers first before sorting
+    # Validate all initializers first
     for initializer in initializers:
         if not isinstance(initializer, PyRITInitializer):
             raise ValueError(
                 f"All initializers must be PyRITInitializer instances. Got {type(initializer).__name__}: {initializer}"
             )
 
-    # Sort initializers by execution_order (lower numbers first)
-    sorted_initializers = sorted(initializers, key=lambda x: x.execution_order)
-
-    for initializer in sorted_initializers:
-        logger.info(f"Executing initializer: {initializer.name}")
+    for initializer in initializers:
+        logger.info(f"Executing initializer: {type(initializer).__name__}")
         logger.debug(f"Description: {initializer.description}")
 
         try:
@@ -220,10 +220,10 @@ async def _execute_initializers_async(*, initializers: Sequence["PyRITInitialize
             # Then initialize with tracking to capture what was configured
             await initializer.initialize_with_tracking_async()
 
-            logger.debug(f"Successfully executed initializer: {initializer.name}")
+            logger.debug(f"Successfully executed initializer: {type(initializer).__name__}")
 
         except Exception as e:
-            logger.error(f"Error executing initializer {initializer.name}: {e}")
+            logger.error(f"Error executing initializer {type(initializer).__name__}: {e}")
             raise
 
 
@@ -270,17 +270,18 @@ async def initialize_pyrit_async(
 
     if memory_db_type == IN_MEMORY:
         logger.info("Using in-memory SQLite database.")
-        memory = SQLiteMemory(db_path=":memory:", **memory_instance_kwargs)
+        memory = SQLiteMemory(db_path=":memory:", **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
     elif memory_db_type == SQLITE:
         logger.info("Using persistent SQLite database.")
-        memory = SQLiteMemory(**memory_instance_kwargs)
+        memory = SQLiteMemory(**memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
     elif memory_db_type == AZURE_SQL:
         logger.info("Using AzureSQL database.")
-        memory = AzureSQLMemory(**memory_instance_kwargs)
+        memory = AzureSQLMemory(**memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
     else:
         raise ValueError(
             f"Memory database type '{memory_db_type}' is not a supported type {get_args(MemoryDatabaseType)}"
         )
+
     CentralMemory.set_memory_instance(memory)
 
     # Combine directly provided initializers with those loaded from scripts
@@ -291,6 +292,6 @@ async def initialize_pyrit_async(
         script_initializers = _load_initializers_from_scripts(script_paths=initialization_scripts)
         all_initializers.extend(script_initializers)
 
-    # Execute all initializers (sorted by execution_order)
+    # Execute all initializers in order
     if all_initializers:
         await _execute_initializers_async(initializers=all_initializers)

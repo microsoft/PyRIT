@@ -37,21 +37,19 @@ seeds:
         # Should fallback to filename stem
         assert loader.dataset_name == "test"
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset(self, tmp_path, valid_yaml_content):
         file_path = tmp_path / "test.yaml"
         file_path.write_text(valid_yaml_content, encoding="utf-8")
 
         loader = _LocalDatasetLoader(file_path=file_path)
-        dataset = await loader.fetch_dataset()
+        dataset = await loader.fetch_dataset_async()
 
         assert isinstance(dataset, SeedDataset)
         assert dataset.dataset_name == "test_dataset"
         assert len(dataset.prompts) == 1
         assert dataset.prompts[0].value == "test prompt"
 
-    @pytest.mark.asyncio
     async def test_fetch_dataset_file_not_found(self):
         loader = _LocalDatasetLoader(file_path=Path("non_existent.yaml"))
-        with pytest.raises(Exception):
-            await loader.fetch_dataset()
+        with pytest.raises(Exception):  # noqa: B017
+            await loader.fetch_dataset_async()

@@ -4,6 +4,7 @@
 import json
 import logging
 import uuid
+from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.exceptions import (
@@ -18,7 +19,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_converter import ConverterResult, PromptConverter
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ class FuzzerConverter(PromptConverter):
     Base class for GPTFUZZER converters.
 
     Adapted from GPTFUZZER: Red Teaming Large Language Models with Auto-Generated Jailbreak Prompts.
-    Paper: https://arxiv.org/pdf/2309.10253 by Jiahao Yu, Xingwei Lin, Zheng Yu, Xinyu Xing.
+    Paper: [@yu2023gptfuzzer]
     GitHub: https://github.com/sherdencooper/GPTFuzz/tree/master
     """
 
@@ -39,14 +40,14 @@ class FuzzerConverter(PromptConverter):
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         prompt_template: SeedPrompt,
-    ):
+    ) -> None:
         """
         Initialize the converter with the specified chat target and prompt template.
 
         Args:
-            converter_target (PromptChatTarget): Chat target used to perform fuzzing on user prompt.
+            converter_target (PromptTarget): Chat target used to perform fuzzing on user prompt.
                 Can be omitted if a default has been configured via PyRIT initialization.
             prompt_template (SeedPrompt): Template to be used instead of the default system prompt with
                 instructions for the chat target.
@@ -58,9 +59,8 @@ class FuzzerConverter(PromptConverter):
         self.system_prompt = prompt_template.value
         self.template_label = "TEMPLATE"
 
-    def update(self, **kwargs) -> None:
+    def update(self, **kwargs: Any) -> None:
         """Update the converter with new parameters."""
-        pass
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
@@ -111,7 +111,7 @@ class FuzzerConverter(PromptConverter):
         return ConverterResult(output_text=response, output_type="text")
 
     @pyrit_json_retry
-    async def send_prompt_async(self, request):
+    async def send_prompt_async(self, request: Message) -> str:
         """
         Send the message to the converter target and process the response.
 
@@ -133,10 +133,10 @@ class FuzzerConverter(PromptConverter):
             parsed_response = json.loads(response_msg)
             if "output" not in parsed_response:
                 raise InvalidJsonException(message=f"Invalid JSON encountered; missing 'output' key: {response_msg}")
-            return parsed_response["output"]
+            return str(parsed_response["output"])
 
         except json.JSONDecodeError:
-            raise InvalidJsonException(message=f"Invalid JSON encountered: {response_msg}")
+            raise InvalidJsonException(message=f"Invalid JSON encountered: {response_msg}") from None
 
     def input_supported(self, input_type: PromptDataType) -> bool:
         """

@@ -18,10 +18,11 @@ Helper functions include:
 """
 
 import uuid
-from typing import Dict, List
-from unittest.mock import AsyncMock, MagicMock
+from typing import Optional
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import get_mock_scorer_identifier
 
 from pyrit.executor.attack import ConversationManager, ConversationState
 from pyrit.executor.attack.component import PrependedConversationConfig
@@ -33,9 +34,19 @@ from pyrit.executor.attack.component.conversation_manager import (
 )
 from pyrit.executor.attack.core import AttackContext
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece, Score
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget, PromptTarget
+from pyrit.prompt_target import PromptTarget
+
+
+def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
+
 
 # =============================================================================
 # Test Context Class
@@ -45,7 +56,8 @@ from pyrit.prompt_target import PromptChatTarget, PromptTarget
 class _TestAttackContext(AttackContext):
     """Concrete AttackContext for testing."""
 
-    pass
+    # Add last_score to match MultiTurnAttackContext behavior for testing
+    last_score: Optional[Score] = None
 
 
 # =============================================================================
@@ -54,13 +66,12 @@ class _TestAttackContext(AttackContext):
 
 
 @pytest.fixture
-def attack_identifier() -> Dict[str, str]:
+def attack_identifier() -> ComponentIdentifier:
     """Create a sample attack identifier."""
-    return {
-        "__type__": "TestAttack",
-        "__module__": "pyrit.executor.attack.test_attack",
-        "id": str(uuid.uuid4()),
-    }
+    return ComponentIdentifier(
+        class_name="TestAttack",
+        class_module="pyrit.executor.attack.test_attack",
+    )
 
 
 @pytest.fixture
@@ -74,17 +85,27 @@ def mock_prompt_normalizer() -> MagicMock:
 @pytest.fixture
 def mock_chat_target() -> MagicMock:
     """Create a mock chat target for testing."""
-    target = MagicMock(spec=PromptChatTarget)
+    target = MagicMock(spec=PromptTarget)
     target.set_system_prompt = MagicMock()
-    target.get_identifier.return_value = {"id": "mock_chat_target_id"}
+    target.get_identifier.return_value = _mock_target_id("MockChatTarget")
+    target.capabilities.supports_multi_turn = True
+    target.capabilities.supports_editable_history = True
     return target
 
 
 @pytest.fixture
 def mock_prompt_target() -> MagicMock:
     """Create a mock prompt target (non-chat) for testing."""
+    from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+    from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+
     target = MagicMock(spec=PromptTarget)
-    target.get_identifier.return_value = {"id": "mock_target_id"}
+    target.configuration = TargetConfiguration(
+        capabilities=TargetCapabilities(supports_multi_turn=False, supports_system_prompt=False),
+    )
+    target.get_identifier.return_value = _mock_target_id("MockTarget")
+    target.capabilities.supports_multi_turn = False
+    target.capabilities.supports_editable_history = False
     return target
 
 
@@ -122,7 +143,7 @@ def sample_system_piece() -> MessagePiece:
 
 
 @pytest.fixture
-def sample_conversation(sample_user_piece: MessagePiece, sample_assistant_piece: MessagePiece) -> List[Message]:
+def sample_conversation(sample_user_piece: MessagePiece, sample_assistant_piece: MessagePiece) -> list[Message]:
     """Create a sample conversation with user and assistant messages."""
     return [
         Message(message_pieces=[sample_user_piece]),
@@ -141,6 +162,7 @@ def sample_score() -> Score:
         score_rationale="Test rationale",
         score_metadata={},
         message_piece_id=str(uuid.uuid4()),
+        scorer_class_identifier=get_mock_scorer_identifier(),
     )
 
 
@@ -231,8 +253,8 @@ class TestGetAdversarialChatMessages:
         result = get_adversarial_chat_messages(
             messages,
             adversarial_chat_conversation_id="adversarial_conv",
-            attack_identifier={"__type__": "TestAttack"},
-            adversarial_chat_target_identifier={"id": "adversarial_target"},
+            attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="test_module"),
+            adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
         )
 
         assert len(result) == 1
@@ -247,8 +269,8 @@ class TestGetAdversarialChatMessages:
         result = get_adversarial_chat_messages(
             messages,
             adversarial_chat_conversation_id="adversarial_conv",
-            attack_identifier={"__type__": "TestAttack"},
-            adversarial_chat_target_identifier={"id": "adversarial_target"},
+            attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="test_module"),
+            adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
         )
 
         assert len(result) == 1
@@ -266,8 +288,8 @@ class TestGetAdversarialChatMessages:
         result = get_adversarial_chat_messages(
             messages,
             adversarial_chat_conversation_id="adversarial_conv",
-            attack_identifier={"__type__": "TestAttack"},
-            adversarial_chat_target_identifier={"id": "adversarial_target"},
+            attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="test_module"),
+            adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
         )
 
         assert len(result) == 1
@@ -285,8 +307,8 @@ class TestGetAdversarialChatMessages:
         result = get_adversarial_chat_messages(
             messages,
             adversarial_chat_conversation_id="adversarial_conv",
-            attack_identifier={"__type__": "TestAttack"},
-            adversarial_chat_target_identifier={"id": "adversarial_target"},
+            attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="test_module"),
+            adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
         )
 
         # Only user message should be present, system skipped
@@ -302,8 +324,8 @@ class TestGetAdversarialChatMessages:
         result = get_adversarial_chat_messages(
             messages,
             adversarial_chat_conversation_id="adversarial_conv",
-            attack_identifier={"__type__": "TestAttack"},
-            adversarial_chat_target_identifier={"id": "adversarial_target"},
+            attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="test_module"),
+            adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
         )
 
         # New ID should be different from original
@@ -324,8 +346,8 @@ class TestGetAdversarialChatMessages:
         result = get_adversarial_chat_messages(
             messages,
             adversarial_chat_conversation_id="adversarial_conv",
-            attack_identifier={"__type__": "TestAttack"},
-            adversarial_chat_target_identifier={"id": "adversarial_target"},
+            attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="test_module"),
+            adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
         )
 
         assert result[0].get_piece().original_value == "Original content"
@@ -336,8 +358,8 @@ class TestGetAdversarialChatMessages:
         result = get_adversarial_chat_messages(
             [],
             adversarial_chat_conversation_id="adversarial_conv",
-            attack_identifier={"__type__": "TestAttack"},
-            adversarial_chat_target_identifier={"id": "adversarial_target"},
+            attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="test_module"),
+            adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
         )
 
         assert result == []
@@ -351,18 +373,35 @@ class TestGetAdversarialChatMessages:
         result = get_adversarial_chat_messages(
             messages,
             adversarial_chat_conversation_id="adversarial_conv",
-            attack_identifier={"__type__": "TestAttack"},
-            adversarial_chat_target_identifier={"id": "adversarial_target"},
+            attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="test_module"),
+            adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
             labels=labels,
         )
 
         assert result[0].get_piece().labels == labels
 
+    def test_labels_emit_deprecation_warning(self) -> None:
+        """Test that passing labels emits deprecation warning."""
+        piece = MessagePiece(role="user", original_value="Message", conversation_id="original")
+        messages = [Message(message_pieces=[piece])]
+
+        with patch(
+            "pyrit.executor.attack.component.conversation_manager.print_deprecation_message"
+        ) as mock_deprecation:
+            get_adversarial_chat_messages(
+                messages,
+                adversarial_chat_conversation_id="adversarial_conv",
+                attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="test_module"),
+                adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
+                labels={"env": "prod"},
+            )
+
+        mock_deprecation.assert_called_once()
+
 
 class TestBuildConversationContextStringAsync:
     """Tests for the build_conversation_context_string_async helper function."""
 
-    @pytest.mark.asyncio
     async def test_formats_messages_into_context_string(self) -> None:
         """Test that messages are formatted into a context string."""
         user_piece = MessagePiece(role="user", original_value="Hello", conversation_id="test")
@@ -377,7 +416,6 @@ class TestBuildConversationContextStringAsync:
         assert "Hello" in result
         assert "Hi there" in result
 
-    @pytest.mark.asyncio
     async def test_returns_empty_string_for_empty_messages(self) -> None:
         """Test that empty list returns empty string."""
         result = await build_conversation_context_string_async([])
@@ -461,7 +499,7 @@ class TestConversationState:
 class TestConversationManagerInitialization:
     """Tests for ConversationManager initialization."""
 
-    def test_init_with_required_parameters(self, attack_identifier: Dict[str, str]) -> None:
+    def test_init_with_required_parameters(self, attack_identifier: ComponentIdentifier) -> None:
         """Test initialization with only required parameters."""
         manager = ConversationManager(attack_identifier=attack_identifier)
 
@@ -470,7 +508,7 @@ class TestConversationManagerInitialization:
         assert manager._memory is not None
 
     def test_init_with_custom_prompt_normalizer(
-        self, attack_identifier: Dict[str, str], mock_prompt_normalizer: MagicMock
+        self, attack_identifier: ComponentIdentifier, mock_prompt_normalizer: MagicMock
     ) -> None:
         """Test initialization with a custom prompt normalizer."""
         manager = ConversationManager(attack_identifier=attack_identifier, prompt_normalizer=mock_prompt_normalizer)
@@ -487,7 +525,7 @@ class TestConversationManagerInitialization:
 class TestConversationRetrieval:
     """Tests for conversation retrieval methods."""
 
-    def test_get_conversation_returns_empty_list_when_no_messages(self, attack_identifier: Dict[str, str]) -> None:
+    def test_get_conversation_returns_empty_list_when_no_messages(self, attack_identifier: ComponentIdentifier) -> None:
         """Test get_conversation returns empty list for non-existent conversation."""
         manager = ConversationManager(attack_identifier=attack_identifier)
         conversation_id = str(uuid.uuid4())
@@ -497,7 +535,7 @@ class TestConversationRetrieval:
         assert result == []
 
     def test_get_conversation_returns_messages_in_order(
-        self, attack_identifier: Dict[str, str], sample_conversation: List[Message]
+        self, attack_identifier: ComponentIdentifier, sample_conversation: list[Message]
     ) -> None:
         """Test get_conversation returns messages in order."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -515,7 +553,7 @@ class TestConversationRetrieval:
         assert result[0].message_pieces[0].api_role == "user"
         assert result[1].message_pieces[0].api_role == "assistant"
 
-    def test_get_last_message_returns_none_for_empty_conversation(self, attack_identifier: Dict[str, str]) -> None:
+    def test_get_last_message_returns_none_for_empty_conversation(self, attack_identifier: ComponentIdentifier) -> None:
         """Test get_last_message returns None for empty conversation."""
         manager = ConversationManager(attack_identifier=attack_identifier)
         conversation_id = str(uuid.uuid4())
@@ -525,7 +563,7 @@ class TestConversationRetrieval:
         assert result is None
 
     def test_get_last_message_returns_last_piece(
-        self, attack_identifier: Dict[str, str], sample_conversation: List[Message]
+        self, attack_identifier: ComponentIdentifier, sample_conversation: list[Message]
     ) -> None:
         """Test get_last_message returns the most recent message."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -543,7 +581,7 @@ class TestConversationRetrieval:
         assert result.api_role == "assistant"
 
     def test_get_last_message_with_role_filter(
-        self, attack_identifier: Dict[str, str], sample_conversation: List[Message]
+        self, attack_identifier: ComponentIdentifier, sample_conversation: list[Message]
     ) -> None:
         """Test get_last_message with role filter returns correct message."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -562,7 +600,7 @@ class TestConversationRetrieval:
         assert result.api_role == "user"
 
     def test_get_last_message_with_role_filter_returns_none_when_no_match(
-        self, attack_identifier: Dict[str, str], sample_conversation: List[Message]
+        self, attack_identifier: ComponentIdentifier, sample_conversation: list[Message]
     ) -> None:
         """Test get_last_message returns None when no message matches role filter."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -590,7 +628,7 @@ class TestSystemPromptHandling:
     """Tests for system prompt functionality."""
 
     def test_set_system_prompt_with_chat_target(
-        self, attack_identifier: Dict[str, str], mock_chat_target: MagicMock
+        self, attack_identifier: ComponentIdentifier, mock_chat_target: MagicMock
     ) -> None:
         """Test set_system_prompt calls target's set_system_prompt method."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -613,7 +651,7 @@ class TestSystemPromptHandling:
         )
 
     def test_set_system_prompt_without_labels(
-        self, attack_identifier: Dict[str, str], mock_chat_target: MagicMock
+        self, attack_identifier: ComponentIdentifier, mock_chat_target: MagicMock
     ) -> None:
         """Test set_system_prompt works without labels."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -630,6 +668,24 @@ class TestSystemPromptHandling:
         call_args = mock_chat_target.set_system_prompt.call_args
         assert call_args.kwargs["labels"] is None
 
+    def test_set_system_prompt_labels_emit_deprecation_warning(
+        self, attack_identifier: ComponentIdentifier, mock_chat_target: MagicMock
+    ) -> None:
+        """Test that passing labels emits deprecation warning."""
+        manager = ConversationManager(attack_identifier=attack_identifier)
+
+        with patch(
+            "pyrit.executor.attack.component.conversation_manager.print_deprecation_message"
+        ) as mock_deprecation:
+            manager.set_system_prompt(
+                target=mock_chat_target,
+                conversation_id=str(uuid.uuid4()),
+                system_prompt="You are a helpful assistant",
+                labels={"type": "system"},
+            )
+
+        mock_deprecation.assert_called_once()
+
 
 # =============================================================================
 # Test Class: Initialize Context
@@ -640,10 +696,9 @@ class TestSystemPromptHandling:
 class TestInitializeContext:
     """Tests for initialize_context_async method."""
 
-    @pytest.mark.asyncio
     async def test_raises_error_for_empty_conversation_id(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
         mock_attack_context: AttackContext,
     ) -> None:
@@ -657,10 +712,9 @@ class TestInitializeContext:
                 conversation_id="",
             )
 
-    @pytest.mark.asyncio
     async def test_returns_default_state_for_no_prepended_conversation(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
         mock_attack_context: AttackContext,
     ) -> None:
@@ -678,10 +732,9 @@ class TestInitializeContext:
         assert state.turn_count == 0
         assert state.last_assistant_message_scores == []
 
-    @pytest.mark.asyncio
     async def test_merges_memory_labels(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
     ) -> None:
         """Test that memory_labels are merged with context labels."""
@@ -701,12 +754,11 @@ class TestInitializeContext:
         assert context.memory_labels["attack_key"] == "attack_value"
         assert context.memory_labels["context_key"] == "context_value"
 
-    @pytest.mark.asyncio
     async def test_adds_prepended_conversation_to_memory_for_chat_target(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that prepended conversation is added to memory for chat targets."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -724,10 +776,9 @@ class TestInitializeContext:
         stored = manager.get_conversation(conversation_id)
         assert len(stored) == 2
 
-    @pytest.mark.asyncio
     async def test_converts_assistant_to_simulated_assistant(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
         sample_assistant_piece: MessagePiece,
     ) -> None:
@@ -749,12 +800,11 @@ class TestInitializeContext:
         assert stored[0].get_piece().get_role_for_storage() == "simulated_assistant"
         assert stored[0].get_piece().api_role == "assistant"
 
-    @pytest.mark.asyncio
     async def test_normalizes_for_non_chat_target_by_default(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that prepended conversation is normalized for non-chat targets by default."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -775,12 +825,11 @@ class TestInitializeContext:
         text_value = context.next_message.get_piece().original_value
         assert len(text_value) > 0
 
-    @pytest.mark.asyncio
     async def test_normalizes_for_non_chat_target_when_configured(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that non-chat target normalizes prepended conversation when configured."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -789,7 +838,7 @@ class TestInitializeContext:
         context.prepended_conversation = sample_conversation
         context.next_message = Message.from_prompt(prompt="Next message", role="user")
 
-        config = PrependedConversationConfig(non_chat_target_behavior="normalize_first_turn")
+        config = PrependedConversationConfig()
 
         await manager.initialize_context_async(
             context=context,
@@ -804,12 +853,11 @@ class TestInitializeContext:
         assert "Next message" in text_value
         assert "Hello" in text_value or "doing well" in text_value
 
-    @pytest.mark.asyncio
     async def test_returns_turn_count_for_multi_turn_attacks(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that turn count is returned for multi-turn attacks."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -827,10 +875,9 @@ class TestInitializeContext:
         # sample_conversation has 1 assistant message = 1 turn
         assert state.turn_count == 1
 
-    @pytest.mark.asyncio
     async def test_multipart_message_extracts_scores_from_all_pieces(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
         sample_score: Score,
     ) -> None:
@@ -842,57 +889,153 @@ class TestInitializeContext:
         # Create a multi-part assistant response (e.g., text + image)
         # All pieces in a Message must share the same conversation_id
         piece_conversation_id = str(uuid.uuid4())
+
+        # Create score for first piece
+        # Prepended conversations are simulated, so only false scores are extracted
+        score1 = Score(
+            score_type="true_false",
+            score_value="false",
+            score_category=["test"],
+            score_value_description="Score for text piece",
+            score_rationale="Test rationale for text",
+            score_metadata={},
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=get_mock_scorer_identifier(),
+        )
         piece1 = MessagePiece(
             role="assistant",
             original_value="Here is the analysis:",
             original_value_data_type="text",
             conversation_id=piece_conversation_id,
+            scores=[score1],  # Attach score directly to piece
+        )
+
+        # Create score for second piece
+        # Also false since prepended conversations only extract false scores
+        score2 = Score(
+            score_type="true_false",
+            score_value="false",
+            score_category=["test"],
+            score_value_description="Score for image piece",
+            score_rationale="Test rationale for image",
+            score_metadata={},
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=get_mock_scorer_identifier(),
         )
         piece2 = MessagePiece(
             role="assistant",
             original_value="chart_image.png",
             original_value_data_type="image_path",
             conversation_id=piece_conversation_id,
+            scores=[score2],  # Attach score directly to piece
         )
+
         multipart_response = Message(message_pieces=[piece1, piece2])
         context.prepended_conversation = [
             Message.from_prompt(prompt="Analyze data", role="user"),
             multipart_response,
         ]
 
-        # Mock get_prompt_scores to verify it's called with all piece IDs
-        score2 = Score(
+        state = await manager.initialize_context_async(
+            context=context,
+            target=mock_chat_target,
+            conversation_id=conversation_id,
+            max_turns=10,
+        )
+
+        # Verify scores from both pieces are returned
+        assert len(state.last_assistant_message_scores) == 2
+        assert score1 in state.last_assistant_message_scores
+        assert score2 in state.last_assistant_message_scores
+
+    async def test_prepended_conversation_ignores_true_scores(
+        self,
+        attack_identifier: ComponentIdentifier,
+        mock_chat_target: MagicMock,
+    ) -> None:
+        """Test that prepended conversations only extract false scores, ignoring true scores.
+
+        Prepended conversations are simulated (not real target responses), so true scores
+        would incorrectly indicate the objective was already achieved. Only false scores
+        are extracted to provide feedback rationale for continued attack attempts.
+        """
+        manager = ConversationManager(attack_identifier=attack_identifier)
+        conversation_id = str(uuid.uuid4())
+        context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
+
+        # Create a score with true value - should be ignored
+        true_score = Score(
             score_type="true_false",
             score_value="true",
             score_category=["test"],
-            score_value_description="Score for image piece",
-            score_rationale="Test rationale",
+            score_value_description="Should be ignored",
+            score_rationale="This simulated success should not be extracted",
             score_metadata={},
-            message_piece_id=str(piece2.id),
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=get_mock_scorer_identifier(),
         )
-        original_get_prompt_scores = manager._memory.get_prompt_scores
-        captured_prompt_ids: List[str] = []
 
-        def mock_get_prompt_scores(prompt_ids: List[str]) -> List[Score]:
-            captured_prompt_ids.extend(prompt_ids)
-            return [sample_score, score2]
+        # Create a score with false value - should be extracted
+        false_score = Score(
+            score_type="true_false",
+            score_value="false",
+            score_category=["test"],
+            score_value_description="Should be extracted",
+            score_rationale="This refusal can provide feedback",
+            score_metadata={},
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=get_mock_scorer_identifier(),
+        )
 
-        manager._memory.get_prompt_scores = mock_get_prompt_scores  # type: ignore[assignment, method-assign]
+        piece_with_true = MessagePiece(
+            role="assistant",
+            original_value="Simulated success response",
+            original_value_data_type="text",
+            conversation_id=str(uuid.uuid4()),
+            scores=[true_score],
+        )
 
-        try:
-            state = await manager.initialize_context_async(
-                context=context,
-                target=mock_chat_target,
-                conversation_id=conversation_id,
-                max_turns=10,
-            )
+        piece_with_false = MessagePiece(
+            role="assistant",
+            original_value="Simulated refusal response",
+            original_value_data_type="text",
+            conversation_id=str(uuid.uuid4()),
+            scores=[false_score],
+        )
 
-            # Verify all piece IDs were passed to get_prompt_scores
-            assert len(captured_prompt_ids) == 2
-            # Verify scores from both pieces are returned
-            assert len(state.last_assistant_message_scores) == 2
-        finally:
-            manager._memory.get_prompt_scores = original_get_prompt_scores  # type: ignore[assignment, method-assign]
+        # Test with true score only - should get no scores
+        context.prepended_conversation = [
+            Message.from_prompt(prompt="Test prompt", role="user"),
+            Message(message_pieces=[piece_with_true]),
+        ]
+
+        state = await manager.initialize_context_async(
+            context=context,
+            target=mock_chat_target,
+            conversation_id=conversation_id,
+            max_turns=10,
+        )
+
+        assert len(state.last_assistant_message_scores) == 0
+        assert context.last_score is None
+
+        # Test with false score - should extract it
+        context2 = _TestAttackContext(params=AttackParameters(objective="Test objective"))
+        context2.prepended_conversation = [
+            Message.from_prompt(prompt="Test prompt", role="user"),
+            Message(message_pieces=[piece_with_false]),
+        ]
+
+        state2 = await manager.initialize_context_async(
+            context=context2,
+            target=mock_chat_target,
+            conversation_id=str(uuid.uuid4()),
+            max_turns=10,
+        )
+
+        assert len(state2.last_assistant_message_scores) == 1
+        assert false_score in state2.last_assistant_message_scores
+        assert context2.last_score == false_score
 
 
 # =============================================================================
@@ -908,12 +1051,11 @@ class TestPrependedConversationConfigSettings:
     # non_chat_target_behavior Tests
     # -------------------------------------------------------------------------
 
-    @pytest.mark.asyncio
     async def test_non_chat_target_behavior_normalize_is_default(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that non-chat targets normalize by default (no config), matching dataclass field default."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -934,12 +1076,11 @@ class TestPrependedConversationConfigSettings:
         text_value = context.next_message.get_piece().original_value
         assert len(text_value) > 0
 
-    @pytest.mark.asyncio
     async def test_non_chat_target_behavior_raise_explicit(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that non_chat_target_behavior='raise' raises ValueError."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -947,10 +1088,13 @@ class TestPrependedConversationConfigSettings:
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
         context.prepended_conversation = sample_conversation
 
-        config = PrependedConversationConfig(non_chat_target_behavior="raise")
+        with pytest.warns(DeprecationWarning, match="non_chat_target_behavior"):
+            config = PrependedConversationConfig(non_chat_target_behavior="raise")
 
         with pytest.raises(
-            ValueError, match="prepended_conversation requires the objective target to be a PromptChatTarget"
+            ValueError,
+            match="prepended_conversation requires the objective target to support multi-turn conversations"
+            " with editable history",
         ):
             await manager.initialize_context_async(
                 context=context,
@@ -959,12 +1103,11 @@ class TestPrependedConversationConfigSettings:
                 prepended_conversation_config=config,
             )
 
-    @pytest.mark.asyncio
     async def test_non_chat_target_behavior_normalize_first_turn_creates_next_message(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that normalize_first_turn creates next_message when none exists."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -973,7 +1116,7 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
         context.next_message = None
 
-        config = PrependedConversationConfig(non_chat_target_behavior="normalize_first_turn")
+        config = PrependedConversationConfig()
 
         await manager.initialize_context_async(
             context=context,
@@ -987,12 +1130,11 @@ class TestPrependedConversationConfigSettings:
         text_value = context.next_message.get_piece().original_value
         assert len(text_value) > 0
 
-    @pytest.mark.asyncio
     async def test_non_chat_target_behavior_normalize_first_turn_prepends_to_existing_message(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that normalize_first_turn prepends context to existing next_message."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1001,7 +1143,7 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
         context.next_message = Message.from_prompt(prompt="My question", role="user")
 
-        config = PrependedConversationConfig(non_chat_target_behavior="normalize_first_turn")
+        config = PrependedConversationConfig()
 
         await manager.initialize_context_async(
             context=context,
@@ -1017,12 +1159,11 @@ class TestPrependedConversationConfigSettings:
         question_index = text_value.find("My question")
         assert question_index > 0  # Context should be prepended
 
-    @pytest.mark.asyncio
     async def test_non_chat_target_behavior_normalize_returns_empty_state(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that normalize_first_turn returns empty ConversationState (no turn tracking)."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1030,7 +1171,7 @@ class TestPrependedConversationConfigSettings:
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
         context.prepended_conversation = sample_conversation
 
-        config = PrependedConversationConfig(non_chat_target_behavior="normalize_first_turn")
+        config = PrependedConversationConfig()
 
         state = await manager.initialize_context_async(
             context=context,
@@ -1047,12 +1188,11 @@ class TestPrependedConversationConfigSettings:
     # apply_converters_to_roles Tests
     # -------------------------------------------------------------------------
 
-    @pytest.mark.asyncio
     async def test_apply_converters_to_roles_default_applies_to_all(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that converters are applied to all roles by default."""
         mock_normalizer = MagicMock(spec=PromptNormalizer)
@@ -1074,12 +1214,11 @@ class TestPrependedConversationConfigSettings:
         # convert_values should be called for each message (both user and assistant)
         assert mock_normalizer.convert_values.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_apply_converters_to_roles_user_only(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that converters are applied only to user role when configured."""
         mock_normalizer = MagicMock(spec=PromptNormalizer)
@@ -1103,12 +1242,11 @@ class TestPrependedConversationConfigSettings:
         # convert_values should be called only for user message
         assert mock_normalizer.convert_values.call_count == 1
 
-    @pytest.mark.asyncio
     async def test_apply_converters_to_roles_assistant_only(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that converters are applied only to assistant role when configured."""
         mock_normalizer = MagicMock(spec=PromptNormalizer)
@@ -1132,12 +1270,11 @@ class TestPrependedConversationConfigSettings:
         # convert_values should be called only for assistant message
         assert mock_normalizer.convert_values.call_count == 1
 
-    @pytest.mark.asyncio
     async def test_apply_converters_to_roles_empty_list_skips_all(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that empty roles list means no converters applied to any role."""
         mock_normalizer = MagicMock(spec=PromptNormalizer)
@@ -1165,12 +1302,11 @@ class TestPrependedConversationConfigSettings:
     # message_normalizer Tests
     # -------------------------------------------------------------------------
 
-    @pytest.mark.asyncio
     async def test_message_normalizer_default_uses_conversation_context_normalizer(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that default normalizer produces Turn N format."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1179,7 +1315,7 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
         context.next_message = None
 
-        config = PrependedConversationConfig(non_chat_target_behavior="normalize_first_turn")
+        config = PrependedConversationConfig()
 
         await manager.initialize_context_async(
             context=context,
@@ -1193,12 +1329,11 @@ class TestPrependedConversationConfigSettings:
         text_value = context.next_message.get_piece().original_value
         assert "Turn 1" in text_value or "turn 1" in text_value.lower()
 
-    @pytest.mark.asyncio
     async def test_message_normalizer_custom_normalizer_is_used(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_prompt_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that custom message_normalizer is used when provided."""
         from pyrit.message_normalizer import MessageStringNormalizer
@@ -1214,7 +1349,6 @@ class TestPrependedConversationConfigSettings:
         context.next_message = None
 
         config = PrependedConversationConfig(
-            non_chat_target_behavior="normalize_first_turn",
             message_normalizer=mock_normalizer,
         )
 
@@ -1238,7 +1372,8 @@ class TestPrependedConversationConfigSettings:
 
     def test_default_factory_creates_raise_behavior(self) -> None:
         """Test that PrependedConversationConfig.default() creates raise behavior."""
-        config = PrependedConversationConfig.default()
+        with pytest.warns(DeprecationWarning, match="PrependedConversationConfig.default\\(\\) is deprecated"):
+            config = PrependedConversationConfig.default()
 
         assert config.non_chat_target_behavior == "raise"
         assert config.message_normalizer is None
@@ -1249,7 +1384,10 @@ class TestPrependedConversationConfigSettings:
 
     def test_for_non_chat_target_factory_creates_normalize_behavior(self) -> None:
         """Test that for_non_chat_target() creates normalize_first_turn behavior."""
-        config = PrependedConversationConfig.for_non_chat_target()
+        with pytest.warns(
+            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
+        ):
+            config = PrependedConversationConfig.for_non_chat_target()
 
         assert config.non_chat_target_behavior == "normalize_first_turn"
 
@@ -1258,14 +1396,20 @@ class TestPrependedConversationConfigSettings:
         from pyrit.message_normalizer import MessageStringNormalizer
 
         mock_normalizer = MagicMock(spec=MessageStringNormalizer)
-        config = PrependedConversationConfig.for_non_chat_target(message_normalizer=mock_normalizer)
+        with pytest.warns(
+            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
+        ):
+            config = PrependedConversationConfig.for_non_chat_target(message_normalizer=mock_normalizer)
 
         assert config.message_normalizer == mock_normalizer
         assert config.non_chat_target_behavior == "normalize_first_turn"
 
     def test_for_non_chat_target_with_custom_roles(self) -> None:
         """Test that for_non_chat_target() accepts custom apply_converters_to_roles."""
-        config = PrependedConversationConfig.for_non_chat_target(apply_converters_to_roles=["user"])
+        with pytest.warns(
+            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
+        ):
+            config = PrependedConversationConfig.for_non_chat_target(apply_converters_to_roles=["user"])
 
         assert config.apply_converters_to_roles == ["user"]
         assert config.non_chat_target_behavior == "normalize_first_turn"
@@ -1274,12 +1418,11 @@ class TestPrependedConversationConfigSettings:
     # Chat Target Behavior (Config has no effect)
     # -------------------------------------------------------------------------
 
-    @pytest.mark.asyncio
     async def test_chat_target_ignores_non_chat_target_behavior(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
-        sample_conversation: List[Message],
+        sample_conversation: list[Message],
     ) -> None:
         """Test that chat targets ignore non_chat_target_behavior setting."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1288,7 +1431,8 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
 
         # Even with raise behavior, chat targets should work
-        config = PrependedConversationConfig(non_chat_target_behavior="raise")
+        with pytest.warns(DeprecationWarning, match="non_chat_target_behavior"):
+            config = PrependedConversationConfig(non_chat_target_behavior="raise")
 
         state = await manager.initialize_context_async(
             context=context,
@@ -1306,10 +1450,9 @@ class TestPrependedConversationConfigSettings:
     # Integration with max_turns validation
     # -------------------------------------------------------------------------
 
-    @pytest.mark.asyncio
     async def test_config_with_max_turns_validation(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
     ) -> None:
         """Test that config works correctly with max_turns validation."""
@@ -1356,11 +1499,10 @@ class TestPrependedConversationConfigSettings:
 class TestAddPrependedConversationToMemory:
     """Tests for add_prepended_conversation_to_memory_async method."""
 
-    @pytest.mark.asyncio
     async def test_adds_messages_to_memory(
         self,
-        attack_identifier: Dict[str, str],
-        sample_conversation: List[Message],
+        attack_identifier: ComponentIdentifier,
+        sample_conversation: list[Message],
     ) -> None:
         """Test that messages are added to memory."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1375,11 +1517,10 @@ class TestAddPrependedConversationToMemory:
         assert len(stored) == 2
         assert turn_count == 1  # One assistant message
 
-    @pytest.mark.asyncio
     async def test_assigns_conversation_id_to_all_pieces(
         self,
-        attack_identifier: Dict[str, str],
-        sample_conversation: List[Message],
+        attack_identifier: ComponentIdentifier,
+        sample_conversation: list[Message],
     ) -> None:
         """Test that conversation_id is assigned to all message pieces."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1395,11 +1536,10 @@ class TestAddPrependedConversationToMemory:
             for piece in msg.message_pieces:
                 assert piece.conversation_id == conversation_id
 
-    @pytest.mark.asyncio
     async def test_assigns_attack_identifier_to_all_pieces(
         self,
-        attack_identifier: Dict[str, str],
-        sample_conversation: List[Message],
+        attack_identifier: ComponentIdentifier,
+        sample_conversation: list[Message],
     ) -> None:
         """Test that attack_identifier is assigned to all message pieces."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1415,10 +1555,9 @@ class TestAddPrependedConversationToMemory:
             for piece in msg.message_pieces:
                 assert piece.attack_identifier == attack_identifier
 
-    @pytest.mark.asyncio
     async def test_raises_error_when_exceeds_max_turns(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         sample_user_piece: MessagePiece,
         sample_assistant_piece: MessagePiece,
     ) -> None:
@@ -1441,10 +1580,9 @@ class TestAddPrependedConversationToMemory:
                 max_turns=1,
             )
 
-    @pytest.mark.asyncio
     async def test_multipart_response_counts_as_one_turn(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
     ) -> None:
         """Test that a multi-part assistant response counts as only one turn."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1480,10 +1618,9 @@ class TestAddPrependedConversationToMemory:
 
         assert turn_count == 1
 
-    @pytest.mark.asyncio
     async def test_returns_zero_for_empty_conversation(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
     ) -> None:
         """Test that empty conversation returns 0 turns."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1496,10 +1633,9 @@ class TestAddPrependedConversationToMemory:
 
         assert turn_count == 0
 
-    @pytest.mark.asyncio
     async def test_applies_converters_when_provided(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_prompt_normalizer: MagicMock,
         sample_user_piece: MessagePiece,
     ) -> None:
@@ -1518,10 +1654,9 @@ class TestAddPrependedConversationToMemory:
         # Verify convert_values was called
         mock_prompt_normalizer.convert_values.assert_called()
 
-    @pytest.mark.asyncio
     async def test_handles_none_messages_gracefully(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
     ) -> None:
         """Test that None messages are handled gracefully."""
         manager = ConversationManager(attack_identifier=attack_identifier)
@@ -1544,10 +1679,9 @@ class TestAddPrependedConversationToMemory:
 class TestEdgeCasesAndErrorHandling:
     """Tests for edge cases and error handling."""
 
-    @pytest.mark.asyncio
     async def test_preserves_piece_metadata(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
         sample_user_piece: MessagePiece,
     ) -> None:
@@ -1573,10 +1707,9 @@ class TestEdgeCasesAndErrorHandling:
         assert processed_piece.labels == {"test": "label"}
         assert processed_piece.prompt_metadata == {"key": "value", "count": 1}
 
-    @pytest.mark.asyncio
     async def test_preserves_original_and_converted_values(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
         sample_user_piece: MessagePiece,
     ) -> None:
@@ -1601,10 +1734,9 @@ class TestEdgeCasesAndErrorHandling:
         assert stored_piece.original_value == "Original message"
         assert stored_piece.converted_value == "Converted message"
 
-    @pytest.mark.asyncio
     async def test_handles_system_messages_in_prepended_conversation(
         self,
-        attack_identifier: Dict[str, str],
+        attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
         sample_system_piece: MessagePiece,
         sample_user_piece: MessagePiece,

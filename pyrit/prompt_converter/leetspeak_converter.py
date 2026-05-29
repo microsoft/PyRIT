@@ -4,6 +4,7 @@
 import random
 from typing import Optional
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.text_selection_strategy import WordSelectionStrategy
 from pyrit.prompt_converter.word_level_converter import WordLevelConverter
 
@@ -17,11 +18,11 @@ class LeetspeakConverter(WordLevelConverter):
         self,
         *,
         deterministic: bool = True,
-        custom_substitutions: Optional[dict] = None,
+        custom_substitutions: Optional[dict[str, list[str]]] = None,
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
-    ):
+    ) -> None:
         """
-        Initializes the converter with optional deterministic mode and custom substitutions.
+        Initialize the converter with optional deterministic mode and custom substitutions.
 
         Args:
             deterministic (bool): If True, use the first substitution for each character.
@@ -49,8 +50,41 @@ class LeetspeakConverter(WordLevelConverter):
         # Use custom substitutions if provided, otherwise default to the standard ones
         self._leet_substitutions = custom_substitutions if custom_substitutions else default_substitutions
         self._deterministic = deterministic
+        self._has_custom_substitutions = custom_substitutions is not None
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with leetspeak parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        import hashlib
+        import json
+
+        # Hash custom substitutions if provided
+        substitutions_hash = None
+        if self._has_custom_substitutions:
+            substitutions_str = json.dumps(self._leet_substitutions, sort_keys=True)
+            substitutions_hash = hashlib.sha256(substitutions_str.encode("utf-8")).hexdigest()[:16]
+
+        return self._create_identifier(
+            params={
+                "deterministic": self._deterministic,
+                "custom_substitutions_hash": substitutions_hash,
+            },
+        )
 
     async def convert_word_async(self, word: str) -> str:
+        """
+        Convert a single word into the target format supported by the converter.
+
+        Args:
+            word (str): The word to be converted.
+
+        Returns:
+            str: The converted word.
+        """
         converted_word = []
         for char in word:
             lower_char = char.lower()

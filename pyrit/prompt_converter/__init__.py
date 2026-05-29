@@ -1,6 +1,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+"""
+Prompt converters for transforming prompts before sending them to targets in red teaming workflows.
+
+Converters are organized into categories: Text-to-Text (encoding, obfuscation, translation, variation),
+Audio (text-to-audio, audio-to-text, audio-to-audio), Image (text-to-image, image-to-image),
+Video (image-to-video), File (text-to-PDF/URL), Selective Converting (partial prompt transformation),
+and Human-in-the-Loop (interactive review). Converters can be stacked together to create complex
+transformation pipelines for testing AI system robustness.
+"""
+
+import importlib
+from typing import TYPE_CHECKING
+
 from pyrit.prompt_converter.add_image_text_converter import AddImageTextConverter
 from pyrit.prompt_converter.add_image_to_video_converter import AddImageVideoConverter
 from pyrit.prompt_converter.add_text_image_converter import AddTextImageConverter
@@ -8,7 +21,6 @@ from pyrit.prompt_converter.ansi_escape.ansi_attack_converter import AnsiAttackC
 from pyrit.prompt_converter.ascii_art_converter import AsciiArtConverter
 from pyrit.prompt_converter.ask_to_decode_converter import AskToDecodeConverter
 from pyrit.prompt_converter.atbash_converter import AtbashConverter
-from pyrit.prompt_converter.audio_frequency_converter import AudioFrequencyConverter
 from pyrit.prompt_converter.azure_speech_audio_to_text_converter import AzureSpeechAudioToTextConverter
 from pyrit.prompt_converter.azure_speech_text_to_audio_converter import AzureSpeechTextToAudioConverter
 from pyrit.prompt_converter.base64_converter import Base64Converter
@@ -27,9 +39,14 @@ from pyrit.prompt_converter.ecoji_converter import EcojiConverter
 from pyrit.prompt_converter.emoji_converter import EmojiConverter
 from pyrit.prompt_converter.first_letter_converter import FirstLetterConverter
 from pyrit.prompt_converter.flip_converter import FlipConverter
-from pyrit.prompt_converter.human_in_the_loop_converter import HumanInTheLoopConverter
+from pyrit.prompt_converter.image_color_saturation_converter import ImageColorSaturationConverter
 from pyrit.prompt_converter.image_compression_converter import ImageCompressionConverter
+from pyrit.prompt_converter.image_overlay_converter import ImageOverlayConverter
+from pyrit.prompt_converter.image_prompt_style_converter import ImagePromptStyleConverter
+from pyrit.prompt_converter.image_resizing_converter import ImageResizingConverter
+from pyrit.prompt_converter.image_rotation_converter import ImageRotationConverter
 from pyrit.prompt_converter.insert_punctuation_converter import InsertPunctuationConverter
+from pyrit.prompt_converter.json_string_converter import JsonStringConverter
 from pyrit.prompt_converter.leetspeak_converter import LeetspeakConverter
 from pyrit.prompt_converter.llm_generic_text_converter import LLMGenericTextConverter
 from pyrit.prompt_converter.malicious_question_generator_converter import MaliciousQuestionGeneratorConverter
@@ -47,6 +64,7 @@ from pyrit.prompt_converter.random_capital_letters_converter import RandomCapita
 from pyrit.prompt_converter.random_translation_converter import RandomTranslationConverter
 from pyrit.prompt_converter.repeat_token_converter import RepeatTokenConverter
 from pyrit.prompt_converter.rot13_converter import ROT13Converter
+from pyrit.prompt_converter.scientific_translation_converter import ScientificTranslationConverter
 from pyrit.prompt_converter.search_replace_converter import SearchReplaceConverter
 from pyrit.prompt_converter.selective_text_converter import SelectiveTextConverter
 from pyrit.prompt_converter.string_join_converter import StringJoinConverter
@@ -54,7 +72,6 @@ from pyrit.prompt_converter.suffix_append_converter import SuffixAppendConverter
 from pyrit.prompt_converter.superscript_converter import SuperscriptConverter
 from pyrit.prompt_converter.template_segment_converter import TemplateSegmentConverter
 from pyrit.prompt_converter.tense_converter import TenseConverter
-from pyrit.prompt_converter.text_jailbreak_converter import TextJailbreakConverter
 from pyrit.prompt_converter.text_selection_strategy import (
     AllWordsSelectionStrategy,
     IndexSelectionStrategy,
@@ -86,8 +103,39 @@ from pyrit.prompt_converter.unicode_replacement_converter import UnicodeReplacem
 from pyrit.prompt_converter.unicode_sub_converter import UnicodeSubstitutionConverter
 from pyrit.prompt_converter.url_converter import UrlConverter
 from pyrit.prompt_converter.variation_converter import VariationConverter
+from pyrit.prompt_converter.word_doc_converter import WordDocConverter
 from pyrit.prompt_converter.zalgo_converter import ZalgoConverter
 from pyrit.prompt_converter.zero_width_converter import ZeroWidthConverter
+
+if TYPE_CHECKING:
+    from pyrit.prompt_converter.audio_echo_converter import AudioEchoConverter
+    from pyrit.prompt_converter.audio_frequency_converter import AudioFrequencyConverter
+    from pyrit.prompt_converter.audio_speed_converter import AudioSpeedConverter
+    from pyrit.prompt_converter.audio_volume_converter import AudioVolumeConverter
+    from pyrit.prompt_converter.audio_white_noise_converter import AudioWhiteNoiseConverter
+    from pyrit.prompt_converter.text_jailbreak_converter import TextJailbreakConverter
+
+# Lazy imports for modules with heavy third-party dependencies (PEP 562).
+# Audio converters import `scipy` which adds ~1.3s to startup.
+# TextJailbreakConverter imports `pyrit.datasets` which triggers `datasets` → `pandas` (~1.6s).
+_LAZY_IMPORTS: dict[str, str] = {
+    "AudioEchoConverter": "pyrit.prompt_converter.audio_echo_converter",
+    "AudioFrequencyConverter": "pyrit.prompt_converter.audio_frequency_converter",
+    "AudioSpeedConverter": "pyrit.prompt_converter.audio_speed_converter",
+    "AudioVolumeConverter": "pyrit.prompt_converter.audio_volume_converter",
+    "AudioWhiteNoiseConverter": "pyrit.prompt_converter.audio_white_noise_converter",
+    "TextJailbreakConverter": "pyrit.prompt_converter.text_jailbreak_converter",
+}
+
+
+def __getattr__(name: str) -> object:
+    if name in _LAZY_IMPORTS:
+        module = importlib.import_module(_LAZY_IMPORTS[name])
+        attr = getattr(module, name)
+        globals()[name] = attr
+        return attr
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "AddImageTextConverter",
@@ -99,7 +147,11 @@ __all__ = [
     "AsciiSmugglerConverter",
     "AskToDecodeConverter",
     "AtbashConverter",
+    "AudioEchoConverter",
     "AudioFrequencyConverter",
+    "AudioSpeedConverter",
+    "AudioVolumeConverter",
+    "AudioWhiteNoiseConverter",
     "AzureSpeechAudioToTextConverter",
     "AzureSpeechTextToAudioConverter",
     "Base2048Converter",
@@ -119,10 +171,15 @@ __all__ = [
     "EmojiConverter",
     "FirstLetterConverter",
     "FlipConverter",
-    "HumanInTheLoopConverter",
+    "ImageColorSaturationConverter",
     "ImageCompressionConverter",
+    "ImageOverlayConverter",
+    "ImagePromptStyleConverter",
+    "ImageResizingConverter",
+    "ImageRotationConverter",
     "IndexSelectionStrategy",
     "InsertPunctuationConverter",
+    "JsonStringConverter",
     "KeywordSelectionStrategy",
     "LeetspeakConverter",
     "LLMGenericTextConverter",
@@ -145,6 +202,7 @@ __all__ = [
     "RangeSelectionStrategy",
     "RegexSelectionStrategy",
     "RepeatTokenConverter",
+    "ScientificTranslationConverter",
     "SearchReplaceConverter",
     "SelectiveTextConverter",
     "SneakyBitsSmugglerConverter",
@@ -166,6 +224,7 @@ __all__ = [
     "UrlConverter",
     "VariationConverter",
     "VariationSelectorSmugglerConverter",
+    "WordDocConverter",
     "WordIndexSelectionStrategy",
     "WordKeywordSelectionStrategy",
     "WordPositionSelectionStrategy",

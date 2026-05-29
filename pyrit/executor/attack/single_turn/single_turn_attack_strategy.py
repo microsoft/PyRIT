@@ -3,17 +3,19 @@
 
 from __future__ import annotations
 
-import logging
+import logging  # noqa: TC003
 import uuid
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import Optional, Type, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from pyrit.common.logger import logger
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
 from pyrit.models import AttackResult
-from pyrit.prompt_target import PromptTarget
+
+if TYPE_CHECKING:
+    from pyrit.prompt_target import PromptTarget
 
 
 @dataclass
@@ -36,7 +38,7 @@ class SingleTurnAttackContext(AttackContext[AttackParamsT]):
     metadata: Optional[dict[str, Union[str, int]]] = None
 
 
-class SingleTurnAttackStrategy(AttackStrategy[SingleTurnAttackContext, AttackResult], ABC):
+class SingleTurnAttackStrategy(AttackStrategy[SingleTurnAttackContext[Any], AttackResult], ABC):
     """
     Strategy for executing single-turn attacks.
     This strategy is designed to handle attacks that consist of a single turn
@@ -47,10 +49,10 @@ class SingleTurnAttackStrategy(AttackStrategy[SingleTurnAttackContext, AttackRes
         self,
         *,
         objective_target: PromptTarget,
-        context_type: type[SingleTurnAttackContext] = SingleTurnAttackContext,
-        params_type: Type[AttackParamsT] = AttackParameters,  # type: ignore[assignment]
+        context_type: type[SingleTurnAttackContext[Any]] = SingleTurnAttackContext,
+        params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
         logger: logging.Logger = logger,
-    ):
+    ) -> None:
         """
         Define a base class for single-turn attack strategies.
 

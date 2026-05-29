@@ -7,6 +7,7 @@ This ensures consistent error handling across all attack strategies.
 """
 
 import uuid
+from contextlib import suppress
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -19,10 +20,27 @@ from pyrit.executor.attack import (
     TreeOfAttacksWithPruningAttack,
 )
 from pyrit.executor.attack.core import AttackAdversarialConfig, AttackScoringConfig
+from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece, SeedGroup, SeedPrompt
 from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
-from pyrit.score import TrueFalseScorer
+from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
+
+
+def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
+
+
+def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
+    """Helper to create ComponentIdentifier for tests."""
+    return ComponentIdentifier(
+        class_name=name,
+        class_module="test_module",
+    )
 
 
 @pytest.fixture
@@ -30,7 +48,7 @@ def mock_target():
     """Create a mock prompt target for testing"""
     target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock()
-    target.get_identifier.return_value = {"id": "mock_target_id"}
+    target.get_identifier.return_value = _mock_target_id("MockTarget")
     return target
 
 
@@ -39,7 +57,7 @@ def mock_scorer():
     """Create a mock scorer for testing"""
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_async = AsyncMock()
-    scorer.get_identifier.return_value = {"id": "mock_scorer_id"}
+    scorer.get_identifier.return_value = _mock_scorer_id("MockScorer")
     return scorer
 
 
@@ -76,13 +94,13 @@ ATTACK_TEST_PARAMS = [
             "objective": "test objective",
             "seed_group": SeedGroup(seeds=[SeedPrompt(value="test", data_type="text")]),
         },
-        "pyrit.executor.attack.single_turn.prompt_sending.Scorer.score_response_async",
+        "pyrit.score.scorer.Scorer.score_response_async",
     ),
     (
         MultiPromptSendingAttack,
         {},
         lambda: {"objective": "test objective", "prompt_sequence": [SeedPrompt(value="test", data_type="text")]},
-        "pyrit.executor.attack.multi_turn.multi_prompt_sending.Scorer.score_response_async",
+        "pyrit.score.scorer.Scorer.score_response_async",
     ),
     (
         RedTeamingAttack,
@@ -92,7 +110,7 @@ ATTACK_TEST_PARAMS = [
             "seed_prompt": SeedPrompt(value="test", data_type="text"),
             "max_turns": 1,
         },
-        "pyrit.executor.attack.multi_turn.red_teaming.Scorer.score_response_async",
+        "pyrit.score.scorer.Scorer.score_response_async",
     ),
     (
         CrescendoAttack,
@@ -102,7 +120,7 @@ ATTACK_TEST_PARAMS = [
             "seed_prompt": SeedPrompt(value="test", data_type="text"),
             "max_turns": 1,
         },
-        "pyrit.executor.attack.multi_turn.crescendo.Scorer.score_response_async",
+        "pyrit.score.scorer.Scorer.score_response_async",
     ),
     (
         TreeOfAttacksWithPruningAttack,
@@ -112,7 +130,7 @@ ATTACK_TEST_PARAMS = [
             "seed_prompt": SeedPrompt(value="test", data_type="text"),
             "max_iterations": 1,
         },
-        "pyrit.executor.attack.multi_turn.tree_of_attacks.Scorer.score_response_async",
+        "pyrit.score.scorer.Scorer.score_response_async",
     ),
 ]
 
@@ -122,7 +140,6 @@ ATTACK_TEST_PARAMS = [
     ATTACK_TEST_PARAMS,
     ids=["PromptSending", "MultiPromptSending", "RedTeaming", "Crescendo", "TreeOfAttacks"],
 )
-@pytest.mark.asyncio
 @patch("pyrit.memory.CentralMemory.get_memory_instance")
 async def test_attack_executor_skips_scoring_on_error(
     mock_memory_instance,
@@ -145,21 +162,32 @@ async def test_attack_executor_skips_scoring_on_error(
     mock_memory_instance.return_value = mock_memory
 
     # Setup scoring config with objective scorer
-    attack_scoring_config = AttackScoringConfig(
-        objective_scorer=mock_scorer,
-        use_score_as_feedback=False,
-    )
+    # TAP requires FloatScaleThresholdScorer, so use TAPAttackScoringConfig for it
+    if attack_class == TreeOfAttacksWithPruningAttack:
+        tap_scorer = MagicMock(spec=FloatScaleThresholdScorer)
+        tap_scorer.score_async = AsyncMock()
+        tap_scorer.get_identifier.return_value = _mock_scorer_id("MockTapScorer")
+        tap_scorer.threshold = 0.7
+        attack_scoring_config = TAPAttackScoringConfig(
+            objective_scorer=tap_scorer,
+            use_score_as_feedback=False,
+        )
+    else:
+        attack_scoring_config = AttackScoringConfig(
+            objective_scorer=mock_scorer,
+            use_score_as_feedback=False,
+        )
 
     # Setup additional configs for multi-turn attacks that need adversarial config
     if attack_class in [RedTeamingAttack, CrescendoAttack, TreeOfAttacksWithPruningAttack]:
-        # TreeOfAttacks requires PromptChatTarget, others can use PromptTarget
+        # TreeOfAttacks requires PromptTarget, others can use PromptTarget
         if attack_class == TreeOfAttacksWithPruningAttack:
-            adversarial_target = MagicMock(spec=PromptChatTarget)
+            adversarial_target = MagicMock(spec=PromptTarget)
         else:
             adversarial_target = MagicMock(spec=PromptTarget)
 
         adversarial_target.send_prompt_async = AsyncMock()
-        adversarial_target.get_identifier.return_value = {"id": "adversarial_target_id"}
+        adversarial_target.get_identifier.return_value = _mock_target_id("AdversarialTarget")
 
         attack_adversarial_config = AttackAdversarialConfig(
             target=adversarial_target,
@@ -170,7 +198,7 @@ async def test_attack_executor_skips_scoring_on_error(
     if attack_class == CrescendoAttack:
         refusal_scorer = MagicMock(spec=TrueFalseScorer)
         refusal_scorer.score_async = AsyncMock(return_value=[])
-        refusal_scorer.get_identifier.return_value = {"id": "refusal_scorer_id"}
+        refusal_scorer.get_identifier.return_value = _mock_scorer_id("RefusalScorer")
         attack_scoring_config.refusal_scorer = refusal_scorer
 
     # Create attack with proper configuration
@@ -204,11 +232,8 @@ async def test_attack_executor_skips_scoring_on_error(
             mock_score.return_value = {"objective_scores": [], "auxiliary_scores": []}
 
             # Execute attack
-            try:
+            with suppress(Exception):
                 await attack.execute_async(**execute_kwargs_func())
-            except Exception:
-                # May fail due to mocking complexity, we just care about scoring behavior
-                pass
 
             # Verify scoring was called with skip_on_error_result=True if it was called
             if mock_score.called:

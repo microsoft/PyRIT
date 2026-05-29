@@ -41,14 +41,12 @@ def _make_non_text_message(
 class TestConversationContextNormalizerNormalizeStringAsync:
     """Tests for ConversationContextNormalizer.normalize_string_async."""
 
-    @pytest.mark.asyncio
     async def test_empty_list_raises(self):
         """Test that empty message list raises ValueError."""
         normalizer = ConversationContextNormalizer()
         with pytest.raises(ValueError, match="Messages list cannot be empty"):
             await normalizer.normalize_string_async(messages=[])
 
-    @pytest.mark.asyncio
     async def test_basic_conversation(self):
         """Test basic user-assistant conversation formatting."""
         normalizer = ConversationContextNormalizer()
@@ -60,10 +58,9 @@ class TestConversationContextNormalizerNormalizeStringAsync:
         result = await normalizer.normalize_string_async(messages)
 
         assert "Turn 1:" in result
-        assert "User: Hello" in result
-        assert "Assistant: Hi there!" in result
+        assert "user: Hello" in result
+        assert "assistant: Hi there!" in result
 
-    @pytest.mark.asyncio
     async def test_skips_system_messages(self):
         """Test that system messages are skipped in output."""
         normalizer = ConversationContextNormalizer()
@@ -77,10 +74,9 @@ class TestConversationContextNormalizerNormalizeStringAsync:
 
         assert "system" not in result.lower()
         assert "You are a helpful assistant" not in result
-        assert "User: Hello" in result
-        assert "Assistant: Hi!" in result
+        assert "user: Hello" in result
+        assert "assistant: Hi!" in result
 
-    @pytest.mark.asyncio
     async def test_turn_numbering(self):
         """Test that turns are numbered correctly."""
         normalizer = ConversationContextNormalizer()
@@ -96,7 +92,6 @@ class TestConversationContextNormalizerNormalizeStringAsync:
         assert "Turn 1:" in result
         assert "Turn 2:" in result
 
-    @pytest.mark.asyncio
     async def test_shows_original_if_different_from_converted(self):
         """Test that original value is shown when different from converted."""
         normalizer = ConversationContextNormalizer()
@@ -108,3 +103,31 @@ class TestConversationContextNormalizerNormalizeStringAsync:
 
         assert "converted text" in result
         assert "(original: original text)" in result
+
+    @pytest.mark.asyncio
+    async def test_preserves_tool_role_label(self):
+        """Test that tool messages keep the Tool label in context output."""
+        normalizer = ConversationContextNormalizer()
+        messages = [
+            _make_message("user", "Call the weather tool"),
+            _make_message("tool", "72F and sunny"),
+        ]
+
+        result = await normalizer.normalize_string_async(messages)
+
+        assert "tool: 72F and sunny" in result
+        assert "assistant: 72F and sunny" not in result
+
+    @pytest.mark.asyncio
+    async def test_preserves_developer_role_label(self):
+        """Test that developer messages keep the Developer label in context output."""
+        normalizer = ConversationContextNormalizer()
+        messages = [
+            _make_message("user", "Use concise units"),
+            _make_message("developer", "Prefer metric units"),
+        ]
+
+        result = await normalizer.normalize_string_async(messages)
+
+        assert "developer: Prefer metric units" in result
+        assert "assistant: Prefer metric units" not in result

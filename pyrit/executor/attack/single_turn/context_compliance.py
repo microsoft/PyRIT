@@ -3,7 +3,7 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -23,7 +23,7 @@ from pyrit.models import (
     SeedDataset,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class ContextComplianceAttack(PromptSendingAttack):
     def __init__(
         self,
         *,
-        objective_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
@@ -70,7 +70,7 @@ class ContextComplianceAttack(PromptSendingAttack):
         Initialize the context compliance attack strategy.
 
         Args:
-            objective_target (PromptChatTarget): The target system to attack. Must be a PromptChatTarget.
+            objective_target (PromptTarget): The target system to attack. Must be a PromptTarget.
             attack_adversarial_config (AttackAdversarialConfig): Configuration for the adversarial component,
                 including the adversarial chat target used for rephrasing.
             attack_converter_config (Optional[AttackConverterConfig]): Configuration for attack converters,
@@ -119,7 +119,7 @@ class ContextComplianceAttack(PromptSendingAttack):
         try:
             context_description_instructions = SeedDataset.from_yaml_file(instructions_path)
         except Exception as e:
-            raise ValueError(f"Failed to load context description instructions from {instructions_path}: {e}")
+            raise ValueError(f"Failed to load context description instructions from {instructions_path}: {e}") from e
 
         if len(context_description_instructions.prompts) < 3:
             raise ValueError(
@@ -131,7 +131,7 @@ class ContextComplianceAttack(PromptSendingAttack):
         self._answer_user_turn = context_description_instructions.prompts[1]
         self._rephrase_objective_to_question = context_description_instructions.prompts[2]
 
-    async def _setup_async(self, *, context: SingleTurnAttackContext) -> None:
+    async def _setup_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """
         Set up the context compliance attack.
 
@@ -164,7 +164,7 @@ class ContextComplianceAttack(PromptSendingAttack):
         await super()._setup_async(context=context)
 
     async def _build_benign_context_conversation_async(
-        self, *, objective: str, context: SingleTurnAttackContext
+        self, *, objective: str, context: SingleTurnAttackContext[Any]
     ) -> list[Message]:
         """
         Build the conversation that creates a benign context for the objective.
@@ -213,7 +213,9 @@ class ContextComplianceAttack(PromptSendingAttack):
             ),
         ]
 
-    async def _get_objective_as_benign_question_async(self, *, objective: str, context: SingleTurnAttackContext) -> str:
+    async def _get_objective_as_benign_question_async(
+        self, *, objective: str, context: SingleTurnAttackContext[Any]
+    ) -> str:
         """
         Rephrase the objective as a more benign question.
 
@@ -239,7 +241,7 @@ class ContextComplianceAttack(PromptSendingAttack):
         return response.get_value()
 
     async def _get_benign_question_answer_async(
-        self, *, benign_user_query: str, context: SingleTurnAttackContext
+        self, *, benign_user_query: str, context: SingleTurnAttackContext[Any]
     ) -> str:
         """
         Generate an answer to the benign question.
@@ -265,7 +267,7 @@ class ContextComplianceAttack(PromptSendingAttack):
 
         return response.get_value()
 
-    async def _get_objective_as_question_async(self, *, objective: str, context: SingleTurnAttackContext) -> str:
+    async def _get_objective_as_question_async(self, *, objective: str, context: SingleTurnAttackContext[Any]) -> str:
         """
         Rephrase the objective as a question.
 

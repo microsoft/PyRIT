@@ -1,13 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import logging
-from typing import Optional
-
-import requests
+from typing import Any, Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
-from pyrit.common.path import JAILBREAK_TEMPLATES_PATH
+from pyrit.common.path import DATASETS_PATH, JAILBREAK_TEMPLATES_PATH
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
@@ -22,24 +21,24 @@ logger = logging.getLogger(__name__)
 # as it constructs its own prompt format with examples.
 ManyShotJailbreakParameters = AttackParameters.excluding("prepended_conversation", "next_message")
 
+_MANY_SHOT_EXAMPLES_PATH = DATASETS_PATH / "jailbreak" / "many_shot_examples.json"
 
-def fetch_many_shot_jailbreaking_dataset() -> list[dict[str, str]]:
+
+def load_many_shot_jailbreaking_dataset() -> list[dict[str, str]]:
     """
-    Fetch many-shot jailbreaking dataset from a specified source.
+    Load the bundled many-shot jailbreaking examples from the local dataset file.
 
     Returns:
         list[dict[str, str]]: A list of many-shot jailbreaking examples.
     """
-    source = "https://raw.githubusercontent.com/KutalVolkan/many-shot-jailbreaking-dataset/5eac855/examples.json"
-    response = requests.get(source)
-    response.raise_for_status()
-    return response.json()
+    with open(_MANY_SHOT_EXAMPLES_PATH, encoding="utf-8") as f:
+        data: list[dict[str, str]] = json.load(f)
+        return data
 
 
 class ManyShotJailbreakAttack(PromptSendingAttack):
     """
-    Implement the Many Shot Jailbreak method as discussed in research found here:
-    https://www.anthropic.com/research/many-shot-jailbreaking.
+    Implement the Many Shot Jailbreak method [@anthropic2024manyshot].
 
     Prepends the seed prompt with a faux dialogue between a human and an AI, using examples from a dataset
     to demonstrate successful jailbreaking attempts. This method leverages the model's ability to learn from
@@ -49,7 +48,8 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
     @apply_defaults
     def __init__(
         self,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        *,
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
@@ -88,12 +88,12 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
         self._examples = (
             many_shot_examples[:example_count]
             if (many_shot_examples is not None)
-            else fetch_many_shot_jailbreaking_dataset()[:example_count]
+            else load_many_shot_jailbreaking_dataset()[:example_count]
         )
         if not self._examples:
             raise ValueError("Many shot examples must be provided.")
 
-    async def _perform_async(self, *, context: SingleTurnAttackContext) -> AttackResult:
+    async def _perform_async(self, *, context: SingleTurnAttackContext[Any]) -> AttackResult:
         """
         Perform the ManyShotJailbreakAttack.
 

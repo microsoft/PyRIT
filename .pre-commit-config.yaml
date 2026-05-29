@@ -1,18 +1,47 @@
 repos:
   - repo: https://github.com/kynan/nbstripout
-    rev: 0.8.1
+    rev: 34071b78c181af3bf5af955c1426466e096fc3db #0.9.1
     hooks:
       - id: nbstripout
-        args:
-          - '--keep-output'
+        args: [--keep-output, '--extra-keys=metadata.kernelspec']
+        files: ^doc/.*\.ipynb$
 
   - repo: local
     hooks:
-    - id: remove-notebook-headers
-      name: Remove Notebook Headers
-      entry: python ./build_scripts/remove_notebook_headers.py
-      language: python
-      files: ^doc.*\.(ipynb)$
+      - id: sanitize-notebook-paths
+        name: Sanitize Notebook Paths
+        entry: python ./build_scripts/sanitize_notebook_paths.py
+        language: python
+        files: ^doc.*\.(ipynb)$
+      - id: strip-notebook-progress-bars
+        name: Strip Notebook Progress Bars
+        entry: python ./build_scripts/strip_notebook_progress_bars.py
+        language: python
+        files: ^doc.*\.(ipynb)$
+      - id: strip-py-kernelspec
+        name: Strip kernelspec from jupytext .py files
+        entry: python ./build_scripts/strip_py_kernelspec.py
+        language: python
+        files: ^doc/.*\.py$
+      - id: validate-docs
+        name: Validate Documentation Structure
+        entry: python ./build_scripts/validate_docs.py
+        language: python
+        files: ^(doc/.*\.(py|ipynb|md)|doc/myst\.yml)$
+        pass_filenames: false
+        additional_dependencies: ['pyyaml']
+      - id: enforce_alembic_revision_immutability
+        name: Enforce Alembic Revision Immutability
+        entry: python ./build_scripts/enforce_alembic_revision_immutability.py
+        language: python
+        files: ^pyrit/memory/alembic/versions/.*\.py$
+        pass_filenames: false
+      - id: memory-migrations-check
+        name: Check Memory Migrations
+        entry: python ./build_scripts/memory_migrations.py check
+        language: system
+        pass_filenames: false
+        files: ^pyrit/memory/(memory_models\.py|alembic/.*|migration\.py)$
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -40,46 +69,11 @@ repos:
       name: Ruff (Jupyter Notebooks)
       args: [--fix]
 
-  - repo: local
+  - repo: https://github.com/allganize/ty-pre-commit
+    rev: v0.0.32
     hooks:
-    - id: check-links
-      name: Check Links in Python and md Files
-      entry: python ./build_scripts/check_links.py
-      language: python
-      files: ^doc.*\.(py|md)$
-      additional_dependencies: ['requests']
-      exclude: (release_process.md|git.md|^doc/deployment/|tests|pyrit/prompt_converter/morse_converter.py|.github|pyrit/prompt_converter/emoji_converter.py|pyrit/score/markdown_injection.py|^pyrit/datasets/|^pyrit/auxiliary_attacks/gcg/)
-
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.15.0
-    hooks:
-      - id: mypy
-        name: mypy (strict)
-        files: &strict_modules ^pyrit/(auth|analytics|embedding|exceptions|memory|prompt_normalizer)/
-        args: [--install-types, --non-interactive, --ignore-missing-imports, --sqlite-cache, --cache-dir=.mypy_cache, --strict]
-        entry: mypy
-        language: system
-        types: [ python ]
-      - id: mypy
-        name: mypy (regular)
-        exclude: *strict_modules
-        args: [--install-types, --non-interactive, --ignore-missing-imports, --sqlite-cache, --cache-dir=.mypy_cache]
-        entry: mypy
-        language: system
-        types: [ python ]
-
-  - repo: local
-    hooks:
-      - id: validate-jupyter-book
-        name: Validate Jupyter Book Structure
-        entry: python ./build_scripts/validate_jupyter_book.py
-        language: python
-        files: ^(doc/.*\.(py|ipynb|md|rst)|doc/_toc\.yml)$
-        pass_filenames: false
-        additional_dependencies: ['pyyaml']
-      - id: website
-        name: Jupyter Book Build Check
-        entry: python ./build_scripts/conditional_jb_build.py
-        language: system
+      - id: ty-check
+        name: ty (type check)
+        files: ^pyrit/
+        exclude: ^pyrit/auxiliary_attacks/
         types: [python]
-        pass_filenames: false

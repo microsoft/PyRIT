@@ -19,6 +19,12 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
     Reference: https://github.com/centerforaisafety/HarmBench
     """
 
+    # Metadata
+    harm_categories: list[str] = ["cybercrime", "illegal", "harmful", "chemical_biological", "harassment"]
+    modalities: list[str] = ["text"]
+    size: str = "large"  # 504 seeds
+    tags: set[str] = {"default", "safety"}
+
     def __init__(
         self,
         *,
@@ -27,7 +33,7 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
             "harmbench_behaviors_text_all.csv"
         ),
         source_type: Literal["public_url", "file"] = "public_url",
-    ):
+    ) -> None:
         """
         Initialize the HarmBench dataset loader.
 
@@ -43,7 +49,7 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "harmbench"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch HarmBench dataset and return as SeedDataset.
 

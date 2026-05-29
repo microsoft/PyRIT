@@ -7,11 +7,13 @@ from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import get_mock_target_identifier
 
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import Message, MessagePiece, Score
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
     Scorer,
     ScorerPromptValidator,
@@ -60,9 +62,9 @@ class MockScorer(TrueFalseScorer):
     def __init__(self):
         super().__init__(validator=DummyValidator())
 
-    def _build_scorer_identifier(self) -> None:
+    def _build_identifier(self) -> ComponentIdentifier:
         """Build the scorer evaluation identifier for this mock scorer."""
-        self._set_scorer_identifier()
+        return self._create_identifier()
 
     async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
         return [
@@ -101,10 +103,11 @@ class MockScorer(TrueFalseScorer):
 class SelectiveValidator(ScorerPromptValidator):
     """Validator that only supports text pieces, not images."""
 
-    def __init__(self, *, enforce_all_pieces_valid: bool = False):
+    def __init__(self, *, enforce_all_pieces_valid: bool = False, raise_on_no_valid_pieces: bool = False):
         super().__init__(
             supported_data_types=["text"],
             enforce_all_pieces_valid=enforce_all_pieces_valid,
+            raise_on_no_valid_pieces=raise_on_no_valid_pieces,
         )
 
 
@@ -115,9 +118,9 @@ class MockFloatScorer(Scorer):
         self.scored_piece_ids: list[str] = []
         super().__init__(validator=validator)
 
-    def _build_scorer_identifier(self) -> None:
+    def _build_identifier(self) -> ComponentIdentifier:
         """Build the scorer evaluation identifier for this mock scorer."""
-        self._set_scorer_identifier()
+        return self._create_identifier()
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
         # Track which pieces get scored
@@ -141,14 +144,29 @@ class MockFloatScorer(Scorer):
         for score in scores:
             assert 0 <= float(score.score_value) <= 1
 
+    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+        return [
+            Score(
+                score_value="0.0",
+                score_value_description="Mock fallback",
+                score_type="float_scale",
+                score_category=None,
+                score_metadata=None,
+                score_rationale="Mock fallback",
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=message.message_pieces[0].id or "test-id",
+                objective=objective,
+            )
+        ]
+
     def get_scorer_metrics(self):
         return None
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("bad_json", [BAD_JSON, KEY_ERROR_JSON, KEY_ERROR2_JSON])
 async def test_scorer_send_chat_target_async_bad_json_exception_retries(bad_json: str):
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     bad_json_resp = Message(
         message_pieces=[MessagePiece(role="assistant", original_value=bad_json, conversation_id="test-convo")]
     )
@@ -169,9 +187,9 @@ async def test_scorer_send_chat_target_async_bad_json_exception_retries(bad_json
     assert chat_target.send_prompt_async.call_count == 2
 
 
-@pytest.mark.asyncio
 async def test_scorer_score_value_with_llm_exception_display_prompt_id():
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(side_effect=Exception("Test exception"))
 
     scorer = MockScorer()
@@ -188,19 +206,19 @@ async def test_scorer_score_value_with_llm_exception_display_prompt_id():
         )
 
 
-@pytest.mark.asyncio
 async def test_scorer_score_value_with_llm_use_provided_attack_identifier(good_json):
     scorer = MockScorer()
 
     message = Message(
         message_pieces=[MessagePiece(role="assistant", original_value=good_json, conversation_id="test-convo")]
     )
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[message])
     chat_target.set_system_prompt = MagicMock()
 
     expected_system_prompt = "system_prompt"
-    expected_attack_id = "attack_id"
+    expected_attack_identifier = ComponentIdentifier(class_name="TestAttack", class_module="test.module")
     expected_scored_prompt_id = "123"
 
     await scorer._score_value_with_llm(
@@ -211,7 +229,7 @@ async def test_scorer_score_value_with_llm_use_provided_attack_identifier(good_j
         scored_prompt_id=expected_scored_prompt_id,
         category="category",
         objective="task",
-        attack_identifier={"id": expected_attack_id},
+        attack_identifier=expected_attack_identifier,
     )
 
     chat_target.set_system_prompt.assert_called_once()
@@ -219,18 +237,17 @@ async def test_scorer_score_value_with_llm_use_provided_attack_identifier(good_j
     _, set_sys_prompt_args = chat_target.set_system_prompt.call_args
     assert set_sys_prompt_args["system_prompt"] == expected_system_prompt
     assert isinstance(set_sys_prompt_args["conversation_id"], str)
-    assert set_sys_prompt_args["attack_identifier"]["id"] == expected_attack_id
-    assert set_sys_prompt_args["attack_identifier"]["scored_prompt_id"] == expected_scored_prompt_id
+    assert set_sys_prompt_args["attack_identifier"] is expected_attack_identifier
 
 
-@pytest.mark.asyncio
 async def test_scorer_score_value_with_llm_does_not_add_score_prompt_id_for_empty_attack_identifier(good_json):
     scorer = MockScorer()
 
     message = Message(
         message_pieces=[MessagePiece(role="assistant", original_value=good_json, conversation_id="test-convo")]
     )
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[message])
     chat_target.set_system_prompt = MagicMock()
 
@@ -254,9 +271,9 @@ async def test_scorer_score_value_with_llm_does_not_add_score_prompt_id_for_empt
     assert not set_sys_prompt_args["attack_identifier"]
 
 
-@pytest.mark.asyncio
 async def test_scorer_send_chat_target_async_good_response(good_json):
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     good_json_resp = Message(
         message_pieces=[MessagePiece(role="assistant", original_value=good_json, conversation_id="test-convo")]
@@ -275,12 +292,12 @@ async def test_scorer_send_chat_target_async_good_response(good_json):
         objective="task",
     )
 
-    assert chat_target.send_prompt_async.call_count == int(1)
+    assert chat_target.send_prompt_async.call_count == 1
 
 
-@pytest.mark.asyncio
 async def test_scorer_remove_markdown_json_called(good_json):
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     good_json_resp = Message(
         message_pieces=[MessagePiece(role="assistant", original_value=good_json, conversation_id="test-convo")]
     )
@@ -302,10 +319,10 @@ async def test_scorer_remove_markdown_json_called(good_json):
         mock_remove_markdown_json.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_score_value_with_llm_prepended_text_message_piece_creates_multipiece_message(good_json):
     """Test that prepended_text_message_piece creates a multi-piece message (text context + main content)."""
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     good_json_resp = Message(
         message_pieces=[MessagePiece(role="assistant", original_value=good_json, conversation_id="test-convo")]
     )
@@ -345,10 +362,10 @@ async def test_score_value_with_llm_prepended_text_message_piece_creates_multipi
     assert main_piece.original_value == "test_image.png"
 
 
-@pytest.mark.asyncio
 async def test_score_value_with_llm_no_prepended_text_creates_single_piece_message(good_json):
     """Test that without prepended_text_message_piece, only a single piece message is created."""
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     good_json_resp = Message(
         message_pieces=[MessagePiece(role="assistant", original_value=good_json, conversation_id="test-convo")]
     )
@@ -380,10 +397,10 @@ async def test_score_value_with_llm_no_prepended_text_creates_single_piece_messa
     assert "response: some text" in text_piece.original_value
 
 
-@pytest.mark.asyncio
 async def test_score_value_with_llm_prepended_text_works_with_audio(good_json):
     """Test that prepended_text_message_piece works with audio content (type-independent)."""
-    chat_target = MagicMock(PromptChatTarget)
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     good_json_resp = Message(
         message_pieces=[MessagePiece(role="assistant", original_value=good_json, conversation_id="test-convo")]
     )
@@ -446,7 +463,6 @@ def test_scorer_extract_task_from_response(patch_central_database):
         assert "User's question about the universe" in extracted_task
 
 
-@pytest.mark.asyncio
 async def test_scorer_score_responses_batch_async(patch_central_database):
     """
     Test that score_responses_batch_async filters to only assistant pieces,
@@ -480,7 +496,51 @@ async def test_scorer_score_responses_batch_async(patch_central_database):
         assert len(fake_scores) == 2
 
 
-@pytest.mark.asyncio
+async def test_score_prompts_batch_async_rejects_explicit_empty_objectives():
+    """Test explicit empty objectives are rejected for non-empty message batches."""
+    scorer = MockScorer()
+    message = MessagePiece(role="user", original_value="Hello user", sequence=1).to_message()
+
+    with pytest.raises(ValueError, match="objectives"):
+        await scorer.score_prompts_batch_async(messages=[message], objectives=[])
+
+
+async def test_score_image_batch_async_rejects_explicit_empty_objectives():
+    """Test explicit empty objectives are rejected for non-empty image batches."""
+    scorer = MockScorer()
+
+    with pytest.raises(ValueError, match="objectives"):
+        await scorer.score_image_batch_async(image_paths=["test_image.png"], objectives=[])
+
+
+async def test_score_prompts_batch_async_defaults_objectives_when_none(patch_central_database):
+    """Test that objectives=None defaults to empty-string objectives matching message count."""
+    scorer = MockScorer()
+
+    with patch.object(scorer, "score_async", new_callable=AsyncMock) as mock_score_async:
+        mock_score_async.return_value = [MagicMock()]
+        message = MessagePiece(role="user", original_value="Hello user", sequence=1).to_message()
+
+        await scorer.score_prompts_batch_async(messages=[message])
+
+        _, call_kwargs = mock_score_async.call_args
+        assert call_kwargs["objective"] == ""
+
+
+async def test_score_image_batch_async_works_when_objectives_none(patch_central_database):
+    """Test that objectives=None omits objectives from the batch call."""
+    scorer = MockScorer()
+
+    with patch.object(scorer, "score_image_async", new_callable=AsyncMock) as mock_score_image:
+        mock_score_image.return_value = [MagicMock()]
+
+        await scorer.score_image_batch_async(image_paths=["test.png"])
+
+        mock_score_image.assert_called_once()
+        _, call_kwargs = mock_score_image.call_args
+        assert "objective" not in call_kwargs
+
+
 async def test_score_response_async_empty_scorers():
     """Test that score_response_async returns empty list when no scorers provided."""
     response = Message(
@@ -491,7 +551,6 @@ async def test_score_response_async_empty_scorers():
     assert result == {"auxiliary_scores": [], "objective_scores": []}
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_no_matching_role():
     """Test that score_response_async returns empty list when no pieces match role filter."""
     response = Message(
@@ -515,7 +574,6 @@ async def test_score_response_async_no_matching_role():
     scorer.score_async.assert_called()
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_parallel_execution():
     """Test that score_response_async runs all scorers in parallel on all filtered pieces."""
     piece1 = MessagePiece(role="assistant", original_value="response1", conversation_id="test-convo")
@@ -544,14 +602,19 @@ async def test_score_response_async_parallel_execution():
     assert score1_1 in result["auxiliary_scores"]
     assert score2_1 in result["auxiliary_scores"]
     scorer1.score_async.assert_any_call(
-        message=response, objective="test task", role_filter="assistant", skip_on_error_result=True
+        message=response,
+        objective="test task",
+        role_filter="assistant",
+        skip_on_error_result=True,
     )
     scorer2.score_async.assert_any_call(
-        message=response, objective="test task", role_filter="assistant", skip_on_error_result=True
+        message=response,
+        objective="test task",
+        role_filter="assistant",
+        skip_on_error_result=True,
     )
 
 
-@pytest.mark.asyncio
 async def test_score_response_select_first_success_async_empty_scorers():
     """Test that score_response_select_first_success_async returns None when no scorers provided."""
     response = Message(
@@ -563,7 +626,6 @@ async def test_score_response_select_first_success_async_empty_scorers():
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_score_async_no_matching_role():
     """Test that score_response_select_first_success_async returns None when no pieces match role filter."""
     response = Message(message_pieces=[MessagePiece(role="user", original_value="test", conversation_id="test-convo")])
@@ -573,7 +635,6 @@ async def test_score_async_no_matching_role():
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_finds_success():
     """Test that score_response_async returns first successful score."""
     piece1 = MessagePiece(role="assistant", original_value="response1", conversation_id="test-convo")
@@ -612,7 +673,6 @@ async def test_score_response_async_finds_success():
     assert scorer2.score_async.call_count == 1
 
 
-@pytest.mark.asyncio
 async def test_score_response_success_async_no_success_returns_first():
     """Test that score_response_success_async returns first score when no success found."""
     piece1 = MessagePiece(role="assistant", original_value="response1", conversation_id="test-convo")
@@ -651,7 +711,6 @@ async def test_score_response_success_async_no_success_returns_first():
     assert scorer2.score_async.call_count == 1
 
 
-@pytest.mark.asyncio
 async def test_score_response_success_async_parallel_scoring_per_piece():
     """Test that score_response_success_async runs scorers in parallel for each piece."""
     piece1 = MessagePiece(role="assistant", original_value="response1", conversation_id="test-convo")
@@ -690,7 +749,6 @@ async def test_score_response_success_async_parallel_scoring_per_piece():
     assert ("scorer2", "response1") in call_order[:2]
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_no_scorers():
     """Test score_response_async with no scorers provided."""
     response = Message(message_pieces=[MessagePiece(role="assistant", original_value="test")])
@@ -702,7 +760,6 @@ async def test_score_response_async_no_scorers():
     assert result == {"auxiliary_scores": [], "objective_scores": []}
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_auxiliary_only():
     """Test score_response_async with only auxiliary scorers."""
     piece = MessagePiece(role="assistant", original_value="response")
@@ -730,7 +787,6 @@ async def test_score_response_async_auxiliary_only():
     assert result["objective_scores"] == []
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_objective_only():
     """Test score_response_async with only objective scorers."""
     piece = MessagePiece(role="assistant", original_value="response")
@@ -754,7 +810,6 @@ async def test_score_response_async_objective_only():
     assert result["objective_scores"][0] == obj_score
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_both_types():
     """Test score_response_async with both auxiliary and objective scorers."""
     piece = MessagePiece(role="assistant", original_value="response")
@@ -783,7 +838,6 @@ async def test_score_response_async_both_types():
     assert result["objective_scores"][0] == obj_score
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_multiple_pieces():
     """Test score_response_async with multiple response pieces."""
     piece1 = MessagePiece(role="assistant", original_value="response1", conversation_id="test-convo")
@@ -818,16 +872,15 @@ async def test_score_response_async_multiple_pieces():
 
     # The following commented-out lines should be uncommented when the permanent solution is implemented
     # # Should have all auxiliary scores
-    # assert len(result["auxiliary_scores"]) == 4
-    # for score in aux_scores:
-    #     assert score in result["auxiliary_scores"]
+    # assert len(result["auxiliary_scores"]) == 4  # noqa: ERA001
+    # for score in aux_scores:  # noqa: ERA001
+    #     assert score in result["auxiliary_scores"]  # noqa: ERA001
 
     # Should have only one objective score (first success)
     assert len(result["objective_scores"]) == 1
     assert result["objective_scores"][0] == obj_score
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_skip_on_error_true():
     """Test score_response_async skips error pieces when skip_on_error_result=True."""
     piece1 = MessagePiece(role="assistant", original_value="good response", conversation_id="test-convo")
@@ -865,7 +918,6 @@ async def test_score_response_async_skip_on_error_true():
     obj_scorer.score_async.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_skip_on_error_false():
     """Test score_response_async includes error pieces when skip_on_error_result=False."""
     piece1 = MessagePiece(role="assistant", original_value="good response", conversation_id="test-convo")
@@ -898,16 +950,15 @@ async def test_score_response_async_skip_on_error_false():
     assert len(result["auxiliary_scores"]) == 1
     # The following commented-out lines should be uncommented when the permanent solution is implemented
     # # Should score both pieces for auxiliary
-    # assert len(result["auxiliary_scores"]) == 2
+    # assert len(result["auxiliary_scores"]) == 2  # noqa: ERA001
 
     # But only one objective score (first success)
     assert len(result["objective_scores"]) == 1
 
     # # Verify both pieces were scored for auxiliary
-    # assert aux_scorer.score_async.call_count == 2
+    # assert aux_scorer.score_async.call_count == 2  # noqa: ERA001
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_objective_failure():
     """Test score_response_async when no objective succeeds."""
     piece = MessagePiece(role="assistant", original_value="response")
@@ -937,7 +988,6 @@ async def test_score_response_async_objective_failure():
     assert result["objective_scores"][0] == obj_score1
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_concurrent_execution():
     """Test that auxiliary and objective scoring happen concurrently."""
     piece = MessagePiece(role="assistant", original_value="response")
@@ -977,7 +1027,6 @@ async def test_score_response_async_concurrent_execution():
     assert call_order.index("obj_start") < call_order.index("aux_end")
 
 
-@pytest.mark.asyncio
 async def test_score_response_async_empty_lists():
     """Test score_response_async with empty scorer lists."""
     piece = MessagePiece(role="assistant", original_value="response")
@@ -990,7 +1039,6 @@ async def test_score_response_async_empty_lists():
     assert result == {"auxiliary_scores": [], "objective_scores": []}
 
 
-@pytest.mark.asyncio
 async def test_get_supported_pieces_filters_unsupported_data_types(patch_central_database):
     """Test that _get_supported_pieces only returns pieces with supported data types."""
     validator = SelectiveValidator(enforce_all_pieces_valid=False)
@@ -1043,7 +1091,6 @@ async def test_get_supported_pieces_filters_unsupported_data_types(patch_central
     assert scores[0].message_piece_id == "text-1"
 
 
-@pytest.mark.asyncio
 async def test_unsupported_pieces_ignored_when_enforce_all_pieces_valid_false(patch_central_database):
     """Test that unsupported pieces don't cause errors when enforce_all_pieces_valid=False."""
     validator = SelectiveValidator(enforce_all_pieces_valid=False)
@@ -1075,10 +1122,9 @@ async def test_unsupported_pieces_ignored_when_enforce_all_pieces_valid_false(pa
     assert scorer.scored_piece_ids[0] == "text-1"
 
 
-@pytest.mark.asyncio
 async def test_all_unsupported_pieces_raises_error(patch_central_database):
-    """Test that having no supported pieces raises a clear error."""
-    validator = SelectiveValidator(enforce_all_pieces_valid=False)
+    """Test that having no supported pieces raises a clear error when raise_on_no_valid_pieces=True."""
+    validator = SelectiveValidator(enforce_all_pieces_valid=False, raise_on_no_valid_pieces=True)
     scorer = MockFloatScorer(validator=validator)
 
     # Create a response with only unsupported types
@@ -1107,7 +1153,6 @@ async def test_all_unsupported_pieces_raises_error(patch_central_database):
     assert len(scorer.scored_piece_ids) == 0
 
 
-@pytest.mark.asyncio
 async def test_true_false_scorer_uses_supported_pieces_only(patch_central_database):
     """Test that TrueFalseScorer also uses _get_supported_pieces via base implementation."""
     validator = SelectiveValidator(enforce_all_pieces_valid=False)
@@ -1117,9 +1162,9 @@ async def test_true_false_scorer_uses_supported_pieces_only(patch_central_databa
             self.scored_piece_ids = []
             super().__init__(validator=validator)
 
-        def _build_scorer_identifier(self) -> None:
+        def _build_identifier(self) -> ComponentIdentifier:
             """Build the scorer evaluation identifier for this test scorer."""
-            self._set_scorer_identifier()
+            return self._create_identifier()
 
         async def _score_piece_async(
             self, message_piece: MessagePiece, *, objective: Optional[str] = None
@@ -1170,7 +1215,6 @@ async def test_true_false_scorer_uses_supported_pieces_only(patch_central_databa
     assert scores[0].score_value == "true"
 
 
-@pytest.mark.asyncio
 async def test_base_scorer_score_async_implementation(patch_central_database):
     """Test that the base Scorer._score_async implementation works correctly."""
     validator = SelectiveValidator(enforce_all_pieces_valid=False)
@@ -1204,26 +1248,25 @@ async def test_base_scorer_score_async_implementation(patch_central_database):
     assert len(scores) == 2
 
 
-# Tests for get_identifier and scorer_identifier
+# Tests for get_identifier and identifier
 
 
 def test_mock_scorer_get_identifier_returns_type():
-    """Test that get_identifier returns the correct __type__ key."""
+    """Test that get_identifier returns a ComponentIdentifier with the correct class_name."""
     scorer = MockScorer()
     identifier = scorer.get_identifier()
 
-    assert "__type__" in identifier
-    assert identifier["__type__"] == "MockScorer"
+    assert identifier.class_name == "MockScorer"
 
 
 def test_mock_scorer_get_identifier_includes_hash():
-    """Test that get_identifier includes a hash field."""
+    """Test that get_identifier returns a ComponentIdentifier with a hash field."""
     scorer = MockScorer()
     identifier = scorer.get_identifier()
 
-    assert "hash" in identifier
-    assert isinstance(identifier["hash"], str)
-    assert len(identifier["hash"]) == 64  # SHA256 hex digest length
+    assert hasattr(identifier, "hash")
+    assert isinstance(identifier.hash, str)
+    assert len(identifier.hash) == 64  # SHA256 hex digest length
 
 
 def test_mock_scorer_get_identifier_deterministic():
@@ -1240,33 +1283,31 @@ def test_mock_scorer_get_identifier_hash_deterministic():
     """Test that the hash is consistent across multiple calls."""
     scorer = MockScorer()
 
-    hash1 = scorer.get_identifier()["hash"]
-    hash2 = scorer.get_identifier()["hash"]
+    hash1 = scorer.get_identifier().hash
+    hash2 = scorer.get_identifier().hash
 
     assert hash1 == hash2
 
 
-def test_mock_scorer_scorer_identifier_property():
-    """Test that scorer_identifier property returns a ScorerIdentifier."""
-    from pyrit.score.scorer_identifier import ScorerIdentifier
-
+def test_mock_scorer_get_identifier_is_component_identifier():
+    """Test that get_identifier returns a ComponentIdentifier."""
     scorer = MockScorer()
-    sid = scorer.scorer_identifier
+    sid = scorer.get_identifier()
 
-    assert isinstance(sid, ScorerIdentifier)
-    assert sid.type == "MockScorer"
+    assert isinstance(sid, ComponentIdentifier)
+    assert sid.class_name == "MockScorer"
 
 
-def test_mock_scorer_scorer_identifier_lazy_build():
-    """Test that scorer_identifier is built lazily on first access."""
+def test_mock_scorer_identifier_lazy_build():
+    """Test that identifier is built lazily on first access."""
     scorer = MockScorer()
 
-    # Before accessing, _scorer_identifier should be None
-    assert scorer._scorer_identifier is None
+    # Before accessing, _identifier should be None
+    assert scorer._identifier is None
 
-    # After accessing, it should be built
-    _ = scorer.scorer_identifier
-    assert scorer._scorer_identifier is not None
+    # After accessing via get_identifier(), it should be built
+    _ = scorer.get_identifier()
+    assert scorer._identifier is not None
 
 
 def test_mock_float_scorer_get_identifier():
@@ -1276,5 +1317,643 @@ def test_mock_float_scorer_get_identifier():
 
     identifier = scorer.get_identifier()
 
-    assert identifier["__type__"] == "MockFloatScorer"
-    assert "hash" in identifier
+    assert identifier.class_name == "MockFloatScorer"
+    assert hasattr(identifier, "hash")
+
+
+class TestTrueFalseScorerEmptyScoreListRationale:
+    """Tests for TrueFalseScorer rationale when no pieces are scored (empty score_list).
+
+    The empty score_list scenario occurs when _score_piece_async returns empty lists
+    for all pieces, which triggers special handling in TrueFalseScorer._score_async
+    to provide informative rationales based on the message piece status.
+    """
+
+    @pytest.fixture
+    def no_valid_pieces_validator(self):
+        """Validator that doesn't raise on no valid pieces and only supports text."""
+        return ScorerPromptValidator(
+            supported_data_types=["text"],
+            enforce_all_pieces_valid=False,
+            raise_on_no_valid_pieces=False,
+        )
+
+    @pytest.fixture
+    def true_false_scorer_returns_empty(self, no_valid_pieces_validator):
+        """Create a TrueFalseScorer where _score_piece_async returns empty list."""
+
+        class TestTrueFalseScorer(TrueFalseScorer):
+            def __init__(self, validator):
+                super().__init__(validator=validator)
+
+            def _build_identifier(self) -> ComponentIdentifier:
+                return self._create_identifier()
+
+            async def _score_piece_async(
+                self, message_piece: MessagePiece, *, objective: Optional[str] = None
+            ) -> list[Score]:
+                # Return empty list to simulate no scorable pieces
+                return []
+
+        return TestTrueFalseScorer(validator=no_valid_pieces_validator)
+
+    async def test_blocked_response_returns_specific_rationale(
+        self, true_false_scorer_returns_empty, patch_central_database
+    ):
+        """Test that a blocked response returns a rationale mentioning 'blocked'."""
+        blocked_piece = MessagePiece(
+            role="assistant",
+            original_value="",
+            converted_value="",
+            converted_value_data_type="text",
+            id="blocked-piece-id",
+            conversation_id="test-convo",
+            response_error="blocked",
+        )
+        response = Message(message_pieces=[blocked_piece])
+
+        scores = await true_false_scorer_returns_empty.score_async(response)
+
+        assert len(scores) == 1
+        assert scores[0].score_value == "false"
+        assert "blocked" in scores[0].score_rationale.lower()
+        assert "blocked" in scores[0].score_value_description.lower()
+
+    async def test_error_response_returns_specific_rationale(
+        self, true_false_scorer_returns_empty, patch_central_database
+    ):
+        """Test that an error response returns a rationale mentioning the error type."""
+        # response_error must be a valid PromptResponseError: "blocked", "none", "processing", "empty", "unknown"
+        error_piece = MessagePiece(
+            role="assistant",
+            original_value="",
+            converted_value="",
+            converted_value_data_type="text",
+            id="error-piece-id",
+            conversation_id="test-convo",
+            response_error="unknown",
+        )
+        response = Message(message_pieces=[error_piece])
+
+        scores = await true_false_scorer_returns_empty.score_async(response)
+
+        assert len(scores) == 1
+        assert scores[0].score_value == "false"
+        assert "error" in scores[0].score_rationale.lower()
+        assert "unknown" in scores[0].score_rationale
+
+    async def test_filtered_pieces_returns_generic_rationale(
+        self, true_false_scorer_returns_empty, patch_central_database
+    ):
+        """Test that normal pieces (no error) return a generic filtering rationale."""
+        # A normal text piece with no error - _score_piece_async returns empty
+        normal_piece = MessagePiece(
+            role="assistant",
+            original_value="some text",
+            converted_value="some text",
+            converted_value_data_type="text",
+            id="normal-piece-id",
+            conversation_id="test-convo",
+            response_error="none",
+        )
+        response = Message(message_pieces=[normal_piece])
+
+        scores = await true_false_scorer_returns_empty.score_async(response)
+
+        assert len(scores) == 1
+        assert scores[0].score_value == "false"
+        assert "filter" in scores[0].score_rationale.lower()
+        assert "blocked" not in scores[0].score_rationale.lower()
+        assert "error" not in scores[0].score_rationale.lower()
+
+    async def test_blocked_takes_precedence_over_generic_error(
+        self, true_false_scorer_returns_empty, patch_central_database
+    ):
+        """Test that blocked status is checked before generic has_error check."""
+        # response_error="blocked" should mention "blocked" not just "error"
+        blocked_piece = MessagePiece(
+            role="assistant",
+            original_value="",
+            converted_value="",
+            converted_value_data_type="text",
+            id="blocked-piece-id",
+            conversation_id="test-convo",
+            response_error="blocked",
+        )
+        response = Message(message_pieces=[blocked_piece])
+
+        scores = await true_false_scorer_returns_empty.score_async(response)
+
+        # Should specifically mention blocked, not generic error
+        assert "blocked" in scores[0].score_rationale.lower()
+        # The description should also mention blocked, not just "error"
+        assert "blocked" in scores[0].score_value_description.lower()
+
+
+class TestFloatScaleScorerEmptyScoreListRationale:
+    """Tests for FloatScaleScorer's unified no-pieces fallback that returns Score(0.0).
+
+    Mirrors TestTrueFalseScorerEmptyScoreListRationale. When no supported pieces remain
+    after validator filtering, FloatScaleScorer returns a single Score with value 0.0
+    and a rationale distinguishing blocked / error / filtered cases.
+    """
+
+    @pytest.fixture
+    def no_valid_pieces_validator(self):
+        """Validator that doesn't raise on no valid pieces and only supports text."""
+        return ScorerPromptValidator(
+            supported_data_types=["text"],
+            enforce_all_pieces_valid=False,
+            raise_on_no_valid_pieces=False,
+        )
+
+    @pytest.fixture
+    def float_scale_scorer_returns_empty(self, no_valid_pieces_validator):
+        """Create a FloatScaleScorer whose _score_piece_async would return empty,
+        but in practice the validator filters all pieces so it's never invoked."""
+        from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+
+        class _TestFloatScaleScorer(FloatScaleScorer):
+            def __init__(self, validator):
+                super().__init__(validator=validator)
+
+            def _build_identifier(self) -> ComponentIdentifier:
+                return self._create_identifier()
+
+            async def _score_piece_async(
+                self, message_piece: MessagePiece, *, objective: Optional[str] = None
+            ) -> list[Score]:
+                return []
+
+        return _TestFloatScaleScorer(validator=no_valid_pieces_validator)
+
+    async def test_blocked_response_returns_zero_with_blocked_rationale(
+        self, float_scale_scorer_returns_empty, patch_central_database
+    ):
+        """A blocked response yields Score(0.0) with a rationale mentioning 'blocked'."""
+        blocked_piece = MessagePiece(
+            role="assistant",
+            original_value="",
+            converted_value="",
+            converted_value_data_type="error",
+            id="blocked-piece-id",
+            conversation_id="test-convo",
+            response_error="blocked",
+        )
+        response = Message(message_pieces=[blocked_piece])
+
+        scores = await float_scale_scorer_returns_empty.score_async(response)
+
+        assert len(scores) == 1
+        assert scores[0].score_type == "float_scale"
+        assert scores[0].get_value() == 0.0
+        assert "blocked" in scores[0].score_rationale.lower()
+        assert "blocked" in scores[0].score_value_description.lower()
+
+    async def test_other_error_response_returns_zero_with_error_rationale(
+        self, float_scale_scorer_returns_empty, patch_central_database
+    ):
+        """A non-blocked error response yields Score(0.0) mentioning the error type."""
+        error_piece = MessagePiece(
+            role="assistant",
+            original_value="",
+            converted_value="",
+            converted_value_data_type="error",
+            id="error-piece-id",
+            conversation_id="test-convo",
+            response_error="unknown",
+        )
+        response = Message(message_pieces=[error_piece])
+
+        scores = await float_scale_scorer_returns_empty.score_async(response)
+
+        assert len(scores) == 1
+        assert scores[0].get_value() == 0.0
+        assert "error" in scores[0].score_rationale.lower()
+        assert "unknown" in scores[0].score_rationale
+
+    async def test_filtered_pieces_return_zero_with_generic_rationale(
+        self, float_scale_scorer_returns_empty, patch_central_database
+    ):
+        """When pieces are filtered for non-error reasons, the fallback still returns 0.0."""
+        normal_piece = MessagePiece(
+            role="assistant",
+            original_value="some text",
+            converted_value="some text",
+            converted_value_data_type="text",
+            id="normal-piece-id",
+            conversation_id="test-convo",
+            response_error="none",
+        )
+        response = Message(message_pieces=[normal_piece])
+
+        scores = await float_scale_scorer_returns_empty.score_async(response)
+
+        assert len(scores) == 1
+        assert scores[0].get_value() == 0.0
+        assert "filter" in scores[0].score_rationale.lower()
+        assert "blocked" not in scores[0].score_rationale.lower()
+
+    async def test_text_only_scorer_filters_blocked_via_validator(
+        self, float_scale_scorer_returns_empty, patch_central_database
+    ):
+        """A text-only FloatScaleScorer never invokes _score_piece_async for blocked pieces;
+        the unified fallback returns 0.0 directly."""
+        blocked_piece = MessagePiece(
+            role="assistant",
+            original_value="",
+            converted_value="error-json-blob",
+            converted_value_data_type="error",
+            id="blocked-piece-id",
+            conversation_id="test-convo",
+            response_error="blocked",
+        )
+        response = Message(message_pieces=[blocked_piece])
+
+        # _score_piece_async should not be called because validator filters the error piece
+        with patch.object(
+            float_scale_scorer_returns_empty, "_score_piece_async", new_callable=AsyncMock
+        ) as mock_score_piece:
+            scores = await float_scale_scorer_returns_empty.score_async(response)
+
+        mock_score_piece.assert_not_called()
+        assert len(scores) == 1
+        assert scores[0].get_value() == 0.0
+
+
+async def test_score_value_with_llm_skips_reasoning_piece(good_json):
+    """Test that _score_value_with_llm extracts JSON from the text piece, not a reasoning piece."""
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    # Simulate a reasoning model response: first piece is reasoning, second is the actual text with JSON
+    reasoning_piece = MessagePiece(
+        role="assistant",
+        original_value="Let me think about this...",
+        original_value_data_type="reasoning",
+        converted_value="Let me think about this...",
+        converted_value_data_type="reasoning",
+        conversation_id="test-convo",
+    )
+    text_piece = MessagePiece(
+        role="assistant",
+        original_value=good_json,
+        conversation_id="test-convo",
+    )
+    response_message = Message(message_pieces=[reasoning_piece, text_piece])
+    chat_target.send_prompt_async = AsyncMock(return_value=[response_message])
+
+    scorer = MockScorer()
+
+    result = await scorer._score_value_with_llm(
+        prompt_target=chat_target,
+        system_prompt="system_prompt",
+        message_value="message_value",
+        message_data_type="text",
+        scored_prompt_id="123",
+        category="category",
+        objective="task",
+    )
+
+    assert result.raw_score_value == "1"
+    assert result.score_rationale == "Valid response"
+
+
+# ── Helpers for score_blocked_content tests ──────────────────────────────────
+
+
+class _AcceptAllValidator(ScorerPromptValidator):
+    """Validator that accepts all pieces (like SelfAskRefusalScorer's default)."""
+
+    def validate(self, message: Message, objective: Optional[str] = None) -> None:
+        pass
+
+    def is_message_piece_supported(self, message_piece: MessagePiece) -> bool:
+        return True
+
+
+class _TextOnlyValidator(ScorerPromptValidator):
+    """Validator that only accepts text pieces (like SelfAskTrueFalseScorer's default)."""
+
+    def __init__(self) -> None:
+        super().__init__(supported_data_types=["text", "image_path"])
+
+    def validate(self, message: Message, objective: Optional[str] = None) -> None:
+        pass
+
+
+class _BlockedContentScorer(TrueFalseScorer):
+    """A mock TrueFalseScorer that records what pieces it was asked to score."""
+
+    def __init__(self, *, validator: Optional[ScorerPromptValidator] = None) -> None:
+        super().__init__(validator=validator or _TextOnlyValidator())
+        self.scored_pieces: list[MessagePiece] = []
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+        self.scored_pieces.append(message_piece)
+        return [
+            Score(
+                score_value="true",
+                score_value_description="desc",
+                score_type="true_false",
+                score_category=None,
+                score_metadata=None,
+                score_rationale="rationale",
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=str(message_piece.id),
+                objective=objective,
+            )
+        ]
+
+
+class _MockRefusalScorer(TrueFalseScorer):
+    """Mimics SelfAskRefusalScorer: accepts all types, short-circuits on blocked."""
+
+    def __init__(self) -> None:
+        super().__init__(validator=_AcceptAllValidator())
+        self.scored_pieces: list[MessagePiece] = []
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+        self.scored_pieces.append(message_piece)
+        if message_piece.response_error == "blocked":
+            return [
+                Score(
+                    score_value="true",
+                    score_value_description="Refusal detected",
+                    score_type="true_false",
+                    score_category=None,
+                    score_metadata=None,
+                    score_rationale="Content was filtered, constituting a refusal.",
+                    scorer_class_identifier=self.get_identifier(),
+                    message_piece_id=str(message_piece.id),
+                    objective=objective,
+                )
+            ]
+        return [
+            Score(
+                score_value="false",
+                score_value_description="Not a refusal",
+                score_type="true_false",
+                score_category=None,
+                score_metadata=None,
+                score_rationale="The response contains substantive content.",
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=str(message_piece.id),
+                objective=objective,
+            )
+        ]
+
+
+def _make_blocked_piece(*, partial_content: Optional[str] = None, conversation_id: str = "test-convo") -> MessagePiece:
+    """Create a blocked MessagePiece, optionally with partial content metadata."""
+    metadata: dict = {}
+    if partial_content is not None:
+        metadata["partial_content"] = partial_content
+    return MessagePiece(
+        role="assistant",
+        original_value='{"status_code": 200, "message": "content_filter"}',
+        converted_value='{"status_code": 200, "message": "content_filter"}',
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        conversation_id=conversation_id,
+        response_error="blocked",
+        prompt_metadata=metadata,
+    )
+
+
+def _make_normal_piece(*, conversation_id: str = "test-convo") -> MessagePiece:
+    """Create a normal text MessagePiece."""
+    return MessagePiece(
+        role="assistant",
+        original_value="Hello, how can I help?",
+        conversation_id=conversation_id,
+    )
+
+
+# ── _create_text_piece_from_blocked tests ────────────────────────────────────
+
+
+class TestCreateTextPieceFromBlocked:
+    def test_returns_text_piece_with_partial_content(self):
+        piece = _make_blocked_piece(partial_content="Harmful partial text here")
+        substitute = Scorer._create_text_piece_from_blocked(piece)
+
+        assert substitute is not None
+        assert substitute.converted_value == "Harmful partial text here"
+        assert substitute.converted_value_data_type == "text"
+        assert substitute.response_error == "none"
+        assert substitute.id == piece.id
+
+    def test_preserves_original_value(self):
+        piece = _make_blocked_piece(partial_content="partial")
+        substitute = Scorer._create_text_piece_from_blocked(piece)
+
+        assert substitute is not None
+        assert substitute.original_value == piece.original_value
+        assert substitute.original_value_data_type == piece.original_value_data_type
+
+    def test_returns_none_when_no_partial_content(self):
+        piece = _make_blocked_piece()
+        assert Scorer._create_text_piece_from_blocked(piece) is None
+
+    def test_returns_none_when_empty_partial_content(self):
+        piece = _make_blocked_piece(partial_content="")
+        assert Scorer._create_text_piece_from_blocked(piece) is None
+
+    def test_preserves_conversation_id(self):
+        piece = _make_blocked_piece(partial_content="partial")
+        substitute = Scorer._create_text_piece_from_blocked(piece)
+        assert substitute is not None
+        assert substitute.conversation_id == piece.conversation_id
+
+    def test_response_error_is_none_not_blocked(self):
+        """Substitute must have response_error='none' so refusal short-circuits don't fire."""
+        piece = _make_blocked_piece(partial_content="partial text")
+        substitute = Scorer._create_text_piece_from_blocked(piece)
+        assert substitute is not None
+        assert substitute.response_error == "none"
+        assert not substitute.is_blocked()
+        assert not substitute.has_error()
+
+
+# ── score_async with score_blocked_content tests ─────────────────────────────
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestScoreAsyncWithBlockedContent:
+    async def test_default_false_skips_blocked_piece_text_only_scorer(self):
+        """Default behavior: text-only scorer filters out blocked error-type pieces."""
+        scorer = _BlockedContentScorer()
+        msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
+
+        scores = await scorer.score_async(msg)
+
+        assert len(scores) == 1
+        assert scores[0].score_value == "false"
+        assert len(scorer.scored_pieces) == 0
+
+    async def test_true_substitutes_blocked_piece_for_text_only_scorer(self):
+        """With flag on, text-only scorer gets a text substitute and scores it."""
+        scorer = _BlockedContentScorer()
+        msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
+
+        scorer.score_blocked_content = True
+        scores = await scorer.score_async(msg)
+
+        assert len(scores) == 1
+        assert scores[0].score_value == "true"
+        assert len(scorer.scored_pieces) == 1
+        assert scorer.scored_pieces[0].converted_value == "harmful text"
+        assert scorer.scored_pieces[0].converted_value_data_type == "text"
+
+    async def test_refusal_scorer_short_circuits_on_blocked_by_default(self):
+        """Refusal scorer (accepts all types) sees original blocked piece, returns True."""
+        scorer = _MockRefusalScorer()
+        msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
+
+        scores = await scorer.score_async(msg)
+
+        assert len(scores) == 1
+        assert scores[0].score_value == "true"
+        assert scorer.scored_pieces[0].response_error == "blocked"
+
+    async def test_refusal_scorer_evaluates_partial_content_when_flag_on(self):
+        """With flag on, refusal scorer gets substitute (response_error=none), evaluates via LLM path."""
+        scorer = _MockRefusalScorer()
+        msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
+
+        scorer.score_blocked_content = True
+        scores = await scorer.score_async(msg)
+
+        assert len(scores) == 1
+        assert scores[0].score_value == "false"
+        assert scorer.scored_pieces[0].response_error == "none"
+        assert scorer.scored_pieces[0].converted_value == "harmful text"
+
+    async def test_no_substitute_when_no_partial_content(self):
+        """400 full block with no partial content: no substitute, same behavior."""
+        scorer = _BlockedContentScorer()
+        msg = Message(message_pieces=[_make_blocked_piece()])
+
+        scorer.score_blocked_content = True
+        scores = await scorer.score_async(msg)
+
+        assert len(scores) == 1
+        assert scores[0].score_value == "false"
+        assert len(scorer.scored_pieces) == 0
+
+    async def test_normal_piece_unaffected_by_flag(self):
+        """Normal text pieces are scored the same regardless of flag."""
+        scorer = _BlockedContentScorer()
+        msg = Message(message_pieces=[_make_normal_piece()])
+
+        scores_off = await scorer.score_async(msg)
+        scorer.scored_pieces.clear()
+        scorer.score_blocked_content = True
+        scores_on = await scorer.score_async(msg)
+
+        assert scores_off[0].score_value == scores_on[0].score_value
+
+    async def test_mixed_pieces_only_blocked_substituted(self):
+        """In a multi-piece message, only blocked pieces get substituted."""
+        scorer = _BlockedContentScorer()
+        msg = Message(message_pieces=[_make_normal_piece(), _make_blocked_piece(partial_content="partial harmful")])
+
+        scorer.score_blocked_content = True
+        scores = await scorer.score_async(msg)
+
+        assert len(scores) == 1  # TrueFalseScorer aggregates
+        assert len(scorer.scored_pieces) == 2
+        assert scorer.scored_pieces[0].converted_value == "Hello, how can I help?"
+        assert scorer.scored_pieces[1].converted_value == "partial harmful"
+        assert scorer.scored_pieces[1].response_error == "none"
+
+
+# ── skip_on_error_result interaction tests ───────────────────────────────────
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestSkipOnErrorWithBlockedContent:
+    async def test_skip_on_error_true_without_flag_skips_blocked(self):
+        scorer = _BlockedContentScorer()
+        msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
+
+        scores = await scorer.score_async(msg, skip_on_error_result=True)
+        assert scores == []
+
+    async def test_skip_on_error_true_with_flag_does_not_skip_when_partial_content(self):
+        scorer = _BlockedContentScorer()
+        msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
+
+        scorer.score_blocked_content = True
+        scores = await scorer.score_async(msg, skip_on_error_result=True)
+        assert len(scores) == 1
+        assert scores[0].score_value == "true"
+
+    async def test_skip_on_error_true_with_flag_still_skips_when_no_partial_content(self):
+        scorer = _BlockedContentScorer()
+        msg = Message(message_pieces=[_make_blocked_piece()])
+
+        scorer.score_blocked_content = True
+        scores = await scorer.score_async(msg, skip_on_error_result=True)
+        assert scores == []
+
+
+# ── score_response_async passthrough tests ───────────────────────────────────
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestScoreResponseAsyncBlockedContent:
+    async def test_score_response_async_passes_flag_to_scorers(self):
+        obj_scorer = _BlockedContentScorer()
+        obj_scorer.score_blocked_content = True
+        msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
+
+        result = await Scorer.score_response_async(
+            response=msg,
+            objective_scorer=obj_scorer,
+            objective="test",
+            skip_on_error_result=False,
+        )
+
+        assert len(result["objective_scores"]) == 1
+        assert result["objective_scores"][0].score_value == "true"
+        assert obj_scorer.scored_pieces[0].converted_value == "harmful text"
+
+    async def test_score_response_async_default_does_not_substitute(self):
+        obj_scorer = _BlockedContentScorer()
+        msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
+
+        result = await Scorer.score_response_async(
+            response=msg,
+            objective_scorer=obj_scorer,
+            objective="test",
+            skip_on_error_result=False,
+        )
+
+        assert result["objective_scores"][0].score_value == "false"
+        assert len(obj_scorer.scored_pieces) == 0
+
+    async def test_score_response_multiple_scorers_passes_flag(self):
+        scorer1 = _BlockedContentScorer()
+        scorer1.score_blocked_content = True
+        scorer2 = _BlockedContentScorer()
+        scorer2.score_blocked_content = True
+        msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
+
+        scores = await Scorer.score_response_multiple_scorers_async(
+            response=msg,
+            scorers=[scorer1, scorer2],
+            objective="test",
+            skip_on_error_result=False,
+        )
+
+        assert len(scores) == 2
+        assert len(scorer1.scored_pieces) == 1
+        assert len(scorer2.scored_pieces) == 1

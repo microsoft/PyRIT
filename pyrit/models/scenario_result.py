@@ -1,18 +1,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal
 
 import pyrit
 from pyrit.models import AttackOutcome, AttackResult
 
 if TYPE_CHECKING:
-    from pyrit.score import Scorer
-    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerMetrics
-    from pyrit.score.scorer_identifier import ScorerIdentifier
+    from pyrit.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +28,9 @@ class ScenarioIdentifier:
         name: str,
         description: str = "",
         scenario_version: int = 1,
-        init_data: Optional[dict] = None,
-        pyrit_version: Optional[str] = None,
-    ):
+        init_data: dict[str, Any] | None = None,
+        pyrit_version: str | None = None,
+    ) -> None:
         """
         Initialize a ScenarioIdentifier.
 
@@ -39,6 +40,7 @@ class ScenarioIdentifier:
             scenario_version (int): Version of the scenario.
             init_data (Optional[dict]): Initialization data.
             pyrit_version (Optional[str]): PyRIT version string. If None, uses current version.
+
         """
         self.name = name
         self.description = description
@@ -46,80 +48,155 @@ class ScenarioIdentifier:
         self.pyrit_version = pyrit_version if pyrit_version is not None else pyrit.__version__
         self.init_data = init_data
 
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Serialize to a JSON-compatible dictionary.
 
-ScenarioRunState = Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED"]
+        Returns:
+            dict[str, Any]: Serialized payload.
+        """
+        return {
+            "name": self.name,
+            "description": self.description,
+            "scenario_version": self.version,
+            "pyrit_version": self.pyrit_version,
+            "init_data": self.init_data,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ScenarioIdentifier:
+        """
+        Reconstruct a ScenarioIdentifier from a dictionary.
+
+        Args:
+            data (dict[str, Any]): Dictionary as produced by to_dict().
+
+        Returns:
+            ScenarioIdentifier: Reconstructed instance.
+        """
+        return cls(
+            name=data["name"],
+            description=data.get("description", ""),
+            scenario_version=data.get("scenario_version", 1),
+            init_data=data.get("init_data"),
+            pyrit_version=data.get("pyrit_version") or "unknown",
+        )
+
+
+ScenarioRunState = Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED", "CANCELLED"]
 
 
 class ScenarioResult:
     """
     Scenario result class for aggregating scenario results.
-
-    Note: When creating a new ScenarioResult, objective_scorer should always be provided.
-    The parameter is Optional only to support deserialization from the database where
-    the scorer object cannot be reconstructed.
     """
 
     def __init__(
         self,
         *,
         scenario_identifier: ScenarioIdentifier,
-        objective_target_identifier: dict,
-        attack_results: dict[str, List[AttackResult]],
-        objective_scorer: Optional["Scorer"] = None,
-        objective_scorer_identifier: Optional[dict] = None,
+        objective_target_identifier: ComponentIdentifier | None,
+        attack_results: dict[str, list[AttackResult]],
+        objective_scorer_identifier: ComponentIdentifier | None,
         scenario_run_state: ScenarioRunState = "CREATED",
-        labels: Optional[dict[str, str]] = None,
-        completion_time: Optional[datetime] = None,
+        labels: dict[str, str] | None = None,
+        creation_time: datetime | None = None,
+        completion_time: datetime | None = None,
         number_tries: int = 0,
-        id: Optional[uuid.UUID] = None,
+        id: uuid.UUID | None = None,  # noqa: A002
+        display_group_map: dict[str, str] | None = None,
+        error_message: str | None = None,
+        error_type: str | None = None,
+        error_attack_result_ids: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
+        """
+        Initialize a scenario result.
+
+        Args:
+            scenario_identifier (ScenarioIdentifier): Identifier for the executed scenario.
+            objective_target_identifier (ComponentIdentifier): Target identifier.
+            attack_results (dict[str, List[AttackResult]]): Results grouped by atomic attack name.
+            objective_scorer_identifier (ComponentIdentifier | None): Objective scorer identifier,
+                or None if the scenario has no objective scorer.
+            scenario_run_state (ScenarioRunState): Current scenario run state.
+            labels (Optional[dict[str, str]]): Optional labels.
+            creation_time (datetime | None): When the scenario result was created.
+            completion_time (Optional[datetime]): Optional completion timestamp.
+            number_tries (int): Number of run attempts.
+            id (Optional[uuid.UUID]): Optional scenario result ID.
+            display_group_map (Optional[dict[str, str]]): Optional mapping of
+                atomic_attack_name → display group label. Used by the console
+                printer to aggregate results for user-facing output.
+            error_message (Optional[str]): Scenario-level error message when the run fails.
+            error_type (Optional[str]): Exception class name when the run fails.
+            error_attack_result_ids (Optional[list[str]]): IDs of attack results that
+                errored during the scenario run. Defaults to an empty list.
+            metadata (Optional[dict[str, Any]]): Free-form JSON metadata persisted
+                with the scenario result. Currently used to record
+                ``objective_hashes`` — the objective ``sha256`` set chosen
+                on the first run, replayed on resume so a fresh
+                ``random.sample`` can't silently change which objectives the
+                scenario operates on. Keys are not part of any public contract
+                and may evolve.
+
+        """
         self.id = id if id is not None else uuid.uuid4()
         self.scenario_identifier = scenario_identifier
+
         self.objective_target_identifier = objective_target_identifier
-        # Store the scorer object for metrics access (not serialized)
-        self._objective_scorer = objective_scorer
-        # Derive identifier from scorer if available, otherwise use provided identifier
-        if objective_scorer:
-            self.objective_scorer_identifier = objective_scorer.get_identifier() or objective_scorer_identifier
-        else:
-            self.objective_scorer_identifier = objective_scorer_identifier or {}
+
+        self.objective_scorer_identifier = objective_scorer_identifier
+
         self.scenario_run_state = scenario_run_state
         self.attack_results = attack_results
         self.labels = labels if labels is not None else {}
+        self.creation_time = creation_time if creation_time is not None else datetime.now(timezone.utc)
         self.completion_time = completion_time if completion_time is not None else datetime.now(timezone.utc)
         self.number_tries = number_tries
+        self._display_group_map = display_group_map or {}
+        self.error_message = error_message
+        self.error_type = error_type
+        self.error_attack_result_ids: list[str] = list(error_attack_result_ids) if error_attack_result_ids else []
+        self.metadata: dict[str, Any] = metadata if metadata is not None else {}
 
     @property
-    def objective_scorer(self) -> Optional["Scorer"]:
+    def display_group_map(self) -> dict[str, str]:
+        """Mapping of atomic_attack_name → display group label."""
+        return self._display_group_map
+
+    def get_strategies_used(self) -> list[str]:
         """
-        Get the objective scorer for this scenario.
+        Get the list of strategies used in this scenario.
 
         Returns:
-            Scorer: The objective scorer instance, or None if deserialized from database.
+            List[str]: Atomic attack strategy names present in the results.
+
         """
-        return self._objective_scorer
-
-    def get_objective_scorer_identifier(self) -> Optional["ScorerIdentifier"]:
-        """
-        Get the objective scorer identifier as a ScorerIdentifier object.
-
-        Reconstructs a ScorerIdentifier from the stored dict representation.
-        This can be used even for deserialized results from the database.
-
-        Returns:
-            ScorerIdentifier: The scorer identifier object, or None if no identifier is stored.
-        """
-        from pyrit.score.scorer_identifier import ScorerIdentifier
-
-        if not self.objective_scorer_identifier:
-            return None
-        return ScorerIdentifier.from_compact_dict(self.objective_scorer_identifier)
-
-    def get_strategies_used(self) -> List[str]:
-        """Get the list of strategies used in this scenario."""
         return list(self.attack_results.keys())
 
-    def get_objectives(self, *, atomic_attack_name: Optional[str] = None) -> List[str]:
+    def get_display_groups(self) -> dict[str, list[AttackResult]]:
+        """
+        Aggregate attack results by display group.
+
+        When a ``display_group_map`` was provided, results from multiple
+        ``atomic_attack_name`` keys that share the same display group are
+        merged into a single list.  When no map was provided, this returns
+        the same structure as ``attack_results`` (identity mapping).
+
+        Returns:
+            dict[str, list[AttackResult]]: Results grouped by display label.
+        """
+        if not self._display_group_map:
+            return dict(self.attack_results)
+
+        grouped: dict[str, list[AttackResult]] = {}
+        for attack_name, results in self.attack_results.items():
+            group = self._display_group_map.get(attack_name, attack_name)
+            grouped.setdefault(group, []).extend(results)
+        return grouped
+
+    def get_objectives(self, *, atomic_attack_name: str | None = None) -> list[str]:
         """
         Get the list of unique objectives for this scenario.
 
@@ -129,9 +206,10 @@ class ScenarioResult:
 
         Returns:
             List[str]: Deduplicated list of objectives.
+
         """
-        objectives: List[str] = []
-        strategies_to_process: List[List[AttackResult]]
+        objectives: list[str] = []
+        strategies_to_process: list[list[AttackResult]]
 
         if not atomic_attack_name:
             # Include all atomic attacks
@@ -144,12 +222,11 @@ class ScenarioResult:
                 strategies_to_process = []
 
         for results in strategies_to_process:
-            for result in results:
-                objectives.append(result.objective)
+            objectives.extend(result.objective for result in results)
 
         return list(set(objectives))
 
-    def objective_achieved_rate(self, *, atomic_attack_name: Optional[str] = None) -> int:
+    def objective_achieved_rate(self, *, atomic_attack_name: str | None = None) -> int:
         """
         Get the success rate of this scenario.
 
@@ -159,6 +236,7 @@ class ScenarioResult:
 
         Returns:
             int: Success rate as a percentage (0-100).
+
         """
         if not atomic_attack_name:
             # Calculate rate across all atomic attacks
@@ -196,32 +274,108 @@ class ScenarioResult:
 
         Returns:
             The normalized scenario name suitable for database queries.
+
         """
         # Check if it looks like snake_case (contains underscore and is lowercase)
         if "_" in scenario_name and scenario_name == scenario_name.lower():
             # Convert snake_case to PascalCase
             # e.g., "content_harms" -> "ContentHarms"
             parts = scenario_name.split("_")
-            pascal_name = "".join(part.capitalize() for part in parts)
-            return pascal_name
+            return "".join(part.capitalize() for part in parts)
         # Already PascalCase or other format, return as-is
         return scenario_name
 
-    def get_scorer_evaluation_metrics(self) -> Optional["ScorerMetrics"]:
+    def get_scorer_evaluation_metrics(self) -> ScorerMetrics | None:
         """
         Get the evaluation metrics for the scenario's scorer from the scorer evaluation registry.
 
         Returns:
             ScorerMetrics: The evaluation metrics object, or None if not found.
+
         """
         # import here to avoid circular imports
+        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
         from pyrit.score.scorer_evaluation.scorer_metrics_io import (
-            find_objective_metrics_by_hash,
+            find_objective_metrics_by_eval_hash,
         )
 
-        # Use the stored hash directly for lookup (avoids needing to reconstruct ScorerIdentifier)
-        scorer_hash = self.objective_scorer_identifier.get("hash")
-        if not scorer_hash:
+        if not self.objective_scorer_identifier:
             return None
 
-        return find_objective_metrics_by_hash(hash=scorer_hash)
+        eval_hash = ScorerEvaluationIdentifier(self.objective_scorer_identifier).eval_hash
+
+        return find_objective_metrics_by_eval_hash(eval_hash=eval_hash)
+
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Serialize this scenario result to a JSON-compatible dictionary.
+
+        Returns:
+            dict[str, Any]: Serialized payload suitable for REST APIs or persistence.
+        """
+        return {
+            "id": str(self.id),
+            "scenario_identifier": self.scenario_identifier.to_dict(),
+            "objective_target_identifier": (
+                self.objective_target_identifier.to_dict() if self.objective_target_identifier else None
+            ),
+            "objective_scorer_identifier": (
+                self.objective_scorer_identifier.to_dict() if self.objective_scorer_identifier else None
+            ),
+            "scenario_run_state": self.scenario_run_state,
+            "attack_results": {name: [r.to_dict() for r in results] for name, results in self.attack_results.items()},
+            "display_group_map": self._display_group_map,
+            "labels": self.labels,
+            "creation_time": self.creation_time.isoformat() if self.creation_time else None,
+            "completion_time": self.completion_time.isoformat() if self.completion_time else None,
+            "number_tries": self.number_tries,
+            "error_attack_result_ids": self.error_attack_result_ids,
+            "error_message": self.error_message,
+            "error_type": self.error_type,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ScenarioResult:
+        """
+        Reconstruct a ScenarioResult from a dictionary.
+
+        Args:
+            data (dict[str, Any]): Dictionary as produced by to_dict().
+
+        Returns:
+            ScenarioResult: Reconstructed instance.
+        """
+        from pyrit.identifiers.component_identifier import ComponentIdentifier
+
+        result = cls(
+            id=uuid.UUID(data["id"]) if data.get("id") else None,
+            scenario_identifier=ScenarioIdentifier.from_dict(data["scenario_identifier"]),
+            objective_target_identifier=(
+                ComponentIdentifier.from_dict(data["objective_target_identifier"])
+                if data.get("objective_target_identifier")
+                else None
+            ),
+            objective_scorer_identifier=(
+                ComponentIdentifier.from_dict(data["objective_scorer_identifier"])
+                if data.get("objective_scorer_identifier")
+                else None
+            ),
+            scenario_run_state=data.get("scenario_run_state", "CREATED"),
+            attack_results={
+                name: [AttackResult.from_dict(r) for r in results]
+                for name, results in data.get("attack_results", {}).items()
+            },
+            display_group_map=data.get("display_group_map"),
+            labels=data.get("labels"),
+            creation_time=(datetime.fromisoformat(data["creation_time"]) if data.get("creation_time") else None),
+            completion_time=(datetime.fromisoformat(data["completion_time"]) if data.get("completion_time") else None),
+            number_tries=data.get("number_tries", 0),
+            error_attack_result_ids=data.get("error_attack_result_ids"),
+            error_message=data.get("error_message"),
+            error_type=data.get("error_type"),
+        )
+        # Preserve missing completion_time: __init__ defaults it to now(), but a
+        # still-running scenario shouldn't be marked as completed-at-load-time.
+        if not data.get("completion_time"):
+            result.completion_time = None  # type: ignore[ty:invalid-assignment]
+        return result

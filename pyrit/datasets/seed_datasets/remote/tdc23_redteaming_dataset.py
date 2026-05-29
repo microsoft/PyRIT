@@ -19,14 +19,14 @@ class _TDC23RedteamingDataset(_RemoteDatasetLoader):
     harm categories related to fairness, misinformation, dangerous and criminal activities,
     violence, etc. in the style of writing narratives.
 
-    Reference: https://huggingface.co/datasets/walledai/TDC23-RedTeaming
+    Reference: [@mazeika2023tdc]
     """
 
     def __init__(
         self,
         *,
         source: str = "walledai/TDC23-RedTeaming",
-    ):
+    ) -> None:
         """
         Initialize the TDC23-RedTeaming dataset loader.
 
@@ -40,7 +40,7 @@ class _TDC23RedteamingDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "tdc23_redteaming"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch TDC23-RedTeaming dataset and return as SeedDataset.
 

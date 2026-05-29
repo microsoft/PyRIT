@@ -6,10 +6,6 @@
 #       format_name: percent
 #       format_version: '1.3'
 #       jupytext_version: 1.18.1
-#   kernelspec:
-#     display_name: pyrit (3.13.5)
-#     language: python
-#     name: python3
 # ---
 
 # %% [markdown]
@@ -31,7 +27,7 @@
 #
 # Some examples of scenarios you might create:
 #
-# - **VibeCheckScenario**: Randomly selects a few prompts from HarmBench to quickly assess model behavior
+# - **VibeCheckScenario**: Randomly selects a few prompts from HarmBench [@mazeika2024harmbench] to quickly assess model behavior
 # - **QuickViolence**: Checks how resilient a model is to violent objectives using multiple attack techniques
 # - **ComprehensiveFoundry**: Tests a target with all available attack converters and strategies
 # - **CustomCompliance**: Tests against specific compliance requirements with curated datasets and attacks
@@ -40,7 +36,9 @@
 #
 # ## How to Run Scenarios
 #
-# Scenarios should take almost no effort to run with default values. [pyrit_scan](../front_end/1_pyrit_scan.ipynb) and [pyrit_shell](../front_end/2_pyrit_shell.md) both use scenarios to execute.
+# Scenarios should take almost no effort to run with default values. The [PyRIT Scanner](../../scanner/0_scanner.md) provides two CLIs for running scenarios: [pyrit_scan](../../scanner/1_pyrit_scan.ipynb) for automated execution and [pyrit_shell](../../scanner/2_pyrit_shell.md) for interactive exploration.
+#
+# For programmatic configuration — customizing datasets, strategies, scorers, and baseline mode — see [Common Scenario Parameters](./1_common_scenario_parameters.ipynb).
 #
 # ## How It Works
 #
@@ -57,44 +55,51 @@
 #
 # ### Required Components
 #
-# 1. **Strategy Enum**: Create a `ScenarioStrategy` enum that defines the available strategies for your scenario.
-#    - Each enum member is defined as `(value, tags)` where value is a string and tags is a set of strings
+# 1. **Strategy Enum**: Create a `ScenarioStrategy` enum that defines the available attack techniques for your scenario.
+#    - Each enum member represents an **attack technique** (the *how* of an attack)
+#    - Each member is defined as `(value, tags)` where value is a string and tags is a set of strings
 #    - Include an `ALL` aggregate strategy that expands to all available strategies
-#    - Optionally implement `supports_composition()` and `validate_composition()` for strategy composition rules
+#    - Optionally override `_prepare_strategies()` for custom composition logic (see `FoundryComposite`)
 #
-# 2. **Scenario Class**: Extend `Scenario` and implement these abstract methods:
-#    - `get_strategy_class()`: Return your strategy enum class
-#    - `get_default_strategy()`: Return the default strategy (typically `YourStrategy.ALL`)
-#    - `_get_atomic_attacks_async()`: Build and return a list of `AtomicAttack` instances
+# 2. **Scenario Class**: Extend `Scenario` and pass these to `super().__init__()`:
+#    - `strategy_class`: Your strategy enum class
+#    - `default_strategy`: The default strategy (typically `YourStrategy.ALL` or `YourStrategy.DEFAULT`)
+#    - The base class provides a default `_get_atomic_attacks_async()` that uses the factory/registry
+#      pattern. Override it only if your scenario needs custom attack construction logic.
 #
-# 3. **Constructor**: Use `@apply_defaults` decorator and call `super().__init__()` with scenario metadata:
+# 3. **Default Dataset**: Pass `default_dataset_config=` to `super().__init__()` to specify the datasets your scenario uses out of the box.
+#    - Returns a `DatasetConfiguration` with one or more named datasets (e.g., `DatasetConfiguration(dataset_names=["my_dataset"])`)
+#    - Users can override this at runtime via `--dataset-names` in the CLI or by passing a custom `dataset_config` programmatically
+#
+# 4. **Constructor**: Use `@apply_defaults` decorator and call `super().__init__()` with scenario metadata:
 #    - `name`: Descriptive name for your scenario
 #    - `version`: Integer version number
 #    - `strategy_class`: The strategy enum class for this scenario
 #    - `objective_scorer_identifier`: Identifier dict for the scoring mechanism (optional)
-#    - `include_default_baseline`: Whether to include a baseline attack (default: True)
 #    - `scenario_result_id`: Optional ID to resume an existing scenario (optional)
 #
-# 4. **Initialization**: Call `await scenario.initialize_async()` to populate atomic attacks:
+# 5. **Initialization**: Call `await scenario.initialize_async()` to populate atomic attacks:
 #    - `objective_target`: The target system being tested (required)
 #    - `scenario_strategies`: List of strategies to execute (optional, defaults to ALL)
 #    - `max_concurrency`: Number of concurrent operations (default: 1)
 #    - `max_retries`: Number of retry attempts on failure (default: 0)
 #    - `memory_labels`: Optional labels for tracking (optional)
+#    - `include_baseline`: Whether to prepend a baseline attack (defaults to the scenario type's
+#      `BASELINE_ATTACK_POLICY`; most scenarios default it on, `Jailbreak` defaults it off)
 #
 # ### Example Structure
+#
+# The simplest approach uses the **factory/registry pattern**: define your strategy,
+# dataset config, and constructor — the base class handles building atomic attacks
+# automatically from registered attack techniques.
 # %%
-from typing import List, Optional, Type
 
 from pyrit.common import apply_defaults
-from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.scenario import (
-    AtomicAttack,
     DatasetConfiguration,
     Scenario,
     ScenarioStrategy,
 )
-from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 from pyrit.setup import initialize_pyrit_async
 
@@ -103,93 +108,81 @@ await initialize_pyrit_async(memory_db_type="InMemory")  # type: ignore [top-lev
 
 class MyStrategy(ScenarioStrategy):
     ALL = ("all", {"all"})
-    StrategyA = ("strategy_a", {"tag1", "tag2"})
-    StrategyB = ("strategy_b", {"tag1"})
+    DEFAULT = ("default", {"default"})
+    SINGLE_TURN = ("single_turn", {"single_turn"})
+    # Strategy members represent attack techniques
+    PromptSending = ("prompt_sending", {"single_turn", "default"})
+    RolePlay = ("role_play", {"single_turn"})
 
 
 class MyScenario(Scenario):
-    version: int = 1
+    """Quick-check scenario for testing model behavior across harm categories."""
 
-    # A strategy defintion helps callers define how to run your scenario (e.g. from the front_end)
-    @classmethod
-    def get_strategy_class(cls) -> Type[ScenarioStrategy]:
-        return MyStrategy
-
-    @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        return MyStrategy.ALL
-
-    # This is the default dataset configuration for this scenario (e.g. prompts to send)
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        return DatasetConfiguration(dataset_names=["dataset_name"])
+    VERSION: int = 1
 
     @apply_defaults
     def __init__(
         self,
         *,
-        objective_scorer: Optional[TrueFalseScorer] = None,
-        scenario_result_id: Optional[str] = None,
-    ):
-        self._objective_scorer = objective_scorer
-        self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
+        objective_scorer: TrueFalseScorer | None = None,
+        scenario_result_id: str | None = None,
+    ) -> None:
+        self._objective_scorer: TrueFalseScorer = (
+            objective_scorer if objective_scorer else self._get_default_objective_scorer()
+        )
 
-        # Call parent constructor - note: objective_target is NOT passed here
         super().__init__(
-            name="My Custom Scenario",
-            version=self.version,
+            version=self.VERSION,
+            objective_scorer=self._objective_scorer,
             strategy_class=MyStrategy,
-            objective_scorer=objective_scorer,
+            default_strategy=MyStrategy.DEFAULT,
+            default_dataset_config=DatasetConfiguration(dataset_names=["dataset_name"], max_dataset_size=4),
             scenario_result_id=scenario_result_id,
         )
 
-    async def _get_atomic_attacks_async(self) -> List[AtomicAttack]:
-        """
-        Build atomic attacks based on selected strategies.
+    # Optional: override _build_display_group to customize result grouping.
+    # Default groups by technique name; override to group by dataset instead:
+    def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> str:
+        return seed_group_name
 
-        This method is called by initialize_async() after strategies are prepared.
-        Use self._scenario_composites to access the selected strategies.
-        """
-        atomic_attacks = []
+    # No _get_atomic_attacks_async override needed!
+    # The base class builds attacks from the (technique x dataset) cross-product
+    # using the factory/registry pattern automatically.
 
-        # objective_target is guaranteed to be non-None by parent class validation
-        assert self._objective_target is not None
-
-        # Extract individual strategy values from the composites
-        selected_strategies = ScenarioCompositeStrategy.extract_single_strategy_values(
-            self._scenario_composites, strategy_type=MyStrategy
-        )
-
-        for strategy in selected_strategies:
-            # self._dataset_config is set by the parent class
-            seed_groups = self._dataset_config.get_all_seed_groups()
-
-            # Create attack instances based on strategy
-            attack = PromptSendingAttack(
-                objective_target=self._objective_target,
-                attack_scoring_config=self._scorer_config,
-            )
-            atomic_attacks.append(
-                AtomicAttack(
-                    atomic_attack_name=strategy,
-                    attack=attack,
-                    seed_groups=seed_groups,  # type: ignore[arg-type]
-                    memory_labels=self._memory_labels,
-                )
-            )
-        return atomic_attacks
-
-
-scenario = MyScenario()
 
 # %% [markdown]
 #
 # ## Existing Scenarios
 
 # %%
-from pyrit.cli.frontend_core import FrontendCore, print_scenarios_list_async
+from pyrit.backend.services.scenario_service import get_scenario_service
+from pyrit.cli._output import print_scenario_list
 
-await print_scenarios_list_async(context=FrontendCore())  # type: ignore
+response = await get_scenario_service().list_scenarios_async(limit=200)  # type: ignore
+print_scenario_list(items=[s.model_dump() for s in response.items])
+
+# %% [markdown]
+#
+# ## Baseline Execution
+#
+# Every scenario can optionally include a **baseline attack** — a `PromptSendingAttack` that sends
+# each objective directly to the target without any converters or multi-turn techniques. This is
+# controlled by the `include_baseline` parameter on `initialize_async`; when omitted, each
+# scenario falls back to its own `BASELINE_ATTACK_POLICY` class attribute (most scenarios default
+# it on; `Jailbreak` defaults it off). See
+# [Common Scenario Parameters](./1_common_scenario_parameters.ipynb) for a worked example.
+#
+# Custom scenarios should choose their `BASELINE_ATTACK_POLICY` based on whether an unmodified
+# prompt is a meaningful comparator for the scenario's strategies:
+#
+# - **`Enabled`** — the baseline is prepended by default and the caller can opt out. Use when an
+#   unmodified-prompt run is a meaningful comparison point (most scenarios).
+# - **`Disabled`** — the baseline is supported but omitted by default; the caller must opt in. Use
+#   when the scenario is already dominated by a large set of templates/strategies that already
+#   exercise the unmodified surface (e.g., `Jailbreak`).
+# - **`Forbidden`** — the baseline is unavailable and passing `include_baseline=True` raises. Use
+#   when the scenario's semantics make a single-shot unmodified prompt meaningless as a comparator
+#   (e.g., benchmarks comparing across adversarial models, or multi-turn-only scenarios).
 
 # %% [markdown]
 #

@@ -2,11 +2,13 @@
 # Licensed under the MIT license.
 
 import asyncio
-from typing import Any, Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any, Optional
 
 import tenacity
 from openai import AsyncOpenAI
 
+from pyrit.auth import ensure_async_token_provider
 from pyrit.common import default_values
 from pyrit.models import (
     EmbeddingData,
@@ -59,10 +61,10 @@ class OpenAITextEmbedding(EmbeddingSupport):
                 env_var_name=self.API_KEY_ENVIRONMENT_VARIABLE, passed_value=api_key
             )
 
-        # Create async client - type: ignore needed because get_required_value returns str
-        # but api_key parameter accepts str | Callable[[], str | Awaitable[str]]
+        # Wrap sync token providers for async compatibility; AsyncOpenAI accepts str or async callable
+        resolved_api_key = ensure_async_token_provider(api_key)
         self._async_client = AsyncOpenAI(
-            api_key=api_key,  # type: ignore[arg-type]
+            api_key=resolved_api_key,
             base_url=endpoint,
         )
 
@@ -82,7 +84,7 @@ class OpenAITextEmbedding(EmbeddingSupport):
             The embedding response
         """
         embedding_obj = await self._async_client.embeddings.create(input=text, model=self._model, **kwargs)
-        embedding_response = EmbeddingResponse(
+        return EmbeddingResponse(
             model=embedding_obj.model,
             object=embedding_obj.object,
             data=[
@@ -97,7 +99,6 @@ class OpenAITextEmbedding(EmbeddingSupport):
                 total_tokens=embedding_obj.usage.total_tokens,
             ),
         )
-        return embedding_response
 
     def generate_text_embedding(self, text: str, **kwargs: Any) -> EmbeddingResponse:
         """

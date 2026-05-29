@@ -7,9 +7,10 @@ from typing import Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import SeedPrompt
 from pyrit.prompt_converter.llm_generic_text_converter import LLMGenericTextConverter
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -18,22 +19,22 @@ class ToneConverter(LLMGenericTextConverter):
     """
     Converts a conversation to a different tone using an LLM.
 
-    An existing ``PromptChatTarget`` is used to perform the conversion (like Azure OpenAI).
+    An existing ``PromptTarget`` is used to perform the conversion (like Azure OpenAI).
     """
 
     @apply_defaults
     def __init__(
         self,
         *,
-        converter_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         tone: str,
         prompt_template: Optional[SeedPrompt] = None,
-    ):
+    ) -> None:
         """
-        Initializes the converter with the target chat support, tone, and optional prompt template.
+        Initialize the converter with the target chat support, tone, and optional prompt template.
 
         Args:
-            converter_target (PromptChatTarget): The target chat support for the conversion which will translate.
+            converter_target (PromptTarget): The target chat support for the conversion which will translate.
                 Can be omitted if a default has been configured via PyRIT initialization.
             tone (str): The tone for the conversation. E.g. upset, sarcastic, indifferent, etc.
             prompt_template (SeedPrompt, Optional): The prompt template for the conversion.
@@ -52,4 +53,19 @@ class ToneConverter(LLMGenericTextConverter):
             converter_target=converter_target,
             system_prompt_template=prompt_template,
             tone=tone,
+        )
+        self._tone = tone
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with tone parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "tone": self._tone,
+            },
+            children={"converter_target": self._converter_target.get_identifier()},
         )

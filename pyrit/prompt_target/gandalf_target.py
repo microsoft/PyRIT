@@ -7,8 +7,10 @@ import logging
 from typing import Optional
 
 from pyrit.common import net_utility
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,7 @@ class GandalfTarget(PromptTarget):
         *,
         level: GandalfLevel,
         max_requests_per_minute: Optional[int] = None,
+        custom_configuration: Optional[TargetConfiguration] = None,
     ) -> None:
         """
         Initialize the Gandalf target.
@@ -51,24 +54,45 @@ class GandalfTarget(PromptTarget):
             max_requests_per_minute (int, Optional): Number of requests the target can handle per
                 minute before hitting a rate limit. The number of requests sent to the target
                 will be capped at the value provided.
+            custom_configuration (TargetConfiguration, Optional): Override the default configuration for
+              target instance.
         """
         endpoint = "https://gandalf-api.lakera.ai/api/send-message"
-        super().__init__(max_requests_per_minute=max_requests_per_minute, endpoint=endpoint)
+        super().__init__(
+            max_requests_per_minute=max_requests_per_minute,
+            endpoint=endpoint,
+            custom_configuration=custom_configuration,
+        )
 
         self._defender = level.value
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier with Gandalf-specific parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this target instance.
+        """
+        return self._create_identifier(
+            params={
+                "level": self._defender,
+            },
+        )
+
     @limit_requests_per_minute
-    async def send_prompt_async(self, *, message: Message) -> list[Message]:
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously send a message to the Gandalf target.
 
         Args:
-            message (Message): The message object containing the prompt to send.
+            normalized_conversation (list[Message]): The full conversation
+                (history + current message) after running the normalization
+                pipeline. The current message is the last element.
 
         Returns:
             list[Message]: A list containing the response from the prompt target.
         """
-        self._validate_request(message=message)
+        message = normalized_conversation[-1]
         request = message.message_pieces[0]
 
         logger.info(f"Sending the following prompt to the prompt target: {request}")
@@ -78,15 +102,6 @@ class GandalfTarget(PromptTarget):
         response_entry = construct_response_from_request(request=request, response_text_pieces=[response])
 
         return [response_entry]
-
-    def _validate_request(self, *, message: Message) -> None:
-        n_pieces = len(message.message_pieces)
-        if n_pieces != 1:
-            raise ValueError(f"This target only supports a single message piece. Received: {n_pieces} pieces.")
-
-        piece_type = message.message_pieces[0].converted_value_data_type
-        if piece_type != "text":
-            raise ValueError(f"This target only supports text prompt input. Received: {piece_type}.")
 
     async def check_password(self, password: str) -> bool:
         """
@@ -111,7 +126,7 @@ class GandalfTarget(PromptTarget):
             raise ValueError("The chat returned an empty response.")
 
         json_response = resp.json()
-        return json_response["success"]
+        return bool(json_response["success"])
 
     async def _complete_text_async(self, text: str) -> str:
         payload: dict[str, object] = {
@@ -126,7 +141,7 @@ class GandalfTarget(PromptTarget):
         if not resp.text:
             raise ValueError("The chat returned an empty response.")
 
-        answer = json.loads(resp.text)["answer"]
+        answer: str = json.loads(resp.text)["answer"]
 
         logger.info(f'Received the following response from the prompt target "{answer}"')
         return answer

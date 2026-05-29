@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional, Sequence, get_args
+from collections.abc import Sequence
+from typing import Optional, get_args
 
 from pyrit.models import ChatMessageRole, Message, MessagePiece, PromptDataType
 
@@ -23,9 +24,9 @@ class ScorerPromptValidator:
         max_pieces_in_response: Optional[int] = None,
         max_text_length: Optional[int] = None,
         enforce_all_pieces_valid: Optional[bool] = False,
-        raise_on_no_valid_pieces: Optional[bool] = True,
-        is_objective_required=False,
-    ):
+        raise_on_no_valid_pieces: Optional[bool] = False,
+        is_objective_required: bool = False,
+    ) -> None:
         """
         Initialize the ScorerPromptValidator.
 
@@ -43,7 +44,8 @@ class ScorerPromptValidator:
             enforce_all_pieces_valid (Optional[bool]): Whether all pieces must be valid or just at least one.
                 Defaults to False.
             raise_on_no_valid_pieces (Optional[bool]): Whether to raise ValueError when no pieces are valid.
-                Defaults to True for backwards compatibility. Set to False to allow empty scores.
+                Defaults to False, allowing scorers to handle empty results gracefully (e.g., returning
+                False for blocked responses). Set to True to raise an exception instead.
             is_objective_required (bool): Whether an objective must be provided for scoring. Defaults to False.
         """
         if supported_data_types:
@@ -98,12 +100,11 @@ class ScorerPromptValidator:
                 f"Objective included: {objective}. "
             )
 
-        if self._max_pieces_in_response is not None:
-            if len(message.message_pieces) > self._max_pieces_in_response:
-                raise ValueError(
-                    f"Message has {len(message.message_pieces)} pieces, "
-                    f"exceeding the limit of {self._max_pieces_in_response}."
-                )
+        if self._max_pieces_in_response is not None and len(message.message_pieces) > self._max_pieces_in_response:
+            raise ValueError(
+                f"Message has {len(message.message_pieces)} pieces, "
+                f"exceeding the limit of {self._max_pieces_in_response}."
+            )
 
         if self._is_objective_required and not objective:
             raise ValueError("Objective is required but not provided.")
@@ -125,7 +126,7 @@ class ScorerPromptValidator:
             if metadata not in message_piece.prompt_metadata:
                 return False
 
-        if message_piece.role not in self._supported_roles:
+        if message_piece.api_role not in self._supported_roles:
             return False
 
         # Check text length limit for text data types

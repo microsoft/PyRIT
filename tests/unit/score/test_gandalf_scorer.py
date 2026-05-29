@@ -6,6 +6,7 @@ from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import get_mock_target_identifier
 
 from pyrit.exceptions.exception_classes import PyritException
 from pyrit.memory.memory_interface import MemoryInterface
@@ -47,11 +48,11 @@ def generate_request(conversation_id: Optional[str] = None) -> Message:
 @patch("requests.post")
 @pytest.mark.parametrize("password_correct", [True, False])
 @pytest.mark.parametrize("level", [GandalfLevel.LEVEL_1, GandalfLevel.LEVEL_2, GandalfLevel.LEVEL_3])
-@pytest.mark.asyncio
 async def test_gandalf_scorer_score(
     mocked_post, sqlite_instance: MemoryInterface, level: GandalfLevel, password_correct: bool
 ):
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     conversation_id = str(uuid.uuid4())
     sqlite_instance.add_message_to_memory(request=generate_request(conversation_id=conversation_id))
@@ -78,12 +79,11 @@ async def test_gandalf_scorer_score(
         assert scores[0].score_rationale == "Password SUNSHINE found! Gandalf response: Message"
     else:
         assert scores[0].score_rationale == "Invalid password found in text. [value=SUNSHINE]"
-    assert scores[0].scorer_class_identifier["__type__"] == "GandalfScorer"
+    assert scores[0].scorer_class_identifier.class_name == "GandalfScorer"
 
 
 @patch("requests.post")
 @pytest.mark.parametrize("level", [GandalfLevel.LEVEL_1, GandalfLevel.LEVEL_2, GandalfLevel.LEVEL_3])
-@pytest.mark.asyncio
 async def test_gandalf_scorer_set_system_prompt(
     mocked_post,
     sqlite_instance: MemoryInterface,
@@ -95,6 +95,7 @@ async def test_gandalf_scorer_set_system_prompt(
     sqlite_instance.add_message_to_memory(request=response)
 
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[response])
 
     scorer = GandalfScorer(chat_target=chat_target, level=level)
@@ -110,7 +111,6 @@ async def test_gandalf_scorer_set_system_prompt(
 
 @patch("requests.post")
 @pytest.mark.parametrize("level", [GandalfLevel.LEVEL_1, GandalfLevel.LEVEL_2, GandalfLevel.LEVEL_3])
-@pytest.mark.asyncio
 async def test_gandalf_scorer_adds_to_memory(mocked_post, level: GandalfLevel, sqlite_instance: MemoryInterface):
     conversation_id = str(uuid.uuid4())
     generated_request = generate_request(conversation_id=conversation_id)
@@ -119,6 +119,7 @@ async def test_gandalf_scorer_adds_to_memory(mocked_post, level: GandalfLevel, s
     sqlite_instance.add_message_to_memory(request=response)
 
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[response])
 
     # Mock the requests.post call to return a successful response
@@ -131,7 +132,6 @@ async def test_gandalf_scorer_adds_to_memory(mocked_post, level: GandalfLevel, s
 
 
 @pytest.mark.parametrize("level", [GandalfLevel.LEVEL_1, GandalfLevel.LEVEL_2, GandalfLevel.LEVEL_3])
-@pytest.mark.asyncio
 async def test_gandalf_scorer_runtime_error_retries(level: GandalfLevel, sqlite_instance: MemoryInterface):
     conversation_id = str(uuid.uuid4())
     sqlite_instance.add_message_to_memory(request=generate_request(conversation_id=conversation_id))
@@ -139,6 +139,7 @@ async def test_gandalf_scorer_runtime_error_retries(level: GandalfLevel, sqlite_
     sqlite_instance.add_message_to_memory(request=response)
 
     chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(side_effect=[RuntimeError("Error"), response])
     scorer = GandalfScorer(level=level, chat_target=chat_target)
 

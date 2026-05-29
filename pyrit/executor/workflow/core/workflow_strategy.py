@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import logging
+import logging  # noqa: TC003
 from abc import ABC
 from dataclasses import dataclass
 from typing import Optional, TypeVar
@@ -26,14 +26,10 @@ WorkflowResultT = TypeVar("WorkflowResultT", bound="WorkflowResult")
 class WorkflowContext(StrategyContext, ABC):
     """Base class for all workflow contexts."""
 
-    pass
-
 
 @dataclass
 class WorkflowResult(StrategyResult, ABC):
     """Base class for all workflow results."""
-
-    pass
 
 
 class _DefaultWorkflowEventHandler(StrategyEventHandler[WorkflowContextT, WorkflowResultT]):
@@ -42,7 +38,7 @@ class _DefaultWorkflowEventHandler(StrategyEventHandler[WorkflowContextT, Workfl
     Handles events during the execution of a workflow strategy.
     """
 
-    def __init__(self, logger: logging.Logger = logger):
+    def __init__(self, logger: logging.Logger = logger) -> None:
         """
         Initialize the default event handler with a logger.
 
@@ -115,7 +111,7 @@ class WorkflowStrategy(Strategy[WorkflowContextT, WorkflowResultT], ABC):
         context_type: type[WorkflowContextT],
         logger: logging.Logger = logger,
         event_handler: Optional[StrategyEventHandler[WorkflowContextT, WorkflowResultT]] = None,
-    ):
+    ) -> None:
         """
         Initialize the workflow strategy with a specific context type and logger.
 

@@ -10,11 +10,10 @@ the pre-defined datasets in PyRIT. These are meant as a starting point only.
 
 import logging
 import textwrap
-from typing import List
 
-from pyrit.cli.scenario_registry import ScenarioRegistry
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory
+from pyrit.registry import ScenarioRegistry
 from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
@@ -47,31 +46,20 @@ class LoadDefaultDatasets(PyRITInitializer):
         ).strip()
 
     @property
-    def required_env_vars(self) -> List[str]:
+    def required_env_vars(self) -> list[str]:
         """Return the list of required environment variables."""
         return []
 
     async def initialize_async(self) -> None:
         """Load default datasets from all registered scenarios."""
-        # Get ScenarioRegistry to discover all scenarios
-        registry = ScenarioRegistry()
+        registry = ScenarioRegistry.get_registry_singleton()
 
-        # Collect all default datasets from all scenarios
-        all_default_datasets: List[str] = []
+        all_default_datasets: list[str] = []
 
-        # Get all scenario names from registry
-        scenario_names = registry.get_scenario_names()
-
-        for scenario_name in scenario_names:
-            scenario_class = registry.get_scenario(scenario_name)
-            if scenario_class:
-                # Get default_dataset_config from the scenario class
-                try:
-                    datasets = scenario_class.default_dataset_config().get_default_dataset_names()
-                    all_default_datasets.extend(datasets)
-                    logger.info(f"Scenario '{scenario_name}' uses datasets: {datasets}")
-                except Exception as e:
-                    logger.warning(f"Could not get default datasets from scenario '{scenario_name}': {e}")
+        for metadata in registry.list_metadata():
+            datasets = list(metadata.default_datasets)
+            all_default_datasets.extend(datasets)
+            logger.info(f"Scenario '{metadata.registry_name}' uses datasets: {datasets}")
 
         # Remove duplicates
         unique_datasets = list(dict.fromkeys(all_default_datasets))
@@ -82,12 +70,10 @@ class LoadDefaultDatasets(PyRITInitializer):
 
         logger.info(f"Loading {len(unique_datasets)} unique datasets required by all scenarios")
 
-        # Fetch the datasets
         dataset_list = await SeedDatasetProvider.fetch_datasets_async(
             dataset_names=unique_datasets,
         )
 
-        # Store datasets in CentralMemory
         memory = CentralMemory.get_memory_instance()
         await memory.add_seed_datasets_to_memory_async(datasets=dataset_list, added_by="LoadDefaultDatasets")
 

@@ -18,14 +18,14 @@ class _LLMLatentAdversarialTrainingDataset(_RemoteDatasetLoader):
     This dataset contains prompts used to assess and analyze harmful behaviors
     in large language models.
 
-    Reference: https://huggingface.co/datasets/LLM-LAT/harmful-dataset
+    Reference: [@sheshadri2024lat]
     """
 
     def __init__(
         self,
         *,
         source: str = "LLM-LAT/harmful-dataset",
-    ):
+    ) -> None:
         """
         Initialize the LLM-LAT harmful dataset loader.
 
@@ -39,7 +39,7 @@ class _LLMLatentAdversarialTrainingDataset(_RemoteDatasetLoader):
         """Return the dataset name."""
         return "llm_lat_harmful"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch LLM-LAT harmful dataset and return as SeedDataset.
 

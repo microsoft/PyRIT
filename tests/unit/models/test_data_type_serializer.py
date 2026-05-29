@@ -6,13 +6,14 @@ import os
 import re
 import tempfile
 from typing import get_args
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 from PIL import Image
 
 from pyrit.models import (
     AllowedCategories,
+    BinaryPathDataTypeSerializer,
     DataTypeSerializer,
     ErrorDataTypeSerializer,
     ImagePathDataTypeSerializer,
@@ -51,35 +52,30 @@ def test_data_serializer_factory_error_with_data(sqlite_instance):
     assert serializer.data_on_disk() is False
 
 
-@pytest.mark.asyncio
 async def test_data_serializer_text_read_data_throws(sqlite_instance):
     serializer = data_serializer_factory(category="prompt-memory-entries", data_type="text", value="test")
     with pytest.raises(TypeError):
         await serializer.read_data()
 
 
-@pytest.mark.asyncio
 async def test_data_serializer_text_save_data_throws(sqlite_instance):
     serializer = data_serializer_factory(category="prompt-memory-entries", data_type="text", value="test")
     with pytest.raises(TypeError):
         await serializer.save_data(b"\x00")
 
 
-@pytest.mark.asyncio
 async def test_data_serializer_error_read_data_throws(sqlite_instance):
     serializer = data_serializer_factory(category="prompt-memory-entries", data_type="error", value="test")
     with pytest.raises(TypeError):
         await serializer.read_data()
 
 
-@pytest.mark.asyncio
 async def test_data_serializer_error_save_data_throws(sqlite_instance):
     serializer = data_serializer_factory(category="prompt-memory-entries", data_type="error", value="test")
     with pytest.raises(TypeError):
         await serializer.save_data(b"\x00")
 
 
-@pytest.mark.asyncio
 async def test_data_serializer_factory_missing_category_raises_value_error():
     expected_error_message = (
         "The 'category' argument is mandatory and must be one of the following: "
@@ -99,7 +95,6 @@ def test_image_path_normalizer_factory(sqlite_instance):
     assert serializer.data_on_disk()
 
 
-@pytest.mark.asyncio
 async def test_image_path_save_data(sqlite_instance):
     serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
     await serializer.save_data(b"\x00")
@@ -111,7 +106,6 @@ async def test_image_path_save_data(sqlite_instance):
     assert os.path.isfile(serializer_value)
 
 
-@pytest.mark.asyncio
 async def test_image_path_read_data(sqlite_instance):
     data = b"\x00\x11\x22\x33"
     normalizer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
@@ -123,7 +117,6 @@ async def test_image_path_read_data(sqlite_instance):
     assert await read_normalizer.read_data() == data
 
 
-@pytest.mark.asyncio
 async def test_image_path_read_data_base64(sqlite_instance):
     data = b"AAAA"
 
@@ -134,7 +127,6 @@ async def test_image_path_read_data_base64(sqlite_instance):
     assert base_64_data == "QUFBQQ=="
 
 
-@pytest.mark.asyncio
 async def test_path_not_exists(sqlite_instance):
     file_path = "non_existing_file.txt"
     serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path", value=file_path)
@@ -159,7 +151,6 @@ def test_get_mime_type(sqlite_instance):
         assert mime_type == expected_mime_type
 
 
-@pytest.mark.asyncio
 async def test_save_b64_image(sqlite_instance):
     serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
     await serializer.save_b64_image("\x00")
@@ -171,7 +162,6 @@ async def test_save_b64_image(sqlite_instance):
     assert os.path.isfile(serializer_value)
 
 
-@pytest.mark.asyncio
 async def test_audio_path_save_data(sqlite_instance):
     """Test saving audio data to disk."""
     serializer = data_serializer_factory(category="prompt-memory-entries", data_type="audio_path")
@@ -181,7 +171,6 @@ async def test_audio_path_save_data(sqlite_instance):
     assert os.path.isfile(serializer.value)
 
 
-@pytest.mark.asyncio
 async def test_audio_path_read_data(sqlite_instance):
     """Test reading audio data from disk."""
     data = b"audio_content"
@@ -191,7 +180,6 @@ async def test_audio_path_read_data(sqlite_instance):
     assert read_data == data
 
 
-@pytest.mark.asyncio
 async def test_video_path_save_data(sqlite_instance):
     """Test saving video data to disk."""
     serializer = data_serializer_factory(category="prompt-memory-entries", data_type="video_path")
@@ -202,7 +190,6 @@ async def test_video_path_save_data(sqlite_instance):
     assert os.path.isfile(serializer.value)
 
 
-@pytest.mark.asyncio
 async def test_video_path_read_data(sqlite_instance):
     """Test reading video data from disk."""
     video_data = b"video_content"
@@ -212,7 +199,6 @@ async def test_video_path_read_data(sqlite_instance):
     assert read_data == video_data
 
 
-@pytest.mark.asyncio
 async def test_video_path_save_with_custom_extension(sqlite_instance):
     """Test saving video data with a custom file extension."""
     custom_extension = "avi"
@@ -226,7 +212,6 @@ async def test_video_path_save_with_custom_extension(sqlite_instance):
     assert os.path.isfile(serializer.value)
 
 
-@pytest.mark.asyncio
 async def test_get_sha256_from_text(sqlite_instance):
     """Test SHA256 hash calculation for text data."""
     serializer = data_serializer_factory(category="prompt-memory-entries", data_type="text", value="test_string")
@@ -235,7 +220,6 @@ async def test_get_sha256_from_text(sqlite_instance):
     assert sha256_hash == expected_hash
 
 
-@pytest.mark.asyncio
 async def test_get_sha256_from_image_file(sqlite_instance):
     """Test SHA256 hash calculation for file data."""
     data = b"file_content.png"
@@ -256,7 +240,6 @@ def test_is_azure_storage_url(sqlite_instance):
     assert serializer._is_azure_storage_url(invalid_url) is False
 
 
-@pytest.mark.asyncio
 async def test_read_data_local_file_with_dummy_image(sqlite_instance):
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_image_file:
         image_path = temp_image_file.name
@@ -288,7 +271,6 @@ async def test_read_data_local_file_with_dummy_image(sqlite_instance):
             os.remove(image_path)
 
 
-@pytest.mark.asyncio
 async def test_get_data_filename(sqlite_instance):
     """Test get_data_filename when a file_name is provided."""
     serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
@@ -298,3 +280,149 @@ async def test_get_data_filename(sqlite_instance):
     assert os.path.isabs(filename)
     assert os.path.exists(os.path.dirname(filename))
     assert not os.path.exists(filename)  # File should not exist yet
+
+
+def test_binary_path_normalizer_factory(sqlite_instance):
+    """Test factory creates BinaryPathDataTypeSerializer correctly."""
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="binary_path")
+    assert isinstance(serializer, DataTypeSerializer)
+    assert isinstance(serializer, BinaryPathDataTypeSerializer)
+    assert serializer.data_type == "binary_path"
+    assert serializer.data_on_disk()
+
+
+def test_binary_path_normalizer_factory_with_value(sqlite_instance):
+    """Test factory creates BinaryPathDataTypeSerializer with value."""
+    serializer = data_serializer_factory(
+        category="prompt-memory-entries", data_type="binary_path", value="/path/to/file.bin"
+    )
+    assert isinstance(serializer, BinaryPathDataTypeSerializer)
+    assert serializer.data_type == "binary_path"
+    assert serializer.value == "/path/to/file.bin"
+    assert serializer.data_on_disk()
+
+
+async def test_binary_path_save_data(sqlite_instance):
+    """Test saving binary data to disk."""
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="binary_path")
+    await serializer.save_data(b"\x00\x01\x02\x03")
+    serializer_value = serializer.value
+    assert serializer_value
+    assert serializer_value.endswith(".bin")
+    assert os.path.isabs(serializer_value)
+    assert os.path.exists(serializer_value)
+    assert os.path.isfile(serializer_value)
+
+
+async def test_binary_path_read_data(sqlite_instance):
+    """Test reading binary data from disk."""
+    data = b"\x00\x11\x22\x33\x44\x55"
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="binary_path")
+    await serializer.save_data(data)
+    assert await serializer.read_data() == data
+    # Test reading with a new serializer initialized with the saved path
+    read_serializer = data_serializer_factory(
+        category="prompt-memory-entries", data_type="binary_path", value=serializer.value
+    )
+    assert await read_serializer.read_data() == data
+
+
+async def test_binary_path_save_with_custom_extension(sqlite_instance):
+    """Test saving binary data with a custom file extension."""
+    custom_extension = "pdf"
+    serializer = data_serializer_factory(
+        category="prompt-memory-entries", data_type="binary_path", extension=custom_extension
+    )
+    binary_data = b"PDF binary content"
+    await serializer.save_data(binary_data)
+    assert serializer.value.endswith(f".{custom_extension}")
+    assert os.path.exists(serializer.value)
+    assert os.path.isfile(serializer.value)
+
+
+async def test_binary_path_subdirectory(sqlite_instance):
+    """Test that binary data is stored in the correct subdirectory."""
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="binary_path")
+    await serializer.save_data(b"test data")
+    assert "/binaries/" in serializer.value or "\\binaries\\" in serializer.value
+
+
+def test_get_storage_io_raises_when_results_storage_io_none():
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
+    serializer.value = "https://account.blob.core.windows.net/container/path/image.png"
+    mock_memory = MagicMock()
+    mock_memory.results_storage_io = None
+    with patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory):
+        with pytest.raises(RuntimeError, match="results_storage_io is not configured"):
+            serializer._get_storage_io()
+
+
+async def test_save_data_raises_when_results_storage_io_none():
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
+    mock_memory = MagicMock()
+    mock_memory.results_storage_io = None
+    with patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory):
+        with patch.object(serializer, "get_data_filename", new_callable=AsyncMock, return_value="local/path/img.png"):
+            with pytest.raises(RuntimeError, match="Storage IO not initialized"):
+                await serializer.save_data(b"\x89PNG")
+
+
+async def test_save_b64_image_raises_when_results_storage_io_none():
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
+    mock_memory = MagicMock()
+    mock_memory.results_storage_io = None
+    with patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory):
+        with patch.object(serializer, "get_data_filename", new_callable=AsyncMock, return_value="local/path/img.png"):
+            import base64
+
+            b64_data = base64.b64encode(b"\x89PNG").decode()
+            with pytest.raises(RuntimeError, match="Storage IO not initialized"):
+                await serializer.save_b64_image(b64_data)
+
+
+async def test_save_formatted_audio_raises_when_results_storage_io_none():
+    from pyrit.models import data_serializer_factory as factory
+
+    serializer = factory(category="prompt-memory-entries", data_type="audio_path")
+    mock_memory = MagicMock()
+    mock_memory.results_storage_io = None
+    azure_url = "https://account.blob.core.windows.net/container/audio/test.wav"
+    with patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory):
+        with patch.object(serializer, "get_data_filename", new_callable=AsyncMock, return_value=azure_url):
+            with patch("wave.open"):
+                with patch("aiofiles.open", new_callable=MagicMock) as mock_aio:
+                    mock_file = MagicMock()
+                    mock_file.__aenter__ = AsyncMock(return_value=mock_file)
+                    mock_file.__aexit__ = AsyncMock(return_value=False)
+                    mock_file.read = AsyncMock(return_value=b"audio_bytes")
+                    mock_aio.return_value = mock_file
+                    with pytest.raises(RuntimeError, match="results_storage_io is not initialized"):
+                        await serializer.save_formatted_audio(data=b"\x00\x01\x02")
+
+
+async def test_get_data_filename_raises_when_results_storage_io_none():
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
+    serializer._file_path = None
+    mock_memory = MagicMock()
+    mock_memory.results_storage_io = None
+    mock_memory.results_path = "/local/results"
+    with patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory):
+        with pytest.raises(RuntimeError, match="results_storage_io is not initialized"):
+            await serializer.get_data_filename()
+
+
+async def test_get_data_filename_uses_db_data_path_when_results_path_falsy():
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
+    serializer._file_path = None
+    mock_memory = MagicMock()
+    mock_memory.results_path = None
+    mock_storage_io = AsyncMock()
+    mock_memory.results_storage_io = mock_storage_io
+    with (
+        patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory),
+        patch("pyrit.common.path.DB_DATA_PATH", "/fallback/db_data"),
+    ):
+        result = await serializer.get_data_filename(file_name="test_file")
+    result_str = str(result).replace("\\", "/")
+    assert "/fallback/db_data" in result_str
+    assert result_str.endswith(".png")

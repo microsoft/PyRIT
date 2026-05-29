@@ -10,7 +10,7 @@ hint extraction for consistent error handling across OpenAI-based prompt targets
 
 import json
 import logging
-from typing import Optional, Tuple, Union
+from typing import Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,8 @@ def _extract_request_id_from_exception(exc: Exception) -> Optional[str]:
         resp = getattr(exc, "response", None)
         if resp is not None:
             # Try both common header name variants
-            return resp.headers.get("x-request-id") or resp.headers.get("X-Request-Id")
+            request_id = resp.headers.get("x-request-id") or resp.headers.get("X-Request-Id")
+            return str(request_id) if request_id is not None else None
     except Exception:
         pass
     return None
@@ -60,7 +61,7 @@ def _extract_retry_after_from_exception(exc: Exception) -> Optional[float]:
     return None
 
 
-def _is_content_filter_error(data: Union[dict, str]) -> bool:
+def _is_content_filter_error(data: Union[dict[str, object], str]) -> bool:
     """
     Check if error data indicates content filtering.
 
@@ -72,18 +73,25 @@ def _is_content_filter_error(data: Union[dict, str]) -> bool:
     """
     if isinstance(data, dict):
         # Check for explicit content_filter or moderation_blocked codes
-        code = (data.get("error") or {}).get("code")
+        error_obj = data.get("error")
+        code = error_obj.get("code") if isinstance(error_obj, dict) else None  # type: ignore[ty:invalid-argument-type]
         if code in ["content_filter", "moderation_blocked"]:
             return True
+        # OpenAI uses "invalid_prompt" for model-level safety blocks (e.g. CBRN topics).
+        # Only treat it as a content filter when the message indicates a safety block,
+        # not for other invalid_prompt reasons (e.g. malformed schemas).
+        if code == "invalid_prompt":
+            message = error_obj.get("message", "") if isinstance(error_obj, dict) else ""  # type: ignore[ty:no-matching-overload]
+            if "limited access" in str(message).lower() or "safety" in str(message).lower():
+                return True
         # Heuristic: Azure sometimes uses other codes with policy-related content
         return "content_filter" in json.dumps(data).lower()
-    else:
-        # String-based heuristic search
-        lower = str(data).lower()
-        return "content_filter" in lower or "policy_violation" in lower or "moderation_blocked" in lower
+    # String-based heuristic search
+    lower = str(data).lower()
+    return "content_filter" in lower or "policy_violation" in lower or "moderation_blocked" in lower
 
 
-def _extract_error_payload(exc: Exception) -> Tuple[Union[dict, str], bool]:
+def _extract_error_payload(exc: Exception) -> tuple[Union[dict[str, object], str], bool]:
     """
     Extract error payload and detect content filter from an OpenAI SDK exception.
 
@@ -127,7 +135,7 @@ def _extract_error_payload(exc: Exception) -> Tuple[Union[dict, str], bool]:
     if body is not None:
         if isinstance(body, dict):
             return body, _is_content_filter_error(body)
-        elif isinstance(body, str):
+        if isinstance(body, str):
             try:
                 data = json.loads(body)
                 return data, _is_content_filter_error(data)

@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import List
 
 from pyrit.message_normalizer.message_normalizer import MessageStringNormalizer
 from pyrit.models import Message, MessagePiece
@@ -16,15 +15,15 @@ class ConversationContextNormalizer(MessageStringNormalizer):
     The output format is:
 
         Turn 1:
-        User: <content>
-        Assistant: <content>
+        user: <content>
+        assistant: <content>
 
         Turn 2:
-        User: <content>
+        user: <content>
         ...
     """
 
-    async def normalize_string_async(self, messages: List[Message]) -> str:
+    async def normalize_string_async(self, messages: list[Message]) -> str:
         """
         Normalize a list of messages into a turn-based context string.
 
@@ -40,24 +39,23 @@ class ConversationContextNormalizer(MessageStringNormalizer):
         if not messages:
             raise ValueError("Messages list cannot be empty")
 
-        context_parts: List[str] = []
+        context_parts: list[str] = []
         turn_number = 0
 
         for message in messages:
             for piece in message.message_pieces:
                 # Skip system messages in context formatting
-                if piece.role == "system":
+                if piece.api_role == "system":
                     continue
 
                 # Start a new turn when we see a user message
-                if piece.role == "user":
+                if piece.api_role == "user":
                     turn_number += 1
                     context_parts.append(f"Turn {turn_number}:")
 
                 # Format the piece content
                 content = self._format_piece_content(piece)
-                role_label = "User" if piece.role == "user" else "Assistant"
-                context_parts.append(f"{role_label}: {content}")
+                context_parts.append(f"{piece.api_role}: {content}")
 
         return "\n".join(context_parts)
 
@@ -81,8 +79,7 @@ class ConversationContextNormalizer(MessageStringNormalizer):
             if piece.prompt_metadata and "context_description" in piece.prompt_metadata:
                 description = piece.prompt_metadata["context_description"]
                 return f"[{data_type.capitalize()} - {description}]"
-            else:
-                return f"[{data_type.capitalize()}]"
+            return f"[{data_type.capitalize()}]"
 
         # For text pieces, include both original and converted if different
         original = piece.original_value
@@ -90,5 +87,4 @@ class ConversationContextNormalizer(MessageStringNormalizer):
 
         if original != converted:
             return f"{converted} (original: {original})"
-        else:
-            return converted
+        return converted

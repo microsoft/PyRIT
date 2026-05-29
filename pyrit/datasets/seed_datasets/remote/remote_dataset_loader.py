@@ -7,8 +7,12 @@ import io
 import logging
 import tempfile
 from abc import ABC
+from collections.abc import Callable, Sequence
+from dataclasses import fields
+from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, TextIO
+from typing import Any, Literal, Optional, TextIO, cast
+from urllib.parse import urlparse
 
 import requests
 from datasets import DownloadMode, disable_progress_bars, load_dataset
@@ -18,14 +22,16 @@ from pyrit.common.json_helper import read_json, read_jsonl, write_json, write_js
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.common.text_helper import read_txt, write_txt
 from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
+from pyrit.datasets.seed_datasets.seed_metadata import SeedDatasetMetadata
 
 logger = logging.getLogger(__name__)
 
-# Define the type for the file handlers
-FileHandlerRead = Callable[[TextIO], List[Dict[str, str]]]
-FileHandlerWrite = Callable[[TextIO, List[Dict[str, str]]], None]
 
-FILE_TYPE_HANDLERS: Dict[str, Dict[str, Callable]] = {
+# Define the type for the file handlers
+FileHandlerRead = Callable[[TextIO], list[dict[str, str]]]
+FileHandlerWrite = Callable[[TextIO, list[dict[str, str]]], None]
+
+FILE_TYPE_HANDLERS: dict[str, dict[str, Callable[..., Any]]] = {
     "json": {"read": read_json, "write": write_json},
     "jsonl": {"read": read_jsonl, "write": write_jsonl},
     "csv": {"read": read_csv, "write": write_csv},
@@ -43,9 +49,54 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
     - HuggingFace Hub
 
     Subclasses must implement:
-    - fetch_dataset(): Fetch and return the dataset as a SeedDataset
+    - fetch_dataset_async(): Fetch and return the dataset as a SeedDataset
     - dataset_name property: Human-readable name for the dataset
     """
+
+    @staticmethod
+    def _validate_enums(
+        values: Sequence[Enum],
+        enum_cls: type[Enum],
+        label: str,
+    ) -> None:
+        """
+        Validate that all values are instances of the expected enum class.
+
+        Args:
+            values: List of values to validate.
+            enum_cls: The enum class that all values must be instances of.
+            label: Human-readable label for error messages (e.g. "category").
+
+        Raises:
+            ValueError: If any value is not an instance of the expected enum class.
+        """
+        for v in values:
+            if not isinstance(v, enum_cls):
+                valid = ", ".join(f"{enum_cls.__name__}.{m.name}" for m in enum_cls)
+                raise ValueError(f"Expected {enum_cls.__name__}, got {type(v).__name__}: {v!r}. Valid values: {valid}")
+
+    @staticmethod
+    def _validate_enum(
+        value: Enum,
+        enum_cls: type[Enum],
+        label: str,
+    ) -> None:
+        """
+        Validate that a single value is an instance of the expected enum class.
+
+        Args:
+            value: The value to validate.
+            enum_cls: The enum class that the value must be an instance of.
+            label: Human-readable label for error messages (e.g. "severity").
+
+        Raises:
+            ValueError: If the value is not an instance of the expected enum class.
+        """
+        if not isinstance(value, enum_cls):
+            valid = ", ".join(f"{enum_cls.__name__}.{m.name}" for m in enum_cls)
+            raise ValueError(
+                f"Expected {enum_cls.__name__}, got {type(value).__name__}: {value!r}. Valid values: {valid}"
+            )
 
     def _get_cache_file_name(self, *, source: str, file_type: str) -> str:
         """
@@ -75,7 +126,25 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             valid_types = ", ".join(FILE_TYPE_HANDLERS.keys())
             raise ValueError(f"Invalid file_type. Expected one of: {valid_types}.")
 
-    def _read_cache(self, *, cache_file: Path, file_type: str) -> List[Dict[str, str]]:
+    def _get_file_type(self, *, source: str) -> str:
+        """
+        Infer the source file type from a URL or local path.
+
+        Query strings and fragments are ignored for URLs, and the result is
+        normalized to lowercase so `.JSON` and `.json` are treated identically.
+
+        Args:
+            source (str): The URL or local file path to extract the file type from.
+
+        Returns:
+            str: The lowercase file extension without the leading dot.
+        """
+        parsed = urlparse(source)
+        source_path = parsed.path if parsed.scheme else source
+        suffix = Path(source_path).suffix
+        return suffix.lstrip(".").lower()
+
+    def _read_cache(self, *, cache_file: Path, file_type: str) -> list[dict[str, str]]:
         """
         Read data from cache.
 
@@ -91,9 +160,9 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         """
         self._validate_file_type(file_type)
         with cache_file.open("r", encoding="utf-8") as file:
-            return FILE_TYPE_HANDLERS[file_type]["read"](file)
+            return cast("list[dict[str, str]]", FILE_TYPE_HANDLERS[file_type]["read"](file))
 
-    def _write_cache(self, *, cache_file: Path, examples: List[Dict[str, str]], file_type: str) -> None:
+    def _write_cache(self, *, cache_file: Path, examples: list[dict[str, str]], file_type: str) -> None:
         """
         Write data to cache.
 
@@ -110,7 +179,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         with cache_file.open("w", encoding="utf-8") as file:
             FILE_TYPE_HANDLERS[file_type]["write"](file, examples)
 
-    def _fetch_from_public_url(self, *, source: str, file_type: str) -> List[Dict[str, str]]:
+    def _fetch_from_public_url(self, *, source: str, file_type: str) -> list[dict[str, str]]:
         """
         Fetch examples from a public URL.
 
@@ -129,16 +198,18 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         if response.status_code == 200:
             if file_type in FILE_TYPE_HANDLERS:
                 if file_type == "json":
-                    return FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO(response.text))
-                else:
-                    return FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO("\n".join(response.text.splitlines())))
-            else:
-                valid_types = ", ".join(FILE_TYPE_HANDLERS.keys())
-                raise ValueError(f"Invalid file_type. Expected one of: {valid_types}.")
-        else:
-            raise Exception(f"Failed to fetch examples from public URL. Status code: {response.status_code}")
+                    return cast(
+                        "list[dict[str, str]]", FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO(response.text))
+                    )
+                return cast(
+                    "list[dict[str, str]]",
+                    FILE_TYPE_HANDLERS[file_type]["read"](io.StringIO("\n".join(response.text.splitlines()))),
+                )
+            valid_types = ", ".join(FILE_TYPE_HANDLERS.keys())
+            raise ValueError(f"Invalid file_type. Expected one of: {valid_types}.")
+        raise Exception(f"Failed to fetch examples from public URL. Status code: {response.status_code}")
 
-    def _fetch_from_file(self, *, source: str, file_type: str) -> List[Dict[str, str]]:
+    def _fetch_from_file(self, *, source: str, file_type: str) -> list[dict[str, str]]:
         """
         Fetch examples from a local file.
 
@@ -152,12 +223,11 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         Raises:
             ValueError: If the file_type is invalid.
         """
-        with open(source, "r", encoding="utf-8") as file:
+        with open(source, encoding="utf-8") as file:
             if file_type in FILE_TYPE_HANDLERS:
-                return FILE_TYPE_HANDLERS[file_type]["read"](file)
-            else:
-                valid_types = ", ".join(FILE_TYPE_HANDLERS.keys())
-                raise ValueError(f"Invalid file_type. Expected one of: {valid_types}.")
+                return cast("list[dict[str, str]]", FILE_TYPE_HANDLERS[file_type]["read"](file))
+            valid_types = ", ".join(FILE_TYPE_HANDLERS.keys())
+            raise ValueError(f"Invalid file_type. Expected one of: {valid_types}.")
 
     def _fetch_from_url(
         self,
@@ -165,7 +235,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         source: str,
         source_type: Literal["public_url", "file"] = "public_url",
         cache: bool = True,
-    ) -> List[Dict[str, str]]:
+    ) -> list[dict[str, str]]:
         """
         Fetch examples from a specified source with caching support.
 
@@ -186,7 +256,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             ...     source_type='public_url'
             ... )
         """
-        file_type = source.split(".")[-1]
+        file_type = self._get_file_type(source=source)
         if file_type not in FILE_TYPE_HANDLERS:
             valid_types = ", ".join(FILE_TYPE_HANDLERS.keys())
             raise ValueError(f"Invalid file_type. Expected one of: {valid_types}.")
@@ -257,7 +327,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         """
         disable_progress_bars()
 
-        def _load_dataset_sync():
+        def _load_dataset_sync() -> Any:
             """
             Run dataset loading synchronously in thread pool.
 
@@ -267,7 +337,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             cache_dir = str(DB_DATA_PATH / "huggingface") if cache else None
 
             # Explicitly set download_mode to reuse cached data and never re-download
-            dataset = load_dataset(
+            return load_dataset(
                 dataset_name,
                 config,
                 split=split,
@@ -276,12 +346,40 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
                 token=token,
                 **kwargs,
             )
-            return dataset
 
         try:
             # Run the synchronous load_dataset in a thread pool to avoid blocking the event loop
-            dataset = await asyncio.to_thread(_load_dataset_sync)
-            return dataset
+            return await asyncio.to_thread(_load_dataset_sync)
         except Exception as e:
             logger.error(f"Failed to load HuggingFace dataset {dataset_name}: {e}")
             raise
+
+    async def _parse_metadata(self) -> Optional[SeedDatasetMetadata]:
+        """
+        Extract metadata from class attributes, wrap in sets, and format into SeedDatasetMetadata.
+
+        Class attributes may be singular values (str, enum), lists, or sets.
+        All are normalized into sets for the unified SeedDatasetMetadata schema.
+
+        Returns:
+            Optional[SeedDatasetMetadata]: Parsed metadata if available, otherwise None.
+        """
+        valid_fields = [f.name for f in fields(SeedDatasetMetadata)]
+
+        provider_class = type(self)
+        raw = {}
+        for key in valid_fields:
+            value = getattr(provider_class, key, None)
+            if value is None:
+                continue
+            raw[key] = value
+
+        if not raw:
+            return None
+
+        coerced = SeedDatasetMetadata._coerce_metadata_values(raw_metadata=raw)
+        # Validation must happen after coercion because raw values are strings/lists,
+        # not sets. _validate_singular_fields checks set cardinality (len > 1).
+        result = SeedDatasetMetadata(**coerced)
+        SeedDatasetMetadata._validate_singular_fields(metadata=result)
+        return result

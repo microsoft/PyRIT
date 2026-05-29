@@ -4,7 +4,7 @@
 import logging
 import pathlib
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -21,7 +21,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_converter import FlipConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +31,7 @@ FlipAttackParameters = AttackParameters.excluding("prepended_conversation", "nex
 
 class FlipAttack(PromptSendingAttack):
     """
-    Implement the FlipAttack method found here:
-    https://arxiv.org/html/2410.02832v1.
+    Implement the FlipAttack method [@liu2024flipattack].
 
     Essentially, it adds a system prompt to the beginning of the conversation to flip each word in the prompt.
     """
@@ -40,7 +39,8 @@ class FlipAttack(PromptSendingAttack):
     @apply_defaults
     def __init__(
         self,
-        objective_target: PromptChatTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        *,
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
@@ -48,7 +48,7 @@ class FlipAttack(PromptSendingAttack):
     ) -> None:
         """
         Args:
-            objective_target (PromptChatTarget): The target system to attack.
+            objective_target (PromptTarget): The target system to attack.
             attack_converter_config (AttackConverterConfig, Optional): Configuration for the prompt converters.
             attack_scoring_config (AttackScoringConfig, Optional): Configuration for scoring components.
             prompt_normalizer (PromptNormalizer, Optional): Normalizer for handling prompts.
@@ -72,7 +72,7 @@ class FlipAttack(PromptSendingAttack):
 
         self._system_prompt = Message.from_system_prompt(system_prompt=system_prompt)
 
-    async def _setup_async(self, *, context: SingleTurnAttackContext) -> None:
+    async def _setup_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """
         Set up the FlipAttack by preparing conversation context.
 
@@ -91,7 +91,7 @@ class FlipAttack(PromptSendingAttack):
             memory_labels=self._memory_labels,
         )
 
-    async def _perform_async(self, *, context: SingleTurnAttackContext) -> AttackResult:
+    async def _perform_async(self, *, context: SingleTurnAttackContext[Any]) -> AttackResult:
         """
         Perform the FlipAttack.
 

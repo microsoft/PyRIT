@@ -4,7 +4,7 @@
 import logging
 import textwrap
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, overload
+from typing import Any, Optional, overload
 
 from pyrit.common.utils import get_kwarg_param
 from pyrit.executor.attack.core import (
@@ -34,10 +34,10 @@ class QuestionAnsweringBenchmarkContext(StrategyContext):
     question_answering_entry: QuestionAnsweringEntry
 
     # Prepended conversation for context
-    prepended_conversation: List[Message] = field(default_factory=list)
+    prepended_conversation: list[Message] = field(default_factory=list)
 
     # Memory labels for tracking
-    memory_labels: Dict[str, str] = field(default_factory=dict)
+    memory_labels: dict[str, str] = field(default_factory=dict)
 
     # Generated fields for the benchmark run
     # The generated objective for the benchmark
@@ -91,7 +91,7 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
         question_asking_format_string: str = _DEFAULT_QUESTION_FORMAT,
         options_format_string: str = _DEFAULT_OPTIONS_FORMAT,
         max_attempts_on_failure: int = 0,
-    ):
+    ) -> None:
         """
         Initialize the question answering benchmark strategy.
 
@@ -253,27 +253,26 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
         Args:
             context (QuestionAnsweringBenchmarkContext): The context for the strategy.
         """
-        pass
 
     @overload
     async def execute_async(
         self,
         *,
         question_answering_entry: QuestionAnsweringEntry,
-        prepended_conversation: Optional[List[Message]] = None,
-        memory_labels: Optional[Dict[str, str]] = None,
-        **kwargs,
+        prepended_conversation: Optional[list[Message]] = None,
+        memory_labels: Optional[dict[str, str]] = None,
+        **kwargs: Any,
     ) -> AttackResult: ...
 
     @overload
     async def execute_async(
         self,
-        **kwargs,
+        **kwargs: Any,
     ) -> AttackResult: ...
 
     async def execute_async(
         self,
-        **kwargs,
+        **kwargs: Any,
     ) -> AttackResult:
         """
         Execute the QA benchmark strategy asynchronously with the provided parameters.

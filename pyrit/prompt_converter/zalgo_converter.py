@@ -5,6 +5,7 @@ import logging
 import random
 from typing import Optional
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.text_selection_strategy import WordSelectionStrategy
 from pyrit.prompt_converter.word_level_converter import WordLevelConverter
 
@@ -26,9 +27,9 @@ class ZalgoConverter(WordLevelConverter):
         intensity: int = 10,
         seed: Optional[int] = None,
         word_selection_strategy: Optional[WordSelectionStrategy] = None,
-    ):
+    ) -> None:
         """
-        Initializes the converter with the specified selection parameters.
+        Initialize the converter with the specified selection parameters.
 
         Args:
             intensity (int): Number of combining marks per character (higher = more cursed). Default is 10.
@@ -40,11 +41,24 @@ class ZalgoConverter(WordLevelConverter):
         self._intensity = self._normalize_intensity(intensity)
         self._seed = seed
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with zalgo parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "intensity": self._intensity,
+            },
+        )
+
     def _normalize_intensity(self, intensity: int) -> int:
         try:
             intensity = int(intensity)
         except (TypeError, ValueError):
-            raise ValueError(f"Invalid intensity value: {intensity!r} (must be an integer)")
+            raise ValueError(f"Invalid intensity value: {intensity!r} (must be an integer)") from None
 
         normalized_intensity = max(0, min(intensity, MAX_INTENSITY))
         if intensity != normalized_intensity:
@@ -55,6 +69,15 @@ class ZalgoConverter(WordLevelConverter):
         return normalized_intensity
 
     async def convert_word_async(self, word: str) -> str:
+        """
+        Convert a single word into the target format supported by the converter.
+
+        Args:
+            word (str): The word to be converted.
+
+        Returns:
+            str: The converted word.
+        """
         if self._intensity <= 0:
             return word
 
@@ -64,6 +87,7 @@ class ZalgoConverter(WordLevelConverter):
         return "".join(glitch(c) if c.isalnum() else c for c in word)
 
     def validate_input(self, prompt: str) -> None:
+        """Validate the input prompt before conversion."""
         # Initialize the random seed before processing any words
         if self._seed is not None:
             random.seed(self._seed)

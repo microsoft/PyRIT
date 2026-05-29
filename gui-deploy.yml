@@ -1,0 +1,389 @@
+# CI/CD pipeline for CoPyRIT GUI deployment.
+#
+# Triggers on changes to GUI-relevant paths on the main branch.
+# Builds Docker image, pushes to ACR, deploys to test ACA environment.
+# Production deployment is opt-in via the deployToProd parameter.
+#
+# All infrastructure details (IDs, connection strings, resource names) are
+# stored in ADO variable groups — nothing sensitive appears in this file.
+# Required variable groups:
+#   - copyrit-gui-common  (azureServiceConnection, acrName, acrLoginServer, imageName)
+#   - copyrit-gui-test    (resourceGroup, appName, entraTenantId, entraClientId,
+#                           allowedGroupObjectIds, sqlServerFqdn, sqlDatabaseName,
+#                           keyVaultResourceId, acrResourceId, enablePrivateEndpoint, enableOtel,
+#                           envFileContents [SECURE])
+#   - copyrit-gui-prod    (same keys as test, with production values)
+#
+# The `envFileContents` variable must be marked SECURE in the ADO library.
+# It contains the entire .env file (endpoints, keys, etc.) and is passed to
+# the Bicep template as the @secure() `envFileContents` parameter via a
+# parameters JSON file written to disk in the runner. Writing to a file
+# (instead of `--parameters envFileContents=$(envFileContents)`) avoids
+# exposing the value in the runner's process list / `ps` output.
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - pyrit/backend/**
+      - frontend/**
+      - docker/**
+      - infra/**
+
+pr: none
+
+parameters:
+  - name: deployToProd
+    displayName: 'Deploy to production'
+    type: boolean
+    default: false
+
+# Service connection must be a compile-time variable (not from a variable group)
+# because azureSubscription is validated during YAML parsing.
+variables:
+  azureServiceConnection: 'copyrit-gui-azure'
+
+stages:
+  # ──────────────────────────────────────────────
+  # Stage 1: Build Docker image and push to ACR
+  # ──────────────────────────────────────────────
+  - stage: Build
+    displayName: 'Build and Push Image'
+    variables:
+      - group: copyrit-gui-common
+    pool:
+      vmImage: 'ubuntu-latest'
+    jobs:
+      - job: BuildAndPush
+        displayName: 'Build Docker image and push to ACR'
+        steps:
+          - checkout: self
+            fetchDepth: 1
+
+          - task: AzureCLI@2
+            displayName: 'Build and push Docker image'
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -euo pipefail
+
+                echo "=== Building devcontainer base image ==="
+                docker build \
+                  -f .devcontainer/Dockerfile \
+                  -t pyrit-devcontainer \
+                  .devcontainer/
+
+                echo "=== Building production image ==="
+                docker build --no-cache \
+                  -f docker/Dockerfile \
+                  -t $(acrLoginServer)/$(imageName):$(Build.SourceVersion) \
+                  -t $(acrLoginServer)/$(imageName):latest \
+                  --build-arg BASE_IMAGE=pyrit-devcontainer \
+                  --build-arg PYRIT_SOURCE=local \
+                  --build-arg GIT_COMMIT=$(Build.SourceVersion) \
+                  --build-arg GIT_MODIFIED=false \
+                  .
+
+                echo "=== Pushing to ACR ==="
+                az acr login --name $(acrName)
+                docker push $(acrLoginServer)/$(imageName):$(Build.SourceVersion)
+                docker push $(acrLoginServer)/$(imageName):latest
+
+                echo "✅ Image pushed: $(acrLoginServer)/$(imageName):$(Build.SourceVersion)"
+
+  # ──────────────────────────────────────────────
+  # Stage 2: Deploy to test environment
+  # ──────────────────────────────────────────────
+  - stage: DeployTest
+    displayName: 'Deploy to Test'
+    dependsOn: Build
+    variables:
+      - group: copyrit-gui-common
+      - group: copyrit-gui-test
+    pool:
+      vmImage: 'ubuntu-latest'
+    jobs:
+      - deployment: DeployToTest
+        displayName: 'Deploy to test environment'
+        environment: 'copyrit-test'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  fetchDepth: 1
+
+                - task: AzureCLI@2
+                  displayName: 'Deploy Bicep to test'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      set -euo pipefail
+
+                      # Write deployment parameters to a temp file so the
+                      # @secure() envFileContents value never appears on the
+                      # az CLI command line (visible in process list).
+                      PARAMS_FILE="$(mktemp --suffix=.parameters.json)"
+                      trap 'rm -f "$PARAMS_FILE"' EXIT
+
+                      python3 - <<'PY' > "$PARAMS_FILE"
+                      import json, os, sys
+
+
+                      def parse_bool(name: str) -> bool:
+                          """Strict bool parse: fail loudly if the ADO variable was unresolved.
+
+                          ADO leaves unresolved macro variables as the literal string
+                          '$(varname)'. Without this guard, that string would silently
+                          coerce to False (since 'lower() == "true"' is False), which can
+                          deploy with the wrong network posture (e.g., public access on
+                          when private endpoint was intended). Fail loudly instead.
+                          """
+                          val = os.environ.get(name, "")
+                          if val.lower() in ("true", "false"):
+                              return val.lower() == "true"
+                          sys.exit(
+                              f"ERROR: Pipeline variable {name} must be 'true' or 'false', "
+                              f"got: {val!r}. Check the ADO variable group (likely the "
+                              f"variable is missing or misspelled — ADO leaves unresolved "
+                              f"macros as the literal string '$(name)')."
+                          )
+
+
+                      def parse_secret_str(name: str) -> str:
+                          """Fail loudly if a SECURE pipeline variable was unresolved.
+
+                          Same root cause as parse_bool: ADO leaves unresolved macros as
+                          '$(varname)'. For securestring parameters (envFileContents), Azure
+                          accepts ANY string, so an unresolved macro silently deploys garbage
+                          that the container can't parse. Detect the pattern and abort.
+                          """
+                          val = os.environ.get(name, "")
+                          # Match exactly '$(identifier)' — ADO macro syntax for unresolved variables.
+                          if val.startswith("$(") and val.endswith(")") and "(" not in val[2:-1]:
+                              sys.exit(
+                                  f"ERROR: Pipeline variable {name} appears unresolved (got "
+                                  f"'{val}'). The ADO library variable is likely missing or "
+                                  f"misspelled (ADO leaves unresolved macros as the literal "
+                                  f"string '$(name)'). For envFileContents, also confirm the "
+                                  f"variable is marked SECURE in the ADO library."
+                              )
+                          if not val:
+                              sys.exit(f"ERROR: Pipeline variable {name} is empty.")
+                          return val
+
+
+                      doc = {
+                          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+                          "contentVersion": "1.0.0.0",
+                          "parameters": {
+                              "appName": {"value": os.environ["APP_NAME"]},
+                              "containerImage": {"value": os.environ["CONTAINER_IMAGE"]},
+                              "entraTenantId": {"value": os.environ["ENTRA_TENANT_ID"]},
+                              "entraClientId": {"value": os.environ["ENTRA_CLIENT_ID"]},
+                              "allowedGroupObjectIds": {"value": os.environ["ALLOWED_GROUP_OBJECT_IDS"]},
+                              "sqlServerFqdn": {"value": os.environ["SQL_SERVER_FQDN"]},
+                              "sqlDatabaseName": {"value": os.environ["SQL_DATABASE_NAME"]},
+                              "keyVaultResourceId": {"value": os.environ["KEY_VAULT_RESOURCE_ID"]},
+                              "acrResourceId": {"value": os.environ["ACR_RESOURCE_ID"]},
+                              "enablePrivateEndpoint": {"value": parse_bool("ENABLE_PRIVATE_ENDPOINT")},
+                              "enableOtel": {"value": parse_bool("ENABLE_OTEL")},
+                              "envFileContents": {"value": parse_secret_str("ENV_FILE_CONTENTS")},
+                          },
+                      }
+                      print(json.dumps(doc))
+                      PY
+
+                      az deployment group create \
+                        --resource-group $(resourceGroup) \
+                        --template-file $(Build.SourcesDirectory)/infra/main.bicep \
+                        --parameters @"$PARAMS_FILE"
+                  env:
+                    APP_NAME: $(appName)
+                    CONTAINER_IMAGE: $(acrLoginServer)/$(imageName):$(Build.SourceVersion)
+                    ENTRA_TENANT_ID: $(entraTenantId)
+                    ENTRA_CLIENT_ID: $(entraClientId)
+                    ALLOWED_GROUP_OBJECT_IDS: $(allowedGroupObjectIds)
+                    SQL_SERVER_FQDN: $(sqlServerFqdn)
+                    SQL_DATABASE_NAME: $(sqlDatabaseName)
+                    KEY_VAULT_RESOURCE_ID: $(keyVaultResourceId)
+                    ACR_RESOURCE_ID: $(acrResourceId)
+                    ENABLE_PRIVATE_ENDPOINT: $(enablePrivateEndpoint)
+                    ENABLE_OTEL: $(enableOtel)
+                    ENV_FILE_CONTENTS: $(envFileContents)
+
+                - task: AzureCLI@2
+                  displayName: 'Health check'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      set -euo pipefail
+
+                      FQDN=$(az containerapp show \
+                        --name $(appName) \
+                        --resource-group $(resourceGroup) \
+                        --query "properties.configuration.ingress.fqdn" -o tsv)
+
+                      echo "Testing https://$FQDN/api/health"
+
+                      curl --retry 5 --retry-delay 15 --retry-all-errors \
+                        --fail --max-time 10 \
+                        "https://$FQDN/api/health"
+
+                      echo ""
+                      echo "✅ Test environment health check passed"
+
+  # ──────────────────────────────────────────────
+  # Stage 3: Deploy to production (manual trigger)
+  # ──────────────────────────────────────────────
+  - ${{ if eq(parameters.deployToProd, true) }}:
+    - stage: DeployProd
+      displayName: 'Deploy to Production'
+      dependsOn: DeployTest
+      variables:
+        - group: copyrit-gui-common
+        - group: copyrit-gui-prod
+      pool:
+        vmImage: 'ubuntu-latest'
+      jobs:
+        - deployment: DeployToProd
+          displayName: 'Deploy to production environment'
+          environment: 'copyrit-prod'
+          strategy:
+            runOnce:
+              deploy:
+                steps:
+                  - checkout: self
+                    fetchDepth: 1
+
+                  - task: AzureCLI@2
+                    displayName: 'Deploy Bicep to prod'
+                    inputs:
+                      azureSubscription: '$(azureServiceConnection)'
+                      scriptType: 'bash'
+                      scriptLocation: 'inlineScript'
+                      inlineScript: |
+                        set -euo pipefail
+
+                        # Write deployment parameters to a temp file so the
+                        # @secure() envFileContents value never appears on the
+                        # az CLI command line (visible in process list).
+                        PARAMS_FILE="$(mktemp --suffix=.parameters.json)"
+                        trap 'rm -f "$PARAMS_FILE"' EXIT
+
+                        python3 - <<'PY' > "$PARAMS_FILE"
+                        import json, os, sys
+
+
+                        def parse_bool(name: str) -> bool:
+                            """Strict bool parse: fail loudly if the ADO variable was unresolved.
+
+                            ADO leaves unresolved macro variables as the literal string
+                            '$(varname)'. Without this guard, that string would silently
+                            coerce to False (since 'lower() == "true"' is False), which can
+                            deploy with the wrong network posture (e.g., public access on
+                            when private endpoint was intended). Fail loudly instead.
+                            """
+                            val = os.environ.get(name, "")
+                            if val.lower() in ("true", "false"):
+                                return val.lower() == "true"
+                            sys.exit(
+                                f"ERROR: Pipeline variable {name} must be 'true' or 'false', "
+                                f"got: {val!r}. Check the ADO variable group (likely the "
+                                f"variable is missing or misspelled — ADO leaves unresolved "
+                                f"macros as the literal string '$(name)')."
+                            )
+
+
+                        def parse_secret_str(name: str) -> str:
+                            """Fail loudly if a SECURE pipeline variable was unresolved.
+
+                            Same root cause as parse_bool: ADO leaves unresolved macros as
+                            '$(varname)'. For securestring parameters (envFileContents), Azure
+                            accepts ANY string, so an unresolved macro silently deploys garbage
+                            that the container can't parse. Detect the pattern and abort.
+                            """
+                            val = os.environ.get(name, "")
+                            # Match exactly '$(identifier)' — ADO macro syntax for unresolved variables.
+                            if val.startswith("$(") and val.endswith(")") and "(" not in val[2:-1]:
+                                sys.exit(
+                                    f"ERROR: Pipeline variable {name} appears unresolved (got "
+                                    f"'{val}'). The ADO library variable is likely missing or "
+                                    f"misspelled (ADO leaves unresolved macros as the literal "
+                                    f"string '$(name)'). For envFileContents, also confirm the "
+                                    f"variable is marked SECURE in the ADO library."
+                                )
+                            if not val:
+                                sys.exit(f"ERROR: Pipeline variable {name} is empty.")
+                            return val
+
+
+                        doc = {
+                            "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+                            "contentVersion": "1.0.0.0",
+                            "parameters": {
+                                "appName": {"value": os.environ["APP_NAME"]},
+                                "containerImage": {"value": os.environ["CONTAINER_IMAGE"]},
+                                "entraTenantId": {"value": os.environ["ENTRA_TENANT_ID"]},
+                                "entraClientId": {"value": os.environ["ENTRA_CLIENT_ID"]},
+                                "allowedGroupObjectIds": {"value": os.environ["ALLOWED_GROUP_OBJECT_IDS"]},
+                                "sqlServerFqdn": {"value": os.environ["SQL_SERVER_FQDN"]},
+                                "sqlDatabaseName": {"value": os.environ["SQL_DATABASE_NAME"]},
+                                "keyVaultResourceId": {"value": os.environ["KEY_VAULT_RESOURCE_ID"]},
+                                "acrResourceId": {"value": os.environ["ACR_RESOURCE_ID"]},
+                                "enablePrivateEndpoint": {"value": parse_bool("ENABLE_PRIVATE_ENDPOINT")},
+                                "enableOtel": {"value": parse_bool("ENABLE_OTEL")},
+                                "envFileContents": {"value": parse_secret_str("ENV_FILE_CONTENTS")},
+                            },
+                        }
+                        print(json.dumps(doc))
+                        PY
+
+                        az deployment group create \
+                          --resource-group $(resourceGroup) \
+                          --template-file $(Build.SourcesDirectory)/infra/main.bicep \
+                          --parameters @"$PARAMS_FILE"
+                    env:
+                      APP_NAME: $(appName)
+                      CONTAINER_IMAGE: $(acrLoginServer)/$(imageName):$(Build.SourceVersion)
+                      ENTRA_TENANT_ID: $(entraTenantId)
+                      ENTRA_CLIENT_ID: $(entraClientId)
+                      ALLOWED_GROUP_OBJECT_IDS: $(allowedGroupObjectIds)
+                      SQL_SERVER_FQDN: $(sqlServerFqdn)
+                      SQL_DATABASE_NAME: $(sqlDatabaseName)
+                      KEY_VAULT_RESOURCE_ID: $(keyVaultResourceId)
+                      ACR_RESOURCE_ID: $(acrResourceId)
+                      ENABLE_PRIVATE_ENDPOINT: $(enablePrivateEndpoint)
+                      ENABLE_OTEL: $(enableOtel)
+                      ENV_FILE_CONTENTS: $(envFileContents)
+
+                  - task: AzureCLI@2
+                    displayName: 'Health check'
+                    inputs:
+                      azureSubscription: '$(azureServiceConnection)'
+                      scriptType: 'bash'
+                      scriptLocation: 'inlineScript'
+                      inlineScript: |
+                        set -euo pipefail
+
+                        FQDN=$(az containerapp show \
+                          --name $(appName) \
+                          --resource-group $(resourceGroup) \
+                          --query "properties.configuration.ingress.fqdn" -o tsv)
+
+                        echo "Testing https://$FQDN/api/health"
+
+                        curl --retry 5 --retry-delay 15 --retry-all-errors \
+                          --fail --max-time 10 \
+                          "https://$FQDN/api/health"
+
+                        echo ""
+                        echo "✅ Production health check passed"

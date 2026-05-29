@@ -3,16 +3,20 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from pyrit.models import MessagePiece, Score, UnvalidatedScore
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+
+if TYPE_CHECKING:
+    from pyrit.identifiers import ComponentIdentifier
+    from pyrit.models import MessagePiece, Score, UnvalidatedScore
+    from pyrit.prompt_target import PromptTarget
 
 
 class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
@@ -21,15 +25,16 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
     system prompt and prompt format.
     """
 
-    _default_validator: ScorerPromptValidator = ScorerPromptValidator(
+    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"],
         is_objective_required=False,
     )
+    TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
     def __init__(
         self,
         *,
-        chat_target: PromptChatTarget,
+        chat_target: PromptTarget,
         system_prompt_format_string: str,
         prompt_format_string: Optional[str] = None,
         category: Optional[str] = None,
@@ -52,7 +57,9 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
         in the response, the provided `category` argument will be applied.
 
         Args:
-            chat_target (PromptChatTarget): The chat target used to score.
+            chat_target (PromptTarget): The chat target used to score. Must satisfy
+                CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
+                possibly via normalization-pipeline adaptation).
             system_prompt_format_string (str): System prompt template with placeholders for
                 objective, task (alias of objective), prompt, and message_piece.
             prompt_format_string (Optional[str]): User prompt template with the same placeholders.
@@ -70,7 +77,11 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
         Raises:
             ValueError: If system_prompt_format_string is not provided or empty.
         """
-        super().__init__(validator=validator or self._default_validator, score_aggregator=score_aggregator)
+        super().__init__(
+            validator=validator or self._DEFAULT_VALIDATOR,
+            score_aggregator=score_aggregator,
+            chat_target=chat_target,
+        )
         self._prompt_target = chat_target
         if not system_prompt_format_string:
             raise ValueError("system_prompt_format_string must be provided and non-empty.")
@@ -84,13 +95,22 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
         self._metadata_output_key = metadata_output_key
         self._category_output_key = category_output_key
 
-    def _build_scorer_identifier(self) -> None:
-        """Build the scorer evaluation identifier for this scorer."""
-        self._set_scorer_identifier(
-            system_prompt_template=self._system_prompt_format_string,
-            user_prompt_template=self._prompt_format_string,
-            prompt_target=self._prompt_target,
-            score_aggregator=self._score_aggregator.__name__,
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the identifier for this scorer.
+
+        Returns:
+            ComponentIdentifier: The identifier for this scorer.
+        """
+        return self._create_identifier(
+            params={
+                "system_prompt_template": self._system_prompt_format_string,
+                "user_prompt_template": self._prompt_format_string,
+                "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            },
+            children={
+                "prompt_target": self._prompt_target.get_identifier(),
+            },
         )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:

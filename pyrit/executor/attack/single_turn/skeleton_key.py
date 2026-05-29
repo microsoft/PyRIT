@@ -3,7 +3,7 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -13,6 +13,7 @@ from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.single_turn_attack_strategy import (
     SingleTurnAttackContext,
 )
+from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -42,8 +43,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
     2. Sending the actual objective prompt to the primed target.
     3. Evaluating the response using configured scorers to determine success.
 
-    Learn more about attack at the link below:
-    https://www.microsoft.com/en-us/security/blog/2024/06/26/mitigating-skeleton-key-a-new-type-of-generative-ai-jailbreak-technique/
+    Learn more about the attack [@microsoft2024skeletonkey].
     """
 
     # Default skeleton key prompt path
@@ -53,7 +53,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
     def __init__(
         self,
         *,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
@@ -100,7 +100,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
 
         return SeedDataset.from_yaml_file(self.DEFAULT_SKELETON_KEY_PROMPT_PATH).prompts[0].value
 
-    async def _perform_async(self, *, context: SingleTurnAttackContext) -> AttackResult:
+    async def _perform_async(self, *, context: SingleTurnAttackContext[Any]) -> AttackResult:
         """
         Execute the skeleton key attack by first sending the skeleton key prompt,
         then sending the objective prompt and evaluating the response.
@@ -135,7 +135,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
 
         return result
 
-    async def _send_skeleton_key_prompt_async(self, *, context: SingleTurnAttackContext) -> Optional[Message]:
+    async def _send_skeleton_key_prompt_async(self, *, context: SingleTurnAttackContext[Any]) -> Optional[Message]:
         """
         Send the skeleton key prompt to the target to prime it for the attack.
 
@@ -162,7 +162,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
 
         return skeleton_response
 
-    def _create_skeleton_key_failure_result(self, *, context: SingleTurnAttackContext) -> AttackResult:
+    def _create_skeleton_key_failure_result(self, *, context: SingleTurnAttackContext[Any]) -> AttackResult:
         """
         Create an attack result for when the skeleton key prompt fails.
 
@@ -175,10 +175,11 @@ class SkeletonKeyAttack(PromptSendingAttack):
         return AttackResult(
             conversation_id=context.conversation_id,
             objective=context.objective,
-            attack_identifier=self.get_identifier(),
+            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
             last_response=None,
             last_score=None,
             outcome=AttackOutcome.FAILURE,
             outcome_reason="Skeleton key prompt was filtered or failed",
             executed_turns=1,
+            labels=context.memory_labels,
         )

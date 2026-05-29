@@ -26,11 +26,10 @@ class Base2048Converter(PromptConverter):
 
     def __init__(self) -> None:
         """Initialize the Base2048Converter."""
-        pass
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
-        Converts the given prompt to base2048 encoding.
+        Convert the given prompt to base2048 encoding.
 
         Args:
             prompt: The prompt to be converted.

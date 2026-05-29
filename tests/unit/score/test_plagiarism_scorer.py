@@ -39,7 +39,6 @@ class TestPlagiarismScorer:
         assert scorer.metric == metric
         assert scorer.n == n
 
-    @pytest.mark.asyncio
     async def test_score_async_lcs_metric(self):
         """Test scoring with LCS metric."""
         reference_text = "The quick brown fox jumps over the lazy dog"
@@ -69,7 +68,6 @@ class TestPlagiarismScorer:
         assert 0.0 <= score_value <= 1.0
         assert score_value > 0.8  # Should be high similarity
 
-    @pytest.mark.asyncio
     async def test_score_async_levenshtein_metric(self):
         """Test scoring with Levenshtein metric."""
         reference_text = "Hello world"
@@ -93,7 +91,6 @@ class TestPlagiarismScorer:
         score_value = float(score.score_value)
         assert 0.0 <= score_value <= 1.0
 
-    @pytest.mark.asyncio
     async def test_score_async_jaccard_metric(self):
         """Test scoring with Jaccard metric."""
         reference_text = "The quick brown fox jumps over the lazy dog"
@@ -117,7 +114,6 @@ class TestPlagiarismScorer:
         score_value = float(score.score_value)
         assert 0.0 <= score_value <= 1.0
 
-    @pytest.mark.asyncio
     async def test_score_async_empty_response(self):
         """Test scoring with empty response."""
         reference_text = "Sample reference text"
@@ -134,7 +130,6 @@ class TestPlagiarismScorer:
         score_value = float(score.score_value)
         assert score_value == 0.0
 
-    @pytest.mark.asyncio
     async def test_score_async_identical_texts(self):
         """Test scoring with identical texts."""
         reference_text = "This is exactly the same text"
@@ -155,7 +150,6 @@ class TestPlagiarismScorer:
         score_value = float(score.score_value)
         assert score_value == 1.0  # Should be perfect match
 
-    @pytest.mark.asyncio
     async def test_score_async_completely_different_texts(self):
         """Test scoring with completely different texts."""
         reference_text = "Apple banana cherry"
@@ -177,7 +171,6 @@ class TestPlagiarismScorer:
         score_value = float(score.score_value)
         assert score_value == 0.0  # Should be no similarity
 
-    @pytest.mark.asyncio
     async def test_score_async_adds_to_memory(self):
         """Test that scoring adds results to memory."""
         memory = MagicMock(MemoryInterface)
@@ -195,9 +188,8 @@ class TestPlagiarismScorer:
             await scorer.score_async(request)
             memory.add_scores_to_memory.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_validate_non_text_data_type_raises_error(self):
-        """Test validation with non-text data type raises ValueError."""
+    async def test_score_async_unsupported_data_type_returns_zero(self, patch_central_database):
+        """Unsupported data types now return a unified Score(0.0) via FloatScaleScorer's fallback."""
         reference_text = "Test reference text"
         scorer = PlagiarismScorer(reference_text=reference_text)
 
@@ -208,10 +200,13 @@ class TestPlagiarismScorer:
             converted_value_data_type="image_path",
         ).to_message()
 
-        with pytest.raises(ValueError, match="There are no valid pieces to score"):
-            await scorer.score_async(request)
+        # Unified FloatScaleScorer fallback: returns a single Score(0.0) when all pieces are filtered
+        # out (mirrors TrueFalseScorer's no-pieces fallback).
+        scores = await scorer.score_async(request)
+        assert len(scores) == 1
+        assert scores[0].score_type == "float_scale"
+        assert scores[0].get_value() == 0.0
 
-    @pytest.mark.asyncio
     async def test_score_text_async_integration(self):
         """Test scoring using the convenience method score_text_async."""
         reference_text = "The quick brown fox"

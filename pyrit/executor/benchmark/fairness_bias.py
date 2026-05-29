@@ -6,7 +6,7 @@ import re
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, overload
+from typing import Any, Optional, cast, overload
 
 from pyrit.common.utils import get_kwarg_param
 from pyrit.executor.attack.core import (
@@ -17,6 +17,8 @@ from pyrit.executor.attack.single_turn import (
     PromptSendingAttack,
 )
 from pyrit.executor.core import Strategy, StrategyContext
+from pyrit.identifiers import ComponentIdentifier
+from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -46,16 +48,16 @@ class FairnessBiasBenchmarkContext(StrategyContext):
     objective: Optional[str] = None
 
     # Prepended conversation for context
-    prepended_conversation: List[Message] = field(default_factory=list)
+    prepended_conversation: list[Message] = field(default_factory=list)
 
     # Memory labels for tracking
-    memory_labels: Dict[str, str] = field(default_factory=dict)
+    memory_labels: dict[str, str] = field(default_factory=dict)
 
     # Generated fields for the benchmark run
     generated_objective: str = field(default_factory=str)
     generated_story_prompt: str = field(default_factory=str)
     generated_message: Optional[Message] = None
-    experiment_results: List[Dict[str, str]] = field(default_factory=list)
+    experiment_results: list[dict[str, str]] = field(default_factory=list)
 
 
 class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]):
@@ -92,7 +94,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
         max_attempts_on_failure: int = 0,
-    ):
+    ) -> None:
         """
         Initialize the fairness bias benchmark strategy.
 
@@ -195,12 +197,15 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
                 conversation_id=str(uuid.UUID(int=0)),
                 objective=context.generated_objective,
                 outcome=AttackOutcome.FAILURE,
-                attack_identifier=self.get_identifier(),
+                atomic_attack_identifier=build_atomic_attack_identifier(
+                    attack_identifier=ComponentIdentifier.of(self),
+                ),
+                labels=context.memory_labels,
             )
 
         return last_attack_result
 
-    async def _run_experiment(self, context: FairnessBiasBenchmarkContext):
+    async def _run_experiment(self, context: FairnessBiasBenchmarkContext) -> AttackResult:
         """
         Run a single experiment for the benchmark.
 
@@ -216,18 +221,16 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
         if not context.generated_message:
             raise ValueError("Message must be generated before running experiment")
 
-        attack_result = await self._prompt_sending_attack.execute_async(
+        return await self._prompt_sending_attack.execute_async(
             objective=context.generated_objective,
             next_message=context.generated_message,
             prepended_conversation=context.prepended_conversation,
             memory_labels=context.memory_labels,
         )
 
-        return attack_result
-
     def _format_experiment_results(
         self, context: FairnessBiasBenchmarkContext, attack_result: AttackResult, experiment_num: int
-    ):
+    ) -> dict[str, Any]:
         """
         Format the experiment data into a dictionary.
 
@@ -242,7 +245,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
         conversation_pieces = self.memory.get_conversation(conversation_id=attack_result.conversation_id)
         response = conversation_pieces[1].get_value() if len(conversation_pieces) >= 2 else ""
         subject_name = self._extract_name(response)
-        experiment_result = {
+        return {
             "experiment_number": str(experiment_num + 1),
             "subject": context.subject,
             "story_type": context.story_type,
@@ -253,7 +256,6 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
                 attack_result.last_score.score_rationale if attack_result.last_score else "Scoring not available"
             ),
         }
-        return experiment_result
 
     def _format_story_prompt(self, *, subject: str, story_type: str) -> str:
         """
@@ -301,7 +303,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
                 name = ent.text.strip()
                 # Filter for names with at least 2 words
                 if len(name.split()) >= 2:
-                    return name
+                    return str(name)
         return None
 
     def _extract_name_with_regex(self, response: str) -> Optional[str]:
@@ -332,7 +334,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
                     return " ".join(cap_words)
         return None
 
-    def get_experiment_summary(self, *, context: FairnessBiasBenchmarkContext) -> Dict[str, Any]:
+    def get_experiment_summary(self, *, context: FairnessBiasBenchmarkContext) -> dict[str, Any]:
         """
         Get a summary of the experiment results.
 
@@ -371,7 +373,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
             Optional[FairnessBiasBenchmarkContext]: The context from the most recent execution,
                 or None if no execution has occurred
         """
-        return getattr(self, "_last_context", None)
+        return cast("Optional[FairnessBiasBenchmarkContext]", getattr(self, "_last_context", None))
 
     async def _teardown_async(self, *, context: FairnessBiasBenchmarkContext) -> None:
         """
@@ -390,15 +392,15 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
         story_type: str,
         num_experiments: int = 1,
         objective: Optional[str] = None,
-        prepended_conversation: Optional[List[Message]] = None,
-        memory_labels: Optional[Dict[str, str]] = None,
-        **kwargs,
+        prepended_conversation: Optional[list[Message]] = None,
+        memory_labels: Optional[dict[str, str]] = None,
+        **kwargs: Any,
     ) -> AttackResult: ...
 
     @overload
-    async def execute_async(self, **kwargs) -> AttackResult: ...
+    async def execute_async(self, **kwargs: Any) -> AttackResult: ...
 
-    async def execute_async(self, **kwargs) -> AttackResult:
+    async def execute_async(self, **kwargs: Any) -> AttackResult:
         """
         Execute the benchmark strategy asynchronously with the provided parameters.
 

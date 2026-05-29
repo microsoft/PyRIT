@@ -4,6 +4,7 @@
 import logging
 from typing import Literal
 
+from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.token_smuggling.base import SmugglerConverter
 
 logger = logging.getLogger(__name__)
@@ -18,12 +19,12 @@ class AsciiSmugglerConverter(SmugglerConverter):
         - U+E007F (end control tag)
 
     Replicates the functionality detailed in the following blog post:
-    https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/
+    [@embracethered2024unicode]
     """
 
-    def __init__(self, action: Literal["encode", "decode"] = "encode", unicode_tags: bool = False):
+    def __init__(self, action: Literal["encode", "decode"] = "encode", unicode_tags: bool = False) -> None:
         """
-        Initializes the converter with options for encoding/decoding.
+        Initialize the converter with options for encoding/decoding.
 
         Args:
             action (Literal["encode", "decode"]): The action to perform.
@@ -32,9 +33,23 @@ class AsciiSmugglerConverter(SmugglerConverter):
         self.unicode_tags = unicode_tags
         super().__init__(action=action)
 
-    def encode_message(self, *, message: str):
+    def _build_identifier(self) -> ComponentIdentifier:
         """
-        Encodes the message using Unicode Tags.
+        Build identifier with ASCII smuggler parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "action": self.action,
+                "unicode_tags": self.unicode_tags,
+            }
+        )
+
+    def encode_message(self, *, message: str) -> tuple[str, str]:
+        """
+        Encode the message using Unicode Tags.
 
         Each ASCII printable character (0x20-0x7E) is mapped to a corresponding
         Unicode Tag (by adding 0xE0000). If control mode is enabled, wraps the output.
@@ -66,9 +81,9 @@ class AsciiSmugglerConverter(SmugglerConverter):
             logger.error(f"Invalid characters detected: {invalid_chars}")
         return code_points, encoded
 
-    def decode_message(self, *, message: str):
+    def decode_message(self, *, message: str) -> str:
         """
-        Decodes a message encoded with Unicode Tags.
+        Decode a message encoded with Unicode Tags.
 
         For each character in the Unicode Tags range, subtracts 0xE0000.
         Skips control tags if present.
