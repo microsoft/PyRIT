@@ -115,7 +115,6 @@ huggingface = [
 gcg = [
     "accelerate>=1.7.0",
     "azure-ai-ml>=1.32.0",
-    "ml-collections>=1.1.0",
     # pyarrow is a transitive dep of `datasets`. With the gcg extra installed,
     # the resolver picks a pyarrow version that lacks cp314 wheels and fails
     # to build from source on Python 3.14; pin to a version that ships them.
@@ -148,7 +147,6 @@ all = [
     "flask>=3.1.3",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
-    "ml-collections>=1.1.0",
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",

@@ -87,15 +87,15 @@ def _mock_runtime_env():
 
 
 def _get_rapid_response_strategy():
-    from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
+    from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_strategy
 
-    return RapidResponse.get_strategy_class()
+    return _build_rapid_response_strategy()
 
 
 def _get_cyber_strategy():
-    from pyrit.scenario.scenarios.airt.cyber import Cyber
+    from pyrit.scenario.scenarios.airt.cyber import _build_cyber_strategy
 
-    return Cyber.get_strategy_class()
+    return _build_cyber_strategy()
 
 
 SCENARIO_STRATEGY_BUILDERS = [

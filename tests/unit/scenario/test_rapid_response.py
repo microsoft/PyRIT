@@ -48,7 +48,9 @@ def _mock_id(name: str) -> ComponentIdentifier:
 
 def _strategy_class():
     """Get the dynamically-generated RapidResponseStrategy class."""
-    return RapidResponse.get_strategy_class()
+    from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_strategy
+
+    return _build_rapid_response_strategy()
 
 
 # ---------------------------------------------------------------------------
@@ -85,9 +87,11 @@ def reset_technique_registry():
     ``build_scenario_technique_factories`` does not fall back to
     ``OpenAIChatTarget``.
     """
+    from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_strategy
+
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
-    RapidResponse._cached_strategy_class = None
+    _build_rapid_response_strategy.cache_clear()
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
@@ -98,7 +102,7 @@ def reset_technique_registry():
     yield
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
-    RapidResponse._cached_strategy_class = None
+    _build_rapid_response_strategy.cache_clear()
 
 
 @pytest.fixture(autouse=True)
@@ -153,16 +157,25 @@ class TestRapidResponseBasic:
     def test_version_is_2(self):
         assert RapidResponse.VERSION == 2
 
-    def test_get_strategy_class(self):
+    def test_get_strategy_class(self, mock_objective_scorer):
         strat = _strategy_class()
-        assert RapidResponse.get_strategy_class() is strat
+        with patch(
+            "pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer", return_value=mock_objective_scorer
+        ):
+            assert RapidResponse()._strategy_class is strat
 
-    def test_get_default_strategy_returns_default(self):
+    def test_get_default_strategy_returns_default(self, mock_objective_scorer):
         strat = _strategy_class()
-        assert RapidResponse.get_default_strategy() == strat.DEFAULT
+        with patch(
+            "pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer", return_value=mock_objective_scorer
+        ):
+            assert RapidResponse()._default_strategy == strat.DEFAULT
 
-    def test_default_dataset_config_has_all_harm_datasets(self):
-        config = RapidResponse.default_dataset_config()
+    def test_default_dataset_config_has_all_harm_datasets(self, mock_objective_scorer):
+        with patch(
+            "pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer", return_value=mock_objective_scorer
+        ):
+            config = RapidResponse()._default_dataset_config
         assert isinstance(config, DatasetConfiguration)
         names = config.get_default_dataset_names()
         expected = [f"airt_{cat}" for cat in ALL_HARM_CATEGORIES]
@@ -170,8 +183,11 @@ class TestRapidResponseBasic:
             assert name in names
         assert len(names) == 7
 
-    def test_default_dataset_config_max_dataset_size(self):
-        config = RapidResponse.default_dataset_config()
+    def test_default_dataset_config_max_dataset_size(self, mock_objective_scorer):
+        with patch(
+            "pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer", return_value=mock_objective_scorer
+        ):
+            config = RapidResponse()._default_dataset_config
         assert config.max_dataset_size == 4
 
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")

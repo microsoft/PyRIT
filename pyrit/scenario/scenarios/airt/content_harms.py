@@ -40,12 +40,12 @@ def __getattr__(name: str) -> Any:
     if name == "ContentHarmsStrategy":
         print_deprecation_message(
             old_item="pyrit.scenario.scenarios.airt.content_harms.ContentHarmsStrategy",
-            new_item="pyrit.scenario.scenarios.airt.rapid_response.RapidResponse.get_strategy_class()",
+            new_item="pyrit.scenario.scenarios.airt.rapid_response.RapidResponseStrategy",
             removed_in="0.15.0",
         )
-        from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
+        from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_strategy
 
-        return RapidResponse.get_strategy_class()
+        return _build_rapid_response_strategy()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
