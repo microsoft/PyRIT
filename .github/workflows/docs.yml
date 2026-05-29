@@ -75,7 +75,7 @@ jobs:
         make docs-build-all
     # Upload the book's HTML as an artifact
     - name: Upload artifact
-      uses: actions/upload-pages-artifact@v3
+      uses: actions/upload-pages-artifact@v5
       with:
         path: "doc/_build/html"
     - name: Deploy to GitHub Pages
