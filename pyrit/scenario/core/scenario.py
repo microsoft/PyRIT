@@ -8,6 +8,7 @@ This module provides the Scenario class that orchestrates the execution of multi
 AtomicAttack instances sequentially, enabling comprehensive security testing campaigns.
 """
 
+import asyncio
 import copy
 import json
 import logging
@@ -19,12 +20,20 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, cast, get_origin
 
+try:
+    # Built-in on Python 3.11+. Fall back to the ``exceptiongroup`` backport on 3.10
+    # (declared as a conditional dependency in pyproject.toml).
+    from builtins import ExceptionGroup  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - exercised only on 3.10
+    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef]
+
 from tqdm.auto import tqdm
 
 from pyrit.common import REQUIRED_VALUE, Parameter, apply_defaults
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.parameter import coerce_value, validate_param_type
 from pyrit.common.utils import to_sha256
+from pyrit.executor.attack import AttackExecutor
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
@@ -208,7 +217,7 @@ class Scenario(ABC):
         self._objective_target: Optional[PromptTarget] = None
         self._objective_target_identifier: Optional[ComponentIdentifier] = None
         self._memory_labels: dict[str, str] = {}
-        self._max_concurrency: int = 1
+        self._max_concurrency: Optional[int] = None
         self._max_retries: int = 0
 
         self._objective_scorer = objective_scorer
@@ -582,7 +591,7 @@ class Scenario(ABC):
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         scenario_strategies: Optional[Sequence[ScenarioStrategy]] = None,
         dataset_config: Optional[DatasetConfiguration] = None,
-        max_concurrency: int = 10,
+        max_concurrency: int = 4,
         max_retries: int = 0,
         memory_labels: Optional[dict[str, str]] = None,
         include_baseline: bool | None = None,
@@ -606,7 +615,14 @@ class Scenario(ABC):
             dataset_config (Optional[DatasetConfiguration]): Configuration for the dataset source.
                 Use this to specify dataset names or maximum dataset size from the CLI.
                 If not provided, scenarios use their default_dataset_config().
-            max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 1.
+            max_concurrency (int): Maximum number of concurrent units of work for the scenario.
+                Defaults to 4. A "unit of work" is one parameter-build call (turning a seed
+                group into attack parameters) or one attack execution (running a single
+                ``objective × attack`` pair). All atomic attacks in the scenario share a
+                single ``AttackExecutor`` whose internal semaphore caps in-flight units at
+                ``max_concurrency``: e.g. ``max_concurrency=4`` means at most 4 such units
+                are in flight at any time, regardless of how many atomic attacks or
+                objectives the scenario has.
             max_retries (int): Maximum number of automatic retries if the scenario raises an exception.
                 Set to 0 (default) for no automatic retries. If set to a positive number,
                 the scenario will automatically retry up to this many times after an exception.
@@ -1230,97 +1246,18 @@ class Scenario(ABC):
         # Calculate starting index based on completed attacks
         completed_count = len(self._atomic_attacks) - len(remaining_attacks)
 
+        # Run atomic attacks through a worker pool sharing a single AttackExecutor-level
+        # Semaphore(max_concurrency) so the global in-flight budget (parameter-build +
+        # attack-execution units of work) never exceeds max_concurrency, regardless of
+        # how work is distributed across atomic attacks. At max_concurrency=1 the pool
+        # reduces to a single worker, naturally giving serial execution with
+        # abort-on-first-failure.
         try:
-            for i, atomic_attack in enumerate(
-                tqdm(
-                    remaining_attacks,
-                    desc=f"Executing {self._name}",
-                    unit="attack",
-                    total=len(self._atomic_attacks),
-                    initial=completed_count,
-                ),
-                start=completed_count + 1,
-            ):
-                # Stamp the scenario id onto the atomic attack so each persisted
-                # AttackResult carries the attribution_parent_id linkage. This
-                # is what enables mid-run interruption recovery (results are
-                # visible without the post-atomic-attack bulk manifest write).
-                atomic_attack.set_scenario_result_id(scenario_result_id)
-
-                logger.info(
-                    f"Executing atomic attack {i}/{len(self._atomic_attacks)} "
-                    f"('{atomic_attack.atomic_attack_name}') in scenario '{self._name}'"
-                )
-
-                try:
-                    atomic_results = await atomic_attack.run_async(
-                        max_concurrency=self._max_concurrency,
-                        return_partial_on_failure=True,
-                    )
-
-                    # Per-result scenario linkage is now stamped by the attack
-                    # event handler at write time; no post-atomic bulk update.
-
-                    # Check if there were any incomplete objectives
-                    if atomic_results.has_incomplete:
-                        incomplete_count = len(atomic_results.incomplete_objectives)
-                        completed_count = len(atomic_results.completed_results)
-
-                        logger.error(
-                            f"Atomic attack {i}/{len(self._atomic_attacks)} "
-                            f"('{atomic_attack.atomic_attack_name}') partially completed: "
-                            f"{completed_count} completed, {incomplete_count} incomplete"
-                        )
-
-                        # Log details of each incomplete objective
-                        for obj, exc in atomic_results.incomplete_objectives:
-                            logger.error(f"  Incomplete objective '{obj[:50]}...': {str(exc)}")
-
-                        # Error AttackResults are linked to this scenario via the
-                        # attribution_parent_id foreign key on AttackResultEntry
-                        # (stamped by the attack event handler when an
-                        # AttackResultAttribution is on the context). The
-                        # previous per-scenario error_id manifest is no longer
-                        # needed.
-
-                        # Mark scenario as failed
-                        error_msg = (
-                            f"Atomic attack '{atomic_attack.atomic_attack_name}' partially failed: "
-                            f"{incomplete_count} of {incomplete_count + completed_count} objectives incomplete. "
-                            f"See attack results for details."
-                        )
-                        self._memory.update_scenario_run_state(
-                            scenario_result_id=scenario_result_id,
-                            scenario_run_state="FAILED",
-                            error_message=error_msg,
-                            error_type=type(atomic_results.incomplete_objectives[0][1]).__name__,
-                        )
-
-                        # Raise exception with detailed information
-                        raise ValueError(error_msg) from atomic_results.incomplete_objectives[0][1]
-                    logger.info(
-                        f"Atomic attack {i}/{len(self._atomic_attacks)} completed successfully with "
-                        f"{len(atomic_results.completed_results)} results"
-                    )
-
-                except Exception as e:
-                    # Exception was raised either by run_async or by our check above
-                    logger.error(
-                        f"Atomic attack {i}/{len(self._atomic_attacks)} "
-                        f"('{atomic_attack.atomic_attack_name}') failed in scenario '{self._name}': {str(e)}"
-                    )
-
-                    # Mark scenario as failed if not already done
-                    scenario_results = self._memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
-                    if scenario_results and scenario_results[0].scenario_run_state != "FAILED":
-                        self._memory.update_scenario_run_state(
-                            scenario_result_id=scenario_result_id,
-                            scenario_run_state="FAILED",
-                            error_message=str(e),
-                            error_type=type(e).__name__,
-                        )
-
-                    raise
+            await self._execute_atomic_attacks_parallel_async(
+                remaining_attacks=remaining_attacks,
+                scenario_result_id=scenario_result_id,
+                completed_count=completed_count,
+            )
 
             logger.info(f"Scenario '{self._name}' completed successfully")
 
@@ -1339,3 +1276,178 @@ class Scenario(ABC):
         except Exception as e:
             logger.error(f"Scenario '{self._name}' failed with error: {str(e)}")
             raise
+
+    def _partial_result_to_exception(
+        self,
+        *,
+        atomic_attack: AtomicAttack,
+        atomic_results: Any,
+    ) -> ValueError | None:
+        """
+        Log the outcome of an atomic attack and return an exception if it didn't
+        fully complete.
+
+        Returns:
+            ValueError | None: An error to raise when the atomic attack has incomplete
+            objectives, otherwise ``None`` when all objectives finished successfully.
+        """
+        if not atomic_results.has_incomplete:
+            logger.info(
+                f"Atomic attack ('{atomic_attack.atomic_attack_name}') completed successfully with "
+                f"{len(atomic_results.completed_results)} results"
+            )
+            return None
+
+        incomplete_count = len(atomic_results.incomplete_objectives)
+        completed_in_run = len(atomic_results.completed_results)
+        logger.error(
+            f"Atomic attack ('{atomic_attack.atomic_attack_name}') partially completed: "
+            f"{completed_in_run} completed, {incomplete_count} incomplete"
+        )
+        for obj, exc in atomic_results.incomplete_objectives:
+            logger.error(f"  Incomplete objective '{obj[:50]}...': {str(exc)}")
+
+        inner = atomic_results.incomplete_objectives[0][1]
+        error = ValueError(
+            f"Atomic attack '{atomic_attack.atomic_attack_name}' partially failed: "
+            f"{incomplete_count} of {incomplete_count + completed_in_run} objectives incomplete. "
+            f"See attack results for details."
+        )
+        if isinstance(inner, BaseException):
+            error.__cause__ = inner
+        return error
+
+    def _mark_scenario_failed(self, *, scenario_result_id: str, error: BaseException) -> None:
+        """Mark the scenario run as FAILED, deriving message/type from ``error``."""
+        cause = error.__cause__ if error.__cause__ is not None else error
+        self._memory.update_scenario_run_state(
+            scenario_result_id=scenario_result_id,
+            scenario_run_state="FAILED",
+            error_message=str(error),
+            error_type=type(cause).__name__,
+        )
+
+    async def _execute_atomic_attacks_parallel_async(
+        self,
+        *,
+        remaining_attacks: list[AtomicAttack],
+        scenario_result_id: str,
+        completed_count: int,
+    ) -> None:
+        """
+        Execute remaining atomic attacks concurrently via a worker pool.
+
+        At most ``max_concurrency`` atomic attacks are in-flight at any time, and all
+        of their per-objective tasks share a single ``AttackExecutor`` (and therefore a
+        single internal ``Semaphore(max_concurrency)``) so the global concurrent-objective
+        budget never exceeds ``max_concurrency`` regardless of how work is distributed
+        across atomic attacks.
+
+        Failure semantics: when an in-flight atomic attack raises or returns
+        ``has_incomplete``, the worker pool stops pulling new atomic attacks from the
+        queue. Already-started atomic attacks are allowed to finish (so their partial
+        work persists for resume). If more than one in-flight attack ends up failing,
+        every failure is surfaced: a single failure is re-raised as-is, multiple
+        failures are wrapped in an ``ExceptionGroup`` so callers see all of them.
+        """
+        # Type narrowing: initialize_async always sets _max_concurrency to an int. We hold
+        # the narrowed value in a local so the type checker can verify all uses below.
+        assert self._max_concurrency is not None, "Scenario not initialized; call initialize_async first."
+        max_concurrency: int = self._max_concurrency
+
+        shared_executor = AttackExecutor(max_concurrency=max_concurrency)
+        pbar = tqdm(
+            desc=f"Executing {self._name}",
+            unit="attack",
+            total=len(self._atomic_attacks),
+            initial=completed_count,
+        )
+
+        for atomic_attack in remaining_attacks:
+            atomic_attack.set_scenario_result_id(scenario_result_id)
+
+        logger.info(
+            f"Launching {len(remaining_attacks)} atomic attacks in parallel "
+            f"(shared max_concurrency={max_concurrency}) in scenario '{self._name}'"
+        )
+
+        queue: asyncio.Queue[AtomicAttack] = asyncio.Queue()
+        for atomic_attack in remaining_attacks:
+            queue.put_nowait(atomic_attack)
+
+        stop_event = asyncio.Event()
+        outcomes: list[tuple[AtomicAttack, Any] | BaseException] = []
+
+        async def worker() -> None:
+            while not stop_event.is_set():
+                try:
+                    atomic_attack = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                try:
+                    result = await atomic_attack.run_async(
+                        executor=shared_executor,
+                        return_partial_on_failure=True,
+                    )
+                    outcomes.append((atomic_attack, result))
+                    if result.has_incomplete:
+                        stop_event.set()
+                except Exception as exc:
+                    outcomes.append(exc)
+                    stop_event.set()
+                finally:
+                    pbar.update(1)
+
+        # Cap workers at max_concurrency: that's also the objective-budget cap, and it's
+        # the natural place to enforce "don't start new atomic attacks after a failure"
+        # without losing parallelism for the common case where remaining_attacks fits in
+        # the budget.
+        worker_count = min(max_concurrency, len(remaining_attacks))
+        try:
+            await asyncio.gather(*(worker() for _ in range(worker_count)))
+        finally:
+            pbar.close()
+
+        errors = self._collect_errors_from_outcomes(outcomes=outcomes)
+        if errors:
+            # Single failure: re-raise as-is to keep simple cases readable. Multiple
+            # failures: wrap in ExceptionGroup so the caller sees every one — logging
+            # alone is easy to miss.
+            final_error: BaseException = (
+                errors[0]
+                if len(errors) == 1
+                else ExceptionGroup(f"Multiple atomic attacks failed in scenario '{self._name}'", errors)
+            )
+            self._mark_scenario_failed(scenario_result_id=scenario_result_id, error=final_error)
+            raise final_error
+
+    def _collect_errors_from_outcomes(
+        self,
+        *,
+        outcomes: list[tuple[AtomicAttack, Any] | BaseException],
+    ) -> list[BaseException]:
+        """
+        Convert worker outcomes into a flat list of errors for the caller to raise.
+
+        Each outcome is either:
+            - ``BaseException``: the atomic attack raised; log and surface as-is.
+            - ``(AtomicAttack, result)``: ran to completion. If the result reports
+              incomplete objectives, ``_partial_result_to_exception`` produces a
+              synthetic ``ValueError`` so partial failures are surfaced the same
+              way as raised exceptions.
+
+        Returns:
+            list[BaseException]: One exception per failed atomic attack, preserving
+                worker-completion order. Empty if every atomic attack succeeded.
+        """
+        errors: list[BaseException] = []
+        for outcome in outcomes:
+            if isinstance(outcome, BaseException):
+                logger.error(f"Atomic attack failed in scenario '{self._name}': {str(outcome)}")
+                error: Optional[BaseException] = outcome
+            else:
+                atomic_attack, atomic_results = outcome
+                error = self._partial_result_to_exception(atomic_attack=atomic_attack, atomic_results=atomic_results)
+            if error is not None:
+                errors.append(error)
+        return errors
