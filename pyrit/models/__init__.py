@@ -1,7 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Public model exports for PyRIT core data structures and helpers."""
+"""Public model exports for PyRIT core data structures and helpers.
+
+Sub-packages:
+    ``pyrit.models.identifiers``
+        Component, atomic-attack, and evaluation identifier types plus
+        registry-name and class-name utilities. Previously available at
+        ``pyrit.identifiers`` (kept as a deprecation shim through ``0.16.0``).
+"""
 
 from pyrit.models.attack_result import AttackOutcome, AttackResult, AttackResultT
 from pyrit.models.chat_message import (
