@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import pytest
+from pydantic import ValidationError
 
 from pyrit.models.conversation_reference import ConversationReference, ConversationType
 
@@ -31,7 +32,7 @@ def test_conversation_reference_with_description():
 
 def test_conversation_reference_is_frozen():
     ref = ConversationReference(conversation_id="abc", conversation_type=ConversationType.SCORE)
-    with pytest.raises(AttributeError):
+    with pytest.raises(ValidationError):
         ref.conversation_id = "new_id"
 
 
@@ -78,11 +79,25 @@ def test_conversation_reference_usable_as_dict_key():
     assert d[lookup_ref] == "value"
 
 
-def test_to_dict_from_dict_roundtrip():
+def test_model_dump_validate_roundtrip():
     original = ConversationReference(
         conversation_id="conv-123",
         conversation_type=ConversationType.ADVERSARIAL,
         description="main adversarial conversation",
     )
-    roundtripped = ConversationReference.from_dict(original.to_dict())
-    assert original.to_dict() == roundtripped.to_dict()
+    payload = original.model_dump(mode="json")
+    roundtripped = ConversationReference.model_validate(payload)
+    assert original.model_dump(mode="json") == roundtripped.model_dump(mode="json")
+
+
+def test_to_dict_from_dict_deprecated_wrappers_still_work():
+    original = ConversationReference(
+        conversation_id="conv-123",
+        conversation_type=ConversationType.ADVERSARIAL,
+        description="main adversarial conversation",
+    )
+    with pytest.warns(DeprecationWarning):
+        payload = original.to_dict()
+    with pytest.warns(DeprecationWarning):
+        roundtripped = ConversationReference.from_dict(payload)
+    assert original.model_dump(mode="json") == roundtripped.model_dump(mode="json")

@@ -251,7 +251,7 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         Args:
             result (ScenarioResult): The scenario result to summarize.
         """
-        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="2.0")
+        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="0.16.0")
         await self.write_async(result)
 
 
