@@ -68,31 +68,39 @@ class TestCopyLineageTo:
 
 
 class TestMarkNotPersisted:
-    def test_sets_id_to_none(self) -> None:
+    def test_sets_not_in_database_flag(self) -> None:
         piece = _make_piece()
-        assert piece.id is not None
+        assert piece.not_in_database is False
+        original_id = piece.id
 
         mark_not_persisted(piece)
 
-        assert piece.id is None
+        assert piece.not_in_database is True
+        # The id is intentionally preserved so scorers can still reference the piece
+        # within the in-memory call; only the persistence policy changes.
+        assert piece.id == original_id
 
-    def test_idempotent_when_id_already_none(self) -> None:
+    def test_idempotent_when_already_flagged(self) -> None:
         piece = _make_piece()
-        piece.id = None
+        mark_not_persisted(piece)
+        original_id = piece.id
 
         mark_not_persisted(piece)
 
-        assert piece.id is None
+        assert piece.not_in_database is True
+        assert piece.id == original_id
 
     def test_does_not_alter_other_fields(self) -> None:
         piece = _make_piece(conversation_id="conv-X")
         original_conv = piece.conversation_id
         original_role = piece.role
         original_value = piece.original_value
+        original_id = piece.id
 
         mark_not_persisted(piece)
 
         assert piece.conversation_id == original_conv
         assert piece.role == original_role
         assert piece.original_value == original_value
+        assert piece.id == original_id
         assert isinstance(piece.original_prompt_id, uuid.UUID) or piece.original_prompt_id is None

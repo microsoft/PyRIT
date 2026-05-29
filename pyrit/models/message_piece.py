@@ -12,6 +12,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     ValidationInfo,
     field_serializer,
     field_validator,
@@ -101,6 +102,12 @@ class MessagePiece(BaseModel):
     originator: _OriginatorLiteral = "undefined"
     original_prompt_id: Optional[uuid.UUID] = None
     scores: list[Score] = Field(default_factory=list)
+
+    # Private flag set via ``set_piece_not_in_database()`` that tells the memory
+    # layer this piece should not be persisted (e.g., ephemeral pieces created
+    # solely so a scorer can produce a Score for content PyRIT did not send).
+    # Excluded from serialization to preserve JSON shape parity.
+    _not_in_database: bool = PrivateAttr(default=False)
 
     # ------------------------------------------------------------------ #
     # Pre-validation: drop explicit ``None`` overrides, emit deprecation
@@ -409,15 +416,22 @@ class MessagePiece(BaseModel):
 
         copy_lineage_to(target=self, source=source)
 
+    @property
+    def not_in_database(self) -> bool:
+        """Whether this piece is flagged to be excluded from database persistence."""
+        return self._not_in_database
+
     def set_piece_not_in_database(self) -> None:
         """
-        Set that the prompt is not in the database.
+        Flag this piece so memory operations skip persisting it.
 
-        This is needed when we're scoring prompts or other things that have not been sent by PyRIT
+        This is needed when we're scoring prompts or other things that have not been
+        sent by PyRIT. The piece keeps its ``id`` (so scorers can reference it within
+        the in-memory call); the memory layer checks :attr:`not_in_database` and
+        either filters the piece out of insert calls or, for downstream scores that
+        reference it, drops the missing foreign key so the score itself still persists.
         """
-        from pyrit.models.helpers.message_piece import mark_not_persisted
-
-        mark_not_persisted(self)
+        self._not_in_database = True
 
     def to_dict(self) -> dict[str, Any]:
         """

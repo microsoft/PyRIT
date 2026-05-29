@@ -28,7 +28,7 @@ def text_message_piece(patch_central_database) -> MessagePiece:
         original_value_data_type="text",
         prompt_metadata={"correct_answer_index": "0", "correct_answer": "Paris"},
     )
-    piece.id = None
+    piece.set_piece_not_in_database()
     return piece
 
 

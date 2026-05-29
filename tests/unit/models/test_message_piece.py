@@ -1019,15 +1019,19 @@ class TestSimulatedAssistantRole:
         assert piece.is_simulated is True
 
 
-def test_set_piece_not_in_database_sets_id_to_none():
+def test_set_piece_not_in_database_sets_flag():
     entry = MessagePiece(
         role="user",
         original_value="Hello",
         converted_value="Hello",
     )
+    original_id = entry.id
     assert entry.id is not None
+    assert entry.not_in_database is False
     entry.set_piece_not_in_database()
-    assert entry.id is None
+    assert entry.not_in_database is True
+    # id is preserved so scorers can still reference the piece within the in-memory call
+    assert entry.id == original_id
 
 
 class TestMessagePieceDeprecationWarnings:
@@ -1238,23 +1242,27 @@ def test_to_dict_from_dict_roundtrip():
 
 
 def test_to_dict_from_dict_roundtrip_after_set_piece_not_in_database():
-    """Pieces marked not-in-database (id=None) must serialize and deserialize cleanly without ValueError."""
+    """Pieces marked not-in-database keep their id; the flag itself is not serialized."""
     piece = MessagePiece(
         role="user",
         original_value="Hello world",
         conversation_id="conv-not-in-db",
     )
+    original_id = piece.id
     piece.set_piece_not_in_database()
-    piece.original_prompt_id = None  # type: ignore[assignment]
+    assert piece.not_in_database is True
+    assert piece.id == original_id
 
     serialized = piece.to_dict()
-    assert serialized["id"] is None
-    assert serialized["original_prompt_id"] is None
+    # PrivateAttr is intentionally excluded from serialization.
+    assert "_not_in_database" not in serialized
+    assert serialized["id"] == str(original_id)
 
-    # Must not raise ValueError on the literal string "None" or similar corruption.
     roundtripped = MessagePiece.from_dict(serialized)
     assert isinstance(roundtripped.id, uuid.UUID)
-    assert isinstance(roundtripped.original_prompt_id, uuid.UUID)
+    assert roundtripped.id == original_id
+    # Flag does not survive serialization (in-process only).
+    assert roundtripped.not_in_database is False
 
 
 class TestPhase3PydanticMigration:

@@ -300,8 +300,15 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
     def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
         Insert a list of message pieces into the memory storage.
+
+        Pieces flagged via :meth:`MessagePiece.set_piece_not_in_database` are
+        silently filtered out so callers don't need to track persistence policy
+        themselves.
         """
-        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in message_pieces])
+        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_database]
+        if not pieces_to_insert:
+            return
+        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in pieces_to_insert])
 
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
         """

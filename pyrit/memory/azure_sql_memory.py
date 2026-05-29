@@ -698,10 +698,17 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         Insert a list of message pieces into the memory storage.
 
+        Pieces flagged via :meth:`MessagePiece.set_piece_not_in_database` are
+        silently filtered out so callers don't need to track persistence policy
+        themselves.
+
         Args:
             message_pieces (Sequence[MessagePiece]): A sequence of MessagePiece instances to be added.
         """
-        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in message_pieces])
+        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_database]
+        if not pieces_to_insert:
+            return
+        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in pieces_to_insert])
 
     def dispose_engine(self) -> None:
         """

@@ -683,6 +683,11 @@ class MemoryInterface(abc.ABC):
     def add_scores_to_memory(self, *, scores: Sequence[Score]) -> None:
         """
         Insert a list of scores into the memory storage.
+
+        Callers that produce scores for pieces flagged via
+        :meth:`MessagePiece.set_piece_not_in_database` should null out
+        ``message_piece_id`` on those scores before calling this method so the
+        score itself can still be persisted without a dangling piece linkage.
         """
         for score in scores:
             if score.message_piece_id:

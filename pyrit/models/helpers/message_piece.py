@@ -33,12 +33,15 @@ def copy_lineage_to(*, target: MessagePiece, source: MessagePiece) -> None:
 
 def mark_not_persisted(piece: MessagePiece) -> None:
     """
-    Mark ``piece`` as not stored in the database by clearing its ``id``.
+    Flag ``piece`` so memory operations skip persisting it.
 
-    This is needed when we're scoring prompts or other things that have not been
-    sent by PyRIT.
+    Delegates to :meth:`MessagePiece.set_piece_not_in_database`, which sets a
+    private ``not_in_database`` flag without touching the piece's ``id``. The
+    memory layer filters flagged pieces out of inserts and gracefully drops the
+    missing foreign key on any score that references one, so the score itself
+    is still persisted.
 
     Args:
         piece: The piece to mark as not persisted.
     """
-    piece.id = None
+    piece.set_piece_not_in_database()
