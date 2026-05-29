@@ -124,6 +124,29 @@ class TestScenarioBaseDeprecation:
 class TestSubclassBaselineKwargDeprecation:
     """Cover the deprecated ``include_baseline`` constructor kwarg on user-facing subclasses."""
 
+    @pytest.fixture(autouse=True)
+    def _populate_registry(self):
+        """Populate the technique registry so Cyber/RapidResponse-style subclasses can build their strategy enum."""
+        from pyrit.prompt_target import PromptTarget
+        from pyrit.registry import TargetRegistry
+        from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+        from pyrit.scenario.scenarios.airt.cyber import Cyber
+        from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
+
+        AttackTechniqueRegistry.reset_instance()
+        TargetRegistry.reset_instance()
+        Cyber._cached_strategy_class = None
+
+        adv_target = MagicMock(spec=PromptTarget)
+        adv_target.capabilities.includes.return_value = True
+        TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
+
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_scenario_technique_factories())
+        yield
+        AttackTechniqueRegistry.reset_instance()
+        TargetRegistry.reset_instance()
+        Cyber._cached_strategy_class = None
+
     @pytest.mark.parametrize(
         "import_path, class_name, needs_adversarial_chat",
         [

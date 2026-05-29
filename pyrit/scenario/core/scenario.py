@@ -338,18 +338,7 @@ class Scenario(ABC):
         from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        factories = registry.get_factories()
-        if not factories:
-            raise RuntimeError(
-                "AttackTechniqueRegistry is empty. Register attack technique factories before "
-                "executing scenarios — for example by running the default "
-                "ScenarioTechniqueInitializer "
-                "(pyrit.setup.initializers.components.scenario_techniques), "
-                "running another initializer that calls "
-                "AttackTechniqueRegistry.register_from_factories(...), or registering "
-                "factories directly via AttackTechniqueRegistry.get_registry_singleton()."
-            )
-        return factories
+        return registry.get_factories_or_raise()
 
     def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> str:
         """

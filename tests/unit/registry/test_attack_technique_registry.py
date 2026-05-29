@@ -225,6 +225,22 @@ class TestAttackTechniqueRegistryInherited:
         result = self.registry.get_factories()
         assert result == {}
 
+    def test_get_factories_or_raise_returns_factories_when_populated(self):
+        factory_a = AttackTechniqueFactory(name="alpha", attack_class=_StubAttack)
+        factory_b = AttackTechniqueFactory(name="beta", attack_class=_StubAttack, attack_kwargs={"max_turns": 5})
+        self.registry.register_technique(name="alpha", factory=factory_a)
+        self.registry.register_technique(name="beta", factory=factory_b)
+
+        result = self.registry.get_factories_or_raise()
+
+        assert set(result.keys()) == {"alpha", "beta"}
+        assert result["alpha"] is factory_a
+        assert result["beta"] is factory_b
+
+    def test_get_factories_or_raise_raises_when_empty(self):
+        with pytest.raises(RuntimeError, match="AttackTechniqueRegistry is empty"):
+            self.registry.get_factories_or_raise()
+
 
 class TestAttackTechniqueRegistryScorerOverridePolicy:
     """Tests for the scorer_override_policy property on the registry."""

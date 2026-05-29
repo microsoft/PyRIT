@@ -79,6 +79,34 @@ class AttackTechniqueRegistry(BaseInstanceRegistry["AttackTechniqueFactory"]):
         """
         return {name: entry.instance for name, entry in self._registry_items.items()}
 
+    def get_factories_or_raise(self) -> dict[str, AttackTechniqueFactory]:
+        """
+        Return all registered factories, raising if the registry is empty.
+
+        Use this from any code path that needs the registry to be populated
+        (scenario strategy builders, scenario initialization) so an empty
+        registry surfaces a single, descriptive error instead of silently
+        producing empty strategy enums or empty attack lists.
+
+        Returns:
+            dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
+
+        Raises:
+            RuntimeError: If the registry has no registered factories.
+        """
+        factories = self.get_factories()
+        if not factories:
+            raise RuntimeError(
+                "AttackTechniqueRegistry is empty. Register attack technique factories before "
+                "executing scenarios — for example by running the default "
+                "ScenarioTechniqueInitializer "
+                "(pyrit.setup.initializers.components.scenario_techniques), "
+                "running another initializer that calls "
+                "AttackTechniqueRegistry.register_from_factories(...), or registering "
+                "factories directly via AttackTechniqueRegistry.get_registry_singleton()."
+            )
+        return factories
+
     @property
     def scorer_override_policy(self) -> ScorerOverridePolicy:
         """The policy applied when a scenario scorer is incompatible with an attack's annotation."""

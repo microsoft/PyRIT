@@ -40,7 +40,7 @@ def _build_rapid_response_strategy() -> type[ScenarioStrategy]:
     from pyrit.registry.tag_query import TagQuery
 
     registry = AttackTechniqueRegistry.get_registry_singleton()
-    factories = list(registry.get_factories().values())
+    factories = list(registry.get_factories_or_raise().values())
 
     return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[ty:invalid-return-type]
         class_name="RapidResponseStrategy",

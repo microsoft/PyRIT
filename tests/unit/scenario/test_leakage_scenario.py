@@ -15,7 +15,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario import DatasetConfiguration
-from pyrit.scenario.airt import Leakage, LeakageStrategy
+from pyrit.scenario.airt import Leakage
 from pyrit.scenario.core import BaselineAttackPolicy
 from pyrit.score import TrueFalseCompositeScorer
 from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
@@ -220,27 +220,31 @@ class TestLeakageStrategyEnum:
 
     def test_strategy_all_exists(self):
         """Test that ALL strategy exists."""
-        assert LeakageStrategy.ALL is not None
-        assert LeakageStrategy.ALL.value == "all"
-        assert "all" in LeakageStrategy.ALL.tags
+        strategy_class = Leakage.get_strategy_class()
+        assert strategy_class.ALL is not None
+        assert strategy_class.ALL.value == "all"
+        assert "all" in strategy_class.ALL.tags
 
     def test_strategy_single_turn_aggregate_exists(self):
         """Test that SINGLE_TURN aggregate strategy exists."""
-        assert LeakageStrategy.SINGLE_TURN is not None
-        assert LeakageStrategy.SINGLE_TURN.value == "single_turn"
-        assert "single_turn" in LeakageStrategy.SINGLE_TURN.tags
+        strategy_class = Leakage.get_strategy_class()
+        assert strategy_class.SINGLE_TURN is not None
+        assert strategy_class.SINGLE_TURN.value == "single_turn"
+        assert "single_turn" in strategy_class.SINGLE_TURN.tags
 
     def test_strategy_multi_turn_aggregate_exists(self):
         """Test that MULTI_TURN aggregate strategy exists."""
-        assert LeakageStrategy.MULTI_TURN is not None
-        assert LeakageStrategy.MULTI_TURN.value == "multi_turn"
-        assert "multi_turn" in LeakageStrategy.MULTI_TURN.tags
+        strategy_class = Leakage.get_strategy_class()
+        assert strategy_class.MULTI_TURN is not None
+        assert strategy_class.MULTI_TURN.value == "multi_turn"
+        assert "multi_turn" in strategy_class.MULTI_TURN.tags
 
     def test_strategy_default_aggregate_exists(self):
         """Test that DEFAULT aggregate strategy exists."""
-        assert LeakageStrategy.DEFAULT is not None
-        assert LeakageStrategy.DEFAULT.value == "default"
-        assert "default" in LeakageStrategy.DEFAULT.tags
+        strategy_class = Leakage.get_strategy_class()
+        assert strategy_class.DEFAULT is not None
+        assert strategy_class.DEFAULT.value == "default"
+        assert "default" in strategy_class.DEFAULT.tags
 
     def test_strategy_has_technique_members(self):
         """Test that the strategy has technique members from core + leakage techniques."""

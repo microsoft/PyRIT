@@ -39,7 +39,7 @@ def _build_cyber_strategy() -> type[ScenarioStrategy]:
     from pyrit.registry.tag_query import TagQuery
 
     registry = AttackTechniqueRegistry.get_registry_singleton()
-    factories = registry.get_factories()
+    factories = registry.get_factories_or_raise()
     cyber_factories = [f for name, f in factories.items() if name in _CYBER_TECHNIQUE_NAMES]
 
     return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[ty:invalid-return-type]

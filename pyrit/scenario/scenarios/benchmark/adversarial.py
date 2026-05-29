@@ -288,6 +288,6 @@ class AdversarialBenchmark(Scenario):
         registry = AttackTechniqueRegistry.get_registry_singleton()
         return [
             factory
-            for factory in registry.get_factories().values()
+            for factory in registry.get_factories_or_raise().values()
             if factory.uses_adversarial and "core" in factory.strategy_tags
         ]

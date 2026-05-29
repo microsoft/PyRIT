@@ -74,7 +74,7 @@ def _build_leakage_strategy() -> type[ScenarioStrategy]:
         type[ScenarioStrategy]: The dynamically generated strategy enum class.
     """
     registry = AttackTechniqueRegistry.get_registry_singleton()
-    core_factories = list(registry.get_factories().values())
+    core_factories = list(registry.get_factories_or_raise().values())
     all_factories = core_factories + LEAKAGE_FACTORIES
     return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
         class_name="LeakageStrategy",
