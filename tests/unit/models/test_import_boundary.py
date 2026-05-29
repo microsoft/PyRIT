@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable  # noqa: F401
 
 MODELS_PACKAGE = Path(pyrit.models.__file__).parent
-EXCLUDE_FILES = frozenset({"__init__.py"})
+EXCLUDE_FILES: frozenset[str] = frozenset()
 
 # Always allowed at module level (in addition to pyrit.models.* self-imports).
 ALLOWED_TOP_LEVEL: frozenset[str] = frozenset(
@@ -109,7 +109,10 @@ KNOWN_LAZY_VIOLATIONS: dict[str, dict[str, str]] = {
 def _module_name_for(path: Path) -> str:
     """Return the dotted module name for a file inside ``pyrit/models/``."""
     rel = path.relative_to(MODELS_PACKAGE).with_suffix("")
-    return "pyrit.models." + ".".join(rel.parts)
+    parts = [p for p in rel.parts if p != "__init__"]
+    if not parts:
+        return "pyrit.models"
+    return "pyrit.models." + ".".join(parts)
 
 
 def _resolve_from_import(node: ast.ImportFrom, source_module: str) -> str:
