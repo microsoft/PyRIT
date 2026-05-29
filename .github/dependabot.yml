@@ -1,0 +1,87 @@
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "MAINT"
+    reviewers:
+      - "microsoft/ai-red-team-dev"
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "MAINT"
+    reviewers:
+      - "microsoft/ai-red-team-dev"
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "MAINT"
+    reviewers:
+      - "microsoft/ai-red-team-dev"
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "MAINT"
+    reviewers:
+      - "microsoft/ai-red-team-dev"
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: docker
+    directories:
+      - /docker
+      - /.devcontainer
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "MAINT"
+    reviewers:
+      - "microsoft/ai-red-team-dev"
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: devcontainers
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "MAINT"
+    reviewers:
+      - "microsoft/ai-red-team-dev"
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
