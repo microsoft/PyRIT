@@ -101,10 +101,10 @@ def test_constructor_caches_streaming_handle(vad_target):
 
 
 def test_constructor_rejects_target_without_streaming_handle(vad_target):
-    """If a target declares STREAMING_BARGE_IN but did not wire .streaming, construction fails."""
-    # Simulate a malformed target: keeps the capability flag, drops the handle.
-    vad_target.streaming = None  # type: ignore[assignment]
-    with pytest.raises(ValueError, match="declares STREAMING_BARGE_IN.*did not wire"):
+    """A target that doesn't satisfy SupportsStreamingBargeIn (no streaming attr) fails fast."""
+    # Simulate a malformed target: capability flag still set, but streaming attribute removed.
+    del vad_target.streaming
+    with pytest.raises(TypeError, match="does not satisfy SupportsStreamingBargeIn"):
         BargeInAttack(objective_target=vad_target)
 
 

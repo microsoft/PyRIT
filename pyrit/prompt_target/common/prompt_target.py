@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import abc
 import logging
-from typing import TYPE_CHECKING, Any, Union, final
+from typing import Any, Union, final
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.identifiers import ComponentIdentifier, Identifiable
@@ -14,9 +14,6 @@ from pyrit.models import Message, MessagePiece
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-
-if TYPE_CHECKING:
-    from pyrit.prompt_target.common.realtime_audio import StreamingHandle
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +44,6 @@ class PromptTarget(Identifiable):
     # Per-instance overrides are also possible via the ``custom_configuration``
     # constructor parameter, which takes precedence over the class-level value.
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
-
-    #: Provider-specific streaming handle, set by targets that declare ``STREAMING_BARGE_IN``.
-    #: Non-streaming targets leave this as ``None``.
-    streaming: StreamingHandle | None = None
 
     def __init__(
         self,

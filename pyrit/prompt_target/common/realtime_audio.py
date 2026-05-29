@@ -9,7 +9,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -304,3 +304,20 @@ class StreamingHandle(ABC):
     @abstractmethod
     async def cleanup_conversation(self, conversation_id: str) -> None:
         """Tear down any per-conversation state held by the target."""
+
+
+@runtime_checkable
+class SupportsStreamingBargeIn(Protocol):
+    """
+    Structural marker for targets that expose a streaming barge-in surface.
+
+    Used by ``BargeInAttack`` to validate at construction time that its objective
+    target wires a ``StreamingHandle`` on ``self.streaming``. Decoupled from
+    ``PromptTarget`` so the base class stays free of streaming-specific attributes.
+
+    Note: ``runtime_checkable`` Protocol ``isinstance`` checks attribute *presence*,
+    not value — a target that explicitly sets ``streaming = None`` would still pass
+    the check and fail at first method call instead of construction time.
+    """
+
+    streaming: StreamingHandle

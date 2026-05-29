@@ -24,7 +24,7 @@ from pyrit.models import (
     MessagePiece,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target.common.realtime_audio import REALTIME_COMMITTED_ITEM_ID_KEY
+from pyrit.prompt_target.common.realtime_audio import REALTIME_COMMITTED_ITEM_ID_KEY, SupportsStreamingBargeIn
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
@@ -169,8 +169,9 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             params_type: Attack parameter dataclass type.
 
         Raises:
-            ValueError: If ``objective_target`` declares ``STREAMING_BARGE_IN`` but did not
-                wire its ``streaming`` attribute to a ``StreamingHandle``.
+            TypeError: If ``objective_target`` does not satisfy ``SupportsStreamingBargeIn``
+                (i.e. it declared ``STREAMING_BARGE_IN`` but did not wire a ``streaming``
+                attribute pointing at a ``StreamingHandle``).
         """
         super().__init__(
             objective_target=objective_target,
@@ -178,10 +179,11 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             params_type=params_type,
             logger=logger,
         )
-        if objective_target.streaming is None:
-            raise ValueError(
-                f"{type(objective_target).__name__} declares STREAMING_BARGE_IN capability but did not "
-                f"wire `self.streaming` to a StreamingHandle. This is a target-implementation bug."
+        if not isinstance(objective_target, SupportsStreamingBargeIn):
+            raise TypeError(
+                f"{type(objective_target).__name__} does not satisfy SupportsStreamingBargeIn "
+                f"(missing `streaming` attribute). Targets that declare STREAMING_BARGE_IN must "
+                f"set `self.streaming` to a StreamingHandle instance in `__init__`."
             )
         self._streaming = objective_target.streaming
         attack_converter_config = attack_converter_config or AttackConverterConfig()
