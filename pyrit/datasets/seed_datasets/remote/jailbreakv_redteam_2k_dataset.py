@@ -93,14 +93,8 @@ class _JailbreakVRedteam2KDataset(_RemoteDatasetLoader):
         self.source = source
         self.filter_categories = harm_categories
 
-        # Validate harm categories if provided
         if harm_categories is not None:
-            valid_categories = {category.value for category in _HarmCategory}
-            invalid_categories = {
-                cat.value if isinstance(cat, _HarmCategory) else cat for cat in harm_categories
-            } - valid_categories
-            if invalid_categories:
-                raise ValueError(f"Invalid harm categories: {', '.join(invalid_categories)}")
+            self._validate_enums(harm_categories, _HarmCategory, "harm category")
 
     @property
     def dataset_name(self) -> str:
@@ -141,7 +135,8 @@ class _JailbreakVRedteam2KDataset(_RemoteDatasetLoader):
             seeds: list[SeedObjective] = []
 
             for item in data:
-                policy = self._normalize_policy(item.get("policy", ""))
+                raw_policy = item.get("policy", "")
+                policy = self._normalize_policy(raw_policy)
 
                 # Skip if user requested policy filter and item's policy does not match
                 if harm_categories_normalized is not None and policy not in harm_categories_normalized:
@@ -152,7 +147,7 @@ class _JailbreakVRedteam2KDataset(_RemoteDatasetLoader):
                     continue
 
                 row_metadata: dict[str, str | int] = {
-                    "policy": item.get("policy", ""),
+                    "policy": raw_policy,
                     "from": item.get("from", ""),
                 }
                 if "id" in item and item["id"] is not None:
@@ -163,7 +158,7 @@ class _JailbreakVRedteam2KDataset(_RemoteDatasetLoader):
                         value=question,
                         name="JailBreakV-Redteam-2K",
                         dataset_name=self.dataset_name,
-                        harm_categories=[policy],
+                        harm_categories=[raw_policy],
                         description=(
                             "Text-only red-teaming objectives bundled with JailBreakV-28K; "
                             "~2,000 deduplicated goals across 16 harm categories."
@@ -180,10 +175,7 @@ class _JailbreakVRedteam2KDataset(_RemoteDatasetLoader):
             raise
 
         if len(seeds) == 0:
-            raise ValueError(
-                "JailBreakV Redteam_2k fetch produced 0 objectives. "
-                "Try adjusting your harm_categories filter or check the dataset source."
-            )
+            raise ValueError("SeedDataset cannot be empty. Check your filter criteria.")
 
         logger.info(f"Successfully loaded {len(seeds)} objectives from JailBreakV Redteam_2k dataset")
 

@@ -109,14 +109,8 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
         self.split = split
         self.filter_categories = harm_categories
 
-        # Validate harm categories if provided
         if harm_categories is not None:
-            valid_categories = {category.value for category in _HarmCategory}
-            invalid_categories = {
-                cat.value if isinstance(cat, _HarmCategory) else cat for cat in harm_categories
-            } - valid_categories
-            if invalid_categories:
-                raise ValueError(f"Invalid harm categories: {', '.join(invalid_categories)}")
+            self._validate_enums(harm_categories, _HarmCategory, "harm category")
 
     @property
     def dataset_name(self) -> str:
@@ -182,7 +176,8 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
             per_call_cache: dict[str, str] = {}
 
             for item in data:
-                policy = self._normalize_policy(item.get("policy", ""))
+                raw_policy = item.get("policy", "")
+                policy = self._normalize_policy(raw_policy)
 
                 # Skip if user requested policy filter and item's policy does not match
                 if harm_categories_normalized is not None and policy not in harm_categories_normalized:
@@ -209,13 +204,12 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
                 # Create linked text and image prompts
                 group_id = uuid.uuid4()
 
-                # Preserve source row trace-back fields (rom Jan 4 review comment)
                 # NB: avoid the bare key "format" because SeedPrompt.set_encoding_metadata
                 # writes "format" for media files and would overwrite the source value.
                 row_metadata: dict[str, str | int] = {
                     "source_format": item.get("format", ""),
                     "transfer_attack_type": item.get("transfer_attack_type", ""),
-                    "policy": item.get("policy", ""),
+                    "policy": raw_policy,
                     "image_path_raw": image_rel_path,
                 }
                 if "id" in item and item["id"] is not None:
@@ -225,7 +219,7 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
                     value=item.get("redteam_query", ""),
                     name="JailBreakV-28K",
                     dataset_name=self.dataset_name,
-                    harm_categories=[policy],
+                    harm_categories=[raw_policy],
                     description=(
                         "Benchmark for Assessing the Robustness of "
                         "Multimodal Large Language Models against Jailbreak Attacks."
@@ -242,7 +236,7 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
                     data_type="text",
                     name="JailBreakV-28K",
                     dataset_name=self.dataset_name,
-                    harm_categories=[policy],
+                    harm_categories=[raw_policy],
                     description=(
                         "Benchmark for Assessing the Robustness of "
                         "Multimodal Large Language Models against Jailbreak Attacks."
@@ -260,7 +254,7 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
                     data_type="image_path",
                     name="JailBreakV-28K",
                     dataset_name=self.dataset_name,
-                    harm_categories=[policy],
+                    harm_categories=[raw_policy],
                     description=(
                         "Benchmark for Assessing the Robustness of "
                         "Multimodal Large Language Models against Jailbreak Attacks."
@@ -283,10 +277,7 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
 
         # Validation: Check if 50% or more of the responses are unpaired
         if total_items_processed == 0:
-            raise ValueError(
-                "JailBreakV-28K fetch produced 0 items after filtering. "
-                "Try adjusting your harm_categories filter or check the dataset source."
-            )
+            raise ValueError("SeedDataset cannot be empty. Check your filter criteria.")
 
         successful_pairs = len(seed_prompts) // 3  # Each pair has objective + text + image
         unpaired_percentage = (missing_images / total_items_processed) * 100
