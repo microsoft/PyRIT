@@ -80,3 +80,8 @@ updates:
       prefix: "MAINT"
     reviewers:
       - "microsoft/ai-red-team-dev"
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
