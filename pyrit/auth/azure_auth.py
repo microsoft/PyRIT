@@ -443,10 +443,10 @@ async def get_speech_config_async(
     """
     Get the speech config, resolving a callable token provider if one is provided.
 
-    This is the async counterpart to :func:`get_speech_config`. When a callable
+    This is the async counterpart to ``get_speech_config``. When a callable
     ``token_provider`` is supplied, it is invoked (and awaited if async) to obtain
     a token, which is then used with the ``aad#{resource_id}#{token}`` auth format.
-    Otherwise, it delegates to the synchronous :func:`get_speech_config`.
+    Otherwise, it delegates to the synchronous ``get_speech_config``.
 
     Args:
         token_provider (Callable | None): An optional sync or async callable that returns a token string.

@@ -192,6 +192,33 @@ def calculate_score(
     """
 ```
 
+### Code references in docstrings
+
+The PyRIT docs build uses **MyST** (Markdown-flavoured), not reStructuredText.
+Do **not** use reST cross-reference roles in docstrings or module comments —
+they render as raw text under MyST and are inconsistent with the rest of the
+codebase, which uses plain double-backtick code spans for symbol names.
+
+```python
+# WRONG — reST roles render as literal `:class:\`SeedPrompt\`` under MyST
+"""Returns a :class:`SeedPrompt` instance."""
+"""Delegate to :func:`download_files_async` (deprecated alias)."""
+"""See :meth:`PromptTarget.apply_capabilities` for details."""
+
+# CORRECT — plain double-backtick code span (matches existing convention)
+"""Returns a ``SeedPrompt`` instance."""
+"""Delegate to ``download_files_async`` (deprecated alias)."""
+"""See ``PromptTarget.apply_capabilities`` for details."""
+```
+
+Roles to avoid include `:class:`, `:func:`, `:meth:`, `:mod:`, `:attr:`,
+`:data:`, `:exc:`, `:obj:`, `:ref:`, and any `:py:*:` variants
+(e.g. `:py:class:`, `:py:func:`).
+
+If you genuinely need a Sphinx cross-reference (rare in PyRIT — most
+docstrings just name the symbol in backticks), use the MyST role syntax
+`` {class}`Name` `` instead. The default, though, is plain double-backticks.
+
 ### Class-Level Constants
 - Define constants as class attributes, not module-level
 - Use UPPER_CASE naming for constants
@@ -295,7 +322,7 @@ def process_items(self, *, items: list[str]) -> list[str]:
 
 ## Deprecations
 
-When deprecating a public class, function, method, parameter, or module path, use `pyrit.common.deprecation.print_deprecation_message` — never `warnings.warn` directly. It wraps `warnings.warn(..., DeprecationWarning, stacklevel=3)` with a consistent format so filtering still works.
+When deprecating a public class, function, method, parameter, or module path, use `pyrit.common.deprecation.print_deprecation_message` — **never** `warnings.warn` directly. It wraps `warnings.warn(..., DeprecationWarning, stacklevel=3)` with a consistent format so filtering still works.
 
 Set `removed_in` to **current version + 2 minor versions** (e.g. `0.14.x` → `removed_in="0.16.0"`). This gives one full release cycle of warning before removal.
 
@@ -312,6 +339,32 @@ def old_method(self, *, foo: str) -> None:
 ```
 
 `old_item` / `new_item` accept a class/callable (qualified name is generated) or a string.
+
+```python
+# INCORRECT - bypasses the helper, breaks consistent formatting and filtering
+import warnings
+warnings.warn("foo is deprecated, use bar", DeprecationWarning, stacklevel=2)
+```
+
+If you find yourself reaching for `warnings.warn` because the
+"`X` is deprecated and will be removed in `Y`. Use `Z` instead." template doesn't fit your message, **rework the message to fit the template** (e.g. lean on the docstring or a log line for any extra nuance). Do not stuff extra prose into `new_item` to work around the template.
+
+### Deprecating an argument with a non-default value
+
+To detect "user passed this argument" reliably, use a sentinel default (typically `None`) rather than the documented default, and warn whenever the value is not the sentinel — otherwise callers who explicitly pass the documented default get no warning even though they're using the deprecated path.
+
+```python
+# CORRECT - warns on any explicit value, including the old documented default of 1
+def run_async(self, *, max_concurrency: int | None = None) -> None:
+    if max_concurrency is not None:
+        print_deprecation_message(
+            old_item="run_async(max_concurrency=...)",
+            new_item="run_async(executor=AttackExecutor(max_concurrency=...))",
+            removed_in="0.16.0",
+        )
+    effective = max_concurrency if max_concurrency is not None else 1
+    ...
+```
 
 ## Pythonic Patterns
 
@@ -454,6 +507,7 @@ Before committing code, ensure:
 - [ ] All functions have complete type annotations
 - [ ] Functions with >1 parameter use keyword-only arguments
 - [ ] Docstrings include parameter types
+- [ ] Docstrings use plain double-backtick code spans for symbol references (no reST roles)
 - [ ] Enums are used instead of Literals
 - [ ] Functions are focused and under 20 lines
 - [ ] Error messages are helpful and specific

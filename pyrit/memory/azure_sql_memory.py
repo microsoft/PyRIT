@@ -354,7 +354,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             json_column (InstrumentedAttribute[Any]): The JSON-backed model field to query.
             property_path (str): The JSON path for the property to match.
             value (str): The string value that must match the extracted JSON property value.
-            partial_match (bool): Whether to perform a substring match.
+            partial_match (bool): Whether to perform a substring match. Defaults to False.
             case_sensitive (bool): Whether the match should be case-sensitive. Defaults to False.
 
         Returns:
