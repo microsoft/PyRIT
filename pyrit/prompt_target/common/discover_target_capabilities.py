@@ -149,7 +149,6 @@ def _permissive_configuration(
         supports_json_output=True,
         supports_editable_history=True,
         supports_system_prompt=True,
-        supports_tool_use=True,
         input_modalities=merged_modalities,
     )
     # Rebuild a fresh configuration from the instance's native capabilities so

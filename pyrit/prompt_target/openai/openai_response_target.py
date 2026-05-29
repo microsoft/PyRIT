@@ -3,7 +3,6 @@
 
 import json
 import logging
-import warnings
 from collections.abc import Awaitable, Callable, MutableSequence
 from enum import Enum
 from typing import (
@@ -35,14 +34,6 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
 from pyrit.prompt_target.openai.openai_error_handling import _is_content_filter_error
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
-from pyrit.tools import (
-    CanonicalEnvelopeParser,
-    LocalToolBackend,
-    ToolBackend,
-    ToolCallParser,
-    ToolEventBehavior,
-    ToolEventPolicy,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +76,6 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
             supports_json_output=True,
             supports_multi_message_pieces=True,
             supports_system_prompt=True,
-            supports_tool_use=True,
             input_modalities=frozenset(
                 {
                     frozenset(["text"]),
@@ -164,17 +154,6 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
         """
         super().__init__(custom_configuration=custom_configuration, **kwargs)
 
-        # If the constructed configuration is the class-level _DEFAULT_CONFIGURATION
-        # singleton (user did not pass custom_configuration AND the underlying_model
-        # was unrecognized), rebuild a per-instance copy so the C6 tool-backend
-        # plumbing below does not mutate state shared across every other instance.
-        if custom_configuration is None and self._configuration is type(self)._DEFAULT_CONFIGURATION:
-            caps = self._configuration.capabilities
-            self._configuration = TargetConfiguration(
-                capabilities=caps,
-                policy=self._configuration.policy,
-            )
-
         # Validate temperature and top_p
         validate_temperature(temperature)
         validate_top_p(top_p)
@@ -188,38 +167,9 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
 
         self._extra_body_parameters = extra_body_parameters
 
-        # ----- Tool-calling plumbing (C6) ---------------------------------
-        # custom_functions is deprecated as of 0.15.x. New code configures
-        # tool_backend on TargetConfiguration directly. The kwarg is still
-        # accepted; we ALWAYS install a LocalToolBackend (whether populated
-        # or empty) when no other backend is supplied, so legacy in-place
-        # mutations of `target._custom_functions` (via the back-compat
-        # property below) keep affecting dispatch.
+        # Per-instance tool/func registries:
+        self._custom_functions: dict[str, ToolExecutor] = custom_functions or {}
         self._fail_on_missing_function: bool = fail_on_missing_function
-
-        if self.configuration.tool_backend is None:
-            shim_backend = LocalToolBackend(
-                callables=dict(custom_functions) if custom_functions else {},
-                schemas=self._derive_default_schemas(custom_functions or {}),
-                fail_on_missing_function=fail_on_missing_function,
-            )
-            self.configuration.tool_backend = shim_backend
-
-        if custom_functions:
-            warnings.warn(
-                "OpenAIResponseTarget(custom_functions=...) is deprecated and will be "
-                "removed in 0.16.0. Configure tool_backend on TargetConfiguration "
-                "instead (e.g. LocalToolBackend(callables=..., schemas=..., "
-                "fail_on_missing_function=...)).",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        # Default policy to EXECUTE when a backend is present. The wrapper's
-        # parser returns an empty list when the model produces no tool calls,
-        # so this is a no-op for plain text completions.
-        if self.configuration.tool_event_policy is None:
-            self.configuration.tool_event_policy = ToolEventPolicy(behavior=ToolEventBehavior.EXECUTE)
 
         # Extract the grammar 'tool' if one is present
         # See
@@ -234,61 +184,6 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
                     tool_name = tool.get("name")
                     logger.debug("Detected grammar tool: %s", tool_name)
                     self._grammar_name = tool_name
-
-    @staticmethod
-    def _derive_default_schemas(callables: dict[str, ToolExecutor]) -> list[dict[str, Any]]:
-        """
-        Synthesize minimal JSON schemas for the deprecation-shim path.
-
-        Users who pass the legacy ``custom_functions`` kwarg do not also pass a
-        schema list (the Responses API would accept the calls anyway because the
-        legacy path predates structured tool advertisement). To keep the
-        deprecation shim transparent we generate a schema-less stub per name so
-        ``_tool_schemas()`` returns something non-empty when the user actually
-        wires tools.
-
-        Args:
-            callables: Function name to async callable mapping.
-
-        Returns:
-            list[dict[str, Any]]: A bare schema per callable (``parameters``
-            is the unconstrained empty-object schema).
-        """
-        return [{"name": name, "parameters": {"type": "object"}} for name in callables]
-
-    @property
-    def _custom_functions(self) -> dict[str, ToolExecutor]:
-        """
-        Back-compat live view of the active backend's callables registry.
-
-        Mutations on the returned dict (``target._custom_functions[name] = fn``,
-        ``target._custom_functions.pop(name)``) take effect immediately because
-        the dict object is shared with the underlying
-        :class:`pyrit.tools.LocalToolBackend`. Returns an empty dict when no
-        backend is installed or when the configured backend is not a
-        ``LocalToolBackend``.
-
-        Returns:
-            dict[str, ToolExecutor]: The live callables dict.
-        """
-        backend = self.configuration.tool_backend
-        if isinstance(backend, LocalToolBackend):
-            return cast("dict[str, ToolExecutor]", backend._callables)
-        return {}
-
-    @_custom_functions.setter
-    def _custom_functions(self, value: dict[str, ToolExecutor]) -> None:
-        backend = self.configuration.tool_backend
-        if isinstance(backend, LocalToolBackend):
-            backend._callables = dict(value)
-            backend._schemas = self._derive_default_schemas(value)
-            return
-        new_backend = LocalToolBackend(
-            callables=dict(value),
-            schemas=self._derive_default_schemas(value),
-            fail_on_missing_function=self._fail_on_missing_function,
-        )
-        self.configuration.tool_backend = new_backend
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -483,9 +378,8 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
         input_items = await self._build_input_for_multi_modal_async(conversation)
 
         text_format = self._build_text_format(json_config=json_config)
-        tool_schemas = self._tool_schemas()
 
-        body_parameters: dict[str, Any] = {
+        body_parameters = {
             "model": self._model_name,
             "max_output_tokens": self._max_output_tokens,
             "temperature": self._temperature,
@@ -496,11 +390,8 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
             "text": text_format,
             "reasoning": self._build_reasoning_config(),
         }
-        if tool_schemas:
-            body_parameters["tools"] = tool_schemas
 
         if self._extra_body_parameters:
-            # User-supplied extra_body_parameters wins over backend-derived tools.
             body_parameters.update(self._extra_body_parameters)
 
         # Filter out None values
@@ -668,18 +559,11 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
     @pyrit_target_retry
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
-        Send one prompt to the Responses API and return exactly one Message.
+        Send prompt, handle agentic tool calls (function_call), return all messages.
 
-        The agentic tool-calling loop now lives in :func:`pyrit.tools.tool_loop`
-        on the base class. This method is the single-iteration body the loop
-        re-enters on each turn: build the request body, call the API, parse the
-        response, return the constructed :class:`Message` wrapped in a list of
-        length 1.
-
-        The wrapper detects function_call pieces via :attr:`_tool_parser` and
-        decides whether to dispatch + re-enter. Reasoning, MCP, web-search,
-        computer-use, and other non-function-call sections pass through to
-        Memory unchanged because the parser ignores them.
+        The Responses API supports structured outputs and tool execution. This method handles both:
+        - Simple text/reasoning responses
+        - Agentic tool-calling loops that may require multiple back-and-forth exchanges
 
         Args:
             normalized_conversation (list[Message]): The full conversation
@@ -687,54 +571,59 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
                 pipeline. The current message is the last element.
 
         Returns:
-            list[Message]: Exactly one Message wrapping the parsed response.
+            List of messages generated during the interaction (assistant responses and tool messages).
+            The normalizer will persist all of these to memory.
         """
         message = normalized_conversation[-1]
+        message_piece: MessagePiece = message.message_pieces[0]
         last_piece = message.message_pieces[-1]
         json_config = self._get_json_response_config(message_piece=last_piece)
 
-        body = await self._construct_request_body(conversation=list(normalized_conversation), json_config=json_config)
-        logger.info("Sending conversation with %d messages to the Responses API", len(normalized_conversation))
-        result = await self._handle_openai_request(
-            api_call=lambda body=body: self._client.responses.create(**body),
-            request=message,
-        )
-        return [result]
+        working_conversation: MutableSequence[Message] = list(normalized_conversation)
 
-    @property
-    def _tool_parser(self) -> ToolCallParser | None:
-        """
-        Canonical-envelope parser shared with future canonical-envelope targets.
+        # Track all responses generated during this interaction
+        responses_to_return: list[Message] = []
 
-        Walks response message pieces and emits one :class:`~pyrit.tools.ToolCall`
-        per piece whose ``original_value_data_type`` is ``"function_call"``.
-        Reasoning, MCP, web-search, computer-use, and local-shell sections all
-        produce pieces of OTHER data types, so the parser returns an empty list
-        for them and the @tool_loop decorator exits cleanly. Those sections
-        still land in Memory via the parsed Message returned by
-        ``_send_prompt_to_target_async``; they're just not client-side
-        dispatched.
-        """
-        return CanonicalEnvelopeParser()
+        # Main agentic loop - each back-and-forth creates a new message
+        tool_call_section: Optional[dict[str, Any]] = None
 
-    def _tool_schemas(self) -> list[dict[str, Any]]:
-        """
-        Translate the configured backend's schemas into Responses-API tools shape.
+        while True:
+            logger.info(f"Sending conversation with {len(working_conversation)} messages to the prompt target")
 
-        The Responses API expects each function tool as a top-level
-        ``{"type": "function", "name": ..., "description": ...,
-        "parameters": ...}`` entry (NOT wrapped in an inner ``"function"`` key
-        the way Chat Completions does). The backend's schemas are already the
-        bare function schema, so we just stamp ``type=function`` on each.
+            body = await self._construct_request_body(conversation=working_conversation, json_config=json_config)
 
-        Returns:
-            list[dict[str, Any]]: One descriptor per advertised tool, or an
-                empty list when no backend is configured.
-        """
-        backend: ToolBackend | None = self.configuration.tool_backend
-        if backend is None:
-            return []
-        return [{"type": "function", **schema} for schema in backend.schemas]
+            # Use unified error handling - automatically detects Response and validates
+            result = await self._handle_openai_request(
+                api_call=lambda body=body: self._client.responses.create(**body),
+                request=message,
+            )
+
+            # Add result to conversation and responses list
+            working_conversation.append(result)
+            responses_to_return.append(result)
+
+            # Extract tool call if present
+            tool_call_section = self._find_last_pending_tool_call(result)
+
+            # If no tool call, we're done
+            if not tool_call_section:
+                break
+
+            # Execute the tool/function
+            tool_output = await self._execute_call_section(tool_call_section)
+
+            # Create a new message with the tool output
+            tool_piece = self._make_tool_piece(tool_output, tool_call_section["call_id"], reference_piece=message_piece)
+            tool_message = Message(message_pieces=[tool_piece], skip_validation=True)
+
+            # Add tool output message to conversation and responses list
+            working_conversation.append(tool_message)
+            responses_to_return.append(tool_message)
+
+            # Continue loop to send tool result and get next response
+
+        # Return all responses (normalizer will persist all of them to memory)
+        return responses_to_return
 
     def _parse_response_output_section(
         self, *, section: Any, message_piece: MessagePiece, error: Optional[PromptResponseError]

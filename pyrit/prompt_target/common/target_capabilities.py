@@ -24,7 +24,6 @@ class CapabilityName(str, Enum):
     JSON_OUTPUT = "supports_json_output"
     EDITABLE_HISTORY = "supports_editable_history"
     SYSTEM_PROMPT = "supports_system_prompt"
-    TOOL_USE = "supports_tool_use"
 
 
 class UnsupportedCapabilityBehavior(str, Enum):
@@ -138,14 +137,6 @@ class TargetCapabilities:
 
     # Whether the target natively supports system prompts.
     supports_system_prompt: bool = False
-
-    # Whether the target natively supports model-issued tool calls (the
-    # canonical OpenAI ``function_call`` / ``function_call_output`` envelopes
-    # plus an outbound tool-schema list). Targets without this capability
-    # cannot host a tool-use loop -- attempting to configure a
-    # :class:`TargetConfiguration` with a ``tool_backend`` on a target whose
-    # capabilities have ``supports_tool_use=False`` raises at construction.
-    supports_tool_use: bool = False
 
     # The input modalities supported by the target (e.g., "text", "image").
     input_modalities: frozenset[frozenset[PromptDataType]] = frozenset({frozenset(["text"])})
