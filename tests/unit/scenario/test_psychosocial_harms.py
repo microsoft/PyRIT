@@ -288,13 +288,15 @@ class TestPsychosocialProperties:
 
         assert scenario.VERSION == 1
 
-    def test_get_strategy_class(self) -> None:
+    def test_get_strategy_class(self, mock_objective_scorer) -> None:
         """Test that the strategy class is PsychosocialStrategy."""
-        assert Psychosocial.get_strategy_class() == PsychosocialStrategy
+        scenario = Psychosocial(objective_scorer=mock_objective_scorer)
+        assert scenario._strategy_class == PsychosocialStrategy
 
-    def test_get_default_strategy(self) -> None:
+    def test_get_default_strategy(self, mock_objective_scorer) -> None:
         """Test that the default strategy is ALL."""
-        assert Psychosocial.get_default_strategy() == PsychosocialStrategy.ALL
+        scenario = Psychosocial(objective_scorer=mock_objective_scorer)
+        assert scenario._default_strategy == PsychosocialStrategy.ALL
 
     async def test_no_target_duplication_async(
         self,

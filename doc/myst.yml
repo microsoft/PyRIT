@@ -104,6 +104,7 @@ project:
                 - file: code/executor/attack/1_prompt_sending_attack.ipynb
                 - file: code/executor/attack/2_red_teaming_attack.ipynb
                 - file: code/executor/attack/3_crescendo_attack.ipynb
+                - file: code/executor/attack/4_sequential_attack.ipynb
                 - file: code/executor/attack/chunked_request_attack.ipynb
                 - file: code/executor/attack/context_compliance_attack.ipynb
                 - file: code/executor/attack/flip_attack.ipynb
@@ -204,6 +205,7 @@ project:
       children:
         - file: api/pyrit_analytics.md
         - file: api/pyrit_auth.md
+        - file: api/pyrit_auxiliary_attacks.md
         - file: api/pyrit_cli_api_client.md
         - file: api/pyrit_cli_pyrit_scan.md
         - file: api/pyrit_cli_pyrit_shell.md

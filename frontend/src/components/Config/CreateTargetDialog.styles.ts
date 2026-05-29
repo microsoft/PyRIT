@@ -6,4 +6,12 @@ export const useCreateTargetDialogStyles = makeStyles({
     flexDirection: 'column',
     gap: tokens.spacingVerticalL,
   },
+  warningMessage: {
+    width: '100%',
+  },
+  warningMessageBody: {
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
+  },
 })
