@@ -13,8 +13,27 @@ import pytest
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory
 from pyrit.models import SeedDataset
-from pyrit.registry import ScenarioRegistry
+from pyrit.prompt_target import PromptTarget
+from pyrit.registry import ScenarioRegistry, TargetRegistry
+from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
 from pyrit.setup.initializers.scenarios.load_default_datasets import LoadDefaultDatasets
+
+
+@pytest.fixture
+def populated_technique_registry():
+    """Populate the technique + target registries so scenario metadata building succeeds."""
+    AttackTechniqueRegistry.reset_instance()
+    TargetRegistry.reset_instance()
+
+    adv_target = MagicMock(spec=PromptTarget)
+    adv_target.capabilities.includes.return_value = True
+    TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
+
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_scenario_technique_factories())
+    yield
+    AttackTechniqueRegistry.reset_instance()
+    TargetRegistry.reset_instance()
 
 
 @dataclass
@@ -109,7 +128,7 @@ class TestLoadDefaultDatasets:
                     assert set(call_kwargs["dataset_names"]) == {"dataset1", "dataset2", "dataset3"}
                     assert len(call_kwargs["dataset_names"]) == 3
 
-    async def test_all_required_datasets_available_in_seed_provider(self) -> None:
+    async def test_all_required_datasets_available_in_seed_provider(self, populated_technique_registry) -> None:
         """
         Test that all datasets required by scenarios are available in SeedDatasetProvider.
 

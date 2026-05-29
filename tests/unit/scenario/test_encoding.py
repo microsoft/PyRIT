@@ -174,8 +174,8 @@ class TestEncodingInitialization:
                 objective_scorer=mock_objective_scorer,
             )
 
-            # max_concurrency defaults to 1 until initialize_async is called
-            assert scenario._max_concurrency == 1
+            # max_concurrency is unset (None) until initialize_async is called
+            assert scenario._max_concurrency is None
 
     async def test_init_attack_strategies(
         self, mock_objective_target, mock_objective_scorer, mock_seed_attack_groups, mock_dataset_config

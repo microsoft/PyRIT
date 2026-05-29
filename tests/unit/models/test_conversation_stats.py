@@ -4,6 +4,7 @@
 from datetime import datetime, timezone
 
 import pytest
+from pydantic import ValidationError
 
 from pyrit.models.conversation_stats import ConversationStats
 
@@ -32,7 +33,7 @@ def test_conversation_stats_with_values():
 
 def test_conversation_stats_is_frozen():
     stats = ConversationStats(message_count=3)
-    with pytest.raises(AttributeError):
+    with pytest.raises(ValidationError):
         stats.message_count = 10
 
 

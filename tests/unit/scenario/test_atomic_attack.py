@@ -4,6 +4,7 @@
 """Tests for the scenarios.AtomicAttack class."""
 
 import inspect
+import warnings
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -248,7 +249,7 @@ class TestAtomicAttackExecution:
             assert call_kwargs["attack"] == mock_attack
 
     async def test_run_async_with_custom_concurrency(self, mock_attack, sample_seed_groups, sample_attack_results):
-        """Test execution with custom max_concurrency for atomic attack."""
+        """Test execution with custom max_concurrency for atomic attack (deprecated path)."""
         atomic_attack = AtomicAttack(
             attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
@@ -258,7 +259,9 @@ class TestAtomicAttackExecution:
         with (
             patch.object(AttackExecutor, "__init__", return_value=None) as mock_init,
             patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec,
+            warnings.catch_warnings(),
         ):
+            warnings.simplefilter("ignore", DeprecationWarning)
             mock_exec.return_value = wrap_results(sample_attack_results)
 
             result = await atomic_attack.run_async(max_concurrency=5)
@@ -283,6 +286,49 @@ class TestAtomicAttackExecution:
             await atomic_attack.run_async()
 
             mock_init.assert_called_once_with(max_concurrency=1)
+
+    async def test_run_async_with_injected_executor_reuses_it(
+        self, mock_attack, sample_seed_groups, sample_attack_results
+    ):
+        """When an executor is passed, AtomicAttack must reuse it rather than build a new one."""
+        atomic_attack = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="Test Attack Run",
+        )
+
+        injected = AttackExecutor(max_concurrency=7)
+        with (
+            patch.object(AttackExecutor, "__init__", return_value=None) as mock_init,
+            patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec,
+        ):
+            mock_exec.return_value = wrap_results(sample_attack_results)
+
+            await atomic_attack.run_async(executor=injected)
+
+            # __init__ must not be called again — the injected executor is reused as-is.
+            mock_init.assert_not_called()
+
+    async def test_run_async_with_executor_and_max_concurrency_warns_and_ignores(
+        self, mock_attack, sample_seed_groups, sample_attack_results
+    ):
+        """Passing both executor and max_concurrency emits a deprecation warning; max_concurrency is ignored."""
+        atomic_attack = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="Test Attack Run",
+        )
+
+        injected = AttackExecutor(max_concurrency=7)
+        with (
+            patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec,
+            pytest.warns(DeprecationWarning),
+        ):
+            mock_exec.return_value = wrap_results(sample_attack_results)
+            await atomic_attack.run_async(executor=injected, max_concurrency=5)
+
+        # The injected executor's budget is preserved; max_concurrency=5 was silently ignored.
+        assert injected._max_concurrency == 7
 
     async def test_run_async_passes_memory_labels(self, mock_attack, sample_seed_groups, sample_attack_results):
         """Test that memory labels are passed to the executor."""
@@ -442,7 +488,11 @@ class TestAtomicAttackIntegration:
             for i in range(3)
         ]
 
-        with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
+        with (
+            patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec,
+            warnings.catch_warnings(),
+        ):
+            warnings.simplefilter("ignore", DeprecationWarning)
             mock_exec.return_value = wrap_results(mock_results)
 
             attack_run_result = await atomic_attack.run_async(max_concurrency=3)

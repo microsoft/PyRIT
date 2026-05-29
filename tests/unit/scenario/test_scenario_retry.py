@@ -279,6 +279,7 @@ class TestScenarioRetry:
         )
         await scenario.initialize_async(
             objective_target=mock_objective_target,
+            max_concurrency=1,
             max_retries=2,
         )
 
@@ -360,6 +361,7 @@ class TestScenarioRetry:
         )
         await scenario.initialize_async(
             objective_target=mock_objective_target,
+            max_concurrency=1,
             max_retries=3,
         )
 
@@ -396,6 +398,7 @@ class TestScenarioRetry:
         )
         await scenario.initialize_async(
             objective_target=mock_objective_target,
+            max_concurrency=1,
             max_retries=1,
         )
 

@@ -824,7 +824,7 @@ class AttackResultEntry(Base):
 
         # Retry events
         self.retry_events_json = (
-            json.dumps([evt.to_dict() for evt in entry.retry_events]) if entry.retry_events else None
+            json.dumps([evt.model_dump(mode="json") for evt in entry.retry_events]) if entry.retry_events else None
         )
         self.total_retries = entry.total_retries
 
@@ -923,7 +923,7 @@ class AttackResultEntry(Base):
         if self.retry_events_json:
             from pyrit.models.retry_event import RetryEvent
 
-            retry_events = [RetryEvent.from_dict(evt_dict) for evt_dict in json.loads(self.retry_events_json)]
+            retry_events = [RetryEvent.model_validate(evt_dict) for evt_dict in json.loads(self.retry_events_json)]
 
         return AttackResult(
             conversation_id=self.conversation_id,
