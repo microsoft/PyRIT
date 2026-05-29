@@ -633,8 +633,6 @@ def test_order_message_pieces_by_conversation_same_timestamp_different_sequences
             id="1",
         ),
     ]
-    for i, piece in enumerate(pieces):
-        piece.prompt_id = f"prompt-{i}"
     expected = [
         MessagePiece(
             role="user",
@@ -1257,3 +1255,97 @@ def test_to_dict_from_dict_roundtrip_after_set_piece_not_in_database():
     roundtripped = MessagePiece.from_dict(serialized)
     assert isinstance(roundtripped.id, uuid.UUID)
     assert isinstance(roundtripped.original_prompt_id, uuid.UUID)
+
+
+class TestPhase3PydanticMigration:
+    """Phase 3 §F.2 sanity tests for the MessagePiece Pydantic migration."""
+
+    def test_to_dict_golden_shape(self) -> None:
+        ts = datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        piece_id = uuid.UUID("12345678-1234-5678-1234-567812345678")
+        conv_id = "conv-123"
+        piece = MessagePiece(
+            id=piece_id,
+            role="user",
+            conversation_id=conv_id,
+            sequence=2,
+            timestamp=ts,
+            original_value="hello",
+            converted_value="hello",
+        )
+
+        d = piece.to_dict()
+
+        expected_keys = [
+            "id",
+            "role",
+            "conversation_id",
+            "sequence",
+            "timestamp",
+            "labels",
+            "targeted_harm_categories",
+            "prompt_metadata",
+            "converter_identifiers",
+            "prompt_target_identifier",
+            "attack_identifier",
+            "scorer_identifier",
+            "original_value_data_type",
+            "original_value",
+            "original_value_sha256",
+            "converted_value_data_type",
+            "converted_value",
+            "converted_value_sha256",
+            "response_error",
+            "originator",
+            "original_prompt_id",
+            "scores",
+        ]
+        assert list(d.keys()) == expected_keys
+        assert d["id"] == str(piece_id)
+        assert d["role"] == "user"
+        assert d["conversation_id"] == conv_id
+        assert d["sequence"] == 2
+        assert d["timestamp"] == ts.isoformat()
+        assert d["labels"] == {}
+        assert d["targeted_harm_categories"] is None
+        assert d["prompt_metadata"] == {}
+        assert d["converter_identifiers"] == []
+        assert d["prompt_target_identifier"] is None
+        assert d["attack_identifier"] is None
+        assert d["scorer_identifier"] is None
+        assert d["original_value_data_type"] == "text"
+        assert d["original_value"] == "hello"
+        assert d["converted_value_data_type"] == "text"
+        assert d["converted_value"] == "hello"
+        assert d["response_error"] == "none"
+        assert d["originator"] == "undefined"
+        assert d["original_prompt_id"] == str(piece_id)
+        assert d["scores"] == []
+
+    def test_from_dict_roundtrip_does_not_emit_deprecation_warnings(self) -> None:
+        piece = MessagePiece(
+            role="user",
+            original_value="hello",
+            labels={"k": "v"},
+            targeted_harm_categories=["x"],
+        )
+        data = piece.to_dict()
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            MessagePiece.from_dict(data)
+
+        deprecation_msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert deprecation_msgs == [], [str(m.message) for m in deprecation_msgs]
+
+    def test_message_piece_is_unhashable(self) -> None:
+        assert MessagePiece.__hash__ is None
+
+        piece = MessagePiece(role="user", original_value="hello")
+        with pytest.raises(TypeError):
+            hash(piece)
+
+    def test_unknown_kwarg_raises(self) -> None:
+        with pytest.raises(Exception) as exc_info:
+            MessagePiece(role="user", original_value="hello", typo_field="oops")
+        assert "typo_field" in str(exc_info.value) or "Extra" in str(exc_info.value)

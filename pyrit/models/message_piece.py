@@ -8,6 +8,16 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 from uuid import uuid4
 
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
+
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.data_type_serializer import data_serializer_factory
@@ -18,6 +28,9 @@ if TYPE_CHECKING:
     from pyrit.models.message import Message
 
     Originator = Literal["attack", "converter", "undefined", "scorer"]
+
+
+_OriginatorLiteral = Literal["attack", "converter", "undefined", "scorer"]
 
 
 def __getattr__(name: str) -> Any:
@@ -36,15 +49,20 @@ def __getattr__(name: str) -> Any:
             new_item=(
                 "inline Literal['attack', 'converter', 'undefined', 'scorer'] "
                 "(the type alias is being removed; the originator field itself is "
-                "deprecated and will be removed in 0.15.0)"
+                "deprecated and will be removed in 0.16.0)"
             ),
-            removed_in="0.15.0",
+            removed_in="0.16.0",
         )
         return Literal["attack", "converter", "undefined", "scorer"]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-class MessagePiece:
+def _suppress_deprecation(info: ValidationInfo) -> bool:
+    context = info.context or {}
+    return bool(context.get("suppress_deprecation_warnings"))
+
+
+class MessagePiece(BaseModel):
     """
     Represents a piece of a message to a target.
 
@@ -53,208 +71,241 @@ class MessagePiece:
     requests are composed of lists of MessagePiece objects.
     """
 
-    def __init__(
-        self,
-        *,
-        role: ChatMessageRole,
-        original_value: str,
-        original_value_sha256: Optional[str] = None,
-        converted_value: Optional[str] = None,
-        converted_value_sha256: Optional[str] = None,
-        id: Optional[uuid.UUID | str] = None,  # noqa: A002
-        conversation_id: Optional[str] = None,
-        sequence: int = -1,
-        labels: Optional[dict[str, str]] = None,
-        prompt_metadata: Optional[dict[str, Union[str, int]]] = None,
-        converter_identifiers: Optional[list[ComponentIdentifier]] = None,
-        prompt_target_identifier: Optional[ComponentIdentifier] = None,
-        attack_identifier: Optional[ComponentIdentifier] = None,
-        scorer_identifier: Optional[ComponentIdentifier] = None,
-        original_value_data_type: PromptDataType = "text",
-        converted_value_data_type: Optional[PromptDataType] = None,
-        response_error: PromptResponseError = "none",
-        originator: Literal["attack", "converter", "undefined", "scorer"] = "undefined",
-        original_prompt_id: Optional[uuid.UUID] = None,
-        timestamp: Optional[datetime] = None,
-        scores: Optional[list[Score]] = None,
-        targeted_harm_categories: Optional[list[str]] = None,
-    ) -> None:
-        """
-        Initialize a MessagePiece.
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="forbid",
+        validate_assignment=False,
+        populate_by_name=True,
+    )
 
-        Args:
-            role: The role of the prompt (system, assistant, user).
-            original_value: The text of the original prompt. If prompt is an image, it's a link.
-            original_value_sha256: The SHA256 hash of the original prompt data. Defaults to None.
-            converted_value: The text of the converted prompt. If prompt is an image, it's a link. Defaults to None.
-            converted_value_sha256: The SHA256 hash of the converted prompt data. Defaults to None.
-            id: The unique identifier for the memory entry. Defaults to None (auto-generated).
-            conversation_id: The identifier for the conversation which is associated with a single target.
-                Defaults to None.
-            sequence: The order of the conversation within a conversation_id. Defaults to -1.
-            labels: The labels associated with the memory entry. Several can be standardized. Defaults to None.
-                Deprecated: This parameter will be removed in a release 0.16.0.
-            prompt_metadata: The metadata associated with the prompt. This can be specific to any scenarios.
-                Because memory is how components talk with each other, this can be component specific.
-                e.g. the URI from a file uploaded to a blob store, or a document type you want to upload.
-                Defaults to None.
-            converter_identifiers: The converter identifiers for the prompt. Can be ComponentIdentifier
-                objects. Defaults to None.
-            prompt_target_identifier: The target identifier for the prompt. Defaults to None.
-            attack_identifier: The attack identifier for the prompt. Defaults to None.
-            scorer_identifier: The scorer identifier for the prompt. Accepts a ComponentIdentifier.
-                Defaults to None.
-            original_value_data_type: The data type of the original prompt (text, image). Defaults to "text".
-            converted_value_data_type: The data type of the converted prompt (text, image). Defaults to "text".
-            response_error: The response error type. Defaults to "none".
-            originator: The originator of the prompt. Defaults to "undefined".
-            original_prompt_id: The original prompt id. It is equal to id unless it is a duplicate. Defaults to None.
-            timestamp: The timestamp of the memory entry. Defaults to None (auto-generated).
-            scores: The scores associated with the prompt. Defaults to None.
-            targeted_harm_categories: The harm categories associated with the prompt. Defaults to None.
+    # Fields declared in the order produced by ``to_dict`` for serialization parity.
+    id: Optional[Union[uuid.UUID, str]] = Field(default_factory=uuid4)  # noqa: A003
+    role: ChatMessageRole
+    conversation_id: str = Field(default_factory=lambda: str(uuid4()))
+    sequence: int = -1
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    labels: dict[str, Any] = Field(default_factory=dict)
+    targeted_harm_categories: list[str] = Field(default_factory=list)
+    prompt_metadata: dict[str, Any] = Field(default_factory=dict)
+    converter_identifiers: list[ComponentIdentifier] = Field(default_factory=list)
+    prompt_target_identifier: Optional[ComponentIdentifier] = None
+    attack_identifier: Optional[ComponentIdentifier] = None
+    scorer_identifier: Optional[ComponentIdentifier] = None
+    original_value_data_type: PromptDataType = "text"
+    original_value: str
+    original_value_sha256: Optional[str] = None
+    converted_value_data_type: PromptDataType = "text"
+    converted_value: str = ""
+    converted_value_sha256: Optional[str] = None
+    response_error: PromptResponseError = "none"
+    originator: _OriginatorLiteral = "undefined"
+    original_prompt_id: Optional[uuid.UUID] = None
+    scores: list[Score] = Field(default_factory=list)
 
-        Raises:
-            ValueError: If role, data types, or response error are invalid.
+    # ------------------------------------------------------------------ #
+    # Pre-validation: drop explicit ``None`` overrides, emit deprecation
+    # warnings, and apply the legacy default-derivation rules.
+    # ------------------------------------------------------------------ #
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_inputs(cls, data: Any, info: ValidationInfo) -> Any:
+        if not isinstance(data, dict):
+            return data
 
-        """
-        self.id = id if id else uuid4()
+        # Allow ``None`` to mean "use the default" for fields with default_factory or default.
+        for key in (
+            "id",
+            "conversation_id",
+            "timestamp",
+            "labels",
+            "targeted_harm_categories",
+            "prompt_metadata",
+            "converter_identifiers",
+            "scores",
+            "original_prompt_id",
+        ):
+            if key in data and data[key] is None:
+                del data[key]
 
-        if role not in ChatMessageRole.__args__:
-            raise ValueError(f"Role {role} is not a valid role.")
+        # Deprecation warnings (suppressed when called via ``from_dict``).
+        if not _suppress_deprecation(info):
+            if "labels" in data and data["labels"] is not None:
+                print_deprecation_message(
+                    old_item="MessagePiece(..., labels=...)",
+                    new_item="MessagePiece(...)",
+                    removed_in="0.17.0",
+                )
+            if "scorer_identifier" in data and data["scorer_identifier"] is not None:
+                print_deprecation_message(
+                    old_item="MessagePiece(..., scorer_identifier=...)",
+                    new_item="MessagePiece(...)",
+                    removed_in="0.16.0",
+                )
+            if "originator" in data and data["originator"] != "undefined":
+                print_deprecation_message(
+                    old_item="MessagePiece(..., originator=...)",
+                    new_item="MessagePiece(...)",
+                    removed_in="0.16.0",
+                )
+            if "scores" in data and data["scores"] is not None:
+                print_deprecation_message(
+                    old_item="MessagePiece(..., scores=...)",
+                    new_item="MessagePiece(...)",
+                    removed_in="0.16.0",
+                )
+            if "targeted_harm_categories" in data and data["targeted_harm_categories"] is not None:
+                print_deprecation_message(
+                    old_item="MessagePiece(..., targeted_harm_categories=...)",
+                    new_item="MessagePiece(...)",
+                    removed_in="0.16.0",
+                )
 
-        self._role: ChatMessageRole = role
+        # Mirror the legacy default-derivation for ``converted_value`` and types.
+        original_value = data.get("original_value")
+        original_dtype = data.get("original_value_data_type")
+        converted_value = data.get("converted_value")
+        converted_dtype = data.get("converted_value_data_type")
 
-        if converted_value is None:
-            converted_value = original_value
-            if converted_value_data_type is None:
-                converted_value_data_type = original_value_data_type
-        else:
-            # If converted_value is provided but converted_value_data_type is not, default to original_value_data_type
-            if converted_value_data_type is None:
-                converted_value_data_type = original_value_data_type
+        if converted_value is None and original_value is not None:
+            data["converted_value"] = original_value
+            if converted_dtype is None:
+                data["converted_value_data_type"] = original_dtype if original_dtype is not None else "text"
+        elif converted_dtype is None:
+            data["converted_value_data_type"] = original_dtype if original_dtype is not None else "text"
 
-        self.conversation_id = conversation_id if conversation_id else str(uuid4())
-        self.sequence = sequence
+        return data
 
-        if timestamp is None:
-            self.timestamp = datetime.now(tz=timezone.utc)
-        elif timestamp.tzinfo is None:
-            self.timestamp = timestamp.replace(tzinfo=timezone.utc)
-        else:
-            self.timestamp = timestamp
-        if labels is not None:
-            print_deprecation_message(
-                old_item="MessagePiece(..., labels=...)",
-                new_item="MessagePiece(...)",
-                removed_in="0.16.0",
-            )
-        self.labels = labels or {}
-        self.prompt_metadata = prompt_metadata or {}
+    @model_validator(mode="after")
+    def _default_original_prompt_id(self) -> MessagePiece:
+        if self.original_prompt_id is None and isinstance(self.id, uuid.UUID):
+            object.__setattr__(self, "original_prompt_id", self.id)
+        return self
 
-        self.converter_identifiers: list[ComponentIdentifier] = converter_identifiers if converter_identifiers else []
+    # ------------------------------------------------------------------ #
+    # Field-level validators that preserve legacy error messages and
+    # support deserialization from dicts (ComponentIdentifier / Score).
+    # ------------------------------------------------------------------ #
+    @field_validator("role", mode="before")
+    @classmethod
+    def _validate_role(cls, value: Any) -> Any:
+        if value not in get_args(ChatMessageRole):
+            raise ValueError(f"Role {value} is not a valid role.")
+        return value
 
-        self.prompt_target_identifier: Optional[ComponentIdentifier] = prompt_target_identifier
+    @field_validator("original_value_data_type", "converted_value_data_type", mode="before")
+    @classmethod
+    def _validate_data_type(cls, value: Any) -> Any:
+        if value is None:
+            return value
+        if value not in get_args(PromptDataType):
+            raise ValueError(f"{value} is not a valid data type.")
+        return value
 
-        self.attack_identifier: Optional[ComponentIdentifier] = attack_identifier
+    @field_validator("response_error", mode="before")
+    @classmethod
+    def _validate_response_error(cls, value: Any) -> Any:
+        if value not in get_args(PromptResponseError):
+            raise ValueError(f"response_error {value} is not a valid response error.")
+        return value
 
-        # Handle scorer_identifier: normalize to ComponentIdentifier (handles dict with deprecation warning)
-        if scorer_identifier is not None:
-            print_deprecation_message(
-                old_item="MessagePiece(..., scorer_identifier=...)",
-                new_item="MessagePiece(...)",
-                removed_in="0.15.0",
-            )
-        self.scorer_identifier: Optional[ComponentIdentifier] = scorer_identifier if scorer_identifier else None
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def _coerce_timestamp(cls, value: Any) -> Any:
+        if value is None:
+            return value
+        if isinstance(value, str):
+            value = datetime.fromisoformat(value)
+        if isinstance(value, datetime) and value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
 
-        self.original_value = original_value
+    @field_validator("id", mode="before")
+    @classmethod
+    def _coerce_id(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            try:
+                return uuid.UUID(value)
+            except ValueError:
+                return value
+        return value
 
-        if original_value_data_type not in get_args(PromptDataType):
-            raise ValueError(f"original_value_data_type {original_value_data_type} is not a valid data type.")
+    @field_validator("original_prompt_id", mode="before")
+    @classmethod
+    def _coerce_original_prompt_id(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return uuid.UUID(value)
+        return value
 
-        self.original_value_data_type: PromptDataType = original_value_data_type
+    @field_validator("converter_identifiers", mode="before")
+    @classmethod
+    def _coerce_converter_identifiers(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [ComponentIdentifier.from_dict(item) if isinstance(item, dict) else item for item in value]
+        return value
 
-        self.original_value_sha256 = original_value_sha256
+    @field_validator(
+        "prompt_target_identifier",
+        "attack_identifier",
+        "scorer_identifier",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_component_identifier(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return ComponentIdentifier.from_dict(value)
+        return value
 
-        self.converted_value = converted_value
+    @field_validator("scores", mode="before")
+    @classmethod
+    def _coerce_scores(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [Score.from_dict(item) if isinstance(item, dict) else item for item in value]
+        return value
 
-        if converted_value_data_type not in get_args(PromptDataType):
-            raise ValueError(f"converted_value_data_type {converted_value_data_type} is not a valid data type.")
+    # ------------------------------------------------------------------ #
+    # Serializers that preserve the legacy ``to_dict`` JSON shape.
+    # ------------------------------------------------------------------ #
+    @field_serializer("id", "original_prompt_id")
+    def _serialize_uuid(self, value: Optional[Union[uuid.UUID, str]]) -> Optional[str]:
+        return str(value) if value is not None else None
 
-        self.converted_value_data_type: PromptDataType = converted_value_data_type
+    @field_serializer("timestamp")
+    def _serialize_timestamp(self, value: Optional[datetime]) -> Optional[str]:
+        return value.isoformat() if value is not None else None
 
-        self.converted_value_sha256 = converted_value_sha256
+    @field_serializer("converter_identifiers")
+    def _serialize_converter_identifiers(self, value: list[ComponentIdentifier]) -> list[dict[str, Any]]:
+        return [item.to_dict() for item in value]
 
-        if response_error not in get_args(PromptResponseError):
-            raise ValueError(f"response_error {response_error} is not a valid response error.")
+    @field_serializer("prompt_target_identifier", "attack_identifier", "scorer_identifier")
+    def _serialize_component_identifier(
+        self, value: Optional[ComponentIdentifier]
+    ) -> Optional[dict[str, Any]]:
+        return value.to_dict() if value is not None else None
 
-        self.response_error = response_error
+    @field_serializer("targeted_harm_categories")
+    def _serialize_targeted_harm_categories(self, value: list[str]) -> Optional[list[str]]:
+        return value if value else None
 
-        if originator != "undefined":
-            print_deprecation_message(
-                old_item="MessagePiece(..., originator=...)",
-                new_item="MessagePiece(...)",
-                removed_in="0.15.0",
-            )
-        self.originator = originator
+    @field_serializer("scores")
+    def _serialize_scores(self, value: list[Score]) -> list[dict[str, Any]]:
+        return [score.to_dict() for score in value]
 
-        # Original prompt id defaults to id (assumes that this is the original prompt, not a duplicate)
-        self.original_prompt_id = original_prompt_id or self.id
+    # ------------------------------------------------------------------ #
+    # Public API.
+    # ------------------------------------------------------------------ #
+    @property
+    def _role(self) -> ChatMessageRole:
+        """Backwards-compatible accessor for the role field."""
+        return self.role
 
-        if scores is not None:
-            print_deprecation_message(
-                old_item="MessagePiece(..., scores=...)",
-                new_item="MessagePiece(...)",
-                removed_in="0.15.0",
-            )
-        self.scores = scores if scores else []
-
-        if targeted_harm_categories is not None:
-            print_deprecation_message(
-                old_item="MessagePiece(..., targeted_harm_categories=...)",
-                new_item="MessagePiece(...)",
-                removed_in="0.15.0",
-            )
-        self.targeted_harm_categories = targeted_harm_categories if targeted_harm_categories else []
-
-    def copy_lineage_from(self, source: MessagePiece) -> None:
-        """
-        Copy lineage metadata from ``source`` onto this piece.
-
-        Lineage fields are the metadata that tie a piece back to its originating
-        conversation, attack, and target. Mutable containers (``labels``,
-        ``prompt_metadata``) are shallow-copied so that mutations on one piece
-        do not affect others.
-
-        Args:
-            source: The piece whose lineage metadata is authoritative.
-        """
-        self.conversation_id = source.conversation_id
-        self.labels = dict(source.labels)  # deprecated
-        self.attack_identifier = source.attack_identifier
-        self.prompt_target_identifier = source.prompt_target_identifier
-        self.prompt_metadata = dict(source.prompt_metadata)
-
-    async def set_sha256_values_async(self) -> None:
-        """
-        Compute SHA256 hash values for original and converted payloads.
-        It should be called after object creation if `original_value` and `converted_value` are set.
-
-        Note, this method is async due to the blob retrieval. And because of that, we opted
-        to take it out of main and setter functions. The disadvantage is that it must be explicitly called.
-        """
-        original_serializer = data_serializer_factory(
-            category="prompt-memory-entries",
-            data_type=self.original_value_data_type,
-            value=self.original_value,
-        )
-        self.original_value_sha256 = await original_serializer.get_sha256()
-
-        converted_serializer = data_serializer_factory(
-            category="prompt-memory-entries",
-            data_type=self.converted_value_data_type,
-            value=self.converted_value,
-        )
-        self.converted_value_sha256 = await converted_serializer.get_sha256()
+    @_role.setter
+    def _role(self, value: ChatMessageRole) -> None:
+        object.__setattr__(self, "role", value)
 
     @property
     def api_role(self) -> ChatMessageRole:
@@ -264,7 +315,7 @@ class MessagePiece:
         Maps simulated_assistant to assistant for API compatibility.
         Use this property when sending messages to external APIs.
         """
-        return "assistant" if self._role == "simulated_assistant" else self._role
+        return "assistant" if self.role == "simulated_assistant" else self.role
 
     @property
     def is_simulated(self) -> bool:
@@ -274,7 +325,7 @@ class MessagePiece:
         Simulated responses come from prepended conversations or generated
         simulated conversations, not from actual target responses.
         """
-        return self._role == "simulated_assistant"
+        return self.role == "simulated_assistant"
 
     def get_role_for_storage(self) -> ChatMessageRole:
         """
@@ -287,7 +338,7 @@ class MessagePiece:
             The actual role stored (may be simulated_assistant).
 
         """
-        return self._role
+        return self.role
 
     def to_message(self) -> Message:
         """
@@ -320,48 +371,76 @@ class MessagePiece:
         """
         return self.response_error == "blocked"
 
+    async def set_sha256_values_async(self) -> None:
+        """
+        Compute SHA256 hash values for original and converted payloads.
+        It should be called after object creation if `original_value` and `converted_value` are set.
+
+        Note, this method is async due to the blob retrieval. And because of that, we opted
+        to take it out of main and setter functions. The disadvantage is that it must be explicitly called.
+        """
+        original_serializer = data_serializer_factory(
+            category="prompt-memory-entries",
+            data_type=self.original_value_data_type,
+            value=self.original_value,
+        )
+        self.original_value_sha256 = await original_serializer.get_sha256()
+
+        converted_serializer = data_serializer_factory(
+            category="prompt-memory-entries",
+            data_type=self.converted_value_data_type,
+            value=self.converted_value,
+        )
+        self.converted_value_sha256 = await converted_serializer.get_sha256()
+
+    def copy_lineage_from(self, source: MessagePiece) -> None:
+        """
+        Copy lineage metadata from ``source`` onto this piece.
+
+        Lineage fields are the metadata that tie a piece back to its originating
+        conversation, attack, and target. Mutable containers (``labels``,
+        ``prompt_metadata``) are shallow-copied so that mutations on one piece
+        do not affect others.
+
+        Args:
+            source: The piece whose lineage metadata is authoritative.
+        """
+        from pyrit.models.helpers.message_piece import copy_lineage_to
+
+        copy_lineage_to(target=self, source=source)
+
     def set_piece_not_in_database(self) -> None:
         """
         Set that the prompt is not in the database.
 
         This is needed when we're scoring prompts or other things that have not been sent by PyRIT
         """
-        self.id = None
+        from pyrit.models.helpers.message_piece import mark_not_persisted
 
-    def to_dict(self) -> dict[str, object]:
+        mark_not_persisted(self)
+
+    def to_dict(self) -> dict[str, Any]:
         """
         Convert this message piece to a dictionary representation.
 
         Returns:
-            dict[str, object]: Dictionary representation suitable for serialization.
+            dict[str, Any]: Dictionary representation suitable for serialization.
 
         """
-        return {
-            "id": str(self.id) if self.id is not None else None,
-            "role": self._role,
-            "conversation_id": self.conversation_id,
-            "sequence": self.sequence,
-            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
-            "labels": self.labels,  # deprecated
-            "targeted_harm_categories": self.targeted_harm_categories if self.targeted_harm_categories else None,
-            "prompt_metadata": self.prompt_metadata,
-            "converter_identifiers": [conv.to_dict() for conv in self.converter_identifiers],
-            "prompt_target_identifier": (
-                self.prompt_target_identifier.to_dict() if self.prompt_target_identifier else None
-            ),
-            "attack_identifier": self.attack_identifier.to_dict() if self.attack_identifier else None,
-            "scorer_identifier": self.scorer_identifier.to_dict() if self.scorer_identifier else None,
-            "original_value_data_type": self.original_value_data_type,
-            "original_value": self.original_value,
-            "original_value_sha256": self.original_value_sha256,
-            "converted_value_data_type": self.converted_value_data_type,
-            "converted_value": self.converted_value,
-            "converted_value_sha256": self.converted_value_sha256,
-            "response_error": self.response_error,
-            "originator": self.originator,
-            "original_prompt_id": str(self.original_prompt_id) if self.original_prompt_id is not None else None,
-            "scores": [score.to_dict() for score in self.scores],
-        }
+        return self.model_dump(mode="json")
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> MessagePiece:
+        """
+        Reconstruct a MessagePiece from a dictionary.
+
+        Args:
+            data: Dictionary as produced by :meth:`to_dict`.
+
+        Returns:
+            MessagePiece: Reconstructed instance.
+        """
+        return cls.model_validate(data, context={"suppress_deprecation_warnings": True})
 
     def __str__(self) -> str:
         """
@@ -372,57 +451,9 @@ class MessagePiece:
 
         """
         target_str = self.prompt_target_identifier.class_name if self.prompt_target_identifier else "Unknown"
-        return f"{target_str}: {self._role}: {self.converted_value}"
+        return f"{target_str}: {self.role}: {self.converted_value}"
 
     __repr__ = __str__
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> MessagePiece:
-        """
-        Reconstruct a MessagePiece from a dictionary.
-
-        Args:
-            data (dict[str, Any]): Dictionary as produced by to_dict().
-
-        Returns:
-            MessagePiece: Reconstructed instance.
-        """
-        return cls(
-            id=data.get("id"),
-            role=data.get("role", "user"),
-            conversation_id=data.get("conversation_id"),
-            sequence=data.get("sequence", -1),
-            timestamp=(datetime.fromisoformat(str(data["timestamp"])) if data.get("timestamp") else None),
-            labels=data.get("labels") or None,
-            targeted_harm_categories=data.get("targeted_harm_categories"),
-            prompt_metadata=data.get("prompt_metadata"),
-            converter_identifiers=(
-                [ComponentIdentifier.from_dict(c) for c in data["converter_identifiers"]]
-                if data.get("converter_identifiers")
-                else None
-            ),
-            prompt_target_identifier=(
-                ComponentIdentifier.from_dict(data["prompt_target_identifier"])
-                if data.get("prompt_target_identifier")
-                else None
-            ),
-            attack_identifier=(
-                ComponentIdentifier.from_dict(data["attack_identifier"]) if data.get("attack_identifier") else None
-            ),
-            scorer_identifier=(
-                ComponentIdentifier.from_dict(data["scorer_identifier"]) if data.get("scorer_identifier") else None
-            ),
-            original_value_data_type=data.get("original_value_data_type", "text"),
-            original_value=data.get("original_value", ""),
-            original_value_sha256=data.get("original_value_sha256"),
-            converted_value_data_type=data.get("converted_value_data_type"),
-            converted_value=data.get("converted_value"),
-            converted_value_sha256=data.get("converted_value_sha256"),
-            response_error=data.get("response_error", "none"),
-            originator=data.get("originator", "undefined"),
-            original_prompt_id=(uuid.UUID(str(data["original_prompt_id"])) if data.get("original_prompt_id") else None),
-            scores=([Score.from_dict(s) for s in data["scores"]] if data.get("scores") else None),
-        )
 
     def __eq__(self, other: object) -> bool:
         """
@@ -439,7 +470,7 @@ class MessagePiece:
             return NotImplemented
         return (
             self.id == other.id
-            and self._role == other._role
+            and self.role == other.role
             and self.original_value == other.original_value
             and self.original_value_data_type == other.original_value_data_type
             and self.original_value_sha256 == other.original_value_sha256
@@ -449,6 +480,8 @@ class MessagePiece:
             and self.conversation_id == other.conversation_id
             and self.sequence == other.sequence
         )
+
+    __hash__ = None  # type: ignore[assignment]
 
 
 def sort_message_pieces(message_pieces: list[MessagePiece]) -> list[MessagePiece]:

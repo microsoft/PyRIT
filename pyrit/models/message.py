@@ -228,8 +228,10 @@ class Message:
 
         This is needed when we're scoring prompts or other things that have not been sent by PyRIT
         """
+        from pyrit.models.helpers import mark_not_persisted
+
         for piece in self.message_pieces:
-            piece.set_piece_not_in_database()
+            mark_not_persisted(piece)
 
     def set_simulated_role(self) -> None:
         """
