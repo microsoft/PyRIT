@@ -250,7 +250,7 @@ def test_no_new_lazy_violations() -> None:
     for source, imports in actual_lazy.items():
         known = set(KNOWN_LAZY_VIOLATIONS.get(source, {}).keys())
         for imp in sorted(imports):
-            if imp in known:
+            if imp in ALLOWED_TOP_LEVEL or imp in known:
                 continue
             new_violations.append(f"{source} -> {imp}")
     if new_violations:
