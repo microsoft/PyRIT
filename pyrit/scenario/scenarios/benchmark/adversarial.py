@@ -6,20 +6,21 @@
 from __future__ import annotations
 
 import logging
+from functools import cache
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
-from pyrit.registry import AttackTechniqueRegistry, AttackTechniqueSpec
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
-from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
+    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
     from pyrit.score import TrueFalseScorer
 
@@ -33,54 +34,16 @@ class AdversarialBenchmark(Scenario):
     """
 
     VERSION: int = 1
-    _cached_strategy_class: ClassVar[type[ScenarioStrategy] | None] = None
 
     #: AdversarialBenchmark compares attack-success rates across adversarial models; a baseline
     #: attack would be model-independent and contribute no signal to the comparison.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
-    @classmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        """
-        Return the AdversarialBenchmarkStrategy enum, building on first access.
-
-        Returns:
-            type[ScenarioStrategy]: The BenchmarkStrategy enum class.
-        """
-        if cls._cached_strategy_class is None:
-            cls._cached_strategy_class = AdversarialBenchmark._build_benchmark_strategy()
-
-        return cls._cached_strategy_class
-
-    @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        """
-        Return the default strategy (``light`` — run benchmark-friendly techniques
-        that can wrap up quickly and without too many system resources).
-
-        Returns:
-            ScenarioStrategy: The ``light`` aggregate member.
-        """
-        return cls.get_strategy_class()("light")
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """
-        Return the default dataset configuration for benchmarking.
-
-        Returns:
-            DatasetConfiguration: Configuration with standard harm-category datasets.
-        """
-        return DatasetConfiguration(
-            dataset_names=["harmbench"],
-            max_dataset_size=8,
-        )
-
     @apply_defaults
     def __init__(
         self,
         *,
-        adversarial_models: list[PromptTarget],
+        adversarial_models: list[PromptTarget] | None = None,
         objective_scorer: TrueFalseScorer | None = None,
         scenario_result_id: str | None = None,
     ) -> None:
@@ -98,15 +61,56 @@ class AdversarialBenchmark(Scenario):
                 name).  Identical targets are silently deduped and distinct
                 targets whose inferred names collide are suffixed (``_2``,
                 ``_3``, …) with a warning.
+                May be ``None`` at construction so the scenario can be
+                introspected (e.g. for ``--list-scenarios`` metadata); the
+                non-empty / capability validation is then deferred to
+                ``initialize_async``.
             objective_scorer: Scorer for evaluating attack success.
                 Defaults to the registered default objective scorer.
             scenario_result_id: Optional ID of an existing scenario
                 result to resume.
 
         Raises:
-            ValueError: If ``adversarial_models`` is empty, not a list, or
-                contains a target that does not satisfy
-                ``CHAT_TARGET_REQUIREMENTS``.
+            ValueError: If ``adversarial_models`` is provided and is empty,
+                not a list, or contains a target that does not satisfy
+                :data:`CHAT_TARGET_REQUIREMENTS`.
+        """
+        if adversarial_models is not None:
+            self._adversarial_configs = self._build_adversarial_configs(adversarial_models)
+        else:
+            self._adversarial_configs = {}
+
+        self._objective_scorer: TrueFalseScorer = (
+            objective_scorer if objective_scorer else self._get_default_objective_scorer()
+        )
+
+        strategy_class = _build_benchmark_strategy()
+
+        super().__init__(
+            version=self.VERSION,
+            objective_scorer=self._objective_scorer,
+            strategy_class=strategy_class,
+            default_strategy=strategy_class("light"),
+            default_dataset_config=DatasetConfiguration(
+                dataset_names=["harmbench"],
+                max_dataset_size=8,
+            ),
+            scenario_result_id=scenario_result_id,
+        )
+
+    @staticmethod
+    def _build_adversarial_configs(
+        adversarial_models: list[PromptTarget],
+    ) -> dict[str, AttackAdversarialConfig]:
+        """
+        Validate ``adversarial_models`` and wrap each into an ``AttackAdversarialConfig``.
+
+        Returns:
+            dict[str, AttackAdversarialConfig]: Adversarial configs keyed by inferred model label.
+
+        Raises:
+            ValueError: If the list is empty, not a list, or contains a target
+                that does not satisfy :data:`CHAT_TARGET_REQUIREMENTS`.
         """
         if not adversarial_models:
             raise ValueError("adversarial_models must be a non-empty list of PromptTarget instances.")
@@ -123,31 +127,16 @@ class AdversarialBenchmark(Scenario):
                     f"the chat-target capability requirements: {exc}"
                 ) from exc
 
-        # Infer labels, then wrap each bare target in a default AttackAdversarialConfig
-        # so it can be passed to factory.create() as an override.
-        labeled_targets = self._infer_labels(items=adversarial_models)
-        self._adversarial_configs: dict[str, AttackAdversarialConfig] = {
-            label: AttackAdversarialConfig(target=target) for label, target in labeled_targets.items()
-        }
-
-        self._objective_scorer: TrueFalseScorer = (
-            objective_scorer if objective_scorer else self._get_default_objective_scorer()
-        )
-
-        super().__init__(
-            version=self.VERSION,
-            objective_scorer=self._objective_scorer,
-            strategy_class=self.get_strategy_class(),
-            scenario_result_id=scenario_result_id,
-        )
+        labeled_targets = AdversarialBenchmark._infer_labels(items=adversarial_models)
+        return {label: AttackAdversarialConfig(target=target) for label, target in labeled_targets.items()}
 
     async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
         Build atomic attacks from the cross-product of techniques × models × datasets.
 
-        Factories are built locally from adversarial-capable ``SCENARIO_TECHNIQUES``
-        (not the registry singleton).  Each model is injected at create-time via
-        ``attack_adversarial_config_override``.
+        Factories are read from the singleton ``AttackTechniqueRegistry`` and
+        narrowed to adversarial-capable ones. Each model is injected at
+        create-time via ``attack_adversarial_config_override``.
 
         Returns:
             list[AtomicAttack]: One atomic attack per technique/model/dataset combination.
@@ -160,10 +149,14 @@ class AdversarialBenchmark(Scenario):
                 "Scenario not properly initialized. Call await scenario.initialize_async() before running."
             )
 
-        benchmarkable_specs = AdversarialBenchmark._get_benchmarkable_specs()
-        local_factories = {
-            spec.name: AttackTechniqueRegistry.build_factory_from_spec(spec) for spec in benchmarkable_specs
-        }
+        if not self._adversarial_configs:
+            raise ValueError(
+                "AdversarialBenchmark requires adversarial_models to be passed at construction "
+                "(non-empty list of chat-capable PromptTarget instances)."
+            )
+
+        benchmarkable_factories = AdversarialBenchmark._get_benchmarkable_factories()
+        local_factories = {factory.name: factory for factory in benchmarkable_factories}
 
         selected_techniques = {s.value for s in self._scenario_strategies}
         seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
@@ -253,44 +246,41 @@ class AdversarialBenchmark(Scenario):
         return result
 
     @staticmethod
-    def _build_benchmark_strategy() -> type[ScenarioStrategy]:
+    def _get_benchmarkable_factories() -> list[AttackTechniqueFactory]:
         """
-        Build the BenchmarkStrategy enum from adversarial-capable ``SCENARIO_TECHNIQUES``.
+        Return ``core`` factories that drive an adversarial chat.
 
-        Returns a strategy class whose concrete members are adversarial-capable
-        techniques (no baked-in adversarial chat) and whose aggregates allow
-        selecting by turn style.
+        Every benchmark technique must accept an adversarial-config override at
+        ``create()`` time so the scenario can inject one chat per benchmark
+        model. We narrow to the ``core`` tag to exclude experimental / persona
+        variants.
 
         Returns:
-            type[ScenarioStrategy]: The dynamically generated strategy enum class.
+            list[AttackTechniqueFactory]: Filtered core, adversarial-capable factories.
         """
-        specs = AdversarialBenchmark._get_benchmarkable_specs()
-        return AttackTechniqueRegistry.build_strategy_class_from_specs(  # type: ignore[ty:invalid-return-type]
-            class_name="BenchmarkStrategy",
-            specs=TagQuery.all("core").filter(specs),
-            aggregate_tags={
-                "default": TagQuery.any_of("default"),
-                "single_turn": TagQuery.any_of("single_turn"),
-                "multi_turn": TagQuery.any_of("multi_turn"),
-                "light": TagQuery.any_of("light"),
-            },
-        )
-
-    @staticmethod
-    def _get_benchmarkable_specs() -> list[AttackTechniqueSpec]:
-        """
-        Return techniques from ``SCENARIO_TECHNIQUES`` that accept an adversarial
-        model but don't have one already baked in.
-
-        This is the dual guard: ``_accepts_adversarial`` ensures the technique
-        CAN use an adversarial model, and ``adversarial_chat is None`` ensures
-        it doesn't already have one set — we inject our own at create-time.
-
-        Returns:
-            list[AttackTechniqueSpec]: Filtered, adversarial-ready specs.
-        """
+        registry = AttackTechniqueRegistry.get_registry_singleton()
         return [
-            spec
-            for spec in SCENARIO_TECHNIQUES
-            if AttackTechniqueRegistry._accepts_adversarial(spec.attack_class) and spec.adversarial_chat is None
+            factory
+            for factory in registry.get_factories_or_raise().values()
+            if factory.uses_adversarial and "core" in factory.strategy_tags
         ]
+
+
+@cache
+def _build_benchmark_strategy() -> type[ScenarioStrategy]:
+    """
+    Module-level cached builder so all callers share the same strategy enum class.
+
+    Returns:
+        type[ScenarioStrategy]: The dynamically generated BenchmarkStrategy enum class.
+    """
+    return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[ty:invalid-return-type]
+        class_name="BenchmarkStrategy",
+        factories=AdversarialBenchmark._get_benchmarkable_factories(),
+        aggregate_tags={
+            "default": TagQuery.any_of("default"),
+            "single_turn": TagQuery.any_of("single_turn"),
+            "multi_turn": TagQuery.any_of("multi_turn"),
+            "light": TagQuery.any_of("light"),
+        },
+    )

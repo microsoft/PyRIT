@@ -7,6 +7,8 @@ authors:
   - Hamed Hassani
   - George J. Pappas
   - Eric Wong
+groups:
+  - University of Pennsylvania
 source: https://github.com/patrickrchao/JailbreakingLLMs/blob/77e95cbb40d0788bb94588b79a51a212a7a0b55e/system_prompts.py#L1C1-L48C1
 parameters:
   - objective
