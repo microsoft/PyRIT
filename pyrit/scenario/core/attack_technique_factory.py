@@ -241,7 +241,7 @@ class AttackTechniqueFactory(Identifiable):
         if not self._uses_adversarial and self._adversarial_config is not None:
             raise ValueError(
                 f"Factory '{self._name}': adversarial_config is set but uses_adversarial=False. "
-                f"A technique that doesn't use an adversarial chat must not have one wired."
+                f"A technique that doesn't use an adversarial chat should not have one wired."
             )
 
     def _validate_kwargs(self) -> None:
