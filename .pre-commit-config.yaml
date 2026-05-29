@@ -44,7 +44,7 @@ repos:
         files: ^pyrit/memory/(memory_models\.py|alembic/.*|migration\.py)$
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
         exclude: NOTICE.txt
