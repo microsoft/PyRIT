@@ -40,6 +40,7 @@ from pyrit.datasets.seed_datasets.remote.darkbench_dataset import (
     _DarkBenchDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.decoding_trust_toxicity_dataset import (
+    DecodingTrustToxicitySubset,
     _DecodingTrustToxicityDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.equitymedqa_dataset import (
@@ -145,6 +146,7 @@ from pyrit.datasets.seed_datasets.remote.xstest_dataset import (
 )  # noqa: F401
 
 __all__ = [
+    "DecodingTrustToxicitySubset",
     "HiXSTestLanguage",
     "PromptIntelCategory",
     "PromptIntelSeverity",

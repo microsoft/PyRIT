@@ -7,7 +7,9 @@ import pytest
 
 from pyrit.datasets.seed_datasets.remote.decoding_trust_toxicity_dataset import (
     _NONTOXIC_URL,
+    _PERSPECTIVE_SCORE_KEYS,
     _TOXIC_URL,
+    DecodingTrustToxicitySubset,
     _DecodingTrustToxicityDataset,
 )
 from pyrit.models import SeedDataset, SeedPrompt
@@ -80,6 +82,8 @@ class TestDecodingTrustToxicityDataset:
         """Default constructor must fetch only toxic.jsonl (maintainer-requested default)."""
         loader = _DecodingTrustToxicityDataset()
 
+        assert loader.subset is DecodingTrustToxicitySubset.TOXIC
+
         with patch.object(loader, "_fetch_from_url", return_value=toxic_records) as mock_fetch:
             dataset = await loader.fetch_dataset_async()
 
@@ -89,8 +93,8 @@ class TestDecodingTrustToxicityDataset:
         assert len(dataset.seeds) == 2
 
     async def test_subset_nontoxic_only(self, nontoxic_records):
-        """subset='nontoxic' fetches only the nontoxic URL."""
-        loader = _DecodingTrustToxicityDataset(subset="nontoxic")
+        """subset=NONTOXIC fetches only the nontoxic URL."""
+        loader = _DecodingTrustToxicityDataset(subset=DecodingTrustToxicitySubset.NONTOXIC)
 
         with patch.object(loader, "_fetch_from_url", return_value=nontoxic_records) as mock_fetch:
             dataset = await loader.fetch_dataset_async()
@@ -99,8 +103,8 @@ class TestDecodingTrustToxicityDataset:
         assert len(dataset.seeds) == 1
 
     async def test_subset_all_fetches_both_urls(self, toxic_records, nontoxic_records):
-        """subset='all' fetches both URLs and concatenates."""
-        loader = _DecodingTrustToxicityDataset(subset="all")
+        """subset=ALL fetches both URLs and concatenates."""
+        loader = _DecodingTrustToxicityDataset(subset=DecodingTrustToxicitySubset.ALL)
 
         with patch.object(
             loader,
@@ -112,6 +116,11 @@ class TestDecodingTrustToxicityDataset:
         assert mock_fetch.call_count == 2
         assert {call.kwargs["source"] for call in mock_fetch.call_args_list} == {_TOXIC_URL, _NONTOXIC_URL}
         assert len(dataset.seeds) == len(toxic_records) + len(nontoxic_records)
+
+    def test_invalid_subset_raises_value_error(self):
+        """A raw string for subset is rejected by _validate_enum."""
+        with pytest.raises(ValueError, match="DecodingTrustToxicitySubset"):
+            _DecodingTrustToxicityDataset(subset="toxic")  # type: ignore[arg-type]
 
     async def test_harm_category_mapping_threshold(self, toxic_records):
         """Each Perspective score >= threshold contributes its key to harm_categories."""
@@ -133,7 +142,10 @@ class TestDecodingTrustToxicityDataset:
 
     async def test_high_threshold_yields_empty_categories(self, nontoxic_records):
         """At a very high threshold, nontoxic prompts get empty harm_categories."""
-        loader = _DecodingTrustToxicityDataset(subset="nontoxic", toxicity_threshold=0.99)
+        loader = _DecodingTrustToxicityDataset(
+            subset=DecodingTrustToxicitySubset.NONTOXIC,
+            toxicity_threshold=0.99,
+        )
 
         with patch.object(loader, "_fetch_from_url", return_value=nontoxic_records):
             dataset = await loader.fetch_dataset_async()
@@ -152,6 +164,18 @@ class TestDecodingTrustToxicityDataset:
             dataset = await loader.fetch_dataset_async()
 
         assert [seed.value for seed in dataset.seeds] == ["keep me"]
+
+    async def test_raises_when_filters_leave_zero_seeds(self):
+        """challenging_only on a subset with no challenging records → empty result raises."""
+        records = [
+            _record(text="a", challenging=False),
+            _record(text="b", challenging=False),
+        ]
+        loader = _DecodingTrustToxicityDataset(challenging_only=True)
+
+        with patch.object(loader, "_fetch_from_url", return_value=records):
+            with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
+                await loader.fetch_dataset_async()
 
     async def test_skips_records_missing_prompt_text(self):
         """Records with missing or empty prompt.text are skipped, not failed."""
@@ -192,6 +216,55 @@ class TestDecodingTrustToxicityDataset:
         assert "Samuel Gehman" in seed.authors  # RealToxicityPrompts lead
         assert seed.groups is not None and "University of Illinois Urbana-Champaign" in seed.groups
 
+    async def test_metadata_round_trip(self):
+        """Per-row challenging flag and 8 Perspective scores land in SeedPrompt.metadata."""
+        records = [
+            _record(
+                text="x",
+                challenging=True,
+                toxicity=0.9066653,
+                severe_toxicity=0.71939063,
+                profanity=0.913447,
+                sexually_explicit=0.83578736,
+                identity_attack=0.27345368,
+                threat=0.27313367,
+                insult=0.924118,
+                flirtation=0.400925,
+            ),
+        ]
+        loader = _DecodingTrustToxicityDataset()
+
+        with patch.object(loader, "_fetch_from_url", return_value=records):
+            dataset = await loader.fetch_dataset_async()
+
+        meta = dataset.seeds[0].metadata
+        assert meta is not None
+        # challenging stored as bool (bool ≤ int so dict[str, Union[str, int]] accepts it)
+        assert meta["challenging"] is True
+        # All eight Perspective scores stringified at full precision
+        for key in _PERSPECTIVE_SCORE_KEYS:
+            assert key in meta
+            assert meta[key] == str(records[0]["prompt"][key])
+
+    async def test_metadata_challenging_defaults_false_when_missing(self):
+        """Records without a 'challenging' key produce metadata['challenging'] == False."""
+        records = [
+            {
+                "prompt": {
+                    "text": "x",
+                    "toxicity": 0.9,
+                },
+            },
+        ]
+        loader = _DecodingTrustToxicityDataset()
+
+        with patch.object(loader, "_fetch_from_url", return_value=records):
+            dataset = await loader.fetch_dataset_async()
+
+        meta = dataset.seeds[0].metadata
+        assert meta is not None
+        assert meta["challenging"] is False
+
     def test_dataset_name(self):
         """dataset_name property returns the canonical id."""
         assert _DecodingTrustToxicityDataset().dataset_name == "decoding_trust_toxicity"
@@ -207,7 +280,8 @@ class TestDecodingTrustToxicityDataset:
         assert _NONTOXIC_URL.endswith("/data/toxicity/user_prompts/nontoxic.jsonl")
 
     def test_class_level_metadata(self):
-        """modalities/size/tags are set for the metadata parser."""
+        """harm_categories/modalities/size/tags are set for the dataset-discovery parser."""
+        assert _DecodingTrustToxicityDataset.harm_categories == list(_PERSPECTIVE_SCORE_KEYS)
         assert _DecodingTrustToxicityDataset.modalities == ["text"]
         assert _DecodingTrustToxicityDataset.size == "large"
         assert _DecodingTrustToxicityDataset.tags == {"default", "safety", "toxicity"}

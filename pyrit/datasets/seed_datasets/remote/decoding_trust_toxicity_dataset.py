@@ -2,7 +2,8 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Any, Literal, cast
+from enum import Enum
+from typing import Any, cast
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -35,6 +36,20 @@ _PERSPECTIVE_SCORE_KEYS: tuple[str, ...] = (
 )
 
 
+class DecodingTrustToxicitySubset(Enum):
+    """
+    Which subset of the DecodingTrust toxicity prompts to load.
+
+    ``TOXIC`` matches ``toxic.jsonl`` (1196 high-toxicity prompts; the
+    red-teaming default). ``NONTOXIC`` matches ``nontoxic.jsonl`` (1200
+    low-toxicity prompts). ``ALL`` fetches and concatenates both files.
+    """
+
+    TOXIC = "toxic"
+    NONTOXIC = "nontoxic"
+    ALL = "all"
+
+
 class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
     """
     Loader for the Toxicity perspective of the DecodingTrust benchmark.
@@ -59,11 +74,8 @@ class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
     guessing where the source provides no label.
 
     References:
-        - Wang et al., 2023. *DecodingTrust: A Comprehensive Assessment of
-          Trustworthiness in GPT Models.* https://arxiv.org/abs/2306.11698
-        - Gehman et al., 2020. *RealToxicityPrompts: Evaluating Neural Toxic
-          Degeneration in Language Models.* https://arxiv.org/abs/2009.11462
-        - https://github.com/AI-secure/DecodingTrust
+        [@wang2023decodingtrust; @gehman2020realtoxicityprompts]
+        https://github.com/AI-secure/DecodingTrust
 
     License:
         DecodingTrust is distributed under CC BY-SA 4.0. PyRIT fetches the
@@ -79,8 +91,9 @@ class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
 
     # Class-level metadata picked up by _RemoteDatasetLoader._parse_metadata.
     # See pyrit/datasets/seed_datasets/seed_metadata.py for the schema.
+    harm_categories: list[str] = list(_PERSPECTIVE_SCORE_KEYS)
     modalities: list[str] = ["text"]
-    size: str = "large"  # 1196 (default toxic) – 2396 (subset="all")
+    size: str = "large"  # 1196 (default toxic) – 2396 (subset=ALL)
     tags: set[str] = {"default", "safety", "toxicity"}
 
     _AUTHORS: tuple[str, ...] = (
@@ -135,7 +148,7 @@ class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
     def __init__(
         self,
         *,
-        subset: Literal["toxic", "nontoxic", "all"] = "toxic",
+        subset: DecodingTrustToxicitySubset = DecodingTrustToxicitySubset.TOXIC,
         challenging_only: bool = False,
         toxicity_threshold: float = 0.5,
     ) -> None:
@@ -143,19 +156,23 @@ class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
         Initialize the DecodingTrust Toxicity dataset loader.
 
         Args:
-            subset: Which subset of the toxicity prompts to load. ``"toxic"``
-                (default) loads the ~1.2k high-toxicity prompts, ``"nontoxic"``
-                loads the ~1.2k low-toxicity prompts, ``"all"`` loads both.
-                The default matches the red-teaming use case
-                (cf. microsoft/PyRIT#1798).
+            subset: Which subset of the toxicity prompts to load. Defaults to
+                ``DecodingTrustToxicitySubset.TOXIC`` — the red-teaming use case
+                agreed on microsoft/PyRIT#1798. ``NONTOXIC`` loads the low-toxicity
+                file; ``ALL`` concatenates both.
             challenging_only: If True, retain only records flagged
                 ``challenging: true`` in the source — the adversarial subset
                 emphasised by the DecodingTrust authors.
             toxicity_threshold: Perspective score at or above which a category
                 is added to a SeedPrompt's ``harm_categories``. Applied
                 independently to each of the eight Perspective scores.
+
+        Raises:
+            ValueError: If ``subset`` is not a ``DecodingTrustToxicitySubset``
+                instance.
         """
-        self.subset: Literal["toxic", "nontoxic", "all"] = subset
+        self._validate_enum(subset, DecodingTrustToxicitySubset, "subset")
+        self.subset = subset
         self.challenging_only = challenging_only
         self.toxicity_threshold = toxicity_threshold
 
@@ -175,14 +192,15 @@ class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
             SeedDataset: A SeedDataset whose seeds are the selected toxicity prompts.
 
         Raises:
-            ValueError: If the source JSONL contains items that are not dicts.
+            ValueError: If the source JSONL contains items that are not dicts, or
+                if the chosen filter combination leaves zero seeds.
         """
-        logger.info(f"Loading DecodingTrust Toxicity subset={self.subset!r} from {_BASE_URL}")
+        logger.info(f"Loading DecodingTrust Toxicity subset={self.subset.value!r} from {_BASE_URL}")
 
         urls: list[str] = []
-        if self.subset in ("toxic", "all"):
+        if self.subset in (DecodingTrustToxicitySubset.TOXIC, DecodingTrustToxicitySubset.ALL):
             urls.append(_TOXIC_URL)
-        if self.subset in ("nontoxic", "all"):
+        if self.subset in (DecodingTrustToxicitySubset.NONTOXIC, DecodingTrustToxicitySubset.ALL):
             urls.append(_NONTOXIC_URL)
 
         records: list[tuple[str, dict[str, Any]]] = []
@@ -191,6 +209,8 @@ class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
             records.extend((url, item) for item in cast("list[Any]", raw))
 
         seed_prompts = self._records_to_seed_prompts(records=records)
+        if not seed_prompts:
+            raise ValueError("SeedDataset cannot be empty. Check your filter criteria.")
         logger.info(f"Loaded {len(seed_prompts)} prompts from DecodingTrust Toxicity")
         return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)
 
@@ -239,6 +259,14 @@ class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
                     source=source_url,
                     authors=list(self._AUTHORS),
                     groups=list(self._GROUPS),
+                    metadata={
+                        "challenging": bool(item.get("challenging", False)),
+                        **{
+                            key: str(prompt_obj[key])
+                            for key in _PERSPECTIVE_SCORE_KEYS
+                            if isinstance(prompt_obj.get(key), (int, float))
+                        },
+                    },
                 )
             )
         return seed_prompts
