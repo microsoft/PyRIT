@@ -51,8 +51,8 @@ class SamplingStrategy(Protocol):
 
     Implementations must preserve two invariants:
 
-    - The returned tensor has shape ``(batch_size, control_len)`` where
-      ``control_len == control_toks.shape[0]``.
+    - The returned tensor has shape ``(batch_size, control_length)`` where
+      ``control_length == control_tokens.shape[0]``.
     - The returned tensor lives on the same device as ``gradient`` (the
       orchestrator does not re-locate the result).
 
@@ -69,39 +69,40 @@ class SamplingStrategy(Protocol):
         self,
         *,
         gradient: torch.Tensor,
-        control_toks: torch.Tensor,
+        control_tokens: torch.Tensor,
         batch_size: int,
-        topk: int,
-        temp: int,
+        top_k: int,
+        temperature: int,
         allow_non_ascii: bool,
-        nonascii_toks: torch.Tensor,
+        non_ascii_tokens: torch.Tensor,
     ) -> torch.Tensor:
         """Sample ``batch_size`` candidate suffix token sequences.
 
         Args:
             gradient (torch.Tensor): Aggregated gradient over the control
-                tokens with shape ``(control_len, vocab_size)`` and dtype
+                tokens with shape ``(control_length, vocab_size)`` and dtype
                 matching the model's embedding matrix.
-            control_toks (torch.Tensor): The current suffix token sequence
-                with shape ``(control_len,)`` and integer dtype.
+            control_tokens (torch.Tensor): The current suffix token sequence
+                with shape ``(control_length,)`` and integer dtype.
             batch_size (int): Number of candidate suffix rows to return.
-            topk (int): Number of top gradient positions per control slot
+            top_k (int): Number of top gradient positions per control slot
                 that the strategy is permitted to draw from.
-            temp (int): Sampling temperature placeholder kept for API
+            temperature (int): Sampling temperature placeholder kept for API
                 compatibility with the legacy code path. The current default
                 strategy samples uniformly within the top-k and does not use
                 this value.
             allow_non_ascii (bool): When False, the implementation must
-                ensure ``nonascii_toks`` are excluded from the candidate
+                ensure ``non_ascii_tokens`` are excluded from the candidate
                 vocabulary (typically by masking those positions of
                 ``gradient`` to ``+inf`` before top-k selection).
-            nonascii_toks (torch.Tensor): Token ids to exclude when
+            non_ascii_tokens (torch.Tensor): Token ids to exclude when
                 ``allow_non_ascii`` is False, shape ``(num_disallowed,)``
                 and integer dtype.
 
         Returns:
             torch.Tensor: Candidate suffix token sequences with shape
-            ``(batch_size, control_len)`` on the same device as ``gradient``.
+            ``(batch_size, control_length)`` on the same device as
+            ``gradient``.
         """
         ...
 
@@ -188,7 +189,7 @@ class CandidateFilter(Protocol):
 
     Implementations must preserve two invariants:
 
-    - The returned list has length equal to ``candidate_toks.shape[0]``.
+    - The returned list has length equal to ``candidate_tokens.shape[0]``.
     - No element of the returned list equals ``current_control`` *unless* the
       implementation explicitly allows the no-op candidate (the legacy
       filter drops it on the assumption that re-evaluating the current
@@ -202,15 +203,15 @@ class CandidateFilter(Protocol):
     def filter_candidates(
         self,
         *,
-        candidate_toks: torch.Tensor,
+        candidate_tokens: torch.Tensor,
         tokenizer: Any,
         current_control: str,
     ) -> list[str]:
         """Decode and filter a batch of candidate suffix token tensors.
 
         Args:
-            candidate_toks (torch.Tensor): Sampled candidate suffixes with
-                shape ``(batch_size, control_len)`` and integer dtype.
+            candidate_tokens (torch.Tensor): Sampled candidate suffixes with
+                shape ``(batch_size, control_length)`` and integer dtype.
             tokenizer (Any): The worker's HuggingFace-style tokenizer.
                 ``tokenizer.decode`` is used to render each row to text and
                 ``tokenizer(text, add_special_tokens=False).input_ids`` is
@@ -221,8 +222,8 @@ class CandidateFilter(Protocol):
 
         Returns:
             list[str]: Decoded candidate suffix strings of length exactly
-            ``candidate_toks.shape[0]``. Dropped rows are typically padded by
-            repeating the last accepted candidate.
+            ``candidate_tokens.shape[0]``. Dropped rows are typically padded
+            by repeating the last accepted candidate.
         """
         ...
 

@@ -70,14 +70,14 @@ class _StubSamplingStrategy:
         self,
         *,
         gradient: torch.Tensor,
-        control_toks: torch.Tensor,
+        control_tokens: torch.Tensor,
         batch_size: int,
-        topk: int,
-        temp: int,
+        top_k: int,
+        temperature: int,
         allow_non_ascii: bool,
-        nonascii_toks: torch.Tensor,
+        non_ascii_tokens: torch.Tensor,
     ) -> torch.Tensor:
-        return control_toks.unsqueeze(0).repeat(batch_size, 1)
+        return control_tokens.unsqueeze(0).repeat(batch_size, 1)
 
 
 class _StubLossFunction:
@@ -96,11 +96,11 @@ class _StubCandidateFilter:
     def filter_candidates(
         self,
         *,
-        candidate_toks: torch.Tensor,
+        candidate_tokens: torch.Tensor,
         tokenizer: Any,
         current_control: str,
     ) -> list[str]:
-        return ["stub"] * candidate_toks.shape[0]
+        return ["stub"] * candidate_tokens.shape[0]
 
 
 class _StubSuffixInitializer:
@@ -146,18 +146,18 @@ def test_class_missing_protocol_method_fails_isinstance(proto: type) -> None:
 
 def test_sampling_strategy_stub_returns_expected_shape() -> None:
     impl = _StubSamplingStrategy()
-    control_toks = torch.tensor([1, 2, 3, 4], dtype=torch.long)
+    control_tokens = torch.tensor([1, 2, 3, 4], dtype=torch.long)
     gradient = torch.zeros((4, 100))
-    nonascii_toks = torch.tensor([], dtype=torch.long)
+    non_ascii_tokens = torch.tensor([], dtype=torch.long)
 
     out = impl.sample_candidates(
         gradient=gradient,
-        control_toks=control_toks,
+        control_tokens=control_tokens,
         batch_size=5,
-        topk=8,
-        temp=1,
+        top_k=8,
+        temperature=1,
         allow_non_ascii=True,
-        nonascii_toks=nonascii_toks,
+        non_ascii_tokens=non_ascii_tokens,
     )
     assert out.shape == (5, 4)
 
@@ -178,10 +178,10 @@ def test_loss_function_stub_returns_expected_shape() -> None:
 
 def test_candidate_filter_stub_returns_expected_length() -> None:
     impl = _StubCandidateFilter()
-    candidate_toks = torch.zeros((7, 4), dtype=torch.long)
+    candidate_tokens = torch.zeros((7, 4), dtype=torch.long)
 
     out = impl.filter_candidates(
-        candidate_toks=candidate_toks,
+        candidate_tokens=candidate_tokens,
         tokenizer=object(),
         current_control="prev",
     )
