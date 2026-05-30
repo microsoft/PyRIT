@@ -232,6 +232,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
 
         Raises:
             ValueError: If a row is missing required keys or no seeds remain after filtering.
+            RuntimeError: If FigStep-Pro assets fail to load before per-row processing.
         """
         logger.info(
             f"Loading FigStep dataset (variant={self.variant.value}, use_tiny={self.use_tiny}) from {self.source}"
@@ -240,9 +241,10 @@ class _FigStepDataset(_RemoteDatasetLoader):
         required_keys = {"dataset", "category_id", "task_id", "category_name", "question", "instruction"}
         rows = self._fetch_from_url(source=self.source, source_type=self.source_type, cache=cache)
 
-        pro_assets: Optional[tuple[Path, list[str]]] = None
+        pro_extract_dir: Optional[Path] = None
+        pro_benign_sentences: Optional[list[str]] = None
         if self.variant == FigStepVariant.FIGSTEP_PRO:
-            pro_assets = await self._ensure_figstep_pro_assets_async(cache=cache)
+            pro_extract_dir, pro_benign_sentences = await self._ensure_figstep_pro_assets_async(cache=cache)
 
         seeds: list[Seed] = []
         failed_image_count = 0
@@ -259,12 +261,13 @@ class _FigStepDataset(_RemoteDatasetLoader):
                 if self.variant == FigStepVariant.FIGSTEP:
                     group = await self._build_figstep_group_async(row=row)
                 else:
-                    assert pro_assets is not None
+                    if pro_extract_dir is None or pro_benign_sentences is None:
+                        raise RuntimeError("FigStep-Pro assets were not loaded.")  # pragma: no cover
                     group = await self._build_figstep_pro_group_async(
                         row=row,
                         row_idx=row_idx,
-                        extract_dir=pro_assets[0],
-                        benign_sentences=pro_assets[1],
+                        extract_dir=pro_extract_dir,
+                        benign_sentences=pro_benign_sentences,
                     )
             except Exception as e:
                 failed_image_count += 1
@@ -526,7 +529,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
             the list of benign sentences indexed by row position.
         """
         extract_dir = await self._download_and_extract_pro_zip_async(cache=cache)
-        benign_sentences = await self._fetch_benign_sentences(cache=cache)
+        benign_sentences = await self._fetch_benign_sentences_async(cache=cache)
         return extract_dir, benign_sentences
 
     async def _download_and_extract_pro_zip_async(self, *, cache: bool) -> Path:
@@ -559,7 +562,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
         await asyncio.to_thread(_extract)
         return extract_dir
 
-    async def _fetch_benign_sentences(self, *, cache: bool) -> list[str]:
+    async def _fetch_benign_sentences_async(self, *, cache: bool) -> list[str]:
         """
         Fetch the benign-sentences CSV and return the per-row sentence list.
 

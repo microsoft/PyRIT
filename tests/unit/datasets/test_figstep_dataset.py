@@ -505,7 +505,7 @@ def _make_pro_zip_bytes() -> bytes:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestFigStepProAssetDownload:
-    """Tests for _download_and_extract_pro_zip_async and _fetch_benign_sentences."""
+    """Tests for _download_and_extract_pro_zip_async and _fetch_benign_sentences_async."""
 
     async def test_download_and_extract_pro_zip_writes_files(self, tmp_path: Path):
         loader = _FigStepDataset(variant=FigStepVariant.FIGSTEP_PRO)
@@ -569,7 +569,7 @@ class TestFigStepProAssetDownload:
         assert (empty_cache / "image_0_splits" / "image_0_split_0.png").exists()
         mock_request.assert_awaited_once()
 
-    async def test_fetch_benign_sentences_fetches_and_skips_header(self, tmp_path: Path):
+    async def test_fetch_benign_sentences_async_fetches_and_skips_header(self, tmp_path: Path):
         loader = _FigStepDataset(variant=FigStepVariant.FIGSTEP_PRO)
         text = "sentence\nSteps to make *.\nMethods to commit *.\n\n"
         response = SimpleNamespace(text=text)
@@ -581,7 +581,7 @@ class TestFigStepProAssetDownload:
                 new=AsyncMock(return_value=response),
             ) as mock_request,
         ):
-            sentences = await loader._fetch_benign_sentences(cache=False)
+            sentences = await loader._fetch_benign_sentences_async(cache=False)
 
         assert sentences == ["Steps to make *.", "Methods to commit *."]
         cache_path = tmp_path / "seed-prompt-entries" / f"figstep_benign_sentences_{loader.COMMIT_SHA}.txt"
@@ -592,7 +592,7 @@ class TestFigStepProAssetDownload:
         assert request_kwargs["method"] == "GET"
         assert request_kwargs["follow_redirects"] is True
 
-    async def test_fetch_benign_sentences_reads_from_cache(self, tmp_path: Path):
+    async def test_fetch_benign_sentences_async_reads_from_cache(self, tmp_path: Path):
         loader = _FigStepDataset(variant=FigStepVariant.FIGSTEP_PRO)
         cache_dir = tmp_path / "seed-prompt-entries"
         cache_dir.mkdir(parents=True)
@@ -606,12 +606,12 @@ class TestFigStepProAssetDownload:
                 new=AsyncMock(),
             ) as mock_request,
         ):
-            sentences = await loader._fetch_benign_sentences(cache=True)
+            sentences = await loader._fetch_benign_sentences_async(cache=True)
 
         assert sentences == ["Cached one.", "Cached two."]
         mock_request.assert_not_awaited()
 
-    async def test_fetch_benign_sentences_keeps_first_line_when_not_header(self, tmp_path: Path):
+    async def test_fetch_benign_sentences_async_keeps_first_line_when_not_header(self, tmp_path: Path):
         loader = _FigStepDataset(variant=FigStepVariant.FIGSTEP_PRO)
         # No "sentence" header row — the first line should be preserved.
         response = SimpleNamespace(text="First real sentence.\nSecond sentence.\n")
@@ -623,7 +623,7 @@ class TestFigStepProAssetDownload:
                 new=AsyncMock(return_value=response),
             ),
         ):
-            sentences = await loader._fetch_benign_sentences(cache=False)
+            sentences = await loader._fetch_benign_sentences_async(cache=False)
 
         assert sentences == ["First real sentence.", "Second sentence."]
 
@@ -640,7 +640,7 @@ class TestFigStepProAssetDownload:
             ) as mock_zip,
             patch.object(
                 loader,
-                "_fetch_benign_sentences",
+                "_fetch_benign_sentences_async",
                 new=AsyncMock(return_value=["Sentence A", "Sentence B"]),
             ) as mock_sentences,
         ):
