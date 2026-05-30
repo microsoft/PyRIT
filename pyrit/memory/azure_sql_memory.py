@@ -19,7 +19,6 @@ from sqlalchemy.sql.expression import ColumnElement, TextClause
 from pyrit.auth.azure_auth import AzureAuth
 from pyrit.common import default_values
 from pyrit.common.singleton import Singleton
-from pyrit.memory._preview import PREVIEW_FETCH_MAX_LEN, format_last_message_preview
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -614,14 +613,13 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         placeholders = ", ".join(f":cid{i}" for i in range(len(conversation_ids)))
         params = {f"cid{i}": cid for i, cid in enumerate(conversation_ids)}
 
-        max_len = ConversationStats.PREVIEW_MAX_LEN
         sql = text(
             f"""
             SELECT
                 pme.conversation_id,
                 COUNT(DISTINCT pme.sequence) AS msg_count,
                 (
-                    SELECT TOP 1 LEFT(p2.converted_value, {PREVIEW_FETCH_MAX_LEN})
+                    SELECT TOP 1 LEFT(p2.converted_value, {ConversationStats.PREVIEW_FETCH_MAX_LEN})
                     FROM "PromptMemoryEntries" p2
                     WHERE p2.conversation_id = pme.conversation_id
                     ORDER BY p2.sequence DESC, p2.id DESC
@@ -655,12 +653,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         for row in rows:
             conv_id, msg_count, last_preview, last_data_type, raw_labels, raw_created_at = row
 
-            preview = format_last_message_preview(
-                value=last_preview,
-                data_type=last_data_type,
-                max_len=max_len,
-            )
-
             labels: dict[str, str] = {}
             if raw_labels and raw_labels not in ("null", "{}"):
                 with suppress(ValueError, TypeError):
@@ -675,7 +667,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
             result[conv_id] = ConversationStats(
                 message_count=msg_count,
-                last_message_preview=preview,
+                last_message_preview=last_preview,
+                last_message_data_type=last_data_type,
                 labels=labels,
                 created_at=created_at,
             )

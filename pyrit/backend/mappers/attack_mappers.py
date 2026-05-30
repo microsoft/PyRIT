@@ -24,6 +24,7 @@ from azure.identity.aio import DefaultAzureCredential
 from azure.storage.blob import ContainerSasPermissions, generate_container_sas
 from azure.storage.blob.aio import BlobServiceClient
 
+from pyrit.backend.mappers._preview import format_last_message_preview
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
     AttackSummary,
@@ -224,7 +225,10 @@ def attack_result_to_summary(
         AttackSummary DTO ready for the API response.
     """
     message_count = stats.message_count
-    last_preview = stats.last_message_preview
+    last_preview = format_last_message_preview(
+        value=stats.last_message_preview,
+        data_type=stats.last_message_data_type,
+    )
 
     # Merge attack-result labels with conversation-level labels.
     # Conversation labels take precedence on key collision.

@@ -1,11 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Unit tests for ``pyrit.memory._preview.format_last_message_preview``."""
+"""Unit tests for ``pyrit.backend.mappers._preview.format_last_message_preview``."""
 
 import pytest
 
-from pyrit.memory._preview import PREVIEW_FETCH_MAX_LEN, format_last_message_preview
+from pyrit.backend.mappers._preview import format_last_message_preview
+from pyrit.models import ConversationStats
 
 
 class TestFormatLastMessagePreview:
@@ -30,6 +31,15 @@ class TestFormatLastMessagePreview:
     def test_unknown_data_type_treated_as_text(self) -> None:
         result = format_last_message_preview(value="hello", data_type=None, max_len=100)
         assert result == "hello"
+
+    def test_default_max_len_matches_conversation_stats_contract(self) -> None:
+        # The formatter's default truncation length should track the model
+        # constant so callers don't have to plumb it through manually.
+        long_text = "y" * (ConversationStats.PREVIEW_MAX_LEN + 50)
+        result = format_last_message_preview(value=long_text, data_type="text")
+        assert result is not None
+        assert len(result) == ConversationStats.PREVIEW_MAX_LEN + 3
+        assert result.endswith("...")
 
     @pytest.mark.parametrize(
         ("data_type", "label"),
@@ -83,13 +93,13 @@ class TestFormatLastMessagePreview:
 
     def test_media_long_path_basename_not_truncated(self) -> None:
         # Even with a 100-char text limit, the basename label should not be
-        # truncated. The PREVIEW_FETCH_MAX_LEN cap (1024 chars) is far above
-        # any realistic path length.
+        # truncated. Memory layer fetches up to PREVIEW_FETCH_MAX_LEN chars so
+        # the basename survives even very deep paths.
         deep = "C:\\very\\deep\\nested\\directory\\structure\\that\\is\\quite\\long\\file_name_that_is_also_long.png"
         result = format_last_message_preview(value=deep, data_type="image_path", max_len=20)
         assert result == "[Image: file_name_that_is_also_long.png]"
 
-    def test_preview_fetch_max_len_is_generous(self) -> None:
-        # Sanity check: the per-row fetch cap must be large enough to
-        # accommodate realistic filesystem paths and signed blob URLs.
-        assert PREVIEW_FETCH_MAX_LEN >= 512
+    def test_preview_fetch_max_len_contract_is_generous(self) -> None:
+        # Sanity check on the model-side constant: must be large enough to fit
+        # realistic filesystem paths and signed blob URLs in a single fetch.
+        assert ConversationStats.PREVIEW_FETCH_MAX_LEN >= 512

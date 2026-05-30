@@ -793,19 +793,24 @@ def test_get_conversation_stats_returns_labels(sqlite_instance):
     assert result[conv_id].labels == {"env": "prod", "source": "gui"}
 
 
-def test_get_conversation_stats_preview_truncates(sqlite_instance):
-    """Test that last_message_preview is truncated to 100 chars + ellipsis."""
+def test_get_conversation_stats_preview_caps_raw_value_at_fetch_limit(sqlite_instance):
+    """Memory caps the raw last_message_preview at PREVIEW_FETCH_MAX_LEN.
+
+    Display-level truncation to PREVIEW_MAX_LEN happens later in the backend
+    mapper. This test verifies the storage-fetch contract: very long values
+    are bounded so a multi-MB text response doesn't bloat ``ConversationStats``.
+    """
     import uuid
 
-    from pyrit.models import MessagePiece
+    from pyrit.models import ConversationStats, MessagePiece
 
     conv_id = str(uuid.uuid4())
-    long_text = "x" * 200
+    huge_text = "x" * (ConversationStats.PREVIEW_FETCH_MAX_LEN * 3)
     piece = MessagePiece(
         role="assistant",
-        original_value=long_text,
+        original_value=huge_text,
         original_value_data_type="text",
-        converted_value=long_text,
+        converted_value=huge_text,
         converted_value_data_type="text",
         conversation_id=conv_id,
         sequence=0,
@@ -817,8 +822,9 @@ def test_get_conversation_stats_preview_truncates(sqlite_instance):
     assert conv_id in result
     preview = result[conv_id].last_message_preview
     assert preview is not None
-    assert len(preview) == 103  # 100 chars + "..."
-    assert preview.endswith("...")
+    assert len(preview) == ConversationStats.PREVIEW_FETCH_MAX_LEN
+    assert preview == "x" * ConversationStats.PREVIEW_FETCH_MAX_LEN
+    assert result[conv_id].last_message_data_type == "text"
 
 
 def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
@@ -853,17 +859,13 @@ def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
 
 
 @pytest.mark.parametrize(
-    ("data_type", "expected_prefix"),
-    [
-        ("image_path", "[Image:"),
-        ("audio_path", "[Audio:"),
-        ("video_path", "[Video:"),
-        ("binary_path", "[File:"),
-    ],
+    "data_type",
+    ["image_path", "audio_path", "video_path", "binary_path"],
 )
-def test_get_conversation_stats_media_preview_hides_absolute_path(sqlite_instance, data_type, expected_prefix):
-    """Media-path last messages render as ``[Image: <basename>]`` etc.
-    instead of leaking the absolute on-disk path."""
+def test_get_conversation_stats_returns_media_data_type(sqlite_instance, data_type):
+    """Memory exposes the raw value + data type for the last piece — the
+    backend mapper handles display formatting. Verifies the data type is
+    propagated so downstream consumers can render media previews safely."""
     import uuid
 
     from pyrit.models import MessagePiece
@@ -882,18 +884,17 @@ def test_get_conversation_stats_media_preview_hides_absolute_path(sqlite_instanc
     sqlite_instance._insert_entry(PromptMemoryEntry(entry=piece))
 
     result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
-    preview = result[conv_id].last_message_preview
+    stats = result[conv_id]
 
-    assert preview is not None
-    assert preview.startswith(expected_prefix)
-    assert preview.endswith("1780010098266691.bin]")
-    assert "C:\\" not in preview
-    assert "Users" not in preview
+    assert stats.last_message_data_type == data_type
+    # Memory returns the raw value (truncated up to PREVIEW_FETCH_MAX_LEN);
+    # formatting/labeling is the backend mapper's responsibility.
+    assert stats.last_message_preview == path
 
 
-def test_get_conversation_stats_uses_last_piece_data_type_for_preview(sqlite_instance):
-    """Preview formatting picks up the data type of the most recent message,
-    not the first one."""
+def test_get_conversation_stats_uses_last_piece_data_type(sqlite_instance):
+    """Stats reflect the data type of the most recent message, not the
+    first one, so the backend mapper picks the right rendering."""
     import uuid
 
     from pyrit.models import MessagePiece
@@ -921,8 +922,10 @@ def test_get_conversation_stats_uses_last_piece_data_type_for_preview(sqlite_ins
     sqlite_instance._insert_entries(entries=[PromptMemoryEntry(entry=text_piece), PromptMemoryEntry(entry=media_piece)])
 
     result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
+    stats = result[conv_id]
 
-    assert result[conv_id].last_message_preview == "[Audio: response.mp3]"
+    assert stats.last_message_data_type == "audio_path"
+    assert stats.last_message_preview == audio_path
 
 
 def test_dispose_engine_tolerates_closed_log_stream(sqlite_instance, capsys):

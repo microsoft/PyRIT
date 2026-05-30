@@ -2,28 +2,26 @@
 # Licensed under the MIT license.
 
 """
-Helpers for converting raw last-message values into human-readable previews
-for ``ConversationStats``.
+Presentation-layer formatter for ``ConversationStats.last_message_preview``.
 
-Lives in its own module so the same formatting logic is shared between the
-SQLite and Azure SQL memory backends. The motivating bug: ``converted_value``
-for media-path data types (``image_path`` / ``audio_path`` / ``video_path`` /
-``binary_path``) is a filesystem path or blob URL. Rendering it raw in the
-Attack History preview leaks the absolute on-disk location of memory
-artifacts (e.g. ``C:\\Users\\<name>\\git\\PyRIT\\dbdata\\...\\1780.mp3``).
+Lives in the backend mapper package because the formatting it produces
+(``[Image: <basename>]`` etc.) is purely a display concern for the GUI API
+responses — the memory layer stays data-agnostic and just stores the raw
+value + data type.
+
+The motivating bug: ``converted_value`` for media-path data types
+(``image_path`` / ``audio_path`` / ``video_path`` / ``binary_path``) is a
+filesystem path or blob URL. Rendering it raw in the Attack History preview
+leaks the absolute on-disk location of memory artifacts
+(e.g. ``C:\\Users\\<name>\\git\\PyRIT\\dbdata\\...\\1780.mp3``).
 """
 
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
+from pyrit.models import ConversationStats
 from pyrit.models.literals import MEDIA_PATH_DATA_TYPES
-
-# Upper bound (in characters) of the raw ``converted_value`` slice fetched
-# from ``PromptMemoryEntries`` for preview purposes. Large enough to fit any
-# reasonable filesystem path or signed Azure Blob URL while still bounding
-# the per-row payload for very long text responses.
-PREVIEW_FETCH_MAX_LEN = 1024
 
 # Friendly label per media-path data type. Kept here next to the formatter
 # so adding a new media type only requires updating one place.
@@ -61,11 +59,10 @@ def format_last_message_preview(
     *,
     value: Optional[str],
     data_type: Optional[str],
-    max_len: int,
+    max_len: int = ConversationStats.PREVIEW_MAX_LEN,
 ) -> Optional[str]:
     """
-    Build the ``ConversationStats.last_message_preview`` string from raw
-    storage values.
+    Build a display string for ``ConversationStats.last_message_preview``.
 
     Media-path data types are rendered as ``[Image: <basename>]`` (and
     variants) so the absolute filesystem path of memory artifacts is never
