@@ -94,7 +94,7 @@ async def test_question_answer_scorer_adds_to_memory():
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         scorer = QuestionAnswerScorer(category=["new_category"])
         message = MessagePiece(
-                role="user",
+            role="user",
             original_value="test content",
             converted_value="0: Paris",
             converted_value_data_type="text",
@@ -111,7 +111,7 @@ async def test_question_answer_scorer_no_category():
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         scorer = QuestionAnswerScorer()
         message = MessagePiece(
-                role="user",
+            role="user",
             original_value="test content",
             converted_value="0: Paris",
             converted_value_data_type="text",

@@ -288,7 +288,7 @@ class PromptMemoryEntry(Base):
         if self.attack_identifier:
             attack_id = ComponentIdentifier.from_dict({**self.attack_identifier, "pyrit_version": stored_version})
 
-        message_piece = MessagePiece(
+        return MessagePiece(
             role=self.role,
             original_value=self.original_value,
             original_value_sha256=self.original_value_sha256,
@@ -310,7 +310,6 @@ class PromptMemoryEntry(Base):
             timestamp=_ensure_utc(self.timestamp),
             scores=[score.get_score() for score in self.scores],
         )
-        return message_piece
 
     def __str__(self) -> str:
         """

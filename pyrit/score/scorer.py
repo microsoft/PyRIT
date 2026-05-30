@@ -258,7 +258,7 @@ class Scorer(Identifiable, abc.ABC):
         if ephemeral_piece_ids:
             for score in scores:
                 if score.message_piece_id in ephemeral_piece_ids:
-                    score.message_piece_id = None
+                    score.message_piece_id = None  # type: ignore[ty:invalid-assignment]
 
         self._memory.add_scores_to_memory(scores=scores)
 

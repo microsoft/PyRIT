@@ -21,7 +21,11 @@ from pydantic import (
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.data_type_serializer import data_serializer_factory
-from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptResponseError
+from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    ChatMessageRole,
+    PromptDataType,
+    PromptResponseError,
+)
 from pyrit.models.score import Score
 
 if TYPE_CHECKING:
@@ -62,7 +66,18 @@ ScoreField = Annotated[
 
 
 def __getattr__(name: str) -> Any:
-    """Lazily resolve deprecated module-level aliases."""
+    """
+    Lazily resolve deprecated module-level aliases.
+
+    Args:
+        name: The attribute name being accessed.
+
+    Returns:
+        The resolved alias (currently only ``Originator``).
+
+    Raises:
+        AttributeError: If ``name`` is not a known deprecated alias.
+    """
     if name == "Originator":
         print_deprecation_message(
             old_item="pyrit.models.message_piece.Originator",
@@ -126,7 +141,12 @@ class MessagePiece(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _warn_on_deprecated_kwargs(cls, data: Any) -> Any:
-        """Emit DeprecationWarning for each deprecated kwarg explicitly passed."""
+        """
+        Emit DeprecationWarning for each deprecated kwarg explicitly passed.
+
+        Returns:
+            The (unchanged) input ``data`` so validation can continue.
+        """
         if not isinstance(data, dict):
             return data
         for kwarg, removed_in in _DEPRECATED_KWARGS:
@@ -149,7 +169,12 @@ class MessagePiece(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _mirror_original_to_converted(cls, data: Any) -> Any:
-        """When ``converted_value`` / ``converted_value_data_type`` aren't supplied, mirror the originals."""
+        """
+        When ``converted_value`` / ``converted_value_data_type`` aren't supplied, mirror the originals.
+
+        Returns:
+            The input ``data`` with mirrored converted fields applied.
+        """
         if not isinstance(data, dict):
             return data
         if not data.get("converted_value") and "original_value" in data:
@@ -160,7 +185,12 @@ class MessagePiece(BaseModel):
 
     @model_validator(mode="after")
     def _set_original_prompt_id_default(self) -> MessagePiece:
-        """Enforce invariant: ``original_prompt_id == id`` for non-duplicate pieces."""
+        """
+        Enforce invariant: ``original_prompt_id == id`` for non-duplicate pieces.
+
+        Returns:
+            ``self`` (with ``original_prompt_id`` populated when previously ``None``).
+        """
         if self.original_prompt_id is None:
             self.original_prompt_id = self.id
         return self
@@ -184,7 +214,12 @@ class MessagePiece(BaseModel):
         return self.role == "simulated_assistant"
 
     def to_message(self) -> Message:
-        """Wrap this piece in a single-piece :class:`Message`."""
+        """
+        Wrap this piece in a single-piece :class:`Message`.
+
+        Returns:
+            A new :class:`Message` containing only this piece.
+        """
         from pyrit.models.message import Message
 
         return Message([self])
@@ -208,11 +243,21 @@ class MessagePiece(BaseModel):
         target.prompt_metadata = dict(self.prompt_metadata)
 
     def has_error(self) -> bool:
-        """True when :attr:`response_error` is not ``"none"``."""
+        """
+        Return ``True`` when :attr:`response_error` is not ``"none"``.
+
+        Returns:
+            ``True`` if the piece carries any non-``"none"`` error code.
+        """
         return self.response_error != "none"
 
     def is_blocked(self) -> bool:
-        """True when :attr:`response_error` is ``"blocked"``."""
+        """
+        Return ``True`` when :attr:`response_error` is ``"blocked"``.
+
+        Returns:
+            ``True`` if the response was blocked by the target / content filter.
+        """
         return self.response_error == "blocked"
 
     async def set_sha256_values_async(self) -> None:
@@ -239,8 +284,16 @@ class MessagePiece(BaseModel):
 
 def sort_message_pieces(message_pieces: list[MessagePiece]) -> list[MessagePiece]:
     """
-    Group by ``conversation_id``, ordering conversations by earliest timestamp
-    and messages within each conversation by ``sequence``.
+    Group by ``conversation_id``, ordering by earliest timestamp then ``sequence``.
+
+    Conversations are ordered by their earliest piece's timestamp; pieces
+    within a conversation are ordered by ``sequence``.
+
+    Args:
+        message_pieces: The pieces to sort. Not mutated.
+
+    Returns:
+        A new list containing the same pieces in deterministic order.
     """
     earliest_timestamps = {
         convo_id: min(x.timestamp for x in message_pieces if x.conversation_id == convo_id)

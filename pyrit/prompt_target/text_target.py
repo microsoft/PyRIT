@@ -78,13 +78,13 @@ class TextTarget(PromptTarget):
                 labels = json.loads(labels_str) if labels_str else None
 
                 message_piece = MessagePiece(
-                    role=row["role"],  # type: ignore[ty:invalid-argument-type]
+                    role=row["role"],
                     original_value=row["value"],
-                    original_value_data_type=row.get("data_type", None),  # type: ignore[ty:invalid-argument-type]
+                    original_value_data_type=row.get("data_type", None),
                     conversation_id=row.get("conversation_id", None),
                     sequence=int(sequence_str) if sequence_str else 0,
                     labels=labels,  # deprecated
-                    response_error=row.get("response_error", None),  # type: ignore[ty:invalid-argument-type]
+                    response_error=row.get("response_error", None),
                     prompt_target_identifier=self.get_identifier(),
                 )
                 message_pieces.append(message_piece)
