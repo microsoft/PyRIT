@@ -3,82 +3,259 @@ name: build-book
 on:
   push:
     branches:
-      - "main"
+      - main
+      - "releases/v*"
+    paths-ignore:
+      - "**/*.md"
+      - ".github/ISSUE_TEMPLATE/**"
   pull_request:
     branches:
-      - "main"
-      - "release/**"
+      - main
+      - "releases/**"
+    paths:
+      - ".github/workflows/docs.yml"
+      - ".github/docs-versions.yml"
+      - "build_scripts/inject_version_picker.py"
+      - "build_scripts/version_picker_assets/**"
+      - "doc/**"
+      - "build_scripts/pydoc2json.py"
+      - "build_scripts/gen_api_md.py"
+      - "pyrit/**"
   workflow_dispatch:
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+# Permissions for the GH Pages deployment.
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+# One deploy at a time. Don't cancel in-progress production deploys.
 concurrency:
-  group: "pages"
+  group: pages
   cancel-in-progress: false
 
 env:
-  # BASE_URL determines the website path prefix, including CSS & JS assets
-  BASE_URL: /${{ github.event.repository.name }}
+  # All versioned URLs live under /<repo-name>/<slug>/, e.g. /PyRIT/0.13.0/.
+  DOCS_BASE: /${{ github.event.repository.name }}
 
-# This job installs dependencies, builds the book, and pushes it to `gh-pages`
 jobs:
-  deploy-book:
+  # ------------------------------------------------------------------
+  # 1. Read .github/docs-versions.yml and turn it into a build matrix.
+  # ------------------------------------------------------------------
+  versions:
+    name: Resolve version matrix
     runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      default: ${{ steps.matrix.outputs.default }}
+      stable: ${{ steps.matrix.outputs.stable }}
+      versions_json: ${{ steps.matrix.outputs.versions_json }}
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/docs-versions.yml
+          sparse-checkout-cone-mode: false
 
-    # Install dependencies
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v5
-      with:
-        python-version: 3.11
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
 
-    - name: Install uv
-      uses: astral-sh/setup-uv@v7
-      with:
-        # Install a specific version of uv.
-        version: "0.9.17"
-        enable-cache: true
-        cache-dependency-glob: |
-          **/pyproject.toml
-          **/uv.lock
+      - name: Compute matrix
+        id: matrix
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          import yaml
 
-    - name: Install PyRIT with uv
-      run: uv sync --extra all
+          with open(".github/docs-versions.yml") as f:
+              cfg = yaml.safe_load(f)
 
-    # LaTeX toolchain needed for the PDF export (jupyter-book --pdf via xelatex).
-    # Mirrors the ReadTheDocs build so CI catches PDF-only issues (e.g. broken
-    # image paths) instead of letting them silently break the RTD build.
-    - name: Install LaTeX (for PDF export)
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends \
-          texlive-xetex \
-          texlive-fonts-recommended \
-          texlive-fonts-extra \
-          texlive-plain-generic \
-          texlive-latex-extra \
-          latexmk
+          versions = cfg["versions"]
+          matrix = {"include": [{"slug": v["slug"], "ref": v["ref"]} for v in versions]}
+          versions_json = {
+              "default": cfg["default"],
+              "stable": cfg["stable"],
+              "versions": versions,
+          }
 
-    # Build the book (HTML site + PDF export)
-    - name: Build the book
-      run: |
-        make docs-build-all
-    # Upload the book's HTML as an artifact
-    - name: Upload artifact
-      uses: actions/upload-pages-artifact@v3
-      with:
-        path: "doc/_build/html"
-    - name: Deploy to GitHub Pages
-      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      id: deployment
-      uses: actions/deploy-pages@v4
+          print("matrix=" + json.dumps(matrix))
+          print("default=" + cfg["default"])
+          print("stable=" + cfg["stable"])
+          print("versions_json=" + json.dumps(versions_json))
+          PY
+
+  # ------------------------------------------------------------------
+  # 2. Build each version in parallel.
+  # ------------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.slug }}
+    needs: versions
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.versions.outputs.matrix) }}
+    env:
+      BASE_URL: ${{ format('/{0}/{1}', github.event.repository.name, matrix.slug) }}
+    steps:
+      - name: Checkout ${{ matrix.ref }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.17"
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+
+      - name: Install PyRIT with dev dependencies
+        # Older release branches use [project.optional-dependencies] (legacy
+        # extras syntax) while main uses PEP 735 [dependency-groups]. Try the
+        # PEP 735 syntax first, fall back to the extras syntax.
+        run: |
+          uv venv
+          source .venv/bin/activate
+          uv pip install . --group dev 2>/dev/null || uv pip install ".[dev]"
+
+      - name: Generate API reference (pydoc2json + gen_api_md)
+        run: |
+          source .venv/bin/activate
+          python build_scripts/pydoc2json.py pyrit --submodules -o doc/_api/pyrit_all.json
+          python build_scripts/gen_api_md.py
+
+      - name: Build the static HTML site
+        # --all builds frontmatter exports (PDF, per doc/myst.yml).
+        # --html is required to produce the static HTML site we deploy.
+        # NOT using --strict because older release branches have known
+        # warnings (e.g. unresolved cross-refs) that aren't worth fixing
+        # retroactively just to satisfy strict mode.
+        working-directory: doc
+        run: |
+          source ../.venv/bin/activate
+          jupyter-book build --all --html
+
+      - name: Upload built site
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-${{ matrix.slug }}
+          path: doc/_build/html
+          retention-days: 7
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  # 3. Compose dist/, inject picker, deploy to GH Pages.
+  # ------------------------------------------------------------------
+  deploy:
+    name: Deploy
+    needs: [versions, build]
+    runs-on: ubuntu-latest
+    # Only deploy on push to main (not PRs, not pushes to release branches).
+    # Release-branch pushes still rebuild and validate via the build job
+    # above, but the actual published site only changes via main.
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            build_scripts/inject_version_picker.py
+            build_scripts/version_picker_assets
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Download all version artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: site-*
+
+      - name: Compose dist/
+        env:
+          DEFAULT_SLUG: ${{ needs.versions.outputs.default }}
+          STABLE_SLUG: ${{ needs.versions.outputs.stable }}
+          VERSIONS_JSON: ${{ needs.versions.outputs.versions_json }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          # Each artifact lands at artifacts/site-<slug>/. Move to dist/<slug>/.
+          for d in artifacts/site-*; do
+            slug="${d#artifacts/site-}"
+            echo "::group::Stage $slug"
+            mkdir -p "dist/$slug"
+            cp -r "$d/." "dist/$slug/"
+            echo "::endgroup::"
+          done
+
+          # Write the version manifest at the root.
+          echo "$VERSIONS_JSON" > dist/versions.json
+
+          # Root redirect: /PyRIT/ -> /PyRIT/<default>/
+          cat > dist/index.html <<EOF
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <title>PyRIT Documentation</title>
+            <meta http-equiv="refresh" content="0; url=${DOCS_BASE}/${DEFAULT_SLUG}/">
+            <link rel="canonical" href="${DOCS_BASE}/${DEFAULT_SLUG}/">
+          </head>
+          <body>
+            <p>Redirecting to <a href="${DOCS_BASE}/${DEFAULT_SLUG}/">PyRIT documentation (${DEFAULT_SLUG})</a>.</p>
+          </body>
+          </html>
+          EOF
+
+          # Stable alias: /PyRIT/stable/ -> /PyRIT/<stable>/
+          mkdir -p dist/stable
+          cat > dist/stable/index.html <<EOF
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <title>PyRIT Documentation (stable)</title>
+            <meta http-equiv="refresh" content="0; url=${DOCS_BASE}/${STABLE_SLUG}/">
+            <link rel="canonical" href="${DOCS_BASE}/${STABLE_SLUG}/">
+          </head>
+          <body>
+            <p>Redirecting to <a href="${DOCS_BASE}/${STABLE_SLUG}/">PyRIT documentation (${STABLE_SLUG}, stable)</a>.</p>
+          </body>
+          </html>
+          EOF
+
+      - name: Install Python deps for injector
+        # The injector only uses the stdlib, but pin a stable Python so
+        # behavior across runs is deterministic.
+        run: echo "no extra deps needed"
+
+      - name: Inject version picker
+        run: |
+          python build_scripts/inject_version_picker.py \
+            --site-dir dist \
+            --base "${DOCS_BASE}"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
