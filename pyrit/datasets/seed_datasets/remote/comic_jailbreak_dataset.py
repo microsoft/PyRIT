@@ -105,7 +105,6 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         ),
         source_type: Literal["public_url", "file"] = "public_url",
         templates: list[str] | None = None,
-        max_examples: int | None = None,
     ) -> None:
         """
         Initialize the ComicJailbreak dataset loader.
@@ -115,8 +114,6 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
                 at a pinned commit.
             source_type: The type of source ('public_url' or 'file').
             templates: List of template names to include. If None, all 5 templates are used.
-            max_examples: Maximum number of goal×template pairs to produce. If None, all
-                combinations are returned.
 
         Raises:
             ValueError: If any template name is invalid.
@@ -124,7 +121,6 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         self.source = source
         self.source_type: Literal["public_url", "file"] = source_type
         self.templates = templates or list(self.TEMPLATE_NAMES)
-        self.max_examples = max_examples
 
         invalid = set(self.templates) - set(self.TEMPLATE_NAMES)
         if invalid:
@@ -170,7 +166,6 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             template_paths[template_name] = await self._fetch_template_async(template_name)
 
         seeds: list[Seed] = []
-        pair_count = 0
 
         for row_idx, example in enumerate(examples):
             missing_keys = required_keys - example.keys()
@@ -208,15 +203,8 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
                     behavior=example.get("Behavior", ""),
                 )
                 seeds.extend(pair)
-                pair_count += 1
 
-                if self.max_examples is not None and pair_count >= self.max_examples:
-                    break
-
-            if self.max_examples is not None and pair_count >= self.max_examples:
-                break
-
-        logger.info(f"Successfully loaded {len(seeds)} seeds ({pair_count} groups) from ComicJailbreak dataset")
+        logger.info(f"Successfully loaded {len(seeds)} seeds from ComicJailbreak dataset")
         return SeedDataset(seeds=seeds, dataset_name=self.dataset_name)
 
     def _build_seed_group(

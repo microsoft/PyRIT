@@ -29,15 +29,24 @@ _MOCK_MANY_SHOT_EXAMPLES = [{"question": f"q{i}", "answer": f"a{i}"} for i in ra
 
 @pytest.fixture(autouse=True)
 def _reset_registries():
-    """Reset singletons and cached strategy classes between every test."""
+    """Reset singletons, populate factories, and clear cached strategy classes between tests."""
+    from unittest.mock import MagicMock
+
+    from pyrit.prompt_target import PromptTarget
     from pyrit.registry import TargetRegistry
     from pyrit.scenario.scenarios.airt.cyber import Cyber
     from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
+    from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
 
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
     Cyber._cached_strategy_class = None
     RapidResponse._cached_strategy_class = None
+
+    adv_target = MagicMock(spec=PromptTarget)
+    adv_target.capabilities.includes.return_value = True
+    TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_scenario_technique_factories())
     yield
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
@@ -78,15 +87,15 @@ def _mock_runtime_env():
 
 
 def _get_rapid_response_strategy():
-    from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
+    from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_strategy
 
-    return RapidResponse.get_strategy_class()
+    return _build_rapid_response_strategy()
 
 
 def _get_cyber_strategy():
-    from pyrit.scenario.scenarios.airt.cyber import Cyber
+    from pyrit.scenario.scenarios.airt.cyber import _build_cyber_strategy
 
-    return Cyber.get_strategy_class()
+    return _build_cyber_strategy()
 
 
 SCENARIO_STRATEGY_BUILDERS = [

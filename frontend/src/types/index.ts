@@ -85,6 +85,7 @@ export interface TargetListResponse {
 export interface CreateTargetRequest {
   type: string
   params: Record<string, unknown>
+  auth_mode?: 'api_key' | 'entra'
 }
 
 // --- Converters ---
