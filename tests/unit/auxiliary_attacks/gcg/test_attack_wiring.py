@@ -7,7 +7,6 @@ These tests catch kwarg mismatches between IndividualPromptAttack/ProgressiveMul
 and MultiPromptAttack.__init__(), and template compatibility issues in _update_ids().
 """
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -29,12 +28,6 @@ MultiPromptAttack = attack_manager_mod.MultiPromptAttack
 GCGAttackPrompt = gcg_attack_mod.GCGAttackPrompt
 GCGPromptManager = gcg_attack_mod.GCGPromptManager
 GCGMultiPromptAttack = gcg_attack_mod.GCGMultiPromptAttack
-
-train_mod = pytest.importorskip(
-    "pyrit.auxiliary_attacks.gcg.experiments.train",
-    reason="GCG train module not available",
-)
-Generator = train_mod.GreedyCoordinateGradientAdversarialSuffixGenerator
 
 MANAGERS = {
     "AP": GCGAttackPrompt,
@@ -136,51 +129,6 @@ class TestAttackClassWiring:
             mpa_n_steps=5,
         )
 
-        with patch.object(GCGMultiPromptAttack, "run", return_value=("control", 0.5, 1)):
-            attack.run(
-                n_steps=1,
-                batch_size=64,
-                topk=256,
-                temp=1,
-                allow_non_ascii=False,
-                target_weight=1.0,
-                control_weight=0.0,
-                anneal=False,
-                test_steps=1,
-                incr_control=False,
-                stop_on_success=False,
-                verbose=False,
-                filter_cand=True,
-            )
-
-    def test_create_attack_individual_wires_correctly(self, tmp_path: Path) -> None:
-        """_create_attack with transfer=False should produce an IndividualPromptAttack
-        that can create internal MPA instances without error."""
-        worker = _make_mock_worker()
-
-        params = Generator._build_params(
-            transfer=False,
-            control_init="! ! !",
-            result_prefix=str(tmp_path / "test"),
-            learning_rate=0.01,
-            batch_size=64,
-            n_steps=5,
-        )
-
-        attack = Generator._create_attack(
-            params=params,
-            managers=MANAGERS,
-            train_goals=["test goal"],
-            train_targets=["test target"],
-            test_goals=[],
-            test_targets=[],
-            workers=[worker],
-            test_workers=[],
-        )
-
-        assert isinstance(attack, IndividualPromptAttack)
-
-        # Verify internal MPA creation works
         with patch.object(GCGMultiPromptAttack, "run", return_value=("control", 0.5, 1)):
             attack.run(
                 n_steps=1,

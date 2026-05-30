@@ -6,6 +6,7 @@
 from pyrit.exceptions.exception_classes import (
     BadRequestException,
     EmptyResponseException,
+    ExperimentalWarning,
     InvalidJsonException,
     MissingPromptPlaceholderException,
     PyritException,
@@ -42,6 +43,7 @@ __all__ = [
     "EmptyResponseException",
     "ExecutionContext",
     "ExecutionContextManager",
+    "ExperimentalWarning",
     "get_execution_context",
     "get_retry_collector",
     "get_retry_max_num_attempts",

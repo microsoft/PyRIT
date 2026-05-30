@@ -79,6 +79,73 @@ class TestAttackExecutorInitialization:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+class TestAttackExecutorSemaphoreLifecycle:
+    """Tests for the lazy, loop-aware semaphore in ``AttackExecutor._get_semaphore``.
+
+    The semaphore is constructed lazily (not in ``__init__``) and rebuilt whenever the
+    running event loop changes. This guards against the ``RuntimeError: <Semaphore> is
+    bound to a different event loop`` failure mode that bites callers who construct an
+    ``AttackExecutor`` once and reuse it across ``asyncio.run(...)`` invocations.
+    """
+
+    def test_semaphore_is_none_immediately_after_init(self):
+        """Constructor must NOT touch the running loop; semaphore stays unbound until used."""
+        executor = AttackExecutor(max_concurrency=3)
+        assert executor._semaphore is None
+        assert executor._semaphore_loop is None
+
+    async def test_first_get_semaphore_call_binds_to_running_loop(self):
+        """First call inside a loop returns a Semaphore bound to that loop with correct permits."""
+        executor = AttackExecutor(max_concurrency=3)
+
+        sem = executor._get_semaphore()
+
+        assert isinstance(sem, asyncio.Semaphore)
+        # ``_value`` is CPython's internal permit counter — fine for a unit test sanity check.
+        assert sem._value == 3  # type: ignore[attr-defined]
+        assert executor._semaphore is sem
+        assert executor._semaphore_loop is asyncio.get_running_loop()
+
+    async def test_repeated_calls_in_same_loop_return_same_instance(self):
+        """Within a single loop the semaphore must be reused (not rebuilt) so permits are shared."""
+        executor = AttackExecutor(max_concurrency=2)
+
+        sem1 = executor._get_semaphore()
+        sem2 = executor._get_semaphore()
+        sem3 = executor._get_semaphore()
+
+        assert sem1 is sem2 is sem3
+
+    def test_semaphore_is_rebuilt_when_event_loop_changes(self):
+        """Reusing one AttackExecutor across asyncio.run() calls must NOT raise.
+
+        This is the regression test for the loop-binding bug: an ``asyncio.Semaphore``
+        bound to loop A raises ``RuntimeError`` if acquired under loop B. ``_get_semaphore``
+        detects the loop change and rebuilds, so the same executor is safe to reuse.
+        """
+        executor = AttackExecutor(max_concurrency=2)
+
+        captured: dict[str, object] = {}
+
+        async def take_semaphore(label: str) -> None:
+            sem = executor._get_semaphore()
+            captured[f"{label}_sem"] = sem
+            captured[f"{label}_loop"] = asyncio.get_running_loop()
+            # Actually acquire so we'd see the "bound to different loop" RuntimeError if
+            # the rebuild logic is broken.
+            async with sem:
+                pass
+
+        asyncio.run(take_semaphore("first"))
+        asyncio.run(take_semaphore("second"))
+
+        # Two separate asyncio.run() calls create two separate loops.
+        assert captured["first_loop"] is not captured["second_loop"]
+        # And the semaphore must have been rebuilt for the second loop.
+        assert captured["first_sem"] is not captured["second_sem"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
 class TestExecuteAttackAsync:
     """Tests for execute_attack_async method."""
 

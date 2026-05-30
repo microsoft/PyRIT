@@ -39,7 +39,7 @@ def _make_scenario_metadata(
     class_name: str = "TestScenario",
     description: str = "A test scenario",
     default_strategy: str = "default",
-    all_strategies: tuple[str, ...] = ("prompt_sending", "role_play"),
+    all_strategies: tuple[str, ...] = ("role_play", "many_shot"),
     aggregate_strategies: tuple[str, ...] = ("all", "default"),
     default_datasets: tuple[str, ...] = ("test_dataset",),
     max_dataset_size: int | None = None,
@@ -95,7 +95,7 @@ class TestScenarioServiceListScenarios:
             assert result.items[0].description == "A test scenario"
             assert result.items[0].default_strategy == "default"
             assert result.items[0].aggregate_strategies == ["all", "default"]
-            assert result.items[0].all_strategies == ["prompt_sending", "role_play"]
+            assert result.items[0].all_strategies == ["role_play", "many_shot"]
             assert result.items[0].default_datasets == ["test_dataset"]
             assert result.items[0].max_dataset_size is None
 
@@ -229,7 +229,7 @@ class TestScenarioRoutes:
             description="Red team agent testing",
             default_strategy="default",
             aggregate_strategies=["all", "default"],
-            all_strategies=["prompt_sending", "role_play"],
+            all_strategies=["role_play", "many_shot"],
             default_datasets=["airt_hate"],
             max_dataset_size=10,
         )
@@ -254,7 +254,7 @@ class TestScenarioRoutes:
             assert item["scenario_type"] == "RedTeamAgentScenario"
             assert item["default_strategy"] == "default"
             assert item["aggregate_strategies"] == ["all", "default"]
-            assert item["all_strategies"] == ["prompt_sending", "role_play"]
+            assert item["all_strategies"] == ["role_play", "many_shot"]
             assert item["default_datasets"] == ["airt_hate"]
             assert item["max_dataset_size"] == 10
 
@@ -283,7 +283,7 @@ class TestScenarioRoutes:
             description="Red team agent testing",
             default_strategy="default",
             aggregate_strategies=["all"],
-            all_strategies=["prompt_sending"],
+            all_strategies=["role_play"],
             default_datasets=["airt_hate"],
             max_dataset_size=None,
         )
@@ -351,7 +351,7 @@ class TestScenarioServiceSupportedParameters:
             class_module="pyrit.scenario.scenarios.param",
             class_description="A scenario with params",
             default_strategy="default",
-            all_strategies=("prompt_sending",),
+            all_strategies=("role_play",),
             aggregate_strategies=("all",),
             default_datasets=("test_dataset",),
             max_dataset_size=None,
