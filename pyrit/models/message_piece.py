@@ -5,17 +5,16 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Optional
 from uuid import uuid4
 
 from pydantic import (
+    AwareDatetime,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
-    PrivateAttr,
-    ValidationInfo,
-    field_serializer,
-    field_validator,
+    PlainSerializer,
     model_validator,
 )
 
@@ -28,363 +27,200 @@ from pyrit.models.score import Score
 if TYPE_CHECKING:
     from pyrit.models.message import Message
 
-    Originator = Literal["attack", "converter", "undefined", "scorer"]
+
+# Deprecated kwargs whose presence in ``MessagePiece(...)`` should emit a
+# ``DeprecationWarning``. Each entry is ``(kwarg_name, removed_in)``. Kept here
+# (rather than embedded in the validator body) to make the deprecation surface
+# easy to read and update.
+#
+# These can be deleted entirely once their ``removed_in`` releases ship — the
+# Pydantic field definitions and ``extra="forbid"`` config will then reject
+# the kwargs naturally.
+_DEPRECATED_KWARGS: tuple[tuple[str, str], ...] = (
+    ("labels", "0.16.0"),
+    ("scorer_identifier", "0.15.0"),
+    ("scores", "0.15.0"),
+    ("targeted_harm_categories", "0.15.0"),
+)
 
 
-_OriginatorLiteral = Literal["attack", "converter", "undefined", "scorer"]
+# Annotated alias for fields whose runtime type is ``ComponentIdentifier`` —
+# a non-Pydantic class that needs ``from_dict``/``to_dict`` round-tripping.
+# Drop this alias (and the corresponding ``Score`` one below) once
+# ``ComponentIdentifier`` / ``Score`` become Pydantic models (Phase 4 / 5).
+ComponentIdentifierField = Annotated[
+    ComponentIdentifier,
+    BeforeValidator(lambda v: ComponentIdentifier.from_dict(v) if isinstance(v, dict) else v),
+    PlainSerializer(lambda v: v.to_dict() if v is not None else None, return_type=Optional[dict]),
+]
+
+ScoreField = Annotated[
+    Score,
+    BeforeValidator(lambda v: Score.from_dict(v) if isinstance(v, dict) else v),
+    PlainSerializer(lambda v: v.to_dict(), return_type=dict),
+]
 
 
 def __getattr__(name: str) -> Any:
-    """
-    Lazily resolve deprecated module-level aliases.
-
-    Returns:
-        Any: The resolved deprecated alias.
-
-    Raises:
-        AttributeError: If the attribute name is not recognized.
-    """
+    """Lazily resolve deprecated module-level aliases."""
     if name == "Originator":
         print_deprecation_message(
             old_item="pyrit.models.message_piece.Originator",
             new_item=(
                 "inline Literal['attack', 'converter', 'undefined', 'scorer'] "
                 "(the type alias is being removed; the originator field itself is "
-                "deprecated and will be removed in 0.16.0)"
+                "deprecated and will be removed in 0.15.0)"
             ),
-            removed_in="0.16.0",
+            removed_in="0.15.0",
         )
         return Literal["attack", "converter", "undefined", "scorer"]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def _suppress_deprecation(info: ValidationInfo) -> bool:
-    context = info.context or {}
-    return bool(context.get("suppress_deprecation_warnings"))
-
-
 class MessagePiece(BaseModel):
     """
-    Represents a piece of a message to a target.
+    A single piece of a message exchanged with a target.
 
-    This class represents a single piece of a message that will be sent
-    to a target. Since some targets can handle multiple pieces (e.g., text and images),
-    requests are composed of lists of MessagePiece objects.
+    Targets that accept multimodal input (e.g., text + image) are represented
+    as a list of :class:`MessagePiece` instances grouped under one
+    :class:`~pyrit.models.message.Message`.
     """
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
         extra="forbid",
         validate_assignment=False,
-        populate_by_name=True,
     )
 
-    # Fields declared in the order produced by ``to_dict`` for serialization parity.
-    id: Optional[Union[uuid.UUID, str]] = Field(default_factory=uuid4)  # noqa: A003
+    id: uuid.UUID = Field(default_factory=uuid4)  # noqa: A003
     role: ChatMessageRole
     conversation_id: str = Field(default_factory=lambda: str(uuid4()))
     sequence: int = -1
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    original_value: str
+    original_value_data_type: PromptDataType = "text"
+    original_value_sha256: Optional[str] = None
+    converted_value: str = ""
+    converted_value_data_type: PromptDataType = "text"
+    converted_value_sha256: Optional[str] = None
+    response_error: PromptResponseError = "none"
+    originator: Literal["attack", "converter", "undefined", "scorer"] = "undefined"
+    original_prompt_id: Optional[uuid.UUID] = None
     labels: dict[str, Any] = Field(default_factory=dict)
     targeted_harm_categories: list[str] = Field(default_factory=list)
     prompt_metadata: dict[str, Any] = Field(default_factory=dict)
-    converter_identifiers: list[ComponentIdentifier] = Field(default_factory=list)
-    prompt_target_identifier: Optional[ComponentIdentifier] = None
-    attack_identifier: Optional[ComponentIdentifier] = None
-    scorer_identifier: Optional[ComponentIdentifier] = None
-    original_value_data_type: PromptDataType = "text"
-    original_value: str
-    original_value_sha256: Optional[str] = None
-    converted_value_data_type: PromptDataType = "text"
-    converted_value: str = ""
-    converted_value_sha256: Optional[str] = None
-    response_error: PromptResponseError = "none"
-    originator: _OriginatorLiteral = "undefined"
-    original_prompt_id: Optional[uuid.UUID] = None
-    scores: list[Score] = Field(default_factory=list)
+    converter_identifiers: list[ComponentIdentifierField] = Field(default_factory=list)
+    prompt_target_identifier: Optional[ComponentIdentifierField] = None
+    attack_identifier: Optional[ComponentIdentifierField] = None
+    scorer_identifier: Optional[ComponentIdentifierField] = None
+    scores: list[ScoreField] = Field(default_factory=list)
 
-    # Private flag set via ``set_piece_not_in_database()`` that tells the memory
-    # layer this piece should not be persisted (e.g., ephemeral pieces created
-    # solely so a scorer can produce a Score for content PyRIT did not send).
-    # Excluded from serialization to preserve JSON shape parity.
-    _not_in_database: bool = PrivateAttr(default=False)
+    # When True, the memory layer skips persisting this piece. Used for ephemeral
+    # pieces a scorer creates to score arbitrary content; ``exclude=True`` keeps
+    # the flag out of JSON / memory schema serialization.
+    not_in_database: bool = Field(default=False, exclude=True)
 
     # ------------------------------------------------------------------ #
-    # Pre-validation: drop explicit ``None`` overrides, emit deprecation
-    # warnings, and apply the legacy default-derivation rules.
+    # Validators
     # ------------------------------------------------------------------ #
     @model_validator(mode="before")
     @classmethod
-    def _normalize_inputs(cls, data: Any, info: ValidationInfo) -> Any:
+    def _warn_on_deprecated_kwargs(cls, data: Any) -> Any:
+        """Emit DeprecationWarning for each deprecated kwarg explicitly passed."""
         if not isinstance(data, dict):
             return data
-
-        # Allow ``None`` to mean "use the default" for fields with default_factory or default.
-        for key in (
-            "id",
-            "conversation_id",
-            "timestamp",
-            "labels",
-            "targeted_harm_categories",
-            "prompt_metadata",
-            "converter_identifiers",
-            "scores",
-            "original_prompt_id",
-        ):
-            if key in data and data[key] is None:
-                del data[key]
-
-        # Deprecation warnings (suppressed when called via ``from_dict``).
-        if not _suppress_deprecation(info):
-            if "labels" in data and data["labels"] is not None:
+        for kwarg, removed_in in _DEPRECATED_KWARGS:
+            if data.get(kwarg) is not None:
                 print_deprecation_message(
-                    old_item="MessagePiece(..., labels=...)",
+                    old_item=f"MessagePiece(..., {kwarg}=...)",
                     new_item="MessagePiece(...)",
-                    removed_in="0.17.0",
+                    removed_in=removed_in,
                 )
-            if "scorer_identifier" in data and data["scorer_identifier"] is not None:
-                print_deprecation_message(
-                    old_item="MessagePiece(..., scorer_identifier=...)",
-                    new_item="MessagePiece(...)",
-                    removed_in="0.16.0",
-                )
-            if "originator" in data and data["originator"] != "undefined":
-                print_deprecation_message(
-                    old_item="MessagePiece(..., originator=...)",
-                    new_item="MessagePiece(...)",
-                    removed_in="0.16.0",
-                )
-            if "scores" in data and data["scores"] is not None:
-                print_deprecation_message(
-                    old_item="MessagePiece(..., scores=...)",
-                    new_item="MessagePiece(...)",
-                    removed_in="0.16.0",
-                )
-            if "targeted_harm_categories" in data and data["targeted_harm_categories"] is not None:
-                print_deprecation_message(
-                    old_item="MessagePiece(..., targeted_harm_categories=...)",
-                    new_item="MessagePiece(...)",
-                    removed_in="0.16.0",
-                )
+        # ``originator`` is special: only warn when the caller explicitly
+        # opts into a non-default value.
+        if data.get("originator", "undefined") != "undefined":
+            print_deprecation_message(
+                old_item="MessagePiece(..., originator=...)",
+                new_item="MessagePiece(...)",
+                removed_in="0.15.0",
+            )
+        return data
 
-        # Mirror the legacy default-derivation for ``converted_value`` and types.
-        original_value = data.get("original_value")
-        original_dtype = data.get("original_value_data_type")
-        converted_value = data.get("converted_value")
-        converted_dtype = data.get("converted_value_data_type")
-
-        if converted_value is None and original_value is not None:
-            data["converted_value"] = original_value
-            if converted_dtype is None:
-                data["converted_value_data_type"] = original_dtype if original_dtype is not None else "text"
-        elif converted_dtype is None:
-            data["converted_value_data_type"] = original_dtype if original_dtype is not None else "text"
-
+    @model_validator(mode="before")
+    @classmethod
+    def _mirror_original_to_converted(cls, data: Any) -> Any:
+        """When ``converted_value`` / ``converted_value_data_type`` aren't supplied, mirror the originals."""
+        if not isinstance(data, dict):
+            return data
+        if "converted_value" not in data and "original_value" in data:
+            data["converted_value"] = data["original_value"]
+        if "converted_value_data_type" not in data and "original_value_data_type" in data:
+            data["converted_value_data_type"] = data["original_value_data_type"]
         return data
 
     @model_validator(mode="after")
-    def _default_original_prompt_id(self) -> MessagePiece:
-        if self.original_prompt_id is None and isinstance(self.id, uuid.UUID):
-            object.__setattr__(self, "original_prompt_id", self.id)
+    def _set_original_prompt_id_default(self) -> MessagePiece:
+        """Enforce invariant: ``original_prompt_id == id`` for non-duplicate pieces."""
+        if self.original_prompt_id is None:
+            self.original_prompt_id = self.id
         return self
 
     # ------------------------------------------------------------------ #
-    # Field-level validators that preserve legacy error messages and
-    # support deserialization from dicts (ComponentIdentifier / Score).
+    # Public API
     # ------------------------------------------------------------------ #
-    @field_validator("role", mode="before")
-    @classmethod
-    def _validate_role(cls, value: Any) -> Any:
-        if value not in get_args(ChatMessageRole):
-            raise ValueError(f"Role {value} is not a valid role.")
-        return value
-
-    @field_validator("original_value_data_type", "converted_value_data_type", mode="before")
-    @classmethod
-    def _validate_data_type(cls, value: Any) -> Any:
-        if value is None:
-            return value
-        if value not in get_args(PromptDataType):
-            raise ValueError(f"{value} is not a valid data type.")
-        return value
-
-    @field_validator("response_error", mode="before")
-    @classmethod
-    def _validate_response_error(cls, value: Any) -> Any:
-        if value not in get_args(PromptResponseError):
-            raise ValueError(f"response_error {value} is not a valid response error.")
-        return value
-
-    @field_validator("timestamp", mode="before")
-    @classmethod
-    def _coerce_timestamp(cls, value: Any) -> Any:
-        if value is None:
-            return value
-        if isinstance(value, str):
-            value = datetime.fromisoformat(value)
-        if isinstance(value, datetime) and value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value
-
-    @field_validator("id", mode="before")
-    @classmethod
-    def _coerce_id(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            try:
-                return uuid.UUID(value)
-            except ValueError:
-                return value
-        return value
-
-    @field_validator("original_prompt_id", mode="before")
-    @classmethod
-    def _coerce_original_prompt_id(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            return uuid.UUID(value)
-        return value
-
-    @field_validator("converter_identifiers", mode="before")
-    @classmethod
-    def _coerce_converter_identifiers(cls, value: Any) -> Any:
-        if value is None:
-            return []
-        if isinstance(value, list):
-            return [ComponentIdentifier.from_dict(item) if isinstance(item, dict) else item for item in value]
-        return value
-
-    @field_validator(
-        "prompt_target_identifier",
-        "attack_identifier",
-        "scorer_identifier",
-        mode="before",
-    )
-    @classmethod
-    def _coerce_component_identifier(cls, value: Any) -> Any:
-        if isinstance(value, dict):
-            return ComponentIdentifier.from_dict(value)
-        return value
-
-    @field_validator("scores", mode="before")
-    @classmethod
-    def _coerce_scores(cls, value: Any) -> Any:
-        if value is None:
-            return []
-        if isinstance(value, list):
-            return [Score.from_dict(item) if isinstance(item, dict) else item for item in value]
-        return value
-
-    # ------------------------------------------------------------------ #
-    # Serializers that preserve the legacy ``to_dict`` JSON shape.
-    # ------------------------------------------------------------------ #
-    @field_serializer("id", "original_prompt_id")
-    def _serialize_uuid(self, value: Optional[Union[uuid.UUID, str]]) -> Optional[str]:
-        return str(value) if value is not None else None
-
-    @field_serializer("timestamp")
-    def _serialize_timestamp(self, value: Optional[datetime]) -> Optional[str]:
-        return value.isoformat() if value is not None else None
-
-    @field_serializer("converter_identifiers")
-    def _serialize_converter_identifiers(self, value: list[ComponentIdentifier]) -> list[dict[str, Any]]:
-        return [item.to_dict() for item in value]
-
-    @field_serializer("prompt_target_identifier", "attack_identifier", "scorer_identifier")
-    def _serialize_component_identifier(
-        self, value: Optional[ComponentIdentifier]
-    ) -> Optional[dict[str, Any]]:
-        return value.to_dict() if value is not None else None
-
-    @field_serializer("targeted_harm_categories")
-    def _serialize_targeted_harm_categories(self, value: list[str]) -> Optional[list[str]]:
-        return value if value else None
-
-    @field_serializer("scores")
-    def _serialize_scores(self, value: list[Score]) -> list[dict[str, Any]]:
-        return [score.to_dict() for score in value]
-
-    # ------------------------------------------------------------------ #
-    # Public API.
-    # ------------------------------------------------------------------ #
-    @property
-    def _role(self) -> ChatMessageRole:
-        """Backwards-compatible accessor for the role field."""
-        return self.role
-
-    @_role.setter
-    def _role(self, value: ChatMessageRole) -> None:
-        object.__setattr__(self, "role", value)
-
     @property
     def api_role(self) -> ChatMessageRole:
         """
         Role to use for API calls.
 
-        Maps simulated_assistant to assistant for API compatibility.
+        Maps ``simulated_assistant`` to ``assistant`` for API compatibility.
         Use this property when sending messages to external APIs.
         """
         return "assistant" if self.role == "simulated_assistant" else self.role
 
     @property
     def is_simulated(self) -> bool:
-        """
-        Check if this is a simulated assistant response.
-
-        Simulated responses come from prepended conversations or generated
-        simulated conversations, not from actual target responses.
-        """
+        """Whether this piece represents a simulated assistant response."""
         return self.role == "simulated_assistant"
 
-    def get_role_for_storage(self) -> ChatMessageRole:
-        """
-        Get the actual stored role, including simulated_assistant.
-
-        Use this when duplicating messages or preserving role information
-        for storage. For API calls or comparisons, use api_role instead.
-
-        Returns:
-            The actual role stored (may be simulated_assistant).
-
-        """
-        return self.role
-
     def to_message(self) -> Message:
-        """
-        Convert this message piece into a Message.
-
-        Returns:
-            Message: A Message containing this piece.
-        """
+        """Wrap this piece in a single-piece :class:`Message`."""
         from pyrit.models.message import Message
 
         return Message([self])
 
+    def copy_lineage_to(self, *, target: MessagePiece) -> None:
+        """
+        Copy lineage metadata from this piece onto ``target``.
+
+        Lineage fields are the metadata that tie a piece back to its originating
+        conversation, attack, and target. Mutable containers (``labels``,
+        ``prompt_metadata``) are shallow-copied so that mutations on one piece
+        do not affect others.
+
+        Args:
+            target: The piece whose lineage will be overwritten.
+        """
+        target.conversation_id = self.conversation_id
+        target.labels = dict(self.labels)
+        target.attack_identifier = self.attack_identifier
+        target.prompt_target_identifier = self.prompt_target_identifier
+        target.prompt_metadata = dict(self.prompt_metadata)
+
     def has_error(self) -> bool:
-        """
-        Check if the message piece has an error.
-
-        Returns:
-            bool: True when the response_error is not "none".
-
-        """
+        """True when :attr:`response_error` is not ``"none"``."""
         return self.response_error != "none"
 
     def is_blocked(self) -> bool:
-        """
-        Check if the message piece is blocked.
-
-        Returns:
-            bool: True when the response_error is "blocked".
-
-        """
+        """True when :attr:`response_error` is ``"blocked"``."""
         return self.response_error == "blocked"
 
     async def set_sha256_values_async(self) -> None:
         """
         Compute SHA256 hash values for original and converted payloads.
-        It should be called after object creation if `original_value` and `converted_value` are set.
 
-        Note, this method is async due to the blob retrieval. And because of that, we opted
-        to take it out of main and setter functions. The disadvantage is that it must be explicitly called.
+        Async because blob payloads may need to be fetched. Must be called
+        explicitly after construction.
         """
         original_serializer = data_serializer_factory(
             category="prompt-memory-entries",
@@ -400,121 +236,14 @@ class MessagePiece(BaseModel):
         )
         self.converted_value_sha256 = await converted_serializer.get_sha256()
 
-    def copy_lineage_from(self, source: MessagePiece) -> None:
-        """
-        Copy lineage metadata from ``source`` onto this piece.
-
-        Lineage fields are the metadata that tie a piece back to its originating
-        conversation, attack, and target. Mutable containers (``labels``,
-        ``prompt_metadata``) are shallow-copied so that mutations on one piece
-        do not affect others.
-
-        Args:
-            source: The piece whose lineage metadata is authoritative.
-        """
-        from pyrit.models.helpers.message_piece import copy_lineage_to
-
-        copy_lineage_to(target=self, source=source)
-
-    @property
-    def not_in_database(self) -> bool:
-        """Whether this piece is flagged to be excluded from database persistence."""
-        return self._not_in_database
-
-    def set_piece_not_in_database(self) -> None:
-        """
-        Flag this piece so memory operations skip persisting it.
-
-        This is needed when we're scoring prompts or other things that have not been
-        sent by PyRIT. The piece keeps its ``id`` (so scorers can reference it within
-        the in-memory call); the memory layer checks :attr:`not_in_database` and
-        either filters the piece out of insert calls or, for downstream scores that
-        reference it, drops the missing foreign key so the score itself still persists.
-        """
-        self._not_in_database = True
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Convert this message piece to a dictionary representation.
-
-        Returns:
-            dict[str, Any]: Dictionary representation suitable for serialization.
-
-        """
-        return self.model_dump(mode="json")
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> MessagePiece:
-        """
-        Reconstruct a MessagePiece from a dictionary.
-
-        Args:
-            data: Dictionary as produced by :meth:`to_dict`.
-
-        Returns:
-            MessagePiece: Reconstructed instance.
-        """
-        return cls.model_validate(data, context={"suppress_deprecation_warnings": True})
-
-    def __str__(self) -> str:
-        """
-        Return a concise string representation of this message piece.
-
-        Returns:
-            str: Target, role, and converted value summary.
-
-        """
-        target_str = self.prompt_target_identifier.class_name if self.prompt_target_identifier else "Unknown"
-        return f"{target_str}: {self.role}: {self.converted_value}"
-
-    __repr__ = __str__
-
-    def __eq__(self, other: object) -> bool:
-        """
-        Compare this message piece with another for semantic equality.
-
-        Args:
-            other (object): Object to compare.
-
-        Returns:
-            bool: True when all relevant message fields match.
-
-        """
-        if not isinstance(other, MessagePiece):
-            return NotImplemented
-        return (
-            self.id == other.id
-            and self.role == other.role
-            and self.original_value == other.original_value
-            and self.original_value_data_type == other.original_value_data_type
-            and self.original_value_sha256 == other.original_value_sha256
-            and self.converted_value == other.converted_value
-            and self.converted_value_data_type == other.converted_value_data_type
-            and self.converted_value_sha256 == other.converted_value_sha256
-            and self.conversation_id == other.conversation_id
-            and self.sequence == other.sequence
-        )
-
-    __hash__ = None  # type: ignore[assignment]
-
 
 def sort_message_pieces(message_pieces: list[MessagePiece]) -> list[MessagePiece]:
     """
-    Group by conversation_id.
-    Order conversations by the earliest timestamp within each conversation_id.
-    Within each conversation, order messages by sequence.
-
-    Args:
-        message_pieces (list[MessagePiece]): Message pieces to sort.
-
-    Returns:
-        list[MessagePiece]: Sorted message pieces.
-
+    Group by ``conversation_id``, ordering conversations by earliest timestamp
+    and messages within each conversation by ``sequence``.
     """
     earliest_timestamps = {
         convo_id: min(x.timestamp for x in message_pieces if x.conversation_id == convo_id)
         for convo_id in {x.conversation_id for x in message_pieces}
     }
-
-    # Sort using the precomputed timestamp values, then by sequence
     return sorted(message_pieces, key=lambda x: (earliest_timestamps[x.conversation_id], x.conversation_id, x.sequence))

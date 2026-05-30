@@ -22,7 +22,7 @@ def image_message_piece() -> MessagePiece:
 async def test_score_async_unsupported_data_type_returns_false(
     patch_central_database, image_message_piece: MessagePiece
 ):
-    image_message_piece.set_piece_not_in_database()
+    image_message_piece.not_in_database = True
     request = image_message_piece.to_message()
     scorer = SubStringScorer(substring="test", categories=["new_category"])
 

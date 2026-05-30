@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+import uuid
 from textwrap import dedent
 from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1052,25 +1053,26 @@ async def test_get_supported_pieces_filters_unsupported_data_types(patch_central
     )
 
     # Create a response with mixed data types
+    text_id = uuid.uuid4()
     text_piece = MessagePiece(
         role="assistant",
         original_value="text response",
         converted_value_data_type="text",
-        id="text-1",
+        id=text_id,
         conversation_id="test-convo",
     )
     image_piece = MessagePiece(
         role="assistant",
         original_value="image.png",
         converted_value_data_type="image_path",
-        id="image-1",
+        id=uuid.uuid4(),
         conversation_id="test-convo",
     )
     audio_piece = MessagePiece(
         role="assistant",
         original_value="audio.wav",
         converted_value_data_type="audio_path",
-        id="audio-1",
+        id=uuid.uuid4(),
         conversation_id="test-convo",
     )
 
@@ -1086,9 +1088,9 @@ async def test_get_supported_pieces_filters_unsupported_data_types(patch_central
 
     # Should only score the text piece
     assert len(scorer.scored_piece_ids) == 1
-    assert scorer.scored_piece_ids[0] == "text-1"
+    assert scorer.scored_piece_ids[0] == str(text_id)
     assert len(scores) == 1
-    assert scores[0].message_piece_id == "text-1"
+    assert scores[0].message_piece_id == text_id
 
 
 async def test_unsupported_pieces_ignored_when_enforce_all_pieces_valid_false(patch_central_database):
@@ -1097,18 +1099,19 @@ async def test_unsupported_pieces_ignored_when_enforce_all_pieces_valid_false(pa
     scorer = MockFloatScorer(validator=validator)
 
     # Create a response with only unsupported types and one supported
+    text_id = uuid.uuid4()
     text_piece = MessagePiece(
         role="assistant",
         original_value="text response",
         converted_value_data_type="text",
-        id="text-1",
+        id=text_id,
         conversation_id="test-convo",
     )
     image_piece = MessagePiece(
         role="assistant",
         original_value="image.png",
         converted_value_data_type="image_path",
-        id="image-1",
+        id=uuid.uuid4(),
         conversation_id="test-convo",
     )
 
@@ -1119,7 +1122,7 @@ async def test_unsupported_pieces_ignored_when_enforce_all_pieces_valid_false(pa
 
     assert len(scores) == 1
     assert len(scorer.scored_piece_ids) == 1
-    assert scorer.scored_piece_ids[0] == "text-1"
+    assert scorer.scored_piece_ids[0] == str(text_id)
 
 
 async def test_all_unsupported_pieces_raises_error(patch_central_database):
@@ -1132,14 +1135,14 @@ async def test_all_unsupported_pieces_raises_error(patch_central_database):
         role="assistant",
         original_value="image.png",
         converted_value_data_type="image_path",
-        id="image-1",
+        id=uuid.uuid4(),
         conversation_id="test-convo",
     )
     audio_piece = MessagePiece(
         role="assistant",
         original_value="audio.wav",
         converted_value_data_type="audio_path",
-        id="audio-1",
+        id=uuid.uuid4(),
         conversation_id="test-convo",
     )
 
@@ -1187,18 +1190,19 @@ async def test_true_false_scorer_uses_supported_pieces_only(patch_central_databa
     scorer = TestTrueFalseScorer()
 
     # Create mixed response
+    text_id = uuid.uuid4()
     text_piece = MessagePiece(
         role="assistant",
         original_value="text",
         converted_value_data_type="text",
-        id="text-1",
+        id=text_id,
         conversation_id="test-convo",
     )
     image_piece = MessagePiece(
         role="assistant",
         original_value="image.png",
         converted_value_data_type="image_path",
-        id="image-1",
+        id=uuid.uuid4(),
         conversation_id="test-convo",
     )
 
@@ -1209,7 +1213,7 @@ async def test_true_false_scorer_uses_supported_pieces_only(patch_central_databa
 
     # Should only score the text piece
     assert len(scorer.scored_piece_ids) == 1
-    assert scorer.scored_piece_ids[0] == "text-1"
+    assert scorer.scored_piece_ids[0] == text_id
     # TrueFalseScorer aggregates to single score
     assert len(scores) == 1
     assert scores[0].score_value == "true"
@@ -1221,18 +1225,20 @@ async def test_base_scorer_score_async_implementation(patch_central_database):
     scorer = MockFloatScorer(validator=validator)
 
     # Create response with multiple supported pieces
+    text_id1 = uuid.uuid4()
+    text_id2 = uuid.uuid4()
     text_piece1 = MessagePiece(
         role="assistant",
         original_value="text 1",
         converted_value_data_type="text",
-        id="text-1",
+        id=text_id1,
         conversation_id="test-convo",
     )
     text_piece2 = MessagePiece(
         role="assistant",
         original_value="text 2",
         converted_value_data_type="text",
-        id="text-2",
+        id=text_id2,
         conversation_id="test-convo",
     )
 
@@ -1243,8 +1249,8 @@ async def test_base_scorer_score_async_implementation(patch_central_database):
 
     # Should score both pieces
     assert len(scorer.scored_piece_ids) == 2
-    assert "text-1" in scorer.scored_piece_ids
-    assert "text-2" in scorer.scored_piece_ids
+    assert str(text_id1) in scorer.scored_piece_ids
+    assert str(text_id2) in scorer.scored_piece_ids
     assert len(scores) == 2
 
 
@@ -1366,7 +1372,6 @@ class TestTrueFalseScorerEmptyScoreListRationale:
             original_value="",
             converted_value="",
             converted_value_data_type="text",
-            id="blocked-piece-id",
             conversation_id="test-convo",
             response_error="blocked",
         )
@@ -1389,7 +1394,6 @@ class TestTrueFalseScorerEmptyScoreListRationale:
             original_value="",
             converted_value="",
             converted_value_data_type="text",
-            id="error-piece-id",
             conversation_id="test-convo",
             response_error="unknown",
         )
@@ -1412,7 +1416,6 @@ class TestTrueFalseScorerEmptyScoreListRationale:
             original_value="some text",
             converted_value="some text",
             converted_value_data_type="text",
-            id="normal-piece-id",
             conversation_id="test-convo",
             response_error="none",
         )
@@ -1436,7 +1439,6 @@ class TestTrueFalseScorerEmptyScoreListRationale:
             original_value="",
             converted_value="",
             converted_value_data_type="text",
-            id="blocked-piece-id",
             conversation_id="test-convo",
             response_error="blocked",
         )
@@ -1496,7 +1498,6 @@ class TestFloatScaleScorerEmptyScoreListRationale:
             original_value="",
             converted_value="",
             converted_value_data_type="error",
-            id="blocked-piece-id",
             conversation_id="test-convo",
             response_error="blocked",
         )
@@ -1519,7 +1520,6 @@ class TestFloatScaleScorerEmptyScoreListRationale:
             original_value="",
             converted_value="",
             converted_value_data_type="error",
-            id="error-piece-id",
             conversation_id="test-convo",
             response_error="unknown",
         )
@@ -1541,7 +1541,6 @@ class TestFloatScaleScorerEmptyScoreListRationale:
             original_value="some text",
             converted_value="some text",
             converted_value_data_type="text",
-            id="normal-piece-id",
             conversation_id="test-convo",
             response_error="none",
         )
@@ -1564,7 +1563,6 @@ class TestFloatScaleScorerEmptyScoreListRationale:
             original_value="",
             converted_value="error-json-blob",
             converted_value_data_type="error",
-            id="blocked-piece-id",
             conversation_id="test-convo",
             response_error="blocked",
         )

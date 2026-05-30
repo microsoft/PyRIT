@@ -210,7 +210,7 @@ class Scorer(Identifiable, abc.ABC):
         """
         self._validator.validate(message, objective=objective)
 
-        if role_filter is not None and message.get_piece().get_role_for_storage() != role_filter:
+        if role_filter is not None and message.get_piece().role != role_filter:
             logger.debug("Skipping scoring due to role filter mismatch.")
             return []
 
@@ -508,7 +508,7 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
-        request.message_pieces[0].set_piece_not_in_database()
+        request.message_pieces[0].not_in_database = True
         return await self.score_async(request, objective=objective)
 
     async def score_image_async(self, image_path: str, *, objective: Optional[str] = None) -> list[Score]:
@@ -532,7 +532,7 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
-        request.message_pieces[0].set_piece_not_in_database()
+        request.message_pieces[0].not_in_database = True
         return await self.score_async(request, objective=objective)
 
     async def score_prompts_batch_async(

@@ -233,11 +233,9 @@ class PromptTarget(Identifiable):
             source: The original (pre-normalization) message whose metadata is authoritative.
             target_message: The normalized message whose pieces will be updated in place.
         """
-        from pyrit.models.helpers import copy_lineage_to
-
         source_piece = source.message_pieces[0]
         for piece in target_message.message_pieces:
-            copy_lineage_to(target=piece, source=source_piece)
+            source_piece.copy_lineage_to(target=piece)
 
     def set_model_name(self, *, model_name: str) -> None:
         """

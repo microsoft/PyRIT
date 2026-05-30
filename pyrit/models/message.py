@@ -228,10 +228,8 @@ class Message:
 
         This is needed when we're scoring prompts or other things that have not been sent by PyRIT
         """
-        from pyrit.models.helpers import mark_not_persisted
-
         for piece in self.message_pieces:
-            mark_not_persisted(piece)
+            piece.not_in_database = True
 
     def set_simulated_role(self) -> None:
         """
@@ -241,8 +239,8 @@ class Message:
         rather than an actual target response.
         """
         for piece in self.message_pieces:
-            if piece._role == "assistant":
-                piece._role = "simulated_assistant"
+            if piece.role == "assistant":
+                piece.role = "simulated_assistant"
 
     def validate(self) -> None:
         """
@@ -258,7 +256,7 @@ class Message:
 
         conversation_id = self.message_pieces[0].conversation_id
         sequence = self.message_pieces[0].sequence
-        role = self.message_pieces[0]._role
+        role = self.message_pieces[0].role
         for message_piece in self.message_pieces:
             if message_piece.conversation_id != conversation_id:
                 raise ValueError("Conversation ID mismatch.")
@@ -269,7 +267,7 @@ class Message:
             if message_piece.converted_value is None:
                 raise ValueError("Converted prompt text is None.")
 
-            if message_piece._role != role:
+            if message_piece.role != role:
                 raise ValueError("Inconsistent roles within the same message entry.")
 
     def __str__(self) -> str:
@@ -280,10 +278,7 @@ class Message:
             str: Concatenated string representation.
 
         """
-        ret = ""
-        for message_piece in self.message_pieces:
-            ret += str(message_piece) + "\n"
-        return "\n".join([str(message_piece) for message_piece in self.message_pieces])
+        return "\n".join(f"{piece.role}: {piece.converted_value}" for piece in self.message_pieces)
 
     def to_dict(self) -> dict[str, object]:
         """
@@ -291,8 +286,8 @@ class Message:
 
         Includes the original top-level fields ('role', 'converted_value', 'conversation_id',
         'sequence', 'converted_value_data_type') for backward compatibility, plus a 'pieces'
-        list containing each MessagePiece.to_dict() — the latter is the source of truth used
-        by from_dict().
+        list containing each piece's Pydantic JSON dump — the latter is the source of truth
+        used by from_dict().
 
         Returns:
             dict[str, object]: Dictionary with 'role', 'converted_value', 'conversation_id',
@@ -311,7 +306,7 @@ class Message:
             "conversation_id": self.conversation_id,
             "sequence": self.sequence,
             "converted_value_data_type": converted_value_data_type,
-            "pieces": [piece.to_dict() for piece in self.message_pieces],
+            "pieces": [piece.model_dump(mode="json") for piece in self.message_pieces],
         }
 
     @classmethod
@@ -329,7 +324,7 @@ class Message:
             Message: Reconstructed instance.
         """
         pieces_data = data.get("pieces", [])
-        message_pieces = [MessagePiece.from_dict(p) for p in pieces_data]
+        message_pieces = [MessagePiece.model_validate(p) for p in pieces_data]
         return cls(message_pieces, skip_validation=True)
 
     @staticmethod
@@ -392,7 +387,7 @@ class Message:
             Message: Constructed message instance.
 
         """
-        piece = MessagePiece(original_value=prompt, role=role, prompt_metadata=prompt_metadata)
+        piece = MessagePiece(original_value=prompt, role=role, prompt_metadata=prompt_metadata or {})
         return cls(message_pieces=[piece])
 
     @classmethod
@@ -580,12 +575,12 @@ def construct_response_from_request(
                 role="assistant",
                 original_value=resp_text,
                 conversation_id=request.conversation_id,
-                labels=request.labels,  # deprecated
+                labels=request.labels,
                 prompt_target_identifier=request.prompt_target_identifier,
                 attack_identifier=request.attack_identifier,
                 original_value_data_type=response_type,
                 converted_value_data_type=response_type,
-                prompt_metadata=prompt_metadata,
+                prompt_metadata=prompt_metadata or {},
                 response_error=error,
             )
             for resp_text in response_text_pieces

@@ -101,7 +101,6 @@ def _make_mock_piece(
     p.original_value_data_type = "text"
     p.response_error = "none"
     p.role = "user"
-    p.get_role_for_storage.return_value = "user"
     p.timestamp = datetime.now(timezone.utc)
     p.scores = []
     return p

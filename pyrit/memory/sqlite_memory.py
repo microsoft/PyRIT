@@ -301,7 +301,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         """
         Insert a list of message pieces into the memory storage.
 
-        Pieces flagged via :meth:`MessagePiece.set_piece_not_in_database` are
+        Pieces flagged via ``MessagePiece.not_in_database = True`` are
         silently filtered out so callers don't need to track persistence policy
         themselves.
         """
@@ -547,7 +547,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         # Merge conversations and scores - create the data structure manually
         merged_data = []
         for piece in message_pieces:
-            piece_data = piece.to_dict()
+            piece_data = piece.model_dump(mode="json")
             # Find associated scores
             piece_scores = [score for score in scores if score.message_piece_id == piece.id]
             piece_data["scores"] = [score.to_dict() for score in piece_scores]

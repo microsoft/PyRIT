@@ -46,8 +46,8 @@ def mark_messages_as_simulated(messages: Sequence[Message]) -> list[Message]:
     result = list(messages)
     for message in result:
         for piece in message.message_pieces:
-            if piece._role == "assistant":
-                piece._role = "simulated_assistant"
+            if piece.role == "assistant":
+                piece.role = "simulated_assistant"
     return result
 
 

@@ -698,7 +698,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         Insert a list of message pieces into the memory storage.
 
-        Pieces flagged via :meth:`MessagePiece.set_piece_not_in_database` are
+        Pieces flagged via ``MessagePiece.not_in_database = True`` are
         silently filtered out so callers don't need to track persistence policy
         themselves.
 

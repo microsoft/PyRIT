@@ -225,7 +225,7 @@ class PromptMemoryEntry(Base):
             entry (MessagePiece): The message piece to convert into a database entry.
         """
         self.id = entry.id
-        self.role = entry._role
+        self.role = entry.role
         self.conversation_id = entry.conversation_id
         self.sequence = entry.sequence
         self.timestamp = entry.timestamp
@@ -297,8 +297,10 @@ class PromptMemoryEntry(Base):
             id=self.id,
             conversation_id=self.conversation_id,
             sequence=self.sequence,
+            labels=self.labels or {},
             prompt_metadata=self.prompt_metadata,
-            converter_identifiers=converter_ids,
+            targeted_harm_categories=self.targeted_harm_categories or [],
+            converter_identifiers=converter_ids or [],
             prompt_target_identifier=target_id,
             attack_identifier=attack_id,
             original_value_data_type=self.original_value_data_type,
@@ -306,10 +308,8 @@ class PromptMemoryEntry(Base):
             response_error=self.response_error,
             original_prompt_id=self.original_prompt_id,
             timestamp=_ensure_utc(self.timestamp),
+            scores=[score.get_score() for score in self.scores],
         )
-        message_piece.scores = [score.get_score() for score in self.scores]
-        message_piece.labels = self.labels or {}
-        message_piece.targeted_harm_categories = self.targeted_harm_categories or []
         return message_piece
 
     def __str__(self) -> str:

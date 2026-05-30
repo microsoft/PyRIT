@@ -125,7 +125,7 @@ class OpenAITTSTarget(OpenAITarget):
         message = normalized_conversation[-1]
         message_piece = message.message_pieces[0]
 
-        logger.info(f"Sending the following prompt to the prompt target: {message_piece}")
+        logger.info(f"Sending the following prompt to the prompt target: {message_piece.converted_value}")
 
         # Construct request parameters for SDK
         body_parameters: dict[str, object] = {

@@ -685,7 +685,7 @@ class MemoryInterface(abc.ABC):
         Insert a list of scores into the memory storage.
 
         Callers that produce scores for pieces flagged via
-        :meth:`MessagePiece.set_piece_not_in_database` should null out
+        ``MessagePiece.not_in_database = True`` should null out
         ``message_piece_id`` on those scores before calling this method so the
         score itself can still be persisted without a dangling piece linkage.
         """

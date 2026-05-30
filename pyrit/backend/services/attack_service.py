@@ -852,9 +852,9 @@ class AttackService:
         # Apply optional overrides to the fresh pieces before persisting
         for piece in all_pieces:
             if labels_override is not None:
-                piece.labels = dict(labels_override)  # deprecated
+                piece.labels = dict(labels_override)
             if remap_assistant_to_simulated and piece.api_role == "assistant":
-                piece._role = "simulated_assistant"
+                piece.role = "simulated_assistant"
 
         if all_pieces:
             self._memory.add_message_pieces_to_memory(message_pieces=list(all_pieces))

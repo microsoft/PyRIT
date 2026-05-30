@@ -282,7 +282,7 @@ class AttackResult(StrategyResult):
                 if data.get("atomic_attack_identifier")
                 else None
             ),
-            last_response=(MessagePiece.from_dict(data["last_response"]) if data.get("last_response") else None),
+            last_response=(MessagePiece.model_validate(data["last_response"]) if data.get("last_response") else None),
             last_score=Score.from_dict(data["last_score"]) if data.get("last_score") else None,
             executed_turns=data.get("executed_turns", 0),
             execution_time_ms=data.get("execution_time_ms", 0),

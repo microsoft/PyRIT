@@ -285,7 +285,7 @@ class TestMessageSimulatedAssistantRole:
         assert message.is_simulated is True
         assert message.api_role == "assistant"
         for piece in message.message_pieces:
-            assert piece._role == "simulated_assistant"
+            assert piece.role == "simulated_assistant"
             assert piece.is_simulated is True
 
     def test_set_simulated_role_only_changes_assistant_role(self) -> None:
@@ -300,7 +300,7 @@ class TestMessageSimulatedAssistantRole:
 
         # User roles should remain unchanged
         for piece in message.message_pieces:
-            assert piece._role == "user"
+            assert piece.role == "user"
             assert piece.is_simulated is False
 
 
