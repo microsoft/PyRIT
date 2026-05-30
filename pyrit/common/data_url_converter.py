@@ -16,12 +16,12 @@ async def convert_local_image_to_data_url_async(image_path: str) -> str:
     Args:
         image_path (str): The file system path to the image file.
 
+    Returns:
+        str: A string containing the MIME type and the base64-encoded data of the image, formatted as a data URL.
+
     Raises:
         FileNotFoundError: If no file is found at the specified `image_path`.
         ValueError: If the image file's extension is not in the supported formats list.
-
-    Returns:
-        str: A string containing the MIME type and the base64-encoded data of the image, formatted as a data URL.
     """
     ext = DataTypeSerializer.get_extension(image_path)
     if ext is None or ext.lower() not in AZURE_OPENAI_GPT4O_SUPPORTED_IMAGE_FORMATS:
