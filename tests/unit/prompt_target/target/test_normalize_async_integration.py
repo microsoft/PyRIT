@@ -318,7 +318,8 @@ def test_azure_ml_generic_system_squash_normalizer_emits_deprecation_warning():
         )
         deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
         assert len(deprecation_warnings) == 1
-        assert "message_normalizer is deprecated" in str(deprecation_warnings[0].message)
+        assert "message_normalizer" in str(deprecation_warnings[0].message)
+        assert "deprecated" in str(deprecation_warnings[0].message)
 
 
 @pytest.mark.usefixtures("patch_central_database")

@@ -96,39 +96,9 @@ class Scam(Scenario):
         return [SCORER_SEED_PROMPT_PATH / "true_false_question" / "scams.yaml"]
 
     @classmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        """
-        Get the strategy enum class for this scenario.
-
-        Returns:
-            Type[ScenarioStrategy]: The ScamStrategy enum class.
-        """
-        return ScamStrategy
-
-    @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        """
-        Get the default strategy used when no strategies are specified.
-
-        Returns:
-            ScenarioStrategy: ScamStrategy.ALL (all scam strategies).
-        """
-        return ScamStrategy.ALL
-
-    @classmethod
     def required_datasets(cls) -> list[str]:
         """Return a list of dataset names required by this scenario."""
         return ["airt_scams"]
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """
-        Return the default dataset configuration for this scenario.
-
-        Returns:
-            DatasetConfiguration: Configuration with airt_scams dataset.
-        """
-        return DatasetConfiguration(dataset_names=["airt_scams"], max_dataset_size=4)
 
     @classmethod
     def supported_parameters(cls) -> list[Parameter]:
@@ -179,6 +149,8 @@ class Scam(Scenario):
         super().__init__(
             version=self.VERSION,
             strategy_class=ScamStrategy,
+            default_strategy=ScamStrategy.ALL,
+            default_dataset_config=DatasetConfiguration(dataset_names=["airt_scams"], max_dataset_size=4),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )

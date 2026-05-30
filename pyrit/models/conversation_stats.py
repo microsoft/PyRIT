@@ -1,26 +1,24 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from __future__ import annotations
+from datetime import datetime
+from typing import ClassVar, Optional
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, ClassVar, Optional
-
-if TYPE_CHECKING:
-    from datetime import datetime
+from pydantic import BaseModel, ConfigDict, Field
 
 
-@dataclass(frozen=True)
-class ConversationStats:
+class ConversationStats(BaseModel):
     """
     Lightweight aggregate statistics for a conversation.
 
     Used to build attack summaries without loading full message pieces.
     """
 
+    model_config = ConfigDict(frozen=True)
+
     PREVIEW_MAX_LEN: ClassVar[int] = 100
 
     message_count: int = 0
     last_message_preview: Optional[str] = None
-    labels: dict[str, str] = field(default_factory=dict)
+    labels: dict[str, str] = Field(default_factory=dict)
     created_at: Optional[datetime] = None

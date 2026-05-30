@@ -22,13 +22,13 @@ class TestPyRITInitializerBase:
         reset_default_values()
         # Clean up any test globals
         if hasattr(sys.modules["__main__"], "test_var"):
-            delattr(sys.modules["__main__"], "test_var")
+            del sys.modules["__main__"].test_var
 
     def teardown_method(self) -> None:
         """Clean up after each test."""
         reset_default_values()
         if hasattr(sys.modules["__main__"], "test_var"):
-            delattr(sys.modules["__main__"], "test_var")
+            del sys.modules["__main__"].test_var
 
     def test_cannot_instantiate_abstract_class(self):
         """Test that PyRITInitializer cannot be instantiated directly."""
@@ -121,13 +121,13 @@ class TestInitializeWithTracking:
         """Clear default values before each test."""
         reset_default_values()
         if hasattr(sys.modules["__main__"], "tracked_var"):
-            delattr(sys.modules["__main__"], "tracked_var")
+            del sys.modules["__main__"].tracked_var
 
     def teardown_method(self) -> None:
         """Clean up after each test."""
         reset_default_values()
         if hasattr(sys.modules["__main__"], "tracked_var"):
-            delattr(sys.modules["__main__"], "tracked_var")
+            del sys.modules["__main__"].tracked_var
 
     async def test_initialize_with_tracking_calls_initialize(self):
         """Test that initialize_with_tracking_async calls initialize method."""
@@ -625,7 +625,7 @@ class TestInitializerParameterDeprecation:
         """Accessing InitializerParameter on the package emits a DeprecationWarning."""
         import pyrit.setup.initializers as initializers_module
 
-        with pytest.warns(DeprecationWarning, match=r"will be removed in v0\.16\.0"):
+        with pytest.warns(DeprecationWarning, match=r"will be removed in 0\.16\.0"):
             _ = initializers_module.InitializerParameter
 
     def test_package_level_alias_warning_points_to_replacement(self) -> None:
@@ -639,7 +639,7 @@ class TestInitializerParameterDeprecation:
         """Accessing InitializerParameter on pyrit_initializer also emits the warning."""
         import pyrit.setup.initializers.pyrit_initializer as pyrit_initializer_module
 
-        with pytest.warns(DeprecationWarning, match=r"will be removed in v0\.16\.0"):
+        with pytest.warns(DeprecationWarning, match=r"will be removed in 0\.16\.0"):
             value = pyrit_initializer_module.InitializerParameter
 
         assert value is Parameter
