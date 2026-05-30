@@ -42,12 +42,12 @@ objective_target = OpenAIChatTarget()
 # pyrit_scan airt.rapid_response \
 #   --initializers target load_default_datasets \
 #   --target openai_chat \
-#   --strategies prompt_sending \
+#   --strategies role_play \
 #   --dataset-names airt_hate \
 #   --max-dataset-size 1
 # ```
 #
-# **Available strategies:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, prompt_sending, role_play, many_shot, tap
+# **Available strategies:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, role_play, many_shot, tap
 
 # %%
 from pyrit.scenario.scenarios.airt import RapidResponse, RapidResponseStrategy
@@ -57,7 +57,7 @@ dataset_config = DatasetConfiguration(dataset_names=["airt_hate"], max_dataset_s
 scenario = RapidResponse()
 await scenario.initialize_async(  # type: ignore
     objective_target=objective_target,
-    scenario_strategies=[RapidResponseStrategy.prompt_sending],
+    scenario_strategies=[RapidResponseStrategy.role_play],
     dataset_config=dataset_config,
 )
 
@@ -125,11 +125,11 @@ await output_scenario_async(scenario_result)
 # pyrit_scan airt.cyber \
 #   --initializers target load_default_datasets \
 #   --target openai_chat \
-#   --strategies single_turn \
+#   --strategies multi_turn \
 #   --max-dataset-size 1
 # ```
 #
-# **Available strategies:** ALL, SINGLE_TURN, MULTI_TURN
+# **Available strategies:** ALL, MULTI_TURN, red_teaming
 
 # %%
 from pyrit.scenario.scenarios.airt import Cyber, CyberStrategy
@@ -139,7 +139,7 @@ dataset_config = DatasetConfiguration(dataset_names=["airt_malware"], max_datase
 scenario = Cyber()
 await scenario.initialize_async(  # type: ignore
     objective_target=objective_target,
-    scenario_strategies=[CyberStrategy.SINGLE_TURN],
+    scenario_strategies=[CyberStrategy.MULTI_TURN],
     dataset_config=dataset_config,
 )
 

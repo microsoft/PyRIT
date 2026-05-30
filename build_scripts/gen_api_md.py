@@ -17,7 +17,12 @@ Usage:
 """
 
 import json
+import sys
 from pathlib import Path
+
+# Import sibling script for post-generation TOC validation.
+sys.path.insert(0, str(Path(__file__).parent))
+import validate_docs  # noqa: E402
 
 API_JSON_DIR = Path("doc/_api")
 API_MD_DIR = Path("doc/api")
@@ -398,6 +403,15 @@ def main() -> None:
     index_path = API_MD_DIR / "index.md"
     index_path.write_text("\n".join(index_parts), encoding="utf-8")
     print(f"Written {index_path}")
+
+    # Fail loudly if doc/myst.yml's api/ TOC entries no longer match what we
+    # generated. Without this check, mismatches only manifest as easy-to-miss
+    # warnings in the jupyter-book log (--strict does not treat them as errors)
+    # and silently break the Read the Docs build downstream.
+    print("Validating doc/myst.yml stays in sync with generated API pages...")
+    rc = validate_docs.main()
+    if rc != 0:
+        sys.exit(rc)
 
 
 if __name__ == "__main__":

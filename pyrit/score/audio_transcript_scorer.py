@@ -5,11 +5,11 @@ import logging
 import os
 import tempfile
 import uuid
-import warnings
 from typing import Optional
 
 import av
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory
 from pyrit.models import MessagePiece, Score
 from pyrit.prompt_converter import AzureSpeechAudioToTextConverter
@@ -114,18 +114,24 @@ class AudioTranscriptHelper:  # noqa: B024
         Args:
             text_capable_scorer (Scorer): A scorer capable of processing text that will be used to score
                 the transcribed audio content.
-            use_entra_auth (bool, Optional): **Deprecated.** Will be removed in v0.15.0.
-                Authentication is now auto-detected by the underlying converter.
+            use_entra_auth (bool, Optional): **Deprecated.** Will be removed in 0.15.0.
+                Authentication is now configured on the underlying
+                ``AzureSpeechAudioToTextConverter`` via its ``azure_speech_key`` parameter:
+                pass a string API key (or set ``AZURE_SPEECH_KEY``) for key auth, a callable
+                token provider for Entra ID with a custom token, or omit it to use Entra ID
+                via ``DefaultAzureCredential``.
 
         Raises:
             ValueError: If text_capable_scorer does not support text data type.
         """
         if use_entra_auth is not None:
-            warnings.warn(
-                "'use_entra_auth' is deprecated and will be removed in v0.15.0. "
-                "Authentication is now auto-detected by the underlying AzureSpeechAudioToTextConverter.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="AudioTranscriptHelper(use_entra_auth=...)",
+                new_item=(
+                    "AudioTranscriptHelper(...) (configure auth on the underlying "
+                    "AzureSpeechAudioToTextConverter via azure_speech_key)"
+                ),
+                removed_in="0.15.0",
             )
         self._validate_text_scorer(text_capable_scorer)
         self.text_scorer = text_capable_scorer

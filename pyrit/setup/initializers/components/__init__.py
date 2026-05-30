@@ -3,7 +3,7 @@
 
 """Component initializers for targets, scorers, and other components."""
 
-from pyrit.setup.initializers.components.scenarios import ScenarioTechniqueInitializer
+from pyrit.setup.initializers.components.scenario_techniques import ScenarioTechniqueInitializer
 from pyrit.setup.initializers.components.scorers import ScorerInitializer, ScorerInitializerTags
 from pyrit.setup.initializers.components.targets import TargetConfig, TargetInitializer, TargetInitializerTags
 
