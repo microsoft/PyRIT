@@ -852,6 +852,79 @@ def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
     assert result[conv_ids[2]].message_count == 3
 
 
+@pytest.mark.parametrize(
+    ("data_type", "expected_prefix"),
+    [
+        ("image_path", "[Image:"),
+        ("audio_path", "[Audio:"),
+        ("video_path", "[Video:"),
+        ("binary_path", "[File:"),
+    ],
+)
+def test_get_conversation_stats_media_preview_hides_absolute_path(sqlite_instance, data_type, expected_prefix):
+    """Media-path last messages render as ``[Image: <basename>]`` etc.
+    instead of leaking the absolute on-disk path."""
+    import uuid
+
+    from pyrit.models import MessagePiece
+
+    conv_id = str(uuid.uuid4())
+    path = r"C:\Users\someone\git\PyRIT\dbdata\prompt-memory-entries\media\1780010098266691.bin"
+    piece = MessagePiece(
+        role="assistant",
+        original_value=path,
+        original_value_data_type=data_type,
+        converted_value=path,
+        converted_value_data_type=data_type,
+        conversation_id=conv_id,
+        sequence=0,
+    )
+    sqlite_instance._insert_entry(PromptMemoryEntry(entry=piece))
+
+    result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
+    preview = result[conv_id].last_message_preview
+
+    assert preview is not None
+    assert preview.startswith(expected_prefix)
+    assert preview.endswith("1780010098266691.bin]")
+    assert "C:\\" not in preview
+    assert "Users" not in preview
+
+
+def test_get_conversation_stats_uses_last_piece_data_type_for_preview(sqlite_instance):
+    """Preview formatting picks up the data type of the most recent message,
+    not the first one."""
+    import uuid
+
+    from pyrit.models import MessagePiece
+
+    conv_id = str(uuid.uuid4())
+    text_piece = MessagePiece(
+        role="user",
+        original_value="hi there",
+        original_value_data_type="text",
+        converted_value="hi there",
+        converted_value_data_type="text",
+        conversation_id=conv_id,
+        sequence=0,
+    )
+    audio_path = r"C:\dbdata\prompt-memory-entries\audio\response.mp3"
+    media_piece = MessagePiece(
+        role="assistant",
+        original_value=audio_path,
+        original_value_data_type="audio_path",
+        converted_value=audio_path,
+        converted_value_data_type="audio_path",
+        conversation_id=conv_id,
+        sequence=1,
+    )
+    sqlite_instance._insert_entries(entries=[PromptMemoryEntry(entry=text_piece), PromptMemoryEntry(entry=media_piece)])
+
+    result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
+
+    assert result[conv_id].last_message_preview == "[Audio: response.mp3]"
+
+
 def test_dispose_engine_tolerates_closed_log_stream(sqlite_instance, capsys):
     """Verify dispose_engine does not raise or emit 'Logging error' when streams are closed (GH-1520)."""
     pyrit_logger = logging.getLogger("pyrit")

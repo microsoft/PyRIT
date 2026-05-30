@@ -19,6 +19,7 @@ from sqlalchemy.sql.expression import ColumnElement, TextClause
 from pyrit.auth.azure_auth import AzureAuth
 from pyrit.common import default_values
 from pyrit.common.singleton import Singleton
+from pyrit.memory._preview import PREVIEW_FETCH_MAX_LEN, format_last_message_preview
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -620,11 +621,17 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                 pme.conversation_id,
                 COUNT(DISTINCT pme.sequence) AS msg_count,
                 (
-                    SELECT TOP 1 LEFT(p2.converted_value, {max_len + 3})
+                    SELECT TOP 1 LEFT(p2.converted_value, {PREVIEW_FETCH_MAX_LEN})
                     FROM "PromptMemoryEntries" p2
                     WHERE p2.conversation_id = pme.conversation_id
                     ORDER BY p2.sequence DESC, p2.id DESC
                 ) AS last_preview,
+                (
+                    SELECT TOP 1 p2b.converted_value_data_type
+                    FROM "PromptMemoryEntries" p2b
+                    WHERE p2b.conversation_id = pme.conversation_id
+                    ORDER BY p2b.sequence DESC, p2b.id DESC
+                ) AS last_data_type,
                 (
                     SELECT TOP 1 p3.labels
                     FROM "PromptMemoryEntries" p3
@@ -646,11 +653,13 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         result: dict[str, ConversationStats] = {}
         for row in rows:
-            conv_id, msg_count, last_preview, raw_labels, raw_created_at = row
+            conv_id, msg_count, last_preview, last_data_type, raw_labels, raw_created_at = row
 
-            preview = None
-            if last_preview:
-                preview = last_preview[:max_len] + "..." if len(last_preview) > max_len else last_preview
+            preview = format_last_message_preview(
+                value=last_preview,
+                data_type=last_data_type,
+                max_len=max_len,
+            )
 
             labels: dict[str, str] = {}
             if raw_labels and raw_labels not in ("null", "{}"):

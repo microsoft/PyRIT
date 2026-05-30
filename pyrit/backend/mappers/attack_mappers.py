@@ -35,7 +35,7 @@ from pyrit.backend.models.attacks import (
     TargetInfo,
 )
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models import AttackResult, ChatMessageRole, PromptDataType
+from pyrit.models import MEDIA_PATH_DATA_TYPES, AttackResult, ChatMessageRole, PromptDataType
 from pyrit.models import Message as PyritMessage
 from pyrit.models import MessagePiece as PyritMessagePiece
 from pyrit.models import Score as PyritScore
@@ -49,9 +49,6 @@ if TYPE_CHECKING:
 # ============================================================================
 # Domain → DTO  (for API responses)
 # ============================================================================
-
-# Media data types whose values are file paths (local or Azure Blob URLs)
-_MEDIA_PATH_TYPES = frozenset({"image_path", "audio_path", "video_path", "binary_path"})
 
 # ---------------------------------------------------------------------------
 # Azure Blob SAS token cache
@@ -172,7 +169,7 @@ def _resolve_media_url(*, value: Optional[str], data_type: str) -> Optional[str]
         The value unchanged for non-media types, a ``/api/media?path=...``
         URL for local file paths, or the original value for blob URLs / data URIs.
     """
-    if not value or data_type not in _MEDIA_PATH_TYPES:
+    if not value or data_type not in MEDIA_PATH_DATA_TYPES:
         return value
     # Already a URL or data URI — pass through
     if value.startswith(("http://", "https://", "data:")):
