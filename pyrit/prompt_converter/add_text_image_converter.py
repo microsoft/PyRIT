@@ -23,7 +23,7 @@ class AddTextImageConverter(_BaseImageTextConverter):
     """
     Adds a string to an image and wraps the text into multiple lines if necessary.
 
-    This class is similar to :class:`AddImageTextConverter` except
+    This class is similar to ``AddImageTextConverter`` except
     we pass in text as an argument to the constructor as opposed to an image file path.
     """
 

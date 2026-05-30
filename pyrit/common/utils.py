@@ -184,16 +184,6 @@ def get_kwarg_param(
     Returns:
         Optional[_T]: The validated parameter value if present and valid, otherwise None.
 
-    Args:
-        kwargs (Dict[str, Any]): The dictionary containing parameters.
-        param_name (str): The name of the parameter to validate.
-        expected_type (Type[_T]): The expected type of the parameter.
-        required (bool): Whether the parameter is required. If True, raises ValueError if missing.
-        default_value (Optional[_T]): Default value to return if the parameter is not required and not present.
-
-    Returns:
-        Optional[_T]: The validated parameter value if present and valid, otherwise None.
-
     Raises:
         ValueError: If the parameter is missing or None.
         TypeError: If the parameter is not of the expected type.

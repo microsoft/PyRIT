@@ -126,6 +126,10 @@ class AttackExecutor:
 
         Args:
             max_concurrency: Maximum number of concurrent attack executions (default: 1).
+                A single ``asyncio.Semaphore`` of this size is used internally to gate
+                both parameter-building (``from_seed_group_async``) and execution.
+                Sharing one ``AttackExecutor`` across multiple call sites therefore
+                shares a single concurrency budget across all of them.
 
         Raises:
             ValueError: If max_concurrency is not a positive integer.
@@ -133,6 +137,35 @@ class AttackExecutor:
         if max_concurrency <= 0:
             raise ValueError(f"max_concurrency must be a positive integer, got {max_concurrency}")
         self._max_concurrency = max_concurrency
+        # The semaphore is created lazily, NOT here. asyncio synchronization primitives
+        # (Semaphore, Lock, Event, ...) bind to whichever event loop is running on their
+        # first await and raise ``RuntimeError: <Semaphore> is bound to a different event
+        # loop`` if you reuse them under a different loop. That breaks callers who
+        # construct an AttackExecutor once (e.g. at module scope, or in a notebook helper)
+        # and then run it under more than one ``asyncio.run(...)`` invocation. By
+        # constructing the semaphore inside ``_get_semaphore()`` and rebuilding when the
+        # running loop changes, one AttackExecutor instance is safe to reuse across loops.
+        self._semaphore: Optional[asyncio.Semaphore] = None
+        self._semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def _get_semaphore(self) -> asyncio.Semaphore:
+        """
+        Return the internal semaphore, (re)building it when the running event loop changes.
+
+        Must be called from within a running event loop. The first call binds the
+        semaphore to that loop; subsequent calls reuse it as long as the same loop is
+        running. If the executor is reused under a *different* event loop later, the
+        semaphore is rebuilt so we don't leak the binding from the previous loop.
+
+        Returns:
+            asyncio.Semaphore: A semaphore bound to the currently running event loop,
+                with permits equal to ``self._max_concurrency``.
+        """
+        loop = asyncio.get_running_loop()
+        if self._semaphore is None or self._semaphore_loop is not loop:
+            self._semaphore = asyncio.Semaphore(self._max_concurrency)
+            self._semaphore_loop = loop
+        return self._semaphore
 
     async def execute_attack_from_seed_groups_async(
         self,
@@ -193,7 +226,7 @@ class AttackExecutor:
 
         # Build params list using from_seed_group_async with concurrency control
         # This can take time if the SeedSimulatedConversation generation is included
-        semaphore = asyncio.Semaphore(self._max_concurrency)
+        semaphore = self._get_semaphore()
 
         async def build_params(i: int, sg: SeedAttackGroup) -> AttackParameters:
             async with semaphore:
@@ -309,7 +342,7 @@ class AttackExecutor:
         Returns:
             AttackExecutorResult with completed results and any incomplete objectives.
         """
-        semaphore = asyncio.Semaphore(self._max_concurrency)
+        semaphore = self._get_semaphore()
 
         async def run_one(index: int, params: AttackParameters) -> AttackStrategyResultT:
             async with semaphore:

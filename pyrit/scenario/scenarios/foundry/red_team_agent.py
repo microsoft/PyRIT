@@ -215,31 +215,6 @@ class RedTeamAgent(Scenario):
 
     VERSION: int = 1
 
-    @classmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        """
-        Get the strategy enum class for this scenario.
-
-        Returns:
-            Type[ScenarioStrategy]: The FoundryStrategy enum class.
-        """
-        return FoundryStrategy
-
-    @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        """
-        Get the default strategy used when no strategies are specified.
-
-        Returns:
-            ScenarioStrategy: FoundryStrategy.EASY (easy difficulty strategies).
-        """
-        return FoundryStrategy.EASY
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """Return the default dataset configuration for this scenario."""
-        return DatasetConfiguration(dataset_names=["harmbench"], max_dataset_size=4)
-
     @apply_defaults
     def __init__(
         self,
@@ -282,6 +257,8 @@ class RedTeamAgent(Scenario):
         super().__init__(
             version=self.VERSION,
             strategy_class=FoundryStrategy,
+            default_strategy=FoundryStrategy.EASY,
+            default_dataset_config=DatasetConfiguration(dataset_names=["harmbench"], max_dataset_size=4),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
@@ -307,7 +284,7 @@ class RedTeamAgent(Scenario):
             Sequence["FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy"]
         ] = None,
         dataset_config: Optional[DatasetConfiguration] = None,
-        max_concurrency: int = 10,
+        max_concurrency: int = 4,
         max_retries: int = 0,
         memory_labels: Optional[dict[str, str]] = None,
         include_baseline: bool | None = None,
@@ -323,7 +300,7 @@ class RedTeamAgent(Scenario):
                 ScenarioCompositeStrategy is deprecated — use FoundryComposite instead.
                 If None, uses the default aggregate (EASY).
             dataset_config (Optional[DatasetConfiguration]): Configuration for the dataset source.
-            max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 10.
+            max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 4.
             max_retries (int): Maximum number of retries on failure. Defaults to 0.
             memory_labels (Optional[dict[str, str]]): Labels to attach to all memory entries.
             include_baseline (bool | None): See ``Scenario.initialize_async``.
@@ -359,7 +336,7 @@ class RedTeamAgent(Scenario):
             list[ScenarioStrategy]: Flat list of constituent strategies for base-class tracking.
         """
         if not strategies:
-            resolved = FoundryStrategy.resolve(None, default=cast("FoundryStrategy", self.get_default_strategy()))
+            resolved = FoundryStrategy.resolve(None, default=cast("FoundryStrategy", self._default_strategy))
             self._scenario_composites = [self._strategy_to_composite(s) for s in resolved]
             return list(resolved)
 
@@ -387,7 +364,7 @@ class RedTeamAgent(Scenario):
                     flat.append(item.attack)
                 flat.extend(item.converters)
             else:
-                for s in FoundryStrategy.resolve([item], default=cast("FoundryStrategy", self.get_default_strategy())):
+                for s in FoundryStrategy.resolve([item], default=cast("FoundryStrategy", self._default_strategy)):
                     if s not in seen:
                         seen.add(s)
                         composites.append(self._strategy_to_composite(s))
