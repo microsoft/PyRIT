@@ -44,6 +44,7 @@
 # SIUO [@wang2025siuo],
 # SORRY-Bench [@xie2024sorrybench],
 # SOSBench [@jiang2025sosbench],
+# StrongREJECT [@souly2024strongreject],
 # TDC23 [@mazeika2023tdc],
 # ToxicChat [@lin2023toxicchat],
 # VLSU [@palaskar2025vlsu],
