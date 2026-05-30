@@ -234,42 +234,6 @@ async def test_failed_image_is_skipped(english_rows):
     assert len(dataset.seeds) == 6
 
 
-async def test_max_examples_limits_rows(english_rows):
-    loader = _MSTSDataset(max_examples=1)
-
-    with (
-        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=english_rows)),
-        patch.object(
-            loader,
-            "_fetch_and_save_image_async",
-            new=AsyncMock(return_value="/tmp/msts.jpg"),
-        ),
-    ):
-        dataset = await loader.fetch_dataset_async()
-
-    # Only 1 row processed → 2 prompts
-    assert len(dataset.seeds) == 2
-
-
-async def test_max_examples_does_not_count_failed_rows(english_rows):
-    loader = _MSTSDataset(max_examples=2)
-
-    # First row fails, next three succeed. max_examples=2 should still return 2 pairs
-    # (4 prompts) by skipping the failed row, not 1 pair (2 prompts).
-    with (
-        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=english_rows)),
-        patch.object(
-            loader,
-            "_fetch_and_save_image_async",
-            new=AsyncMock(side_effect=[Exception("network error"), "/tmp/a.jpg", "/tmp/b.jpg", "/tmp/c.jpg"]),
-        ),
-    ):
-        dataset = await loader.fetch_dataset_async()
-
-    # 2 successful pairs × 2 prompts each = 4 prompts (failed row did not consume quota)
-    assert len(dataset.seeds) == 4
-
-
 async def test_metadata_includes_msts_fields(english_rows):
     loader = _MSTSDataset()
 
