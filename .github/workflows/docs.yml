@@ -163,10 +163,12 @@ jobs:
     name: Deploy
     needs: [versions, build]
     runs-on: ubuntu-latest
-    # Only deploy on push to main (not PRs, not pushes to release branches).
-    # Release-branch pushes still rebuild and validate via the build job
-    # above, but the actual published site only changes via main.
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    # Deploy on push to main, or when triggered manually from main. Skipped
+    # for pushes to release branches (those builds are validation-only) and
+    # for pull requests.
+    if: >-
+      ${{ github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
