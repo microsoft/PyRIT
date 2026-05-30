@@ -366,8 +366,8 @@ class TestPsychosocialTargetRequirements:
             class_name="NonChatTarget", class_module="test"
         )
         # Configuration reports no EDITABLE_HISTORY support
-        non_chat_target.configuration.includes.side_effect = (
-            lambda *, capability: capability != CapabilityName.EDITABLE_HISTORY
+        non_chat_target.configuration.includes.side_effect = lambda *, capability: (
+            capability != CapabilityName.EDITABLE_HISTORY
         )
 
         with patch.object(Psychosocial, "_resolve_seed_groups", return_value=mock_resolved_seed_data):
