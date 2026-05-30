@@ -91,7 +91,12 @@ class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
 
     # Class-level metadata picked up by _RemoteDatasetLoader._parse_metadata.
     # See pyrit/datasets/seed_datasets/seed_metadata.py for the schema.
-    harm_categories: list[str] = list(_PERSPECTIVE_SCORE_KEYS)
+    # Class-level harm_categories exclude "flirtation" — Perspective API exposes
+    # it as a tone/style signal rather than a harm, so it shouldn't surface
+    # through dataset-discovery harm-category filters. Per-row derivation and
+    # per-seed metadata still carry all 8 Perspective scores so callers can
+    # threshold against `metadata["flirtation"]` if they need it.
+    harm_categories: list[str] = [k for k in _PERSPECTIVE_SCORE_KEYS if k != "flirtation"]
     modalities: list[str] = ["text"]
     size: str = "large"  # 1196 (default toxic) – 2396 (subset=ALL)
     tags: set[str] = {"default", "safety", "toxicity"}
@@ -165,13 +170,18 @@ class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
                 emphasised by the DecodingTrust authors.
             toxicity_threshold: Perspective score at or above which a category
                 is added to a SeedPrompt's ``harm_categories``. Applied
-                independently to each of the eight Perspective scores.
+                independently to each of the eight Perspective scores. Must be
+                in ``[0.0, 1.0]`` (the Perspective API score range).
 
         Raises:
             ValueError: If ``subset`` is not a ``DecodingTrustToxicitySubset``
-                instance.
+                instance, or if ``toxicity_threshold`` is outside ``[0.0, 1.0]``.
         """
         self._validate_enum(subset, DecodingTrustToxicitySubset, "subset")
+        if not 0.0 <= toxicity_threshold <= 1.0:
+            raise ValueError(
+                f"toxicity_threshold must be in [0.0, 1.0] (Perspective API score range), got {toxicity_threshold!r}"
+            )
         self.subset = subset
         self.challenging_only = challenging_only
         self.toxicity_threshold = toxicity_threshold

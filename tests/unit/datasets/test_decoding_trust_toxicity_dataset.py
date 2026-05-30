@@ -122,6 +122,18 @@ class TestDecodingTrustToxicityDataset:
         with pytest.raises(ValueError, match="DecodingTrustToxicitySubset"):
             _DecodingTrustToxicityDataset(subset="toxic")  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize("bad_threshold", [-1.0, -0.01, 1.01, 1.5, float("inf"), float("-inf")])
+    def test_invalid_toxicity_threshold_raises_value_error(self, bad_threshold):
+        """toxicity_threshold outside [0.0, 1.0] is rejected at construction time."""
+        with pytest.raises(ValueError, match="toxicity_threshold must be in"):
+            _DecodingTrustToxicityDataset(toxicity_threshold=bad_threshold)
+
+    @pytest.mark.parametrize("ok_threshold", [0.0, 0.5, 1.0])
+    def test_valid_toxicity_threshold_accepted(self, ok_threshold):
+        """Boundary values 0.0 and 1.0 plus mid-range are accepted."""
+        loader = _DecodingTrustToxicityDataset(toxicity_threshold=ok_threshold)
+        assert loader.toxicity_threshold == ok_threshold
+
     async def test_harm_category_mapping_threshold(self, toxic_records):
         """Each Perspective score >= threshold contributes its key to harm_categories."""
         loader = _DecodingTrustToxicityDataset(toxicity_threshold=0.5)
@@ -280,8 +292,50 @@ class TestDecodingTrustToxicityDataset:
         assert _NONTOXIC_URL.endswith("/data/toxicity/user_prompts/nontoxic.jsonl")
 
     def test_class_level_metadata(self):
-        """harm_categories/modalities/size/tags are set for the dataset-discovery parser."""
-        assert _DecodingTrustToxicityDataset.harm_categories == list(_PERSPECTIVE_SCORE_KEYS)
+        """harm_categories/modalities/size/tags are set for the dataset-discovery parser.
+
+        Class-level ``harm_categories`` deliberately excludes ``flirtation`` because
+        Perspective API exposes it as a tone signal, not a harm — including it in
+        dataset-discovery indexing would misrepresent this dataset's purpose
+        (see PR #1821 review thread). Per-row derivation still emits flirtation when
+        the per-prompt score crosses the threshold; see
+        ``test_per_row_derivation_still_emits_flirtation``.
+        """
+        expected = [k for k in _PERSPECTIVE_SCORE_KEYS if k != "flirtation"]
+        assert _DecodingTrustToxicityDataset.harm_categories == expected
+        assert "flirtation" not in _DecodingTrustToxicityDataset.harm_categories
         assert _DecodingTrustToxicityDataset.modalities == ["text"]
         assert _DecodingTrustToxicityDataset.size == "large"
         assert _DecodingTrustToxicityDataset.tags == {"default", "safety", "toxicity"}
+
+    async def test_per_row_derivation_still_emits_flirtation(self):
+        """Per-row harm_categories still include flirtation when the per-prompt score crosses the threshold.
+
+        This guards the class-level / per-row asymmetry: flirtation is dropped from
+        class-level discovery indexing, but a specific prompt that scores high on
+        flirtation still gets it tagged in its per-row harm_categories so callers can
+        filter on it via metadata.
+        """
+        records = [
+            _record(
+                text="flirty prompt",
+                challenging=True,
+                toxicity=0.2,
+                severe_toxicity=0.1,
+                profanity=0.1,
+                sexually_explicit=0.1,
+                identity_attack=0.1,
+                threat=0.1,
+                insult=0.1,
+                flirtation=0.9,  # only flirtation crosses threshold
+            ),
+        ]
+        loader = _DecodingTrustToxicityDataset(toxicity_threshold=0.5)
+
+        with patch.object(loader, "_fetch_from_url", return_value=records):
+            dataset = await loader.fetch_dataset_async()
+
+        assert dataset.seeds[0].harm_categories == ["flirtation"]
+        # ...and metadata still carries the full flirtation score string
+        assert dataset.seeds[0].metadata is not None
+        assert dataset.seeds[0].metadata["flirtation"] == "0.9"
