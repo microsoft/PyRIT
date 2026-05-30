@@ -120,12 +120,11 @@ class Score:
 
         If the score type is "float_scale", it returns the score value as a float.
 
-        Raises:
-            ValueError: If the score type is unknown.
-
         Returns:
             bool | float: Parsed score value.
 
+        Raises:
+            ValueError: If the score type is unknown.
         """
         if self.score_type == "true_false":
             return self.score_value.lower() == "true"
