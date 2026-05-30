@@ -85,6 +85,9 @@ from pyrit.datasets.seed_datasets.remote.medsafetybench_dataset import (
 from pyrit.datasets.seed_datasets.remote.mlcommons_ailuminate_dataset import (
     _MLCommonsAILuminateDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.moral_integrity_corpus_dataset import (
+    _MICDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.msts_dataset import (
     _MSTSDataset,
 )  # noqa: F401
@@ -129,6 +132,9 @@ from pyrit.datasets.seed_datasets.remote.sorry_bench_dataset import (
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.sosbench_dataset import (
     _SOSBenchDataset,
+)  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.strong_reject_dataset import (
+    _StrongRejectDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.tdc23_redteaming_dataset import (
     _TDC23RedteamingDataset,
@@ -196,6 +202,7 @@ __all__ = [
     "_LibrAIDoNotAnswerDataset",
     "_LLMLatentAdversarialTrainingDataset",
     "_MedSafetyBenchDataset",
+    "_MICDataset",
     "_MLCommonsAILuminateDataset",
     "_MSTSDataset",
     "_MultilingualVulnerabilityDataset",
@@ -212,6 +219,7 @@ __all__ = [
     "_SIUODataset",
     "_SOSBenchDataset",
     "_SorryBenchDataset",
+    "_StrongRejectDataset",
     "_TDC23RedteamingDataset",
     "_ToxicChatDataset",
     "_TransphobiaAwarenessDataset",
