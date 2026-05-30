@@ -39,7 +39,7 @@ class _ExportableConversationPiece:
     def __init__(self, data: dict[str, Any]) -> None:
         self._data = data
 
-    def to_dict(self) -> dict[str, Any]:
+    def model_dump(self, *, mode: str = "python") -> dict[str, Any]:
         return self._data
 
 

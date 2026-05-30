@@ -242,7 +242,7 @@ class AttackResult(StrategyResult):
             "atomic_attack_identifier": (
                 self.atomic_attack_identifier.to_dict() if self.atomic_attack_identifier else None
             ),
-            "last_response": self.last_response.to_dict() if self.last_response else None,
+            "last_response": self.last_response.model_dump(mode="json") if self.last_response else None,
             "last_score": self.last_score.to_dict() if self.last_score else None,
             "executed_turns": self.executed_turns,
             "execution_time_ms": self.execution_time_ms,

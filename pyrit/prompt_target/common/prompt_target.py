@@ -306,7 +306,7 @@ class PromptTarget(Identifiable):
                 converted_value=system_prompt,
                 prompt_target_identifier=self.get_identifier(),
                 attack_identifier=attack_identifier,
-                labels=labels,
+                labels=labels or {},
             ).to_message()
         )
 

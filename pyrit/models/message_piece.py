@@ -152,9 +152,9 @@ class MessagePiece(BaseModel):
         """When ``converted_value`` / ``converted_value_data_type`` aren't supplied, mirror the originals."""
         if not isinstance(data, dict):
             return data
-        if "converted_value" not in data and "original_value" in data:
+        if not data.get("converted_value") and "original_value" in data:
             data["converted_value"] = data["original_value"]
-        if "converted_value_data_type" not in data and "original_value_data_type" in data:
+        if not data.get("converted_value_data_type") and "original_value_data_type" in data:
             data["converted_value_data_type"] = data["original_value_data_type"]
         return data
 

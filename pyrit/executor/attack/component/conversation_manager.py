@@ -117,7 +117,7 @@ def get_adversarial_chat_messages(
                 conversation_id=adversarial_chat_conversation_id,
                 attack_identifier=attack_identifier,
                 prompt_target_identifier=adversarial_chat_target_identifier,
-                labels=labels,  # deprecated
+                labels=labels or {},  # deprecated
             )
 
             result.append(adversarial_piece.to_message())
