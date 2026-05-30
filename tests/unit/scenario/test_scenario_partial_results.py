@@ -98,40 +98,32 @@ class ConcreteScenario(Scenario):
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
     def __init__(self, *, atomic_attacks_to_return=None, objective_scorer=None, **kwargs):
-        # Get strategy_class from kwargs or use default
-        strategy_class = kwargs.pop("strategy_class", None) or self.get_strategy_class()
+        strategy_class = kwargs.pop("strategy_class", None) or _build_test_strategy()
 
         # Create a default mock scorer if not provided
         if objective_scorer is None:
             objective_scorer = MagicMock()
             objective_scorer.get_identifier.return_value = _mock_scorer_id("MockScorer")
 
+        kwargs.setdefault("default_strategy", strategy_class.ALL)
+        kwargs.setdefault("default_dataset_config", DatasetConfiguration())
         super().__init__(strategy_class=strategy_class, objective_scorer=objective_scorer, **kwargs)
         self._test_atomic_attacks = atomic_attacks_to_return or []
 
     async def _get_atomic_attacks_async(self):
         return self._test_atomic_attacks
 
-    @classmethod
-    def get_strategy_class(cls):
-        class TestStrategy(ScenarioStrategy):
-            CONCRETE = ("concrete", {"concrete"})
-            ALL = ("all", {"all"})
 
-            @classmethod
-            def get_aggregate_tags(cls) -> set[str]:
-                return {"all"}
+def _build_test_strategy():
+    class TestStrategy(ScenarioStrategy):
+        CONCRETE = ("concrete", {"concrete"})
+        ALL = ("all", {"all"})
 
-        return TestStrategy
+        @classmethod
+        def get_aggregate_tags(cls) -> set[str]:
+            return {"all"}
 
-    @classmethod
-    def get_default_strategy(cls):
-        return cls.get_strategy_class().ALL
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """Return the default dataset configuration for testing."""
-        return DatasetConfiguration()
+    return TestStrategy
 
 
 @pytest.mark.usefixtures("patch_central_database")

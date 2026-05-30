@@ -14,7 +14,7 @@ import json
 import logging
 import textwrap
 import uuid
-from abc import ABC, abstractmethod
+from abc import ABC
 from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
@@ -135,7 +135,7 @@ def _format_param_key_diff(*, stored: dict[str, Any], current: dict[str, Any]) -
     return "; ".join(parts) if parts else "no diff details"
 
 
-class Scenario(ABC):
+class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even without abstract methods
     """
     Groups and executes multiple AtomicAttack instances sequentially.
 
@@ -174,6 +174,8 @@ class Scenario(ABC):
         name: str = "",
         version: int,
         strategy_class: type[ScenarioStrategy],
+        default_strategy: ScenarioStrategy,
+        default_dataset_config: DatasetConfiguration,
         objective_scorer: Scorer,
         scenario_result_id: Optional[Union[uuid.UUID, str]] = None,
         include_default_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
@@ -185,6 +187,11 @@ class Scenario(ABC):
             name (str): Descriptive name for the scenario.
             version (int): Version number of the scenario.
             strategy_class (Type[ScenarioStrategy]): The strategy enum class for this scenario.
+            default_strategy (ScenarioStrategy): The default strategy member used when no
+                ``scenario_strategies`` are passed to ``initialize_async``. Usually an aggregate
+                member like ``MyStrategy.ALL`` or ``MyStrategy.DEFAULT``.
+            default_dataset_config (DatasetConfiguration): The default dataset configuration used
+                when no ``dataset_config`` is passed to ``initialize_async``.
             objective_scorer (Scorer): The objective scorer used to evaluate attack results.
             scenario_result_id (Optional[Union[uuid.UUID, str]]): Optional ID of an existing scenario result to resume.
                 Can be either a UUID object or a string representation of a UUID.
@@ -212,6 +219,8 @@ class Scenario(ABC):
 
         # Store strategy configuration for use in initialize_async
         self._strategy_class = strategy_class
+        self._default_strategy = default_strategy
+        self._default_dataset_config = default_dataset_config
 
         # These will be set in initialize_async
         self._objective_target: Optional[PromptTarget] = None
@@ -265,48 +274,6 @@ class Scenario(ABC):
         return len(self._atomic_attacks)
 
     @classmethod
-    @abstractmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        """
-        Get the strategy enum class for this scenario.
-
-        This abstract method must be implemented by all scenario subclasses to return
-        the ScenarioStrategy enum class that defines the available attack strategies
-        for the scenario.
-
-        Returns:
-            Type[ScenarioStrategy]: The strategy enum class (e.g., FoundryStrategy, EncodingStrategy).
-        """
-
-    @classmethod
-    @abstractmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        """
-        Get the default strategy used when no strategies are specified.
-
-        This abstract method must be implemented by all scenario subclasses to return
-        the default aggregate strategy (like EASY, ALL) used when scenario_strategies
-        parameter is None.
-
-        Returns:
-            ScenarioStrategy: The default aggregate strategy (e.g., FoundryStrategy.EASY, EncodingStrategy.ALL).
-        """
-
-    @classmethod
-    @abstractmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """
-        Return the default dataset configuration for this scenario.
-
-        This abstract method must be implemented by all scenario subclasses to return
-        a DatasetConfiguration specifying the default datasets to use when no
-        dataset_config is provided by the user.
-
-        Returns:
-            DatasetConfiguration: The default dataset configuration.
-        """
-
-    @classmethod
     def supported_parameters(cls) -> list[Parameter]:
         """
         Override to declare custom parameters this scenario accepts.
@@ -331,21 +298,23 @@ class Scenario(ABC):
         value is an ``AttackTechniqueFactory`` that can produce an
         ``AttackTechnique`` for that technique.
 
-        The base implementation lazily populates the
-        ``AttackTechniqueRegistry`` singleton with core techniques (via
-        ``ScenarioTechniqueRegistrar``) and returns all registered factories.
+        The base implementation returns every factory currently registered in
+        the ``AttackTechniqueRegistry`` singleton. The canonical scenario
+        techniques are populated by ``ScenarioTechniqueInitializer``
+        (``pyrit.setup.initializers.components.scenario_techniques``); ensure
+        that initializer has run before scenarios use this method.
         Subclasses may override to add, remove, or replace factories.
 
         Returns:
             dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
+
+        Raises:
+            RuntimeError: If the registry is empty (no initializer has run).
         """
-        from pyrit.scenario.core.scenario_techniques import register_scenario_techniques
-
-        register_scenario_techniques()
-
         from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 
-        return AttackTechniqueRegistry.get_registry_singleton().get_factories()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        return registry.get_factories_or_raise()
 
     def _build_display_group(self, *, technique_name: str, seed_group_name: str) -> str:
         """
@@ -582,7 +551,7 @@ class Scenario(ABC):
         Returns:
             list[ScenarioStrategy]: Ordered, deduplicated concrete strategies.
         """
-        return self._strategy_class.resolve(strategies, default=self.get_default_strategy())
+        return self._strategy_class.resolve(strategies, default=self._default_strategy)
 
     @apply_defaults
     async def initialize_async(
@@ -614,7 +583,7 @@ class Scenario(ABC):
                 from the scenario's configuration.
             dataset_config (Optional[DatasetConfiguration]): Configuration for the dataset source.
                 Use this to specify dataset names or maximum dataset size from the CLI.
-                If not provided, scenarios use their default_dataset_config().
+                If not provided, scenarios use their constructor-supplied default_dataset_config.
             max_concurrency (int): Maximum number of concurrent units of work for the scenario.
                 Defaults to 4. A "unit of work" is one parameter-build call (turning a seed
                 group into attack parameters) or one attack execution (running a single
@@ -653,7 +622,7 @@ class Scenario(ABC):
         self._objective_target_identifier = objective_target.get_identifier()
         type(self).TARGET_REQUIREMENTS.validate(target=objective_target)
         self._dataset_config_provided = dataset_config is not None
-        self._dataset_config = dataset_config if dataset_config else self.default_dataset_config()
+        self._dataset_config = dataset_config if dataset_config else self._default_dataset_config
         self._max_concurrency = max_concurrency
         self._max_retries = max_retries
         self._memory_labels = memory_labels or {}
@@ -872,7 +841,7 @@ class Scenario(ABC):
             Either load the datasets into the database before running the scenario, or for
             example datasets, you can use the `load_default_datasets` initializer.
 
-            Required datasets: {", ".join(self.default_dataset_config().get_default_dataset_names())}
+            Required datasets: {", ".join(self._default_dataset_config.get_default_dataset_names())}
             """
         )
         raise ValueError(error_msg)

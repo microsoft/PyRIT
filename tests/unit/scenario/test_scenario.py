@@ -151,6 +151,8 @@ class ConcreteScenario(Scenario):
                 return {"all"}
 
         kwargs.setdefault("strategy_class", TestStrategy)
+        kwargs.setdefault("default_strategy", kwargs["strategy_class"].ALL)
+        kwargs.setdefault("default_dataset_config", DatasetConfiguration())
 
         # Add a mock scorer if not provided
         if "objective_scorer" not in kwargs:
@@ -161,33 +163,6 @@ class ConcreteScenario(Scenario):
 
         super().__init__(**kwargs)
         self._atomic_attacks_to_return = atomic_attacks_to_return or []
-
-    @classmethod
-    def get_strategy_class(cls):
-        """Return a mock strategy class for testing."""
-
-        from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
-
-        # Return a simple mock strategy class for testing
-        class TestStrategy(ScenarioStrategy):
-            TEST = ("test", {"concrete"})  # Tagged as concrete, not aggregate
-            ALL = ("all", {"all"})
-
-            @classmethod
-            def get_aggregate_tags(cls) -> set[str]:
-                return {"all"}
-
-        return TestStrategy
-
-    @classmethod
-    def get_default_strategy(cls):
-        """Return the default strategy for testing."""
-        return cls.get_strategy_class().ALL
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """Return the default dataset configuration for testing."""
-        return DatasetConfiguration()
 
     async def _get_atomic_attacks_async(self):
         return self._atomic_attacks_to_return
@@ -723,6 +698,8 @@ class ConcreteScenarioWithTrueFalseScorer(Scenario):
                 return {"all"}
 
         kwargs.setdefault("strategy_class", TestStrategy)
+        kwargs.setdefault("default_strategy", kwargs["strategy_class"].ALL)
+        kwargs.setdefault("default_dataset_config", DatasetConfiguration())
 
         # Use TrueFalseScorer mock if not provided
         if "objective_scorer" not in kwargs:
@@ -730,32 +707,6 @@ class ConcreteScenarioWithTrueFalseScorer(Scenario):
 
         super().__init__(**kwargs)
         self._atomic_attacks_to_return = atomic_attacks_to_return or []
-
-    @classmethod
-    def get_strategy_class(cls):
-        """Return a mock strategy class for testing."""
-
-        from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
-
-        class TestStrategy(ScenarioStrategy):
-            TEST = ("test", {"concrete"})
-            ALL = ("all", {"all"})
-
-            @classmethod
-            def get_aggregate_tags(cls) -> set[str]:
-                return {"all"}
-
-        return TestStrategy
-
-    @classmethod
-    def get_default_strategy(cls):
-        """Return the default strategy for testing."""
-        return cls.get_strategy_class().ALL
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """Return the default dataset configuration for testing."""
-        return DatasetConfiguration()
 
     async def _get_atomic_attacks_async(self):
         atomic_attacks = list(self._atomic_attacks_to_return)
@@ -900,8 +851,8 @@ class TestScenarioBaselineOnlyExecution:
     def test_empty_list_strategies_expands_defaults_same_as_none(self):
         """Test that [] and None both expand to the default strategy set."""
         scenario = ConcreteScenario(name="Test", version=1)
-        strategy_class = scenario.get_strategy_class()
-        default = scenario.get_default_strategy()
+        strategy_class = scenario._strategy_class
+        default = scenario._default_strategy
 
         resolved_none = strategy_class.resolve(None, default=default)
         resolved_empty = strategy_class.resolve([], default=default)

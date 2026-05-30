@@ -38,6 +38,8 @@ class _LegacyScenario(Scenario):
 
     def __init__(self, **kwargs):
         kwargs.setdefault("strategy_class", _LegacyStrategy)
+        kwargs.setdefault("default_strategy", _LegacyStrategy.ALL)
+        kwargs.setdefault("default_dataset_config", DatasetConfiguration())
         if "objective_scorer" not in kwargs:
             mock_scorer = MagicMock(spec=TrueFalseScorer)
             mock_scorer.get_identifier.return_value = _TEST_SCORER_ID
@@ -45,18 +47,6 @@ class _LegacyScenario(Scenario):
             kwargs["objective_scorer"] = mock_scorer
         kwargs.setdefault("version", 1)
         super().__init__(**kwargs)
-
-    @classmethod
-    def get_strategy_class(cls):
-        return _LegacyStrategy
-
-    @classmethod
-    def get_default_strategy(cls):
-        return _LegacyStrategy.ALL
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        return DatasetConfiguration()
 
     async def _get_atomic_attacks_async(self):
         atomic_attacks = []
@@ -104,7 +94,7 @@ class TestScenarioBaseDeprecation:
             warnings.simplefilter("ignore", DeprecationWarning)
             scenario = _LegacyScenario(include_default_baseline=False)
 
-        with patch.object(_LegacyScenario, "default_dataset_config", return_value=DatasetConfiguration()):
+        with patch.object(_LegacyScenario, "default_dataset_config", create=True, return_value=DatasetConfiguration()):
             await scenario.initialize_async(objective_target=mock_objective_target)
 
         assert not any(a.atomic_attack_name == "baseline" for a in scenario._atomic_attacks)
@@ -115,7 +105,7 @@ class TestScenarioBaseDeprecation:
             warnings.simplefilter("ignore", DeprecationWarning)
             scenario = _LegacyScenario(include_default_baseline=True)
 
-        with patch.object(_LegacyScenario, "default_dataset_config", return_value=DatasetConfiguration()):
+        with patch.object(_LegacyScenario, "default_dataset_config", create=True, return_value=DatasetConfiguration()):
             await scenario.initialize_async(objective_target=mock_objective_target, include_baseline=False)
 
         assert not any(a.atomic_attack_name == "baseline" for a in scenario._atomic_attacks)
@@ -123,6 +113,29 @@ class TestScenarioBaseDeprecation:
 
 class TestSubclassBaselineKwargDeprecation:
     """Cover the deprecated ``include_baseline`` constructor kwarg on user-facing subclasses."""
+
+    @pytest.fixture(autouse=True)
+    def _populate_registry(self):
+        """Populate the technique registry so Cyber/RapidResponse-style subclasses can build their strategy enum."""
+        from pyrit.prompt_target import PromptTarget
+        from pyrit.registry import TargetRegistry
+        from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+        from pyrit.scenario.scenarios.airt.cyber import Cyber
+        from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
+
+        AttackTechniqueRegistry.reset_instance()
+        TargetRegistry.reset_instance()
+        Cyber._cached_strategy_class = None
+
+        adv_target = MagicMock(spec=PromptTarget)
+        adv_target.capabilities.includes.return_value = True
+        TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
+
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_scenario_technique_factories())
+        yield
+        AttackTechniqueRegistry.reset_instance()
+        TargetRegistry.reset_instance()
+        Cyber._cached_strategy_class = None
 
     @pytest.mark.parametrize(
         "import_path, class_name, needs_adversarial_chat",

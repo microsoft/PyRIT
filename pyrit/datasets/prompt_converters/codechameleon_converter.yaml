@@ -3,7 +3,18 @@ description: |
   A template for the CodeChameleon converter with encryption, decryption and ProblemSolver class
   From https://arxiv.org/abs/2402.16717 "CodeChameleon: Personalized Encryption Framework for Jailbreaking Large Language Models"
 authors:
-  - Lv, Huijie, et al.
+  - Huijie Lv
+  - Xiao Wang
+  - Yuansen Zhang
+  - Caishuang Huang
+  - Shihan Dou
+  - Junjie Ye
+  - Tao Gui
+  - Qi Zhang
+  - Xuanjing Huang
+groups:
+  - School of Computer Science, Fudan University
+  - Institute of Modern Languages and Linguistics, Fudan University
 source: https://github.com/huizhang-L/CodeChameleon/blob/master/template.py
 parameters:
   - decrypt_function

@@ -38,18 +38,6 @@ def _make_scenario(*, declared_params: list[Parameter]) -> Scenario:
         BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
         @classmethod
-        def get_strategy_class(cls):
-            return _ParamTestStrategy
-
-        @classmethod
-        def get_default_strategy(cls):
-            return _ParamTestStrategy.ALL
-
-        @classmethod
-        def default_dataset_config(cls) -> DatasetConfiguration:
-            return DatasetConfiguration()
-
-        @classmethod
         def supported_parameters(cls) -> list[Parameter]:
             return list(params_to_declare)
 
@@ -63,6 +51,8 @@ def _make_scenario(*, declared_params: list[Parameter]) -> Scenario:
     return _ParamTestScenario(
         version=1,
         strategy_class=_ParamTestStrategy,
+        default_strategy=_ParamTestStrategy.ALL,
+        default_dataset_config=DatasetConfiguration(),
         objective_scorer=mock_scorer,
     )
 
