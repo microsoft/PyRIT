@@ -62,6 +62,9 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Install PyYAML
+        run: pip install --quiet "pyyaml>=6.0"
+
       - name: Compute matrix
         id: matrix
         run: |
