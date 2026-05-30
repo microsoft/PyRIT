@@ -174,8 +174,8 @@ class TestEncodingInitialization:
                 objective_scorer=mock_objective_scorer,
             )
 
-            # max_concurrency defaults to 1 until initialize_async is called
-            assert scenario._max_concurrency == 1
+            # max_concurrency is unset (None) until initialize_async is called
+            assert scenario._max_concurrency is None
 
     async def test_init_attack_strategies(
         self, mock_objective_target, mock_objective_scorer, mock_seed_attack_groups, mock_dataset_config
@@ -334,21 +334,21 @@ class TestEncodingExecution:
 class TestEncodingDatasetConfiguration:
     """Tests for the EncodingDatasetConfiguration class."""
 
-    def test_default_dataset_config_returns_encoding_config(self):
+    def test_default_dataset_config_returns_encoding_config(self, mock_objective_scorer):
         """Test that default_dataset_config returns EncodingDatasetConfiguration."""
-        config = Encoding.default_dataset_config()
+        config = Encoding(objective_scorer=mock_objective_scorer)._default_dataset_config
         assert isinstance(config, EncodingDatasetConfiguration)
 
-    def test_default_dataset_config_uses_garak_datasets(self):
+    def test_default_dataset_config_uses_garak_datasets(self, mock_objective_scorer):
         """Test that the default config uses the expected garak datasets."""
-        config = Encoding.default_dataset_config()
+        config = Encoding(objective_scorer=mock_objective_scorer)._default_dataset_config
         dataset_names = config.get_default_dataset_names()
         assert "garak_slur_terms_en" in dataset_names
         assert "garak_web_html_js" in dataset_names
 
-    def test_default_dataset_config_has_max_size(self):
+    def test_default_dataset_config_has_max_size(self, mock_objective_scorer):
         """Test that the default config has max_dataset_size set."""
-        config = Encoding.default_dataset_config()
+        config = Encoding(objective_scorer=mock_objective_scorer)._default_dataset_config
         assert config.max_dataset_size == 3
 
 

@@ -59,8 +59,8 @@ class TagQuery:
     against a tag set directly.  Composite queries are produced by the ``&``
     and ``|`` operators and stored in ``_op`` / ``_children``.
 
-    Prefer the classmethod shortcuts :meth:`all`, :meth:`any_of`, and
-    :meth:`exclude` for single-field leaves.
+    Prefer the classmethod shortcuts ``all``, ``any_of``, and
+    ``exclude`` for single-field leaves.
 
     Args:
         include_all: Tags that must **all** be present (AND).

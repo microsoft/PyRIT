@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
@@ -110,7 +109,7 @@ class DiskStorageIO(StorageIO):
 
         """
         path = self._convert_to_path(path)
-        return os.path.exists(path)
+        return path.exists()
 
     async def is_file(self, path: Union[Path, str]) -> bool:
         """
@@ -124,7 +123,7 @@ class DiskStorageIO(StorageIO):
 
         """
         path = self._convert_to_path(path)
-        return os.path.isfile(path)
+        return path.is_file()
 
     async def create_directory_if_not_exists(self, path: Union[Path, str]) -> None:
         """
@@ -136,7 +135,7 @@ class DiskStorageIO(StorageIO):
         """
         directory_path = self._convert_to_path(path)
         if not directory_path.exists():
-            os.makedirs(directory_path, exist_ok=True)
+            directory_path.mkdir(parents=True, exist_ok=True)
 
     def _convert_to_path(self, path: Union[Path, str]) -> Path:
         """

@@ -102,6 +102,19 @@ async def test_output_scenario_async_pretty(mock_cls):
     mock_printer.write_async.assert_called_once_with(result)
 
 
+@patch("pyrit.output.helpers.PrettyScenarioResultMemoryPrinter")
+async def test_output_scenario_async_forwards_sort_groups_by_success_rate(mock_cls):
+    mock_printer = MagicMock()
+    mock_printer.write_async = AsyncMock()
+    mock_cls.return_value = mock_printer
+    result = MagicMock()
+
+    await output_scenario_async(result, sort_groups_by_success_rate=True)
+
+    assert mock_cls.call_args.kwargs["sort_groups_by_success_rate"] is True
+    mock_printer.write_async.assert_called_once_with(result)
+
+
 async def test_output_scenario_async_unsupported_format():
     with pytest.raises(ValueError, match="Unsupported format"):
         await output_scenario_async(MagicMock(), format="markdown")

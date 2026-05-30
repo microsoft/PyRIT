@@ -49,7 +49,6 @@ class TestVisualLeakBenchDataset:
         dataset = _VisualLeakBenchDataset()
         assert dataset.categories is None
         assert dataset.pii_types is None
-        assert dataset.max_examples is None
 
     def test_init_with_categories(self):
         """Test initialization with category filtering."""
@@ -82,11 +81,6 @@ class TestVisualLeakBenchDataset:
         """Test that raw strings matching enum values are rejected."""
         with pytest.raises(ValueError, match="Expected VisualLeakBenchPIIType"):
             _VisualLeakBenchDataset(pii_types=["Email"])
-
-    def test_init_with_max_examples(self):
-        """Test initialization with max_examples."""
-        dataset = _VisualLeakBenchDataset(max_examples=10)
-        assert dataset.max_examples == 10
 
     async def test_fetch_dataset_ocr_creates_pair(self):
         """Test that OCR Injection example creates an image+text pair."""
@@ -218,24 +212,6 @@ class TestVisualLeakBenchDataset:
         assert len(dataset.seeds) == 2
         categories = [seed.harm_categories for seed in dataset.seeds]
         assert any("ocr_injection" in cats for cats in categories)
-
-    async def test_max_examples_limits_output(self):
-        """Test that max_examples limits the number of examples returned."""
-        mock_data = [
-            _make_ocr_example(filename="ocr_v2_0000.png"),
-            _make_ocr_example(filename="ocr_v2_0001.png"),
-            _make_ocr_example(filename="ocr_v2_0002.png"),
-        ]
-        loader = _VisualLeakBenchDataset(max_examples=2)
-
-        with (
-            patch.object(loader, "_fetch_from_url", return_value=mock_data),
-            patch.object(loader, "_fetch_and_save_image_async", return_value="/fake/img.png"),
-        ):
-            dataset = await loader.fetch_dataset_async(cache=False)
-
-        # max_examples=2 → at most 4 prompts (2 pairs)
-        assert len(dataset.seeds) <= 4
 
     async def test_all_images_fail_produces_empty_dataset(self):
         """Test that when all image downloads fail, no prompts are produced and SeedDataset raises."""

@@ -197,7 +197,7 @@ class MemoryInterface(abc.ABC):
                 and the condition should resolve if any element in that array matches the value.
                 Cannot be used with partial_match.
             value (str): The string value that must match the extracted JSON property value.
-            partial_match (bool): Whether to perform a substring match.
+            partial_match (bool): Whether to perform a substring match. Defaults to False.
             case_sensitive (bool): Whether the match should be case-sensitive. Defaults to False.
 
         Returns:
@@ -238,11 +238,16 @@ class MemoryInterface(abc.ABC):
         """
         Return a database-specific condition for matching a value at a given path within a JSON object.
 
+        Concrete subclasses translate this contract into their SQL dialect (e.g. SQLite's
+        ``json_extract``, Azure SQL's ``JSON_VALUE`` + ``ISJSON``). Implementations must honor
+        ``partial_match`` and ``case_sensitive`` identically so callers can rely on consistent
+        matching semantics across backends.
+
         Args:
             json_column (InstrumentedAttribute[Any]): The JSON-backed model field to query.
             property_path (str): The JSON path for the property to match.
             value (str): The string value that must match the extracted JSON property value.
-            partial_match (bool): Whether to perform a substring match.
+            partial_match (bool): Whether to perform a substring match. Defaults to False.
             case_sensitive (bool): Whether the match should be case-sensitive. Defaults to False.
 
         Returns:
@@ -261,6 +266,11 @@ class MemoryInterface(abc.ABC):
     ) -> Any:
         """
         Return a database-specific condition for matching an array at a given path within a JSON object.
+
+        Concrete subclasses translate this contract into their SQL dialect (e.g. SQLite's
+        ``json_each`` + ``json_extract``, Azure SQL's ``OPENJSON`` + ``JSON_QUERY``).
+        Implementations must honor ``match_mode`` and the empty-``array_to_match`` "absence"
+        semantics identically so callers can rely on consistent matching across backends.
 
         Args:
             json_column (InstrumentedAttribute[Any]): The JSON-backed SQLAlchemy field to query.
