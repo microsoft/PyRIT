@@ -15,7 +15,9 @@ documented in ``pyrit/identifiers/__init__.py``.
 from __future__ import annotations
 
 import importlib
+import re
 import warnings
+from pathlib import Path
 
 import pytest
 
@@ -175,3 +177,106 @@ def test_top_level_shim_does_not_warn_on_internal_attribute_access():
 
     dep = [w for w in caught if issubclass(w.category, DeprecationWarning)]
     assert dep == [], f"Internal-attribute access should not warn, got: {[str(w.message) for w in dep]}"
+
+
+# Matches statements that import from the deprecated ``pyrit.identifiers``
+# package, at module level OR indented inside a function/class body. Both
+# ``from <pkg> ...`` and ``import <pkg> ...`` forms are recognised, with or
+# without a submodule suffix and with or without an ``as`` alias. Strings
+# and comments containing the package name are NOT matched because the regex
+# anchors to the start of a logical line and requires the leading token
+# (``from`` or ``import``) to be the first non-whitespace text.
+_DEPRECATED_IMPORT_RE = re.compile(
+    r"^\s*(?:from\s+pyrit\.identifiers(?:\.|\s)|import\s+pyrit\.identifiers(?:\.|\s|$|,))",
+    re.MULTILINE,
+)
+
+
+def _shim_package_files(repo_root: Path) -> set[Path]:
+    """Return resolved paths of the six shim files inside ``pyrit/identifiers/``.
+
+    These files legitimately reference their own package path (in module
+    docstrings, ``AttributeError`` messages, and the deprecation-message
+    string formatting), so the scan must skip them.
+    """
+    shim_dir = repo_root / "pyrit" / "identifiers"
+    return {p.resolve() for p in shim_dir.rglob("*.py")}
+
+
+def test_no_internal_callers_of_deprecated_pyrit_identifiers_path():
+    """Production and test code must not import from the deprecated shim path.
+
+    Internal code should import from ``pyrit.models.identifiers`` directly. The
+    ``pyrit.identifiers`` package exists only as a backwards-compatibility shim
+    for external users and will be removed in 0.16.0. Letting internal callers
+    rely on it would:
+
+    * Drown the test suite in ``DeprecationWarning`` noise.
+    * Make the eventual 0.16.0 shim removal a much bigger churn.
+    * Hide bugs caused by the shim path having weaker static typing (PEP 562
+      ``__getattr__`` returns ``Any``).
+
+    A regex-based static scan beats a runtime ``-W error`` filter here because
+    it catches files that aren't exercised by any test (e.g. optional backend
+    modules) and produces a clear, file-and-line error message — no special
+    pytest command to remember.
+    """
+    repo_root = Path(__file__).resolve().parents[3]
+    pyrit_dir = repo_root / "pyrit"
+    tests_dir = repo_root / "tests"
+
+    allowed = _shim_package_files(repo_root) | {Path(__file__).resolve()}
+
+    offenders: list[str] = []
+    for root in (pyrit_dir, tests_dir):
+        for path in root.rglob("*.py"):
+            if path.resolve() in allowed:
+                continue
+            text = path.read_text(encoding="utf-8")
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if _DEPRECATED_IMPORT_RE.match(line):
+                    rel = path.relative_to(repo_root)
+                    offenders.append(f"  {rel}:{lineno}: {line.strip()}")
+
+    assert not offenders, (
+        "Found internal imports from the deprecated `pyrit.identifiers` path. "
+        "Replace each with the equivalent `pyrit.models.identifiers...` import:\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_regression_guard_detects_a_deliberate_offender():
+    """Meta-test: the regression-guard scanner above must actually flag offenders.
+
+    Without this test, the scanner could silently regress (e.g. a typo in the
+    regex) and we wouldn't notice — the guard would pass vacuously on a clean
+    tree. Here we hand the scanner a synthetic offender file and confirm the
+    regex matches every legitimate import form.
+    """
+    samples = [
+        "from pyrit.identifiers import ComponentIdentifier",
+        "from pyrit.identifiers.component_identifier import ComponentIdentifier",
+        "import pyrit.identifiers",
+        "import pyrit.identifiers.component_identifier",
+        "import pyrit.identifiers as ident",
+        "    from pyrit.identifiers import ComponentIdentifier",  # indented (lazy import)
+    ]
+    for source_line in samples:
+        assert _DEPRECATED_IMPORT_RE.match(source_line), (
+            f"Regression guard regex failed to match a legitimate offender: {source_line!r}"
+        )
+
+    # And confirm it does NOT match strings/comments/docstrings that merely
+    # mention the deprecated path. Otherwise the shim's own deprecation message
+    # text and this test file would create false positives.
+    non_offenders = [
+        "# from pyrit.identifiers import ComponentIdentifier",
+        '"""See pyrit.identifiers for the legacy path."""',
+        'old_item = "pyrit.identifiers.ComponentIdentifier"',
+        "from pyrit.models.identifiers import ComponentIdentifier",
+        "import pyrit.models.identifiers",
+    ]
+    for source_line in non_offenders:
+        assert not _DEPRECATED_IMPORT_RE.match(source_line), (
+            f"Regression guard regex produced a false positive on: {source_line!r}"
+        )
