@@ -3,10 +3,17 @@
 
 """Deprecation shim — moved to pyrit.models.identifiers.component_identifier in 0.14."""
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers import component_identifier as _new
+
+if TYPE_CHECKING:
+    from pyrit.models.identifiers.component_identifier import (
+        ComponentIdentifier,
+        Identifiable,
+        config_hash,
+    )
 
 __all__ = ["ComponentIdentifier", "Identifiable", "config_hash"]
 

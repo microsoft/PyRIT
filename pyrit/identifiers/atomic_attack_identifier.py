@@ -3,10 +3,16 @@
 
 """Deprecation shim — moved to pyrit.models.identifiers.atomic_attack_identifier in 0.14."""
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers import atomic_attack_identifier as _new
+
+if TYPE_CHECKING:
+    from pyrit.models.identifiers.atomic_attack_identifier import (
+        build_atomic_attack_identifier,
+        build_seed_identifier,
+    )
 
 __all__ = ["build_atomic_attack_identifier", "build_seed_identifier"]
 

@@ -3,10 +3,18 @@
 
 """Deprecation shim — moved to pyrit.models.identifiers.class_name_utils in 0.14."""
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers import class_name_utils as _new
+
+if TYPE_CHECKING:
+    from pyrit.models.identifiers.class_name_utils import (
+        REGISTRY_NAME_PATTERN,
+        class_name_to_snake_case,
+        snake_case_to_class_name,
+        validate_registry_name,
+    )
 
 __all__ = [
     "class_name_to_snake_case",

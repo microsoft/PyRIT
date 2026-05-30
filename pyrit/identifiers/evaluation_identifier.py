@@ -3,10 +3,21 @@
 
 """Deprecation shim — moved to pyrit.models.identifiers.evaluation_identifier in 0.14."""
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers import evaluation_identifier as _new
+
+if TYPE_CHECKING:
+    from pyrit.models.identifiers.evaluation_identifier import (
+        TARGET_EVAL_PARAM_FALLBACKS,
+        TARGET_EVAL_PARAMS,
+        AtomicAttackEvaluationIdentifier,
+        ChildEvalRule,
+        EvaluationIdentifier,
+        ScorerEvaluationIdentifier,
+        compute_eval_hash,
+    )
 
 __all__ = [
     "AtomicAttackEvaluationIdentifier",

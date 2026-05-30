@@ -9,10 +9,35 @@ access of each public symbol and returns the symbol from its new location.
 The shim will be removed in 0.16.0.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import identifiers as _new
+
+if TYPE_CHECKING:
+    # Re-export the public names so static type checkers can resolve
+    # ``from pyrit.identifiers import X``. At runtime the names are still
+    # served lazily by ``__getattr__`` (which fires the DeprecationWarning).
+    from pyrit.models.identifiers import (
+        REGISTRY_NAME_PATTERN,
+        TARGET_EVAL_PARAM_FALLBACKS,
+        TARGET_EVAL_PARAMS,
+        AtomicAttackEvaluationIdentifier,
+        ChildEvalRule,
+        ComponentIdentifier,
+        EvaluationIdentifier,
+        Identifiable,
+        IdentifierFilter,
+        IdentifierType,
+        ScorerEvaluationIdentifier,
+        build_atomic_attack_identifier,
+        build_seed_identifier,
+        class_name_to_snake_case,
+        compute_eval_hash,
+        config_hash,
+        snake_case_to_class_name,
+        validate_registry_name,
+    )
 
 __all__ = [
     "AtomicAttackEvaluationIdentifier",

@@ -3,10 +3,16 @@
 
 """Deprecation shim — moved to pyrit.models.identifiers.identifier_filters in 0.14."""
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers import identifier_filters as _new
+
+if TYPE_CHECKING:
+    from pyrit.models.identifiers.identifier_filters import (
+        IdentifierFilter,
+        IdentifierType,
+    )
 
 __all__ = ["IdentifierFilter", "IdentifierType"]
 
