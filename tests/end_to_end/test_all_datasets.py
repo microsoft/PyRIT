@@ -21,9 +21,11 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.datasets.seed_datasets.remote import (
+    _ComicJailbreakDataset,
     _HarmBenchMultimodalDataset,
     _PromptIntelDataset,
     _SIUODataset,
+    _VLGuardDataset,
     _VLSUMultimodalDataset,
 )
 from pyrit.models import SeedDataset
@@ -40,6 +42,10 @@ _RETRYABLE_ERRORS = (OSError, ConnectionError, TimeoutError)
 # Providers that download many remote images; each image fetch may fail
 # due to rate-limiting, so an empty result is expected in some environments.
 _IMAGE_FETCHING_PROVIDERS: set[type] = {_HarmBenchMultimodalDataset, _SIUODataset, _VLSUMultimodalDataset}
+
+# Providers that produce many seeds and would otherwise exceed _TEST_TIMEOUT.
+# Constructed with max_examples to keep CI fast; full coverage runs are out of scope here.
+_LIMITED_EXAMPLES_PROVIDERS: set[type] = {_ComicJailbreakDataset, _VLSUMultimodalDataset}
 
 
 def get_dataset_providers():
@@ -85,12 +91,14 @@ class TestAllDatasets:
         # Skip providers that require credentials not available in CI
         if provider_cls == _PromptIntelDataset and not os.environ.get("PROMPTINTEL_API_KEY"):
             pytest.skip("PROMPTINTEL_API_KEY not set")
+        if provider_cls == _VLGuardDataset and not os.environ.get("HUGGINGFACE_TOKEN"):
+            pytest.skip("HUGGINGFACE_TOKEN not set (required for gated dataset ys-zong/VLGuard)")
 
         logger.info(f"Testing provider: {name}")
 
         try:
-            # Limit examples for slow multimodal providers that fetch many remote images
-            provider = provider_cls(max_examples=6) if provider_cls == _VLSUMultimodalDataset else provider_cls()
+            # Limit examples for slow providers that would otherwise exceed _TEST_TIMEOUT
+            provider = provider_cls(max_examples=6) if provider_cls in _LIMITED_EXAMPLES_PROVIDERS else provider_cls()
 
             dataset = await _fetch_with_retry(provider)
         except Exception as e:
