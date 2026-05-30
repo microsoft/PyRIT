@@ -193,7 +193,7 @@ class TestFetchDatasetDeprecation:
     async def test_legacy_subclass_emits_class_definition_warning(self):
         """Defining a subclass that overrides only fetch_dataset emits a DeprecationWarning."""
 
-        with pytest.warns(DeprecationWarning, match="overrides the deprecated fetch_dataset method"):
+        with pytest.warns(DeprecationWarning, match="fetch_dataset is deprecated"):
 
             class LegacyProvider(SeedDatasetProvider):
                 should_register = False
@@ -222,7 +222,7 @@ class TestFetchDatasetDeprecation:
                     return SeedDataset(seeds=[SeedPrompt(value="x", data_type="text")], dataset_name="legacy")
 
         provider = LegacyProvider()
-        with pytest.warns(DeprecationWarning, match="rename the override to fetch_dataset_async"):
+        with pytest.warns(DeprecationWarning, match="fetch_dataset is deprecated"):
             dataset = await provider.fetch_dataset_async()
         assert isinstance(dataset, SeedDataset)
         assert dataset.dataset_name == "legacy"

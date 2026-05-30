@@ -4,6 +4,7 @@
 import contextlib
 import logging
 import os
+from pathlib import Path
 
 from pyrit.models import Message, MessagePiece, Score
 from pyrit.output.conversation.base import ConversationPrinterBase
@@ -224,11 +225,13 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
     @staticmethod
     def _format_link_path(path: str) -> str:
         """Return a markdown-friendly link (POSIX separators, relative if possible)."""
+        path_obj = Path(path)
         try:
-            relative_path = os.path.relpath(path)
+            relative_path = str(path_obj.relative_to(Path.cwd()))
         except ValueError:
-            # Different mount/drive than cwd (Windows). Fall back to the absolute path.
-            relative_path = os.path.abspath(path)
+            # Path is not under cwd (different drive on Windows, or simply outside cwd).
+            # Fall back to the absolute path.
+            relative_path = str(path_obj.resolve())
         return relative_path.replace("\\", "/")
 
     def _maybe_blur_image_on_disk(self, *, image_path: str) -> str | None:
@@ -251,12 +254,12 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
             str | None: The path to the blurred image, or ``None`` on failure.
         """
         try:
-            blurred_path = self._blurred_destination(image_path=image_path)
-            if os.path.exists(blurred_path):
+            blurred_path = Path(self._blurred_destination(image_path=image_path))
+            if blurred_path.exists():
                 logger.debug(f"Reusing cached blurred image at {blurred_path}")
-                return blurred_path
+                return str(blurred_path)
 
-            os.makedirs(os.path.dirname(blurred_path) or ".", exist_ok=True)
+            blurred_path.parent.mkdir(parents=True, exist_ok=True)
 
             from pyrit.output._image_utils import blur_image_bytes
 
@@ -264,17 +267,17 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
                 original_bytes = f.read()
             blurred_bytes = blur_image_bytes(image_bytes=original_bytes, radius=self._blur_radius)
 
-            temp_path = f"{blurred_path}.tmp.{os.getpid()}"
+            temp_path = blurred_path.parent / f"{blurred_path.name}.tmp.{os.getpid()}"
             try:
                 with open(temp_path, "wb") as f:
                     f.write(blurred_bytes)
                 os.replace(temp_path, blurred_path)
             except Exception:
-                if os.path.exists(temp_path):
+                if temp_path.exists():
                     with contextlib.suppress(OSError):
-                        os.remove(temp_path)
+                        temp_path.unlink()
                 raise
-            return blurred_path
+            return str(blurred_path)
         except Exception as exc:
             logger.warning(f"Failed to write blurred image for {image_path}; falling back to a text link. Error: {exc}")
             return None
@@ -289,9 +292,9 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         Returns:
             str: Path to the blurred file (sibling by default, or under ``blurred_dir``).
         """
-        directory = self._blurred_dir if self._blurred_dir is not None else os.path.dirname(image_path)
-        stem = os.path.splitext(os.path.basename(image_path))[0]
-        return os.path.join(directory, f"{stem}_blurred.png")
+        image_path_obj = Path(image_path)
+        directory = Path(self._blurred_dir) if self._blurred_dir is not None else image_path_obj.parent
+        return str(directory / f"{image_path_obj.stem}_blurred.png")
 
     def _format_audio_content(self, *, audio_path: str) -> list[str]:
         """

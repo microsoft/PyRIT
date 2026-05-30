@@ -3,10 +3,16 @@
 
 """Tests for the scenarios.Scenario class."""
 
+import asyncio
 from typing import ClassVar
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
+
+try:
+    from builtins import ExceptionGroup  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - 3.10 only
+    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef]
 
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.identifiers import ComponentIdentifier
@@ -145,6 +151,8 @@ class ConcreteScenario(Scenario):
                 return {"all"}
 
         kwargs.setdefault("strategy_class", TestStrategy)
+        kwargs.setdefault("default_strategy", kwargs["strategy_class"].ALL)
+        kwargs.setdefault("default_dataset_config", DatasetConfiguration())
 
         # Add a mock scorer if not provided
         if "objective_scorer" not in kwargs:
@@ -155,33 +163,6 @@ class ConcreteScenario(Scenario):
 
         super().__init__(**kwargs)
         self._atomic_attacks_to_return = atomic_attacks_to_return or []
-
-    @classmethod
-    def get_strategy_class(cls):
-        """Return a mock strategy class for testing."""
-
-        from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
-
-        # Return a simple mock strategy class for testing
-        class TestStrategy(ScenarioStrategy):
-            TEST = ("test", {"concrete"})  # Tagged as concrete, not aggregate
-            ALL = ("all", {"all"})
-
-            @classmethod
-            def get_aggregate_tags(cls) -> set[str]:
-                return {"all"}
-
-        return TestStrategy
-
-    @classmethod
-    def get_default_strategy(cls):
-        """Return the default strategy for testing."""
-        return cls.get_strategy_class().ALL
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """Return the default dataset configuration for testing."""
-        return DatasetConfiguration()
 
     async def _get_atomic_attacks_async(self):
         return self._atomic_attacks_to_return
@@ -202,7 +183,7 @@ class TestScenarioInitialization:
         assert scenario._identifier.name == "ConcreteScenario"
         assert scenario._identifier.version == 1
         assert scenario._memory_labels == {}
-        assert scenario._max_concurrency == 1
+        assert scenario._max_concurrency is None
         assert scenario._max_retries == 0  # Default value
         assert scenario.atomic_attack_count == 0  # Not initialized yet
 
@@ -316,7 +297,7 @@ class TestScenarioInitialization2:
         await scenario.initialize_async(objective_target=mock_objective_target)
 
         assert scenario._max_retries == 0
-        assert scenario._max_concurrency == 10
+        assert scenario._max_concurrency == 4
         assert scenario._memory_labels == {}
 
     @pytest.mark.asyncio
@@ -355,7 +336,7 @@ class TestScenarioExecution:
     """Tests for Scenario execution methods."""
 
     async def test_run_async_executes_all_runs(self, mock_atomic_attacks, sample_attack_results, mock_objective_target):
-        """Test that run_async executes all atomic attacks sequentially."""
+        """Test that run_async executes all atomic attacks."""
         # Configure each run to return different results
         for i, run in enumerate(mock_atomic_attacks):
             run.run_async = create_mock_run_async([sample_attack_results[i]], atomic_attack=run)
@@ -372,10 +353,12 @@ class TestScenarioExecution:
         # Verify return type is ScenarioResult
         assert isinstance(result, ScenarioResult)
 
-        # Verify all runs were executed with correct concurrency
+        # Verify all runs were executed. Default max_concurrency=4 with 3 atomic attacks
+        # means parallel path: each atomic attack receives the shared executor whose
+        # internal semaphore caps total in-flight objectives at 4.
         assert len(result.attack_results) == 3
         for run in mock_atomic_attacks:
-            run.run_async.assert_called_once_with(max_concurrency=10, return_partial_on_failure=True)
+            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True)
 
         # Verify results are aggregated correctly by atomic attack name
         assert "attack_run_1" in result.attack_results
@@ -388,7 +371,7 @@ class TestScenarioExecution:
     async def test_run_async_with_custom_concurrency(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target
     ):
-        """Test that max_concurrency from init is passed to each atomic attack."""
+        """Test that max_concurrency from init is split across atomic attacks."""
         for i, run in enumerate(mock_atomic_attacks):
             run.run_async = create_mock_run_async([sample_attack_results[i]], atomic_attack=run)
 
@@ -401,9 +384,10 @@ class TestScenarioExecution:
 
         result = await scenario.run_async()
 
-        # Verify max_concurrency was passed to each run
+        # 3 atomic attacks, max_concurrency=5 -> parallel path with a shared AttackExecutor.
+        # Each atomic attack receives the same executor instance.
         for run in mock_atomic_attacks:
-            run.run_async.assert_called_once_with(max_concurrency=5, return_partial_on_failure=True)
+            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True)
 
         # Verify result structure
         assert isinstance(result, ScenarioResult)
@@ -441,7 +425,7 @@ class TestScenarioExecution:
         assert len(result.attack_results["attack_run_3"]) == 1
 
     async def test_run_async_stops_on_error(self, mock_atomic_attacks, sample_attack_results, mock_objective_target):
-        """Test that execution stops when an atomic attack fails."""
+        """With max_concurrency=1 the single worker pulls one attack at a time and stops on first failure."""
         mock_atomic_attacks[0].run_async = create_mock_run_async([sample_attack_results[0]])
         mock_atomic_attacks[1].run_async = AsyncMock(side_effect=Exception("Test error"))
         mock_atomic_attacks[2].run_async = create_mock_run_async([sample_attack_results[2]])
@@ -451,7 +435,8 @@ class TestScenarioExecution:
             version=1,
             atomic_attacks_to_return=mock_atomic_attacks,
         )
-        await scenario.initialize_async(objective_target=mock_objective_target)
+        # Single worker so abort-on-first-failure is deterministic.
+        await scenario.initialize_async(objective_target=mock_objective_target, max_concurrency=1)
 
         with pytest.raises(Exception, match="Test error"):
             await scenario.run_async()
@@ -460,7 +445,7 @@ class TestScenarioExecution:
         mock_atomic_attacks[0].run_async.assert_called_once()
         # Second run should have been attempted
         mock_atomic_attacks[1].run_async.assert_called_once()
-        # Third run should not have been executed
+        # Third run should not have been executed (worker stops pulling after failure)
         mock_atomic_attacks[2].run_async.assert_not_called()
 
     async def test_run_async_fails_without_initialization(self, mock_objective_target):
@@ -713,6 +698,8 @@ class ConcreteScenarioWithTrueFalseScorer(Scenario):
                 return {"all"}
 
         kwargs.setdefault("strategy_class", TestStrategy)
+        kwargs.setdefault("default_strategy", kwargs["strategy_class"].ALL)
+        kwargs.setdefault("default_dataset_config", DatasetConfiguration())
 
         # Use TrueFalseScorer mock if not provided
         if "objective_scorer" not in kwargs:
@@ -720,32 +707,6 @@ class ConcreteScenarioWithTrueFalseScorer(Scenario):
 
         super().__init__(**kwargs)
         self._atomic_attacks_to_return = atomic_attacks_to_return or []
-
-    @classmethod
-    def get_strategy_class(cls):
-        """Return a mock strategy class for testing."""
-
-        from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
-
-        class TestStrategy(ScenarioStrategy):
-            TEST = ("test", {"concrete"})
-            ALL = ("all", {"all"})
-
-            @classmethod
-            def get_aggregate_tags(cls) -> set[str]:
-                return {"all"}
-
-        return TestStrategy
-
-    @classmethod
-    def get_default_strategy(cls):
-        """Return the default strategy for testing."""
-        return cls.get_strategy_class().ALL
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """Return the default dataset configuration for testing."""
-        return DatasetConfiguration()
 
     async def _get_atomic_attacks_async(self):
         atomic_attacks = list(self._atomic_attacks_to_return)
@@ -890,8 +851,8 @@ class TestScenarioBaselineOnlyExecution:
     def test_empty_list_strategies_expands_defaults_same_as_none(self):
         """Test that [] and None both expand to the default strategy set."""
         scenario = ConcreteScenario(name="Test", version=1)
-        strategy_class = scenario.get_strategy_class()
-        default = scenario.get_default_strategy()
+        strategy_class = scenario._strategy_class
+        default = scenario._default_strategy
 
         resolved_none = strategy_class.resolve(None, default=default)
         resolved_empty = strategy_class.resolve([], default=default)
@@ -1194,3 +1155,289 @@ class TestScenarioResumption:
 
         with pytest.raises(ValueError, match="not found in memory"):
             await scenario.initialize_async(objective_target=mock_objective_target)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestScenarioParallelExecution:
+    """Tests for parallel atomic-attack execution sharing a single max_concurrency budget."""
+
+    async def test_atomic_attacks_share_one_executor(
+        self, mock_atomic_attacks, sample_attack_results, mock_objective_target
+    ):
+        """All atomic attacks in parallel mode receive the same shared AttackExecutor instance."""
+        from pyrit.executor.attack import AttackExecutor
+
+        for i, run in enumerate(mock_atomic_attacks):
+            run.run_async = create_mock_run_async([sample_attack_results[i]], atomic_attack=run)
+
+        scenario = ConcreteScenario(
+            name="Test Scenario",
+            version=1,
+            atomic_attacks_to_return=mock_atomic_attacks,
+        )
+        await scenario.initialize_async(
+            objective_target=mock_objective_target,
+            max_concurrency=4,
+        )
+
+        await scenario.run_async()
+
+        # Each atomic attack got an executor kwarg, and it's the SAME AttackExecutor instance,
+        # sized to max_concurrency=4.
+        executors_seen = []
+        for run in mock_atomic_attacks:
+            assert run.run_async.call_count == 1
+            kwargs = run.run_async.call_args.kwargs
+            assert kwargs["return_partial_on_failure"] is True
+            assert isinstance(kwargs["executor"], AttackExecutor)
+            executors_seen.append(kwargs["executor"])
+        assert executors_seen[0] is executors_seen[1] is executors_seen[2]
+        assert executors_seen[0]._max_concurrency == 4
+
+    async def test_shared_executor_bounds_global_concurrency(
+        self, mock_atomic_attacks, sample_attack_results, mock_objective_target
+    ):
+        """Total in-flight objectives across all atomic attacks never exceeds max_concurrency.
+
+        Simulates each atomic attack 'using' the executor's internal semaphore for two
+        objectives. With max_concurrency=2 and 3 atomic attacks (= 6 objectives total),
+        peak in-flight objective count must stay <= 2 even though all three atomic
+        attacks are launched.
+        """
+        peak = [0]
+        in_flight = [0]
+        lock = asyncio.Lock()
+
+        def make_run_async(idx):
+            async def run_async(*, executor, **kwargs):
+                # Simulate two objectives per atomic attack, each acquiring the shared
+                # executor's semaphore. Use the public-ish accessor so the executor can
+                # rebind the semaphore to the currently running event loop on demand.
+                semaphore = executor._get_semaphore()
+                for _ in range(2):
+                    async with semaphore:
+                        async with lock:
+                            in_flight[0] += 1
+                            peak[0] = max(peak[0], in_flight[0])
+                        await asyncio.sleep(0.02)
+                        async with lock:
+                            in_flight[0] -= 1
+                _stamp_scenario_linkage(
+                    attack_results=[sample_attack_results[idx]],
+                    atomic_attack=mock_atomic_attacks[idx],
+                )
+                save_attack_results_to_memory([sample_attack_results[idx]])
+                return AttackExecutorResult(completed_results=[sample_attack_results[idx]], incomplete_objectives=[])
+
+            return AsyncMock(side_effect=run_async)
+
+        for i, run in enumerate(mock_atomic_attacks):
+            run.run_async = make_run_async(i)
+
+        scenario = ConcreteScenario(
+            name="Test Scenario",
+            version=1,
+            atomic_attacks_to_return=mock_atomic_attacks,
+        )
+        await scenario.initialize_async(
+            objective_target=mock_objective_target,
+            max_concurrency=2,
+        )
+
+        await scenario.run_async()
+
+        assert peak[0] <= 2, f"shared executor budget violated: peak in-flight was {peak[0]}"
+        assert peak[0] == 2, f"expected to saturate budget of 2, peaked at {peak[0]}"
+
+    async def test_atomic_attacks_run_concurrently(
+        self, mock_atomic_attacks, sample_attack_results, mock_objective_target
+    ):
+        """When max_concurrency permits, multiple atomic attacks are in-flight simultaneously."""
+        started = asyncio.Event()
+        in_flight = 0
+        max_in_flight = 0
+        lock = asyncio.Lock()
+
+        def make_run_async(idx):
+            async def run_async(*args, **kwargs):
+                nonlocal in_flight, max_in_flight
+                async with lock:
+                    in_flight += 1
+                    max_in_flight = max(max_in_flight, in_flight)
+                if in_flight >= 3:
+                    started.set()
+                try:
+                    await asyncio.wait_for(started.wait(), timeout=2.0)
+                finally:
+                    async with lock:
+                        in_flight -= 1
+                _stamp_scenario_linkage(
+                    attack_results=[sample_attack_results[idx]],
+                    atomic_attack=mock_atomic_attacks[idx],
+                )
+                save_attack_results_to_memory([sample_attack_results[idx]])
+                return AttackExecutorResult(completed_results=[sample_attack_results[idx]], incomplete_objectives=[])
+
+            return AsyncMock(side_effect=run_async)
+
+        for i, run in enumerate(mock_atomic_attacks):
+            run.run_async = make_run_async(i)
+
+        scenario = ConcreteScenario(
+            name="Test Scenario",
+            version=1,
+            atomic_attacks_to_return=mock_atomic_attacks,
+        )
+        await scenario.initialize_async(
+            objective_target=mock_objective_target,
+            max_concurrency=6,
+        )
+
+        result = await scenario.run_async()
+
+        assert max_in_flight == 3, f"expected all 3 atomic attacks in flight, peaked at {max_in_flight}"
+        assert len(result.attack_results) == 3
+
+    async def test_failure_lets_inflight_siblings_finish_but_skips_queued(
+        self, mock_atomic_attacks, sample_attack_results, mock_objective_target
+    ):
+        """In-flight siblings finish so partial work persists; queued siblings don't start.
+
+        Uses max_concurrency=2 with 3 atomic attacks so the third is unambiguously queued
+        rather than already-started. attack[0] takes a slot and sleeps; attack[1] takes
+        the second slot and fails. attack[2] is queued behind them — once attack[1]'s
+        worker observes the failure and stops pulling, attack[2] must never start.
+        """
+        started_calls: list[str] = []
+        completed_calls: list[str] = []
+        bad_started = asyncio.Event()
+
+        async def ok_run(idx, name):
+            started_calls.append(name)
+            await asyncio.sleep(0.05)
+            completed_calls.append(name)
+            _stamp_scenario_linkage(
+                attack_results=[sample_attack_results[idx]],
+                atomic_attack=mock_atomic_attacks[idx],
+            )
+            save_attack_results_to_memory([sample_attack_results[idx]])
+            return AttackExecutorResult(completed_results=[sample_attack_results[idx]], incomplete_objectives=[])
+
+        async def bad_run(*args, **kwargs):
+            started_calls.append("attack_run_2")
+            bad_started.set()
+            raise RuntimeError("boom")
+
+        async def side_run_0(*a, **k):
+            return await ok_run(0, "attack_run_1")
+
+        async def side_run_2(*a, **k):
+            return await ok_run(2, "attack_run_3")
+
+        mock_atomic_attacks[0].run_async = AsyncMock(side_effect=side_run_0)
+        mock_atomic_attacks[1].run_async = AsyncMock(side_effect=bad_run)
+        mock_atomic_attacks[2].run_async = AsyncMock(side_effect=side_run_2)
+
+        scenario = ConcreteScenario(
+            name="Test Scenario",
+            version=1,
+            atomic_attacks_to_return=mock_atomic_attacks,
+        )
+        await scenario.initialize_async(
+            objective_target=mock_objective_target,
+            max_concurrency=2,
+        )
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await scenario.run_async()
+
+        # attack[0] was in-flight when attack[1] failed and must complete cleanly.
+        assert "attack_run_1" in completed_calls
+        # attack[2] was queued behind the failed one and must never have started.
+        assert "attack_run_3" not in started_calls
+        assert "attack_run_3" not in completed_calls
+        # Sanity check: the failure actually happened.
+        assert bad_started.is_set()
+
+    async def test_multiple_inflight_failures_are_grouped_into_exception_group(
+        self, mock_atomic_attacks, sample_attack_results, mock_objective_target
+    ):
+        """When multiple in-flight atomic attacks fail, all failures are surfaced via ExceptionGroup."""
+
+        # All three workers fail concurrently, so all three are in-flight when failure is
+        # observed (no queueing) and every failure should propagate.
+        def make_fail_run(name: str):
+            async def _run(*args, **kwargs):
+                await asyncio.sleep(0.01)
+                raise RuntimeError(f"{name} boom")
+
+            return AsyncMock(side_effect=_run)
+
+        mock_atomic_attacks[0].run_async = make_fail_run("a")
+        mock_atomic_attacks[1].run_async = make_fail_run("b")
+        mock_atomic_attacks[2].run_async = make_fail_run("c")
+
+        scenario = ConcreteScenario(
+            name="Test Scenario",
+            version=1,
+            atomic_attacks_to_return=mock_atomic_attacks,
+        )
+        await scenario.initialize_async(
+            objective_target=mock_objective_target,
+            max_concurrency=3,
+        )
+
+        with pytest.raises(ExceptionGroup) as exc_info:
+            await scenario.run_async()
+
+        # All three failures must be present in the group.
+        messages = sorted(str(e) for e in exc_info.value.exceptions)
+        assert messages == ["a boom", "b boom", "c boom"]
+        assert all(isinstance(e, RuntimeError) for e in exc_info.value.exceptions)
+
+    async def test_single_failure_is_raised_directly_not_wrapped(
+        self, mock_atomic_attacks, sample_attack_results, mock_objective_target
+    ):
+        """A lone failure is re-raised as-is (no ExceptionGroup wrapping for the common case)."""
+        for i in [0, 2]:
+            mock_atomic_attacks[i].run_async = create_mock_run_async(
+                [sample_attack_results[i]], atomic_attack=mock_atomic_attacks[i]
+            )
+
+        async def bad_run(*a, **k):
+            raise RuntimeError("solo boom")
+
+        mock_atomic_attacks[1].run_async = AsyncMock(side_effect=bad_run)
+
+        scenario = ConcreteScenario(
+            name="Test Scenario",
+            version=1,
+            atomic_attacks_to_return=mock_atomic_attacks,
+        )
+        await scenario.initialize_async(
+            objective_target=mock_objective_target,
+            max_concurrency=3,
+        )
+
+        # Bare RuntimeError, not ExceptionGroup.
+        with pytest.raises(RuntimeError, match="solo boom"):
+            await scenario.run_async()
+
+    async def test_max_concurrency_one_serializes_via_single_worker(
+        self, mock_atomic_attacks, sample_attack_results, mock_objective_target
+    ):
+        """max_concurrency=1 reduces the worker pool to one worker; attacks still get the shared executor."""
+        for i, run in enumerate(mock_atomic_attacks):
+            run.run_async = create_mock_run_async([sample_attack_results[i]], atomic_attack=run)
+
+        scenario = ConcreteScenario(
+            name="Test Scenario",
+            version=1,
+            atomic_attacks_to_return=mock_atomic_attacks,
+        )
+        await scenario.initialize_async(objective_target=mock_objective_target, max_concurrency=1)
+
+        await scenario.run_async()
+
+        for run in mock_atomic_attacks:
+            run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True)
