@@ -123,13 +123,14 @@ jobs:
             **/uv.lock
 
       - name: Install PyRIT with dev dependencies
-        # Older release branches use [project.optional-dependencies] (legacy
-        # extras syntax) while main uses PEP 735 [dependency-groups]. Try the
-        # PEP 735 syntax first, fall back to the extras syntax.
+        # Use `uv sync --frozen` so each release branch installs the exact
+        # versions pinned in its own uv.lock. Frozen branch = frozen deps =
+        # bit-for-bit reproducible rebuild forever. Newer release branches
+        # (incl. main) use PEP 735 [dependency-groups]; older releases use
+        # legacy [project.optional-dependencies] -- try the group syntax
+        # first, fall back to the extra.
         run: |
-          uv venv
-          source .venv/bin/activate
-          uv pip install . --group dev 2>/dev/null || uv pip install ".[dev]"
+          uv sync --frozen --group dev 2>/dev/null || uv sync --frozen --extra dev
 
       - name: Generate API reference (pydoc2json + gen_api_md)
         run: |
