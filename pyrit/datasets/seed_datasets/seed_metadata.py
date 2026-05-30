@@ -64,6 +64,8 @@ RECOMMENDED_TAGS: frozenset[str] = frozenset(
         "refusal",  # refusal-evaluation oriented (over-refusal, false-refusal, etc.)
         "synthetic",  # programmatically generated content
         "multiturn",  # multi-turn conversations
+        "agent_security",  # agentic-AI threat models (tool poisoning, context exfiltration, etc.)
+        "prompt_injection",  # direct or indirect prompt-injection payloads
     }
 )
 
