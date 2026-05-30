@@ -1,4 +1,46 @@
 name: Many-shot Jailbreaking
+authors:
+  - Cem Anil
+  - Esin Durmus
+  - Mrinank Sharma
+  - Joe Benton
+  - Sandipan Kundu
+  - Joshua Batson
+  - Nina Rimsky
+  - Meg Tong
+  - Jesse Mu
+  - Daniel Ford
+  - Francesco Mosconi
+  - Rajashree Agrawal
+  - Rylan Schaeffer
+  - Naomi Bashkansky
+  - Samuel Svenningsen
+  - Mike Lambert
+  - Ansh Radhakrishnan
+  - Carson Denison
+  - Evan J Hubinger
+  - Yuntao Bai
+  - Trenton Bricken
+  - Timothy Maxwell
+  - Nicholas Schiefer
+  - Jamie Sully
+  - Alex Tamkin
+  - Tamera Lanham
+  - Karina Nguyen
+  - Tomasz Korbak
+  - Jared Kaplan
+  - Deep Ganguli
+  - Samuel R. Bowman
+  - Ethan Perez
+  - Roger Grosse
+  - David Duvenaud
+groups:
+  - Anthropic
+  - University of Toronto
+  - Vector Institute
+  - Constellation
+  - Stanford
+  - Harvard
 source: https://www.anthropic.com/research/many-shot-jailbreaking
 parameters:
   - prompt

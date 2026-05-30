@@ -11,9 +11,10 @@ import pytest
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry, AttackTechniqueSpec
+from pyrit.registry import TargetRegistry
+from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
-from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
+from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
 
 
 class _StubAttack:
@@ -85,7 +86,7 @@ class TestAttackTechniqueRegistryRegister:
         AttackTechniqueRegistry.reset_instance()
 
     def test_register_technique_stores_factory(self):
-        factory = AttackTechniqueFactory(attack_class=_StubAttack)
+        factory = AttackTechniqueFactory(name="stub_attack", attack_class=_StubAttack)
 
         self.registry.register_technique(name="stub_attack", factory=factory)
 
@@ -93,7 +94,7 @@ class TestAttackTechniqueRegistryRegister:
         assert self.registry._registry_items["stub_attack"].instance is factory
 
     def test_register_technique_with_tags(self):
-        factory = AttackTechniqueFactory(attack_class=_StubAttack)
+        factory = AttackTechniqueFactory(name="stub_attack", attack_class=_StubAttack)
 
         self.registry.register_technique(
             name="stub_attack",
@@ -106,8 +107,9 @@ class TestAttackTechniqueRegistryRegister:
         assert entries[0].name == "stub_attack"
 
     def test_register_multiple_techniques(self):
-        factory1 = AttackTechniqueFactory(attack_class=_StubAttack)
+        factory1 = AttackTechniqueFactory(name="stub_5", attack_class=_StubAttack)
         factory2 = AttackTechniqueFactory(
+            name="stub_20",
             attack_class=_StubAttack,
             attack_kwargs={"max_turns": 20},
         )
@@ -130,7 +132,7 @@ class TestAttackTechniqueRegistryMetadata:
         AttackTechniqueRegistry.reset_instance()
 
     def test_build_metadata_returns_component_identifier(self):
-        factory = AttackTechniqueFactory(attack_class=_StubAttack)
+        factory = AttackTechniqueFactory(name="stub", attack_class=_StubAttack)
         self.registry.register_technique(name="stub", factory=factory)
 
         metadata = self.registry.list_metadata()
@@ -140,7 +142,7 @@ class TestAttackTechniqueRegistryMetadata:
         assert metadata[0].class_name == "AttackTechniqueFactory"
 
     def test_metadata_matches_factory_identifier(self):
-        factory = AttackTechniqueFactory(attack_class=_StubAttack)
+        factory = AttackTechniqueFactory(name="stub", attack_class=_StubAttack)
         self.registry.register_technique(name="stub", factory=factory)
 
         metadata = self.registry.list_metadata()
@@ -159,7 +161,7 @@ class TestAttackTechniqueRegistryInherited:
         AttackTechniqueRegistry.reset_instance()
 
     def test_contains(self):
-        factory = AttackTechniqueFactory(attack_class=_StubAttack)
+        factory = AttackTechniqueFactory(name="exists", attack_class=_StubAttack)
         self.registry.register_technique(name="exists", factory=factory)
 
         assert "exists" in self.registry
@@ -168,22 +170,24 @@ class TestAttackTechniqueRegistryInherited:
     def test_len(self):
         assert len(self.registry) == 0
 
-        factory = AttackTechniqueFactory(attack_class=_StubAttack)
+        factory = AttackTechniqueFactory(name="a", attack_class=_StubAttack)
         self.registry.register_technique(name="a", factory=factory)
 
         assert len(self.registry) == 1
 
     def test_get_names_returns_sorted(self):
-        factory = AttackTechniqueFactory(attack_class=_StubAttack)
-        self.registry.register_technique(name="zeta", factory=factory)
-        self.registry.register_technique(name="alpha", factory=factory)
-        self.registry.register_technique(name="beta", factory=factory)
+        factory_zeta = AttackTechniqueFactory(name="zeta", attack_class=_StubAttack)
+        factory_alpha = AttackTechniqueFactory(name="alpha", attack_class=_StubAttack)
+        factory_beta = AttackTechniqueFactory(name="beta", attack_class=_StubAttack)
+        self.registry.register_technique(name="zeta", factory=factory_zeta)
+        self.registry.register_technique(name="alpha", factory=factory_alpha)
+        self.registry.register_technique(name="beta", factory=factory_beta)
 
         assert self.registry.get_names() == ["alpha", "beta", "zeta"]
 
     def test_tag_based_queries(self):
-        factory1 = AttackTechniqueFactory(attack_class=_StubAttack)
-        factory2 = AttackTechniqueFactory(attack_class=_StubAttack, attack_kwargs={"max_turns": 20})
+        factory1 = AttackTechniqueFactory(name="f1", attack_class=_StubAttack)
+        factory2 = AttackTechniqueFactory(name="f2", attack_class=_StubAttack, attack_kwargs={"max_turns": 20})
 
         self.registry.register_technique(name="f1", factory=factory1, tags=["multi_turn"])
         self.registry.register_technique(name="f2", factory=factory2, tags=["single_turn"])
@@ -197,15 +201,16 @@ class TestAttackTechniqueRegistryInherited:
         assert single[0].name == "f2"
 
     def test_iter_yields_sorted_names(self):
-        factory = AttackTechniqueFactory(attack_class=_StubAttack)
-        self.registry.register_technique(name="b", factory=factory)
-        self.registry.register_technique(name="a", factory=factory)
+        factory_b = AttackTechniqueFactory(name="b", attack_class=_StubAttack)
+        factory_a = AttackTechniqueFactory(name="a", attack_class=_StubAttack)
+        self.registry.register_technique(name="b", factory=factory_b)
+        self.registry.register_technique(name="a", factory=factory_a)
 
         assert list(self.registry) == ["a", "b"]
 
     def test_get_factories_returns_dict_mapping(self):
-        factory_a = AttackTechniqueFactory(attack_class=_StubAttack)
-        factory_b = AttackTechniqueFactory(attack_class=_StubAttack, attack_kwargs={"max_turns": 5})
+        factory_a = AttackTechniqueFactory(name="alpha", attack_class=_StubAttack)
+        factory_b = AttackTechniqueFactory(name="beta", attack_class=_StubAttack, attack_kwargs={"max_turns": 5})
         self.registry.register_technique(name="alpha", factory=factory_a)
         self.registry.register_technique(name="beta", factory=factory_b)
 
@@ -219,6 +224,22 @@ class TestAttackTechniqueRegistryInherited:
     def test_get_factories_empty_registry(self):
         result = self.registry.get_factories()
         assert result == {}
+
+    def test_get_factories_or_raise_returns_factories_when_populated(self):
+        factory_a = AttackTechniqueFactory(name="alpha", attack_class=_StubAttack)
+        factory_b = AttackTechniqueFactory(name="beta", attack_class=_StubAttack, attack_kwargs={"max_turns": 5})
+        self.registry.register_technique(name="alpha", factory=factory_a)
+        self.registry.register_technique(name="beta", factory=factory_b)
+
+        result = self.registry.get_factories_or_raise()
+
+        assert set(result.keys()) == {"alpha", "beta"}
+        assert result["alpha"] is factory_a
+        assert result["beta"] is factory_b
+
+    def test_get_factories_or_raise_raises_when_empty(self):
+        with pytest.raises(RuntimeError, match="AttackTechniqueRegistry is empty"):
+            self.registry.get_factories_or_raise()
 
 
 class TestAttackTechniqueRegistryScorerOverridePolicy:
@@ -240,43 +261,68 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
         with pytest.raises(AttributeError):
             self.registry.scorer_override_policy = ScorerOverridePolicy.RAISE
 
-    def test_policy_passed_to_factories_via_register_from_specs(self):
-        """Factories built via register_from_specs inherit the registry's default policy."""
-        spec = AttackTechniqueSpec(name="stub_policy", attack_class=_StubAttack, strategy_tags=["test"])
-        self.registry.register_from_specs([spec])
+    def test_policy_passed_to_factories_via_register_from_factories(self):
+        """Factories registered via register_from_factories inherit the registry's default policy."""
+        factory = AttackTechniqueFactory(name="stub_policy", attack_class=_StubAttack, strategy_tags=["test"])
+        self.registry.register_from_factories([factory])
 
-        factory = self.registry._registry_items["stub_policy"].instance
-        assert factory._scorer_override_policy == ScorerOverridePolicy.WARN
+        stored = self.registry._registry_items["stub_policy"].instance
+        assert stored._scorer_override_policy == ScorerOverridePolicy.WARN
 
 
-class TestScenarioTechniqueSpecsValid:
-    """Validate that every AttackTechniqueSpec in SCENARIO_TECHNIQUES is well-formed."""
+SCENARIO_FACTORIES_FIXTURE: list[AttackTechniqueFactory] = []
 
-    @pytest.mark.parametrize("spec", SCENARIO_TECHNIQUES, ids=lambda s: s.name)
-    def test_spec_extra_kwargs_match_attack_class_constructor(self, spec: AttackTechniqueSpec):
-        """Each spec's extra_kwargs must be valid parameters of its attack_class."""
-        factory = AttackTechniqueRegistry.build_factory_from_spec(spec)
-        assert factory.attack_class is spec.attack_class
 
-    @pytest.mark.parametrize("spec", SCENARIO_TECHNIQUES, ids=lambda s: s.name)
-    def test_spec_attack_class_accepts_objective_target(self, spec: AttackTechniqueSpec):
-        """Every attack class must accept objective_target (required at create time)."""
-        sig = inspect.signature(spec.attack_class.__init__)
+def _scenario_factories() -> list[AttackTechniqueFactory]:
+    """Build the scenario technique factories once for parametrization.
+
+    Uses a mock adversarial target in ``TargetRegistry`` so the build does
+    not depend on environment variables or OpenAIChatTarget.
+    """
+    if not SCENARIO_FACTORIES_FIXTURE:
+        TargetRegistry.reset_instance()
+        adv_target = MagicMock(spec=PromptTarget)
+        adv_target.capabilities.includes.return_value = True
+        TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
+        SCENARIO_FACTORIES_FIXTURE.extend(build_scenario_technique_factories())
+    return SCENARIO_FACTORIES_FIXTURE
+
+
+class TestScenarioTechniqueFactoriesValid:
+    """Validate that every factory built by ``build_scenario_technique_factories`` is well-formed."""
+
+    @pytest.mark.parametrize("factory", _scenario_factories(), ids=lambda f: f.name)
+    def test_factory_attack_class_set(self, factory: AttackTechniqueFactory):
+        """Each factory references an attack class."""
+        assert factory.attack_class is not None
+
+    @pytest.mark.parametrize("factory", _scenario_factories(), ids=lambda f: f.name)
+    def test_factory_attack_class_accepts_objective_target(self, factory: AttackTechniqueFactory):
+        """Every attack class must accept ``objective_target`` (required at create time)."""
+        sig = inspect.signature(factory.attack_class.__init__)
         assert "objective_target" in sig.parameters, (
-            f"{spec.attack_class.__name__} is missing required 'objective_target' parameter"
+            f"{factory.attack_class.__name__} is missing required 'objective_target' parameter"
         )
 
-    def test_spec_names_are_unique(self):
-        """No two specs should share the same name."""
-        names = [spec.name for spec in SCENARIO_TECHNIQUES]
-        assert len(names) == len(set(names)), f"Duplicate spec names: {[n for n in names if names.count(n) > 1]}"
+    def test_factory_names_are_unique(self):
+        """No two factories should share the same name."""
+        names = [f.name for f in _scenario_factories()]
+        assert len(names) == len(set(names)), f"Duplicate factory names: {[n for n in names if names.count(n) > 1]}"
 
-    @pytest.mark.parametrize("spec", SCENARIO_TECHNIQUES, ids=lambda s: s.name)
-    def test_spec_adversarial_fields_not_both_set(self, spec: AttackTechniqueSpec):
-        """adversarial_chat and adversarial_chat_key must be mutually exclusive."""
-        assert not (spec.adversarial_chat and spec.adversarial_chat_key), (
-            f"Spec '{spec.name}' sets both adversarial_chat and adversarial_chat_key"
-        )
+
+class TestPairTechniqueRegistration:
+    """Targeted tests for the PAIR technique factory in build_scenario_technique_factories()."""
+
+    def test_pair_factory_registered_with_pair_attack_class(self):
+        from pyrit.executor.attack import PAIRAttack
+
+        factories = build_scenario_technique_factories()
+        pair_factories = [f for f in factories if f.name == "pair"]
+        assert len(pair_factories) == 1, "Expected exactly one 'pair' factory"
+        factory = pair_factories[0]
+        assert factory.attack_class is PAIRAttack
+        assert set(factory.strategy_tags) >= {"core", "multi_turn"}
+        assert not factory._attack_kwargs, "PAIR defaults are encoded on PAIRAttack itself, not via attack_kwargs"
 
 
 class TestScorerOverrideTypeInference:
@@ -295,12 +341,21 @@ class TestScorerOverrideTypeInference:
         mock_scorer = MagicMock(spec=TrueFalseScorer)
         return AttackScoringConfig(objective_scorer=mock_scorer)
 
+    def _make_adversarial_config(self):
+        """Create an AttackAdversarialConfig wrapping a mock chat target."""
+        from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig
+
+        chat = MagicMock(spec=PromptTarget)
+        return AttackAdversarialConfig(target=chat)
+
     def test_tap_factory_rejects_generic_config_with_raise_policy(self):
         """TAP factory raises when given a generic AttackScoringConfig and policy is RAISE."""
         from pyrit.executor.attack.multi_turn.tree_of_attacks import TreeOfAttacksWithPruningAttack
 
         factory = AttackTechniqueFactory(
+            name="tap_raise",
             attack_class=TreeOfAttacksWithPruningAttack,
+            adversarial_config=self._make_adversarial_config(),
             scorer_override_policy=ScorerOverridePolicy.RAISE,
         )
 
@@ -320,24 +375,28 @@ class TestScorerOverrideTypeInference:
         from pyrit.executor.attack.multi_turn.tree_of_attacks import TreeOfAttacksWithPruningAttack
 
         factory = AttackTechniqueFactory(
+            name="tap_warn",
             attack_class=TreeOfAttacksWithPruningAttack,
+            adversarial_config=self._make_adversarial_config(),
             scorer_override_policy=ScorerOverridePolicy.WARN,
         )
 
         generic_config = self._make_generic_scoring_config()
         target = MagicMock(spec=PromptTarget)
 
-        # TAP will fail downstream (missing adversarial config), but the scorer
-        # override should be skipped with a warning — not a scorer ValueError.
+        # Under WARN policy, the scorer override should be skipped with a warning
+        # rather than raising. The factory.create() call may succeed or fail for
+        # unrelated downstream reasons — we only assert that no scorer-incompatibility
+        # ValueError was raised and that a warning was emitted.
         with caplog.at_level(logging.WARNING):
-            with pytest.raises(Exception) as exc_info:
+            try:
                 factory.create(
                     objective_target=target,
                     attack_scoring_config=generic_config,
                 )
+            except Exception as exc:
+                assert "incompatible" not in str(exc).lower()
 
-        # The downstream error should NOT be about scorer incompatibility
-        assert "incompatible" not in str(exc_info.value).lower()
         # A warning about incompatibility should be logged
         assert any("incompatible" in record.message.lower() for record in caplog.records)
 
@@ -348,24 +407,29 @@ class TestScorerOverrideTypeInference:
         from pyrit.executor.attack.multi_turn.tree_of_attacks import TreeOfAttacksWithPruningAttack
 
         factory = AttackTechniqueFactory(
+            name="tap_skip",
             attack_class=TreeOfAttacksWithPruningAttack,
+            adversarial_config=self._make_adversarial_config(),
             scorer_override_policy=ScorerOverridePolicy.SKIP,
         )
 
         generic_config = self._make_generic_scoring_config()
         target = MagicMock(spec=PromptTarget)
 
+        # Under SKIP policy, the scorer override should be skipped silently. The
+        # factory.create() call may succeed or fail for unrelated downstream reasons
+        # — we only assert that no scorer-incompatibility error or warning was emitted.
         with caplog.at_level(logging.WARNING):
-            with pytest.raises(Exception) as exc_info:
+            try:
                 factory.create(
                     objective_target=target,
                     attack_scoring_config=generic_config,
                 )
+            except Exception as exc:
+                assert "incompatible" not in str(exc).lower()
 
         # No warning about incompatibility should be logged
         assert not any("incompatible" in record.message.lower() for record in caplog.records)
-        # Downstream error should not mention scorer incompatibility
-        assert "incompatible" not in str(exc_info.value).lower()
 
     def test_tap_factory_accepts_tap_scoring_config(self):
         """TAP factory forwards TAPAttackScoringConfig regardless of policy."""
@@ -376,7 +440,9 @@ class TestScorerOverrideTypeInference:
         from pyrit.score import FloatScaleThresholdScorer
 
         factory = AttackTechniqueFactory(
+            name="tap_accept",
             attack_class=TreeOfAttacksWithPruningAttack,
+            adversarial_config=self._make_adversarial_config(),
             scorer_override_policy=ScorerOverridePolicy.RAISE,
         )
 
@@ -385,16 +451,16 @@ class TestScorerOverrideTypeInference:
         tap_config = TAPAttackScoringConfig(objective_scorer=mock_scorer)
         target = MagicMock(spec=PromptTarget)
 
-        # TAP will fail downstream (adversarial config missing), but
-        # the factory should NOT raise about scorer incompatibility
-        with pytest.raises(Exception) as exc_info:
+        # The factory should NOT raise about scorer incompatibility for a TAP-typed
+        # scoring config. Downstream construction may succeed or fail for unrelated
+        # reasons — we only assert no scorer-compatibility error is raised.
+        try:
             factory.create(
                 objective_target=target,
                 attack_scoring_config=tap_config,
             )
-
-        # The error should NOT be about scorer compatibility
-        assert "incompatible" not in str(exc_info.value).lower()
+        except Exception as exc:
+            assert "incompatible" not in str(exc).lower()
 
     def test_prompt_sending_factory_accepts_any_config(self):
         """PromptSendingAttack accepts base AttackScoringConfig — any config passes through."""
@@ -402,6 +468,7 @@ class TestScorerOverrideTypeInference:
         from pyrit.memory import CentralMemory
 
         factory = AttackTechniqueFactory(
+            name="ps_any",
             attack_class=PromptSendingAttack,
             scorer_override_policy=ScorerOverridePolicy.RAISE,
         )
@@ -429,6 +496,7 @@ class TestScorerOverrideTypeInference:
         from pyrit.score import FloatScaleThresholdScorer
 
         factory = AttackTechniqueFactory(
+            name="ps_tap",
             attack_class=PromptSendingAttack,
             scorer_override_policy=ScorerOverridePolicy.RAISE,
         )
@@ -453,6 +521,7 @@ class TestScorerOverrideTypeInference:
     def test_factory_raises_when_attack_has_no_scoring_param_and_policy_raise(self):
         """Factory raises when attack doesn't accept attack_scoring_config and policy is RAISE."""
         factory = AttackTechniqueFactory(
+            name="stub_noscorer_raise",
             attack_class=_StubAttackNoScorer,
             scorer_override_policy=ScorerOverridePolicy.RAISE,
         )
@@ -471,6 +540,7 @@ class TestScorerOverrideTypeInference:
         import logging
 
         factory = AttackTechniqueFactory(
+            name="stub_noscorer_warn",
             attack_class=_StubAttackNoScorer,
             scorer_override_policy=ScorerOverridePolicy.WARN,
         )
@@ -492,6 +562,7 @@ class TestScorerOverrideTypeInference:
         import logging
 
         factory = AttackTechniqueFactory(
+            name="stub_noscorer_skip",
             attack_class=_StubAttackNoScorer,
             scorer_override_policy=ScorerOverridePolicy.SKIP,
         )

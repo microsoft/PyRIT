@@ -18,6 +18,9 @@ build:
       - python build_scripts/gen_api_md.py
     build:
       html:
-        - cd doc && jupyter-book build --all
+        # --all builds frontmatter exports (PDF, per doc/myst.yml); --html is
+        # required to produce the static HTML site (_build/html/index.html)
+        # that RTD serves. Mirrors the Makefile's docs-build-all target.
+        - cd doc && jupyter-book build --all --html
         - mkdir -p $READTHEDOCS_OUTPUT/html
-        - cp -r doc/_build/site/* $READTHEDOCS_OUTPUT/html/
+        - cp -r doc/_build/html/* $READTHEDOCS_OUTPUT/html/

@@ -11,7 +11,7 @@ from pyrit.models.json_response_config import _JsonResponseConfig
 def test_with_none():
     config = _JsonResponseConfig.from_metadata(metadata=None)
     assert config.enabled is False
-    assert config.schema is None
+    assert config.json_schema is None
     assert config.schema_name == "CustomSchema"
     assert config.strict is True
 
@@ -22,7 +22,7 @@ def test_with_json_object():
     }
     config = _JsonResponseConfig.from_metadata(metadata=metadata)
     assert config.enabled is True
-    assert config.schema is None
+    assert config.json_schema is None
     assert config.schema_name == "CustomSchema"
     assert config.strict is True
 
@@ -37,7 +37,7 @@ def test_with_json_string_schema():
     }
     config = _JsonResponseConfig.from_metadata(metadata=metadata)
     assert config.enabled is True
-    assert config.schema == schema
+    assert config.json_schema == schema
     assert config.schema_name == "TestSchema"
     assert config.strict is False
 
@@ -50,7 +50,7 @@ def test_with_json_schema_object():
     }
     config = _JsonResponseConfig.from_metadata(metadata=metadata)
     assert config.enabled is True
-    assert config.schema == schema
+    assert config.json_schema == schema
     assert config.schema_name == "CustomSchema"
     assert config.strict is True
 
@@ -62,7 +62,7 @@ def test_with_empty_json_schema_object():
     }
     config = _JsonResponseConfig.from_metadata(metadata=metadata)
     assert config.enabled is True
-    assert config.schema == {}
+    assert config.json_schema == {}
     assert config.schema_name == "CustomSchema"
     assert config.strict is True
 
@@ -83,6 +83,6 @@ def test_other_response_format():
     }
     config = _JsonResponseConfig.from_metadata(metadata=metadata)
     assert config.enabled is False
-    assert config.schema is None
+    assert config.json_schema is None
     assert config.schema_name == "CustomSchema"
     assert config.strict is True

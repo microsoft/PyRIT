@@ -81,7 +81,6 @@ class TestMMSafetyBenchDataset:
         assert loader.variant == MMSafetyBenchVariant.SD_TYPO
         assert loader.categories is None
         assert loader.use_tiny is False
-        assert loader.max_examples is None
         assert loader.token is None
         assert "PKU-Alignment/MM-SafetyBench" in loader.source
 
@@ -257,37 +256,6 @@ class TestMMSafetyBenchDataset:
         objective = next(s for s in dataset.seeds if isinstance(s, SeedObjective))
         assert objective.metadata is not None
         assert objective.metadata["question_id"] == "5"
-
-    async def test_fetch_dataset_max_examples(self):
-        """max_examples caps the number of groups across multiple categories."""
-        loader = _MMSafetyBenchDataset(
-            categories=[MMSafetyBenchCategory.FRAUD, MMSafetyBenchCategory.HATE_SPEECH],
-            max_examples=1,
-        )
-
-        async def fake_fetch_from_huggingface(*, dataset_name: str, config: str, split: str, **_: Any) -> Any:
-            if split == "Text_only":
-                return [
-                    _text_only_row(qid="0", question=f"{config} objective 0"),
-                    _text_only_row(qid="1", question=f"{config} objective 1"),
-                ]
-            return [
-                _variant_row(qid="0", question=f"{config} rephrased 0"),
-                _variant_row(qid="1", question=f"{config} rephrased 1"),
-            ]
-
-        fake_save = AsyncMock(
-            side_effect=lambda *, pil_image, category_value, question_id: f"/fake/{category_value}_{question_id}.jpg"
-        )
-
-        with (
-            patch.object(loader, "_fetch_from_huggingface", side_effect=fake_fetch_from_huggingface),
-            patch.object(loader, "_save_pil_image_async", new=fake_save),
-        ):
-            dataset = await loader.fetch_dataset_async(cache=False)
-
-        # max_examples=1 -> 1 group = 3 seeds (objective + image + text)
-        assert len(dataset.seeds) == 3
 
     async def test_fetch_dataset_skips_rows_with_no_image(self):
         """Variant rows with image=None (corrupt rows) are dropped."""

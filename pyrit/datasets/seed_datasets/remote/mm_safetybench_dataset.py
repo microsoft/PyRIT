@@ -174,7 +174,6 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         variant: MMSafetyBenchVariant = MMSafetyBenchVariant.SD_TYPO,
         categories: Optional[list[MMSafetyBenchCategory]] = None,
         use_tiny: bool = False,
-        max_examples: Optional[int] = None,
         token: Optional[str] = None,
     ) -> None:
         """
@@ -189,9 +188,6 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
             use_tiny (bool): When True, filter to the per-scenario IDs in
                 ``TinyVersion_ID_List.json`` (~150 questions total) for fast
                 evaluations. Defaults to False.
-            max_examples (int | None): Maximum number of 3-seed groups to
-                produce. Each group contributes 3 seeds to the resulting
-                dataset. If None, all matching examples are returned.
             token (str | None): HuggingFace token. The mirror is non-gated so
                 this is optional; provided for parity with other loaders.
 
@@ -206,7 +202,6 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         self.variant = variant
         self.categories = categories
         self.use_tiny = use_tiny
-        self.max_examples = max_examples
         self.token = token
         self.source = self.SOURCE_URL
 
@@ -282,12 +277,6 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
                     )
                 )
                 group_count += 1
-
-                if self.max_examples is not None and group_count >= self.max_examples:
-                    break
-
-            if self.max_examples is not None and group_count >= self.max_examples:
-                break
 
         if failed_image_count:
             logger.warning(f"[MM-SafetyBench] Skipped {failed_image_count} example(s) due to image save failures")

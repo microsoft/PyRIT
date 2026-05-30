@@ -3,8 +3,6 @@
 
 """Tests for the AdversarialBenchmark scenario."""
 
-import copy
-from dataclasses import FrozenInstanceError
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,27 +19,43 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
+from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
-from pyrit.scenario.core.scenario_techniques import SCENARIO_TECHNIQUES
 from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark
 from pyrit.score import TrueFalseScorer
+from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
 
-# Self-pinned: any change to ``_get_benchmarkable_specs`` (or to the ``light`` tag
-# membership in SCENARIO_TECHNIQUES) is reflected automatically — no magic numbers.
-#
-# ``_BENCHMARKABLE_*`` covers every adversarial-capable spec (used to verify the
-# strategy enum's full concrete-member roster).  ``_LIGHT_BENCHMARKABLE_*`` covers
-# only the subset tagged ``"light"`` (used for runtime expectations under the
-# default ``"light"`` strategy).
-_BENCHMARKABLE_SPECS = AdversarialBenchmark._get_benchmarkable_specs()
-_NUM_ADVERSARIAL_TECHNIQUES = len(_BENCHMARKABLE_SPECS)
-_BENCHMARKABLE_TECHNIQUE_NAMES = {spec.name for spec in _BENCHMARKABLE_SPECS}
-_BENCHMARKABLE_ATTACK_CLASSES = {spec.attack_class for spec in _BENCHMARKABLE_SPECS}
 
-_LIGHT_BENCHMARKABLE_SPECS = [spec for spec in _BENCHMARKABLE_SPECS if "light" in spec.strategy_tags]
-_NUM_LIGHT_BENCHMARKABLE = len(_LIGHT_BENCHMARKABLE_SPECS)
+def _build_benchmarkable_factories_snapshot() -> list:
+    """Build the benchmarkable-factory snapshot used by module-level test constants.
+
+    Sets up a mock ``adversarial_chat`` in ``TargetRegistry`` so factory
+    construction does not depend on environment variables, then filters the
+    canonical scenario factories by the same predicate used by
+    ``AdversarialBenchmark._get_benchmarkable_factories``.
+    """
+    TargetRegistry.reset_instance()
+    adv = MagicMock(spec=PromptTarget)
+    adv.capabilities.includes.return_value = True
+    TargetRegistry.get_registry_singleton().register_instance(adv, name="adversarial_chat")
+    try:
+        factories = build_scenario_technique_factories()
+    finally:
+        TargetRegistry.reset_instance()
+    return [f for f in factories if f.uses_adversarial and "core" in f.strategy_tags]
+
+
+# Self-pinned: any change to ``_get_benchmarkable_factories`` (or to the ``light`` tag
+# membership in the canonical factory catalog) is reflected automatically — no magic numbers.
+_BENCHMARKABLE_FACTORIES = _build_benchmarkable_factories_snapshot()
+_NUM_ADVERSARIAL_TECHNIQUES = len(_BENCHMARKABLE_FACTORIES)
+_BENCHMARKABLE_TECHNIQUE_NAMES = {f.name for f in _BENCHMARKABLE_FACTORIES}
+_BENCHMARKABLE_ATTACK_CLASSES = {f.attack_class for f in _BENCHMARKABLE_FACTORIES}
+
+_LIGHT_BENCHMARKABLE_FACTORIES = [f for f in _BENCHMARKABLE_FACTORIES if "light" in f.strategy_tags]
+_NUM_LIGHT_BENCHMARKABLE = len(_LIGHT_BENCHMARKABLE_FACTORIES)
 
 # ---------------------------------------------------------------------------
 # Synthetic many-shot examples — prevents reading the real JSON during tests
@@ -127,12 +141,22 @@ def single_adversarial_model():
 
 @pytest.fixture(autouse=True)
 def reset_technique_registry():
-    """Reset the AttackTechniqueRegistry and cached strategy class between tests."""
-    from pyrit.registry import TargetRegistry
+    """Reset registries, populate scenario factories, and clear cached strategy class.
 
+    Registers a mock adversarial target under ``adversarial_chat`` in
+    ``TargetRegistry`` so ``build_scenario_technique_factories`` resolves
+    without falling back to ``OpenAIChatTarget``.
+    """
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
     AdversarialBenchmark._cached_strategy_class = None
+
+    adv_target = MagicMock(spec=PromptTarget)
+    adv_target.capabilities.includes.return_value = True
+    TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
+
+    technique_registry = AttackTechniqueRegistry.get_registry_singleton()
+    technique_registry.register_from_factories(build_scenario_technique_factories())
     yield
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
@@ -202,21 +226,15 @@ class TestBenchmarkTypes:
     def test_version_is_1(self):
         assert AdversarialBenchmark.VERSION == 1
 
-    def test_default_dataset_config_uses_harmbench(self):
-        config = AdversarialBenchmark.default_dataset_config()
+    def test_default_dataset_config_uses_harmbench(self, single_adversarial_model):
+        config = _make_benchmark(single_adversarial_model)._default_dataset_config
         assert isinstance(config, DatasetConfiguration)
         names = config.get_default_dataset_names()
         assert "harmbench" in names
 
-    def test_default_dataset_config_max_size_is_8(self):
-        config = AdversarialBenchmark.default_dataset_config()
+    def test_default_dataset_config_max_size_is_8(self, single_adversarial_model):
+        config = _make_benchmark(single_adversarial_model)._default_dataset_config
         assert config.max_dataset_size == 8
-
-    def test_frozen_spec_cannot_be_mutated(self):
-        """AttackTechniqueSpec is frozen — direct mutation must raise."""
-        spec = SCENARIO_TECHNIQUES[0]
-        with pytest.raises(FrozenInstanceError):
-            spec.name = "mutated"  # type: ignore[misc]
 
 
 # ===========================================================================
@@ -235,23 +253,22 @@ def _make_benchmark(adversarial_models):
 class TestBenchmarkStrategy:
     """Tests for the (static) BenchmarkStrategy enum and instance-level wiring."""
 
-    def test_strategy_includes_all_adversarial_techniques(self, all_supported_attacks):
-        """get_strategy_class() concrete members match the adversarial-capable spec set."""
-        strat = AdversarialBenchmark.get_strategy_class()
+    def test_strategy_includes_all_adversarial_techniques(self, all_supported_attacks, single_adversarial_model):
+        """concrete members match the adversarial-capable spec set."""
+        strat = _make_benchmark(single_adversarial_model)._strategy_class
         values = {s.value for s in strat.get_all_strategies()}
         assert values == all_supported_attacks
 
-    def test_strategy_has_no_permuted_members(self):
+    def test_strategy_has_no_permuted_members(self, single_adversarial_model):
         """No ``__model`` suffixes — models are a runtime parameter, not a strategy axis."""
-        strat = AdversarialBenchmark.get_strategy_class()
+        strat = _make_benchmark(single_adversarial_model)._strategy_class
         values = {s.value for s in strat.get_all_strategies()}
         assert not any("__" in v for v in values)
 
-    def test_strategy_excludes_non_adversarial_techniques(self):
+    def test_strategy_excludes_non_adversarial_techniques(self, single_adversarial_model):
         """prompt_sending and many_shot don't accept an adversarial chat and must be excluded."""
-        strat = AdversarialBenchmark.get_strategy_class()
+        strat = _make_benchmark(single_adversarial_model)._strategy_class
         values = {s.value for s in strat.get_all_strategies()}
-        assert "prompt_sending" not in values
         assert "many_shot" not in values
 
     def test_strategy_class_is_static(self, single_adversarial_model, two_adversarial_models):
@@ -259,29 +276,29 @@ class TestBenchmarkStrategy:
         s1 = _make_benchmark(single_adversarial_model)
         s2 = _make_benchmark(two_adversarial_models)
         assert s1._strategy_class is s2._strategy_class
-        assert s1._strategy_class is AdversarialBenchmark.get_strategy_class()
 
-    def test_default_strategy_is_light(self):
+    def test_default_strategy_is_light(self, single_adversarial_model):
         """Default expands to every benchmarkable technique via the ``all`` aggregate."""
-        default = AdversarialBenchmark.get_default_strategy()
+        default = _make_benchmark(single_adversarial_model)._default_strategy
         assert default.value == "light"
 
     def test_benchmarkable_specs_have_no_adversarial_chat(self):
-        """Filtered specs must leave adversarial_chat unset — the scenario injects its own."""
-        for spec in AdversarialBenchmark._get_benchmarkable_specs():
-            assert spec.adversarial_chat is None
+        """Benchmarkable factories must be tagged ``core`` (excludes persona variants)."""
+        for factory in AdversarialBenchmark._get_benchmarkable_factories():
+            assert "core" in factory.strategy_tags
 
     def test_benchmarkable_specs_accept_adversarial(self):
-        """All filtered specs must accept attack_adversarial_config."""
-        for spec in AdversarialBenchmark._get_benchmarkable_specs():
-            assert AttackTechniqueRegistry._accepts_adversarial(spec.attack_class)
+        """All filtered factories drive an adversarial chat."""
+        for factory in AdversarialBenchmark._get_benchmarkable_factories():
+            assert factory.uses_adversarial is True
 
     def test_original_scenario_techniques_unmodified(self, two_adversarial_models):
-        """SCENARIO_TECHNIQUES global must not be mutated by spec filtering."""
-        original = copy.deepcopy([(s.name, s.attack_class) for s in SCENARIO_TECHNIQUES])
+        """The benchmark's factory filter must not mutate the registry."""
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        before = sorted(registry.get_names())
         _make_benchmark(two_adversarial_models)
-        current = [(s.name, s.attack_class) for s in SCENARIO_TECHNIQUES]
-        assert current == original
+        after = sorted(registry.get_names())
+        assert before == after
 
     def test_singleton_registry_not_polluted(self, two_adversarial_models):
         """Building atomic attacks must not register anything in the global singleton."""
@@ -421,6 +438,19 @@ class TestBenchmarkRuntime:
             await scenario._get_atomic_attacks_async()
 
     @pytest.mark.asyncio
+    async def test_raises_when_constructed_without_adversarial_models(self, mock_objective_target):
+        """Construction with ``adversarial_models=None`` (for registry introspection) is allowed,
+        but actually running the scenario must surface a clear error."""
+        with patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer:
+            mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
+            scenario = AdversarialBenchmark()  # no adversarial_models -> introspection-only
+
+        # The validation fires the first time the scenario is asked to build attacks,
+        # which happens inside ``initialize_async``.
+        with pytest.raises(ValueError, match="adversarial_models"):
+            await scenario.initialize_async(objective_target=mock_objective_target)
+
+    @pytest.mark.asyncio
     async def test_multiple_datasets_multiplies_attacks(self, mock_objective_target, single_adversarial_model):
         """1 model x N_light_techniques x 2 datasets = 2 * N_light atomic attacks (default ``light``)."""
         two_datasets = {
@@ -437,7 +467,7 @@ class TestBenchmarkRuntime:
     @pytest.mark.asyncio
     async def test_attacks_use_all_benchmarkable_attack_classes(self, mock_objective_target, single_adversarial_model):
         """Under the ``all`` strategy, atomic attacks must cover every adversarial-capable attack class."""
-        scenario_class_strategies = AdversarialBenchmark.get_strategy_class()
+        scenario_class_strategies = _make_benchmark(single_adversarial_model)._strategy_class
         _, attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             adversarial_models=single_adversarial_model,

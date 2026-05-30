@@ -10,6 +10,12 @@ Import concrete implementations to trigger registration.
 from pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset import (
     _AegisContentSafetyDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset import (
+    ATRCategory,
+    ATRDetectionField,
+    ATRVariationType,
+    _AgentThreatRulesDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.aya_redteaming_dataset import (
     _AyaRedteamingDataset,
 )  # noqa: F401
@@ -27,6 +33,12 @@ from pyrit.datasets.seed_datasets.remote.cbt_bench_dataset import (
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.ccp_sensitive_prompts_dataset import (
     _CCPSensitivePromptsDataset,
+)  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.coconot_dataset import (
+    CoCoNotCategory,
+    CoCoNotSplit,
+    _CoCoNotContrastDataset,
+    _CoCoNotRefusalDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset import (
     COMIC_JAILBREAK_TEMPLATES,
@@ -78,6 +90,9 @@ from pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset import (
     MMSafetyBenchVariant,
     _MMSafetyBenchDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.moral_integrity_corpus_dataset import (
+    _MICDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.msts_dataset import (
     _MSTSDataset,
 )  # noqa: F401
@@ -113,11 +128,18 @@ from pyrit.datasets.seed_datasets.remote.sgxstest_dataset import (
 from pyrit.datasets.seed_datasets.remote.simple_safety_tests_dataset import (
     _SimpleSafetyTestsDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.siuo_dataset import (
+    SIUOCategory,
+    _SIUODataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.sorry_bench_dataset import (
     _SorryBenchDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.sosbench_dataset import (
     _SOSBenchDataset,
+)  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.strong_reject_dataset import (
+    _StrongRejectDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.tdc23_redteaming_dataset import (
     _TDC23RedteamingDataset,
@@ -147,22 +169,31 @@ from pyrit.datasets.seed_datasets.remote.xstest_dataset import (
 )  # noqa: F401
 
 __all__ = [
+    "CoCoNotCategory",
+    "CoCoNotSplit",
     "HiXSTestLanguage",
     "MMSafetyBenchCategory",
     "MMSafetyBenchVariant",
     "PromptIntelCategory",
     "PromptIntelSeverity",
     "SGXSTestLabel",
+    "SIUOCategory",
     "VLGuardCategory",
     "VLGuardSubcategory",
     "VLGuardSubset",
     "_AegisContentSafetyDataset",
+    "ATRCategory",
+    "ATRDetectionField",
+    "ATRVariationType",
+    "_AgentThreatRulesDataset",
     "_AyaRedteamingDataset",
     "_BabelscapeAlertDataset",
     "_BeaverTailsDataset",
     "_CBTBenchDataset",
     "_CCPSensitivePromptsDataset",
     "_CategoricalHarmfulQADataset",
+    "_CoCoNotContrastDataset",
+    "_CoCoNotRefusalDataset",
     "_ComicJailbreakDataset",
     "COMIC_JAILBREAK_TEMPLATES",
     "ComicJailbreakTemplateConfig",
@@ -178,6 +209,7 @@ __all__ = [
     "_LibrAIDoNotAnswerDataset",
     "_LLMLatentAdversarialTrainingDataset",
     "_MedSafetyBenchDataset",
+    "_MICDataset",
     "_MLCommonsAILuminateDataset",
     "_MMSafetyBenchDataset",
     "_MSTSDataset",
@@ -192,8 +224,10 @@ __all__ = [
     "_SGXSTestDataset",
     "_SaladBenchDataset",
     "_SimpleSafetyTestsDataset",
+    "_SIUODataset",
     "_SOSBenchDataset",
     "_SorryBenchDataset",
+    "_StrongRejectDataset",
     "_TDC23RedteamingDataset",
     "_ToxicChatDataset",
     "_TransphobiaAwarenessDataset",

@@ -6,7 +6,7 @@
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.parameter import Parameter
 from pyrit.setup.initializers.airt import AIRTInitializer
-from pyrit.setup.initializers.components.scenarios import ScenarioTechniqueInitializer
+from pyrit.setup.initializers.components.scenario_techniques import ScenarioTechniqueInitializer
 from pyrit.setup.initializers.components.scorers import ScorerInitializer
 from pyrit.setup.initializers.components.targets import TargetInitializer
 from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
@@ -32,7 +32,7 @@ def __getattr__(name: str) -> type:
         print_deprecation_message(
             old_item="pyrit.setup.initializers.InitializerParameter",
             new_item=Parameter,
-            removed_in="v0.16.0",
+            removed_in="0.16.0",
         )
         return Parameter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

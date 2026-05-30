@@ -287,31 +287,46 @@ class ScenarioRunService:
         if request.labels:
             init_kwargs["memory_labels"] = request.labels
 
-        # Validate and resolve strategies
-        if request.strategies:
-            strategy_class = scenario_class.get_strategy_class()
-            strategy_enums = []
-            for name in request.strategies:
-                try:
-                    strategy_enums.append(strategy_class(name))
-                except ValueError:
-                    available_strategies = [s.value for s in strategy_class]
-                    raise ValueError(
-                        f"Strategy '{name}' not found for scenario '{request.scenario_name}'. "
-                        f"Available: {', '.join(available_strategies)}"
-                    ) from None
-            init_kwargs["scenario_strategies"] = strategy_enums
+        # Resolve strategies and default dataset config from a temporary instance
+        # of the scenario. The downstream _initialize_scenario_async builds its
+        # own instance (so that scenario_result_id can be passed), so this is a
+        # cheap throwaway used only for introspection.
+        needs_introspection = bool(request.strategies) or (
+            request.max_dataset_size is not None and not request.dataset_names
+        )
+        if needs_introspection:
+            try:
+                introspection_instance = scenario_class()  # type: ignore[ty:missing-argument]
+            except Exception as exc:
+                raise ValueError(
+                    f"Cannot resolve runtime configuration for scenario '{request.scenario_name}': "
+                    f"scenario class is not instantiable without arguments ({exc})."
+                ) from exc
 
-        # Build dataset config
+            if request.strategies:
+                strategy_class = introspection_instance._strategy_class
+                strategy_enums = []
+                for name in request.strategies:
+                    try:
+                        strategy_enums.append(strategy_class(name))
+                    except ValueError:
+                        available_strategies = [s.value for s in strategy_class]
+                        raise ValueError(
+                            f"Strategy '{name}' not found for scenario '{request.scenario_name}'. "
+                            f"Available: {', '.join(available_strategies)}"
+                        ) from None
+                init_kwargs["scenario_strategies"] = strategy_enums
+
+            if request.max_dataset_size is not None and not request.dataset_names:
+                default_config = introspection_instance._default_dataset_config
+                default_config.max_dataset_size = request.max_dataset_size
+                init_kwargs["dataset_config"] = default_config
+
         if request.dataset_names:
             init_kwargs["dataset_config"] = DatasetConfiguration(
                 dataset_names=request.dataset_names,
                 max_dataset_size=request.max_dataset_size,
             )
-        elif request.max_dataset_size is not None:
-            default_config = scenario_class.default_dataset_config()
-            default_config.max_dataset_size = request.max_dataset_size
-            init_kwargs["dataset_config"] = default_config
 
         return init_kwargs
 
