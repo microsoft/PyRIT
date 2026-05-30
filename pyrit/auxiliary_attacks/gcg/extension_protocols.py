@@ -146,7 +146,7 @@ class LossFunction(Protocol):
         self,
         *,
         logits: torch.Tensor,
-        ids: torch.Tensor,
+        token_ids: torch.Tensor,
         target_slice: slice,
         control_slice: slice,
     ) -> torch.Tensor:
@@ -155,8 +155,8 @@ class LossFunction(Protocol):
         Args:
             logits (torch.Tensor): Model logits for the candidate batch with
                 shape ``(batch_size, seq_len, vocab_size)``.
-            ids (torch.Tensor): Input token ids the model was run on with
-                shape ``(batch_size, seq_len)`` and integer dtype.
+            token_ids (torch.Tensor): Input token ids the model was run on
+                with shape ``(batch_size, seq_len)`` and integer dtype.
             target_slice (slice): Slice into the sequence dimension that
                 identifies the target tokens (the completion being optimized
                 toward).

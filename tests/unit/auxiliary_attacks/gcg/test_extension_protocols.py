@@ -85,7 +85,7 @@ class _StubLossFunction:
         self,
         *,
         logits: torch.Tensor,
-        ids: torch.Tensor,
+        token_ids: torch.Tensor,
         target_slice: slice,
         control_slice: slice,
     ) -> torch.Tensor:
@@ -165,11 +165,11 @@ def test_sampling_strategy_stub_returns_expected_shape() -> None:
 def test_loss_function_stub_returns_expected_shape() -> None:
     impl = _StubLossFunction()
     logits = torch.zeros((3, 10, 50))
-    ids = torch.zeros((3, 10), dtype=torch.long)
+    token_ids = torch.zeros((3, 10), dtype=torch.long)
 
     out = impl.compute_loss(
         logits=logits,
-        ids=ids,
+        token_ids=token_ids,
         target_slice=slice(5, 8),
         control_slice=slice(2, 5),
     )
