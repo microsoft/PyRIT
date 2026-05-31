@@ -247,13 +247,18 @@
   // pick the deepest one that exists. Update the link href + suffix to point
   // at it. If only the root exists, suffix shows "-> home"; otherwise it shows
   // "-> /closest/ancestor/" so the user knows where they'll end up.
+  //
+  // Note on the probe URL: we HEAD `<path>index.html` rather than `<path>` so
+  // intermediate path components without an actual rendered page (just dirs
+  // containing children) are correctly treated as misses. GH Pages 404s a
+  // directory without index.html, but `python -m http.server` returns a
+  // directory listing -- checking for index.html explicitly works in both.
   function probeAncestorsAndUpdate(p, relPath) {
     var paths = ancestorPaths(relPath);
-    // Index 0 is the full path. If it exists we don't need a suffix change.
     var results = new Array(paths.length);
     var pending = paths.length;
     paths.forEach(function (path, idx) {
-      var probeUrl = p.versionBase + path;
+      var probeUrl = p.versionBase + path + "index.html";
       fetch(probeUrl, { method: "HEAD", cache: "no-cache" })
         .then(function (r) { results[idx] = r.ok; })
         .catch(function () { results[idx] = false; })
