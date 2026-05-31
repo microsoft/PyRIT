@@ -874,6 +874,76 @@ class Scorer(Identifiable, abc.ABC):
             return None
         return "\n".join(non_empty)
 
+    @pyrit_json_retry
+    async def _invoke_llm_judge_async(
+        self,
+        *,
+        prompt_target: PromptTarget,
+        system_prompt: str,
+        user_prompt: str,
+        attack_identifier: Optional[ComponentIdentifier] = None,
+    ) -> dict[str, Any]:
+        """
+        Send a pre-rendered judge prompt to a chat target and return the parsed JSON reply.
+
+        Use this when a custom scorer needs to dispatch a single-turn LLM call with a fully
+        rendered system + user prompt and expects a JSON object back. Unlike
+        :meth:`_score_value_with_llm`, this helper makes no assumptions about the JSON schema
+        of the reply — the caller owns interpretation. Retries on malformed JSON are handled
+        by ``pyrit_json_retry``.
+
+        Args:
+            prompt_target (PromptTarget): The chat target to send the judge prompt to.
+            system_prompt (str): Fully rendered system prompt for the judge.
+            user_prompt (str): Fully rendered user prompt for the judge.
+            attack_identifier (Optional[ComponentIdentifier]): Identifier of the attack being
+                scored, forwarded so memory entries remain attributable. Defaults to ``None``.
+
+        Returns:
+            dict[str, Any]: The parsed JSON object the judge returned.
+
+        Raises:
+            InvalidJsonException: If the reply contains no text piece, is not valid JSON, or
+                does not decode to a JSON object. ``pyrit_json_retry`` retries the call.
+        """
+        conversation_id = str(uuid.uuid4())
+        prompt_target.set_system_prompt(
+            system_prompt=system_prompt,
+            conversation_id=conversation_id,
+            attack_identifier=attack_identifier,
+        )
+        request = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="user",
+                    original_value=user_prompt,
+                    original_value_data_type="text",
+                    converted_value_data_type="text",
+                    conversation_id=conversation_id,
+                    prompt_target_identifier=prompt_target.get_identifier(),
+                    prompt_metadata={"response_format": "json"},
+                )
+            ]
+        )
+        response = await prompt_target.send_prompt_async(message=request)
+
+        try:
+            text_piece = next(
+                piece for piece in response[0].message_pieces if piece.converted_value_data_type == "text"
+            )
+        except (StopIteration, IndexError) as ex:
+            raise InvalidJsonException(message="Judge response contained no text piece.") from ex
+
+        raw = remove_markdown_json(text_piece.converted_value)
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as ex:
+            raise InvalidJsonException(message=f"Judge returned non-JSON output: {raw}") from ex
+
+        if not isinstance(parsed, dict):
+            raise InvalidJsonException(message=f"Judge returned non-object JSON: {raw}")
+        return parsed
+
     @staticmethod
     async def score_response_async(
         *,

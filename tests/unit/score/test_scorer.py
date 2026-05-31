@@ -1957,3 +1957,109 @@ class TestScoreResponseAsyncBlockedContent:
         assert len(scores) == 2
         assert len(scorer1.scored_pieces) == 1
         assert len(scorer2.scored_pieces) == 1
+
+
+# ---------------------------------------------------------------------------
+# _invoke_llm_judge_async — schema-agnostic JSON-judge helper used by custom
+# scorers (e.g. XL-SafetyBench) that need to dispatch a fully rendered judge
+# prompt and parse a free-form JSON object back.
+# ---------------------------------------------------------------------------
+
+
+def _judge_response(payload: str) -> Message:
+    return Message(message_pieces=[MessagePiece(role="assistant", original_value=payload, conversation_id="judge")])
+
+
+async def test_invoke_llm_judge_async_returns_parsed_dict():
+    scorer = MockScorer()
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.set_system_prompt = MagicMock()
+    chat_target.send_prompt_async = AsyncMock(return_value=[_judge_response('{"verdict": "safe", "score": 0}')])
+
+    result = await scorer._invoke_llm_judge_async(
+        prompt_target=chat_target,
+        system_prompt="system",
+        user_prompt="user",
+    )
+
+    assert result == {"verdict": "safe", "score": 0}
+    # System prompt was set with a generated conversation_id; verify shape.
+    chat_target.set_system_prompt.assert_called_once()
+    _, kwargs = chat_target.set_system_prompt.call_args
+    assert kwargs["system_prompt"] == "system"
+    assert isinstance(kwargs["conversation_id"], str)
+    assert kwargs["attack_identifier"] is None
+    # The user message must request a JSON-formatted response.
+    _, send_kwargs = chat_target.send_prompt_async.call_args
+    sent_piece = send_kwargs["message"].message_pieces[0]
+    assert sent_piece.original_value == "user"
+    assert sent_piece.prompt_metadata == {"response_format": "json"}
+
+
+async def test_invoke_llm_judge_async_strips_markdown_fences():
+    scorer = MockScorer()
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.set_system_prompt = MagicMock()
+    fenced = '```json\n{"k": "v"}\n```'
+    chat_target.send_prompt_async = AsyncMock(return_value=[_judge_response(fenced)])
+
+    result = await scorer._invoke_llm_judge_async(
+        prompt_target=chat_target,
+        system_prompt="s",
+        user_prompt="u",
+    )
+
+    assert result == {"k": "v"}
+
+
+async def test_invoke_llm_judge_async_forwards_attack_identifier():
+    scorer = MockScorer()
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.set_system_prompt = MagicMock()
+    chat_target.send_prompt_async = AsyncMock(return_value=[_judge_response('{"a": 1}')])
+    attack_identifier = ComponentIdentifier(class_name="TestAttack", class_module="test.module")
+
+    await scorer._invoke_llm_judge_async(
+        prompt_target=chat_target,
+        system_prompt="s",
+        user_prompt="u",
+        attack_identifier=attack_identifier,
+    )
+
+    _, sys_kwargs = chat_target.set_system_prompt.call_args
+    assert sys_kwargs["attack_identifier"] is attack_identifier
+
+
+async def test_invoke_llm_judge_async_retries_on_invalid_json():
+    scorer = MockScorer()
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.set_system_prompt = MagicMock()
+    chat_target.send_prompt_async = AsyncMock(return_value=[_judge_response("not json at all")])
+
+    with pytest.raises(InvalidJsonException):
+        await scorer._invoke_llm_judge_async(
+            prompt_target=chat_target,
+            system_prompt="s",
+            user_prompt="u",
+        )
+    # RETRY_MAX_NUM_ATTEMPTS is set to 2 in conftest.py.
+    assert chat_target.send_prompt_async.call_count == 2
+
+
+async def test_invoke_llm_judge_async_rejects_non_object_json():
+    scorer = MockScorer()
+    chat_target = MagicMock(PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.set_system_prompt = MagicMock()
+    chat_target.send_prompt_async = AsyncMock(return_value=[_judge_response("[1, 2, 3]")])
+
+    with pytest.raises(InvalidJsonException, match="non-object JSON"):
+        await scorer._invoke_llm_judge_async(
+            prompt_target=chat_target,
+            system_prompt="s",
+            user_prompt="u",
+        )

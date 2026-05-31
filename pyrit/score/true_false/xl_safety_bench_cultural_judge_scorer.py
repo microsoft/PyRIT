@@ -13,14 +13,12 @@ Reference: https://github.com/AIM-Intelligence/XL-SafetyBench/blob/main/scripts/
 
 from __future__ import annotations
 
-import json
 import logging
-import uuid
 from typing import TYPE_CHECKING, Optional
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.exceptions import InvalidJsonException, pyrit_json_retry, remove_markdown_json
-from pyrit.models import Message, MessagePiece, Score, SeedPrompt
+from pyrit.exceptions import InvalidJsonException
+from pyrit.models import MessagePiece, Score, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
@@ -218,7 +216,8 @@ class XLSafetyBenchCulturalJudgeScorer(TrueFalseScorer):
         system_prompt = _XL_CULTURAL_JUDGE_SYSTEM_PROMPT.render_template_value(**substitutions)
         user_prompt = _XL_CULTURAL_JUDGE_USER_PROMPT.render_template_value(**substitutions)
 
-        parsed = await self._invoke_judge_async(
+        parsed = await self._invoke_llm_judge_async(
+            prompt_target=self._prompt_target,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             attack_identifier=message_piece.attack_identifier,
@@ -276,65 +275,3 @@ class XLSafetyBenchCulturalJudgeScorer(TrueFalseScorer):
                 objective=objective,
             )
         ]
-
-    @pyrit_json_retry
-    async def _invoke_judge_async(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        attack_identifier: Optional[ComponentIdentifier],
-    ) -> dict[str, object]:
-        """
-        Send the rendered judge prompt to the chat target and parse the JSON reply.
-
-        Args:
-            system_prompt (str): Fully rendered system prompt for the judge.
-            user_prompt (str): Fully rendered user prompt for the judge.
-            attack_identifier (Optional[ComponentIdentifier]): Identifier of the attack
-                being scored, forwarded so memory entries remain attributable.
-
-        Returns:
-            dict[str, object]: The parsed JSON reply.
-
-        Raises:
-            InvalidJsonException: If the judge reply is not valid JSON. The
-                ``pyrit_json_retry`` decorator retries the call.
-        """
-        conversation_id = str(uuid.uuid4())
-        self._prompt_target.set_system_prompt(
-            system_prompt=system_prompt,
-            conversation_id=conversation_id,
-            attack_identifier=attack_identifier,
-        )
-        request = Message(
-            message_pieces=[
-                MessagePiece(
-                    role="user",
-                    original_value=user_prompt,
-                    original_value_data_type="text",
-                    converted_value_data_type="text",
-                    conversation_id=conversation_id,
-                    prompt_target_identifier=self._prompt_target.get_identifier(),
-                    prompt_metadata={"response_format": "json"},
-                )
-            ]
-        )
-        response = await self._prompt_target.send_prompt_async(message=request)
-
-        try:
-            text_piece = next(
-                piece for piece in response[0].message_pieces if piece.converted_value_data_type == "text"
-            )
-        except (StopIteration, IndexError) as ex:
-            raise InvalidJsonException(message="Judge response contained no text piece.") from ex
-
-        raw = remove_markdown_json(text_piece.converted_value)
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as ex:
-            raise InvalidJsonException(message=f"Judge returned non-JSON output: {raw}") from ex
-
-        if not isinstance(parsed, dict):
-            raise InvalidJsonException(message=f"Judge returned non-object JSON: {raw}")
-        return parsed
