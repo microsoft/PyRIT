@@ -689,3 +689,143 @@ async def test_jailbreak_objectives_strips_bom_from_id_column():
     assert len(dataset.seeds) == 1
     assert dataset.seeds[0].metadata["row_id"] == "JB-fr-bom-obj-1"
     assert dataset.seeds[0].name == "XL-SafetyBench Jailbreak Objective france JB-fr-bom-obj-1"
+
+
+# ---------------------------------------------------------------------------
+# CSV schema drift and short-row defense — `_fetch_from_url` returns whatever
+# `csv.DictReader` parses, which means: (1) if HuggingFace renames or drops a
+# column the loader silently emits empty seeds, and (2) short rows yield None
+# cell values that would `str(None)`-stringify into the literal "None". Both
+# regressions need to be guarded.
+# ---------------------------------------------------------------------------
+
+
+async def test_jailbreak_raises_when_required_column_missing():
+    loader = _XLSafetyBenchJailbreakDataset(countries=[XLSafetyBenchCountry.FRANCE])
+    # `attack_prompt` is the column the loader actually uses to build prompt values.
+    bad_rows = [
+        {
+            "id": "JB-fr-bad-1",
+            "category": "Criminal Activities",
+            "base_query_english": "bq",
+            "base_query_local": "bql",
+            # NOTE: no "attack_prompt" key — simulates upstream column rename.
+        },
+    ]
+
+    with patch.object(loader, "_fetch_from_url", return_value=bad_rows):
+        with pytest.raises(ValueError, match="attack_prompt"):
+            await loader.fetch_dataset_async()
+
+
+async def test_jailbreak_objectives_raises_when_required_column_missing():
+    loader = _XLSafetyBenchJailbreakObjectivesDataset(countries=[XLSafetyBenchCountry.FRANCE])
+    bad_rows = [
+        {
+            "id": "JB-fr-bad-obj-1",
+            "category": "Criminal Activities",
+            # NOTE: no base_query_* columns.
+        },
+    ]
+
+    with patch.object(loader, "_fetch_from_url", return_value=bad_rows):
+        with pytest.raises(ValueError, match="base_query_local"):
+            await loader.fetch_dataset_async()
+
+
+async def test_cultural_raises_when_required_column_missing():
+    loader = _XLSafetyBenchCulturalDataset(countries=[XLSafetyBenchCountry.FRANCE])
+    bad_rows = [
+        {
+            "id": "CC-fr-bad-1",
+            "category": "Symbolic Taboos & Gift-Giving",
+            "sensitivity_english": "se",
+            "sensitivity_local": "sl",
+            "base_query_english": "bq",
+            "base_query_local": "bql",
+            "scenario_english": "ses",
+            # NOTE: no "scenario_local" and no "hidden_violation".
+        },
+    ]
+
+    with patch.object(loader, "_fetch_from_url", return_value=bad_rows):
+        with pytest.raises(ValueError, match="scenario_local|hidden_violation"):
+            await loader.fetch_dataset_async()
+
+
+async def test_jailbreak_handles_none_cell_values_from_short_rows():
+    loader = _XLSafetyBenchJailbreakDataset(countries=[XLSafetyBenchCountry.FRANCE])
+    # Required columns are present but several optional ones come back as None
+    # (the way csv.DictReader populates missing trailing cells for short rows).
+    rows_with_none = [
+        {
+            "id": "JB-fr-none-1",
+            "category": "Criminal Activities",
+            "attack_prompt": "Attack one",
+            "base_query_english": "bq1",
+            "base_query_local": "bql1",
+            "subcategory_english": None,
+            "subcategory_local": None,
+        },
+    ]
+
+    with patch.object(loader, "_fetch_from_url", return_value=rows_with_none):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 1
+    seed = dataset.seeds[0]
+    # The literal string "None" must not propagate into metadata.
+    assert seed.metadata["subcategory_english"] == ""
+    assert seed.metadata["subcategory_local"] == ""
+    assert seed.value == "Attack one"
+
+
+async def test_jailbreak_objectives_handles_none_cell_values_from_short_rows():
+    loader = _XLSafetyBenchJailbreakObjectivesDataset(countries=[XLSafetyBenchCountry.FRANCE])
+    rows_with_none = [
+        {
+            "id": "JB-fr-none-obj-1",
+            "category": "Criminal Activities",
+            "base_query_english": "Goal english",
+            "base_query_local": "Goal local",
+            "subcategory_english": None,
+            "subcategory_local": None,
+        },
+    ]
+
+    with patch.object(loader, "_fetch_from_url", return_value=rows_with_none):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 1
+    seed = dataset.seeds[0]
+    assert seed.metadata["subcategory_english"] == ""
+    assert seed.metadata["subcategory_local"] == ""
+    assert seed.value == "Goal local"
+
+
+async def test_cultural_handles_none_cell_values_from_short_rows():
+    loader = _XLSafetyBenchCulturalDataset(countries=[XLSafetyBenchCountry.FRANCE])
+    rows_with_none = [
+        {
+            "id": "CC-fr-none-1",
+            "category": "Symbolic Taboos & Gift-Giving",
+            "scenario_english": "English scenario",
+            "scenario_local": "Local scenario",
+            "hidden_violation": "Taboo gift",
+            "sensitivity_english": None,
+            "sensitivity_local": None,
+            "base_query_english": None,
+            "base_query_local": None,
+        },
+    ]
+
+    with patch.object(loader, "_fetch_from_url", return_value=rows_with_none):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 1
+    seed = dataset.seeds[0]
+    assert seed.metadata["sensitivity_english"] == ""
+    assert seed.metadata["sensitivity_local"] == ""
+    assert seed.metadata["base_query_english"] == ""
+    assert seed.metadata["base_query_local"] == ""
+    assert seed.value == "Local scenario"

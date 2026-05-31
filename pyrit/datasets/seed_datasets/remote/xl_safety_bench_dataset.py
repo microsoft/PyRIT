@@ -234,6 +234,78 @@ def _normalize_csv_row(row: dict[str, str]) -> dict[str, str]:
     return {(k.lstrip("\ufeff") if k else k): v for k, v in row.items()}
 
 
+def _row_value(row: dict[str, str], key: str) -> str:
+    """
+    Return a CSV cell as a stripped string, treating missing/None cells as empty.
+
+    ``csv.DictReader`` yields ``None`` for cells that come from short rows; calling
+    ``str(None)`` would silently propagate the literal text ``"None"`` into seed
+    metadata, so we coalesce ``None`` to ``""`` before stripping.
+
+    Args:
+        row (dict[str, str]): A row dict from ``csv.DictReader`` (already normalized).
+        key (str): The column to look up.
+
+    Returns:
+        str: The cell value, stripped of surrounding whitespace, or ``""`` if the
+            column is missing or its cell is ``None``.
+    """
+    return str(row.get(key) or "").strip()
+
+
+def _validate_csv_schema(*, rows: list[dict[str, str]], required_columns: list[str], url: str) -> None:
+    """
+    Validate that a fetched CSV exposes every column the loader depends on.
+
+    The check inspects the first row's keys (after BOM stripping) and raises if any
+    required column is missing. This surfaces upstream HF schema drift up front with
+    one clear error message, instead of silently emitting empty seeds for every
+    affected row.
+
+    Args:
+        rows (list[dict[str, str]]): Rows as returned by ``_fetch_from_url``.
+        required_columns (list[str]): Columns whose absence should fail the load.
+        url (str): The source URL, included in the error message for triage.
+
+    Raises:
+        ValueError: If any required column is absent from the CSV header.
+    """
+    if not rows:
+        # An empty CSV is handled by the loader's empty-result check; nothing to validate.
+        return
+
+    found_columns = {(k.lstrip("\ufeff") if k else k) for k in rows[0] if k is not None}
+    missing = [c for c in required_columns if c not in found_columns]
+    if missing:
+        raise ValueError(
+            f"XL-SafetyBench CSV at {url} is missing required column(s) {missing}. "
+            f"Required columns: {required_columns}. Found columns: {sorted(found_columns)}. "
+            f"The upstream HuggingFace dataset schema may have changed."
+        )
+
+
+_JAILBREAK_REQUIRED_COLUMNS: list[str] = [
+    "id",
+    "category",
+    "base_query_local",
+    "base_query_english",
+    "attack_prompt",
+]
+_JAILBREAK_OBJECTIVES_REQUIRED_COLUMNS: list[str] = [
+    "id",
+    "category",
+    "base_query_local",
+    "base_query_english",
+]
+_CULTURAL_REQUIRED_COLUMNS: list[str] = [
+    "id",
+    "category",
+    "scenario_local",
+    "scenario_english",
+    "hidden_violation",
+]
+
+
 class _XLSafetyBenchJailbreakDataset(_RemoteDatasetLoader):
     """
     Loader for the Jailbreak track of XL-SafetyBench.
@@ -346,33 +418,34 @@ class _XLSafetyBenchJailbreakDataset(_RemoteDatasetLoader):
         """
         url = f"{_HF_RESOLVE_BASE}/data/jailbreak/{country.value}/attack_prompts.csv"
         rows = self._fetch_from_url(source=url, source_type="public_url", cache=cache)
+        _validate_csv_schema(rows=rows, required_columns=_JAILBREAK_REQUIRED_COLUMNS, url=url)
 
         country_metadata = _common_metadata_for_country(country)
         seed_prompts: list[SeedPrompt] = []
         for raw_row in rows:
             row = _normalize_csv_row(raw_row)
-            category = str(row.get("category", "")).strip()
+            category = _row_value(row, "category")
             if self._categories_filter is not None and category not in self._categories_filter:
                 continue
 
-            attack_prompt = str(row.get("attack_prompt", "")).strip()
+            attack_prompt = _row_value(row, "attack_prompt")
             if not attack_prompt:
                 logger.warning(
                     "[XLSafetyBench/Jailbreak] Skipping row with empty attack_prompt (id=%s, country=%s)",
-                    row.get("id", "<unknown>"),
+                    row.get("id") or "<unknown>",
                     country.value,
                 )
                 continue
 
-            row_id = str(row.get("id", "")).strip()
+            row_id = _row_value(row, "id")
             metadata: dict[str, str | int] = {
                 **country_metadata,
                 "row_id": row_id,
                 "category": category,
-                "subcategory_english": str(row.get("subcategory_english", "")),
-                "subcategory_local": str(row.get("subcategory_local", "")),
-                "base_query_english": str(row.get("base_query_english", "")),
-                "base_query_local": str(row.get("base_query_local", "")),
+                "subcategory_english": _row_value(row, "subcategory_english"),
+                "subcategory_local": _row_value(row, "subcategory_local"),
+                "base_query_english": _row_value(row, "base_query_english"),
+                "base_query_local": _row_value(row, "base_query_local"),
                 "track": "jailbreak",
             }
 
@@ -517,22 +590,23 @@ class _XLSafetyBenchJailbreakObjectivesDataset(_RemoteDatasetLoader):
         """
         url = f"{_HF_RESOLVE_BASE}/data/jailbreak/{country.value}/attack_prompts.csv"
         rows = self._fetch_from_url(source=url, source_type="public_url", cache=cache)
+        _validate_csv_schema(rows=rows, required_columns=_JAILBREAK_OBJECTIVES_REQUIRED_COLUMNS, url=url)
 
         country_metadata = _common_metadata_for_country(country)
         seen_objectives: dict[str, SeedObjective] = {}
         for raw_row in rows:
             row = _normalize_csv_row(raw_row)
-            category = str(row.get("category", "")).strip()
+            category = _row_value(row, "category")
             if self._categories_filter is not None and category not in self._categories_filter:
                 continue
 
-            base_query_local = str(row.get("base_query_local", "")).strip()
-            base_query_english = str(row.get("base_query_english", "")).strip()
+            base_query_local = _row_value(row, "base_query_local")
+            base_query_english = _row_value(row, "base_query_english")
             objective_text = base_query_local or base_query_english
             if not objective_text:
                 logger.warning(
                     "[XLSafetyBench/JailbreakObjectives] Skipping row with empty base_query (id=%s, country=%s)",
-                    row.get("id", "<unknown>"),
+                    row.get("id") or "<unknown>",
                     country.value,
                 )
                 continue
@@ -540,13 +614,13 @@ class _XLSafetyBenchJailbreakObjectivesDataset(_RemoteDatasetLoader):
             if objective_text in seen_objectives:
                 continue
 
-            row_id = str(row.get("id", "")).strip()
+            row_id = _row_value(row, "id")
             metadata: dict[str, str | int] = {
                 **country_metadata,
                 "row_id": row_id,
                 "category": category,
-                "subcategory_english": str(row.get("subcategory_english", "")),
-                "subcategory_local": str(row.get("subcategory_local", "")),
+                "subcategory_english": _row_value(row, "subcategory_english"),
+                "subcategory_local": _row_value(row, "subcategory_local"),
                 "base_query_english": base_query_english,
                 "base_query_local": base_query_local,
                 "track": "jailbreak_objectives",
@@ -701,6 +775,7 @@ class _XLSafetyBenchCulturalDataset(_RemoteDatasetLoader):
         """
         url = f"{_HF_RESOLVE_BASE}/data/cultural/{country.value}/scenario_prompts.csv"
         rows = self._fetch_from_url(source=url, source_type="public_url", cache=cache)
+        _validate_csv_schema(rows=rows, required_columns=_CULTURAL_REQUIRED_COLUMNS, url=url)
 
         country_metadata = _common_metadata_for_country(country)
         scenario_key = (
@@ -710,32 +785,32 @@ class _XLSafetyBenchCulturalDataset(_RemoteDatasetLoader):
         seed_prompts: list[SeedPrompt] = []
         for raw_row in rows:
             row = _normalize_csv_row(raw_row)
-            category = str(row.get("category", "")).strip()
+            category = _row_value(row, "category")
             if self._categories_filter is not None and category not in self._categories_filter:
                 continue
 
-            scenario_text = str(row.get(scenario_key, "")).strip()
+            scenario_text = _row_value(row, scenario_key)
             if not scenario_text:
                 logger.warning(
                     "[XLSafetyBench/Cultural] Skipping row with empty %s (id=%s, country=%s)",
                     scenario_key,
-                    row.get("id", "<unknown>"),
+                    row.get("id") or "<unknown>",
                     country.value,
                 )
                 continue
 
-            row_id = str(row.get("id", "")).strip()
+            row_id = _row_value(row, "id")
             metadata: dict[str, str | int] = {
                 **country_metadata,
                 "row_id": row_id,
                 "category": category,
-                "sensitivity_english": str(row.get("sensitivity_english", "")),
-                "sensitivity_local": str(row.get("sensitivity_local", "")),
-                "base_query_english": str(row.get("base_query_english", "")),
-                "base_query_local": str(row.get("base_query_local", "")),
-                "scenario_english": str(row.get("scenario_english", "")),
-                "scenario_local": str(row.get("scenario_local", "")),
-                "hidden_violation": str(row.get("hidden_violation", "")),
+                "sensitivity_english": _row_value(row, "sensitivity_english"),
+                "sensitivity_local": _row_value(row, "sensitivity_local"),
+                "base_query_english": _row_value(row, "base_query_english"),
+                "base_query_local": _row_value(row, "base_query_local"),
+                "scenario_english": _row_value(row, "scenario_english"),
+                "scenario_local": _row_value(row, "scenario_local"),
+                "hidden_violation": _row_value(row, "hidden_violation"),
                 "language_mode": self._language_mode.value,
                 "track": "cultural",
             }
