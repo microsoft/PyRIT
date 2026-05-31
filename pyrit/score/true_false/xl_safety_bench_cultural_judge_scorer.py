@@ -109,6 +109,11 @@ class XLSafetyBenchCulturalJudgeScorer(TrueFalseScorer):
       otherwise default to generic strings, so the scorer remains usable with any
       seed dataset.
 
+    Note: ``language`` always names the country's local language (the cultural
+    context being probed), not the language of the actual scenario text — so even
+    when the loader is configured with ``language_mode="english"`` the metadata
+    still carries the local-language name (e.g. ``"Japanese"`` for Japan).
+
     Reference: [@choi2026xlsafetybench]
     Paper: https://arxiv.org/abs/2605.05662
     """

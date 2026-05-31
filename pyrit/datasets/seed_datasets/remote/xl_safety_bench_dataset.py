@@ -584,6 +584,11 @@ class _XLSafetyBenchCulturalDataset(_RemoteDatasetLoader):
     phrased requests. This dataset is therefore intentionally *not* tagged with
     ``default``: it does not belong in default safety sweeps that assume the prompts
     are adversarial.
+
+    The per-seed ``language`` metadata field always names the country's local
+    language (the cultural context being probed), not the language of the actual
+    scenario text — so even with ``language_mode="english"`` rows for Japan still
+    carry ``language="Japanese"``.
     """
 
     harm_categories: list[str] = [c.value for c in XLSafetyBenchCulturalCategory]
