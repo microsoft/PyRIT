@@ -3,6 +3,17 @@ name: Flip Attack
 description: >
  System Prompt obtained from FlipAttack.
  This is sent to target, not red teaming chat, like other system prompt examples.
+authors:
+  - Yue Liu
+  - Xiaoxin He
+  - Miao Xiong
+  - Jinlan Fu
+  - Shumin Deng
+  - Yingwei Ma
+  - Jiaheng Zhang
+  - Bryan Hooi
+groups:
+  - National University of Singapore
 source: https://github.com/yueliu1999/FlipAttack/blob/main/result/FlipAttack-gpt-4.json
 parameters:
   - prompt

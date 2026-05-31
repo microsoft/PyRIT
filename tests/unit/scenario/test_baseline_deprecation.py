@@ -38,6 +38,8 @@ class _LegacyScenario(Scenario):
 
     def __init__(self, **kwargs):
         kwargs.setdefault("strategy_class", _LegacyStrategy)
+        kwargs.setdefault("default_strategy", _LegacyStrategy.ALL)
+        kwargs.setdefault("default_dataset_config", DatasetConfiguration())
         if "objective_scorer" not in kwargs:
             mock_scorer = MagicMock(spec=TrueFalseScorer)
             mock_scorer.get_identifier.return_value = _TEST_SCORER_ID
@@ -45,18 +47,6 @@ class _LegacyScenario(Scenario):
             kwargs["objective_scorer"] = mock_scorer
         kwargs.setdefault("version", 1)
         super().__init__(**kwargs)
-
-    @classmethod
-    def get_strategy_class(cls):
-        return _LegacyStrategy
-
-    @classmethod
-    def get_default_strategy(cls):
-        return _LegacyStrategy.ALL
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        return DatasetConfiguration()
 
     async def _get_atomic_attacks_async(self):
         atomic_attacks = []
@@ -104,7 +94,7 @@ class TestScenarioBaseDeprecation:
             warnings.simplefilter("ignore", DeprecationWarning)
             scenario = _LegacyScenario(include_default_baseline=False)
 
-        with patch.object(_LegacyScenario, "default_dataset_config", return_value=DatasetConfiguration()):
+        with patch.object(_LegacyScenario, "default_dataset_config", create=True, return_value=DatasetConfiguration()):
             await scenario.initialize_async(objective_target=mock_objective_target)
 
         assert not any(a.atomic_attack_name == "baseline" for a in scenario._atomic_attacks)
@@ -115,7 +105,7 @@ class TestScenarioBaseDeprecation:
             warnings.simplefilter("ignore", DeprecationWarning)
             scenario = _LegacyScenario(include_default_baseline=True)
 
-        with patch.object(_LegacyScenario, "default_dataset_config", return_value=DatasetConfiguration()):
+        with patch.object(_LegacyScenario, "default_dataset_config", create=True, return_value=DatasetConfiguration()):
             await scenario.initialize_async(objective_target=mock_objective_target, include_baseline=False)
 
         assert not any(a.atomic_attack_name == "baseline" for a in scenario._atomic_attacks)

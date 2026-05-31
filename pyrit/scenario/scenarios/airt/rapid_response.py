@@ -13,7 +13,8 @@ to test.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, ClassVar
+from functools import cache
+from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@cache
 def _build_rapid_response_strategy() -> type[ScenarioStrategy]:
     """
     Build the RapidResponse strategy class dynamically from the registered factories.
@@ -62,51 +64,6 @@ class RapidResponse(Scenario):
     """
 
     VERSION: int = 2
-    _cached_strategy_class: ClassVar[type[ScenarioStrategy] | None] = None
-
-    @classmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        """
-        Return the dynamically generated strategy class, building it on first access.
-
-        Returns:
-            type[ScenarioStrategy]: The RapidResponseStrategy enum class.
-        """
-        if cls._cached_strategy_class is None:
-            cls._cached_strategy_class = _build_rapid_response_strategy()
-        return cls._cached_strategy_class
-
-    @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        """
-        Return the default strategy member (``DEFAULT``).
-
-        Returns:
-            ScenarioStrategy: The default strategy value.
-        """
-        strategy_class = cls.get_strategy_class()
-        return strategy_class("default")
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """
-        Return the default dataset configuration for AIRT harm categories.
-
-        Returns:
-            DatasetConfiguration: Configuration with standard harm-category datasets.
-        """
-        return DatasetConfiguration(
-            dataset_names=[
-                "airt_hate",
-                "airt_fairness",
-                "airt_violence",
-                "airt_sexual",
-                "airt_harassment",
-                "airt_misinformation",
-                "airt_leakage",
-            ],
-            max_dataset_size=4,
-        )
 
     @apply_defaults
     def __init__(
@@ -129,10 +86,25 @@ class RapidResponse(Scenario):
             objective_scorer if objective_scorer else self._get_default_objective_scorer()
         )
 
+        strategy_class = _build_rapid_response_strategy()
+
         super().__init__(
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
-            strategy_class=self.get_strategy_class(),
+            strategy_class=strategy_class,
+            default_strategy=strategy_class("default"),
+            default_dataset_config=DatasetConfiguration(
+                dataset_names=[
+                    "airt_hate",
+                    "airt_fairness",
+                    "airt_violence",
+                    "airt_sexual",
+                    "airt_harassment",
+                    "airt_misinformation",
+                    "airt_leakage",
+                ],
+                max_dataset_size=4,
+            ),
             scenario_result_id=scenario_result_id,
         )
 

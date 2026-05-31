@@ -17,6 +17,7 @@ from pyrit.registry.object_registries.attack_technique_registry import AttackTec
 from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.airt import Leakage
 from pyrit.scenario.core import BaselineAttackPolicy
+from pyrit.scenario.scenarios.airt.leakage import _build_leakage_strategy
 from pyrit.score import TrueFalseCompositeScorer
 from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
 
@@ -91,7 +92,7 @@ def reset_technique_registry():
     """Reset registries and populate scenario factories for each test."""
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
-    Leakage._cached_strategy_class = None
+    _build_leakage_strategy.cache_clear()
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
@@ -102,7 +103,7 @@ def reset_technique_registry():
     yield
     AttackTechniqueRegistry.reset_instance()
     TargetRegistry.reset_instance()
-    Leakage._cached_strategy_class = None
+    _build_leakage_strategy.cache_clear()
 
 
 @pytest.mark.usefixtures(*FIXTURES)
@@ -199,14 +200,14 @@ class TestLeakageProperties:
         scenario = Leakage(objective_scorer=mock_objective_scorer)
         assert scenario.VERSION == 2
 
-    def test_get_strategy_class_returns_dynamic_class(self):
-        """Test that get_strategy_class returns a dynamically generated strategy class."""
-        strategy_class = Leakage.get_strategy_class()
+    def test_get_strategy_class_returns_dynamic_class(self, mock_objective_scorer):
+        """Test that the instance strategy class is the dynamically generated Leakage strategy class."""
+        strategy_class = Leakage(objective_scorer=mock_objective_scorer)._strategy_class
         assert strategy_class.__name__ == "LeakageStrategy"
 
-    def test_get_default_strategy_returns_default(self):
-        """Test that get_default_strategy returns the DEFAULT aggregate."""
-        default = Leakage.get_default_strategy()
+    def test_get_default_strategy_returns_default(self, mock_objective_scorer):
+        """Test that the default strategy is the DEFAULT aggregate."""
+        default = Leakage(objective_scorer=mock_objective_scorer)._default_strategy
         assert default.value == "default"
 
     def test_required_datasets_returns_airt_leakage(self):
@@ -218,37 +219,37 @@ class TestLeakageProperties:
 class TestLeakageStrategyEnum:
     """Tests for LeakageStrategy enum (dynamically generated)."""
 
-    def test_strategy_all_exists(self):
+    def test_strategy_all_exists(self, mock_objective_scorer):
         """Test that ALL strategy exists."""
-        strategy_class = Leakage.get_strategy_class()
+        strategy_class = Leakage(objective_scorer=mock_objective_scorer)._strategy_class
         assert strategy_class.ALL is not None
         assert strategy_class.ALL.value == "all"
         assert "all" in strategy_class.ALL.tags
 
-    def test_strategy_single_turn_aggregate_exists(self):
+    def test_strategy_single_turn_aggregate_exists(self, mock_objective_scorer):
         """Test that SINGLE_TURN aggregate strategy exists."""
-        strategy_class = Leakage.get_strategy_class()
+        strategy_class = Leakage(objective_scorer=mock_objective_scorer)._strategy_class
         assert strategy_class.SINGLE_TURN is not None
         assert strategy_class.SINGLE_TURN.value == "single_turn"
         assert "single_turn" in strategy_class.SINGLE_TURN.tags
 
-    def test_strategy_multi_turn_aggregate_exists(self):
+    def test_strategy_multi_turn_aggregate_exists(self, mock_objective_scorer):
         """Test that MULTI_TURN aggregate strategy exists."""
-        strategy_class = Leakage.get_strategy_class()
+        strategy_class = Leakage(objective_scorer=mock_objective_scorer)._strategy_class
         assert strategy_class.MULTI_TURN is not None
         assert strategy_class.MULTI_TURN.value == "multi_turn"
         assert "multi_turn" in strategy_class.MULTI_TURN.tags
 
-    def test_strategy_default_aggregate_exists(self):
+    def test_strategy_default_aggregate_exists(self, mock_objective_scorer):
         """Test that DEFAULT aggregate strategy exists."""
-        strategy_class = Leakage.get_strategy_class()
+        strategy_class = Leakage(objective_scorer=mock_objective_scorer)._strategy_class
         assert strategy_class.DEFAULT is not None
         assert strategy_class.DEFAULT.value == "default"
         assert "default" in strategy_class.DEFAULT.tags
 
-    def test_strategy_has_technique_members(self):
+    def test_strategy_has_technique_members(self, mock_objective_scorer):
         """Test that the strategy has technique members from core + leakage techniques."""
-        strategy_class = Leakage.get_strategy_class()
+        strategy_class = Leakage(objective_scorer=mock_objective_scorer)._strategy_class
         values = {m.value for m in strategy_class}
         # Leakage-unique techniques
         assert "first_letter" in values

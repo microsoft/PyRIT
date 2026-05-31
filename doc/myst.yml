@@ -36,6 +36,7 @@ project:
         - "http://api.openai.com"
         - "http://api.openai.com/**"
         - "https://cognitiveservices.azure.com/**"
+        - "https://www.youtube.com/watch?v=jq9DcEL3cHE"
   toc:
     - file: index.md
     - file: getting_started/README.md
@@ -205,6 +206,7 @@ project:
       children:
         - file: api/pyrit_analytics.md
         - file: api/pyrit_auth.md
+        - file: api/pyrit_auxiliary_attacks.md
         - file: api/pyrit_cli_api_client.md
         - file: api/pyrit_cli_pyrit_scan.md
         - file: api/pyrit_cli_pyrit_shell.md

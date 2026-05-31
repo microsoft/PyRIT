@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import io
 import json
+import zipfile
 from pathlib import Path
-from unittest.mock import mock_open, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
@@ -134,3 +136,102 @@ class TestRemoteDatasetLoader:
             source="https://example.com/data.JSON",
             file_type="json",
         )
+
+
+class TestFetchZipFromUrl:
+    SOURCE = "https://example.com/data.zip"
+
+    def _make_zip_bytes(self, members: dict[str, str]) -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for name, content in members.items():
+                zf.writestr(name, content)
+        return buf.getvalue()
+
+    def _mock_streaming_response(self, content: bytes) -> MagicMock:
+        response = MagicMock()
+        response.__enter__ = MagicMock(return_value=response)
+        response.__exit__ = MagicMock(return_value=False)
+        response.raise_for_status = MagicMock()
+        response.iter_content = MagicMock(return_value=[content])
+        return response
+
+    async def test_parses_multiple_inner_files(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.DB_DATA_PATH",
+            tmp_path,
+        )
+        rows_a = '{"a": 1}\n{"a": 2}\n'
+        rows_b = '{"b": 3}\n'
+        zip_bytes = self._make_zip_bytes({"folder/a.jsonl": rows_a, "folder/b.jsonl": rows_b})
+
+        with patch(
+            "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.requests.get",
+            return_value=self._mock_streaming_response(zip_bytes),
+        ):
+            loader = ConcreteRemoteLoader()
+            result = await loader._fetch_zip_from_url(
+                source=self.SOURCE,
+                inner_files=["folder/a.jsonl", "folder/b.jsonl"],
+                cache=True,
+            )
+
+        assert result["folder/a.jsonl"] == [{"a": 1}, {"a": 2}]
+        assert result["folder/b.jsonl"] == [{"b": 3}]
+
+    async def test_caches_zip_on_disk(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.DB_DATA_PATH",
+            tmp_path,
+        )
+        zip_bytes = self._make_zip_bytes({"x.json": '[{"k": "v"}]'})
+
+        mock_get = MagicMock(return_value=self._mock_streaming_response(zip_bytes))
+        with patch(
+            "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.requests.get",
+            mock_get,
+        ):
+            loader = ConcreteRemoteLoader()
+            await loader._fetch_zip_from_url(source=self.SOURCE, inner_files=["x.json"], cache=True)
+            await loader._fetch_zip_from_url(source=self.SOURCE, inner_files=["x.json"], cache=True)
+
+        assert mock_get.call_count == 1
+        # Cache file is keyed by md5(source) under seed-prompt-entries/
+        cached = list((tmp_path / "seed-prompt-entries").glob("*.zip"))
+        assert len(cached) == 1
+
+    async def test_cache_false_does_not_persist_zip(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.DB_DATA_PATH",
+            tmp_path,
+        )
+        zip_bytes = self._make_zip_bytes({"x.json": '[{"k": "v"}]'})
+
+        with patch(
+            "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.requests.get",
+            return_value=self._mock_streaming_response(zip_bytes),
+        ):
+            loader = ConcreteRemoteLoader()
+            await loader._fetch_zip_from_url(source=self.SOURCE, inner_files=["x.json"], cache=False)
+
+        assert not (tmp_path / "seed-prompt-entries").exists()
+
+    async def test_missing_inner_file_raises_valueerror(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.DB_DATA_PATH",
+            tmp_path,
+        )
+        zip_bytes = self._make_zip_bytes({"exists.jsonl": "{}\n"})
+
+        with patch(
+            "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.requests.get",
+            return_value=self._mock_streaming_response(zip_bytes),
+        ):
+            loader = ConcreteRemoteLoader()
+            with pytest.raises(ValueError, match="missing.jsonl"):
+                await loader._fetch_zip_from_url(source=self.SOURCE, inner_files=["missing.jsonl"], cache=False)
+
+    async def test_unsupported_inner_extension_raises_valueerror(self):
+        loader = ConcreteRemoteLoader()
+        with pytest.raises(ValueError, match="Invalid file_type"):
+            await loader._fetch_zip_from_url(source=self.SOURCE, inner_files=["bad.parquet"], cache=False)

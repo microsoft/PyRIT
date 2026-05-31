@@ -226,14 +226,14 @@ class TestBenchmarkTypes:
     def test_version_is_1(self):
         assert AdversarialBenchmark.VERSION == 1
 
-    def test_default_dataset_config_uses_harmbench(self):
-        config = AdversarialBenchmark.default_dataset_config()
+    def test_default_dataset_config_uses_harmbench(self, single_adversarial_model):
+        config = _make_benchmark(single_adversarial_model)._default_dataset_config
         assert isinstance(config, DatasetConfiguration)
         names = config.get_default_dataset_names()
         assert "harmbench" in names
 
-    def test_default_dataset_config_max_size_is_8(self):
-        config = AdversarialBenchmark.default_dataset_config()
+    def test_default_dataset_config_max_size_is_8(self, single_adversarial_model):
+        config = _make_benchmark(single_adversarial_model)._default_dataset_config
         assert config.max_dataset_size == 8
 
 
@@ -253,21 +253,21 @@ def _make_benchmark(adversarial_models):
 class TestBenchmarkStrategy:
     """Tests for the (static) BenchmarkStrategy enum and instance-level wiring."""
 
-    def test_strategy_includes_all_adversarial_techniques(self, all_supported_attacks):
-        """get_strategy_class() concrete members match the adversarial-capable spec set."""
-        strat = AdversarialBenchmark.get_strategy_class()
+    def test_strategy_includes_all_adversarial_techniques(self, all_supported_attacks, single_adversarial_model):
+        """concrete members match the adversarial-capable spec set."""
+        strat = _make_benchmark(single_adversarial_model)._strategy_class
         values = {s.value for s in strat.get_all_strategies()}
         assert values == all_supported_attacks
 
-    def test_strategy_has_no_permuted_members(self):
+    def test_strategy_has_no_permuted_members(self, single_adversarial_model):
         """No ``__model`` suffixes — models are a runtime parameter, not a strategy axis."""
-        strat = AdversarialBenchmark.get_strategy_class()
+        strat = _make_benchmark(single_adversarial_model)._strategy_class
         values = {s.value for s in strat.get_all_strategies()}
         assert not any("__" in v for v in values)
 
-    def test_strategy_excludes_non_adversarial_techniques(self):
-        """many_shot doesn't accept an adversarial chat and must be excluded."""
-        strat = AdversarialBenchmark.get_strategy_class()
+    def test_strategy_excludes_non_adversarial_techniques(self, single_adversarial_model):
+        """prompt_sending and many_shot don't accept an adversarial chat and must be excluded."""
+        strat = _make_benchmark(single_adversarial_model)._strategy_class
         values = {s.value for s in strat.get_all_strategies()}
         assert "many_shot" not in values
 
@@ -276,11 +276,10 @@ class TestBenchmarkStrategy:
         s1 = _make_benchmark(single_adversarial_model)
         s2 = _make_benchmark(two_adversarial_models)
         assert s1._strategy_class is s2._strategy_class
-        assert s1._strategy_class is AdversarialBenchmark.get_strategy_class()
 
-    def test_default_strategy_is_light(self):
+    def test_default_strategy_is_light(self, single_adversarial_model):
         """Default expands to every benchmarkable technique via the ``all`` aggregate."""
-        default = AdversarialBenchmark.get_default_strategy()
+        default = _make_benchmark(single_adversarial_model)._default_strategy
         assert default.value == "light"
 
     def test_benchmarkable_specs_have_no_adversarial_chat(self):
@@ -439,6 +438,19 @@ class TestBenchmarkRuntime:
             await scenario._get_atomic_attacks_async()
 
     @pytest.mark.asyncio
+    async def test_raises_when_constructed_without_adversarial_models(self, mock_objective_target):
+        """Construction with ``adversarial_models=None`` (for registry introspection) is allowed,
+        but actually running the scenario must surface a clear error."""
+        with patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer") as mock_scorer:
+            mock_scorer.return_value = MagicMock(spec=TrueFalseScorer, get_identifier=lambda: _mock_id("scorer"))
+            scenario = AdversarialBenchmark()  # no adversarial_models -> introspection-only
+
+        # The validation fires the first time the scenario is asked to build attacks,
+        # which happens inside ``initialize_async``.
+        with pytest.raises(ValueError, match="adversarial_models"):
+            await scenario.initialize_async(objective_target=mock_objective_target)
+
+    @pytest.mark.asyncio
     async def test_multiple_datasets_multiplies_attacks(self, mock_objective_target, single_adversarial_model):
         """1 model x N_light_techniques x 2 datasets = 2 * N_light atomic attacks (default ``light``)."""
         two_datasets = {
@@ -455,7 +467,7 @@ class TestBenchmarkRuntime:
     @pytest.mark.asyncio
     async def test_attacks_use_all_benchmarkable_attack_classes(self, mock_objective_target, single_adversarial_model):
         """Under the ``all`` strategy, atomic attacks must cover every adversarial-capable attack class."""
-        scenario_class_strategies = AdversarialBenchmark.get_strategy_class()
+        scenario_class_strategies = _make_benchmark(single_adversarial_model)._strategy_class
         _, attacks = await self._init_and_get_attacks(
             mock_objective_target=mock_objective_target,
             adversarial_models=single_adversarial_model,
