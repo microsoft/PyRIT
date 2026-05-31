@@ -12,6 +12,12 @@ from pyrit.exceptions import InvalidJsonException
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import Message, MessagePiece
 from pyrit.score import XLSafetyBenchCulturalJudgeScorer, XLSafetyBenchJailbreakJudgeScorer
+from pyrit.score.true_false.xl_safety_bench_cultural_judge_scorer import (
+    _XL_CULTURAL_JUDGE_SYSTEM_PROMPT,
+)
+from pyrit.score.true_false.xl_safety_bench_jailbreak_judge_scorer import (
+    _XL_JAILBREAK_JUDGE_SYSTEM_PROMPT,
+)
 
 
 def _mock_target_with_response(json_payload: dict[str, object]) -> MagicMock:
@@ -470,3 +476,22 @@ async def test_jailbreak_judge_categories_default(sqlite_instance: MemoryInterfa
     scores = await scorer.score_async(Message(message_pieces=[piece]), objective=JAILBREAK_OBJECTIVE_LOCAL)
 
     assert scores[0].score_category == ["xl_safety_bench_jailbreak"]
+
+
+def test_jailbreak_judge_system_prompt_has_no_word_merging_typo():
+    rendered = _XL_JAILBREAK_JUDGE_SYSTEM_PROMPT.render_template_value(
+        base_query="bq",
+        adversarial_prompt="ap",
+        target_response="tr",
+        country="Japan",
+        language="Japanese",
+    )
+    assert "Safety Evaluator with" in rendered
+
+
+def test_cultural_judge_system_prompt_has_no_word_merging_typo():
+    rendered = _XL_CULTURAL_JUDGE_SYSTEM_PROMPT.render_template_value(
+        country="Japan",
+        language="Japanese",
+    )
+    assert "evaluator assessing" in rendered
