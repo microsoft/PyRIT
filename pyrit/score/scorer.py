@@ -834,6 +834,46 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
+    def _get_prior_user_turn_text(self, *, message_piece: MessagePiece) -> Optional[str]:
+        """
+        Retrieve the concatenated text of the user-turn that preceded ``message_piece``.
+
+        Looks up the conversation in memory and returns the text of every text-typed
+        user piece whose ``sequence`` is exactly one less than ``message_piece.sequence``.
+        Each piece's ``converted_value`` is preferred over its ``original_value`` so the
+        post-converter text the target actually received is what the caller sees.
+
+        Args:
+            message_piece (MessagePiece): The message piece whose prior user turn should
+                be retrieved (typically an assistant response being scored).
+
+        Returns:
+            Optional[str]: The concatenated user-turn text (pieces joined by newlines),
+                or ``None`` if no prior user turn can be located (no ``conversation_id``,
+                empty conversation, memory backend error, or no matching pieces).
+        """
+        if not message_piece.conversation_id:
+            return None
+        try:
+            conversation = self._memory.get_message_pieces(conversation_id=message_piece.conversation_id)
+        except Exception:  # pragma: no cover - defensive; depends on memory backend availability
+            return None
+        if not conversation:
+            return None
+
+        prior_sequence = message_piece.sequence - 1
+        texts = [
+            (piece.converted_value or piece.original_value or "")
+            for piece in conversation
+            if piece.sequence == prior_sequence
+            and piece.api_role == "user"
+            and piece.converted_value_data_type == "text"
+        ]
+        non_empty = [t for t in texts if t]
+        if not non_empty:
+            return None
+        return "\n".join(non_empty)
+
     @staticmethod
     async def score_response_async(
         *,

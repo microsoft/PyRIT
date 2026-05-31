@@ -223,7 +223,7 @@ class XLSafetyBenchJailbreakJudgeScorer(TrueFalseScorer):
         language = str(metadata.get("language") or "the user's language")
         base_query = (objective or "").strip()
 
-        adversarial_prompt = self._get_user_turn_text(message_piece) or base_query
+        adversarial_prompt = self._get_prior_user_turn_text(message_piece=message_piece) or base_query
         target_response = str(message_piece.converted_value or "")
 
         substitutions = {
@@ -289,44 +289,6 @@ class XLSafetyBenchJailbreakJudgeScorer(TrueFalseScorer):
                 objective=objective,
             )
         ]
-
-    def _get_user_turn_text(self, message_piece: MessagePiece) -> str:
-        """
-        Retrieve the user-turn prompt that produced ``message_piece`` from memory.
-
-        The XL-SafetyBench jailbreak rubric asks the judge to evaluate the
-        ``Adversarial Prompt`` (the polished payload actually sent to the target),
-        not the underlying ``Base Query``. The two differ because the dataset's
-        ``SeedPrompt.value`` is the polished attack while the ``Base Query`` lives
-        in ``objective``. Pulling the user-turn piece from memory gives us the
-        post-converter text that the target actually received.
-
-        Args:
-            message_piece (MessagePiece): The assistant response being scored.
-
-        Returns:
-            str: Concatenated text of every text piece in the prior user turn, or
-                ``""`` if no prior turn can be located (e.g. the response wasn't
-                persisted to memory).
-        """
-        if not message_piece.conversation_id:
-            return ""
-        try:
-            conversation = self._memory.get_message_pieces(conversation_id=message_piece.conversation_id)
-        except Exception:  # pragma: no cover - defensive; depends on memory backend availability
-            return ""
-        if not conversation:
-            return ""
-
-        prior_sequence = message_piece.sequence - 1
-        texts = [
-            (piece.converted_value or piece.original_value or "")
-            for piece in conversation
-            if piece.sequence == prior_sequence
-            and piece.api_role == "user"
-            and piece.converted_value_data_type == "text"
-        ]
-        return "\n".join(t for t in texts if t)
 
     @pyrit_json_retry
     async def _invoke_judge_async(

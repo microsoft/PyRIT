@@ -203,7 +203,7 @@ class XLSafetyBenchCulturalJudgeScorer(TrueFalseScorer):
         language_mode = str(metadata.get("language_mode") or "local")
 
         base_query = (objective or "").strip()
-        scenario_text = self._get_user_turn_text(message_piece) or base_query
+        scenario_text = self._get_prior_user_turn_text(message_piece=message_piece) or base_query
 
         target_response = str(message_piece.converted_value or "")
 
@@ -276,41 +276,6 @@ class XLSafetyBenchCulturalJudgeScorer(TrueFalseScorer):
                 objective=objective,
             )
         ]
-
-    def _get_user_turn_text(self, message_piece: MessagePiece) -> str:
-        """
-        Retrieve the user-turn scenario that produced ``message_piece`` from memory.
-
-        The cultural judge rubric scores how the assistant engaged with a specific
-        scenario text. That scenario is the seed prompt's ``value`` and lives on
-        the prior user-turn piece in the same conversation. Looking it up in memory
-        keeps the judge independent of any specific dataset's metadata schema.
-
-        Args:
-            message_piece (MessagePiece): The assistant response being scored.
-
-        Returns:
-            str: Concatenated text of every text piece in the prior user turn, or
-                ``""`` if no prior turn can be located.
-        """
-        if not message_piece.conversation_id:
-            return ""
-        try:
-            conversation = self._memory.get_message_pieces(conversation_id=message_piece.conversation_id)
-        except Exception:  # pragma: no cover - defensive; depends on memory backend availability
-            return ""
-        if not conversation:
-            return ""
-
-        prior_sequence = message_piece.sequence - 1
-        texts = [
-            (piece.converted_value or piece.original_value or "")
-            for piece in conversation
-            if piece.sequence == prior_sequence
-            and piece.api_role == "user"
-            and piece.converted_value_data_type == "text"
-        ]
-        return "\n".join(t for t in texts if t)
 
     @pyrit_json_retry
     async def _invoke_judge_async(
