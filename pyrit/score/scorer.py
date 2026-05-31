@@ -39,7 +39,7 @@ from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from pyrit.prompt_target import PromptTarget
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
@@ -649,6 +649,7 @@ class Scorer(Identifiable, abc.ABC):
         metadata_output_key: str = "metadata",
         category_output_key: str = "category",
         attack_identifier: Optional[ComponentIdentifier] = None,
+        response_parser: Optional[Callable[[str], dict[str, Any]]] = None,
     ) -> UnvalidatedScore:
         """
         Send a request to a target, and take care of retries.
@@ -684,6 +685,16 @@ class Scorer(Identifiable, abc.ABC):
                 Defaults to "category".
             attack_identifier (Optional[ComponentIdentifier]): The attack identifier.
                 Defaults to None.
+            response_parser (Optional[Callable[[str], dict[str, Any]]]): Custom parser for
+                the target's raw text response. When provided, replaces the default
+                ``json.loads(remove_markdown_json(...))`` step and is called with the raw
+                response text. Must return a dict containing at least ``score_value_output_key``
+                and ``rationale_output_key``; may also include ``description_output_key``,
+                ``metadata_output_key``, and ``category_output_key``. Should raise
+                :class:`InvalidJsonException` on malformed output so the ``@pyrit_json_retry``
+                decorator retries the LLM call. Use when wrapping a fine-tuned classifier
+                whose output is not JSON (e.g. LlamaGuard's ``safe`` / ``unsafe\\n<categories>``
+                format). Defaults to None (use the JSON path).
 
         Returns:
             UnvalidatedScore: The score object containing the response from the target LLM.
@@ -747,8 +758,15 @@ class Scorer(Identifiable, abc.ABC):
             )
             response_json = text_piece.converted_value
 
-            response_json = remove_markdown_json(response_json)
-            parsed_response = json.loads(response_json)
+            if response_parser is not None:
+                # Custom parser: caller owns the wire format. Parser must return a dict
+                # with the score_value/rationale/etc. keys expected by the normalization
+                # below, and should raise InvalidJsonException on malformed output so the
+                # @pyrit_json_retry decorator retries the LLM call.
+                parsed_response = response_parser(response_json)
+            else:
+                response_json = remove_markdown_json(response_json)
+                parsed_response = json.loads(response_json)
             category_response = parsed_response.get(category_output_key)
 
             if category_response and category:
@@ -787,7 +805,7 @@ class Scorer(Identifiable, abc.ABC):
 
             score = UnvalidatedScore(
                 raw_score_value=str(parsed_response[score_value_output_key]),
-                score_value_description=parsed_response.get(description_output_key),
+                score_value_description=parsed_response.get(description_output_key) or "",
                 score_category=normalized_category,
                 score_rationale=parsed_response[rationale_output_key],
                 scorer_class_identifier=self.get_identifier(),

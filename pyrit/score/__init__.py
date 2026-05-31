@@ -43,6 +43,7 @@ from pyrit.score.true_false.credential_leak_scorer import CredentialLeakScorer
 from pyrit.score.true_false.decoding_scorer import DecodingScorer
 from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
 from pyrit.score.true_false.gandalf_scorer import GandalfScorer
+from pyrit.score.true_false.llamaguard_parser import parse_llamaguard_response
 from pyrit.score.true_false.markdown_injection import MarkdownInjectionScorer
 from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
 from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
@@ -135,6 +136,7 @@ __all__ = [
     "LikertScaleEvalFiles",
     "LikertScalePaths",
     "MarkdownInjectionScorer",
+    "parse_llamaguard_response",
     "MetricsType",
     "ObjectiveHumanLabeledEntry",
     "ObjectiveScorerEvaluator",

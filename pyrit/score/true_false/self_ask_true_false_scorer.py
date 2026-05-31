@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import enum
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -111,6 +111,7 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
         true_false_system_prompt_path: Optional[Union[str, Path]] = None,
         validator: Optional[ScorerPromptValidator] = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
+        response_parser: Optional[Callable[[str], dict[str, Any]]] = None,
     ) -> None:
         """
         Initialize the SelfAskTrueFalseScorer.
@@ -125,6 +126,14 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
             validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
+            response_parser (Optional[Callable[[str], dict[str, Any]]]): Custom parser for the
+                target's raw text response. When provided, replaces the default JSON parsing.
+                Must return a dict with at least ``score_value`` and ``rationale`` keys (and
+                may include ``description``, ``metadata``, ``category``). Should raise
+                :class:`pyrit.exceptions.InvalidJsonException` on malformed output to trigger
+                a retry. Use when wrapping a fine-tuned classifier whose output is not JSON
+                (e.g. LlamaGuard's ``safe`` / ``unsafe\\n<categories>`` format). Defaults to
+                None (use the JSON path).
 
         Raises:
             ValueError: If both true_false_question_path and true_false_question are provided.
@@ -172,6 +181,8 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
         self._system_prompt = scoring_instructions_template.render_template_value(
             true_description=true_category, false_description=false_category, metadata=metadata
         )
+
+        self._response_parser = response_parser
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -227,6 +238,7 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
             category=self._score_category,
             objective=objective,
             attack_identifier=message_piece.attack_identifier,
+            response_parser=self._response_parser,
         )
 
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")
