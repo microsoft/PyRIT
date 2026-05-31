@@ -123,6 +123,7 @@
 
   var manifestCache = null;
   var manifestPromise = null;
+  var pagesCache = {}; // versionBase -> Promise<string[] | null>
   var lastPath = window.location.pathname;
   var mountInProgress = false;
 
@@ -211,8 +212,9 @@
         linksToProbe.push({ slug: v.slug, link: link, suffix: suffix, versionBase: versionBase });
       }
     });
-    // Probe page availability per non-current version, walking up ancestors.
-    linksToProbe.forEach(function (p) { probeAncestorsAndUpdate(p, relPath); });
+    // Probe page availability per non-current version using each version's
+    // pages.json manifest, updating links to the closest matching page.
+    linksToProbe.forEach(function (p) { probeAndUpdateLink(p, relPath); });
 
     function toggle(open) {
       var isOpen = open === undefined ? menu.hidden : !open;
@@ -243,55 +245,97 @@
     return paths;
   }
 
-  // For one non-current version: probe each ancestor URL in parallel, then
-  // pick the deepest one that exists. Update the link href + suffix to point
-  // at it. If only the root exists, suffix shows "-> home"; otherwise it shows
-  // "-> /closest/ancestor/" so the user knows where they'll end up.
-  //
-  // Note on the probe URL: we HEAD `<path>index.html` rather than `<path>` so
-  // intermediate path components without an actual rendered page (just dirs
-  // containing children) are correctly treated as misses. GH Pages 404s a
-  // directory without index.html, but `python -m http.server` returns a
-  // directory listing -- checking for index.html explicitly works in both.
-  function probeAncestorsAndUpdate(p, relPath) {
-    var paths = ancestorPaths(relPath);
-    var results = new Array(paths.length);
-    var pending = paths.length;
-    paths.forEach(function (path, idx) {
-      var probeUrl = p.versionBase + path + "index.html";
-      fetch(probeUrl, { method: "HEAD", cache: "no-cache" })
-        .then(function (r) { results[idx] = r.ok; })
-        .catch(function () { results[idx] = false; })
-        .then(function () {
-          pending--;
-          if (pending === 0) resolveFallback(p, paths, results);
-        });
-    });
+  // Fetch a version's pages.json (cached). Returns null on any error so
+  // the picker can degrade gracefully (full-path link, no fallback).
+  function getPages(versionBase) {
+    if (pagesCache[versionBase]) return pagesCache[versionBase];
+    pagesCache[versionBase] = fetch(versionBase + "pages.json", { cache: "no-cache" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("pages.json HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (pages) { return Array.isArray(pages) ? pages : null; })
+      .catch(function () { return null; });
+    return pagesCache[versionBase];
   }
 
-  function resolveFallback(p, paths, results) {
-    // results[0] = full path exists?  if yes, leave link alone.
-    if (results[0]) return;
-    // Walk down from the deepest ancestor that exists.
-    for (var i = 1; i < paths.length; i++) {
-      if (results[i]) {
-        var href = p.versionBase + paths[i];
-        p.link.setAttribute("href", href);
-        if (paths[i] === "") {
-          p.suffix.textContent = " \u2192 home";
-          p.link.title = "This page doesn't exist in this version; opens the version's home page instead.";
-        } else {
-          p.suffix.textContent = " \u2192 /" + paths[i].replace(/\/$/, "");
-          p.link.title = "This page doesn't exist in this version; opens the closest available ancestor (" + paths[i] + ") instead.";
+  // Count common leading path segments between a candidate page path and the
+  // target's segments. Used to break ties when multiple sibling pages share
+  // the same parent prefix.
+  function commonSegmentPrefix(pagePath, targetSegs) {
+    var pageSegs = String(pagePath || "").replace(/\/+$/, "").split("/").filter(Boolean);
+    var n = Math.min(pageSegs.length, targetSegs.length);
+    var i = 0;
+    while (i < n && pageSegs[i] === targetSegs[i]) i++;
+    return i;
+  }
+
+  // Find the best match for `relPath` in the version's manifest:
+  //   1) exact match wins
+  //   2) walk up ancestors; at each level, prefer the ancestor itself if it's
+  //      a real page; otherwise pick any sibling under that ancestor with the
+  //      longest common prefix to the target (tiebreak by alphabetical)
+  //   3) fall through to the version root ("") if nothing better exists.
+  //
+  // Returns the matched path string (e.g. "code/scenarios/scenarios/" or "").
+  function findClosestPage(pages, relPath) {
+    if (!Array.isArray(pages) || pages.length === 0) return null;
+    var clean = String(relPath || "").split("?")[0].split("#")[0].replace(/\/+$/, "");
+    var targetSegs = clean.split("/").filter(Boolean);
+
+    // 1) exact match
+    var full = clean ? clean + "/" : "";
+    if (pages.indexOf(full) !== -1) return full;
+
+    // 2) walk up ancestors, looking for siblings/descendants under each
+    for (var depth = targetSegs.length - 1; depth >= 0; depth--) {
+      var ancestor = depth === 0 ? "" : targetSegs.slice(0, depth).join("/") + "/";
+      // ancestor itself a page?
+      if (pages.indexOf(ancestor) !== -1) return ancestor;
+      // any page that lives under this ancestor? (sibling-of-original branch)
+      var bestPage = null;
+      var bestPrefix = -1;
+      for (var i = 0; i < pages.length; i++) {
+        var p = pages[i];
+        if (ancestor !== "" && p.indexOf(ancestor) !== 0) continue;
+        if (p === ancestor) continue;
+        var pfx = commonSegmentPrefix(p, targetSegs);
+        if (pfx > bestPrefix || (pfx === bestPrefix && bestPage && p < bestPage)) {
+          bestPage = p;
+          bestPrefix = pfx;
         }
-        p.suffix.className += " pyrit-version-picker__link-suffix--fallback";
-        return;
       }
+      if (bestPage) return bestPage;
     }
-    // Nothing exists, not even the root. Leave the link as-is (it'll 404 to
-    // our custom 404 page). Mark it visually so the user knows.
-    p.suffix.textContent = " \u2192 404";
-    p.suffix.className += " pyrit-version-picker__link-suffix--fallback";
+
+    // 3) root
+    return "";
+  }
+
+  // For one non-current version: load the manifest, find the closest page,
+  // and update the link href + suffix. If the manifest can't be loaded (e.g.
+  // the version was built without it), fall back to leaving the full-path
+  // link in place.
+  function probeAndUpdateLink(p, relPath) {
+    getPages(p.versionBase).then(function (pages) {
+      if (!pages) return; // no manifest -- leave full-path link as-is
+      var match = findClosestPage(pages, relPath);
+      if (match === null) return;
+      var clean = String(relPath || "").split("?")[0].split("#")[0].replace(/\/+$/, "");
+      var fullTarget = clean ? clean + "/" : "";
+      if (match === fullTarget) return; // exact match; no suffix needed
+
+      var href = p.versionBase + match;
+      p.link.setAttribute("href", href);
+      if (match === "") {
+        p.suffix.textContent = " \u2192 home";
+        p.link.title = "This page doesn't exist in this version; opens the version's home page instead.";
+      } else {
+        p.suffix.textContent = " \u2192 /" + match.replace(/\/$/, "");
+        p.link.title = "This page doesn't exist in this version; opens the closest available page (" + match + ") instead.";
+      }
+      p.suffix.className += " pyrit-version-picker__link-suffix--fallback";
+    });
   }
 
   function getManifest(base) {

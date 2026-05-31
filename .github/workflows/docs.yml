@@ -179,6 +179,7 @@ jobs:
           sparse-checkout: |
             build_scripts/inject_version_picker.py
             build_scripts/version_picker_assets
+            build_scripts/generate_pages_manifest.py
           sparse-checkout-cone-mode: false
 
       - name: Set up Python 3.13
@@ -201,12 +202,19 @@ jobs:
           set -euo pipefail
           mkdir -p dist
 
-          # Each artifact lands at artifacts/site-<slug>/. Move to dist/<slug>/.
+          # Each artifact lands at artifacts/site-<slug>/. Move to dist/<slug>/
+          # and generate a pages.json manifest of all rendered HTML pages
+          # (every <slug>/.../index.html). The picker uses this manifest to
+          # find the best sibling/ancestor when the user switches to a
+          # version that doesn't have the exact page they're on.
           for d in artifacts/site-*; do
             slug="${d#artifacts/site-}"
             echo "::group::Stage $slug"
             mkdir -p "dist/$slug"
             cp -r "$d/." "dist/$slug/"
+            python build_scripts/generate_pages_manifest.py \
+              --site-dir "dist/$slug" \
+              --output "dist/$slug/pages.json"
             echo "::endgroup::"
           done
 
@@ -280,7 +288,6 @@ jobs:
               var meta = document.querySelector('meta[name="pyrit-docs-base"]');
               var docsBase = (meta && meta.content) ? meta.content.replace(/\/$/, "") : "";
               if (!docsBase) {
-                // Fall back to first path segment if injector hasn't run.
                 var parts = window.location.pathname.split("/").filter(Boolean);
                 docsBase = parts.length > 0 ? "/" + parts[0] : "";
               }
@@ -293,40 +300,62 @@ jobs:
               var relPath = slash === -1 ? "" : rest.slice(slash + 1);
               if (!relPath) return; // already at version root
 
-              // Generate ancestor paths most-specific-first.
-              var clean = relPath.replace(/\/+$/, "");
-              var segs = clean.split("/").filter(Boolean);
-              var paths = [];
-              // Start at length-1 (skip the full path, which we already know
-              // is the 404 we're rendering). Walk down to depth 1 (no root).
-              for (var i = segs.length - 1; i > 0; i--) {
-                paths.push(segs.slice(0, i).join("/") + "/");
-              }
-              if (paths.length === 0) return; // nothing to climb
-
               var versionBase = docsBase + "/" + slug + "/";
-              // Probe `<path>index.html` not `<path>/`: GH Pages 404s a dir
-              // without an index, but the redirect target should be a real
-              // rendered page, not a parent dir.
-              var results = new Array(paths.length);
-              var pending = paths.length;
-              paths.forEach(function (p, idx) {
-                fetch(versionBase + p + "index.html", { method: "HEAD", cache: "no-cache" })
-                  .then(function (r) { results[idx] = r.ok; })
-                  .catch(function () { results[idx] = false; })
-                  .then(function () {
-                    pending--;
-                    if (pending === 0) {
-                      for (var j = 0; j < results.length; j++) {
-                        if (results[j]) {
-                          window.location.replace(versionBase + paths[j]);
-                          return;
-                        }
-                      }
-                      // No ancestor exists. Leave the static fallback page up.
+
+              function commonSegmentPrefix(pagePath, targetSegs) {
+                var pageSegs = String(pagePath || "").replace(/\/+$/, "").split("/").filter(Boolean);
+                var n = Math.min(pageSegs.length, targetSegs.length);
+                var i = 0;
+                while (i < n && pageSegs[i] === targetSegs[i]) i++;
+                return i;
+              }
+
+              // Same closest-page logic as picker.js: walk up ancestors,
+              // at each level prefer the ancestor-as-page, otherwise pick
+              // the best sibling under that ancestor (longest common prefix,
+              // tiebreak alphabetically). Fall through to root.
+              function findClosestPage(pages, target) {
+                if (!Array.isArray(pages) || pages.length === 0) return null;
+                var clean = String(target || "").replace(/\/+$/, "");
+                var targetSegs = clean.split("/").filter(Boolean);
+                var full = clean ? clean + "/" : "";
+                if (pages.indexOf(full) !== -1) return full;
+                for (var depth = targetSegs.length - 1; depth >= 0; depth--) {
+                  var ancestor = depth === 0 ? "" : targetSegs.slice(0, depth).join("/") + "/";
+                  if (pages.indexOf(ancestor) !== -1) return ancestor;
+                  var bestPage = null;
+                  var bestPrefix = -1;
+                  for (var i = 0; i < pages.length; i++) {
+                    var p = pages[i];
+                    if (ancestor !== "" && p.indexOf(ancestor) !== 0) continue;
+                    if (p === ancestor) continue;
+                    var pfx = commonSegmentPrefix(p, targetSegs);
+                    if (pfx > bestPrefix || (pfx === bestPrefix && bestPage && p < bestPage)) {
+                      bestPage = p;
+                      bestPrefix = pfx;
                     }
-                  });
-              });
+                  }
+                  if (bestPage) return bestPage;
+                }
+                return "";
+              }
+
+              fetch(versionBase + "pages.json", { cache: "no-cache" })
+                .then(function (r) {
+                  if (!r.ok) throw new Error("pages.json HTTP " + r.status);
+                  return r.json();
+                })
+                .then(function (pages) {
+                  var match = findClosestPage(pages, relPath);
+                  if (match === null) return; // no manifest -- show static fallback
+                  // Only auto-redirect if we found something better than root.
+                  // (Sitting on root is fine via the static fallback page.)
+                  if (match === "") return;
+                  window.location.replace(versionBase + match);
+                })
+                .catch(function () {
+                  // No manifest available -- leave the static fallback up.
+                });
             })();
             </script>
           </head>
