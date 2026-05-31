@@ -33,24 +33,28 @@ def _build_site(tmp_path: Path, html: str = "<html><head><title>x</title></head>
     return site
 
 
-def test_injects_meta_link_and_inline_script(injector_module, tmp_path):
+def test_injects_meta_and_inline_script(injector_module, tmp_path):
     site = _build_site(tmp_path)
     rc = injector_module.main(["--site-dir", str(site), "--base", "/PyRIT/0.13.0"])
     assert rc == 0
     out = (site / "index.html").read_text(encoding="utf-8")
     assert '<meta name="pyrit-docs-base" content="/PyRIT/0.13.0">' in out
-    assert '<link rel="stylesheet" href="/PyRIT/0.13.0/_pyrit/picker.css">' in out
     assert "<script>" in out
+    # Picker JS body must be inlined; we sanity-check by looking for the
+    # mount-class constant and the styles bundle.
     assert "pyrit-version-picker" in out
-    assert 'src="/PyRIT/0.13.0/_pyrit/picker.js"' not in out
+    assert "position: fixed" in out
+    # No external CSS link, no external picker.js src.
+    assert "<link" not in out or "picker.css" not in out
+    assert 'src="' not in out or "picker.js" not in out
     assert injector_module.INJECT_MARKER in out
 
 
-def test_copies_only_css_asset(injector_module, tmp_path):
+def test_no_asset_directory_is_created(injector_module, tmp_path):
     site = _build_site(tmp_path)
     injector_module.main(["--site-dir", str(site), "--base", "/PyRIT/latest"])
-    assert (site / "_pyrit" / "picker.css").is_file()
-    assert not (site / "_pyrit" / "picker.js").exists()
+    # All picker assets are inlined; no _pyrit/ dir should be written.
+    assert not (site / "_pyrit").exists()
 
 
 def test_idempotent(injector_module, tmp_path):
