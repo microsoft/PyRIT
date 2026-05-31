@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Optional
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -94,6 +94,13 @@ class XLSafetyBenchCulturalCategory(str, Enum):
     DAILY_LIFE_AND_PUBLIC_CONDUCT = "Daily Life & Public Conduct"
     HIERARCHY_ADDRESS_AND_SOCIAL_DEFERENCE = "Hierarchy Address & Social Deference"
     LEGAL_LANDMINES = "Legal Landmines"
+
+
+class XLSafetyBenchLanguageMode(str, Enum):
+    """Which version of a per-row scenario text to use as the SeedPrompt value."""
+
+    LOCAL = "local"
+    ENGLISH = "english"
 
 
 @dataclass(frozen=True)
@@ -601,7 +608,7 @@ class _XLSafetyBenchCulturalDataset(_RemoteDatasetLoader):
         *,
         countries: Optional[list[XLSafetyBenchCountry]] = None,
         categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
-        language_mode: Literal["local", "english"] = "local",
+        language_mode: XLSafetyBenchLanguageMode = XLSafetyBenchLanguageMode.LOCAL,
     ) -> None:
         """
         Initialize the XL-SafetyBench Cultural dataset loader.
@@ -611,17 +618,17 @@ class _XLSafetyBenchCulturalDataset(_RemoteDatasetLoader):
                 pairs to include. Defaults to ``None`` (all 10 countries).
             categories (Optional[list[XLSafetyBenchCulturalCategory]]): Subset of cultural
                 categories to include. Defaults to ``None`` (all 6 categories).
-            language_mode (Literal["local", "english"]): Which version of the scenario
-                text to use as the prompt value. ``"local"`` (default) matches the paper's
-                evaluation setup; ``"english"`` is useful for cross-language probing.
+            language_mode (XLSafetyBenchLanguageMode): Which version of the scenario
+                text to use as the prompt value. ``LOCAL`` (default) matches the paper's
+                evaluation setup; ``ENGLISH`` is useful for cross-language probing.
 
         Raises:
             ValueError: If ``countries`` or ``categories`` is an empty list, contains
                 values that are not members of the expected enum, or if ``language_mode``
-                is not one of the supported values.
+                is not a member of ``XLSafetyBenchLanguageMode``.
         """
-        if language_mode not in ("local", "english"):
-            raise ValueError(f"language_mode must be 'local' or 'english', got {language_mode!r}.")
+        if not isinstance(language_mode, XLSafetyBenchLanguageMode):
+            raise ValueError(f"language_mode must be an XLSafetyBenchLanguageMode member, got {language_mode!r}.")
 
         self._countries = _resolve_countries(countries)
         self._categories_filter = _resolve_category_filter(
@@ -629,7 +636,7 @@ class _XLSafetyBenchCulturalDataset(_RemoteDatasetLoader):
             enum_cls=XLSafetyBenchCulturalCategory,
             label="category",
         )
-        self._language_mode: Literal["local", "english"] = language_mode
+        self._language_mode: XLSafetyBenchLanguageMode = language_mode
         self.source = _HF_DATASET_URL
 
     @property
@@ -660,7 +667,7 @@ class _XLSafetyBenchCulturalDataset(_RemoteDatasetLoader):
             "Loading XL-SafetyBench Cultural dataset (countries=%s, categories=%s, language_mode=%s)",
             [c.value for c in self._countries],
             sorted(self._categories_filter) if self._categories_filter is not None else "all",
-            self._language_mode,
+            self._language_mode.value,
         )
 
         seed_prompts: list[SeedPrompt] = []
@@ -696,7 +703,9 @@ class _XLSafetyBenchCulturalDataset(_RemoteDatasetLoader):
         rows = self._fetch_from_url(source=url, source_type="public_url", cache=cache)
 
         country_metadata = _common_metadata_for_country(country)
-        scenario_key = "scenario_local" if self._language_mode == "local" else "scenario_english"
+        scenario_key = (
+            "scenario_local" if self._language_mode is XLSafetyBenchLanguageMode.LOCAL else "scenario_english"
+        )
 
         seed_prompts: list[SeedPrompt] = []
         for raw_row in rows:
@@ -727,7 +736,7 @@ class _XLSafetyBenchCulturalDataset(_RemoteDatasetLoader):
                 "scenario_english": str(row.get("scenario_english", "")),
                 "scenario_local": str(row.get("scenario_local", "")),
                 "hidden_violation": str(row.get("hidden_violation", "")),
-                "language_mode": self._language_mode,
+                "language_mode": self._language_mode.value,
                 "track": "cultural",
             }
 
@@ -963,7 +972,7 @@ class _XLSafetyBenchCulturalFranceDataset(_XLSafetyBenchCulturalDataset):
         self,
         *,
         categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
-        language_mode: Literal["local", "english"] = "local",
+        language_mode: XLSafetyBenchLanguageMode = XLSafetyBenchLanguageMode.LOCAL,
     ) -> None:
         super().__init__(
             countries=[XLSafetyBenchCountry.FRANCE],
@@ -986,7 +995,7 @@ class _XLSafetyBenchCulturalGermanyDataset(_XLSafetyBenchCulturalDataset):
         self,
         *,
         categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
-        language_mode: Literal["local", "english"] = "local",
+        language_mode: XLSafetyBenchLanguageMode = XLSafetyBenchLanguageMode.LOCAL,
     ) -> None:
         super().__init__(
             countries=[XLSafetyBenchCountry.GERMANY],
@@ -1009,7 +1018,7 @@ class _XLSafetyBenchCulturalIndiaDataset(_XLSafetyBenchCulturalDataset):
         self,
         *,
         categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
-        language_mode: Literal["local", "english"] = "local",
+        language_mode: XLSafetyBenchLanguageMode = XLSafetyBenchLanguageMode.LOCAL,
     ) -> None:
         super().__init__(
             countries=[XLSafetyBenchCountry.INDIA],
@@ -1032,7 +1041,7 @@ class _XLSafetyBenchCulturalIndonesiaDataset(_XLSafetyBenchCulturalDataset):
         self,
         *,
         categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
-        language_mode: Literal["local", "english"] = "local",
+        language_mode: XLSafetyBenchLanguageMode = XLSafetyBenchLanguageMode.LOCAL,
     ) -> None:
         super().__init__(
             countries=[XLSafetyBenchCountry.INDONESIA],
@@ -1055,7 +1064,7 @@ class _XLSafetyBenchCulturalJapanDataset(_XLSafetyBenchCulturalDataset):
         self,
         *,
         categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
-        language_mode: Literal["local", "english"] = "local",
+        language_mode: XLSafetyBenchLanguageMode = XLSafetyBenchLanguageMode.LOCAL,
     ) -> None:
         super().__init__(
             countries=[XLSafetyBenchCountry.JAPAN],
@@ -1078,7 +1087,7 @@ class _XLSafetyBenchCulturalSouthKoreaDataset(_XLSafetyBenchCulturalDataset):
         self,
         *,
         categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
-        language_mode: Literal["local", "english"] = "local",
+        language_mode: XLSafetyBenchLanguageMode = XLSafetyBenchLanguageMode.LOCAL,
     ) -> None:
         super().__init__(
             countries=[XLSafetyBenchCountry.SOUTH_KOREA],
@@ -1101,7 +1110,7 @@ class _XLSafetyBenchCulturalSpainDataset(_XLSafetyBenchCulturalDataset):
         self,
         *,
         categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
-        language_mode: Literal["local", "english"] = "local",
+        language_mode: XLSafetyBenchLanguageMode = XLSafetyBenchLanguageMode.LOCAL,
     ) -> None:
         super().__init__(
             countries=[XLSafetyBenchCountry.SPAIN],
@@ -1124,7 +1133,7 @@ class _XLSafetyBenchCulturalTurkeyDataset(_XLSafetyBenchCulturalDataset):
         self,
         *,
         categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
-        language_mode: Literal["local", "english"] = "local",
+        language_mode: XLSafetyBenchLanguageMode = XLSafetyBenchLanguageMode.LOCAL,
     ) -> None:
         super().__init__(
             countries=[XLSafetyBenchCountry.TURKEY],
@@ -1147,7 +1156,7 @@ class _XLSafetyBenchCulturalUnitedArabEmiratesDataset(_XLSafetyBenchCulturalData
         self,
         *,
         categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
-        language_mode: Literal["local", "english"] = "local",
+        language_mode: XLSafetyBenchLanguageMode = XLSafetyBenchLanguageMode.LOCAL,
     ) -> None:
         super().__init__(
             countries=[XLSafetyBenchCountry.UNITED_ARAB_EMIRATES],
@@ -1170,7 +1179,7 @@ class _XLSafetyBenchCulturalUnitedStatesDataset(_XLSafetyBenchCulturalDataset):
         self,
         *,
         categories: Optional[list[XLSafetyBenchCulturalCategory]] = None,
-        language_mode: Literal["local", "english"] = "local",
+        language_mode: XLSafetyBenchLanguageMode = XLSafetyBenchLanguageMode.LOCAL,
     ) -> None:
         super().__init__(
             countries=[XLSafetyBenchCountry.UNITED_STATES],

@@ -9,6 +9,7 @@ from pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset import (
     XLSafetyBenchCountry,
     XLSafetyBenchCulturalCategory,
     XLSafetyBenchJailbreakCategory,
+    XLSafetyBenchLanguageMode,
     _XLSafetyBenchCulturalDataset,
     _XLSafetyBenchCulturalFranceDataset,
     _XLSafetyBenchCulturalGermanyDataset,
@@ -244,7 +245,7 @@ def test_jailbreak_rejects_wrong_enum_type():
 
 
 def test_cultural_rejects_invalid_language_mode():
-    with pytest.raises(ValueError, match="language_mode must be 'local' or 'english'"):
+    with pytest.raises(ValueError, match="language_mode must be an XLSafetyBenchLanguageMode"):
         _XLSafetyBenchCulturalDataset(language_mode="japanese")  # type: ignore[arg-type]
 
 
@@ -265,7 +266,7 @@ async def test_cultural_default_uses_local_scenario():
 async def test_cultural_english_language_mode():
     loader = _XLSafetyBenchCulturalDataset(
         countries=[XLSafetyBenchCountry.FRANCE],
-        language_mode="english",
+        language_mode=XLSafetyBenchLanguageMode.ENGLISH,
     )
 
     with _patch_cultural_fetch(loader):
@@ -427,8 +428,8 @@ def test_cultural_sibling_pins_country(sibling_cls, expected_name, expected_coun
     assert loader.dataset_name == expected_name
     assert loader._countries == [expected_country]
     assert loader._categories_filter is None
-    # language_mode defaults to "local" on the sibling, matching the parent default.
-    assert loader._language_mode == "local"
+    # language_mode defaults to LOCAL on the sibling, matching the parent default.
+    assert loader._language_mode is XLSafetyBenchLanguageMode.LOCAL
     assert sibling_cls.size == "medium"
     # Cultural siblings inherit the parent's tag set, which intentionally
     # excludes "default" (innocuous-by-construction).
@@ -453,7 +454,7 @@ async def test_jailbreak_sibling_forwards_categories():
 async def test_cultural_sibling_forwards_language_mode_and_categories():
     loader = _XLSafetyBenchCulturalGermanyDataset(
         categories=[XLSafetyBenchCulturalCategory.LEGAL_LANDMINES],
-        language_mode="english",
+        language_mode=XLSafetyBenchLanguageMode.ENGLISH,
     )
 
     with _patch_cultural_fetch(loader):
