@@ -29,6 +29,7 @@
 # Do Anything Now [@shen2023donotanything],
 # Do-Not-Answer [@wang2023donotanswer],
 # EquityMedQA [@pfohl2024equitymedqa],
+# FigStep [@gong2025figstep],
 # HarmBench [@mazeika2024harmbench],
 # HarmfulQA [@bhardwaj2023harmfulqa],
 # JailbreakBench [@chao2024jailbreakbench],
