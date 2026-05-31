@@ -16,7 +16,7 @@ leaks the absolute on-disk location of memory artifacts
 (e.g. ``C:\\Users\\<name>\\git\\PyRIT\\dbdata\\...\\1780.mp3``).
 """
 
-from pathlib import Path
+from pathlib import PureWindowsPath
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -49,10 +49,12 @@ def _derive_basename(value: str) -> Optional[str]:
     if value.startswith(("http://", "https://")):
         # Strip query string (e.g. SAS tokens) before taking the basename.
         parsed = urlparse(value)
-        name = Path(parsed.path).name
+        name = PureWindowsPath(parsed.path).name
         return name or None
-    # Local path — Path handles both POSIX and Windows separators.
-    return Path(value).name or None
+    # Local path — PureWindowsPath treats both ``/`` and ``\`` as separators,
+    # so Windows-style paths stored from a Windows host are split correctly
+    # even when this code runs on a POSIX host (CI, Linux deployments).
+    return PureWindowsPath(value).name or None
 
 
 def format_last_message_preview(
