@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, ClassVar
+from functools import cache
+from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
 from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 _CYBER_TECHNIQUE_NAMES = {"red_teaming"}
 
 
+@cache
 def _build_cyber_strategy() -> type[ScenarioStrategy]:
     """
     Build the Cyber strategy class dynamically from the registered technique factories.
@@ -61,7 +63,6 @@ class Cyber(Scenario):
     """
 
     VERSION: int = 2
-    _cached_strategy_class: ClassVar[type[ScenarioStrategy] | None] = None
 
     @classmethod
     def get_override_composite_scorer_questions_path(cls) -> list[Path]:
@@ -72,39 +73,6 @@ class Cyber(Scenario):
             Sequence[Path]: Paths to true/false question paths for cyber objective scoring.
         """
         return [SCORER_SEED_PROMPT_PATH / "true_false_question" / "malware.yaml"]
-
-    @classmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        """
-        Return the dynamically generated strategy class, building it on first access.
-
-        Returns:
-            type[ScenarioStrategy]: The CyberStrategy enum class.
-        """
-        if cls._cached_strategy_class is None:
-            cls._cached_strategy_class = _build_cyber_strategy()
-        return cls._cached_strategy_class
-
-    @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        """
-        Return the default strategy member (``ALL``).
-
-        Returns:
-            ScenarioStrategy: The ALL strategy value.
-        """
-        strategy_class = cls.get_strategy_class()
-        return strategy_class("all")
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """
-        Return the default dataset configuration for this scenario.
-
-        Returns:
-            DatasetConfiguration: Configuration with airt_malware dataset.
-        """
-        return DatasetConfiguration(dataset_names=["airt_malware"], max_dataset_size=4)
 
     @apply_defaults
     def __init__(
@@ -128,10 +96,14 @@ class Cyber(Scenario):
             objective_scorer if objective_scorer else self._get_default_objective_scorer()
         )
 
+        strategy_class = _build_cyber_strategy()
+
         super().__init__(
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
-            strategy_class=self.get_strategy_class(),
+            strategy_class=strategy_class,
+            default_strategy=strategy_class("all"),
+            default_dataset_config=DatasetConfiguration(dataset_names=["airt_malware"], max_dataset_size=4),
             scenario_result_id=scenario_result_id,
         )
 

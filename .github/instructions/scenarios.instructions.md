@@ -14,25 +14,28 @@ All scenarios inherit from `Scenario` (ABC) and must:
 2. **Optionally declare `BASELINE_ATTACK_POLICY`** (defaults to `BaselineAttackPolicy.Enabled` — a baseline `PromptSendingAttack` is prepended and callers can opt out per run via `initialize_async(include_baseline=False)`):
    - `BaselineAttackPolicy.Disabled` — baseline supported but off by default (e.g. `Jailbreak`, where templates dominate the run).
    - `BaselineAttackPolicy.Forbidden` — baseline is meaningless for this scenario's comparison axis (e.g. `AdversarialBenchmark`, which compares against gold-standard answers). Explicit `include_baseline=True` raises `ValueError`.
-3. **Implement three abstract methods:**
+3. **Pass `strategy_class`, `default_strategy`, and `default_dataset_config` to `super().__init__()`:**
 
 ```python
 class MyScenario(Scenario):
     VERSION: int = 1
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
 
-    @classmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        return MyStrategy
-
-    @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        return MyStrategy.ALL
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        return DatasetConfiguration(dataset_names=["my_dataset"])
+    @apply_defaults
+    def __init__(self, *, objective_scorer=None, scenario_result_id=None) -> None:
+        super().__init__(
+            version=self.VERSION,
+            strategy_class=MyStrategy,
+            default_strategy=MyStrategy.ALL,
+            default_dataset_config=DatasetConfiguration(dataset_names=["my_dataset"]),
+            objective_scorer=objective_scorer or self._get_default_objective_scorer(),
+            scenario_result_id=scenario_result_id,
+        )
 ```
+
+For scenarios whose strategy enum is built dynamically (RapidResponse pattern), build the
+strategy class in a module-level `@cache`-decorated function and pass the result through
+the constructor — no classmethod indirection required.
 
 4. **Optionally override `_get_atomic_attacks_async()`** — the base class provides a default
    that uses the factory/registry pattern (see "AtomicAttack Construction" below).
@@ -60,6 +63,8 @@ def __init__(
     super().__init__(
         version=self.VERSION,
         strategy_class=MyStrategy,
+        default_strategy=MyStrategy.ALL,
+        default_dataset_config=DatasetConfiguration(dataset_names=["my_dataset"]),
         objective_scorer=objective_scorer,
     )
 ```
@@ -67,7 +72,8 @@ def __init__(
 Requirements:
 - `@apply_defaults` decorator on `__init__`
 - All parameters keyword-only via `*`
-- `super().__init__()` called with `version`, `strategy_class`, `objective_scorer`
+- **All constructor parameters must be optional** (default to `None`) so the registry can instantiate the scenario with no arguments for metadata introspection. Defer required-input validation to `initialize_async()` or `_get_atomic_attacks_async()`. `ScenarioRegistry._build_metadata` raises `TypeError` if `scenario_class()` cannot be called with no arguments.
+- `super().__init__()` called with `version`, `strategy_class`, `default_strategy`, `default_dataset_config`, `objective_scorer`
 - complex objects like `adversarial_chat` or `objective_scorer` should be passed into the constructor.
 
 ## Dataset Loading

@@ -44,7 +44,7 @@ repos:
         files: ^pyrit/memory/(memory_models\.py|alembic/.*|migration\.py)$
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
         exclude: NOTICE.txt
@@ -56,7 +56,7 @@ repos:
       - id: detect-private-key
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.4
+    rev: v0.15.15
     hooks:
       - id: ruff-format
       - id: ruff-check

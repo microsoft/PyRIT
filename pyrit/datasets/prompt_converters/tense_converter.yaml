@@ -2,7 +2,10 @@ name: tense_converter
 description: |
   A general strategy for changing the tense of an instruction based on "Does Refusal Training in LLMs Generalize to the Past Tense?" by Maksym Andriushchenko and Nicolas Flammarion.
 authors:
-  - AI Red Team
+  - Maksym Andriushchenko
+  - Nicolas Flammarion
+groups:
+  - EPFL
 source: https://arxiv.org/abs/2407.11969
 parameters:
   - tense
