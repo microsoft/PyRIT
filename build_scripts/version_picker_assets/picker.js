@@ -91,11 +91,21 @@
     "}",
     ".pyrit-version-picker__item { margin: 0; }",
     ".pyrit-version-picker__link {",
-    "  display: block;",
+    "  display: flex;",
+    "  align-items: baseline;",
+    "  justify-content: space-between;",
+    "  gap: 0.5rem;",
     "  padding: 0.5rem 0.875rem;",
     "  color: inherit;",
     "  text-decoration: none;",
     "}",
+    ".pyrit-version-picker__link-label { flex: 1; }",
+    ".pyrit-version-picker__link-suffix {",
+    "  font-size: 0.75rem;",
+    "  opacity: 0.7;",
+    "  font-weight: 400;",
+    "}",
+    ".pyrit-version-picker__link-suffix--fallback { color: #b45309; opacity: 1; }",
     ".pyrit-version-picker__link:hover,",
     ".pyrit-version-picker__link:focus-visible { background: #f1f5f9; outline: none; }",
     ".pyrit-version-picker__item--current .pyrit-version-picker__link {",
@@ -180,16 +190,29 @@
     button.innerHTML = '<span class="pyrit-version-picker__icon" aria-hidden="true">v</span> <span class="pyrit-version-picker__label">' + escapeHtml(currentLabel + stableBadge) + '</span> <span class="pyrit-version-picker__caret" aria-hidden="true">\u25BE</span>';
 
     var menu = el("ul", { class: "pyrit-version-picker__menu", role: "listbox", hidden: "" });
+    var linksToProbe = []; // [{slug, link, suffix, base, ancestors}]
     manifest.versions.forEach(function (v) {
       var isCurrent = v.slug === currentSlug;
       var label = v.name + (v.slug === manifest.stable ? " (stable)" : "");
-      var href = base + "/" + v.slug + "/" + (relPath || "");
+      var versionBase = base + "/" + v.slug + "/";
+      var fullHref = versionBase + (relPath || "");
       var item = el("li", { class: "pyrit-version-picker__item" + (isCurrent ? " pyrit-version-picker__item--current" : ""), role: "option", "aria-selected": isCurrent ? "true" : "false" });
-      var link = el("a", { href: href, class: "pyrit-version-picker__link" });
-      link.textContent = label;
+      var link = el("a", { href: fullHref, class: "pyrit-version-picker__link" });
+      var labelSpan = el("span", { class: "pyrit-version-picker__link-label", text: label });
+      var suffix = el("span", { class: "pyrit-version-picker__link-suffix", "aria-hidden": "true" });
+      link.appendChild(labelSpan);
+      link.appendChild(suffix);
       item.appendChild(link);
       menu.appendChild(item);
+      // Queue an ancestor-walk probe for non-current versions when there's
+      // a non-trivial path. Each ancestor (most specific first, down to root)
+      // is probed in parallel; the deepest one that exists wins.
+      if (!isCurrent && relPath) {
+        linksToProbe.push({ slug: v.slug, link: link, suffix: suffix, versionBase: versionBase });
+      }
     });
+    // Probe page availability per non-current version, walking up ancestors.
+    linksToProbe.forEach(function (p) { probeAncestorsAndUpdate(p, relPath); });
 
     function toggle(open) {
       var isOpen = open === undefined ? menu.hidden : !open;
@@ -204,6 +227,66 @@
     container.appendChild(button);
     container.appendChild(menu);
     return container;
+  }
+
+  // Given a path like "code/gui/some/view" (no leading slash, query/hash
+  // stripped), return ["code/gui/some/view/", "code/gui/some/", "code/gui/",
+  // "code/", ""] -- most specific first, root last.
+  function ancestorPaths(relPath) {
+    var clean = String(relPath || "").split("?")[0].split("#")[0].replace(/\/+$/, "");
+    var parts = clean.split("/").filter(Boolean);
+    var paths = [];
+    for (var i = parts.length; i > 0; i--) {
+      paths.push(parts.slice(0, i).join("/") + "/");
+    }
+    paths.push(""); // version root
+    return paths;
+  }
+
+  // For one non-current version: probe each ancestor URL in parallel, then
+  // pick the deepest one that exists. Update the link href + suffix to point
+  // at it. If only the root exists, suffix shows "-> home"; otherwise it shows
+  // "-> /closest/ancestor/" so the user knows where they'll end up.
+  function probeAncestorsAndUpdate(p, relPath) {
+    var paths = ancestorPaths(relPath);
+    // Index 0 is the full path. If it exists we don't need a suffix change.
+    var results = new Array(paths.length);
+    var pending = paths.length;
+    paths.forEach(function (path, idx) {
+      var probeUrl = p.versionBase + path;
+      fetch(probeUrl, { method: "HEAD", cache: "no-cache" })
+        .then(function (r) { results[idx] = r.ok; })
+        .catch(function () { results[idx] = false; })
+        .then(function () {
+          pending--;
+          if (pending === 0) resolveFallback(p, paths, results);
+        });
+    });
+  }
+
+  function resolveFallback(p, paths, results) {
+    // results[0] = full path exists?  if yes, leave link alone.
+    if (results[0]) return;
+    // Walk down from the deepest ancestor that exists.
+    for (var i = 1; i < paths.length; i++) {
+      if (results[i]) {
+        var href = p.versionBase + paths[i];
+        p.link.setAttribute("href", href);
+        if (paths[i] === "") {
+          p.suffix.textContent = " \u2192 home";
+          p.link.title = "This page doesn't exist in this version; opens the version's home page instead.";
+        } else {
+          p.suffix.textContent = " \u2192 /" + paths[i].replace(/\/$/, "");
+          p.link.title = "This page doesn't exist in this version; opens the closest available ancestor (" + paths[i] + ") instead.";
+        }
+        p.suffix.className += " pyrit-version-picker__link-suffix--fallback";
+        return;
+      }
+    }
+    // Nothing exists, not even the root. Leave the link as-is (it'll 404 to
+    // our custom 404 page). Mark it visually so the user knows.
+    p.suffix.textContent = " \u2192 404";
+    p.suffix.className += " pyrit-version-picker__link-suffix--fallback";
   }
 
   function getManifest(base) {

@@ -246,6 +246,102 @@ jobs:
           </html>
           EOF
 
+          # Custom 404 page served by GitHub Pages for any unmatched path
+          # under /PyRIT/. Two-stage UX:
+          #
+          #   1. Auto-redirect: parse the URL, walk up ancestor paths within
+          #      the same version, HEAD-test each, and redirect to the deepest
+          #      one that exists (so /code/gui/some/view -> /code/gui/some,
+          #      then /code/gui, etc.). Only redirects if a non-root ancestor
+          #      matches, so we don't yank users to the home page silently.
+          #   2. If nothing better than the version root exists, render a
+          #      friendly fallback page with the version picker (injected by
+          #      the next step) so the user can switch versions.
+          cat > dist/404.html <<'EOF'
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <title>Page not found - PyRIT Documentation</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1.5rem; color: #0f172a; line-height: 1.55; }
+              h1 { font-size: 2rem; margin: 0 0 0.5rem; }
+              .muted { color: #64748b; }
+              code { background: #f1f5f9; padding: 0.1rem 0.4rem; border-radius: 0.25rem; font-size: 0.9em; }
+              .btn { display: inline-block; padding: 0.6rem 1.1rem; background: #2563eb; color: #fff; text-decoration: none; border-radius: 0.5rem; margin-top: 1.5rem; font-weight: 500; }
+              .btn:hover { background: #1d4ed8; }
+              @media (prefers-color-scheme: dark) { body { background: #0f172a; color: #f8fafc; } code { background: #1e293b; color: #f8fafc; } .muted { color: #94a3b8; } }
+            </style>
+            <script>
+            (function () {
+              // Extract the docs base + version slug + relative path from the URL.
+              // URL shape: /<docs-base>/<slug>/<rest>
+              var meta = document.querySelector('meta[name="pyrit-docs-base"]');
+              var docsBase = (meta && meta.content) ? meta.content.replace(/\/$/, "") : "";
+              if (!docsBase) {
+                // Fall back to first path segment if injector hasn't run.
+                var parts = window.location.pathname.split("/").filter(Boolean);
+                docsBase = parts.length > 0 ? "/" + parts[0] : "";
+              }
+              var path = window.location.pathname;
+              if (!path.startsWith(docsBase + "/")) return; // not our base
+              var rest = path.slice(docsBase.length + 1);
+              var slash = rest.indexOf("/");
+              var slug = slash === -1 ? rest : rest.slice(0, slash);
+              if (!slug) return;
+              var relPath = slash === -1 ? "" : rest.slice(slash + 1);
+              if (!relPath) return; // already at version root
+
+              // Generate ancestor paths most-specific-first.
+              var clean = relPath.replace(/\/+$/, "");
+              var segs = clean.split("/").filter(Boolean);
+              var paths = [];
+              // Start at length-1 (skip the full path, which we already know
+              // is the 404 we're rendering). Walk down to depth 1 (no root).
+              for (var i = segs.length - 1; i > 0; i--) {
+                paths.push(segs.slice(0, i).join("/") + "/");
+              }
+              if (paths.length === 0) return; // nothing to climb
+
+              var versionBase = docsBase + "/" + slug + "/";
+              // HEAD them all in parallel; redirect to the deepest hit.
+              var results = new Array(paths.length);
+              var pending = paths.length;
+              paths.forEach(function (p, idx) {
+                fetch(versionBase + p, { method: "HEAD", cache: "no-cache" })
+                  .then(function (r) { results[idx] = r.ok; })
+                  .catch(function () { results[idx] = false; })
+                  .then(function () {
+                    pending--;
+                    if (pending === 0) {
+                      for (var j = 0; j < results.length; j++) {
+                        if (results[j]) {
+                          window.location.replace(versionBase + paths[j]);
+                          return;
+                        }
+                      }
+                      // No ancestor exists. Leave the static fallback page up.
+                    }
+                  });
+              });
+            })();
+            </script>
+          </head>
+          <body>
+            <h1>Page not found</h1>
+            <p class="muted">The page you requested doesn't exist in this version of the PyRIT docs.</p>
+            <p>We tried looking for the closest parent section that exists, but didn't find one. The version picker in the bottom-right corner shows what's available across all versions.</p>
+            <p><a class="btn" href="DOCS_BASE_PLACEHOLDER/DEFAULT_SLUG_PLACEHOLDER/">Go to PyRIT DEFAULT_SLUG_PLACEHOLDER home</a></p>
+            <p class="muted" style="margin-top: 3rem; font-size: 0.85rem;">Requested URL: <code id="requested-url"></code></p>
+            <script>document.getElementById("requested-url").textContent = window.location.pathname + window.location.search;</script>
+          </body>
+          </html>
+          EOF
+          # Substitute placeholders so we can use a single-quoted heredoc (which
+          # disables shell expansion) above, keeping the inline JS readable.
+          sed -i "s|DOCS_BASE_PLACEHOLDER|${DOCS_BASE}|g; s|DEFAULT_SLUG_PLACEHOLDER|${DEFAULT_SLUG}|g" dist/404.html
+
       - name: Inject version picker
         run: |
           python build_scripts/inject_version_picker.py \
