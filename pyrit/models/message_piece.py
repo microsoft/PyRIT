@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 from uuid import uuid4
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.data_type_serializer import data_serializer_factory
+from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptResponseError
 from pyrit.models.score import Score
 

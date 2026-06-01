@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from pyrit.common import Parameter
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.core import BaselineAttackPolicy, Scenario, ScenarioStrategy
 from pyrit.score import Scorer

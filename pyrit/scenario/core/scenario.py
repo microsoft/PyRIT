@@ -58,7 +58,7 @@ from pyrit.score import (
 )
 
 if TYPE_CHECKING:
-    from pyrit.identifiers import ComponentIdentifier
+    from pyrit.models import ComponentIdentifier
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 logger = logging.getLogger(__name__)

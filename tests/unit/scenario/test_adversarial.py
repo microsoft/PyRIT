@@ -8,10 +8,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.executor.attack import AttackAdversarialConfig
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ScenarioIdentifier,
     ScenarioResult,
     SeedAttackGroup,
