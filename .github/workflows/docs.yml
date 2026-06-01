@@ -37,6 +37,13 @@ concurrency:
 env:
   # All versioned URLs live under /<repo-name>/<slug>/, e.g. /PyRIT/0.13.0/.
   DOCS_BASE: /${{ github.event.repository.name }}
+  # Manual cache-bust knob. Bump this when the build pipeline changes in a
+  # way that affects the rendered HTML output but isn't captured by the
+  # source-ref SHA -- e.g. bumping python-version, uv version, or changing
+  # build flags in the steps below. Forgetting to bump is harmless (you
+  # just serve a stale cached build for one push); bumping unnecessarily
+  # is also harmless (one extra rebuild).
+  CACHE_VERSION: "v1"
 
 jobs:
   # ------------------------------------------------------------------
@@ -91,12 +98,34 @@ jobs:
         with:
           ref: ${{ matrix.ref }}
 
+      - name: Resolve commit SHA
+        # matrix.ref is a branch name (e.g. "releases/v0.13.0") that can move,
+        # so resolve to the actual commit SHA we just checked out. This is the
+        # primary cache key component: frozen release branches that don't move
+        # produce identical SHAs and hit the cache forever; main produces a
+        # new SHA on every push so it always rebuilds.
+        id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore built site from cache
+        # Cache hit -> we skip the entire install + build pipeline and just
+        # upload the restored doc/_build/html as the matrix artifact. Cache
+        # miss -> we do a fresh build and actions/cache saves the result on
+        # job success, so the next run with the same SHA hits.
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: doc/_build/html
+          key: docs-${{ env.CACHE_VERSION }}-${{ matrix.slug }}-${{ steps.sha.outputs.sha }}
+
       - name: Set up Python 3.13
+        if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
       - name: Install uv
+        if: steps.cache.outputs.cache-hit != 'true'
         uses: astral-sh/setup-uv@v7
         with:
           version: "0.9.17"
@@ -106,6 +135,7 @@ jobs:
             **/uv.lock
 
       - name: Install PyRIT with dev dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
         # Use `uv sync --frozen` so each release branch installs the exact
         # versions pinned in its own uv.lock. Frozen branch = frozen deps =
         # bit-for-bit reproducible rebuild forever.
@@ -131,12 +161,14 @@ jobs:
           uv sync --frozen $choice
 
       - name: Generate API reference (pydoc2json + gen_api_md)
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           source .venv/bin/activate
           python build_scripts/pydoc2json.py pyrit --submodules -o doc/_api/pyrit_all.json
           python build_scripts/gen_api_md.py
 
       - name: Build the static HTML site
+        if: steps.cache.outputs.cache-hit != 'true'
         # --all builds frontmatter exports (PDF, per doc/myst.yml).
         # --html is required to produce the static HTML site we deploy.
         # NOT using --strict because older release branches have known
