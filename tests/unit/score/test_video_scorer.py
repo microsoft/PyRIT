@@ -62,7 +62,7 @@ def video_converter_sample_video(tmp_path, patch_central_database):
 class MockTrueFalseScorer(TrueFalseScorer):
     """Mock TrueFalseScorer for testing"""
 
-    def __init__(self, return_value: bool = True):
+    def __init__(self, *, return_value: bool = True):
         self.return_value = return_value
         validator = ScorerPromptValidator(supported_data_types=["image_path"])
         super().__init__(validator=validator)
@@ -94,7 +94,7 @@ class MockTrueFalseScorer(TrueFalseScorer):
 class MockFloatScaleScorer(FloatScaleScorer):
     """Mock FloatScaleScorer for testing"""
 
-    def __init__(self, return_value: float = 0.8):
+    def __init__(self, *, return_value: float = 0.8):
         self.return_value = return_value
         validator = ScorerPromptValidator(supported_data_types=["image_path"])
         super().__init__(validator=validator)
@@ -286,7 +286,7 @@ def test_video_scorer_default_num_frames():
 class MockAudioTrueFalseScorer(TrueFalseScorer):
     """Mock AudioTrueFalseScorer for testing video+audio integration"""
 
-    def __init__(self, return_value: bool = True):
+    def __init__(self, *, return_value: bool = True):
         self.return_value = return_value
         self.received_objective = None
         # Audio scorer needs to support audio_path data type
