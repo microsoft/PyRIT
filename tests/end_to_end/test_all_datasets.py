@@ -15,6 +15,7 @@ handle transient HuggingFace / GitHub rate-limiting and network errors.
 import asyncio
 import logging
 import os
+import pathlib
 
 import pytest
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -22,6 +23,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.datasets.seed_datasets.remote import (
     _HarmBenchMultimodalDataset,
+    _JailbreakV28KDataset,
     _PromptIntelDataset,
     _SIUODataset,
     _VLSUMultimodalDataset,
@@ -85,6 +87,12 @@ class TestAllDatasets:
         # Skip providers that require credentials not available in CI
         if provider_cls == _PromptIntelDataset and not os.environ.get("PROMPTINTEL_API_KEY"):
             pytest.skip("PROMPTINTEL_API_KEY not set")
+
+        # The JailBreakV-28K image set is distributed via a gated Google Drive
+        # form (see the loader docstring), so it can't be auto-fetched in CI.
+        # Skip when the user-supplied zip is not present in the home directory.
+        if provider_cls == _JailbreakV28KDataset and not (pathlib.Path.home() / "JailBreakV_28K.zip").exists():
+            pytest.skip("JailBreakV_28K.zip not present in home directory (manual download required)")
 
         logger.info(f"Testing provider: {name}")
 
