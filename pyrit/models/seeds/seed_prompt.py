@@ -64,7 +64,14 @@ class SeedPrompt(Seed):
         if not self.data_type:
             # If data_type is not provided, infer it from the value
             # Note: Does not assign 'error' or 'url' implicitly
-            if Path(self.value).is_file():
+            # Guard against OSError / ValueError so values that aren't valid path
+            # strings (too long, null bytes, etc.) are treated as text, matching
+            # the prior os.path.isfile semantics.
+            try:
+                is_file = Path(self.value).is_file()
+            except (OSError, ValueError):
+                is_file = False
+            if is_file:
                 ext = Path(self.value).suffix
                 ext = ext.lstrip(".").lower()
                 if ext in ["mp4", "avi", "mov", "mkv", "ogv", "flv", "wmv", "webm"]:

@@ -63,6 +63,23 @@ def test_seed_prompt_unknown_file_extension_raises(tmp_path):
         SeedPrompt(value=str(file_path))
 
 
+def test_seed_prompt_infers_text_for_value_exceeding_path_name_limit():
+    # Values longer than the filesystem name limit must be treated as text.
+    # Path(value).is_file() can raise OSError (ENAMETOOLONG) on Linux/macOS,
+    # whereas os.path.isfile silently returned False. The inference logic
+    # must preserve the prior behavior so long-form text values (e.g. an
+    # academic paper used as a jailbreak template) don't crash construction.
+    long_value = "JOURNAL OF ARTIFICIAL INTELLIGENCE SAFETY RESEARCH " * 100
+    sp = SeedPrompt(value=long_value)
+    assert sp.data_type == "text"
+
+
+def test_seed_prompt_infers_text_for_value_with_null_byte():
+    # Null bytes raise ValueError inside pathlib; treat as text rather than crashing.
+    sp = SeedPrompt(value="some text with \x00 embedded null")
+    assert sp.data_type == "text"
+
+
 def test_seed_prompt_explicit_data_type_not_overridden():
     sp = SeedPrompt(value="some text", data_type="text")
     assert sp.data_type == "text"
