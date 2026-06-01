@@ -225,7 +225,7 @@ class MessagePiece(BaseModel):
         # module load, so a top-level import here would deadlock the cycle.
         from pyrit.models.message import Message
 
-        return Message([self])
+        return Message(message_pieces=[self])
 
     def copy_lineage_from(self, *, source: MessagePiece) -> None:
         """

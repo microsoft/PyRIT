@@ -8,8 +8,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional, Union
 
+from pydantic import BaseModel, ConfigDict, model_validator
+
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.common.utils import combine_dict
 from pyrit.models.message_piece import MessagePiece
 
 if TYPE_CHECKING:
@@ -18,31 +19,128 @@ if TYPE_CHECKING:
     from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptResponseError
 
 
-class Message:
+class Message(BaseModel):
     """
     Represents a message in a conversation, for example a prompt or a response to a prompt.
 
     This is a single request to a target. It can contain multiple message pieces.
     """
 
-    def __init__(self, message_pieces: Sequence[MessagePiece], *, skip_validation: Optional[bool] = False) -> None:
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="forbid",
+        validate_assignment=False,
+    )
+
+    message_pieces: list[MessagePiece]
+
+    def __init__(self, *args: Any, **data: Any) -> None:
         """
         Initialize a Message from one or more message pieces.
 
-        Args:
-            message_pieces (Sequence[MessagePiece]): Pieces belonging to the same message turn.
-            skip_validation (Optional[bool]): Whether to skip consistency validation.
+        Supports the canonical keyword form ``Message(message_pieces=[...])`` as
+        well as two deprecated forms that emit a ``DeprecationWarning``:
+
+        - positional construction ``Message([piece, ...])``
+        - the ``skip_validation`` keyword (now a no-op; validation always runs)
 
         Raises:
-            ValueError: If no message pieces are provided.
-
+            TypeError: If more than one positional argument is supplied.
+            ValueError: If no message pieces are provided (via validation).
         """
-        if not message_pieces:
-            raise ValueError("Message must have at least one message piece.")
-        self.message_pieces = message_pieces
-        if not skip_validation:
-            self.validate()
+        if args:
+            if len(args) > 1:
+                raise TypeError(f"Message() takes at most 1 positional argument but {len(args)} were given.")
+            print_deprecation_message(
+                old_item="Message(message_pieces) (positional)",
+                new_item="Message(message_pieces=...)",
+                removed_in="0.16.0",
+            )
+            data["message_pieces"] = args[0]
+        if "skip_validation" in data:
+            data.pop("skip_validation")
+            print_deprecation_message(
+                old_item="Message(..., skip_validation=...)",
+                new_item="Message(message_pieces=...)",
+                removed_in="0.16.0",
+            )
+        super().__init__(**data)
 
+    # ------------------------------------------------------------------ #
+    # Validators
+    # ------------------------------------------------------------------ #
+    @model_validator(mode="before")
+    @classmethod
+    def _rewrite_legacy_dict(cls, data: Any) -> Any:
+        """
+        Accept the legacy ``to_dict()`` payload shape during ``model_validate``.
+
+        The legacy dict carries top-level convenience fields plus a ``pieces``
+        list. Under ``extra="forbid"`` those extra keys would be rejected, so
+        collapse the payload down to ``{"message_pieces": [...]}``.
+
+        Returns:
+            The normalized input ``data``.
+        """
+        if isinstance(data, dict) and "pieces" in data and "message_pieces" not in data:
+            return {"message_pieces": data["pieces"]}
+        return data
+
+    @model_validator(mode="after")
+    def _validate_after(self) -> Message:
+        """
+        Enforce internal consistency of the message pieces after construction.
+
+        Returns:
+            ``self``.
+        """
+        self._validate_invariants()
+        return self
+
+    def _validate_invariants(self) -> None:
+        """
+        Check that all message pieces are internally consistent.
+
+        Raises:
+            ValueError: If the piece collection is empty or contains mismatched conversation IDs,
+                sequence numbers, roles, or missing converted values.
+        """
+        if len(self.message_pieces) == 0:
+            raise ValueError("Message must have at least one message piece.")
+
+        conversation_id = self.message_pieces[0].conversation_id
+        sequence = self.message_pieces[0].sequence
+        role = self.message_pieces[0].role
+        for message_piece in self.message_pieces:
+            if message_piece.conversation_id != conversation_id:
+                raise ValueError("Conversation ID mismatch.")
+
+            if message_piece.sequence != sequence:
+                raise ValueError("Inconsistent sequences within the same message entry.")
+
+            if message_piece.converted_value is None:
+                raise ValueError("Converted prompt text is None.")
+
+            if message_piece.role != role:
+                raise ValueError("Inconsistent roles within the same message entry.")
+
+    def validate(self) -> None:
+        """
+        Validate that all message pieces are internally consistent.
+
+        Retained as a public instance method because callers invoke
+        ``message.validate()`` directly. Shadows the deprecated
+        ``BaseModel.validate`` classmethod.
+
+        Raises:
+            ValueError: If piece collection is empty or contains mismatched conversation IDs,
+                sequence numbers, roles, or missing converted values.
+        """
+        self._validate_invariants()
+
+    # ------------------------------------------------------------------ #
+    # Public API
+    # ------------------------------------------------------------------ #
     def get_value(self, n: int = 0) -> str:
         """
         Return the converted value of the nth message piece.
@@ -233,17 +331,6 @@ class Message:
         for piece in self.message_pieces:
             piece.not_in_memory = True
 
-    def set_response_not_in_database(self) -> None:
-        """
-        Mark every piece in this message as ephemeral (DEPRECATED — use ``set_response_not_in_memory``).
-        """
-        print_deprecation_message(
-            old_item="Message.set_response_not_in_database()",
-            new_item="Message.set_response_not_in_memory()",
-            removed_in="0.16.0",
-        )
-        self.set_response_not_in_memory()
-
     def set_simulated_role(self) -> None:
         """
         Set the role of all message pieces to simulated_assistant.
@@ -255,34 +342,6 @@ class Message:
             if piece.role == "assistant":
                 piece.role = "simulated_assistant"
 
-    def validate(self) -> None:
-        """
-        Validate that all message pieces are internally consistent.
-
-        Raises:
-            ValueError: If piece collection is empty or contains mismatched conversation IDs,
-                sequence numbers, roles, or missing converted values.
-
-        """
-        if len(self.message_pieces) == 0:
-            raise ValueError("Empty message pieces.")
-
-        conversation_id = self.message_pieces[0].conversation_id
-        sequence = self.message_pieces[0].sequence
-        role = self.message_pieces[0].role
-        for message_piece in self.message_pieces:
-            if message_piece.conversation_id != conversation_id:
-                raise ValueError("Conversation ID mismatch.")
-
-            if message_piece.sequence != sequence:
-                raise ValueError("Inconsistent sequences within the same message entry.")
-
-            if message_piece.converted_value is None:
-                raise ValueError("Converted prompt text is None.")
-
-            if message_piece.role != role:
-                raise ValueError("Inconsistent roles within the same message entry.")
-
     def __str__(self) -> str:
         """
         Return a newline-delimited string representation of message pieces.
@@ -292,93 +351,6 @@ class Message:
 
         """
         return "\n".join(f"{piece.role}: {piece.converted_value}" for piece in self.message_pieces)
-
-    def to_dict(self) -> dict[str, object]:
-        """
-        Convert the message to a dictionary representation.
-
-        Includes the original top-level fields ('role', 'converted_value', 'conversation_id',
-        'sequence', 'converted_value_data_type') for backward compatibility, plus a 'pieces'
-        list containing each piece's Pydantic JSON dump — the latter is the source of truth
-        used by from_dict().
-
-        Returns:
-            dict[str, object]: Dictionary with 'role', 'converted_value', 'conversation_id',
-                'sequence', 'converted_value_data_type', and 'pieces' keys.
-        """
-        if len(self.message_pieces) == 1:
-            converted_value: str | list[str] = self.message_pieces[0].converted_value
-            converted_value_data_type: str | list[str] = self.message_pieces[0].converted_value_data_type
-        else:
-            converted_value = [piece.converted_value for piece in self.message_pieces]
-            converted_value_data_type = [piece.converted_value_data_type for piece in self.message_pieces]
-
-        return {
-            "role": self.api_role,
-            "converted_value": converted_value,
-            "conversation_id": self.conversation_id,
-            "sequence": self.sequence,
-            "converted_value_data_type": converted_value_data_type,
-            "pieces": [piece.model_dump(mode="json") for piece in self.message_pieces],
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Message:
-        """
-        Reconstruct a Message from a dictionary.
-
-        Expects the format produced by to_dict(), which includes a 'pieces' key
-        containing a list of MessagePiece dictionaries.
-
-        Args:
-            data (dict[str, Any]): Dictionary as produced by to_dict().
-
-        Returns:
-            Message: Reconstructed instance.
-        """
-        pieces_data = data.get("pieces", [])
-        message_pieces = [MessagePiece.model_validate(p) for p in pieces_data]
-        return cls(message_pieces, skip_validation=True)
-
-    @staticmethod
-    def get_all_values(messages: Sequence[Message]) -> list[str]:
-        """
-        Return all converted values across the provided messages.
-
-        Args:
-            messages (Sequence[Message]): Messages to aggregate.
-
-        Returns:
-            list[str]: Flattened list of converted values.
-
-        """
-        values: list[str] = []
-        for message in messages:
-            values.extend(message.get_values())
-        return values
-
-    @staticmethod
-    def flatten_to_message_pieces(
-        messages: Sequence[Message],
-    ) -> MutableSequence[MessagePiece]:
-        """
-        Flatten messages into a single list of message pieces.
-
-        Args:
-            messages (Sequence[Message]): Messages to flatten.
-
-        Returns:
-            MutableSequence[MessagePiece]: Flattened message pieces.
-
-        """
-        if not messages:
-            return []
-        message_pieces: MutableSequence[MessagePiece] = []
-
-        for response in messages:
-            message_pieces.extend(response.message_pieces)
-
-        return message_pieces
 
     @classmethod
     def from_prompt(
@@ -417,7 +389,7 @@ class Message:
         """
         return cls.from_prompt(prompt=system_prompt, role="system")
 
-    def duplicate_message(self) -> Message:
+    def duplicate(self) -> Message:
         """
         Create a deep copy of this message with new IDs and timestamp for all message pieces.
 
@@ -431,13 +403,172 @@ class Message:
             Message: A new Message with deep-copied message pieces, new IDs, and fresh timestamp.
 
         """
-        new_pieces = copy.deepcopy(self.message_pieces)
+        new_pieces = copy.deepcopy(list(self.message_pieces))
         new_timestamp = datetime.now(tz=timezone.utc)
         for piece in new_pieces:
             piece.id = uuid.uuid4()
             piece.timestamp = new_timestamp
             # original_prompt_id intentionally kept the same to track the origin
         return Message(message_pieces=new_pieces)
+
+    # ------------------------------------------------------------------ #
+    # Deprecated method shims (removed in 0.16.0)
+    # ------------------------------------------------------------------ #
+    def set_response_not_in_database(self) -> None:
+        """
+        Mark every piece in this message as ephemeral (DEPRECATED — use ``set_response_not_in_memory``).
+        """
+        print_deprecation_message(
+            old_item="Message.set_response_not_in_database()",
+            new_item="Message.set_response_not_in_memory()",
+            removed_in="0.16.0",
+        )
+        self.set_response_not_in_memory()
+
+    def duplicate_message(self) -> Message:
+        """
+        Create a deep copy of this message (DEPRECATED — use ``duplicate``).
+
+        Returns:
+            Message: A new Message with deep-copied pieces, new IDs, and fresh timestamp.
+        """
+        print_deprecation_message(
+            old_item="Message.duplicate_message()",
+            new_item="Message.duplicate()",
+            removed_in="0.16.0",
+        )
+        return self.duplicate()
+
+    def to_dict(self) -> dict[str, object]:
+        """
+        Convert the message to a dictionary representation (DEPRECATED — use ``model_dump``).
+
+        Includes the original top-level fields ('role', 'converted_value', 'conversation_id',
+        'sequence', 'converted_value_data_type') for backward compatibility, plus a 'pieces'
+        list containing each piece's Pydantic JSON dump.
+
+        Returns:
+            dict[str, object]: Dictionary with 'role', 'converted_value', 'conversation_id',
+                'sequence', 'converted_value_data_type', and 'pieces' keys.
+        """
+        print_deprecation_message(
+            old_item="Message.to_dict()",
+            new_item='Message.model_dump(mode="json")',
+            removed_in="0.16.0",
+        )
+        if len(self.message_pieces) == 1:
+            converted_value: str | list[str] = self.message_pieces[0].converted_value
+            converted_value_data_type: str | list[str] = self.message_pieces[0].converted_value_data_type
+        else:
+            converted_value = [piece.converted_value for piece in self.message_pieces]
+            converted_value_data_type = [piece.converted_value_data_type for piece in self.message_pieces]
+
+        return {
+            "role": self.api_role,
+            "converted_value": converted_value,
+            "conversation_id": self.conversation_id,
+            "sequence": self.sequence,
+            "converted_value_data_type": converted_value_data_type,
+            "pieces": [piece.model_dump(mode="json") for piece in self.message_pieces],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Message:
+        """
+        Reconstruct a Message from a dictionary (DEPRECATED — use ``model_validate``).
+
+        Args:
+            data (dict[str, Any]): Dictionary as produced by ``to_dict()``.
+
+        Returns:
+            Message: Reconstructed instance.
+        """
+        print_deprecation_message(
+            old_item="Message.from_dict()",
+            new_item="Message.model_validate()",
+            removed_in="0.16.0",
+        )
+        return cls.model_validate(data)
+
+    @staticmethod
+    def get_all_values(messages: Sequence[Message]) -> list[str]:
+        """
+        Return all converted values across the provided messages (DEPRECATED — use the module function).
+
+        Args:
+            messages (Sequence[Message]): Messages to aggregate.
+
+        Returns:
+            list[str]: Flattened list of converted values.
+
+        """
+        print_deprecation_message(
+            old_item="Message.get_all_values()",
+            new_item="pyrit.models.get_all_values()",
+            removed_in="0.16.0",
+        )
+        return get_all_values(messages)
+
+    @staticmethod
+    def flatten_to_message_pieces(
+        messages: Sequence[Message],
+    ) -> MutableSequence[MessagePiece]:
+        """
+        Flatten messages into a single list of message pieces (DEPRECATED — use the module function).
+
+        Args:
+            messages (Sequence[Message]): Messages to flatten.
+
+        Returns:
+            MutableSequence[MessagePiece]: Flattened message pieces.
+
+        """
+        print_deprecation_message(
+            old_item="Message.flatten_to_message_pieces()",
+            new_item="pyrit.models.flatten_to_message_pieces()",
+            removed_in="0.16.0",
+        )
+        return flatten_to_message_pieces(messages)
+
+
+def get_all_values(messages: Sequence[Message]) -> list[str]:
+    """
+    Return all converted values across the provided messages.
+
+    Args:
+        messages (Sequence[Message]): Messages to aggregate.
+
+    Returns:
+        list[str]: Flattened list of converted values.
+
+    """
+    values: list[str] = []
+    for message in messages:
+        values.extend(message.get_values())
+    return values
+
+
+def flatten_to_message_pieces(
+    messages: Sequence[Message],
+) -> MutableSequence[MessagePiece]:
+    """
+    Flatten messages into a single list of message pieces.
+
+    Args:
+        messages (Sequence[Message]): Messages to flatten.
+
+    Returns:
+        MutableSequence[MessagePiece]: Flattened message pieces.
+
+    """
+    if not messages:
+        return []
+    message_pieces: MutableSequence[MessagePiece] = []
+
+    for response in messages:
+        message_pieces.extend(response.message_pieces)
+
+    return message_pieces
 
 
 def group_conversation_message_pieces_by_sequence(
@@ -502,7 +633,7 @@ def group_conversation_message_pieces_by_sequence(
         conversation_by_sequence[message_piece.sequence].append(message_piece)
 
     sorted_sequences = sorted(conversation_by_sequence.keys())
-    return [Message(conversation_by_sequence[seq]) for seq in sorted_sequences]
+    return [Message(message_pieces=conversation_by_sequence[seq]) for seq in sorted_sequences]
 
 
 def group_message_pieces_into_conversations(
@@ -580,7 +711,7 @@ def construct_response_from_request(
 
     """
     if request.prompt_metadata:
-        prompt_metadata = combine_dict(request.prompt_metadata, prompt_metadata or {})
+        prompt_metadata = {**request.prompt_metadata, **(prompt_metadata or {})}
 
     return Message(
         message_pieces=[

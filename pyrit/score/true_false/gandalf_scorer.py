@@ -120,7 +120,7 @@ class GandalfScorer(TrueFalseScorer):
             conversation_as_text += "\n"
 
         request = Message(
-            [
+            message_pieces=[
                 MessagePiece(
                     role="user",
                     original_value_data_type="text",

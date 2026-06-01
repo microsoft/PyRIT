@@ -874,11 +874,8 @@ class TestVerifyTargetAsync:
         """Responses whose Messages have no pieces must also be rejected."""
         target = MockPromptTarget()
         target._send_prompt_to_target_async = AsyncMock(  # type: ignore[method-assign]
-            return_value=[Message.__new__(Message)]
+            return_value=[Message.model_construct(message_pieces=[])]
         )
-        # Bypass __init__ to construct a Message with no pieces (Message.__init__ rejects empty).
-        empty_msg = target._send_prompt_to_target_async.return_value[0]
-        empty_msg.message_pieces = []
 
         result = await _discover_capability_flags_async(
             target=target,
@@ -891,8 +888,7 @@ class TestVerifyTargetAsync:
         """Any empty Message in a multi-message response must cause the probe to fail."""
         target = MockPromptTarget()
         ok = _ok_response()[0]
-        empty = Message.__new__(Message)
-        empty.message_pieces = []
+        empty = Message.model_construct(message_pieces=[])
         target._send_prompt_to_target_async = AsyncMock(return_value=[ok, empty])  # type: ignore[method-assign]
 
         result = await _discover_capability_flags_async(

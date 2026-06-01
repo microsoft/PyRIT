@@ -63,6 +63,8 @@ from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptRespons
 from pyrit.models.message import (
     Message,
     construct_response_from_request,
+    flatten_to_message_pieces,
+    get_all_values,
     group_conversation_message_pieces_by_sequence,
     group_message_pieces_into_conversations,
 )
@@ -125,7 +127,9 @@ __all__ = [
     "EmbeddingUsageInformation",
     "ErrorDataTypeSerializer",
     "EvaluationIdentifier",
+    "flatten_to_message_pieces",
     "get_all_harm_definitions",
+    "get_all_values",
     "group_conversation_message_pieces_by_sequence",
     "group_message_pieces_into_conversations",
     "HarmDefinition",

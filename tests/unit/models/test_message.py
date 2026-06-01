@@ -355,3 +355,73 @@ class TestSetResponseNotInMemory:
         msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
         assert any("set_response_not_in_database" in str(m.message) for m in msgs)
         assert piece.not_in_memory is True
+
+
+class TestMessagePydanticShape:
+    """Tests for the Pydantic v2 BaseModel behavior of Message."""
+
+    def test_keyword_construction_does_not_warn(self) -> None:
+        import warnings as _warnings
+
+        piece = MessagePiece(role="user", original_value="hi", conversation_id="c")
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            Message(message_pieces=[piece])
+        assert not [w for w in caught if issubclass(w.category, DeprecationWarning)]
+
+    def test_positional_construction_warns_and_works(self) -> None:
+        import warnings as _warnings
+
+        piece = MessagePiece(role="user", original_value="hi", conversation_id="c")
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            message = Message([piece])
+        assert message.message_pieces == [piece]
+        assert any(issubclass(w.category, DeprecationWarning) and "positional" in str(w.message) for w in caught)
+
+    def test_too_many_positional_args_raises(self) -> None:
+        piece = MessagePiece(role="user", original_value="hi", conversation_id="c")
+        with pytest.raises(TypeError, match="at most 1 positional argument"):
+            Message([piece], [piece])
+
+    def test_skip_validation_kwarg_is_deprecated_noop(self) -> None:
+        import warnings as _warnings
+
+        piece = MessagePiece(role="user", original_value="hi", conversation_id="c")
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            message = Message(message_pieces=[piece], skip_validation=True)
+        assert message.message_pieces == [piece]
+        assert any(issubclass(w.category, DeprecationWarning) and "skip_validation" in str(w.message) for w in caught)
+
+    def test_model_validate_canonical_shape(self) -> None:
+        piece = MessagePiece(role="user", original_value="hi", conversation_id="c")
+        message = Message.model_validate({"message_pieces": [piece.model_dump()]})
+        assert message.get_value() == "hi"
+
+    def test_model_validate_legacy_dict_shape(self) -> None:
+        original = Message.from_prompt(prompt="legacy hello", role="user")
+        rebuilt = Message.model_validate(original.to_dict())
+        assert rebuilt.get_value() == "legacy hello"
+
+    def test_value_equality(self, message_pieces: list[MessagePiece]) -> None:
+        assert Message(message_pieces=message_pieces) == Message(message_pieces=message_pieces)
+
+    def test_membership_uses_value_equality(self, message_pieces: list[MessagePiece]) -> None:
+        a = Message(message_pieces=message_pieces)
+        b = Message(message_pieces=message_pieces)
+        assert a in [b]
+
+    def test_validate_instance_method_still_callable(self, message: Message) -> None:
+        message.validate()
+        message.message_pieces = []
+        with pytest.raises(ValueError, match="at least one message piece"):
+            message.validate()
+
+    def test_duplicate_creates_new_ids_and_deep_copy(self, message: Message) -> None:
+        duplicated = message.duplicate()
+        original_ids = {p.id for p in message.message_pieces}
+        duplicated_ids = {p.id for p in duplicated.message_pieces}
+        assert original_ids.isdisjoint(duplicated_ids)
+        duplicated.message_pieces[0].original_value = "changed"
+        assert message.message_pieces[0].original_value == "First piece"

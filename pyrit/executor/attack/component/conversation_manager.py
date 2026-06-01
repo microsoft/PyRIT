@@ -481,7 +481,7 @@ class ConversationManager:
         turn_count = 0
 
         for i, message in enumerate(valid_messages):
-            message_copy = message.duplicate_message()
+            message_copy = message.duplicate()
 
             message_copy.set_simulated_role()
 
