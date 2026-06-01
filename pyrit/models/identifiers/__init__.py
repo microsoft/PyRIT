@@ -20,6 +20,7 @@ from pyrit.models.identifiers.evaluation_identifier import (
     AtomicAttackEvaluationIdentifier,
     ChildEvalRule,
     EvaluationIdentifier,
+    ObjectiveTargetEvaluationIdentifier,
     ScorerEvaluationIdentifier,
     compute_eval_hash,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "compute_eval_hash",
     "EvaluationIdentifier",
     "Identifiable",
+    "ObjectiveTargetEvaluationIdentifier",
     "REGISTRY_NAME_PATTERN",
     "ScorerEvaluationIdentifier",
     "snake_case_to_class_name",

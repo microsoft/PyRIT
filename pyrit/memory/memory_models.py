@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 # Default pyrit_version for database records created before version tracking was added
 LEGACY_PYRIT_VERSION = "<0.10.0"
 
-# Maximum length for string values in ComponentIdentifier.to_dict() when storing to the database.
+# Maximum length for string values in ComponentIdentifier.model_dump() when storing to the database.
 # Longer values are truncated with a "..." suffix.
 MAX_IDENTIFIER_VALUE_LENGTH: int = 80
 
@@ -223,7 +223,7 @@ class PromptMemoryEntry(Base):
             entry (MessagePiece): The message piece to convert into a database entry.
         """
         self.id = entry.id
-        self.role = entry._role
+        self.role = entry.role
         self.conversation_id = entry.conversation_id
         self.sequence = entry.sequence
         self.timestamp = entry.timestamp
@@ -285,9 +285,7 @@ class PromptMemoryEntry(Base):
         # Reconstruct ComponentIdentifier with the stored pyrit_version
         attack_id: ComponentIdentifier | None = None
         if self.attack_identifier:
-            attack_id = ComponentIdentifier.model_validate(
-                {**self.attack_identifier, "pyrit_version": stored_version}
-            )
+            attack_id = ComponentIdentifier.model_validate({**self.attack_identifier, "pyrit_version": stored_version})
 
         message_piece = MessagePiece(
             role=self.role,
@@ -299,7 +297,7 @@ class PromptMemoryEntry(Base):
             conversation_id=self.conversation_id,
             sequence=self.sequence,
             prompt_metadata=self.prompt_metadata,
-            converter_identifiers=converter_ids,
+            converter_identifiers=converter_ids or [],
             prompt_target_identifier=target_id,
             attack_identifier=attack_id,
             original_value_data_type=self.original_value_data_type,
@@ -308,9 +306,13 @@ class PromptMemoryEntry(Base):
             original_prompt_id=self.original_prompt_id,
             timestamp=_ensure_utc(self.timestamp),
         )
-        message_piece.scores = [score.get_score() for score in self.scores]
+        # Assign deprecated containers post-construction so the DB-load path
+        # does not trip the ``MessagePiece`` deprecation-kwarg validator.
+        # ``validate_assignment=False`` on the model makes this assignment
+        # bypass the model_validator entirely.
         message_piece.labels = self.labels or {}
         message_piece.targeted_harm_categories = self.targeted_harm_categories or []
+        message_piece.scores = [score.get_score() for score in self.scores]
         return message_piece
 
     def __str__(self) -> str:
@@ -912,9 +914,7 @@ class AttackResultEntry(Base):
         # Reconstruct atomic_attack_identifier, with backward compatibility for
         # legacy rows that only have the attack_identifier column.
         atomic_id = (
-            ComponentIdentifier.model_validate(self.atomic_attack_identifier)
-            if self.atomic_attack_identifier
-            else None
+            ComponentIdentifier.model_validate(self.atomic_attack_identifier) if self.atomic_attack_identifier else None
         )
         if atomic_id is None and self.attack_identifier:
             from pyrit.models import build_atomic_attack_identifier

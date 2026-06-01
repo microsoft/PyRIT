@@ -188,7 +188,7 @@ class TestMarkMessagesAsSimulated:
         result = mark_messages_as_simulated([message])
 
         assert len(result) == 1
-        assert result[0].message_pieces[0].get_role_for_storage() == "simulated_assistant"
+        assert result[0].message_pieces[0].role == "simulated_assistant"
         assert result[0].message_pieces[0].api_role == "assistant"
         assert result[0].message_pieces[0].is_simulated is True
 
@@ -200,7 +200,7 @@ class TestMarkMessagesAsSimulated:
         result = mark_messages_as_simulated([message])
 
         assert len(result) == 1
-        assert result[0].message_pieces[0].get_role_for_storage() == "user"
+        assert result[0].message_pieces[0].role == "user"
         assert result[0].message_pieces[0].is_simulated is False
 
     def test_leaves_system_unchanged(self) -> None:
@@ -211,7 +211,7 @@ class TestMarkMessagesAsSimulated:
         result = mark_messages_as_simulated([message])
 
         assert len(result) == 1
-        assert result[0].message_pieces[0].get_role_for_storage() == "system"
+        assert result[0].message_pieces[0].role == "system"
         assert result[0].message_pieces[0].is_simulated is False
 
     def test_mixed_conversation(self) -> None:
@@ -228,10 +228,10 @@ class TestMarkMessagesAsSimulated:
 
         assert len(result) == 2
         # User should be unchanged
-        assert result[0].message_pieces[0].get_role_for_storage() == "user"
+        assert result[0].message_pieces[0].role == "user"
         assert result[0].is_simulated is False
         # Assistant should be converted
-        assert result[1].message_pieces[0].get_role_for_storage() == "simulated_assistant"
+        assert result[1].message_pieces[0].role == "simulated_assistant"
         assert result[1].is_simulated is True
         assert result[1].api_role == "assistant"
 
@@ -796,7 +796,7 @@ class TestInitializeContext:
         stored = manager.get_conversation(conversation_id)
         assert len(stored) == 1
         # Should be stored as simulated_assistant but api_role is still assistant
-        assert stored[0].get_piece().get_role_for_storage() == "simulated_assistant"
+        assert stored[0].get_piece().role == "simulated_assistant"
         assert stored[0].get_piece().api_role == "assistant"
 
     async def test_normalizes_for_non_chat_target_by_default(

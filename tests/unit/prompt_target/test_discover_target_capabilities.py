@@ -311,7 +311,7 @@ class TestDiscoverTargetCapabilitiesAsync:
         # the seeded user + assistant history followed by the new user turn.
         assert len(first_conv) == 1
         assert len(second_conv) >= 3
-        roles = [msg.message_pieces[0]._role for msg in second_conv]
+        roles = [msg.message_pieces[0].role for msg in second_conv]
         assert roles[-3:] == ["user", "assistant", "user"]
 
     async def test_multi_turn_probe_short_circuits_on_first_failure(self) -> None:
@@ -449,11 +449,11 @@ class TestDiscoverTargetCapabilitiesAsync:
         # separate. Verify the system message is in memory and the wire
         # payload contains the system + user history.
         normalized: list[Message] = target._send_prompt_to_target_async.await_args.kwargs["normalized_conversation"]
-        roles_sent = [piece._role for msg in normalized for piece in msg.message_pieces]
+        roles_sent = [piece.role for msg in normalized for piece in msg.message_pieces]
         assert "system" in roles_sent
         assert roles_sent[-1] == "user"
         # The last sent Message itself should be user-only.
-        assert [piece._role for piece in normalized[-1].message_pieces] == ["user"]
+        assert [piece.role for piece in normalized[-1].message_pieces] == ["user"]
 
     async def test_multi_message_pieces_probe_sends_two_pieces(self) -> None:
         target = MockPromptTarget()
@@ -503,7 +503,7 @@ class TestDiscoverTargetCapabilitiesAsync:
         )
 
         async def reject_system_roles(*, normalized_conversation: list[Message]) -> list[Message]:
-            roles = [piece._role for message in normalized_conversation for piece in message.message_pieces]
+            roles = [piece.role for message in normalized_conversation for piece in message.message_pieces]
             if "system" in roles:
                 raise RuntimeError("system messages are not natively supported")
             return _ok_response()
@@ -530,7 +530,7 @@ class TestDiscoverTargetCapabilitiesAsync:
         )
 
         async def require_native_system_role(*, normalized_conversation: list[Message]) -> list[Message]:
-            roles = [piece._role for message in normalized_conversation for piece in message.message_pieces]
+            roles = [piece.role for message in normalized_conversation for piece in message.message_pieces]
             if "system" not in roles:
                 raise RuntimeError("probe used adapted system-prompt shaping")
             return _ok_response()

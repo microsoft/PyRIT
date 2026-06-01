@@ -626,7 +626,6 @@ def test_is_response_format_json_no_metadata(target: OpenAIResponseTarget):
         converted_value="Hello, how are you?",
         conversation_id="conversation_1",
         sequence=0,
-        prompt_metadata=None,
     )
 
     result = target.is_response_format_json(message_piece)

@@ -29,14 +29,17 @@ if TYPE_CHECKING:
 
 def create_message_piece(conversation_id: str, prompt_num: int, targeted_harm_categories=None, labels=None):
     """Helper function to create MessagePiece with optional targeted harm categories and labels."""
-    return MessagePiece(
-        role="user",
-        original_value=f"Test prompt {prompt_num}",
-        converted_value=f"Test prompt {prompt_num}",
-        conversation_id=conversation_id,
-        targeted_harm_categories=targeted_harm_categories,
-        labels=labels,
-    )
+    kwargs: dict = {
+        "role": "user",
+        "original_value": f"Test prompt {prompt_num}",
+        "converted_value": f"Test prompt {prompt_num}",
+        "conversation_id": conversation_id,
+    }
+    if targeted_harm_categories is not None:
+        kwargs["targeted_harm_categories"] = targeted_harm_categories
+    if labels is not None:
+        kwargs["labels"] = labels
+    return MessagePiece(**kwargs)
 
 
 def create_attack_result(
