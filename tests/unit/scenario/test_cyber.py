@@ -8,8 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.executor.attack import RedTeamingAttack
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration

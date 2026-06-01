@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
     import numpy as np
 
-    from pyrit.identifiers import ComponentIdentifier
+    from pyrit.models import ComponentIdentifier
     from pyrit.models.harm_definition import HarmDefinition
 
 T = TypeVar("T", bound="ScorerMetrics")
@@ -27,8 +27,8 @@ class ScorerMetrics:
     Base dataclass for storing scorer evaluation metrics.
 
     This class provides methods for serializing metrics to JSON strings (see
-    :meth:`to_json`) and loading them from JSON files on disk (see
-    :meth:`from_json_file`).
+    ``to_json``) and loading them from JSON files on disk (see
+    ``from_json_file``).
 
     Args:
         num_responses (int): Total number of responses evaluated.
@@ -53,7 +53,7 @@ class ScorerMetrics:
         Serialize this metrics instance to a JSON string.
 
         This is the canonical serialization entry point for ``ScorerMetrics`` and its
-        subclasses. Pair it with :meth:`from_json_file` (which reads a JSON file written
+        subclasses. Pair it with ``from_json_file`` (which reads a JSON file written
         from this string, optionally wrapped in a ``"metrics"`` key) for round-trip
         (de)serialization.
 
@@ -98,10 +98,10 @@ class ScorerMetrics:
     @classmethod
     def from_json(cls: type[T], file_path: Union[str, Path]) -> T:
         """
-        Load a metrics instance from a JSON file (deprecated alias for :meth:`from_json_file`).
+        Load a metrics instance from a JSON file (deprecated alias for ``from_json_file``).
 
         The name ``from_json`` is misleading because it accepts a *file path*, not a JSON
-        string. Use :meth:`from_json_file` instead.
+        string. Use ``from_json_file`` instead.
 
         Args:
             file_path (Union[str, Path]): The path to the JSON file.

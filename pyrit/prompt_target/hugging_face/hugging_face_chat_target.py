@@ -19,8 +19,7 @@ from transformers import (
 from pyrit.common import default_values
 from pyrit.common.download_hf_model import download_specific_files_async
 from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, construct_response_from_request
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration

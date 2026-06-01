@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 
 if TYPE_CHECKING:
-    from pyrit.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 
 ScoreType = Literal["true_false", "float_scale", "unknown"]
 
@@ -120,12 +120,11 @@ class Score:
 
         If the score type is "float_scale", it returns the score value as a float.
 
-        Raises:
-            ValueError: If the score type is unknown.
-
         Returns:
             bool | float: Parsed score value.
 
+        Raises:
+            ValueError: If the score type is unknown.
         """
         if self.score_type == "true_false":
             return self.score_value.lower() == "true"
@@ -205,7 +204,7 @@ class Score:
         Returns:
             Score: Reconstructed instance.
         """
-        from pyrit.identifiers.component_identifier import ComponentIdentifier
+        from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 
         return cls(
             id=data.get("id"),

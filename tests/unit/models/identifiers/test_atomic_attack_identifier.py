@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 
-from pyrit.identifiers import (
+from pyrit.models.identifiers import (
     AtomicAttackEvaluationIdentifier,
     ComponentIdentifier,
     build_atomic_attack_identifier,
