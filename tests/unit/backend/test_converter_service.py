@@ -15,7 +15,7 @@ from pyrit.backend.models.converters import (
     CreateConverterRequest,
 )
 from pyrit.backend.services.converter_service import ConverterService, _is_llm_based, get_converter_service
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.prompt_converter import (
     Base64Converter,
     CaesarConverter,

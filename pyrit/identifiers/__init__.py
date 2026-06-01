@@ -1,29 +1,43 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Identifiers module for PyRIT components."""
+"""
+Deprecation shim — ``pyrit.identifiers`` was renamed to ``pyrit.models.identifiers`` in 0.14.
 
-from pyrit.identifiers.atomic_attack_identifier import (
-    build_atomic_attack_identifier,
-    build_seed_identifier,
-)
-from pyrit.identifiers.class_name_utils import (
-    REGISTRY_NAME_PATTERN,
-    class_name_to_snake_case,
-    snake_case_to_class_name,
-    validate_registry_name,
-)
-from pyrit.identifiers.component_identifier import ComponentIdentifier, Identifiable, config_hash
-from pyrit.identifiers.evaluation_identifier import (
-    TARGET_EVAL_PARAM_FALLBACKS,
-    TARGET_EVAL_PARAMS,
-    AtomicAttackEvaluationIdentifier,
-    ChildEvalRule,
-    EvaluationIdentifier,
-    ScorerEvaluationIdentifier,
-    compute_eval_hash,
-)
-from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
+This module emits a ``DeprecationWarning`` (one per name per process) on first
+access of each public symbol and returns the symbol from its new location.
+The shim will be removed in 0.16.0.
+"""
+
+from typing import TYPE_CHECKING, Any
+
+from pyrit.common.deprecation import print_deprecation_message
+from pyrit.models import identifiers as _new
+
+if TYPE_CHECKING:
+    # Re-export the public names so static type checkers can resolve
+    # ``from pyrit.identifiers import X``. At runtime the names are still
+    # served lazily by ``__getattr__`` (which fires the DeprecationWarning).
+    from pyrit.models.identifiers import (
+        REGISTRY_NAME_PATTERN,
+        TARGET_EVAL_PARAM_FALLBACKS,
+        TARGET_EVAL_PARAMS,
+        AtomicAttackEvaluationIdentifier,
+        ChildEvalRule,
+        ComponentIdentifier,
+        EvaluationIdentifier,
+        Identifiable,
+        IdentifierFilter,
+        IdentifierType,
+        ScorerEvaluationIdentifier,
+        build_atomic_attack_identifier,
+        build_seed_identifier,
+        class_name_to_snake_case,
+        compute_eval_hash,
+        config_hash,
+        snake_case_to_class_name,
+        validate_registry_name,
+    )
 
 __all__ = [
     "AtomicAttackEvaluationIdentifier",
@@ -33,15 +47,34 @@ __all__ = [
     "class_name_to_snake_case",
     "ComponentIdentifier",
     "compute_eval_hash",
+    "config_hash",
     "EvaluationIdentifier",
     "Identifiable",
+    "IdentifierFilter",
+    "IdentifierType",
     "REGISTRY_NAME_PATTERN",
     "ScorerEvaluationIdentifier",
     "snake_case_to_class_name",
     "TARGET_EVAL_PARAM_FALLBACKS",
     "TARGET_EVAL_PARAMS",
     "validate_registry_name",
-    "config_hash",
-    "IdentifierFilter",
-    "IdentifierType",
 ]
+
+_warned: set[str] = set()
+
+
+def __getattr__(name: str) -> Any:
+    if name not in __all__:
+        raise AttributeError(f"module 'pyrit.identifiers' has no attribute {name!r}")
+    if name not in _warned:
+        print_deprecation_message(
+            old_item=f"pyrit.identifiers.{name}",
+            new_item=f"pyrit.models.identifiers.{name}",
+            removed_in="0.16.0",
+        )
+        _warned.add(name)
+    return getattr(_new, name)
+
+
+def __dir__() -> list[str]:
+    return sorted(__all__)

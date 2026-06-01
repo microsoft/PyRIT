@@ -9,6 +9,12 @@ import only from the standard library, ``pydantic``,
 ``pyrit.common.deprecation``, and other ``pyrit.models.*`` submodules. The
 CI test ``tests/unit/models/test_import_boundary.py`` enforces this. See
 ``.github/instructions/models.instructions.md`` for the rule.
+
+Identifier types and helpers live in the ``pyrit.models.identifiers``
+sub-package but are re-exported here, so external callers should import them
+directly from ``pyrit.models`` (e.g. ``from pyrit.models import
+ComponentIdentifier``). The previous ``pyrit.identifiers`` location is kept as
+a deprecation shim through ``0.16.0``.
 """
 
 from pyrit.models.attack_result import AttackOutcome, AttackResult, AttackResultT
@@ -32,6 +38,26 @@ from pyrit.models.data_type_serializer import (
 )
 from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
 from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
+from pyrit.models.identifiers import (
+    REGISTRY_NAME_PATTERN,
+    TARGET_EVAL_PARAM_FALLBACKS,
+    TARGET_EVAL_PARAMS,
+    AtomicAttackEvaluationIdentifier,
+    ChildEvalRule,
+    ComponentIdentifier,
+    EvaluationIdentifier,
+    Identifiable,
+    IdentifierFilter,
+    IdentifierType,
+    ScorerEvaluationIdentifier,
+    build_atomic_attack_identifier,
+    build_seed_identifier,
+    class_name_to_snake_case,
+    compute_eval_hash,
+    config_hash,
+    snake_case_to_class_name,
+    validate_registry_name,
+)
 from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptResponseError, SeedType
 from pyrit.models.message import (
     Message,
@@ -68,15 +94,23 @@ from pyrit.models.strategy_result import StrategyResult, StrategyResultT
 __all__ = [
     "ALLOWED_CHAT_MESSAGE_ROLES",
     "AllowedCategories",
+    "AtomicAttackEvaluationIdentifier",
     "AttackResult",
     "AttackResultT",
     "AttackOutcome",
     "AudioPathDataTypeSerializer",
     "AzureBlobStorageIO",
     "BinaryPathDataTypeSerializer",
+    "build_atomic_attack_identifier",
+    "build_seed_identifier",
     "ChatMessage",
     "ChatMessagesDataset",
     "ChatMessageRole",
+    "ChildEvalRule",
+    "class_name_to_snake_case",
+    "ComponentIdentifier",
+    "compute_eval_hash",
+    "config_hash",
     "ConversationReference",
     "ConversationStats",
     "ConversationType",
@@ -89,10 +123,14 @@ __all__ = [
     "EmbeddingSupport",
     "EmbeddingUsageInformation",
     "ErrorDataTypeSerializer",
+    "EvaluationIdentifier",
     "get_all_harm_definitions",
     "group_conversation_message_pieces_by_sequence",
     "group_message_pieces_into_conversations",
     "HarmDefinition",
+    "Identifiable",
+    "IdentifierFilter",
+    "IdentifierType",
     "ImagePathDataTypeSerializer",
     "Message",
     "MessagePiece",
@@ -102,9 +140,11 @@ __all__ = [
     "QuestionAnsweringDataset",
     "QuestionAnsweringEntry",
     "QuestionChoice",
+    "REGISTRY_NAME_PATTERN",
     "ScaleDescription",
     "Score",
     "ScoreType",
+    "ScorerEvaluationIdentifier",
     "ScenarioIdentifier",
     "ScenarioResult",
     "Seed",
@@ -117,12 +157,16 @@ __all__ = [
     "SeedSimulatedConversation",
     "SeedType",
     "SimulatedTargetSystemPromptPaths",
+    "snake_case_to_class_name",
     "sort_message_pieces",
     "StorageIO",
     "StrategyResult",
     "StrategyResultT",
+    "TARGET_EVAL_PARAM_FALLBACKS",
+    "TARGET_EVAL_PARAMS",
     "TextDataTypeSerializer",
     "UnvalidatedScore",
+    "validate_registry_name",
     "VideoPathDataTypeSerializer",
     "RetryEvent",
 ]

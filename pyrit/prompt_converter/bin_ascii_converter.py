@@ -4,7 +4,7 @@
 import binascii
 from typing import Literal, Optional
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.prompt_converter.text_selection_strategy import (
     AllWordsSelectionStrategy,
     WordSelectionStrategy,
