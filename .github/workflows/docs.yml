@@ -55,6 +55,7 @@ jobs:
         with:
           sparse-checkout: |
             .github/docs-versions.yml
+            build_scripts/resolve_docs_matrix.py
           sparse-checkout-cone-mode: false
 
       - name: Set up Python 3.13
@@ -68,27 +69,9 @@ jobs:
       - name: Compute matrix
         id: matrix
         run: |
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          import os
-          import yaml
-
-          with open(".github/docs-versions.yml") as f:
-              cfg = yaml.safe_load(f)
-
-          versions = cfg["versions"]
-          matrix = {"include": [{"slug": v["slug"], "ref": v["ref"]} for v in versions]}
-          versions_json = {
-              "default": cfg["default"],
-              "stable": cfg["stable"],
-              "versions": versions,
-          }
-
-          print("matrix=" + json.dumps(matrix))
-          print("default=" + cfg["default"])
-          print("stable=" + cfg["stable"])
-          print("versions_json=" + json.dumps(versions_json))
-          PY
+          python build_scripts/resolve_docs_matrix.py \
+            --config .github/docs-versions.yml \
+            --github-output "$GITHUB_OUTPUT"
 
   # ------------------------------------------------------------------
   # 2. Build each version in parallel.
@@ -125,12 +108,27 @@ jobs:
       - name: Install PyRIT with dev dependencies
         # Use `uv sync --frozen` so each release branch installs the exact
         # versions pinned in its own uv.lock. Frozen branch = frozen deps =
-        # bit-for-bit reproducible rebuild forever. Newer release branches
-        # (incl. main) use PEP 735 [dependency-groups]; older releases use
-        # legacy [project.optional-dependencies] -- try the group syntax
-        # first, fall back to the extra.
+        # bit-for-bit reproducible rebuild forever.
+        #
+        # Newer release branches (incl. main) use PEP 735 [dependency-groups];
+        # older releases use legacy [project.optional-dependencies]. We pick
+        # the right flag up front by reading pyproject.toml (via stdlib
+        # tomllib) so any uv sync failure surfaces normally instead of being
+        # swallowed by `|| fallback` with stderr redirected to /dev/null.
         run: |
-          uv sync --frozen --group dev 2>/dev/null || uv sync --frozen --extra dev
+          set -euo pipefail
+          choice=$(python -c "
+          import sys, tomllib
+          d = tomllib.loads(open('pyproject.toml').read())
+          if 'dev' in (d.get('dependency-groups') or {}):
+              print('--group dev')
+          elif 'dev' in (d.get('project', {}).get('optional-dependencies') or {}):
+              print('--extra dev')
+          else:
+              print('error: no dev group/extra in pyproject.toml', file=sys.stderr); sys.exit(1)
+          ")
+          echo "Installing with: uv sync --frozen $choice"
+          uv sync --frozen $choice
 
       - name: Generate API reference (pydoc2json + gen_api_md)
         run: |
@@ -177,15 +175,20 @@ jobs:
       - uses: actions/checkout@v6
         with:
           sparse-checkout: |
+            .github/docs-versions.yml
             build_scripts/inject_version_picker.py
             build_scripts/version_picker_assets
             build_scripts/generate_pages_manifest.py
+            build_scripts/compose_docs_dist.py
           sparse-checkout-cone-mode: false
 
       - name: Set up Python 3.13
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+
+      - name: Install PyYAML
+        run: pip install --quiet "pyyaml>=6.0"
 
       - name: Download all version artifacts
         uses: actions/download-artifact@v4
@@ -194,184 +197,17 @@ jobs:
           pattern: site-*
 
       - name: Compose dist/
-        env:
-          DEFAULT_SLUG: ${{ needs.versions.outputs.default }}
-          STABLE_SLUG: ${{ needs.versions.outputs.stable }}
-          VERSIONS_JSON: ${{ needs.versions.outputs.versions_json }}
+        # Compose script does everything: stage artifacts into dist/<slug>/,
+        # write per-version pages.json manifests, write top-level versions.json,
+        # write the root + /stable/ redirects, and write 404.html (with the
+        # auto-redirect script that uses the manifest to find the closest
+        # sibling page in the same version).
         run: |
-          set -euo pipefail
-          mkdir -p dist
-
-          # Each artifact lands at artifacts/site-<slug>/. Move to dist/<slug>/
-          # and generate a pages.json manifest of all rendered HTML pages
-          # (every <slug>/.../index.html). The picker uses this manifest to
-          # find the best sibling/ancestor when the user switches to a
-          # version that doesn't have the exact page they're on.
-          for d in artifacts/site-*; do
-            slug="${d#artifacts/site-}"
-            echo "::group::Stage $slug"
-            mkdir -p "dist/$slug"
-            cp -r "$d/." "dist/$slug/"
-            python build_scripts/generate_pages_manifest.py \
-              --site-dir "dist/$slug" \
-              --output "dist/$slug/pages.json"
-            echo "::endgroup::"
-          done
-
-          # Write the version manifest at the root.
-          echo "$VERSIONS_JSON" > dist/versions.json
-
-          # Root redirect: /PyRIT/ -> /PyRIT/<default>/
-          cat > dist/index.html <<EOF
-          <!doctype html>
-          <html lang="en">
-          <head>
-            <meta charset="utf-8">
-            <title>PyRIT Documentation</title>
-            <meta http-equiv="refresh" content="0; url=${DOCS_BASE}/${DEFAULT_SLUG}/">
-            <link rel="canonical" href="${DOCS_BASE}/${DEFAULT_SLUG}/">
-          </head>
-          <body>
-            <p>Redirecting to <a href="${DOCS_BASE}/${DEFAULT_SLUG}/">PyRIT documentation (${DEFAULT_SLUG})</a>.</p>
-          </body>
-          </html>
-          EOF
-
-          # Stable alias: /PyRIT/stable/ -> /PyRIT/<stable>/
-          mkdir -p dist/stable
-          cat > dist/stable/index.html <<EOF
-          <!doctype html>
-          <html lang="en">
-          <head>
-            <meta charset="utf-8">
-            <title>PyRIT Documentation (stable)</title>
-            <meta http-equiv="refresh" content="0; url=${DOCS_BASE}/${STABLE_SLUG}/">
-            <link rel="canonical" href="${DOCS_BASE}/${STABLE_SLUG}/">
-          </head>
-          <body>
-            <p>Redirecting to <a href="${DOCS_BASE}/${STABLE_SLUG}/">PyRIT documentation (${STABLE_SLUG}, stable)</a>.</p>
-          </body>
-          </html>
-          EOF
-
-          # Custom 404 page served by GitHub Pages for any unmatched path
-          # under /PyRIT/. Two-stage UX:
-          #
-          #   1. Auto-redirect: parse the URL, walk up ancestor paths within
-          #      the same version, HEAD-test each, and redirect to the deepest
-          #      one that exists (so /code/gui/some/view -> /code/gui/some,
-          #      then /code/gui, etc.). Only redirects if a non-root ancestor
-          #      matches, so we don't yank users to the home page silently.
-          #   2. If nothing better than the version root exists, render a
-          #      friendly fallback page with the version picker (injected by
-          #      the next step) so the user can switch versions.
-          cat > dist/404.html <<'EOF'
-          <!doctype html>
-          <html lang="en">
-          <head>
-            <meta charset="utf-8">
-            <title>Page not found - PyRIT Documentation</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1.5rem; color: #0f172a; line-height: 1.55; }
-              h1 { font-size: 2rem; margin: 0 0 0.5rem; }
-              .muted { color: #64748b; }
-              code { background: #f1f5f9; padding: 0.1rem 0.4rem; border-radius: 0.25rem; font-size: 0.9em; }
-              .btn { display: inline-block; padding: 0.6rem 1.1rem; background: #2563eb; color: #fff; text-decoration: none; border-radius: 0.5rem; margin-top: 1.5rem; font-weight: 500; }
-              .btn:hover { background: #1d4ed8; }
-              @media (prefers-color-scheme: dark) { body { background: #0f172a; color: #f8fafc; } code { background: #1e293b; color: #f8fafc; } .muted { color: #94a3b8; } }
-            </style>
-            <script>
-            (function () {
-              // Extract the docs base + version slug + relative path from the URL.
-              // URL shape: /<docs-base>/<slug>/<rest>
-              var meta = document.querySelector('meta[name="pyrit-docs-base"]');
-              var docsBase = (meta && meta.content) ? meta.content.replace(/\/$/, "") : "";
-              if (!docsBase) {
-                var parts = window.location.pathname.split("/").filter(Boolean);
-                docsBase = parts.length > 0 ? "/" + parts[0] : "";
-              }
-              var path = window.location.pathname;
-              if (!path.startsWith(docsBase + "/")) return; // not our base
-              var rest = path.slice(docsBase.length + 1);
-              var slash = rest.indexOf("/");
-              var slug = slash === -1 ? rest : rest.slice(0, slash);
-              if (!slug) return;
-              var relPath = slash === -1 ? "" : rest.slice(slash + 1);
-              if (!relPath) return; // already at version root
-
-              var versionBase = docsBase + "/" + slug + "/";
-
-              function commonSegmentPrefix(pagePath, targetSegs) {
-                var pageSegs = String(pagePath || "").replace(/\/+$/, "").split("/").filter(Boolean);
-                var n = Math.min(pageSegs.length, targetSegs.length);
-                var i = 0;
-                while (i < n && pageSegs[i] === targetSegs[i]) i++;
-                return i;
-              }
-
-              // Same closest-page logic as picker.js: walk up ancestors,
-              // at each level prefer the ancestor-as-page, otherwise pick
-              // the best sibling under that ancestor (longest common prefix,
-              // tiebreak alphabetically). Fall through to root.
-              function findClosestPage(pages, target) {
-                if (!Array.isArray(pages) || pages.length === 0) return null;
-                var clean = String(target || "").replace(/\/+$/, "");
-                var targetSegs = clean.split("/").filter(Boolean);
-                var full = clean ? clean + "/" : "";
-                if (pages.indexOf(full) !== -1) return full;
-                for (var depth = targetSegs.length - 1; depth >= 0; depth--) {
-                  var ancestor = depth === 0 ? "" : targetSegs.slice(0, depth).join("/") + "/";
-                  if (pages.indexOf(ancestor) !== -1) return ancestor;
-                  var bestPage = null;
-                  var bestPrefix = -1;
-                  for (var i = 0; i < pages.length; i++) {
-                    var p = pages[i];
-                    if (ancestor !== "" && p.indexOf(ancestor) !== 0) continue;
-                    if (p === ancestor) continue;
-                    var pfx = commonSegmentPrefix(p, targetSegs);
-                    if (pfx > bestPrefix || (pfx === bestPrefix && bestPage && p < bestPage)) {
-                      bestPage = p;
-                      bestPrefix = pfx;
-                    }
-                  }
-                  if (bestPage) return bestPage;
-                }
-                return "";
-              }
-
-              fetch(versionBase + "pages.json", { cache: "no-cache" })
-                .then(function (r) {
-                  if (!r.ok) throw new Error("pages.json HTTP " + r.status);
-                  return r.json();
-                })
-                .then(function (pages) {
-                  var match = findClosestPage(pages, relPath);
-                  if (match === null) return; // no manifest -- show static fallback
-                  // Only auto-redirect if we found something better than root.
-                  // (Sitting on root is fine via the static fallback page.)
-                  if (match === "") return;
-                  window.location.replace(versionBase + match);
-                })
-                .catch(function () {
-                  // No manifest available -- leave the static fallback up.
-                });
-            })();
-            </script>
-          </head>
-          <body>
-            <h1>Page not found</h1>
-            <p class="muted">The page you requested doesn't exist in this version of the PyRIT docs.</p>
-            <p>We tried looking for the closest parent section that exists, but didn't find one. The version picker in the bottom-right corner shows what's available across all versions.</p>
-            <p><a class="btn" href="DOCS_BASE_PLACEHOLDER/DEFAULT_SLUG_PLACEHOLDER/">Go to PyRIT DEFAULT_SLUG_PLACEHOLDER home</a></p>
-            <p class="muted" style="margin-top: 3rem; font-size: 0.85rem;">Requested URL: <code id="requested-url"></code></p>
-            <script>document.getElementById("requested-url").textContent = window.location.pathname + window.location.search;</script>
-          </body>
-          </html>
-          EOF
-          # Substitute placeholders so we can use a single-quoted heredoc (which
-          # disables shell expansion) above, keeping the inline JS readable.
-          sed -i "s|DOCS_BASE_PLACEHOLDER|${DOCS_BASE}|g; s|DEFAULT_SLUG_PLACEHOLDER|${DEFAULT_SLUG}|g" dist/404.html
+          python build_scripts/compose_docs_dist.py \
+            --artifacts-dir artifacts \
+            --dist-dir dist \
+            --config .github/docs-versions.yml \
+            --base "${DOCS_BASE}"
 
       - name: Inject version picker
         run: |
