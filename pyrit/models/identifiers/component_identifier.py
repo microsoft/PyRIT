@@ -19,13 +19,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import warnings
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, SerializationInfo, model_serializer, model_validator
 
 import pyrit
+from pyrit.common.deprecation import print_deprecation_message
 
 #: Param names that collide with reserved top-level keys in the flat storage
 #: shape. Forbidden inside ``ComponentIdentifier.params`` so storage / REST
@@ -595,11 +595,10 @@ class ComponentIdentifier(BaseModel):
         Returns:
             The flat dict representation.
         """
-        warnings.warn(
-            "ComponentIdentifier.to_dict() is deprecated; use "
-            "model_dump(context={'max_value_length': N}) for the same flat shape.",
-            DeprecationWarning,
-            stacklevel=2,
+        print_deprecation_message(
+            old_item="ComponentIdentifier.to_dict",
+            new_item="ComponentIdentifier.model_dump",
+            removed_in="0.16.0",
         )
         context = (
             {"max_value_length": max_value_length} if max_value_length is not None else None
@@ -617,11 +616,10 @@ class ComponentIdentifier(BaseModel):
         Returns:
             A new ComponentIdentifier.
         """
-        warnings.warn(
-            "ComponentIdentifier.from_dict() is deprecated; use "
-            "ComponentIdentifier.model_validate(data) for the same input shape.",
-            DeprecationWarning,
-            stacklevel=2,
+        print_deprecation_message(
+            old_item="ComponentIdentifier.from_dict",
+            new_item="ComponentIdentifier.model_validate",
+            removed_in="0.16.0",
         )
         return cls.model_validate(data)
 
