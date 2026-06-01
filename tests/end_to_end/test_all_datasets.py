@@ -23,8 +23,11 @@ from pyrit.datasets import SeedDatasetProvider
 from pyrit.datasets.seed_datasets.remote import (
     _ComicJailbreakDataset,
     _HarmBenchMultimodalDataset,
+    _HiXSTestDataset,
     _PromptIntelDataset,
+    _SGXSTestDataset,
     _SIUODataset,
+    _SorryBenchDataset,
     _VLGuardDataset,
     _VLSUMultimodalDataset,
 )
@@ -46,6 +49,16 @@ _IMAGE_FETCHING_PROVIDERS: set[type] = {_HarmBenchMultimodalDataset, _SIUODatase
 # Providers that produce many seeds and would otherwise exceed _TEST_TIMEOUT.
 # Constructed with max_examples to keep CI fast; full coverage runs are out of scope here.
 _LIMITED_EXAMPLES_PROVIDERS: set[type] = {_ComicJailbreakDataset, _VLSUMultimodalDataset}
+
+# Providers backed by HuggingFace-gated datasets. They require both a HUGGINGFACE_TOKEN
+# and that the token's account has accepted each dataset's terms; skipped when no token
+# is present (e.g. when running E2E locally without secrets).
+_HF_GATED_PROVIDERS: set[type] = {
+    _HiXSTestDataset,
+    _SGXSTestDataset,
+    _SorryBenchDataset,
+    _VLGuardDataset,
+}
 
 
 def get_dataset_providers():
@@ -91,8 +104,8 @@ class TestAllDatasets:
         # Skip providers that require credentials not available in CI
         if provider_cls == _PromptIntelDataset and not os.environ.get("PROMPTINTEL_API_KEY"):
             pytest.skip("PROMPTINTEL_API_KEY not set")
-        if provider_cls == _VLGuardDataset and not os.environ.get("HUGGINGFACE_TOKEN"):
-            pytest.skip("HUGGINGFACE_TOKEN not set (required for gated dataset ys-zong/VLGuard)")
+        if provider_cls in _HF_GATED_PROVIDERS and not os.environ.get("HUGGINGFACE_TOKEN"):
+            pytest.skip(f"HUGGINGFACE_TOKEN not set (required for gated dataset used by {name})")
 
         logger.info(f"Testing provider: {name}")
 
