@@ -30,6 +30,7 @@ These tests cover the new contract:
   persistence -> SQL filter -> objective-target filter -> outcome filter.
 """
 
+import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -916,7 +917,7 @@ def _persist_attack_result(
     ``_collect_cached_completion_pairs``.
     """
     attack_result = AttackResult(
-        conversation_id=f"conv-{outcome.value}-{datetime.now(timezone.utc).timestamp()}",
+        conversation_id=str(uuid.uuid4()),
         objective=objective,
         atomic_attack_identifier=_make_atomic_attack_identifier(target),
         outcome=outcome,
