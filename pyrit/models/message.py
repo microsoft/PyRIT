@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional, Union
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.utils import combine_dict
 from pyrit.models.message_piece import MessagePiece
 
@@ -222,14 +223,26 @@ class Message:
                 return True
         return False
 
-    def set_response_not_in_database(self) -> None:
+    def set_response_not_in_memory(self) -> None:
         """
-        Set that the prompt is not in the database.
+        Mark every piece in this message as ephemeral.
 
-        This is needed when we're scoring prompts or other things that have not been sent by PyRIT
+        This is needed when we're scoring prompts or other things that have not been sent by PyRIT.
+        Ephemeral pieces are skipped by ``add_message_pieces_to_memory``.
         """
         for piece in self.message_pieces:
-            piece.not_in_database = True
+            piece.not_in_memory = True
+
+    def set_response_not_in_database(self) -> None:
+        """
+        Mark every piece in this message as ephemeral (DEPRECATED — use ``set_response_not_in_memory``).
+        """
+        print_deprecation_message(
+            old_item="Message.set_response_not_in_database()",
+            new_item="Message.set_response_not_in_memory()",
+            removed_in="0.16.0",
+        )
+        self.set_response_not_in_memory()
 
     def set_simulated_role(self) -> None:
         """

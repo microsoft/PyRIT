@@ -252,10 +252,10 @@ class Scorer(Identifiable, abc.ABC):
 
         self.validate_return_scores(scores=scores)
 
-        # For pieces flagged not-in-database, drop the FK on any score that points at them
+        # For pieces flagged not-in-memory, drop the FK on any score that points at them
         # so memory doesn't try to link a score to a piece that was never persisted.
         ephemeral_piece_ids = {
-            piece.id for piece in scoring_message.message_pieces if piece.not_in_database and piece.id is not None
+            piece.id for piece in scoring_message.message_pieces if piece.not_in_memory and piece.id is not None
         }
         if ephemeral_piece_ids:
             for score in scores:
@@ -510,7 +510,7 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
-        request.message_pieces[0].not_in_database = True
+        request.message_pieces[0].not_in_memory = True
         return await self.score_async(request, objective=objective)
 
     async def score_image_async(self, image_path: str, *, objective: Optional[str] = None) -> list[Score]:
@@ -534,7 +534,7 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
-        request.message_pieces[0].not_in_database = True
+        request.message_pieces[0].not_in_memory = True
         return await self.score_async(request, objective=objective)
 
     async def score_prompts_batch_async(

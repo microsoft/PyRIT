@@ -1035,7 +1035,7 @@ class TestSimulatedAssistantRole:
         assert piece.is_simulated is True
 
 
-def test_set_piece_not_in_database_sets_flag():
+def test_set_piece_not_in_memory_sets_flag():
     entry = MessagePiece(
         role="user",
         original_value="Hello",
@@ -1043,9 +1043,9 @@ def test_set_piece_not_in_database_sets_flag():
     )
     original_id = entry.id
     assert entry.id is not None
-    assert entry.not_in_database is False
-    entry.not_in_database = True
-    assert entry.not_in_database is True
+    assert entry.not_in_memory is False
+    entry.not_in_memory = True
+    assert entry.not_in_memory is True
     # id is preserved so scorers can still reference the piece within the in-memory call
     assert entry.id == original_id
 
@@ -1102,28 +1102,28 @@ def test_to_dict_from_dict_roundtrip():
     assert original.model_dump(mode="json") == roundtripped.model_dump(mode="json")
 
 
-def test_to_dict_from_dict_roundtrip_after_set_piece_not_in_database():
-    """Pieces marked not-in-database keep their id; the flag itself is not serialized."""
+def test_to_dict_from_dict_roundtrip_after_set_piece_not_in_memory():
+    """Pieces marked not-in-memory keep their id; the flag itself is not serialized."""
     piece = MessagePiece(
         role="user",
         original_value="Hello world",
         conversation_id="conv-not-in-db",
     )
     original_id = piece.id
-    piece.not_in_database = True
-    assert piece.not_in_database is True
+    piece.not_in_memory = True
+    assert piece.not_in_memory is True
     assert piece.id == original_id
 
     serialized = piece.model_dump(mode="json")
-    # The not_in_database field is intentionally excluded from serialization.
-    assert "not_in_database" not in serialized
+    # The not_in_memory field is intentionally excluded from serialization.
+    assert "not_in_memory" not in serialized
     assert serialized["id"] == str(original_id)
 
     roundtripped = MessagePiece.model_validate(serialized)
     assert isinstance(roundtripped.id, uuid.UUID)
     assert roundtripped.id == original_id
     # Flag does not survive serialization (in-process only).
-    assert roundtripped.not_in_database is False
+    assert roundtripped.not_in_memory is False
 
 
 class TestCopyLineageFrom:
@@ -1373,10 +1373,10 @@ class TestMessagePieceDeprecatedMethodShims:
 
     def test_set_piece_not_in_database_emits_warning_and_sets_flag(self) -> None:
         piece = MessagePiece(role="user", original_value="hello")
-        assert piece.not_in_database is False
+        assert piece.not_in_memory is False
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             piece.set_piece_not_in_database()
         msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
         assert any("set_piece_not_in_database" in str(m.message) for m in msgs)
-        assert piece.not_in_database is True
+        assert piece.not_in_memory is True

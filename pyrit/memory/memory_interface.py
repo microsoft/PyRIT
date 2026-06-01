@@ -686,9 +686,12 @@ class MemoryInterface(abc.ABC):
         Insert a list of scores into the memory storage.
 
         Callers that produce scores for pieces flagged via
-        ``MessagePiece.not_in_database = True`` should null out
+        ``MessagePiece.not_in_memory = True`` should null out
         ``message_piece_id`` on those scores before calling this method so the
         score itself can still be persisted without a dangling piece linkage.
+        Persisting the score even without a piece is intentional: aggregate
+        analytics (e.g. refusal rate over a batch) still want the score row
+        even when the scored content was never a real conversation turn.
         """
         for score in scores:
             if score.message_piece_id:

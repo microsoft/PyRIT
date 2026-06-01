@@ -132,8 +132,9 @@ class MessagePiece(BaseModel):
 
     # When True, the memory layer skips persisting this piece. Used for ephemeral
     # pieces a scorer creates to score arbitrary content; ``exclude=True`` keeps
-    # the flag out of JSON / memory schema serialization.
-    not_in_database: bool = Field(default=False, exclude=True)
+    # the flag out of JSON / memory schema serialization. Named ``not_in_memory``
+    # to match PyRIT's ``add_*_to_memory`` API verbs.
+    not_in_memory: bool = Field(default=False, exclude=True)
 
     # ------------------------------------------------------------------ #
     # Validators
@@ -220,6 +221,8 @@ class MessagePiece(BaseModel):
         Returns:
             A new ``Message`` containing only this piece.
         """
+        # Deferred import: ``pyrit.models.message`` imports ``MessagePiece`` at
+        # module load, so a top-level import here would deadlock the cycle.
         from pyrit.models.message import Message
 
         return Message([self])
@@ -298,18 +301,18 @@ class MessagePiece(BaseModel):
 
     def set_piece_not_in_database(self) -> None:
         """
-        Mark this piece as ephemeral (DEPRECATED — set ``not_in_database`` directly).
+        Mark this piece as ephemeral (DEPRECATED — set ``not_in_memory`` directly).
 
         Example::
 
-            piece.not_in_database = True
+            piece.not_in_memory = True
         """
         print_deprecation_message(
             old_item="MessagePiece.set_piece_not_in_database()",
-            new_item="MessagePiece.not_in_database = True",
+            new_item="MessagePiece.not_in_memory = True",
             removed_in="0.16.0",
         )
-        self.not_in_database = True
+        self.not_in_memory = True
 
     async def set_sha256_values_async(self) -> None:
         """

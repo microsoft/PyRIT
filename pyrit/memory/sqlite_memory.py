@@ -301,11 +301,11 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         """
         Insert a list of message pieces into the memory storage.
 
-        Pieces flagged via ``MessagePiece.not_in_database = True`` are
+        Pieces flagged via ``MessagePiece.not_in_memory = True`` are
         silently filtered out so callers don't need to track persistence policy
         themselves.
         """
-        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_database]
+        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_memory]
         if not pieces_to_insert:
             return
         self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in pieces_to_insert])

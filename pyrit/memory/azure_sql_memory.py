@@ -698,14 +698,20 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         Insert a list of message pieces into the memory storage.
 
-        Pieces flagged via ``MessagePiece.not_in_database = True`` are
+        Pieces flagged via ``MessagePiece.not_in_memory = True`` are
         silently filtered out so callers don't need to track persistence policy
         themselves.
 
         Args:
             message_pieces (Sequence[MessagePiece]): A sequence of MessagePiece instances to be added.
         """
-        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_database]
+        # ``not_in_memory`` pieces are ephemeral — typically synthesized inside a
+        # scorer to score arbitrary content that never came through a real
+        # PromptTarget. They have no conversation, target, or attack lineage, so
+        # persisting them would pollute the memory store with rows that don't
+        # tie to any real exchange. Filtering here lets every caller share one
+        # policy instead of guarding each call site.
+        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_memory]
         if not pieces_to_insert:
             return
         self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in pieces_to_insert])
