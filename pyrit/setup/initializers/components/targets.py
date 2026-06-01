@@ -14,12 +14,14 @@ Note: This module only includes PRIMARY endpoint configurations from .env_exampl
 
 import logging
 import os
+from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
 from pyrit.auth import get_azure_openai_auth, get_azure_token_provider
 from pyrit.common.parameter import Parameter
+from pyrit.identifiers import TARGET_EVAL_PARAM_FALLBACKS, TARGET_EVAL_PARAMS
 from pyrit.prompt_target import (
     AzureMLChatTarget,
     OpenAIChatTarget,
@@ -76,30 +78,6 @@ class TargetConfig:
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
     tags: list[TargetInitializerTags] = field(default_factory=lambda: [TargetInitializerTags.DEFAULT])
     default_objective_target: bool = False
-
-
-@dataclass
-class RoundRobinGroupConfig:
-    """
-    Configuration for a round-robin target group composed of already-registered targets.
-
-    Round-robin groups are registered AFTER individual targets. Each group
-    references its member targets by registry name — if all members were
-    successfully registered, a ``RoundRobinTarget`` wrapping them is created
-    and registered under ``registry_name``. If any member is missing the
-    group is silently skipped (same graceful degradation as individual targets).
-
-    Attributes:
-        registry_name: The name used to retrieve the round-robin target from the registry.
-        member_names: Registry names of the individual targets to include. Must have at least 2 entries.
-        weights: Optional per-member weights (same semantics as ``RoundRobinTarget.weights``).
-        tags: Tags for filtering which round-robin groups to register.
-    """
-
-    registry_name: str
-    member_names: list[str]
-    weights: list[int] | None = None
-    tags: list[TargetInitializerTags] = field(default_factory=lambda: [TargetInitializerTags.DEFAULT])
 
 
 # Define all supported target configurations.
@@ -461,20 +439,6 @@ SCORER_TARGET_CONFIGS: list[TargetConfig] = [
 # Combined list of all target configurations.
 TARGET_CONFIGS: list[TargetConfig] = ENV_TARGET_CONFIGS + SCORER_TARGET_CONFIGS
 
-# Round-robin groups that combine multiple endpoints for the same model.
-# These provide rate-limit distribution and fault tolerance across endpoints.
-# Groups are only registered when ALL member targets are successfully registered.
-ROUND_ROBIN_CONFIGS: list[RoundRobinGroupConfig] = [
-    RoundRobinGroupConfig(
-        registry_name="azure_openai_gpt4o_rr",
-        member_names=["azure_openai_gpt4o", "azure_openai_gpt4o2"],
-    ),
-    RoundRobinGroupConfig(
-        registry_name="azure_gpt4o_unsafe_chat_rr",
-        member_names=["azure_gpt4o_unsafe_chat", "azure_gpt4o_unsafe_chat2"],
-    ),
-]
-
 
 class TargetInitializer(PyRITInitializer):
     """
@@ -490,6 +454,9 @@ class TargetInitializer(PyRITInitializer):
             "scorer" registers scorer-specific temperature variant targets.
             "all" registers all targets regardless of tag.
             If not provided, only "default" targets are registered.
+        auto_group: Whether to automatically create round-robin groups from
+            targets with matching behavioral eval params (underlying model,
+            temperature, top_p). Defaults to True.
 
     Supported Endpoints by Category:
 
@@ -559,6 +526,11 @@ class TargetInitializer(PyRITInitializer):
                 description="Target tags to register (e.g., ['default'], ['default', 'scorer'], or ['all'])",
                 default=["default"],
             ),
+            Parameter(
+                name="auto_group",
+                description="Auto-create round-robin groups from targets with matching behavioral eval params",
+                default=True,
+            ),
         ]
 
     @property
@@ -579,19 +551,30 @@ class TargetInitializer(PyRITInitializer):
         corresponding targets into the TargetRegistry. Only targets with
         tags matching the configured tags are registered.
 
-        After individual targets are registered, round-robin groups are
-        created for any groups whose member targets are all present.
+        When ``auto_group`` is True (the default), targets that share the
+        same behavioral eval params (underlying model, temperature, top_p)
+        and target class are automatically grouped into ``RoundRobinTarget``
+        instances for rate-limit distribution and fault tolerance.
         """
         tags = self.params.get("tags", ["default"])
         if TargetInitializerTags.ALL in tags:
             tags = [tag for tag in TargetInitializerTags if tag != TargetInitializerTags.ALL]
+
+        auto_group = self.params.get("auto_group", True)
+        # Normalize: params arrive as bool (direct), str, or list[str] (YAML).
+        if not isinstance(auto_group, bool):
+            value = auto_group[0] if isinstance(auto_group, list) else auto_group
+            auto_group = str(value).lower() not in ("false", "0", "no")
+
+        self._registered_names: list[str] = []
 
         for config in TARGET_CONFIGS:
             if not any(tag in tags for tag in config.tags):
                 continue
             self._register_target(config)
 
-        self._register_round_robin_groups(tags=tags)
+        if auto_group:
+            self._auto_group_targets()
 
     def _register_target(self, config: TargetConfig) -> None:
         """
@@ -654,43 +637,105 @@ class TargetInitializer(PyRITInitializer):
         registry.register_instance(target, name=config.registry_name)
         if config.default_objective_target:
             registry.add_tags(name=config.registry_name, tags=[TargetInitializerTags.DEFAULT_OBJECTIVE_TARGET])
+        self._registered_names.append(config.registry_name)
         logger.info(f"Registered target: {config.registry_name}")
 
-    def _register_round_robin_groups(self, *, tags: list[str] | list[TargetInitializerTags]) -> None:
+    def _auto_group_targets(self) -> None:
         """
-        Register round-robin target groups from ROUND_ROBIN_CONFIGS.
+        Automatically create round-robin groups from registered targets with
+        matching behavioral eval params.
 
-        For each ``RoundRobinGroupConfig`` whose tags match the requested tags,
-        resolves member targets by name from the ``TargetRegistry``. If all
-        members are present, creates a ``RoundRobinTarget`` wrapping them and
-        registers it. If any member is missing the group is silently skipped.
+        Groups targets by ``(class_name, underlying_model_name, temperature,
+        top_p)`` — the same ``TARGET_EVAL_PARAMS`` checked by
+        ``RoundRobinTarget._validate_behavioral_consistency``. For each group
+        with 2+ members, creates a ``RoundRobinTarget`` wrapping them.
 
-        Args:
-            tags: The active tag filters from ``initialize_async``.
+        The ``RoundRobinTarget`` constructor validates both behavioral AND
+        configuration consistency, so any group that would fail validation
+        (e.g. different ``TargetConfiguration``) is caught and skipped.
         """
         registry = TargetRegistry.get_registry_singleton()
 
-        for group_config in ROUND_ROBIN_CONFIGS:
-            if not any(tag in tags for tag in group_config.tags):
+        # Group registered targets by behavioral key.
+        groups: dict[tuple, list[tuple[str, PromptTarget]]] = defaultdict(list)
+        for name in self._registered_names:
+            target = registry.get_instance_by_name(name)
+            if target is None:
+                continue
+            key = _get_behavioral_key(target)
+            groups[key].append((name, target))
+
+        for key, members in groups.items():
+            if len(members) < 2:
                 continue
 
-            members: list[PromptTarget] = []
-            for member_name in group_config.member_names:
-                target = registry.get_instance_by_name(member_name)
-                if target is None:
-                    break
-                members.append(target)
-            else:
-                # All members resolved — create the round-robin target.
-                rr_target = RoundRobinTarget(targets=members, weights=group_config.weights)
-                registry.register_instance(rr_target, name=group_config.registry_name)
-                logger.info(
-                    f"Registered round-robin target: {group_config.registry_name} "
-                    f"(members: {group_config.member_names})"
-                )
+            member_names = [name for name, _ in members]
+            member_targets = [target for _, target in members]
+
+            try:
+                rr_target = RoundRobinTarget(targets=member_targets)
+            except ValueError as ex:
+                logger.debug(f"Skipping auto-group for behavioral key {key}: {ex}")
                 continue
 
-            # At least one member missing — skip this group.
-            logger.debug(
-                f"Skipping round-robin group {group_config.registry_name}: not all member targets are registered"
-            )
+            rr_name = _generate_rr_name(key)
+            registry.register_instance(rr_target, name=rr_name)
+
+            logger.info(f"Auto-grouped round-robin target: {rr_name} (members: {member_names})")
+
+
+def _get_behavioral_key(target: PromptTarget) -> tuple:
+    """
+    Extract a hashable behavioral grouping key from a target's identifier.
+
+    Uses ``TARGET_EVAL_PARAMS`` with ``TARGET_EVAL_PARAM_FALLBACKS`` — the
+    same params that ``RoundRobinTarget._validate_behavioral_consistency``
+    checks. Prepends ``class_name`` so different target types never mix.
+
+    Args:
+        target: The target to extract the key from.
+
+    Returns:
+        A hashable tuple of ``(class_name, (param, value), ...)``.
+    """
+    identifier = target.get_identifier()
+    parts: list[Any] = [identifier.class_name]
+    for param in sorted(TARGET_EVAL_PARAMS):
+        value = identifier.params.get(param)
+        if (value is None or value == "") and param in TARGET_EVAL_PARAM_FALLBACKS:
+            value = identifier.params.get(TARGET_EVAL_PARAM_FALLBACKS[param])
+        parts.append((param, value))
+    return tuple(parts)
+
+
+def _generate_rr_name(key: tuple) -> str:
+    """
+    Generate a registry name for an auto-grouped round-robin target.
+
+    Produces names like ``OpenAIChatTarget_gpt-4o_rr`` or
+    ``OpenAIChatTarget_gpt-4o_temp0.0_rr``.
+
+    Args:
+        key: The behavioral grouping key tuple from ``_get_behavioral_key``.
+
+    Returns:
+        A sanitized registry name string.
+    """
+    class_name = key[0]
+    param_dict = dict(key[1:])
+
+    effective_model = param_dict.get("underlying_model_name") or "unknown"
+
+    parts = [class_name, effective_model]
+
+    temperature = param_dict.get("temperature")
+    if temperature is not None:
+        parts.append(f"temp{temperature}")
+
+    top_p = param_dict.get("top_p")
+    if top_p is not None:
+        parts.append(f"top_p{top_p}")
+
+    parts.append("rr")
+
+    return "_".join(parts)
