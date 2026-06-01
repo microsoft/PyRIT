@@ -48,14 +48,14 @@ _DEPRECATED_KWARGS: tuple[tuple[str, str], ...] = (
 )
 
 
-# Annotated alias for fields whose runtime type is ``ComponentIdentifier`` —
-# a non-Pydantic class that needs ``from_dict``/``to_dict`` round-tripping.
-# Drop this alias (and the corresponding ``Score`` one below) once
-# ``ComponentIdentifier`` / ``Score`` become Pydantic models (Phase 4 / 5).
+# Annotated alias that round-trips identifier fields through the flat dict
+# storage shape. ``ComponentIdentifier`` is a Pydantic model with a custom
+# flat serializer; ``Score`` is still a plain class needing ``from_dict`` /
+# ``to_dict``. Drop the ``Score`` alias once it becomes a Pydantic model.
 ComponentIdentifierField = Annotated[
     ComponentIdentifier,
-    BeforeValidator(lambda v: ComponentIdentifier.from_dict(v) if isinstance(v, dict) else v),
-    PlainSerializer(lambda v: v.to_dict() if v is not None else None, return_type=Optional[dict]),
+    BeforeValidator(lambda v: ComponentIdentifier.model_validate(v) if isinstance(v, dict) else v),
+    PlainSerializer(lambda v: v.model_dump() if v is not None else None, return_type=Optional[dict]),
 ]
 
 ScoreField = Annotated[

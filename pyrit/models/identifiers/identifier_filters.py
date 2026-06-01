@@ -1,8 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from dataclasses import dataclass
 from enum import Enum
+
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 class IdentifierType(Enum):
@@ -14,8 +15,7 @@ class IdentifierType(Enum):
     CONVERTER = "converter"
 
 
-@dataclass(frozen=True)
-class IdentifierFilter:
+class IdentifierFilter(BaseModel):
     """
     Immutable filter definition for matching JSON-backed identifier properties.
 
@@ -31,6 +31,8 @@ class IdentifierFilter:
             Cannot be used with array_element_path or partial_match.
     """
 
+    model_config = ConfigDict(frozen=True)
+
     identifier_type: IdentifierType
     property_path: str
     value: str
@@ -38,14 +40,10 @@ class IdentifierFilter:
     partial_match: bool = False
     case_sensitive: bool = False
 
-    def __post_init__(self) -> None:
-        """
-        Validate the filter configuration.
-
-        Raises:
-            ValueError: If the filter configuration is not valid.
-        """
+    @model_validator(mode="after")
+    def _validate_combinations(self) -> "IdentifierFilter":
         if self.array_element_path and (self.partial_match or self.case_sensitive):
             raise ValueError("Cannot use array_element_path with partial_match or case_sensitive")
         if self.partial_match and self.case_sensitive:
             raise ValueError("case_sensitive is not reliably supported with partial_match across all backends")
+        return self

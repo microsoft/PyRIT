@@ -756,7 +756,7 @@ class AttackService:
                     children=new_children,
                 )
                 if ar.atomic_attack_identifier:
-                    atomic = ComponentIdentifier.from_dict(ar.atomic_attack_identifier.to_dict())
+                    atomic = ComponentIdentifier.model_validate(ar.atomic_attack_identifier.model_dump())
                     atomic_children = dict(atomic.children)
                     # Navigate into attack_technique child to update the nested attack child.
                     technique = atomic_children.get("attack_technique")
@@ -778,7 +778,7 @@ class AttackService:
                         params=dict(atomic.params),
                         children=atomic_children,
                     )
-                    update_fields["atomic_attack_identifier"] = new_atomic.to_dict()
+                    update_fields["atomic_attack_identifier"] = new_atomic.model_dump()
 
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,
