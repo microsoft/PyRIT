@@ -61,13 +61,13 @@
 #    - Include an `ALL` aggregate strategy that expands to all available strategies
 #    - Optionally override `_prepare_strategies()` for custom composition logic (see `FoundryComposite`)
 #
-# 2. **Scenario Class**: Extend `Scenario` and implement these abstract methods:
-#    - `get_strategy_class()`: Return your strategy enum class
-#    - `get_default_strategy()`: Return the default strategy (typically `YourStrategy.ALL`)
+# 2. **Scenario Class**: Extend `Scenario` and pass these to `super().__init__()`:
+#    - `strategy_class`: Your strategy enum class
+#    - `default_strategy`: The default strategy (typically `YourStrategy.ALL` or `YourStrategy.DEFAULT`)
 #    - The base class provides a default `_get_atomic_attacks_async()` that uses the factory/registry
 #      pattern. Override it only if your scenario needs custom attack construction logic.
 #
-# 3. **Default Dataset**: Implement `default_dataset_config()` to specify the datasets your scenario uses out of the box.
+# 3. **Default Dataset**: Pass `default_dataset_config=` to `super().__init__()` to specify the datasets your scenario uses out of the box.
 #    - Returns a `DatasetConfiguration` with one or more named datasets (e.g., `DatasetConfiguration(dataset_names=["my_dataset"])`)
 #    - Users can override this at runtime via `--dataset-names` in the CLI or by passing a custom `dataset_config` programmatically
 #
@@ -120,18 +120,6 @@ class MyScenario(Scenario):
 
     VERSION: int = 1
 
-    @classmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        return MyStrategy
-
-    @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        return MyStrategy.DEFAULT
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        return DatasetConfiguration(dataset_names=["dataset_name"], max_dataset_size=4)
-
     @apply_defaults
     def __init__(
         self,
@@ -146,7 +134,9 @@ class MyScenario(Scenario):
         super().__init__(
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
-            strategy_class=self.get_strategy_class(),
+            strategy_class=MyStrategy,
+            default_strategy=MyStrategy.DEFAULT,
+            default_dataset_config=DatasetConfiguration(dataset_names=["dataset_name"], max_dataset_size=4),
             scenario_result_id=scenario_result_id,
         )
 

@@ -46,6 +46,7 @@ flowchart LR
         S_c["CrescendoAttack"]
         S_r["RedTeamingAttack"]
         s_t["TreeOfAttacksWithPruningAttack (aka TAPAttack)"]
+        s_pair["PAIRAttack"]
         S_multi["MultiTurnAttackStrategy (ABC)"]
         S_seq["SequentialAttack"]
         S_compound["Compound Attacks"]
@@ -59,6 +60,8 @@ flowchart LR
     S_single --> S_psa
     S_multi --> S_c
     S_multi --> S_r
+    S_multi --> s_t
+    s_t --> s_pair
     S_compound --> S_seq
 
 ```
