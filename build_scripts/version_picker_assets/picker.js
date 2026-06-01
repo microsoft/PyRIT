@@ -231,20 +231,6 @@
     return container;
   }
 
-  // Given a path like "code/gui/some/view" (no leading slash, query/hash
-  // stripped), return ["code/gui/some/view/", "code/gui/some/", "code/gui/",
-  // "code/", ""] -- most specific first, root last.
-  function ancestorPaths(relPath) {
-    var clean = String(relPath || "").split("?")[0].split("#")[0].replace(/\/+$/, "");
-    var parts = clean.split("/").filter(Boolean);
-    var paths = [];
-    for (var i = parts.length; i > 0; i--) {
-      paths.push(parts.slice(0, i).join("/") + "/");
-    }
-    paths.push(""); // version root
-    return paths;
-  }
-
   // Fetch a version's pages.json (cached). Returns null on any error so
   // the picker can degrade gracefully (full-path link, no fallback).
   function getPages(versionBase) {
