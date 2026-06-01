@@ -16,7 +16,7 @@ from typing import Any, Optional, TypeVar
 from pyrit.common.path import (
     SCORER_EVALS_PATH,
 )
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.score.scorer_evaluation.scorer_metrics import (
     HarmScorerMetrics,
     ObjectiveScorerMetrics,

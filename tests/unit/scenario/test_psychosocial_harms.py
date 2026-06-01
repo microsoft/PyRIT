@@ -8,8 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import SeedAttackGroup, SeedDataset, SeedGroup, SeedObjective
+from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedDataset, SeedGroup, SeedObjective
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.scenario.scenarios.airt import (
     Psychosocial,

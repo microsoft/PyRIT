@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 """
-Tests for pyrit.identifiers.evaluation_identifier.
+Tests for pyrit.models.identifiers.evaluation_identifier.
 
 Covers the ``EvaluationIdentifier`` abstract base class, the ``_build_eval_dict``
 helper, and the ``compute_eval_hash`` free function.
@@ -12,8 +12,8 @@ from typing import ClassVar
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier, compute_eval_hash
-from pyrit.identifiers.evaluation_identifier import ChildEvalRule, EvaluationIdentifier, _build_eval_dict
+from pyrit.models.identifiers import ComponentIdentifier, compute_eval_hash
+from pyrit.models.identifiers.evaluation_identifier import ChildEvalRule, EvaluationIdentifier, _build_eval_dict
 
 # ---------------------------------------------------------------------------
 # Concrete subclass for testing the ABC
@@ -535,7 +535,7 @@ class TestInnerChildName:
     def test_scorer_eval_hash_matches_with_and_without_round_robin(self):
         """ScorerEvaluationIdentifier produces the same eval_hash whether
         the scorer uses a direct target or a RoundRobinTarget wrapping it."""
-        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
+        from pyrit.models.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
 
         inner_target = ComponentIdentifier(
             class_name="OpenAIChatTarget",

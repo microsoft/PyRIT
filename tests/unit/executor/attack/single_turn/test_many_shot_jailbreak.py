@@ -13,10 +13,10 @@ from pyrit.executor.attack import (
     ManyShotJailbreakAttack,
     SingleTurnAttackContext,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     SeedPrompt,
 )
 from pyrit.prompt_converter import Base64Converter
