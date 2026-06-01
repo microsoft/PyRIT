@@ -39,14 +39,18 @@ from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     get_all_objective_metrics,
 )
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.credential_leak_scorer import CredentialLeakScorer
 from pyrit.score.true_false.decoding_scorer import DecodingScorer
 from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
 from pyrit.score.true_false.gandalf_scorer import GandalfScorer
 from pyrit.score.true_false.markdown_injection import MarkdownInjectionScorer
 from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
 from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
-from pyrit.score.true_false.regex_scorer import RegexScorer
+from pyrit.score.true_false.regex.credential_leak_scorer import CredentialLeakScorer
+from pyrit.score.true_false.regex.path_traversal_output_scorer import PathTraversalOutputScorer
+from pyrit.score.true_false.regex.regex_scorer import RegexScorer
+from pyrit.score.true_false.regex.shell_command_output_scorer import ShellCommandOutputScorer
+from pyrit.score.true_false.regex.sql_injection_output_scorer import SQLInjectionOutputScorer
+from pyrit.score.true_false.regex.xss_output_scorer import XSSOutputScorer
 from pyrit.score.true_false.self_ask_category_scorer import ContentClassifierPaths, SelfAskCategoryScorer
 from pyrit.score.true_false.self_ask_general_true_false_scorer import SelfAskGeneralTrueFalseScorer
 from pyrit.score.true_false.self_ask_question_answer_scorer import SelfAskQuestionAnswerScorer
@@ -139,6 +143,7 @@ __all__ = [
     "ObjectiveHumanLabeledEntry",
     "ObjectiveScorerEvaluator",
     "ObjectiveScorerMetrics",
+    "PathTraversalOutputScorer",
     "PlagiarismMetric",
     "PlagiarismScorer",
     "PromptShieldScorer",
@@ -164,6 +169,8 @@ __all__ = [
     "SelfAskScaleScorer",
     "SelfAskTrueFalseScorer",
     "ScorerPrinter",
+    "ShellCommandOutputScorer",
+    "SQLInjectionOutputScorer",
     "StaticPromptInjectionScorer",
     "SubStringScorer",
     "TrueFalseCompositeScorer",
@@ -175,4 +182,5 @@ __all__ = [
     "TrueFalseScorer",
     "VideoFloatScaleScorer",
     "VideoTrueFalseScorer",
+    "XSSOutputScorer",
 ]
