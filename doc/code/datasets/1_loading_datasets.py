@@ -26,6 +26,7 @@
 # CategoricalHarmfulQA (CatQA) [@bhardwaj2024homer],
 # CoCoNot [@brahman2024coconot],
 # DarkBench [@darkbench2025],
+# DecodingTrust [@wang2023decodingtrust],
 # Do Anything Now [@shen2023donotanything],
 # Do-Not-Answer [@wang2023donotanswer],
 # EquityMedQA [@pfohl2024equitymedqa],

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
 
 if TYPE_CHECKING:
-    from pyrit.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 
 ScoreType = Literal["true_false", "float_scale", "unknown"]
 
@@ -204,7 +204,7 @@ class Score:
         Returns:
             Score: Reconstructed instance.
         """
-        from pyrit.identifiers.component_identifier import ComponentIdentifier
+        from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 
         return cls(
             id=data.get("id"),

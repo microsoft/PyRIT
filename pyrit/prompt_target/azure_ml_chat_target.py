@@ -16,9 +16,9 @@ from pyrit.exceptions import (
     handle_bad_request_exception,
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.message_normalizer import ChatMessageNormalizer, MessageListNormalizer
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     construct_response_from_request,
 )

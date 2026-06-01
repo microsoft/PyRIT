@@ -10,8 +10,7 @@ from typing import Optional
 import numpy as np
 
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType, data_serializer_factory
+from pyrit.models import ComponentIdentifier, PromptDataType, data_serializer_factory
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)

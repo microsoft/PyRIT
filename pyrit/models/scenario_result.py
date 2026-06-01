@@ -12,7 +12,7 @@ import pyrit
 from pyrit.models import AttackOutcome, AttackResult
 
 if TYPE_CHECKING:
-    from pyrit.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
 
 logger = logging.getLogger(__name__)
@@ -294,7 +294,7 @@ class ScenarioResult:
 
         """
         # import here to avoid circular imports
-        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
+        from pyrit.models.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
         from pyrit.score.scorer_evaluation.scorer_metrics_io import (
             find_objective_metrics_by_eval_hash,
         )
@@ -345,7 +345,7 @@ class ScenarioResult:
         Returns:
             ScenarioResult: Reconstructed instance.
         """
-        from pyrit.identifiers.component_identifier import ComponentIdentifier
+        from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 
         result = cls(
             id=uuid.UUID(data["id"]) if data.get("id") else None,

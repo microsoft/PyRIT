@@ -285,7 +285,7 @@ class TestMessageSimulatedAssistantRole:
         assert message.is_simulated is True
         assert message.api_role == "assistant"
         for piece in message.message_pieces:
-            assert piece._role == "simulated_assistant"
+            assert piece.role == "simulated_assistant"
             assert piece.is_simulated is True
 
     def test_set_simulated_role_only_changes_assistant_role(self) -> None:
@@ -300,7 +300,7 @@ class TestMessageSimulatedAssistantRole:
 
         # User roles should remain unchanged
         for piece in message.message_pieces:
-            assert piece._role == "user"
+            assert piece.role == "user"
             assert piece.is_simulated is False
 
 
@@ -327,3 +327,31 @@ def test_to_dict_from_dict_roundtrip():
     original = Message(message_pieces=pieces)
     roundtripped = Message.from_dict(original.to_dict())
     assert original.to_dict() == roundtripped.to_dict()
+
+
+class TestSetResponseNotInMemory:
+    """Tests for ``Message.set_response_not_in_memory`` and its deprecation shim."""
+
+    def test_set_response_not_in_memory_flags_every_piece(self) -> None:
+        pieces = [
+            MessagePiece(role="user", original_value="a", conversation_id="conv-1"),
+            MessagePiece(role="user", original_value="b", conversation_id="conv-1"),
+        ]
+        message = Message(message_pieces=pieces)
+        for p in pieces:
+            assert p.not_in_memory is False
+        message.set_response_not_in_memory()
+        for p in pieces:
+            assert p.not_in_memory is True
+
+    def test_set_response_not_in_database_emits_warning_and_delegates(self) -> None:
+        import warnings as _warnings
+
+        piece = MessagePiece(role="user", original_value="hello")
+        message = Message(message_pieces=[piece])
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            message.set_response_not_in_database()
+        msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert any("set_response_not_in_database" in str(m.message) for m in msgs)
+        assert piece.not_in_memory is True

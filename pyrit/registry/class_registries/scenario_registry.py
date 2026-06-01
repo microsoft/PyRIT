@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, Optional, get_origin
 
-from pyrit.identifiers.class_name_utils import class_name_to_snake_case
+from pyrit.models import class_name_to_snake_case
 from pyrit.registry.base import ClassRegistryEntry
 from pyrit.registry.class_registries.base_class_registry import (
     BaseClassRegistry,
