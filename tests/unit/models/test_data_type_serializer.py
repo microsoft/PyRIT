@@ -426,3 +426,27 @@ async def test_get_data_filename_uses_db_data_path_when_results_path_falsy():
     result_str = str(result).replace("\\", "/")
     assert "/fallback/db_data" in result_str
     assert result_str.endswith(".png")
+
+
+async def test_save_formatted_audio_azure_storage_unlinks_local_temp(tmp_path):
+    """save_formatted_audio cleans up the local temp WAV after writing to Azure storage."""
+    from pyrit.models import data_serializer_factory as factory
+
+    serializer = factory(category="prompt-memory-entries", data_type="audio_path")
+    mock_memory = MagicMock()
+    mock_storage_io = AsyncMock()
+    mock_memory.results_storage_io = mock_storage_io
+    azure_url = "https://account.blob.core.windows.net/container/audio/test.wav"
+
+    with (
+        patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory),
+        patch.object(serializer, "get_data_filename", new_callable=AsyncMock, return_value=azure_url),
+        patch("pyrit.models.data_type_serializer.DB_DATA_PATH", tmp_path),
+    ):
+        await serializer.save_formatted_audio(data=b"\x00\x01\x02\x03")
+
+    # The local temp file written via wave.open should have been unlinked after upload.
+    assert not (tmp_path / "temp_audio.wav").exists()
+    mock_storage_io.write_file.assert_awaited_once()
+    assert mock_storage_io.write_file.call_args[0][0] == azure_url
+    assert serializer.value == azure_url
