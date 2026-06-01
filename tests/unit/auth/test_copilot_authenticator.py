@@ -491,7 +491,9 @@ class TestCopilotAuthenticatorTokenRetrieval:
         async def mock_fetch():
             nonlocal fetch_call_count
             fetch_call_count += 1
-            await asyncio.sleep(0.01)  # minimal delay to test concurrency
+            # Yield once so concurrent callers contend for the lock; the lock
+            # guarantees serialization regardless of real-time delays.
+            await asyncio.sleep(0)
             return f"token.{fetch_call_count}"
 
         def mock_load_side_effect():
