@@ -40,6 +40,8 @@ def _make_request(
     initializers: list[str] | None = None,
     strategies: list[str] | None = None,
     scenario_result_id: str | None = None,
+    dataset_names: list[str] | None = None,
+    max_dataset_size: int | None = None,
 ) -> RunScenarioRequest:
     """Create a RunScenarioRequest for testing."""
     return RunScenarioRequest(
@@ -48,6 +50,8 @@ def _make_request(
         initializers=initializers,
         strategies=strategies,
         scenario_result_id=scenario_result_id,
+        dataset_names=dataset_names,
+        max_dataset_size=max_dataset_size,
     )
 
 
@@ -99,8 +103,8 @@ def mock_all_registries(mock_memory):
     mock_scenario_instance._scenario_result_id = "sr-uuid-1"
 
     mock_scenario_class = MagicMock(return_value=mock_scenario_instance)
-    mock_scenario_class.get_strategy_class.return_value = MagicMock()
-    mock_scenario_class.default_dataset_config.return_value = MagicMock()
+    mock_scenario_instance._strategy_class = MagicMock()
+    mock_scenario_instance._default_dataset_config = MagicMock()
 
     mock_sr = MagicMock()
     mock_sr.get_class.return_value = mock_scenario_class
@@ -203,8 +207,8 @@ class TestScenarioRunServiceStartRun:
         mock_strategy_class = MagicMock(side_effect=ValueError("not a valid strategy"))
         mock_strategy_class.__iter__ = MagicMock(return_value=iter([MagicMock(value="valid_strat")]))
 
-        mock_scenario_class = MagicMock()
-        mock_scenario_class.get_strategy_class.return_value = mock_strategy_class
+        mock_instance = MagicMock(_strategy_class=mock_strategy_class)
+        mock_scenario_class = MagicMock(return_value=mock_instance)
 
         mock_sr = MagicMock()
         mock_sr.get_class.return_value = mock_scenario_class
@@ -219,6 +223,61 @@ class TestScenarioRunServiceStartRun:
         ):
             with pytest.raises(ValueError, match="Strategy.*not found for scenario"):
                 await service.start_run_async(request=_make_request(strategies=["bad_strategy"]))
+
+    async def test_start_run_scenario_not_no_arg_instantiable_raises(self, mock_memory) -> None:
+        """If introspection is required and ``scenario_class()`` fails, surface a ValueError."""
+        service = ScenarioRunService()
+
+        # scenario_class() raises -> introspection fails
+        mock_scenario_class = MagicMock(side_effect=TypeError("missing required arg 'foo'"))
+
+        mock_sr = MagicMock()
+        mock_sr.get_class.return_value = mock_scenario_class
+
+        mock_tr = MagicMock()
+        mock_tr.get_instance_by_name.return_value = MagicMock()
+
+        with (
+            patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=mock_sr),
+            patch(f"{_REGISTRY_PATCH_BASE}.TargetRegistry.get_registry_singleton", return_value=mock_tr),
+            patch(f"{_REGISTRY_PATCH_BASE}.InitializerRegistry.get_registry_singleton"),
+        ):
+            with pytest.raises(ValueError, match="not instantiable without arguments"):
+                # strategies forces the introspection path
+                await service.start_run_async(request=_make_request(strategies=["any"]))
+
+    async def test_start_run_passes_valid_strategies_through(self, mock_all_registries) -> None:
+        """A valid strategy list is converted to enum values and forwarded to initialize_async."""
+        strategy_a = MagicMock(value="strat_a")
+        strategy_b = MagicMock(value="strat_b")
+
+        def _lookup(name):
+            return {"strat_a": strategy_a, "strat_b": strategy_b}[name]
+
+        mock_strategy_class = MagicMock(side_effect=_lookup)
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._strategy_class = mock_strategy_class
+
+        service = ScenarioRunService()
+        await service.start_run_async(request=_make_request(strategies=["strat_a", "strat_b"]))
+
+        init_call = scenario_instance.initialize_async.await_args
+        assert init_call.kwargs["scenario_strategies"] == [strategy_a, strategy_b]
+
+    async def test_start_run_max_dataset_size_uses_default_config(self, mock_all_registries) -> None:
+        """``max_dataset_size`` with no ``dataset_names`` reuses the scenario's default config."""
+        default_config = MagicMock()
+        default_config.max_dataset_size = 100  # original
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._default_dataset_config = default_config
+
+        service = ScenarioRunService()
+        await service.start_run_async(request=_make_request(max_dataset_size=5))
+
+        # max_dataset_size on the default config was overridden
+        assert default_config.max_dataset_size == 5
+        init_call = scenario_instance.initialize_async.await_args
+        assert init_call.kwargs["dataset_config"] is default_config
 
     async def test_start_run_exceeds_concurrent_limit(self, mock_all_registries) -> None:
         """Test that exceeding concurrent run limit raises ValueError."""
