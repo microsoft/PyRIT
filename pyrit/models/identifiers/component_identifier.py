@@ -46,9 +46,7 @@ RESERVED_PARAM_NAMES: frozenset[str] = frozenset(
 
 #: Field updates that invalidate the stored content hash. ``model_copy``
 #: rejects updates to these unless the caller also passes a fresh ``hash``.
-_HASH_AFFECTING_FIELDS: frozenset[str] = frozenset(
-    {"class_name", "class_module", "params", "children"}
-)
+_HASH_AFFECTING_FIELDS: frozenset[str] = frozenset({"class_name", "class_module", "params", "children"})
 
 logger = logging.getLogger(__name__)
 
@@ -168,9 +166,7 @@ class ComponentIdentifier(BaseModel):
     #: Behavioral parameters that affect output.
     params: dict[str, Any] = Field(default_factory=dict)
     #: Named child identifiers for compositional identity (e.g., a scorer's target).
-    children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = Field(
-        default_factory=dict
-    )
+    children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = Field(default_factory=dict)
     #: Content-addressed SHA256 hash. Computed automatically when ``None``;
     #: pass an explicit value to preserve a hash from DB storage where params
     #: may have been truncated.
@@ -263,10 +259,7 @@ class ComponentIdentifier(BaseModel):
         if isinstance(params_dict, dict):
             collisions = set(params_dict) & RESERVED_PARAM_NAMES
             if collisions:
-                raise ValueError(
-                    "ComponentIdentifier params must not use reserved names: "
-                    f"{sorted(collisions)}"
-                )
+                raise ValueError(f"ComponentIdentifier params must not use reserved names: {sorted(collisions)}")
 
         return data
 
@@ -330,9 +323,7 @@ class ComponentIdentifier(BaseModel):
                 if isinstance(child, ComponentIdentifier):
                     serialized_children[name] = child.model_dump(mode=mode, context=context)
                 elif isinstance(child, list):
-                    serialized_children[name] = [
-                        c.model_dump(mode=mode, context=context) for c in child
-                    ]
+                    serialized_children[name] = [c.model_dump(mode=mode, context=context) for c in child]
             result[self.KEY_CHILDREN] = serialized_children
 
         return result
@@ -382,7 +373,7 @@ class ComponentIdentifier(BaseModel):
 
         Updates to ``eval_hash`` and ``pyrit_version`` are safe (they don't
         feed into the content hash) and work normally. Use
-        :meth:`with_eval_hash` for the eval-hash case.
+        ``with_eval_hash`` for the eval-hash case.
 
         Args:
             update: Fields to override on the new copy.
@@ -520,16 +511,13 @@ class ComponentIdentifier(BaseModel):
 
         Raises:
             ValueError: If the child at ``key`` is a list. Use
-                :meth:`get_child_list` for list-valued children.
+                ``get_child_list`` for list-valued children.
         """
         child = self.children.get(key)
         if child is None:
             return None
         if isinstance(child, list):
-            raise ValueError(
-                f"Child '{key}' is a list of {len(child)} components. "
-                "Use get_child_list() instead."
-            )
+            raise ValueError(f"Child '{key}' is a list of {len(child)} components. Use get_child_list() instead.")
         return child
 
     def get_child_list(self, key: str) -> list[ComponentIdentifier]:
@@ -560,9 +548,9 @@ class ComponentIdentifier(BaseModel):
         for child_val in self.children.values():
             children_list = child_val if isinstance(child_val, list) else [child_val]
             for child in children_list:
-                if child.eval_hash:  # type: ignore[ty:unresolved-attribute]
-                    hashes.add(child.eval_hash)  # type: ignore[ty:unresolved-attribute]
-                hashes.update(child._collect_child_eval_hashes())  # type: ignore[ty:unresolved-attribute]
+                if child.eval_hash:
+                    hashes.add(child.eval_hash)
+                hashes.update(child._collect_child_eval_hashes())
         return hashes
 
     @staticmethod
@@ -600,9 +588,7 @@ class ComponentIdentifier(BaseModel):
             new_item="ComponentIdentifier.model_dump",
             removed_in="0.16.0",
         )
-        context = (
-            {"max_value_length": max_value_length} if max_value_length is not None else None
-        )
+        context = {"max_value_length": max_value_length} if max_value_length is not None else None
         return self.model_dump(context=context)
 
     @classmethod
@@ -664,6 +650,8 @@ class Identifiable(ABC):
             ComponentIdentifier: The frozen identity snapshot representing
                 this component's behavioral configuration.
         """
-        if self._identifier is None:
-            self._identifier = self._build_identifier()
-        return self._identifier
+        identifier = self._identifier
+        if identifier is None:
+            identifier = self._build_identifier()
+            self._identifier = identifier
+        return identifier
