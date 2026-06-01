@@ -130,7 +130,7 @@ class VideoHelper:
 
             piece = MessagePiece(
                 original_value=message_piece.converted_value,
-                role=message_piece.get_role_for_storage(),
+                role=message_piece.role,
                 original_prompt_id=original_prompt_id,
                 converted_value=frame,
                 converted_value_data_type="image_path",
@@ -245,7 +245,7 @@ class VideoHelper:
 
             audio_piece = MessagePiece(
                 original_value=audio_path,
-                role=message_piece.get_role_for_storage(),
+                role=message_piece.role,
                 original_prompt_id=original_prompt_id,
                 converted_value=audio_path,
                 converted_value_data_type="audio_path",

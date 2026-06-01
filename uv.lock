@@ -5197,7 +5197,6 @@ dependencies = [
 [package.optional-dependencies]
 all = [
     { name = "accelerate" },
-    { name = "av" },
     { name = "azure-ai-ml" },
     { name = "azure-cognitiveservices-speech" },
     { name = "flask" },
@@ -5206,10 +5205,9 @@ all = [
     { name = "ollama" },
     { name = "opencv-python" },
     { name = "playwright" },
+    { name = "pyarrow", marker = "python_full_version >= '3.14'" },
     { name = "spacy" },
     { name = "torch" },
-    { name = "types-pyyaml" },
-    { name = "types-requests" },
 ]
 fairness-bias = [
     { name = "spacy" },
@@ -5280,7 +5278,6 @@ requires-dist = [
     { name = "appdirs", specifier = ">=1.4.0" },
     { name = "art", specifier = ">=6.5.0" },
     { name = "av", specifier = ">=14.0.0" },
-    { name = "av", marker = "extra == 'all'", specifier = ">=14.0.0" },
     { name = "azure-ai-contentsafety", specifier = ">=1.0.0" },
     { name = "azure-ai-ml", marker = "extra == 'all'", specifier = ">=1.32.0" },
     { name = "azure-ai-ml", marker = "extra == 'gcg'", specifier = ">=1.32.0" },
@@ -5314,6 +5311,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=12.2.0" },
     { name = "playwright", marker = "extra == 'all'", specifier = ">=1.49.0" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.49.0" },
+    { name = "pyarrow", marker = "python_full_version >= '3.14' and extra == 'all'", specifier = ">=22.0.0" },
     { name = "pyarrow", marker = "python_full_version >= '3.14' and extra == 'gcg'", specifier = ">=22.0.0" },
     { name = "pydantic", specifier = ">=2.11.5" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.8.0" },
@@ -5338,8 +5336,6 @@ requires-dist = [
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "transformers", specifier = ">=5.0.0rc3" },
     { name = "treelib", specifier = ">=1.7.1" },
-    { name = "types-pyyaml", marker = "extra == 'all'", specifier = ">=6.0.12.20250516" },
-    { name = "types-requests", marker = "extra == 'all'", specifier = ">=2.31.0.20250515" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
     { name = "websockets", specifier = ">=14.0" },
 ]

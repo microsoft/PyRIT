@@ -439,7 +439,7 @@ async def pyrit_messages_to_dto_async(pyrit_messages: list[PyritMessage]) -> lis
         messages.append(
             Message(
                 turn_number=first.sequence if first else 0,
-                role=first.get_role_for_storage() if first else "user",
+                role=first.role if first else "user",
                 pieces=pieces,
                 created_at=first.timestamp if first else datetime.now(timezone.utc),
             )
@@ -481,7 +481,7 @@ def request_piece_to_pyrit_message_piece(
             new_item="request_piece_to_pyrit_message_piece(...)",
             removed_in="0.16.0",
         )
-    metadata: Optional[dict[str, str | int]] = None
+    metadata: dict[str, str | int] = {}
     if piece.prompt_metadata:
         metadata = dict(piece.prompt_metadata)
     elif piece.mime_type:
