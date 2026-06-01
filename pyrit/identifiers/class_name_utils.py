@@ -1,79 +1,43 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""
-Class name conversion utilities for PyRIT identifiers.
+"""Deprecation shim — moved to pyrit.models.identifiers.class_name_utils in 0.14."""
 
-This module provides functions for converting between different naming conventions
-(e.g., PascalCase class names to snake_case identifiers and vice versa).
-"""
+from typing import TYPE_CHECKING, Any
 
-import re
+from pyrit.common.deprecation import print_deprecation_message
+from pyrit.models.identifiers import class_name_utils as _new
 
-# Valid registry names: lowercase letter followed by up to 63 lowercase
-# letters, digits, or underscores.  This matches the output of
-# class_name_to_snake_case and is safe for use as filesystem components.
-REGISTRY_NAME_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
+if TYPE_CHECKING:
+    from pyrit.models.identifiers.class_name_utils import (
+        REGISTRY_NAME_PATTERN,
+        class_name_to_snake_case,
+        snake_case_to_class_name,
+        validate_registry_name,
+    )
 
-_REGISTRY_NAME_RE = re.compile(REGISTRY_NAME_PATTERN)
+__all__ = [
+    "class_name_to_snake_case",
+    "REGISTRY_NAME_PATTERN",
+    "snake_case_to_class_name",
+    "validate_registry_name",
+]
+
+_warned: set[str] = set()
 
 
-def validate_registry_name(name: str) -> None:
-    """
-    Validate that *name* is a legal registry name.
-
-    Args:
-        name: The name to validate.
-
-    Raises:
-        ValueError: If *name* does not match the required pattern.
-    """
-    if not _REGISTRY_NAME_RE.match(name):
-        raise ValueError(
-            f"Invalid registry name '{name}'. "
-            f"Names must match {REGISTRY_NAME_PATTERN} "
-            "(lowercase ASCII, digits, underscores; 1-64 chars; must start with a letter)."
+def __getattr__(name: str) -> Any:
+    if name not in __all__:
+        raise AttributeError(f"module 'pyrit.identifiers.class_name_utils' has no attribute {name!r}")
+    if name not in _warned:
+        print_deprecation_message(
+            old_item=f"pyrit.identifiers.class_name_utils.{name}",
+            new_item=f"pyrit.models.identifiers.class_name_utils.{name}",
+            removed_in="0.16.0",
         )
+        _warned.add(name)
+    return getattr(_new, name)
 
 
-def class_name_to_snake_case(class_name: str, *, suffix: str = "") -> str:
-    """
-    Convert a PascalCase class name to snake_case, optionally stripping a suffix.
-
-    Args:
-        class_name: The class name to convert (e.g., "SelfAskRefusalScorer").
-        suffix: Optional explicit suffix to strip before conversion (e.g., "Scorer").
-
-    Returns:
-        The snake_case name (e.g., "self_ask_refusal" if suffix="Scorer").
-    """
-    # Strip explicit suffix if provided
-    if suffix and class_name.endswith(suffix):
-        class_name = class_name[: -len(suffix)]
-    # Handle transitions like "XMLParser" -> "XML_Parser"
-    name = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", class_name)
-    # Handle transitions like "getHTTPResponse" -> "get_HTTP_Response"
-    return re.sub("([a-z0-9])([A-Z])", r"\1_\2", name).lower()
-
-
-def snake_case_to_class_name(snake_case_name: str, *, suffix: str = "") -> str:
-    """
-    Convert a snake_case name to a PascalCase class name.
-
-    Args:
-        snake_case_name: The snake_case name to convert (e.g., "my_custom").
-        suffix: Optional suffix to append to the class name
-            (e.g., "Scenario" would convert "my_custom" to "MyCustomScenario").
-
-    Returns:
-        The PascalCase class name (e.g., "MyCustomScenario").
-    """
-    # Split on underscores and capitalize each part
-    parts = snake_case_name.split("_")
-    pascal_case = "".join(part.capitalize() for part in parts)
-
-    # Append suffix if provided
-    if suffix:
-        pascal_case += suffix
-
-    return pascal_case
+def __dir__() -> list[str]:
+    return sorted(__all__)

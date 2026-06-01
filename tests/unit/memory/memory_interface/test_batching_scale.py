@@ -11,10 +11,9 @@ import hashlib
 import uuid
 from unittest.mock import patch
 
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import PromptMemoryEntry
-from pyrit.models import AttackResult, MessagePiece, ScenarioIdentifier, ScenarioResult, Score
+from pyrit.models import AttackResult, ComponentIdentifier, MessagePiece, ScenarioIdentifier, ScenarioResult, Score
 
 # Use the class attribute for the batch limit in tests
 _MAX_BIND_VARS = MemoryInterface._MAX_BIND_VARS
