@@ -25,6 +25,7 @@ from pyrit.prompt_converter.azure_speech_audio_to_text_converter import AzureSpe
 from pyrit.prompt_converter.azure_speech_text_to_audio_converter import AzureSpeechTextToAudioConverter
 from pyrit.prompt_converter.base64_converter import Base64Converter
 from pyrit.prompt_converter.base2048_converter import Base2048Converter
+from pyrit.prompt_converter.bidi_converter import BidiConverter
 from pyrit.prompt_converter.bin_ascii_converter import BinAsciiConverter
 from pyrit.prompt_converter.binary_converter import BinaryConverter
 from pyrit.prompt_converter.braille_converter import BrailleConverter
@@ -156,6 +157,7 @@ __all__ = [
     "AzureSpeechTextToAudioConverter",
     "Base2048Converter",
     "Base64Converter",
+    "BidiConverter",
     "BinAsciiConverter",
     "BinaryConverter",
     "BrailleConverter",

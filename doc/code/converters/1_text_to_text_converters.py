@@ -87,6 +87,7 @@ print("Negation Trap:", await NegationTrapConverter().convert_async(prompt="your
 # %%
 from pyrit.prompt_converter import (
     AnsiAttackConverter,
+    BidiConverter,
     CharacterSpaceConverter,
     CharSwapConverter,
     CodeChameleonConverter,
@@ -125,6 +126,9 @@ print("Flip:", await FlipConverter().convert_async(prompt=prompt))  # type: igno
 # Character Space [@robustintelligence2024bypass] inserts spaces between characters
 print("Character Space:", await CharacterSpaceConverter().convert_async(prompt=prompt))  # type: ignore
 print("Diacritic:", await DiacriticConverter().convert_async(prompt=prompt))  # type: ignore
+
+# Bidi [@boucher2023trojan] wraps text in Unicode bidirectional control characters
+print("Bidi:", await BidiConverter().convert_async(prompt=prompt))  # type: ignore
 print("Superscript:", await SuperscriptConverter().convert_async(prompt=prompt))  # type: ignore
 print("Zalgo:", await ZalgoConverter().convert_async(prompt=prompt))  # type: ignore
 

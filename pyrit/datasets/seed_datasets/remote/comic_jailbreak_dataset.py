@@ -105,6 +105,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         ),
         source_type: Literal["public_url", "file"] = "public_url",
         templates: list[str] | None = None,
+        max_examples: int | None = None,
     ) -> None:
         """
         Initialize the ComicJailbreak dataset loader.
@@ -114,6 +115,9 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
                 at a pinned commit.
             source_type: The type of source ('public_url' or 'file').
             templates: List of template names to include. If None, all 5 templates are used.
+            max_examples: Maximum number of source goals to render. Each goal produces up to
+                ``len(templates)`` image+text pairs. If None, all goals are rendered. Useful for
+                CI and quick validations where rendering all 300 goals × 5 templates is too slow.
 
         Raises:
             ValueError: If any template name is invalid.
@@ -121,6 +125,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         self.source = source
         self.source_type: Literal["public_url", "file"] = source_type
         self.templates = templates or list(self.TEMPLATE_NAMES)
+        self.max_examples = max_examples
 
         invalid = set(self.templates) - set(self.TEMPLATE_NAMES)
         if invalid:
@@ -166,6 +171,7 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
             template_paths[template_name] = await self._fetch_template_async(template_name)
 
         seeds: list[Seed] = []
+        processed_goals = 0
 
         for row_idx, example in enumerate(examples):
             missing_keys = required_keys - example.keys()
@@ -203,6 +209,10 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
                     behavior=example.get("Behavior", ""),
                 )
                 seeds.extend(pair)
+
+            processed_goals += 1
+            if self.max_examples is not None and processed_goals >= self.max_examples:
+                break
 
         logger.info(f"Successfully loaded {len(seeds)} seeds from ComicJailbreak dataset")
         return SeedDataset(seeds=seeds, dataset_name=self.dataset_name)

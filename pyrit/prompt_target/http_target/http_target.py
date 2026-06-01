@@ -10,8 +10,8 @@ from typing import Any, Optional
 
 import httpx
 
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     MessagePiece,
     construct_response_from_request,

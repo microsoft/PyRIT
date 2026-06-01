@@ -67,6 +67,7 @@ RECOMMENDED_TAGS: frozenset[str] = frozenset(
         "agent_security",  # agentic-AI threat models (tool poisoning, context exfiltration, etc.)
         "prompt_injection",  # direct or indirect prompt-injection payloads
         "ethics",  # moral-judgment / values evaluation (e.g., moral foundations theory)
+        "toxicity",  # toxicity / hate-speech / profanity (e.g., RealToxicityPrompts, Perspective API)
     }
 )
 

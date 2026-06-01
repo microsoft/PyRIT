@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry

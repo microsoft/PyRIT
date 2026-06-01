@@ -292,7 +292,7 @@ def parse_args(args: Optional[list[str]] = None) -> Namespace:
     ``--max-turns 7``) don't cause an error before we've had a chance to
     fetch the scenario's declared parameters from the server. The unknown
     leftovers are stashed on the returned Namespace as ``_unknown_args``
-    so :func:`_reparse_with_scenario_params` can detect truly unknown flags
+    so ``_reparse_with_scenario_params`` can detect truly unknown flags
     when no scenario was specified.
 
     Args:
@@ -470,7 +470,7 @@ def _reparse_with_scenario_params(
     Re-parse the original args with scenario-declared flags added to the base parser.
 
     The original argument list is read from ``parsed_args._raw_args`` (populated
-    by :func:`parse_args`). If no scenario-declared parameters are supplied but
+    by ``parse_args``). If no scenario-declared parameters are supplied but
     pass 1 left unknown args behind, surface the error now via strict re-parse.
 
     Returns:
