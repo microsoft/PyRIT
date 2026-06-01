@@ -1337,9 +1337,7 @@ class TestComponentIdentifierPydanticMethods:
 
     def _nested(self):
         child = ComponentIdentifier(class_name="Child", class_module="m", params={"k": "v"})
-        return ComponentIdentifier(
-            class_name="Parent", class_module="m", params={"x": 1}, children={"c": child}
-        )
+        return ComponentIdentifier(class_name="Parent", class_module="m", params={"x": 1}, children={"c": child})
 
     def test_model_dump_matches_to_dict_simple(self):
         ident = self._simple()
@@ -1358,17 +1356,13 @@ class TestComponentIdentifierPydanticMethods:
             assert ident.model_dump() == ident.to_dict()
 
     def test_model_dump_context_truncates(self):
-        ident = ComponentIdentifier(
-            class_name="Foo", class_module="m", params={"v": "x" * 200}
-        )
+        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"v": "x" * 200})
         dumped = ident.model_dump(context={"max_value_length": 50})
         assert isinstance(dumped["v"], str) and len(dumped["v"]) < 200
 
     def test_model_dump_context_propagates_to_children(self):
         child = ComponentIdentifier(class_name="C", class_module="m", params={"v": "y" * 200})
-        parent = ComponentIdentifier(
-            class_name="P", class_module="m", params={"v": "x" * 200}, children={"c": child}
-        )
+        parent = ComponentIdentifier(class_name="P", class_module="m", params={"v": "x" * 200}, children={"c": child})
         dumped = parent.model_dump(context={"max_value_length": 50})
         assert len(dumped["v"]) < 200
         assert len(dumped["children"]["c"]["v"]) < 200
@@ -1395,34 +1389,26 @@ class TestComponentIdentifierPydanticMethods:
         assert "eval_hash" not in flat
 
 
-class TestComponentIdentifierModelCopy:
-    def test_eval_hash_update_preserves_stored_hash(self):
+class TestComponentIdentifierWithEvalHash:
+    def test_with_eval_hash_preserves_stored_hash(self):
         ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
         stored_hash = ident.hash
-        new = ident.model_copy(update={"eval_hash": "abc123"})
+        new = ident.with_eval_hash("abc123")
         assert new.hash == stored_hash
         assert new.eval_hash == "abc123"
 
-    def test_pyrit_version_update_succeeds(self):
-        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
-        new = ident.model_copy(update={"pyrit_version": "9.9.9"})
-        assert new.pyrit_version == "9.9.9"
-
-    def test_params_update_raises(self):
-        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
-        with pytest.raises(ValueError, match="hash-affecting"):
-            ident.model_copy(update={"params": {"a": 2}})
-
-    def test_class_name_update_raises(self):
-        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
-        with pytest.raises(ValueError, match="hash-affecting"):
-            ident.model_copy(update={"class_name": "Bar"})
-
-    def test_explicit_hash_with_params_update_succeeds(self):
-        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
-        # Passing hash explicitly disables the guard, caller takes responsibility.
-        new = ident.model_copy(update={"params": {"a": 2}, "hash": "deadbeef"})
+    def test_with_eval_hash_preserves_truncated_hash(self):
+        # A hash reconstructed from truncated params must survive unchanged.
+        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1}, hash="deadbeef")
+        new = ident.with_eval_hash("abc123")
         assert new.hash == "deadbeef"
+        assert new.eval_hash == "abc123"
+
+    def test_with_eval_hash_returns_new_instance(self):
+        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
+        new = ident.with_eval_hash("abc123")
+        assert new is not ident
+        assert ident.eval_hash is None
 
 
 class TestComponentIdentifierReservedKeyCollision:

@@ -44,10 +44,6 @@ RESERVED_PARAM_NAMES: frozenset[str] = frozenset(
     }
 )
 
-#: Field updates that invalidate the stored content hash. ``model_copy``
-#: rejects updates to these unless the caller also passes a fresh ``hash``.
-_HASH_AFFECTING_FIELDS: frozenset[str] = frozenset({"class_name", "class_module", "params", "children"})
-
 logger = logging.getLogger(__name__)
 
 
@@ -138,7 +134,7 @@ class ComponentIdentifier(BaseModel):
     param values. This shape is also the storage / REST format. Pass
     ``context={"max_value_length": N}`` to truncate long string param values.
     ``model_validate()`` accepts the same flat shape (plus a structured form
-    with an explicit ``params`` dict, used by ``model_copy``).
+    with an explicit ``params`` dict).
 
     Mutability
     ----------
@@ -354,56 +350,17 @@ class ComponentIdentifier(BaseModel):
         return hash(self.hash)
 
     # ------------------------------------------------------------------
-    # Copy with guard against stale content hashes
+    # Derived copies
     # ------------------------------------------------------------------
-
-    def model_copy(
-        self,
-        *,
-        update: Optional[dict[str, Any]] = None,
-        deep: bool = False,
-    ) -> ComponentIdentifier:
-        """
-        Override ``BaseModel.model_copy`` to prevent silent hash drift.
-
-        ``model_copy`` does not rerun validators, so updating ``class_name``
-        / ``class_module`` / ``params`` / ``children`` would leave the
-        stored ``hash`` stale. Reject those updates loudly; callers should
-        construct a new ``ComponentIdentifier`` instead.
-
-        Updates to ``eval_hash`` and ``pyrit_version`` are safe (they don't
-        feed into the content hash) and work normally. Use
-        ``with_eval_hash`` for the eval-hash case.
-
-        Args:
-            update: Fields to override on the new copy.
-            deep: Whether to deep-copy field values.
-
-        Returns:
-            A new ComponentIdentifier with the requested updates applied.
-
-        Raises:
-            ValueError: If ``update`` modifies a hash-affecting field
-                without also providing an explicit ``hash``.
-        """
-        update_dict = dict(update or {})
-        bad = _HASH_AFFECTING_FIELDS & update_dict.keys()
-        if bad and "hash" not in update_dict:
-            raise ValueError(
-                f"model_copy cannot update hash-affecting fields "
-                f"{sorted(bad)} without also providing a new 'hash'. "
-                "Construct a new ComponentIdentifier instead so the content "
-                "hash stays in sync."
-            )
-        return super().model_copy(update=update_dict, deep=deep)
 
     def with_eval_hash(self, eval_hash: str) -> ComponentIdentifier:
         """
         Return a new identifier with ``eval_hash`` set.
 
-        The original ``hash`` is preserved (important for identifiers
-        reconstructed from truncated DB data where recomputation would
-        produce a wrong hash).
+        Builds a fresh instance, passing the existing ``hash`` through
+        explicitly so it is preserved rather than recomputed. This matters
+        for identifiers reconstructed from truncated DB data, where
+        recomputing from the truncated params would produce a wrong hash.
 
         Args:
             eval_hash: The evaluation hash to attach.
@@ -412,7 +369,15 @@ class ComponentIdentifier(BaseModel):
             A new ComponentIdentifier identical to this one but with
             ``eval_hash`` set to the given value.
         """
-        return self.model_copy(update={"eval_hash": eval_hash})
+        return ComponentIdentifier(
+            class_name=self.class_name,
+            class_module=self.class_module,
+            params=self.params,
+            children=self.children,
+            hash=self.hash,
+            pyrit_version=self.pyrit_version,
+            eval_hash=eval_hash,
+        )
 
     # ------------------------------------------------------------------
     # Display
