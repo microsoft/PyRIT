@@ -11,6 +11,7 @@ Follow these coding standards to ensure consistent, readable, and maintainable c
 ### Async Functions
 - **MANDATORY**: All async functions and methods MUST end with `_async` suffix
 - This applies to ALL async functions without exception
+- Enforced by the `check-async-suffix` pre-commit hook (`build_scripts/check_async_suffix.py`)
 
 ```python
 # CORRECT
@@ -21,6 +22,16 @@ async def send_prompt_async(self, prompt: str) -> Message:
 async def send_prompt(self, prompt: str) -> Message:  # Missing _async suffix
     ...
 ```
+
+**Exemptions** are limited and explicit:
+- Async dunders (`__aenter__`, `__aexit__`, `__aiter__`, `__anext__`) are exempt automatically.
+- A small set of framework-mandated names (`lifespan`, `dispatch`, `__call__`) is exempt
+  automatically; see `_FRAMEWORK_EXEMPT_NAMES` in `build_scripts/check_async_suffix.py`.
+- For one-off exemptions (e.g. an external SDK protocol method) add a
+  `# pyrit-async-suffix-exempt` trailing comment on the `async def` line.
+- `build_scripts/async_suffix_baseline.txt` holds the transitional allowlist of
+  pre-existing violations. It must shrink monotonically: when you rename a function to
+  add the `_async` suffix, remove its baseline entry in the same commit.
 
 ### Private Methods
 - Private methods MUST start with underscore
