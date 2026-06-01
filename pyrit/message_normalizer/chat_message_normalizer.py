@@ -6,6 +6,8 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, Union
 
+import aiofiles
+
 from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.message_normalizer.message_normalizer import (
     MessageListNormalizer,
@@ -144,13 +146,13 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
             return {"type": "image_url", "image_url": {"url": data_url}}
         if data_type == "audio_path":
             # Convert local audio to base64 for input_audio format
-            return await self._convert_audio_to_input_audio(content)
+            return await self._convert_audio_to_input_audio_async(content)
         if data_type == "url":
             # Direct URL (typically for images)
             return {"type": "image_url", "image_url": {"url": content}}
         raise ValueError(f"Data type '{data_type}' is not yet supported for chat message content.")
 
-    async def _convert_audio_to_input_audio(self, audio_path: str) -> dict[str, Any]:
+    async def _convert_audio_to_input_audio_async(self, audio_path: str) -> dict[str, Any]:
         """
         Convert a local audio file to OpenAI input_audio format.
 
@@ -176,7 +178,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
         if not os.path.isfile(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        with open(audio_path, "rb") as f:
-            audio_data = base64.b64encode(f.read()).decode("utf-8")
+        async with aiofiles.open(audio_path, "rb") as f:
+            audio_data = base64.b64encode(await f.read()).decode("utf-8")
 
         return {"type": "input_audio", "input_audio": {"data": audio_data, "format": audio_format}}

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import logging
 import os
 import tempfile
@@ -225,7 +226,7 @@ class AudioTranscriptHelper:  # noqa: B024
             Exception: If transcription fails for any other reason.
         """
         # Convert audio to WAV if needed (Azure Speech requires WAV)
-        wav_path = self._ensure_wav_format(audio_path)
+        wav_path = await asyncio.to_thread(self._ensure_wav_format, audio_path)
         logger.info(f"Audio transcription: WAV file path = {wav_path}")
 
         # Check if WAV file exists and has content

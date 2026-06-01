@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 
+import aiofiles
 import httpx
 from huggingface_hub import HfApi
 
@@ -107,9 +108,9 @@ async def download_file_async(url: str, token: str, download_dir: Path, num_spli
         chunks = await asyncio.gather(*tasks)
 
         # Write chunks to the file in order
-        with open(file_path, "wb") as f:
+        async with aiofiles.open(file_path, "wb") as f:
             for chunk in chunks:
-                f.write(chunk)
+                await f.write(chunk)
         logger.info(f"Downloaded {file_name} to {file_path}")
 
 

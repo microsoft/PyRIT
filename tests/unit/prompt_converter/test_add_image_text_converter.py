@@ -139,10 +139,9 @@ async def test_add_image_text_converter_invalid_input_text(image_text_converter_
         assert await converter.convert_async(prompt="", input_type="text")  # type: ignore[arg-type]
 
 
-async def test_add_image_text_converter_invalid_file_path():
-    converter = AddImageTextConverter(img_to_add="nonexistent_image.png")
+def test_add_image_text_converter_invalid_file_path():
     with pytest.raises(FileNotFoundError):
-        assert await converter.convert_async(prompt="Sample Text!", input_type="text")  # type: ignore[arg-type]
+        AddImageTextConverter(img_to_add="nonexistent_image.png")
 
 
 async def test_add_image_text_converter_convert_async(

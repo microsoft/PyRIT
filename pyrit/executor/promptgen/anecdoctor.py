@@ -134,8 +134,14 @@ class AnecdoctorGenerator(
         # Prepare the system prompt template based on whether we're using knowledge graph
         if self._processing_model:
             self._system_prompt_template = self._load_prompt_from_yaml(yaml_filename=self._ANECDOCTOR_USE_KG_YAML)
+            # Also preload the KG extraction prompt so `_extract_knowledge_graph_async` doesn't
+            # repeat the file read + YAML parse on each invocation.
+            self._kg_prompt_template: Optional[str] = self._load_prompt_from_yaml(
+                yaml_filename=self._ANECDOCTOR_BUILD_KG_YAML
+            )
         else:
             self._system_prompt_template = self._load_prompt_from_yaml(yaml_filename=self._ANECDOCTOR_USE_FEWSHOT_YAML)
+            self._kg_prompt_template = None
 
     def _create_identifier(
         self,
@@ -362,11 +368,13 @@ class AnecdoctorGenerator(
         if self._processing_model is None:
             raise ValueError("self._processing_model is not initialized")
 
+        if self._kg_prompt_template is None:
+            raise ValueError("self._kg_prompt_template is not initialized")
+
         self._logger.debug("Extracting knowledge graph from evaluation data")
 
-        # Load and format the KG extraction prompt
-        kg_prompt_template = self._load_prompt_from_yaml(yaml_filename=self._ANECDOCTOR_BUILD_KG_YAML)
-        kg_system_prompt = kg_prompt_template.format(language=context.language)
+        # Format the cached KG extraction prompt
+        kg_system_prompt = self._kg_prompt_template.format(language=context.language)
 
         # Create a separate conversation ID for KG extraction
         kg_conversation_id = str(uuid.uuid4())

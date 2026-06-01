@@ -5,9 +5,9 @@ import uuid
 from textwrap import dedent
 from typing import Optional
 
-import requests
 from openai import BadRequestError
 
+from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.exceptions import PyritException, pyrit_target_retry
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece, Score
@@ -181,14 +181,12 @@ class GandalfScorer(TrueFalseScorer):
             )
         else:
             # Step 2. Check for correct password via API
-            response = requests.post(
-                self._endpoint,
-                data={"defender": self._defender, "password": extracted_password},
+            response = await make_request_and_raise_if_error_async(
+                endpoint_uri=self._endpoint,
+                method="POST",
+                post_type="data",
+                request_body={"defender": self._defender, "password": extracted_password},
             )
-            if response.status_code != 200:
-                raise RuntimeError(
-                    f"Error in Gandalf Scorer. Status code returned {response.status_code}, message: {response.text}"
-                )
             json_response = response.json()
             did_guess_password = json_response["success"]
             if did_guess_password:
