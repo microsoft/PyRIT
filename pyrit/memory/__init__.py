@@ -7,6 +7,8 @@ Provide functionality for storing and retrieving conversation history and embedd
 This package defines the core `MemoryInterface` and concrete implementations for different storage backends.
 """
 
+from typing import Any
+
 from pyrit.memory.azure_sql_memory import AzureSQLMemory
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_embedding import MemoryEmbedding
@@ -28,7 +30,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):  # noqa: N807 - module __getattr__ hook must use this name
+def __getattr__(name: str) -> Any:  # noqa: N807 - module __getattr__ hook must use this name
     if name == "MemoryExporter":
         from pyrit.common.deprecation import print_deprecation_message
         from pyrit.memory.memory_exporter import MemoryExporter
