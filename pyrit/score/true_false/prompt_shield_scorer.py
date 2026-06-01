@@ -6,8 +6,7 @@ import logging
 import uuid
 from typing import Any, Optional
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece, Score, ScoreType
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoreType
 from pyrit.prompt_target import PromptShieldTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (

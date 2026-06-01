@@ -13,8 +13,8 @@ import pytest
 from unit.mocks import MockPromptTarget, get_mock_target, get_sample_conversations
 
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     MessagePiece,
     Score,

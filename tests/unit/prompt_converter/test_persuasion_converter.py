@@ -7,8 +7,7 @@ import pytest
 from unit.mocks import MockPromptTarget
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.prompt_converter import PersuasionConverter
 
 

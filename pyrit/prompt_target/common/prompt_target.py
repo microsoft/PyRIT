@@ -6,9 +6,8 @@ import logging
 from typing import Any, Union, final
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Identifiable, Message, MessagePiece
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration

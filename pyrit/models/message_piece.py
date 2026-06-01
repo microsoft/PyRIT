@@ -19,8 +19,8 @@ from pydantic import (
 )
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.data_type_serializer import data_serializer_factory
+from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ChatMessageRole,
     PromptDataType,

@@ -34,8 +34,7 @@ from pyrit.executor.attack.component.conversation_manager import (
 )
 from pyrit.executor.attack.core import AttackContext
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 

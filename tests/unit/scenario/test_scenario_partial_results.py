@@ -9,9 +9,8 @@ from unittest.mock import MagicMock, PropertyMock
 import pytest
 
 from pyrit.executor.attack.core import AttackExecutorResult
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackOutcome, AttackResult
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
 from pyrit.scenario import DatasetConfiguration, ScenarioResult
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioStrategy
 

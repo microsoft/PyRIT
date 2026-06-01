@@ -38,17 +38,18 @@ from pyrit.executor.attack.core.attack_config import (
 )
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
-from pyrit.identifiers import ComponentIdentifier, build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
     Message,
     MessagePiece,
     Score,
     SeedPrompt,
+    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget

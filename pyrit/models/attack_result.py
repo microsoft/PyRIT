@@ -11,9 +11,9 @@ from enum import Enum
 from typing import Any, Optional, TypeVar
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
-from pyrit.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.conversation_reference import ConversationReference, ConversationType
+from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.message_piece import MessagePiece
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import Score

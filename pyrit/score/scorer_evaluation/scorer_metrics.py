@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
     import numpy as np
 
-    from pyrit.identifiers import ComponentIdentifier
+    from pyrit.models import ComponentIdentifier
     from pyrit.models.harm_definition import HarmDefinition
 
 T = TypeVar("T", bound="ScorerMetrics")

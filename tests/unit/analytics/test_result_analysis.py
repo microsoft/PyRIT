@@ -6,8 +6,7 @@ from typing import Optional
 import pytest
 
 from pyrit.analytics.result_analysis import AttackStats, analyze_results
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import AttackOutcome, AttackResult
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
 
 
 # helpers
