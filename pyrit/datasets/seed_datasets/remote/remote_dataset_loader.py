@@ -2,10 +2,12 @@
 # Licensed under the MIT license.
 
 import asyncio
+import contextlib
 import hashlib
 import io
 import logging
 import tempfile
+import zipfile
 from abc import ABC
 from collections.abc import Callable, Sequence
 from dataclasses import fields
@@ -383,3 +385,85 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         result = SeedDatasetMetadata(**coerced)
         SeedDatasetMetadata._validate_singular_fields(metadata=result)
         return result
+
+    async def _fetch_zip_from_url(
+        self,
+        *,
+        source: str,
+        inner_files: list[str],
+        cache: bool = True,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """
+        Download a ZIP archive from ``source`` and return parsed contents of selected inner files.
+
+        The downloaded zip is cached on disk (keyed by md5 of ``source``) when ``cache=True``,
+        streamed in chunks to avoid double-buffering large archives in memory, and parsed in a
+        worker thread so the event loop is never blocked. Each inner file is decoded with the
+        handler in ``FILE_TYPE_HANDLERS`` matching its extension (json/jsonl/csv/txt).
+
+        Args:
+            source: HTTPS URL of the zip archive.
+            inner_files: Paths inside the zip to extract (e.g. ``["MIC/train.jsonl"]``). Each
+                path's extension must be one of ``FILE_TYPE_HANDLERS`` keys.
+            cache: Whether to cache the downloaded zip on disk. Defaults to True.
+
+        Returns:
+            Mapping of each requested ``inner_files`` path to its parsed list of records.
+
+        Raises:
+            ValueError: If an ``inner_files`` extension is unsupported, or if a requested inner
+                file is not present in the archive.
+            Exception: If the HTTP request fails.
+        """
+        for inner in inner_files:
+            self._validate_file_type(self._get_file_type(source=inner))
+
+        cache_dir = DB_DATA_PATH / "seed-prompt-entries"
+        cache_path = cache_dir / f"{hashlib.md5(source.encode('utf-8')).hexdigest()}.zip"
+
+        def _download_and_parse() -> dict[str, list[dict[str, Any]]]:
+            zip_path: Path
+            temp_to_clean: Optional[Path] = None
+            if cache and cache_path.exists():
+                zip_path = cache_path
+            else:
+                if cache:
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                    zip_path = cache_path
+                else:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
+                        zip_path = Path(tmp.name)
+                    temp_to_clean = zip_path
+
+                logger.info(f"Downloading zip archive from {source}")
+                with requests.get(source, stream=True) as response:
+                    response.raise_for_status()
+                    with zip_path.open("wb") as fh:
+                        for chunk in response.iter_content(chunk_size=1 << 16):
+                            if chunk:
+                                fh.write(chunk)
+
+            try:
+                results: dict[str, list[dict[str, Any]]] = {}
+                with zipfile.ZipFile(zip_path) as zf:
+                    members = set(zf.namelist())
+                    for inner in inner_files:
+                        if inner not in members:
+                            preview = ", ".join(sorted(members)[:10])
+                            raise ValueError(
+                                f"File '{inner}' not found in zip from {source}. Archive contains (preview): {preview}"
+                            )
+                        file_type = self._get_file_type(source=inner)
+                        with zf.open(inner) as raw:
+                            text = io.TextIOWrapper(raw, encoding="utf-8")
+                            results[inner] = cast(
+                                "list[dict[str, Any]]",
+                                FILE_TYPE_HANDLERS[file_type]["read"](text),
+                            )
+                return results
+            finally:
+                if temp_to_clean is not None:
+                    with contextlib.suppress(OSError):
+                        temp_to_clean.unlink()
+
+        return await asyncio.to_thread(_download_and_parse)

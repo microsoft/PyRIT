@@ -35,13 +35,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.identifiers import (
+from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
+    AttackOutcome,
+    AttackResult,
     ComponentIdentifier,
     ObjectiveTargetEvaluationIdentifier,
+    SeedAttackGroup,
+    SeedObjective,
 )
-from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import AttackOutcome, AttackResult, SeedAttackGroup, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry

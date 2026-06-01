@@ -614,7 +614,7 @@ class TestSetGlobalVariable:
 
         # Ensure the variable doesn't exist initially
         if hasattr(sys.modules["__main__"], "test_global_var"):
-            delattr(sys.modules["__main__"], "test_global_var")
+            del sys.modules["__main__"].test_global_var
 
         try:
             # Set a global variable
@@ -627,7 +627,7 @@ class TestSetGlobalVariable:
         finally:
             # Cleanup
             if hasattr(sys.modules["__main__"], "test_global_var"):
-                delattr(sys.modules["__main__"], "test_global_var")
+                del sys.modules["__main__"].test_global_var
 
     def test_set_global_variable_overwrites_existing(self) -> None:
         """Test that set_global_variable overwrites existing variables."""
@@ -645,7 +645,7 @@ class TestSetGlobalVariable:
         finally:
             # Cleanup
             if hasattr(sys.modules["__main__"], "test_overwrite_var"):
-                delattr(sys.modules["__main__"], "test_overwrite_var")
+                del sys.modules["__main__"].test_overwrite_var
 
     def test_set_global_variable_with_complex_objects(self) -> None:
         """Test that set_global_variable works with complex objects."""
@@ -674,9 +674,9 @@ class TestSetGlobalVariable:
         finally:
             # Cleanup
             if hasattr(sys.modules["__main__"], "test_dict_var"):
-                delattr(sys.modules["__main__"], "test_dict_var")
+                del sys.modules["__main__"].test_dict_var
             if hasattr(sys.modules["__main__"], "test_obj_var"):
-                delattr(sys.modules["__main__"], "test_obj_var")
+                del sys.modules["__main__"].test_obj_var
 
     def test_set_global_variable_with_none_value(self) -> None:
         """Test that set_global_variable can set None as a value."""
@@ -691,7 +691,7 @@ class TestSetGlobalVariable:
         finally:
             # Cleanup
             if hasattr(sys.modules["__main__"], "test_none_var"):
-                delattr(sys.modules["__main__"], "test_none_var")
+                del sys.modules["__main__"].test_none_var
 
 
 class TestRequiredValue:

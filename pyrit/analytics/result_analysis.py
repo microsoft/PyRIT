@@ -6,12 +6,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
-from pyrit.identifiers import (
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
     IdentifierFilter,
     IdentifierType,
     ObjectiveTargetEvaluationIdentifier,
 )
-from pyrit.models import AttackOutcome, AttackResult
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_interface import MemoryInterface

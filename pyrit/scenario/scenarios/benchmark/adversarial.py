@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.analytics import get_cached_results_for_technique
 from pyrit.common import Parameter, apply_defaults
 from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig
-from pyrit.identifiers import ObjectiveTargetEvaluationIdentifier
+from pyrit.models import ObjectiveTargetEvaluationIdentifier
 from pyrit.models import AttackOutcome, SeedAttackGroup
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.registry.tag_query import TagQuery

@@ -3,7 +3,7 @@
 
 import pytest
 
-from pyrit.identifiers.class_name_utils import (
+from pyrit.models.identifiers.class_name_utils import (
     class_name_to_snake_case,
     snake_case_to_class_name,
     validate_registry_name,

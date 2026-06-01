@@ -15,9 +15,8 @@ except ImportError:  # pragma: no cover - 3.10 only
     from exceptiongroup import ExceptionGroup  # type: ignore[no-redef]
 
 from pyrit.executor.attack.core import AttackExecutorResult
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackOutcome, AttackResult
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
 from pyrit.scenario import DatasetConfiguration, ScenarioIdentifier, ScenarioResult
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioStrategy
 from pyrit.score import Scorer

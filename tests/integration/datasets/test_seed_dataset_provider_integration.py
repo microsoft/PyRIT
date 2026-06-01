@@ -14,8 +14,7 @@ from pyrit.datasets.seed_datasets.remote import _SimpleSafetyTestsDataset, _XSTe
 from pyrit.datasets.seed_datasets.seed_metadata import (
     SeedDatasetFilter,
 )
-from pyrit.identifiers.component_identifier import ComponentIdentifier
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import ComponentIdentifier, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 

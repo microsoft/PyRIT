@@ -13,14 +13,15 @@ from pyrit.analytics.result_analysis import (
     analyze_results,
     get_cached_results_for_technique,
 )
-from pyrit.identifiers import (
+from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
     ComponentIdentifier,
     IdentifierFilter,
     IdentifierType,
     ObjectiveTargetEvaluationIdentifier,
 )
-from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import AttackOutcome, AttackResult
 
 
 # helpers

@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 """
-Tests for pyrit.identifiers.evaluation_identifier.
+Tests for pyrit.models.identifiers.evaluation_identifier.
 
 Covers the ``EvaluationIdentifier`` abstract base class, the ``_build_eval_dict``
 helper, and the ``compute_eval_hash`` free function.
@@ -12,8 +12,8 @@ from typing import ClassVar
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier, compute_eval_hash
-from pyrit.identifiers.evaluation_identifier import ChildEvalRule, EvaluationIdentifier, _build_eval_dict
+from pyrit.models.identifiers import ComponentIdentifier, compute_eval_hash
+from pyrit.models.identifiers.evaluation_identifier import ChildEvalRule, EvaluationIdentifier, _build_eval_dict
 
 # ---------------------------------------------------------------------------
 # Concrete subclass for testing the ABC
@@ -535,7 +535,7 @@ class TestInnerChildName:
     def test_scorer_eval_hash_matches_with_and_without_round_robin(self):
         """ScorerEvaluationIdentifier produces the same eval_hash whether
         the scorer uses a direct target or a RoundRobinTarget wrapping it."""
-        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
+        from pyrit.models.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
 
         inner_target = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -716,7 +716,7 @@ class TestObjectiveTargetEvaluationIdentifier:
 
     def test_different_endpoints_same_eval_hash(self):
         """Same model name + temperature + top_p on different endpoints → same eval hash."""
-        from pyrit.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
+        from pyrit.models.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
 
         target_east = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -747,7 +747,7 @@ class TestObjectiveTargetEvaluationIdentifier:
 
     def test_different_temperature_different_eval_hash(self):
         """Behavioral params (temperature) DO contribute to the eval hash."""
-        from pyrit.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
+        from pyrit.models.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
 
         target_cold = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -766,7 +766,7 @@ class TestObjectiveTargetEvaluationIdentifier:
 
     def test_model_name_fallback_to_model_name(self):
         """When underlying_model_name is missing, model_name is used as fallback."""
-        from pyrit.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
+        from pyrit.models.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
 
         target_underlying = ComponentIdentifier(
             class_name="OpenAIChatTarget",
@@ -785,7 +785,7 @@ class TestObjectiveTargetEvaluationIdentifier:
 
     def test_stored_eval_hash_takes_precedence(self):
         """A pre-stamped eval_hash is honored (DB round-trip safety)."""
-        from pyrit.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
+        from pyrit.models.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
 
         stored = "objective_target_stored_hash" + "0" * 36
         cid = ComponentIdentifier(

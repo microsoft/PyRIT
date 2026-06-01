@@ -12,8 +12,7 @@ from pyrit.executor.promptgen.anecdoctor import (
     AnecdoctorGenerator,
     AnecdoctorResult,
 )
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message
+from pyrit.models import ComponentIdentifier, Message
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 

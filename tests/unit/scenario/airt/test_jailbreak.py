@@ -13,8 +13,7 @@ from pyrit.executor.attack.single_turn.many_shot_jailbreak import ManyShotJailbr
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.role_play import RolePlayAttack
 from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import SeedGroup, SeedObjective
+from pyrit.models import ComponentIdentifier, SeedGroup, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core import BaselineAttackPolicy
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak, JailbreakStrategy
