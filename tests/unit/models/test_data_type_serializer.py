@@ -400,6 +400,32 @@ async def test_save_formatted_audio_raises_when_results_storage_io_none():
                         await serializer.save_formatted_audio(data=b"\x00\x01\x02")
 
 
+async def test_save_formatted_audio_writes_local_wav_via_to_thread(sqlite_instance, tmp_path):
+    """save_formatted_audio (local-disk path) should produce a readable WAV via _write_wav_sync."""
+    import wave
+
+    from pyrit.models import data_serializer_factory as factory
+
+    serializer = factory(category="prompt-memory-entries", data_type="audio_path")
+    output_path = tmp_path / "out.wav"
+    with patch.object(serializer, "get_data_filename", new_callable=AsyncMock, return_value=str(output_path)):
+        pcm = b"\x01\x00\x02\x00\x03\x00\x04\x00"
+        await serializer.save_formatted_audio(
+            data=pcm,
+            num_channels=1,
+            sample_width=2,
+            sample_rate=16000,
+        )
+
+    assert os.path.exists(serializer.value)
+    assert serializer.value == str(output_path)
+    with wave.open(str(output_path), "rb") as wav_file:
+        assert wav_file.getnchannels() == 1
+        assert wav_file.getsampwidth() == 2
+        assert wav_file.getframerate() == 16000
+        assert wav_file.readframes(wav_file.getnframes()) == pcm
+
+
 async def test_get_data_filename_raises_when_results_storage_io_none():
     serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
     serializer._file_path = None
