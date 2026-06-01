@@ -1126,7 +1126,7 @@ def test_to_dict_from_dict_roundtrip_after_set_piece_not_in_database():
     assert roundtripped.not_in_database is False
 
 
-class TestCopyLineageTo:
+class TestCopyLineageFrom:
     def _make_piece(self, **overrides) -> MessagePiece:
         defaults = {
             "role": "user",
@@ -1146,7 +1146,7 @@ class TestCopyLineageTo:
 
         target = self._make_piece(conversation_id="conv-B", role="assistant", original_value="hi")
 
-        source.copy_lineage_to(target=target)
+        target.copy_lineage_from(source=source)
 
         assert target.conversation_id == "conv-A"
         assert target.attack_identifier == source.attack_identifier
@@ -1159,7 +1159,7 @@ class TestCopyLineageTo:
 
         target = self._make_piece(role="assistant")
 
-        source.copy_lineage_to(target=target)
+        target.copy_lineage_from(source=source)
 
         # Mutating the target containers should not affect the source.
         target.prompt_metadata["meta"] = "2"
@@ -1176,7 +1176,7 @@ class TestCopyLineageTo:
         role_before = target.role
         id_before = target.id
 
-        source.copy_lineage_to(target=target)
+        target.copy_lineage_from(source=source)
 
         assert target.original_value == original_value_before
         assert target.role == role_before
@@ -1347,3 +1347,36 @@ class TestMessagePieceDeprecationWarnings:
         assert deprecation_msgs == [], [str(m.message) for m in deprecation_msgs]
         assert reconstructed.labels == {"k": "v"}
         assert reconstructed.targeted_harm_categories == ["violence"]
+
+
+class TestMessagePieceDeprecatedMethodShims:
+    """Tests for the deprecated method shims scheduled for removal in 0.16.0."""
+
+    def test_to_dict_emits_warning_and_matches_model_dump(self) -> None:
+        piece = MessagePiece(role="user", original_value="hello")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = piece.to_dict()
+        msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert any("to_dict" in str(m.message) for m in msgs)
+        assert result == piece.model_dump(mode="json")
+
+    def test_from_dict_emits_warning_and_matches_model_validate(self) -> None:
+        piece = MessagePiece(role="user", original_value="hello")
+        serialized = piece.model_dump(mode="json")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            reconstructed = MessagePiece.from_dict(serialized)
+        msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert any("from_dict" in str(m.message) for m in msgs)
+        assert reconstructed.model_dump(mode="json") == serialized
+
+    def test_set_piece_not_in_database_emits_warning_and_sets_flag(self) -> None:
+        piece = MessagePiece(role="user", original_value="hello")
+        assert piece.not_in_database is False
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            piece.set_piece_not_in_database()
+        msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert any("set_piece_not_in_database" in str(m.message) for m in msgs)
+        assert piece.not_in_database is True

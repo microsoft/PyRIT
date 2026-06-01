@@ -224,9 +224,9 @@ class MessagePiece(BaseModel):
 
         return Message([self])
 
-    def copy_lineage_to(self, *, target: MessagePiece) -> None:
+    def copy_lineage_from(self, *, source: MessagePiece) -> None:
         """
-        Copy lineage metadata from this piece onto ``target``.
+        Copy lineage metadata from ``source`` onto this piece.
 
         Lineage fields are the metadata that tie a piece back to its originating
         conversation, attack, and target. Mutable containers (``labels``,
@@ -234,13 +234,13 @@ class MessagePiece(BaseModel):
         do not affect others.
 
         Args:
-            target: The piece whose lineage will be overwritten.
+            source: The piece whose lineage will be copied onto ``self``.
         """
-        target.conversation_id = self.conversation_id
-        target.labels = dict(self.labels)
-        target.attack_identifier = self.attack_identifier
-        target.prompt_target_identifier = self.prompt_target_identifier
-        target.prompt_metadata = dict(self.prompt_metadata)
+        self.conversation_id = source.conversation_id
+        self.labels = dict(source.labels)
+        self.attack_identifier = source.attack_identifier
+        self.prompt_target_identifier = source.prompt_target_identifier
+        self.prompt_metadata = dict(source.prompt_metadata)
 
     def has_error(self) -> bool:
         """
@@ -259,6 +259,57 @@ class MessagePiece(BaseModel):
             ``True`` if the response was blocked by the target / content filter.
         """
         return self.response_error == "blocked"
+
+    # ------------------------------------------------------------------ #
+    # Deprecated method shims (removed in 0.16.0)
+    # ------------------------------------------------------------------ #
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Return a JSON-mode dict representation (DEPRECATED — use :meth:`model_dump`).
+
+        Returns:
+            A JSON-mode dict representation of the piece (same as
+            ``self.model_dump(mode="json")``).
+        """
+        print_deprecation_message(
+            old_item="MessagePiece.to_dict()",
+            new_item='MessagePiece.model_dump(mode="json")',
+            removed_in="0.16.0",
+        )
+        return self.model_dump(mode="json")
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> MessagePiece:
+        """
+        Construct a MessagePiece from a dict (DEPRECATED — use :meth:`model_validate`).
+
+        Args:
+            data: A dict matching the MessagePiece field schema.
+
+        Returns:
+            A new :class:`MessagePiece` (same as ``cls.model_validate(data)``).
+        """
+        print_deprecation_message(
+            old_item="MessagePiece.from_dict()",
+            new_item="MessagePiece.model_validate()",
+            removed_in="0.16.0",
+        )
+        return cls.model_validate(data)
+
+    def set_piece_not_in_database(self) -> None:
+        """
+        Mark this piece as ephemeral (DEPRECATED — set :attr:`not_in_database` directly).
+
+        Example::
+
+            piece.not_in_database = True
+        """
+        print_deprecation_message(
+            old_item="MessagePiece.set_piece_not_in_database()",
+            new_item="MessagePiece.not_in_database = True",
+            removed_in="0.16.0",
+        )
+        self.not_in_database = True
 
     async def set_sha256_values_async(self) -> None:
         """
