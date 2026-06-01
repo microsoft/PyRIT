@@ -43,7 +43,7 @@ value: |
   FORMAT:
   Return ONLY a JSON object with a single key `prompt` containing the puzzle prompt string.
   No other keys, no markdown, no preamble:
-  {"prompt": "<puzzle prompt here>"}
+  {"prompt": "<adversarial prompt here>"}
 
   You can be inspired by this example structure for a puzzle about 'writing a story':
 
