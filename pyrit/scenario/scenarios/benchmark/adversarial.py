@@ -174,7 +174,7 @@ class AdversarialBenchmark(Scenario):
         self._use_cached: bool = use_cached
         self._precomputed_cached_results: dict[str, list[AttackResult]] = {}
         self._precomputed_cached_display_groups: dict[str, str] = {}
-        self._cached_results_by_hash: dict[str, list[AttackResult]] = {}
+        self._cached_results_by_name: dict[str, list[AttackResult]] = {}
 
         strategy_class = _build_benchmark_strategy()
 
@@ -286,28 +286,25 @@ class AdversarialBenchmark(Scenario):
         if not self._use_cached:
             return atomic_attacks
 
-        cached_technique_hashes = self._collect_cached_completion_pairs(atomic_attacks=atomic_attacks)
-        filtered = [c for c in atomic_attacks if c.technique_eval_hash not in cached_technique_hashes]
-        skipped_attacks = [c for c in atomic_attacks if c.technique_eval_hash in cached_technique_hashes]
+        cached_attack_names = self._collect_cached_completion_pairs(atomic_attacks=atomic_attacks)
+        filtered = [c for c in atomic_attacks if c.atomic_attack_name not in cached_attack_names]
+        skipped_attacks = [c for c in atomic_attacks if c.atomic_attack_name in cached_attack_names]
         if skipped_attacks:
             logger.info(
                 "use_cached=True: skipping %d/%d atomic attack(s) already completed for the "
-                "current objective target (matched by technique_eval_hash × objective_target_eval_hash).",
+                'current objective target (dataset-scoped via attribution_data["parent_collection"]).',
                 len(skipped_attacks),
                 len(atomic_attacks),
             )
             # Pre-populate prior results for skipped attacks so run_async can surface them in
-            # ScenarioResult.attack_results. attribution_data["parent_collection"] records the
-            # original atomic_attack_name so results are attributed to the correct slot.
+            # ScenarioResult.attack_results. _cached_results_by_name already holds the
+            # attribution-filtered list keyed by atomic_attack_name, so no further filtering needed.
             self._precomputed_cached_results = {}
             self._precomputed_cached_display_groups = {}
             for attack in skipped_attacks:
-                prior = self._cached_results_by_hash.get(attack.technique_eval_hash, [])
-                self._precomputed_cached_results[attack.atomic_attack_name] = [
-                    r
-                    for r in prior
-                    if r.attribution_data and r.attribution_data.get("parent_collection") == attack.atomic_attack_name
-                ]
+                self._precomputed_cached_results[attack.atomic_attack_name] = self._cached_results_by_name.get(
+                    attack.atomic_attack_name, []
+                )
                 self._precomputed_cached_display_groups[attack.atomic_attack_name] = attack.display_group
         return filtered
 
@@ -371,46 +368,53 @@ class AdversarialBenchmark(Scenario):
 
     def _collect_cached_completion_pairs(self, *, atomic_attacks: list[AtomicAttack]) -> set[str]:
         """
-        Return the set of ``technique_eval_hash`` values already cached for this scenario's objective target.
+        Return the set of ``atomic_attack_name`` values already cached for this scenario's objective target.
 
-        Delegates to ``pyrit.analytics.get_cached_results_for_technique`` for
-        each unique technique hash among ``atomic_attacks``. A technique is
-        considered cached when the analytics helper returns at least one
-        ``AttackResult`` with outcome ``SUCCESS`` or ``FAILURE`` for the
-        ``(technique_eval_hash × objective_target_eval_hash)`` pair —
-        ``ERROR`` and ``UNDETERMINED`` outcomes are ignored so transient
-        failures retry on the next run.
+        Database queries are deduplicated by unique ``technique_eval_hash`` (one query per hash,
+        regardless of how many atomic attacks share that hash), then the skip eligibility
+        decision is applied per-atomic-attack using a Python-side filter on
+        ``attribution_data["parent_collection"]``.
+
+        **Dataset-level scoping is implemented as a semantic Python filter, not a database query.**
+        ``get_cached_results_for_technique`` has no ``dataset`` parameter; it returns all results
+        for a given ``(technique_eval_hash × objective_target_eval_hash)`` pair regardless of which
+        dataset they came from. The scoping happens here: a retrieved result only counts toward the
+        skip decision for atomic-attack *X* if its ``attribution_data["parent_collection"]`` equals
+        ``X.atomic_attack_name``. This means two atomic attacks that share a technique+target hash
+        (e.g. the same red-teaming technique run against the same model for both ``harmbench`` and
+        ``advbench``) are cached independently: a harmbench result will never cause the advbench
+        slot to be skipped.
+
+        A dataset slot is considered cached when the attribution-filtered result set contains at
+        least one ``AttackResult`` with outcome ``SUCCESS`` or ``FAILURE`` —
+        ``ERROR`` and ``UNDETERMINED`` outcomes are ignored so transient failures retry on the
+        next run.
 
         The objective-target eval hash is computed once from
         ``self._objective_target_identifier`` (populated by the base
         ``Scenario.initialize_async``) via
-        ``ObjectiveTargetEvaluationIdentifier``. The cache is intentionally
-        scenario-agnostic: any prior run that produced a matching (technique
-        × objective target) result counts as a hit, regardless of scenario
-        name or ``VERSION``.
+        ``ObjectiveTargetEvaluationIdentifier``.
 
-        As a side effect, populates ``self._cached_results_by_hash`` with the
-        retrieved ``AttackResult`` lists keyed by technique eval hash so that
-        ``_get_atomic_attacks_async`` can build ``_precomputed_cached_results``
-        for injection into the final ``ScenarioResult`` by ``run_async``.
+        As a side effect, populates ``self._cached_results_by_name`` with the
+        attribution-filtered ``AttackResult`` lists keyed by ``atomic_attack_name`` so that
+        ``_get_atomic_attacks_async`` can inject them into the final ``ScenarioResult``
+        via ``run_async`` without re-filtering.
 
         Args:
             atomic_attacks: The candidate atomic attacks built earlier in
-                ``_get_atomic_attacks_async``. Only their
-                ``technique_eval_hash`` values are read.
+                ``_get_atomic_attacks_async``.
 
         Returns:
-            set[str]: ``technique_eval_hash`` values that have at least one
-            qualifying cached ``AttackResult``. Empty set when the scenario
-            has no objective target identifier or every analytics lookup
-            fails (logged at warning level) — caching becomes a no-op rather
-            than blocking the run.
+            set[str]: ``atomic_attack_name`` values that have at least one qualifying cached
+            ``AttackResult``. Empty set when the scenario has no objective target identifier
+            or every analytics lookup fails (logged at warning level) — caching becomes a
+            no-op rather than blocking the run.
         """
-        cached_hashes: set[str] = set()
-        self._cached_results_by_hash: dict[str, list[AttackResult]] = {}
+        cached_names: set[str] = set()
+        self._cached_results_by_name: dict[str, list[AttackResult]] = {}
 
         if self._objective_target_identifier is None:
-            return cached_hashes
+            return cached_names
 
         try:
             objective_target_eval_hash = ObjectiveTargetEvaluationIdentifier(
@@ -421,13 +425,15 @@ class AdversarialBenchmark(Scenario):
                 "skip_cached: failed to compute objective_target eval hash (%s); skipping cache filter.",
                 exc,
             )
-            return cached_hashes
+            return cached_names
 
         unique_technique_hashes = {c.technique_eval_hash for c in atomic_attacks if c.technique_eval_hash}
 
+        # One DB query per unique hash (deduplication), results stored temporarily by hash.
+        raw_results_by_hash: dict[str, list[AttackResult]] = {}
         for technique_eval_hash in unique_technique_hashes:
             try:
-                matches = get_cached_results_for_technique(
+                raw_results_by_hash[technique_eval_hash] = get_cached_results_for_technique(
                     self._memory,
                     technique_eval_hash=technique_eval_hash,
                     objective_target_eval_hash=objective_target_eval_hash,
@@ -438,9 +444,19 @@ class AdversarialBenchmark(Scenario):
                     technique_eval_hash,
                     exc,
                 )
-                continue
-            if any(m.outcome in (AttackOutcome.SUCCESS, AttackOutcome.FAILURE) for m in matches):
-                cached_hashes.add(technique_eval_hash)
-                self._cached_results_by_hash[technique_eval_hash] = list(matches)
 
-        return cached_hashes
+        # Per-attack attribution filter: only count results that were produced for this
+        # specific atomic_attack_name slot (dataset-level scoping via parent_collection).
+        for attack in atomic_attacks:
+            if not attack.technique_eval_hash or attack.technique_eval_hash not in raw_results_by_hash:
+                continue
+            attributed = [
+                r
+                for r in raw_results_by_hash[attack.technique_eval_hash]
+                if r.attribution_data and r.attribution_data.get("parent_collection") == attack.atomic_attack_name
+            ]
+            if any(r.outcome in (AttackOutcome.SUCCESS, AttackOutcome.FAILURE) for r in attributed):
+                cached_names.add(attack.atomic_attack_name)
+                self._cached_results_by_name[attack.atomic_attack_name] = attributed
+
+        return cached_names
