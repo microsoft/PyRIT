@@ -45,8 +45,8 @@ def mark_messages_as_simulated(messages: Sequence[Message]) -> list[Message]:
     result = list(messages)
     for message in result:
         for piece in message.message_pieces:
-            if piece._role == "assistant":
-                piece._role = "simulated_assistant"
+            if piece.role == "assistant":
+                piece.role = "simulated_assistant"
     return result
 
 
@@ -116,7 +116,7 @@ def get_adversarial_chat_messages(
                 conversation_id=adversarial_chat_conversation_id,
                 attack_identifier=attack_identifier,
                 prompt_target_identifier=adversarial_chat_target_identifier,
-                labels=labels,  # deprecated
+                labels=labels or {},  # deprecated
             )
 
             result.append(adversarial_piece.to_message())

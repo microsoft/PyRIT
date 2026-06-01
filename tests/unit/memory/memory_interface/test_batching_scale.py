@@ -221,7 +221,7 @@ class TestBatchingScale:
 
         # Should return only user pieces (intersection of both filters)
         assert len(results) == num_pieces
-        assert all(r.get_role_for_storage() == "user" for r in results)
+        assert all(r.role == "user" for r in results)
 
         # Query with role filter and a subset of IDs
         subset_ids = user_ids[:10]

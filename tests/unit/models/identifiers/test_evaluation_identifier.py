@@ -584,3 +584,214 @@ class TestInnerChildName:
         eval_rr = ScorerEvaluationIdentifier(scorer_rr).eval_hash
 
         assert eval_direct == eval_rr
+
+
+# ---------------------------------------------------------------------------
+# OWN_RULE / leaf-entity eval-hash tests
+# ---------------------------------------------------------------------------
+
+
+class TestOwnRule:
+    """Tests for compute_eval_hash(own_rule=...) — leaf-entity filtering."""
+
+    def test_own_rule_filters_root_params(self):
+        """own_rule.included_params is applied to the root entity's params."""
+        target = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            params={
+                "underlying_model_name": "gpt-4o",
+                "temperature": 0.7,
+                "top_p": 1.0,
+                "endpoint": "https://east.example.com",
+            },
+        )
+        rule = ChildEvalRule(
+            included_params=frozenset({"underlying_model_name", "temperature", "top_p"}),
+        )
+
+        eval_hash = compute_eval_hash(target, child_eval_rules={}, own_rule=rule)
+
+        # Same target body without endpoint should produce the same hash.
+        target_no_endpoint = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            params={
+                "underlying_model_name": "gpt-4o",
+                "temperature": 0.7,
+                "top_p": 1.0,
+            },
+        )
+        eval_hash_no_endpoint = compute_eval_hash(target_no_endpoint, child_eval_rules={}, own_rule=rule)
+        assert eval_hash == eval_hash_no_endpoint
+
+    def test_own_rule_applies_param_fallbacks_at_root(self):
+        """When the primary param is missing at the root, the fallback is substituted."""
+        target_primary = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"underlying_model_name": "gpt-4o", "temperature": 0.7},
+        )
+        target_fallback = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"model_name": "gpt-4o", "temperature": 0.7},
+        )
+        rule = ChildEvalRule(
+            included_params=frozenset({"underlying_model_name", "temperature"}),
+            param_fallbacks={"underlying_model_name": "model_name"},
+        )
+
+        hash_primary = compute_eval_hash(target_primary, child_eval_rules={}, own_rule=rule)
+        hash_fallback = compute_eval_hash(target_fallback, child_eval_rules={}, own_rule=rule)
+        assert hash_primary == hash_fallback
+
+    def test_own_rule_raises_on_exclude(self):
+        """own_rule.exclude has no meaning at the root."""
+        rule = ChildEvalRule(exclude=True)
+        target = ComponentIdentifier(class_name="T", class_module="m")
+        with pytest.raises(ValueError, match="exclude"):
+            compute_eval_hash(target, child_eval_rules={}, own_rule=rule)
+
+    def test_own_rule_raises_on_included_item_values(self):
+        """own_rule.included_item_values is only meaningful for list children."""
+        rule = ChildEvalRule(included_item_values={"is_general_technique": True})
+        target = ComponentIdentifier(class_name="T", class_module="m")
+        with pytest.raises(ValueError, match="included_item_values"):
+            compute_eval_hash(target, child_eval_rules={}, own_rule=rule)
+
+    def test_own_rule_raises_on_inner_child_name(self):
+        """own_rule.inner_child_name is only meaningful for child rules."""
+        rule = ChildEvalRule(inner_child_name="targets")
+        target = ComponentIdentifier(class_name="T", class_module="m")
+        with pytest.raises(ValueError, match="inner_child_name"):
+            compute_eval_hash(target, child_eval_rules={}, own_rule=rule)
+
+    def test_short_circuit_only_when_both_empty(self):
+        """With own_rule set, the short-circuit MUST NOT return identifier.hash."""
+        target = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"underlying_model_name": "gpt-4o", "endpoint": "https://east.example.com"},
+        )
+        rule = ChildEvalRule(included_params=frozenset({"underlying_model_name"}))
+        eval_hash = compute_eval_hash(target, child_eval_rules={}, own_rule=rule)
+        # The full identifier hash includes the endpoint; eval_hash must not.
+        assert eval_hash != target.hash
+
+
+class TestEvaluationIdentifierOwnRule:
+    """Tests for the EvaluationIdentifier.OWN_RULE ClassVar."""
+
+    def test_own_rule_defaults_to_none(self):
+        """Subclasses that do not declare OWN_RULE inherit None."""
+        assert _StubEvaluationIdentifier.OWN_RULE is None
+
+    def test_subclass_with_own_rule_filters_root(self):
+        """A subclass that sets OWN_RULE filters root params at eval time."""
+
+        class TargetIdentity(EvaluationIdentifier):
+            CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]] = {}
+            OWN_RULE: ClassVar = ChildEvalRule(
+                included_params=frozenset({"underlying_model_name"}),
+            )
+
+        target = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"underlying_model_name": "gpt-4o", "endpoint": "https://east.example.com"},
+        )
+        identity = TargetIdentity(target)
+        # Eval hash should not equal the raw identifier hash (endpoint must be stripped).
+        assert identity.eval_hash != target.hash
+
+
+# ---------------------------------------------------------------------------
+# ObjectiveTargetEvaluationIdentifier tests
+# ---------------------------------------------------------------------------
+
+
+class TestObjectiveTargetEvaluationIdentifier:
+    """Tests for the ObjectiveTargetEvaluationIdentifier concrete subclass."""
+
+    def test_different_endpoints_same_eval_hash(self):
+        """Same model name + temperature + top_p on different endpoints → same eval hash."""
+        from pyrit.models.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
+
+        target_east = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            params={
+                "underlying_model_name": "gpt-4o",
+                "temperature": 0.7,
+                "top_p": 1.0,
+                "endpoint": "https://east.example.com",
+                "model_name": "gpt4o-east",
+            },
+        )
+        target_west = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            params={
+                "underlying_model_name": "gpt-4o",
+                "temperature": 0.7,
+                "top_p": 1.0,
+                "endpoint": "https://west.example.com",
+                "model_name": "gpt4o-west",
+            },
+        )
+
+        eval_east = ObjectiveTargetEvaluationIdentifier(target_east).eval_hash
+        eval_west = ObjectiveTargetEvaluationIdentifier(target_west).eval_hash
+        assert eval_east == eval_west
+
+    def test_different_temperature_different_eval_hash(self):
+        """Behavioral params (temperature) DO contribute to the eval hash."""
+        from pyrit.models.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
+
+        target_cold = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"underlying_model_name": "gpt-4o", "temperature": 0.0},
+        )
+        target_hot = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"underlying_model_name": "gpt-4o", "temperature": 1.0},
+        )
+
+        eval_cold = ObjectiveTargetEvaluationIdentifier(target_cold).eval_hash
+        eval_hot = ObjectiveTargetEvaluationIdentifier(target_hot).eval_hash
+        assert eval_cold != eval_hot
+
+    def test_model_name_fallback_to_model_name(self):
+        """When underlying_model_name is missing, model_name is used as fallback."""
+        from pyrit.models.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
+
+        target_underlying = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"underlying_model_name": "gpt-4o", "temperature": 0.7},
+        )
+        target_only_model_name = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"model_name": "gpt-4o", "temperature": 0.7},
+        )
+
+        eval_a = ObjectiveTargetEvaluationIdentifier(target_underlying).eval_hash
+        eval_b = ObjectiveTargetEvaluationIdentifier(target_only_model_name).eval_hash
+        assert eval_a == eval_b
+
+    def test_stored_eval_hash_takes_precedence(self):
+        """A pre-stamped eval_hash is honored (DB round-trip safety)."""
+        from pyrit.models.identifiers.evaluation_identifier import ObjectiveTargetEvaluationIdentifier
+
+        stored = "objective_target_stored_hash" + "0" * 36
+        cid = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"underlying_model_name": "gpt-4o"},
+        ).with_eval_hash(stored)
+
+        assert ObjectiveTargetEvaluationIdentifier(cid).eval_hash == stored

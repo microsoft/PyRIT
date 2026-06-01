@@ -188,7 +188,7 @@ class AudioTranscriptHelper:  # noqa: B024
 
         text_piece = MessagePiece(
             original_value=transcript,
-            role=message_piece.get_role_for_storage(),
+            role=message_piece.role,
             original_prompt_id=original_prompt_id,
             converted_value=transcript,
             converted_value_data_type="text",

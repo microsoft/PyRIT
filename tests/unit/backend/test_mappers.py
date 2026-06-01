@@ -8,7 +8,6 @@ These tests verify the domain ↔ DTO translation layer in isolation,
 without any database or service dependencies.
 """
 
-import dataclasses
 import os
 import tempfile
 import uuid
@@ -100,7 +99,6 @@ def _make_mock_piece(
     p.original_value_data_type = "text"
     p.response_error = "none"
     p.role = "user"
-    p.get_role_for_storage.return_value = "user"
     p.timestamp = datetime.now(timezone.utc)
     p.scores = []
     return p
@@ -1557,7 +1555,7 @@ class TestDomainModelFieldsExist:
         ],
     )
     def test_component_identifier_has_field(self, field_name: str) -> None:
-        field_names = {f.name for f in dataclasses.fields(ComponentIdentifier)}
+        field_names = set(ComponentIdentifier.model_fields.keys())
         assert field_name in field_names, (
             f"ComponentIdentifier is missing '{field_name}' – mappers depend on this field"
         )

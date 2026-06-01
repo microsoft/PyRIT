@@ -130,7 +130,7 @@ def _load_metrics_from_file(
 
         try:
             # Reconstruct ComponentIdentifier from the stored dict
-            scorer_identifier = ComponentIdentifier.from_dict(identity_dict)
+            scorer_identifier = ComponentIdentifier.model_validate(identity_dict)
 
             # Create the metrics object
             metrics = metrics_class(**metrics_dict)
@@ -251,7 +251,7 @@ def add_evaluation_results(
         _file_write_locks[file_path_str] = threading.Lock()
 
     # Build entry dictionary
-    entry = scorer_identifier.to_dict()
+    entry = scorer_identifier.model_dump()
     entry["eval_hash"] = eval_hash
     entry["metrics"] = _metrics_to_registry_dict(metrics)
 
@@ -340,7 +340,7 @@ def replace_evaluation_results(
         _file_write_locks[file_path_str] = threading.Lock()
 
     # Build new entry dictionary
-    new_entry = scorer_identifier.to_dict()
+    new_entry = scorer_identifier.model_dump()
     new_entry["eval_hash"] = eval_hash
     new_entry["metrics"] = _metrics_to_registry_dict(metrics)
 

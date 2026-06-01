@@ -3,6 +3,7 @@
 
 
 import pytest
+from pydantic import ValidationError
 
 import pyrit
 from pyrit.models.identifiers import ComponentIdentifier, Identifiable, compute_eval_hash, config_hash
@@ -640,25 +641,35 @@ class TestComponentIdentifierRoundtrip:
 
 
 class TestComponentIdentifierFrozen:
-    """Tests for frozen immutability."""
+    """Tests for frozen immutability and content-hash equality semantics."""
 
     def test_cannot_modify_class_name(self):
         """Test that class_name is immutable."""
         identifier = ComponentIdentifier(class_name="Test", class_module="mod")
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValidationError):
             identifier.class_name = "Modified"  # type: ignore[misc]
 
     def test_cannot_modify_hash(self):
         """Test that hash is immutable."""
         identifier = ComponentIdentifier(class_name="Test", class_module="mod")
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValidationError):
             identifier.hash = "new_hash"  # type: ignore[misc]
 
-    def test_not_natively_hashable_due_to_dict_fields(self):
-        """Test that frozen identifier with dict fields is not natively hashable."""
-        identifier = ComponentIdentifier(class_name="Test", class_module="mod")
-        with pytest.raises(TypeError):
-            hash(identifier)
+    def test_hashable_via_content_hash(self):
+        """ComponentIdentifier is hashable via its content hash."""
+        id1 = ComponentIdentifier(
+            class_name="Test",
+            class_module="mod",
+            params={"endpoint": "x"},
+        )
+        id2 = ComponentIdentifier(
+            class_name="Test",
+            class_module="mod",
+            params={"endpoint": "x"},
+        )
+        assert id1 == id2
+        assert hash(id1) == hash(id2)
+        assert id1 in {id2}
 
 
 class TestComponentIdentifierOf:
@@ -1314,5 +1325,148 @@ def test_short_hash_raises_when_hash_none():
     object.__setattr__(obj, "hash", None)
     object.__setattr__(obj, "class_name", "Test")
     object.__setattr__(obj, "class_module", "test.module")
-    with pytest.raises(RuntimeError, match="hash should be set by __post_init__"):
+    with pytest.raises(RuntimeError, match="hash should be set"):
         _ = obj.short_hash
+
+
+class TestComponentIdentifierPydanticMethods:
+    """Tests for the Pydantic-native model_dump/model_validate path."""
+
+    def _simple(self):
+        return ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1, "b": "hi"})
+
+    def _nested(self):
+        child = ComponentIdentifier(class_name="Child", class_module="m", params={"k": "v"})
+        return ComponentIdentifier(class_name="Parent", class_module="m", params={"x": 1}, children={"c": child})
+
+    def test_model_dump_matches_to_dict_simple(self):
+        ident = self._simple()
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            assert ident.model_dump() == ident.to_dict()
+
+    def test_model_dump_matches_to_dict_nested(self):
+        ident = self._nested()
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            assert ident.model_dump() == ident.to_dict()
+
+    def test_model_dump_context_truncates(self):
+        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"v": "x" * 200})
+        dumped = ident.model_dump(context={"max_value_length": 50})
+        assert isinstance(dumped["v"], str) and len(dumped["v"]) < 200
+
+    def test_model_dump_context_propagates_to_children(self):
+        child = ComponentIdentifier(class_name="C", class_module="m", params={"v": "y" * 200})
+        parent = ComponentIdentifier(class_name="P", class_module="m", params={"v": "x" * 200}, children={"c": child})
+        dumped = parent.model_dump(context={"max_value_length": 50})
+        assert len(dumped["v"]) < 200
+        assert len(dumped["children"]["c"]["v"]) < 200
+
+    def test_model_validate_roundtrip(self):
+        ident = self._nested()
+        dumped = ident.model_dump()
+        rebuilt = ComponentIdentifier.model_validate(dumped)
+        assert rebuilt.hash == ident.hash
+        assert rebuilt.children["c"].hash == ident.children["c"].hash
+
+    def test_model_validate_preserves_stored_hash(self):
+        # Simulates DB round-trip where params were truncated but hash was preserved.
+        ident = self._simple()
+        stored_hash = ident.hash
+        flat = ident.model_dump()
+        flat["a"] = "TRUNCATED"
+        rebuilt = ComponentIdentifier.model_validate(flat)
+        assert rebuilt.hash == stored_hash
+
+    def test_model_validate_omits_eval_hash_when_none(self):
+        ident = self._simple()
+        flat = ident.model_dump()
+        assert "eval_hash" not in flat
+
+
+class TestComponentIdentifierWithEvalHash:
+    def test_with_eval_hash_preserves_stored_hash(self):
+        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
+        stored_hash = ident.hash
+        new = ident.with_eval_hash("abc123")
+        assert new.hash == stored_hash
+        assert new.eval_hash == "abc123"
+
+    def test_with_eval_hash_preserves_truncated_hash(self):
+        # A hash reconstructed from truncated params must survive unchanged.
+        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1}, hash="deadbeef")
+        new = ident.with_eval_hash("abc123")
+        assert new.hash == "deadbeef"
+        assert new.eval_hash == "abc123"
+
+    def test_with_eval_hash_returns_new_instance(self):
+        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
+        new = ident.with_eval_hash("abc123")
+        assert new is not ident
+        assert ident.eval_hash is None
+
+
+class TestComponentIdentifierReservedKeyCollision:
+    @pytest.mark.parametrize(
+        "reserved",
+        ["class_name", "class_module", "hash", "pyrit_version", "eval_hash", "children", "params"],
+    )
+    def test_reserved_param_name_rejected_in_normalized_shape(self, reserved):
+        with pytest.raises(ValidationError, match="reserved names"):
+            ComponentIdentifier(class_name="Foo", class_module="m", params={reserved: "x"})
+
+    def test_ambiguous_flat_and_params_shape_rejected(self):
+        with pytest.raises(ValidationError):
+            ComponentIdentifier.model_validate(
+                {"class_name": "Foo", "class_module": "m", "params": {"a": 1}, "extra": "stray"}
+            )
+
+
+class TestComponentIdentifierDeprecationWarnings:
+    def test_to_dict_warns(self):
+        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
+        with pytest.warns(DeprecationWarning, match="to_dict"):
+            ident.to_dict()
+
+    def test_from_dict_warns(self):
+        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            flat = ident.to_dict()
+        with pytest.warns(DeprecationWarning, match="from_dict"):
+            ComponentIdentifier.from_dict(flat)
+
+    def test_with_eval_hash_does_not_warn(self):
+        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            new = ident.with_eval_hash("abc123")
+        assert new.eval_hash == "abc123"
+
+
+class TestComponentIdentifierHashEquality:
+    def test_equal_content_compares_equal(self):
+        a = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
+        b = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
+        assert a == b
+        assert hash(a) == hash(b)
+
+    def test_different_content_not_equal(self):
+        a = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
+        b = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 2})
+        assert a != b
+
+    def test_usable_in_set(self):
+        a = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
+        b = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
+        s = {a, b}
+        assert len(s) == 1

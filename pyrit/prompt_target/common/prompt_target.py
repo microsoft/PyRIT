@@ -234,7 +234,7 @@ class PromptTarget(Identifiable):
         """
         source_piece = source.message_pieces[0]
         for piece in target_message.message_pieces:
-            piece.copy_lineage_from(source_piece)
+            piece.copy_lineage_from(source=source_piece)
 
     def set_model_name(self, *, model_name: str) -> None:
         """
@@ -305,7 +305,7 @@ class PromptTarget(Identifiable):
                 converted_value=system_prompt,
                 prompt_target_identifier=self.get_identifier(),
                 attack_identifier=attack_identifier,
-                labels=labels,
+                labels=labels or {},
             ).to_message()
         )
 
