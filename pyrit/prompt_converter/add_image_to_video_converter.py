@@ -3,7 +3,6 @@
 
 import contextlib
 import logging
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -183,7 +182,7 @@ class AddImageVideoConverter(PromptConverter):
             with contextlib.suppress(cv2.error):
                 cv2.destroyAllWindows()  # Not available in headless OpenCV builds
             if azure_storage_flag:
-                os.remove(local_temp_path)  # type: ignore[ty:possibly-unresolved-reference]
+                local_temp_path.unlink()  # type: ignore[ty:possibly-unresolved-reference]
 
         logger.info(f"Video saved as {output_path}")
 

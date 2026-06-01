@@ -3,7 +3,7 @@
 
 import base64
 import json
-import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Union
 
 from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
@@ -173,7 +173,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
         audio_format = SUPPORTED_AUDIO_FORMATS[ext]
 
         # Read and encode the audio file
-        if not os.path.isfile(audio_path):
+        if not Path(audio_path).is_file():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
         with open(audio_path, "rb") as f:
