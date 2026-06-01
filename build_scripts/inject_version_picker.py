@@ -42,6 +42,12 @@ from pathlib import Path
 INJECT_MARKER = "<!-- pyrit-version-picker -->"
 ASSETS_SOURCE_DIR = Path(__file__).resolve().parent / "version_picker_assets"
 
+# The same marker string is used in compose_docs_dist.py's 404 template. Both
+# consumers replace this token with the contents of closest_page.js at build
+# time so the findClosestPage/commonSegmentPrefix algorithm has exactly one
+# source of truth -- see closest_page.js for the rationale.
+CLOSEST_PAGE_MARKER = "// @@CLOSEST_PAGE_JS@@"
+
 
 def _head_block(base: str, picker_js: str) -> str:
     return f'{INJECT_MARKER}\n<meta name="pyrit-docs-base" content="{base}">\n<script>{picker_js}</script>\n'
@@ -57,9 +63,18 @@ def _inject(html: str, base: str, picker_js: str) -> tuple[str, bool]:
 
 def _load_picker_js() -> str:
     js_src = ASSETS_SOURCE_DIR / "picker.js"
+    closest_page_src = ASSETS_SOURCE_DIR / "closest_page.js"
     if not js_src.is_file():
         raise FileNotFoundError(f"picker.js not found at {js_src}")
-    return js_src.read_text(encoding="utf-8")
+    if not closest_page_src.is_file():
+        raise FileNotFoundError(f"closest_page.js not found at {closest_page_src}")
+    picker = js_src.read_text(encoding="utf-8")
+    closest = closest_page_src.read_text(encoding="utf-8")
+    if CLOSEST_PAGE_MARKER not in picker:
+        raise RuntimeError(
+            f"picker.js is missing the {CLOSEST_PAGE_MARKER!r} marker; the closest-page algorithm cannot be inlined."
+        )
+    return picker.replace(CLOSEST_PAGE_MARKER, closest)
 
 
 def main(argv: list[str] | None = None) -> int:

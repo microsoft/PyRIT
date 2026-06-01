@@ -245,58 +245,13 @@
     return pagesCache[versionBase];
   }
 
-  // Count common leading path segments between a candidate page path and the
-  // target's segments. Used to break ties when multiple sibling pages share
-  // the same parent prefix.
-  function commonSegmentPrefix(pagePath, targetSegs) {
-    var pageSegs = String(pagePath || "").replace(/\/+$/, "").split("/").filter(Boolean);
-    var n = Math.min(pageSegs.length, targetSegs.length);
-    var i = 0;
-    while (i < n && pageSegs[i] === targetSegs[i]) i++;
-    return i;
-  }
-
-  // Find the best match for `relPath` in the version's manifest:
-  //   1) exact match wins
-  //   2) walk up ancestors; at each level, prefer the ancestor itself if it's
-  //      a real page; otherwise pick any sibling under that ancestor with the
-  //      longest common prefix to the target (tiebreak by alphabetical)
-  //   3) fall through to the version root ("") if nothing better exists.
-  //
-  // Returns the matched path string (e.g. "code/scenarios/scenarios/" or "").
-  function findClosestPage(pages, relPath) {
-    if (!Array.isArray(pages) || pages.length === 0) return null;
-    var clean = String(relPath || "").split("?")[0].split("#")[0].replace(/\/+$/, "");
-    var targetSegs = clean.split("/").filter(Boolean);
-
-    // 1) exact match
-    var full = clean ? clean + "/" : "";
-    if (pages.indexOf(full) !== -1) return full;
-
-    // 2) walk up ancestors, looking for siblings/descendants under each
-    for (var depth = targetSegs.length - 1; depth >= 0; depth--) {
-      var ancestor = depth === 0 ? "" : targetSegs.slice(0, depth).join("/") + "/";
-      // ancestor itself a page?
-      if (pages.indexOf(ancestor) !== -1) return ancestor;
-      // any page that lives under this ancestor? (sibling-of-original branch)
-      var bestPage = null;
-      var bestPrefix = -1;
-      for (var i = 0; i < pages.length; i++) {
-        var p = pages[i];
-        if (ancestor !== "" && p.indexOf(ancestor) !== 0) continue;
-        if (p === ancestor) continue;
-        var pfx = commonSegmentPrefix(p, targetSegs);
-        if (pfx > bestPrefix || (pfx === bestPrefix && bestPage && p < bestPage)) {
-          bestPage = p;
-          bestPrefix = pfx;
-        }
-      }
-      if (bestPage) return bestPage;
-    }
-
-    // 3) root
-    return "";
-  }
+  // findClosestPage + commonSegmentPrefix come from closest_page.js, the
+  // single source of truth shared with the 404 page's auto-redirect script
+  // (see compose_docs_dist.py.render_not_found_html). inject_version_picker.py
+  // substitutes the marker below with the contents of closest_page.js at
+  // build time. Tests in test_closest_page.py exercise the algorithm against
+  // the real JS file via node so the two consumers can't drift in behavior.
+  // @@CLOSEST_PAGE_JS@@
 
   // For one non-current version: load the manifest, find the closest page,
   // and update the link href + suffix. If the manifest can't be loaded (e.g.

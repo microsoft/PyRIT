@@ -128,6 +128,11 @@ def test_render_not_found_includes_auto_redirect_script(module):
     assert "window.location.replace" in html
     # docs_base must be wired into the script body.
     assert 'var docsBase = "/PyRIT"' in html
+    # The closest-page algorithm marker must have been substituted with
+    # closest_page.js contents -- no marker text in the rendered page.
+    assert module.CLOSEST_PAGE_MARKER not in html
+    assert "function findClosestPage" in html
+    assert "function commonSegmentPrefix" in html
 
 
 def test_compose_strips_trailing_slash_in_base(module, tmp_path):

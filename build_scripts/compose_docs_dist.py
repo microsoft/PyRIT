@@ -41,6 +41,15 @@ from typing import Any
 import yaml
 from generate_pages_manifest import collect_pages
 
+# Single source of truth for the closest-page algorithm. Both the version
+# picker (inject_version_picker.py) and the 404 page below concat the
+# contents of closest_page.js into their own IIFE at build time, so the
+# findClosestPage/commonSegmentPrefix functions can never drift between the
+# two consumers. The marker string MUST match the one in
+# inject_version_picker.CLOSEST_PAGE_MARKER.
+CLOSEST_PAGE_MARKER = "// @@CLOSEST_PAGE_JS@@"
+CLOSEST_PAGE_JS_PATH = Path(__file__).resolve().parent / "version_picker_assets" / "closest_page.js"
+
 REDIRECT_HTML = """\
 <!doctype html>
 <html lang="en">
@@ -61,10 +70,12 @@ REDIRECT_HTML = """\
 # matching page if one exists. This static body shows only when the manifest
 # is unavailable or no sibling exists in the version at all.
 #
-# The same closest-page algorithm runs in picker.js for cross-version
-# switching, but the picker explicitly does NOT redirect the current
-# version (it assumes you're on a real page). 404.html plugs that gap by
-# running the algorithm against the current version on landing.
+# The closest-page algorithm (findClosestPage + commonSegmentPrefix) is NOT
+# duplicated here -- the build-time marker in CLOSEST_PAGE_MARKER is replaced
+# with the contents of closest_page.js by render_not_found_html(). The same
+# closest_page.js is also concat'd into picker.js by inject_version_picker.py,
+# so cross-version sibling matching (in the picker dropdown) and same-version
+# 404 fallback can never drift in behavior.
 NOT_FOUND_HTML_TEMPLATE = """\
 <!doctype html>
 <html lang="en">
@@ -120,39 +131,7 @@ NOT_FOUND_HTML_TEMPLATE = """\
 
     var versionBase = docsBase + "/" + slug + "/";
 
-    function commonSegmentPrefix(pagePath, targetSegs) {{
-      var pageSegs = String(pagePath || "").replace(/\\/+$/, "").split("/").filter(Boolean);
-      var n = Math.min(pageSegs.length, targetSegs.length);
-      var i = 0;
-      while (i < n && pageSegs[i] === targetSegs[i]) i++;
-      return i;
-    }}
-
-    function findClosestPage(pages, target) {{
-      if (!Array.isArray(pages) || pages.length === 0) return null;
-      var clean = String(target || "").replace(/\\/+$/, "");
-      var targetSegs = clean.split("/").filter(Boolean);
-      var full = clean ? clean + "/" : "";
-      if (pages.indexOf(full) !== -1) return full;
-      for (var depth = targetSegs.length - 1; depth >= 0; depth--) {{
-        var ancestor = depth === 0 ? "" : targetSegs.slice(0, depth).join("/") + "/";
-        if (pages.indexOf(ancestor) !== -1) return ancestor;
-        var bestPage = null;
-        var bestPrefix = -1;
-        for (var i = 0; i < pages.length; i++) {{
-          var p = pages[i];
-          if (ancestor !== "" && p.indexOf(ancestor) !== 0) continue;
-          if (p === ancestor) continue;
-          var pfx = commonSegmentPrefix(p, targetSegs);
-          if (pfx > bestPrefix || (pfx === bestPrefix && bestPage && p < bestPage)) {{
-            bestPage = p;
-            bestPrefix = pfx;
-          }}
-        }}
-        if (bestPage) return bestPage;
-      }}
-      return "";
-    }}
+    // @@CLOSEST_PAGE_JS@@
 
     fetch(versionBase + "pages.json", {{ cache: "no-cache" }})
       .then(function (r) {{
@@ -198,11 +177,19 @@ def render_redirect_html(title: str, target: str, link_text: str) -> str:
 
 def render_not_found_html(base: str, default_slug: str) -> str:
     home_href = f"{base.rstrip('/')}/{default_slug}/"
-    return NOT_FOUND_HTML_TEMPLATE.format(
+    if not CLOSEST_PAGE_JS_PATH.is_file():
+        raise FileNotFoundError(f"closest_page.js not found at {CLOSEST_PAGE_JS_PATH}")
+    closest_page_js = CLOSEST_PAGE_JS_PATH.read_text(encoding="utf-8")
+    html = NOT_FOUND_HTML_TEMPLATE.format(
         docs_base=base.rstrip("/"),
         home_href=home_href,
         default_slug=default_slug,
     )
+    if CLOSEST_PAGE_MARKER not in html:
+        raise RuntimeError(
+            f"404 template is missing the {CLOSEST_PAGE_MARKER!r} marker; the closest-page algorithm cannot be inlined."
+        )
+    return html.replace(CLOSEST_PAGE_MARKER, closest_page_js)
 
 
 def load_config(config_path: Path) -> dict[str, Any]:

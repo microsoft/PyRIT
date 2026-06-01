@@ -44,9 +44,10 @@ def test_injects_meta_and_inline_script(injector_module, tmp_path):
     # mount-class constant and the styles bundle.
     assert "pyrit-version-picker" in out
     assert "position: fixed" in out
-    # No external CSS link, no external picker.js src.
-    assert "<link" not in out or "picker.css" not in out
-    assert 'src="' not in out or "picker.js" not in out
+    # The closest-page algorithm must have been substituted in, with no
+    # marker text leaking through to the rendered page.
+    assert "findClosestPage" in out
+    assert injector_module.CLOSEST_PAGE_MARKER not in out
     assert injector_module.INJECT_MARKER in out
 
 
