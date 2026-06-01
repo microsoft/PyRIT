@@ -7,7 +7,7 @@ import logging
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import aiofiles
@@ -34,31 +34,31 @@ class StorageIO(ABC):
     """
 
     @abstractmethod
-    async def read_file(self, path: Union[Path, str]) -> bytes:
+    async def read_file(self, path: Path | str) -> bytes:
         """
         Asynchronously reads the file (or blob) from the given path.
         """
 
     @abstractmethod
-    async def write_file(self, path: Union[Path, str], data: bytes) -> None:
+    async def write_file(self, path: Path | str, data: bytes) -> None:
         """
         Asynchronously writes data to the given path.
         """
 
     @abstractmethod
-    async def path_exists(self, path: Union[Path, str]) -> bool:
+    async def path_exists(self, path: Path | str) -> bool:
         """
         Asynchronously checks if a file or blob exists at the given path.
         """
 
     @abstractmethod
-    async def is_file(self, path: Union[Path, str]) -> bool:
+    async def is_file(self, path: Path | str) -> bool:
         """
         Asynchronously checks if the path refers to a file (not a directory or container).
         """
 
     @abstractmethod
-    async def create_directory_if_not_exists(self, path: Union[Path, str]) -> None:
+    async def create_directory_if_not_exists(self, path: Path | str) -> None:
         """
         Asynchronously creates a directory or equivalent in the storage system if it doesn't exist.
         """
@@ -69,7 +69,7 @@ class DiskStorageIO(StorageIO):
     Implementation of StorageIO for local disk storage.
     """
 
-    async def read_file(self, path: Union[Path, str]) -> bytes:
+    async def read_file(self, path: Path | str) -> bytes:
         """
         Asynchronously reads a file from the local disk.
 
@@ -84,7 +84,7 @@ class DiskStorageIO(StorageIO):
         async with aiofiles.open(path, "rb") as file:
             return await file.read()
 
-    async def write_file(self, path: Union[Path, str], data: bytes) -> None:
+    async def write_file(self, path: Path | str, data: bytes) -> None:
         """
         Asynchronously writes data to a file on the local disk.
 
@@ -97,7 +97,7 @@ class DiskStorageIO(StorageIO):
         async with aiofiles.open(path, "wb") as file:
             await file.write(data)
 
-    async def path_exists(self, path: Union[Path, str]) -> bool:
+    async def path_exists(self, path: Path | str) -> bool:
         """
         Check whether a path exists on the local disk.
 
@@ -111,7 +111,7 @@ class DiskStorageIO(StorageIO):
         path = self._convert_to_path(path)
         return path.exists()
 
-    async def is_file(self, path: Union[Path, str]) -> bool:
+    async def is_file(self, path: Path | str) -> bool:
         """
         Check whether the given path is a file (not a directory).
 
@@ -125,7 +125,7 @@ class DiskStorageIO(StorageIO):
         path = self._convert_to_path(path)
         return path.is_file()
 
-    async def create_directory_if_not_exists(self, path: Union[Path, str]) -> None:
+    async def create_directory_if_not_exists(self, path: Path | str) -> None:
         """
         Asynchronously creates a directory if it doesn't exist on the local disk.
 
@@ -137,7 +137,7 @@ class DiskStorageIO(StorageIO):
         if not directory_path.exists():
             directory_path.mkdir(parents=True, exist_ok=True)
 
-    def _convert_to_path(self, path: Union[Path, str]) -> Path:
+    def _convert_to_path(self, path: Path | str) -> Path:
         """
         Convert an input path to a Path object.
 
@@ -159,8 +159,8 @@ class AzureBlobStorageIO(StorageIO):
     def __init__(
         self,
         *,
-        container_url: Optional[str] = None,
-        sas_token: Optional[str] = None,
+        container_url: str | None = None,
+        sas_token: str | None = None,
         blob_content_type: SupportedContentType = SupportedContentType.PLAIN_TEXT,
     ) -> None:
         """
@@ -269,7 +269,7 @@ class AzureBlobStorageIO(StorageIO):
             return container_name, blob_name
         raise ValueError("Invalid blob URL")
 
-    def _resolve_blob_name(self, path: Union[Path, str]) -> str:
+    def _resolve_blob_name(self, path: Path | str) -> str:
         """
         Resolve a blob name from either a full blob URL or a relative blob path.
 
@@ -295,7 +295,7 @@ class AzureBlobStorageIO(StorageIO):
         except ValueError:
             return path_str
 
-    async def read_file(self, path: Union[Path, str]) -> bytes:
+    async def read_file(self, path: Path | str) -> bytes:
         """
         Asynchronously reads the content of a file (blob) from Azure Blob Storage.
 
@@ -338,7 +338,7 @@ class AzureBlobStorageIO(StorageIO):
             await self._client_async.close()
             self._client_async = None
 
-    async def write_file(self, path: Union[Path, str], data: bytes) -> None:
+    async def write_file(self, path: Path | str, data: bytes) -> None:
         """
         Write data to Azure Blob Storage at the specified path.
 
@@ -361,7 +361,7 @@ class AzureBlobStorageIO(StorageIO):
             await self._client_async.close()
             self._client_async = None
 
-    async def path_exists(self, path: Union[Path, str]) -> bool:
+    async def path_exists(self, path: Path | str) -> bool:
         """
         Check whether a given path exists in the Azure Blob Storage container.
 
@@ -386,7 +386,7 @@ class AzureBlobStorageIO(StorageIO):
             await self._client_async.close()
             self._client_async = None
 
-    async def is_file(self, path: Union[Path, str]) -> bool:
+    async def is_file(self, path: Path | str) -> bool:
         """
         Check whether the path refers to a file (blob) in Azure Blob Storage.
 
@@ -411,7 +411,7 @@ class AzureBlobStorageIO(StorageIO):
             await self._client_async.close()
             self._client_async = None
 
-    async def create_directory_if_not_exists(self, directory_path: Union[Path, str]) -> None:  # type: ignore[ty:invalid-method-override]
+    async def create_directory_if_not_exists(self, directory_path: Path | str) -> None:  # type: ignore[ty:invalid-method-override]
         """
         Log a no-op directory creation for Azure Blob Storage.
 

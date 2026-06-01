@@ -9,7 +9,7 @@ import uuid
 import zipfile
 from enum import Enum
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.common.path import DB_DATA_PATH
@@ -167,8 +167,8 @@ class _FigStepDataset(_RemoteDatasetLoader):
         *,
         use_tiny: bool = True,
         variant: FigStepVariant = FigStepVariant.FIGSTEP,
-        categories: Optional[list[FigStepCategory]] = None,
-        source: Optional[str] = None,
+        categories: list[FigStepCategory] | None = None,
+        source: str | None = None,
         source_type: Literal["public_url", "file"] = "public_url",
     ) -> None:
         """
@@ -241,8 +241,8 @@ class _FigStepDataset(_RemoteDatasetLoader):
         required_keys = {"dataset", "category_id", "task_id", "category_name", "question", "instruction"}
         rows = self._fetch_from_url(source=self.source, source_type=self.source_type, cache=cache)
 
-        pro_extract_dir: Optional[Path] = None
-        pro_benign_sentences: Optional[list[str]] = None
+        pro_extract_dir: Path | None = None
+        pro_benign_sentences: list[str] | None = None
         if self.variant == FigStepVariant.FIGSTEP_PRO:
             pro_extract_dir, pro_benign_sentences = await self._ensure_figstep_pro_assets_async(cache=cache)
 

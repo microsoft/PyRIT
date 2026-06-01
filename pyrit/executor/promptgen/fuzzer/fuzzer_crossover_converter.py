@@ -4,7 +4,7 @@
 import pathlib
 import random
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.apply_defaults import apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
@@ -25,9 +25,9 @@ class FuzzerCrossOverConverter(FuzzerConverter):
     def __init__(
         self,
         *,
-        converter_target: Optional[PromptTarget] = None,
-        prompt_template: Optional[SeedPrompt] = None,
-        prompt_templates: Optional[list[str]] = None,
+        converter_target: PromptTarget | None = None,
+        prompt_template: SeedPrompt | None = None,
+        prompt_templates: list[str] | None = None,
     ) -> None:
         """
         Initialize the converter with the specified chat target and prompt templates.

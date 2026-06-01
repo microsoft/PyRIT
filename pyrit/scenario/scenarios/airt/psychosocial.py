@@ -4,7 +4,7 @@
 import logging
 import pathlib
 from dataclasses import dataclass
-from typing import Any, Optional, TypeVar
+from typing import Any, TypeVar
 
 import yaml
 
@@ -73,7 +73,7 @@ class ResolvedSeedData:
     """Helper dataclass for resolved seed data."""
 
     seed_groups: list[SeedAttackGroup]
-    subharm: Optional[str]
+    subharm: str | None
 
 
 class PsychosocialStrategy(ScenarioStrategy):
@@ -97,7 +97,7 @@ class PsychosocialStrategy(ScenarioStrategy):
     LicensedTherapist = ("licensed_therapist", set[str]())
 
     @property
-    def harm_category_filter(self) -> Optional[str]:
+    def harm_category_filter(self) -> str | None:
         """
         Get the harm category filter for this strategy.
 
@@ -179,11 +179,11 @@ class Psychosocial(Scenario):
     def __init__(
         self,
         *,
-        objectives: Optional[list[str]] = None,
-        adversarial_chat: Optional[PromptTarget] = None,
-        objective_scorer: Optional[FloatScaleThresholdScorer] = None,
-        scenario_result_id: Optional[str] = None,
-        subharm_configs: Optional[dict[str, SubharmConfig]] = None,
+        objectives: list[str] | None = None,
+        adversarial_chat: PromptTarget | None = None,
+        objective_scorer: FloatScaleThresholdScorer | None = None,
+        scenario_result_id: str | None = None,
+        subharm_configs: dict[str, SubharmConfig] | None = None,
         max_turns: int = 5,
         include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
@@ -255,7 +255,7 @@ class Psychosocial(Scenario):
         # Store deprecated objectives for later resolution in _resolve_seed_groups
         self._deprecated_objectives = objectives
         # Will be resolved in _get_atomic_attacks_async
-        self._seed_groups: Optional[list[SeedAttackGroup]] = None
+        self._seed_groups: list[SeedAttackGroup] | None = None
 
     def _resolve_seed_groups(self) -> ResolvedSeedData:
         """
@@ -300,7 +300,7 @@ class Psychosocial(Scenario):
             subharm=harm_category_filter,
         )
 
-    def _extract_harm_category_filter(self) -> Optional[str]:
+    def _extract_harm_category_filter(self) -> str | None:
         """
         Extract harm category filter from scenario strategies.
 
@@ -339,7 +339,7 @@ class Psychosocial(Scenario):
                 filtered_groups.append(SeedAttackGroup(seeds=filtered_seeds))
         return filtered_groups
 
-    def _get_scorer(self, subharm: Optional[str] = None) -> FloatScaleThresholdScorer:
+    def _get_scorer(self, subharm: str | None = None) -> FloatScaleThresholdScorer:
         """
         Create scorer for psychosocial harms evaluation.
 
@@ -420,7 +420,7 @@ class Psychosocial(Scenario):
 
         return atomic_attacks
 
-    def _create_scoring_config(self, subharm: Optional[str]) -> AttackScoringConfig:
+    def _create_scoring_config(self, subharm: str | None) -> AttackScoringConfig:
         subharm_config = self._subharm_configs.get(subharm) if subharm else None
         scorer = self._get_scorer(subharm=subharm) if subharm_config else self._objective_scorer
         return AttackScoringConfig(objective_scorer=scorer)
@@ -470,7 +470,7 @@ class Psychosocial(Scenario):
         self,
         *,
         scoring_config: AttackScoringConfig,
-        subharm: Optional[str],
+        subharm: str | None,
         seed_groups: list[SeedAttackGroup],
     ) -> AtomicAttack:
         subharm_config = self._subharm_configs.get(subharm) if subharm else None

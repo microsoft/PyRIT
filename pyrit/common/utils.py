@@ -8,12 +8,12 @@ import logging
 import math
 import random
 from pathlib import Path
-from typing import Any, Optional, TypeVar, Union
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
 
-def verify_and_resolve_path(path: Union[str, Path]) -> Path:
+def verify_and_resolve_path(path: str | Path) -> Path:
     """
     Verify that a path is valid and resolve it to an absolute path.
 
@@ -39,9 +39,7 @@ def verify_and_resolve_path(path: Union[str, Path]) -> Path:
     return path_obj
 
 
-def combine_dict(
-    existing_dict: Optional[dict[str, Any]] = None, new_dict: Optional[dict[str, Any]] = None
-) -> dict[str, Any]:
+def combine_dict(existing_dict: dict[str, Any] | None = None, new_dict: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     Combine two dictionaries containing string keys and values into one.
 
@@ -58,7 +56,7 @@ def combine_dict(
     return result
 
 
-def combine_list(list1: Union[str, list[str]], list2: Union[str, list[str]]) -> list[str]:
+def combine_list(list1: str | list[str], list2: str | list[str]) -> list[str]:
     """
     Combine two lists or strings into a single list with unique values.
 
@@ -126,7 +124,7 @@ def to_sha256(data: str) -> str:
 
 
 def warn_if_set(
-    *, config: Any, unused_fields: list[str], log: Union[logging.Logger, logging.LoggerAdapter[logging.Logger]] = logger
+    *, config: Any, unused_fields: list[str], log: logging.Logger | logging.LoggerAdapter[logging.Logger] = logger
 ) -> None:
     """
     Warn about unused parameters in configurations.
@@ -169,8 +167,8 @@ def get_kwarg_param(
     param_name: str,
     expected_type: type[_T],
     required: bool = True,
-    default_value: Optional[_T] = None,
-) -> Optional[_T]:
+    default_value: _T | None = None,
+) -> _T | None:
     """
     Validate and extract a parameter from kwargs.
 

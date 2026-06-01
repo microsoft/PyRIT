@@ -4,7 +4,7 @@
 import base64
 import json
 import os
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.message_normalizer.message_normalizer import (
@@ -91,7 +91,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
 
             # Use simple string for single text piece, otherwise use content list
             if len(pieces) == 1 and pieces[0].converted_value_data_type == "text":
-                content: Union[str, list[dict[str, Any]]] = pieces[0].converted_value
+                content: str | list[dict[str, Any]] = pieces[0].converted_value
             else:
                 content = [await self._piece_to_content_dict_async(piece) for piece in pieces]
 

@@ -16,7 +16,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.auth import get_azure_openai_auth, get_azure_token_provider
 from pyrit.common.parameter import Parameter
@@ -69,9 +69,9 @@ class TargetConfig:
     target_class: type[PromptTarget]
     endpoint_var: str
     key_var: str = ""  # Empty string means no auth required
-    model_var: Optional[str] = None
-    underlying_model_var: Optional[str] = None
-    temperature: Optional[float] = None
+    model_var: str | None = None
+    underlying_model_var: str | None = None
+    temperature: float | None = None
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
     tags: list[TargetInitializerTags] = field(default_factory=lambda: [TargetInitializerTags.DEFAULT])
     default_objective_target: bool = False

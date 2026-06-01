@@ -3,7 +3,6 @@
 
 import logging
 import pathlib
-from typing import Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
@@ -27,7 +26,7 @@ class DenylistConverter(LLMGenericTextConverter):
         self,
         *,
         converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        system_prompt_template: Optional[SeedPrompt] = None,
+        system_prompt_template: SeedPrompt | None = None,
         denylist: list[str] | None = None,
     ) -> None:
         """

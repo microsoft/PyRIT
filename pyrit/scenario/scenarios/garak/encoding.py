@@ -4,7 +4,6 @@
 
 import logging
 from collections.abc import Sequence
-from typing import Optional
 
 from pyrit.common import apply_defaults
 from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
@@ -138,9 +137,9 @@ class Encoding(Scenario):
     def __init__(
         self,
         *,
-        objective_scorer: Optional[TrueFalseScorer] = None,
-        encoding_templates: Optional[Sequence[str]] = None,
-        scenario_result_id: Optional[str] = None,
+        objective_scorer: TrueFalseScorer | None = None,
+        encoding_templates: Sequence[str] | None = None,
+        scenario_result_id: str | None = None,
         include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
@@ -184,7 +183,7 @@ class Encoding(Scenario):
             self._legacy_include_baseline = include_baseline
 
         # Will be resolved in _get_atomic_attacks_async
-        self._resolved_seed_groups: Optional[list[SeedAttackGroup]] = None
+        self._resolved_seed_groups: list[SeedAttackGroup] | None = None
 
     def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
         """

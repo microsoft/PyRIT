@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional
+from typing import Literal
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.token_smuggling.base import SmugglerConverter
@@ -32,7 +32,7 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
     def __init__(
         self,
         action: Literal["encode", "decode"] = "encode",
-        base_char_utf8: Optional[str] = None,
+        base_char_utf8: str | None = None,
         embed_in_base: bool = True,
     ) -> None:
         """

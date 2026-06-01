@@ -21,7 +21,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Optional, Union
+from typing import Any, ClassVar
 
 import pyrit
 
@@ -125,18 +125,18 @@ class ComponentIdentifier:
     #: Behavioral parameters that affect output.
     params: dict[str, Any] = field(default_factory=dict)
     #: Named child identifiers for compositional identity (e.g., a scorer's target).
-    children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = field(default_factory=dict)
+    children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] = field(default_factory=dict)
     #: Content-addressed SHA256 hash computed from class, params, and children.
     #: When ``None`` (the default), it is computed automatically in ``__post_init__``.
     #: Pass an explicit value to preserve a pre-computed hash (e.g. from DB storage
     #: where params may have been truncated).
-    hash: Optional[str] = field(default=None, compare=False)
+    hash: str | None = field(default=None, compare=False)
     #: Version tag for storage. Not included in hash.
     pyrit_version: str = field(default_factory=lambda: pyrit.__version__, compare=False)
     #: Evaluation hash. Computed by EvaluationIdentifier subclasses (e.g. ScorerEvaluationIdentifier)
     #: and attached to the identifier so it is always available via ``to_dict()``.
     #: Survives DB round-trips even when param values are truncated.
-    eval_hash: Optional[str] = field(default=None, compare=False)
+    eval_hash: str | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         """Compute the content-addressed hash at creation time if not already provided."""
@@ -206,8 +206,8 @@ class ComponentIdentifier:
         cls,
         obj: object,
         *,
-        params: Optional[dict[str, Any]] = None,
-        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+        params: dict[str, Any] | None = None,
+        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
     ) -> ComponentIdentifier:
         """
         Build a ComponentIdentifier from a live object instance.
@@ -239,7 +239,7 @@ class ComponentIdentifier:
             children=clean_children,
         )
 
-    def to_dict(self, *, max_value_length: Optional[int] = None) -> dict[str, Any]:
+    def to_dict(self, *, max_value_length: int | None = None) -> dict[str, Any]:
         """
         Serialize to a JSON-compatible dictionary for DB/JSONL storage.
 
@@ -284,7 +284,7 @@ class ComponentIdentifier:
         return result
 
     @staticmethod
-    def _truncate_value(*, value: Any, max_length: Optional[int]) -> Any:
+    def _truncate_value(*, value: Any, max_length: int | None) -> Any:
         """
         Truncate a string value if it exceeds the maximum length.
 
@@ -354,7 +354,7 @@ class ComponentIdentifier:
             eval_hash=stored_eval_hash,
         )
 
-    def get_child(self, key: str) -> Optional[ComponentIdentifier]:
+    def get_child(self, key: str) -> ComponentIdentifier | None:
         """
         Get a single child by key.
 
@@ -413,8 +413,8 @@ class ComponentIdentifier:
 
     @classmethod
     def _reconstruct_children(
-        cls, children_dict: Optional[dict[str, Any]]
-    ) -> dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]:
+        cls, children_dict: dict[str, Any] | None
+    ) -> dict[str, ComponentIdentifier | list[ComponentIdentifier]]:
         """
         Reconstruct child identifiers from raw dictionary data.
 
@@ -425,7 +425,7 @@ class ComponentIdentifier:
         Returns:
             Dict mapping child names to reconstructed ComponentIdentifier instances or lists thereof.
         """
-        children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = {}
+        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] = {}
         if not children_dict or not isinstance(children_dict, dict):
             return children
 
@@ -477,7 +477,7 @@ class Identifiable(ABC):
     component's lifetime.
     """
 
-    _identifier: Optional[ComponentIdentifier] = None
+    _identifier: ComponentIdentifier | None = None
 
     @abstractmethod
     def _build_identifier(self) -> ComponentIdentifier:

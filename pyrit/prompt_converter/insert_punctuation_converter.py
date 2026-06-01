@@ -4,7 +4,6 @@
 import random
 import re
 import string
-from typing import Optional
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType
@@ -73,7 +72,7 @@ class InsertPunctuationConverter(PromptConverter):
         return all(char in string.punctuation for char in punctuation_list)
 
     async def convert_async(
-        self, *, prompt: str, input_type: PromptDataType = "text", punctuation_list: Optional[list[str]] = None
+        self, *, prompt: str, input_type: PromptDataType = "text", punctuation_list: list[str] | None = None
     ) -> ConverterResult:
         """
         Convert the given prompt by inserting punctuation.

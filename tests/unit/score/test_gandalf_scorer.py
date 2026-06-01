@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import uuid
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,7 +14,7 @@ from pyrit.prompt_target import GandalfLevel
 from pyrit.score import GandalfScorer
 
 
-def generate_password_extraction_response(response_text: str, conversation_id: Optional[str] = None) -> Message:
+def generate_password_extraction_response(response_text: str, conversation_id: str | None = None) -> Message:
     return Message(
         message_pieces=[
             MessagePiece(
@@ -30,7 +29,7 @@ def generate_password_extraction_response(response_text: str, conversation_id: O
     )
 
 
-def generate_request(conversation_id: Optional[str] = None) -> Message:
+def generate_request(conversation_id: str | None = None) -> Message:
     return Message(
         message_pieces=[
             MessagePiece(

@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from pyrit.common import default_values
 from pyrit.common.logger import logger
@@ -85,10 +85,10 @@ class StrategyEventData(Generic[StrategyContextT, StrategyResultT]):
 
     # Context and result of the strategy
     context: StrategyContextT
-    result: Optional[StrategyResultT] = None
+    result: StrategyResultT | None = None
 
     # Optional error if the event is related to an error
-    error: Optional[Exception] = None
+    error: Exception | None = None
 
 
 class StrategyEventHandler(ABC, Generic[StrategyContextT, StrategyResultT]):
@@ -157,7 +157,7 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         self,
         *,
         context_type: type[StrategyContextT],
-        event_handler: Optional[StrategyEventHandler[StrategyContextT, StrategyResultT]] = None,
+        event_handler: StrategyEventHandler[StrategyContextT, StrategyResultT] | None = None,
         logger: logging.Logger = logger,
     ) -> None:
         """
@@ -250,8 +250,8 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         *,
         event: StrategyEvent,
         context: StrategyContextT,
-        result: Optional[StrategyResultT] = None,
-        error: Optional[Exception] = None,
+        result: StrategyResultT | None = None,
+        error: Exception | None = None,
     ) -> None:
         """
         Handle a strategy event by notifying all registered event handlers.

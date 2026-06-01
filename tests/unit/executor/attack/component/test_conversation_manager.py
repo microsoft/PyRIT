@@ -18,7 +18,6 @@ Helper functions include:
 """
 
 import uuid
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -57,7 +56,7 @@ class _TestAttackContext(AttackContext):
     """Concrete AttackContext for testing."""
 
     # Add last_score to match MultiTurnAttackContext behavior for testing
-    last_score: Optional[Score] = None
+    last_score: Score | None = None
 
 
 # =============================================================================

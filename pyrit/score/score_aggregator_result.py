@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 from dataclasses import dataclass
-from typing import Union
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,8 +18,8 @@ class ScoreAggregatorResult:
         metadata (Dict[str, Union[str, int, float]]): Combined metadata from constituent scores.
     """
 
-    value: Union[bool, float]
+    value: bool | float
     description: str
     rationale: str
     category: list[str]
-    metadata: dict[str, Union[str, int, float]]
+    metadata: dict[str, str | int | float]

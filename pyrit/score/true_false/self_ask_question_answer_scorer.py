@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.common.utils import verify_and_resolve_path
@@ -38,8 +38,8 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
         self,
         *,
         chat_target: PromptTarget,
-        true_false_question_path: Optional[pathlib.Path] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        true_false_question_path: pathlib.Path | None = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
     ) -> None:
         """
@@ -67,7 +67,7 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
             score_aggregator=score_aggregator,
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score the message piece using question answering evaluation.
 

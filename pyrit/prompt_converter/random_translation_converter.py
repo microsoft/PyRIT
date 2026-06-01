@@ -4,7 +4,6 @@
 import logging
 import random
 from pathlib import Path
-from typing import Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH, DATASETS_PATH
@@ -36,9 +35,9 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
         self,
         *,
         converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        system_prompt_template: Optional[SeedPrompt] = None,
-        languages: Optional[list[str]] = None,
-        word_selection_strategy: Optional[WordSelectionStrategy] = None,
+        system_prompt_template: SeedPrompt | None = None,
+        languages: list[str] | None = None,
+        word_selection_strategy: WordSelectionStrategy | None = None,
     ) -> None:
         """
         Initialize the converter with a target, an optional system prompt template, and language options.

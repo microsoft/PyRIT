@@ -4,7 +4,6 @@
 import pathlib
 import random
 import re
-from typing import Optional
 
 import yaml
 
@@ -29,8 +28,8 @@ class ColloquialWordswapConverter(PromptConverter):
         self,
         *,
         deterministic: bool = False,
-        custom_substitutions: Optional[dict[str, list[str]]] = None,
-        wordswap_path: Optional[str] = None,
+        custom_substitutions: dict[str, list[str]] | None = None,
+        wordswap_path: str | None = None,
     ) -> None:
         """
         Initialize the converter with optional deterministic mode and substitutions source.

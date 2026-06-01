@@ -3,7 +3,7 @@
 
 import logging
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.utils import warn_if_set
@@ -55,12 +55,12 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         self,
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         max_attempts_on_failure: int = 0,
         params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
-        prepended_conversation_config: Optional[PrependedConversationConfig] = None,
+        prepended_conversation_config: PrependedConversationConfig | None = None,
     ) -> None:
         """
         Initialize the prompt injection attack strategy.
@@ -119,7 +119,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         # Store the prepended conversation configuration
         self._prepended_conversation_config = prepended_conversation_config
 
-    def get_attack_scoring_config(self) -> Optional[AttackScoringConfig]:
+    def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
         Get the attack scoring configuration used by this strategy.
 
@@ -242,8 +242,8 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         )
 
     def _determine_attack_outcome(
-        self, *, response: Optional[Message], score: Optional[Score], context: SingleTurnAttackContext[Any]
-    ) -> tuple[AttackOutcome, Optional[str]]:
+        self, *, response: Message | None, score: Score | None, context: SingleTurnAttackContext[Any]
+    ) -> tuple[AttackOutcome, str | None]:
         """
         Determine the outcome of the attack based on the response and score.
 
@@ -299,7 +299,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
 
     async def _send_prompt_to_objective_target_async(
         self, *, message: Message, context: SingleTurnAttackContext[Any]
-    ) -> Optional[Message]:
+    ) -> Message | None:
         """
         Send the prompt to the target and return the response.
 
@@ -334,7 +334,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         *,
         response: Message,
         objective: str,
-    ) -> Optional[Score]:
+    ) -> Score | None:
         """
         Evaluate the response against the objective using the configured scorers.
 

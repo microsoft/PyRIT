@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import binascii
-from typing import Literal, Optional
+from typing import Literal
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.text_selection_strategy import (
@@ -29,8 +29,8 @@ class BinAsciiConverter(WordLevelConverter):
         self,
         *,
         encoding_func: EncodingFunc = "hex",
-        word_selection_strategy: Optional[WordSelectionStrategy] = None,
-        word_split_separator: Optional[str] = " ",
+        word_selection_strategy: WordSelectionStrategy | None = None,
+        word_split_separator: str | None = " ",
     ) -> None:
         """
         Initialize the BinAsciiConverter.

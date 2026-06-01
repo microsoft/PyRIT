@@ -6,7 +6,7 @@ import inspect
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import fields as dc_fields
-from typing import Any, Optional
+from typing import Any
 
 from tqdm import tqdm
 
@@ -120,7 +120,7 @@ class SeedDatasetProvider(ABC):
         )
         return await self.fetch_dataset_async(cache=cache)
 
-    async def _parse_metadata(self) -> Optional[SeedDatasetMetadata]:
+    async def _parse_metadata(self) -> SeedDatasetMetadata | None:
         """
         Parse provider-specific metadata into the shared schema.
 
@@ -144,7 +144,7 @@ class SeedDatasetProvider(ABC):
         return cls._registry.copy()
 
     @classmethod
-    async def get_all_dataset_names_async(cls, filters: Optional[SeedDatasetFilter] = None) -> list[str]:
+    async def get_all_dataset_names_async(cls, filters: SeedDatasetFilter | None = None) -> list[str]:
         """
         Get the names of all registered datasets.
 
@@ -273,7 +273,7 @@ class SeedDatasetProvider(ABC):
     async def fetch_datasets_async(
         cls,
         *,
-        dataset_names: Optional[list[str]] = None,
+        dataset_names: list[str] | None = None,
         cache: bool = True,
         max_concurrency: int = 5,
     ) -> list[SeedDataset]:
@@ -315,7 +315,7 @@ class SeedDatasetProvider(ABC):
 
         async def fetch_single_dataset(
             provider_name: str, provider_class: type["SeedDatasetProvider"]
-        ) -> Optional[tuple[str, SeedDataset]]:
+        ) -> tuple[str, SeedDataset] | None:
             """
             Fetch a single dataset with error handling.
 
@@ -341,7 +341,7 @@ class SeedDatasetProvider(ABC):
 
         async def fetch_with_semaphore(
             provider_name: str, provider_class: type["SeedDatasetProvider"]
-        ) -> Optional[tuple[str, SeedDataset]]:
+        ) -> tuple[str, SeedDataset] | None:
             """
             Enforce concurrency limit and update progress during dataset fetch.
 

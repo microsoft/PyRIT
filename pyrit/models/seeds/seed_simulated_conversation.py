@@ -18,7 +18,7 @@ import hashlib
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 import pyrit
 from pyrit.common.path import EXECUTOR_SIMULATED_TARGET_PATH
@@ -69,12 +69,12 @@ class SeedSimulatedConversation(Seed):
     def __init__(
         self,
         *,
-        adversarial_chat_system_prompt_path: Union[str, Path],
-        simulated_target_system_prompt_path: Optional[Union[str, Path]] = None,
-        next_message_system_prompt_path: Optional[Union[str, Path]] = None,
+        adversarial_chat_system_prompt_path: str | Path,
+        simulated_target_system_prompt_path: str | Path | None = None,
+        next_message_system_prompt_path: str | Path | None = None,
         num_turns: int = 3,
         sequence: int = 0,
-        pyrit_version: Optional[str] = None,
+        pyrit_version: str | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -180,9 +180,9 @@ class SeedSimulatedConversation(Seed):
     @classmethod
     def from_yaml_with_required_parameters(
         cls,
-        template_path: Union[str, Path],
+        template_path: str | Path,
         required_parameters: list[str],
-        error_message: Optional[str] = None,
+        error_message: str | None = None,
     ) -> SeedSimulatedConversation:
         """
         Load a SeedSimulatedConversation from a YAML file and validate required parameters.
@@ -246,8 +246,8 @@ class SeedSimulatedConversation(Seed):
         *,
         objective: str,
         num_turns: int,
-        simulated_target_system_prompt_path: Optional[Union[str, Path]] = None,
-    ) -> Optional[str]:
+        simulated_target_system_prompt_path: str | Path | None = None,
+    ) -> str | None:
         """
         Load and render the simulated target system prompt.
 

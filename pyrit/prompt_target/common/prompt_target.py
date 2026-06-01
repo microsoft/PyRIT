@@ -3,7 +3,7 @@
 
 import abc
 import logging
-from typing import Any, Union, final
+from typing import Any, final
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.identifiers import ComponentIdentifier, Identifiable
@@ -320,7 +320,7 @@ class PromptTarget(Identifiable):
         self,
         *,
         params: dict[str, Any] | None = None,
-        children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] | None = None,
+        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct the target identifier.

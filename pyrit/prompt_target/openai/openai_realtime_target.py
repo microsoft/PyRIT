@@ -7,7 +7,7 @@ import logging
 import re
 import wave
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from openai import AsyncOpenAI
 
@@ -94,9 +94,9 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
     def __init__(
         self,
         *,
-        voice: Optional[RealTimeVoice] = None,
-        existing_convo: Optional[dict[str, Any]] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        voice: RealTimeVoice | None = None,
+        existing_convo: dict[str, Any] | None = None,
+        custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -128,7 +128,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
 
         self.voice = voice
         self._existing_conversation = existing_convo if existing_convo is not None else {}
-        self._realtime_client: Optional[AsyncOpenAI] = None
+        self._realtime_client: AsyncOpenAI | None = None
 
     def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_REALTIME_MODEL"
@@ -402,7 +402,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         num_channels: int = 1,
         sample_width: int = 2,
         sample_rate: int = 16000,
-        output_filename: Optional[str] = None,
+        output_filename: str | None = None,
     ) -> str:
         """
         Save audio bytes to a WAV file.

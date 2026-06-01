@@ -13,7 +13,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from inspect import signature
-from typing import TYPE_CHECKING, Any, Optional, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
@@ -219,9 +219,9 @@ class RedTeamAgent(Scenario):
     def __init__(
         self,
         *,
-        adversarial_chat: Optional[PromptTarget] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        scenario_result_id: Optional[str] = None,
+        adversarial_chat: PromptTarget | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        scenario_result_id: str | None = None,
         include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
@@ -280,13 +280,11 @@ class RedTeamAgent(Scenario):
         self,
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        scenario_strategies: Optional[
-            Sequence["FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy"]
-        ] = None,
-        dataset_config: Optional[DatasetConfiguration] = None,
+        scenario_strategies: Sequence["FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy"] | None = None,
+        dataset_config: DatasetConfiguration | None = None,
         max_concurrency: int = 4,
         max_retries: int = 0,
-        memory_labels: Optional[dict[str, str]] = None,
+        memory_labels: dict[str, str] | None = None,
         include_baseline: bool | None = None,
     ) -> None:
         """
@@ -320,7 +318,7 @@ class RedTeamAgent(Scenario):
 
     def _prepare_strategies(  # type: ignore[ty:invalid-method-override]
         self,
-        strategies: "Optional[Sequence[FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy]]",
+        strategies: "Sequence[FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy] | None",
     ) -> list[ScenarioStrategy]:
         """
         Resolve strategies and build FoundryComposite objects.
@@ -510,7 +508,7 @@ class RedTeamAgent(Scenario):
         *,
         attack_type: type[AttackStrategyT],
         converters: list[PromptConverter],
-        attack_kwargs: Optional[dict[str, Any]] = None,
+        attack_kwargs: dict[str, Any] | None = None,
     ) -> AttackStrategyT:
         """
         Create an attack instance with the specified converters.

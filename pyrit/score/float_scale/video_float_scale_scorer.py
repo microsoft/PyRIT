@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score
@@ -43,12 +43,12 @@ class VideoFloatScaleScorer(
         self,
         *,
         image_capable_scorer: FloatScaleScorer,
-        audio_scorer: Optional[FloatScaleScorer] = None,
-        num_sampled_frames: Optional[int] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        audio_scorer: FloatScaleScorer | None = None,
+        num_sampled_frames: int | None = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: FloatScaleAggregatorFunc = FloatScaleScorerByCategory.MAX,
-        image_objective_template: Optional[str] = VideoHelper._DEFAULT_IMAGE_OBJECTIVE_TEMPLATE,
-        audio_objective_template: Optional[str] = None,
+        image_objective_template: str | None = VideoHelper._DEFAULT_IMAGE_OBJECTIVE_TEMPLATE,
+        audio_objective_template: str | None = None,
     ) -> None:
         """
         Initialize the VideoFloatScaleScorer.
@@ -117,7 +117,7 @@ class VideoFloatScaleScorer(
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score a single video piece by extracting frames and optionally audio, then aggregating their scores.
 

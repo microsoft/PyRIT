@@ -105,8 +105,8 @@ class TAPAttackScoringConfig(AttackScoringConfig):
         self,
         *,
         objective_scorer: FloatScaleThresholdScorer,
-        refusal_scorer: Optional[TrueFalseScorer] = None,
-        auxiliary_scorers: Optional[list[Scorer]] = None,
+        refusal_scorer: TrueFalseScorer | None = None,
+        auxiliary_scorers: list[Scorer] | None = None,
         use_score_as_feedback: bool = True,
     ) -> None:
         """
@@ -170,9 +170,9 @@ class TAPAttackContext(MultiTurnAttackContext[Any]):
     nodes: list["_TreeOfAttacksNode"] = field(default_factory=list)
 
     # Best conversation ID and score found during the attack
-    best_conversation_id: Optional[str] = None
-    best_objective_score: Optional[Score] = None
-    best_adversarial_conversation_id: Optional[str] = None
+    best_conversation_id: str | None = None
+    best_objective_score: Score | None = None
+    best_adversarial_conversation_id: str | None = None
 
 
 @dataclass
@@ -185,7 +185,7 @@ class TAPAttackResult(AttackResult):
     """
 
     @property
-    def tree_visualization(self) -> Optional[Tree]:
+    def tree_visualization(self) -> Tree | None:
         """Get the tree visualization from metadata."""
         return self.metadata.get("tree_visualization", None)
 
@@ -235,12 +235,12 @@ class TAPAttackResult(AttackResult):
         self.metadata["auxiliary_scores_summary"] = value
 
     @property
-    def best_adversarial_conversation_id(self) -> Optional[str]:
+    def best_adversarial_conversation_id(self) -> str | None:
         """Get the adversarial conversation ID for the best-scoring branch."""
-        return cast("Optional[str]", self.metadata.get("best_adversarial_conversation_id", None))
+        return cast("str | None", self.metadata.get("best_adversarial_conversation_id", None))
 
     @best_adversarial_conversation_id.setter
-    def best_adversarial_conversation_id(self, value: Optional[str]) -> None:
+    def best_adversarial_conversation_id(self, value: str | None) -> None:
         """Set the best adversarial conversation ID."""
         self.metadata["best_adversarial_conversation_id"] = value
 
@@ -285,16 +285,16 @@ class _TreeOfAttacksNode:
         adversarial_chat_system_seed_prompt: SeedPrompt,
         desired_response_prefix: str,
         objective_scorer: Scorer,
-        on_topic_scorer: Optional[Scorer],
+        on_topic_scorer: Scorer | None,
         request_converters: list[PromptConverterConfiguration],
         response_converters: list[PromptConverterConfiguration],
-        auxiliary_scorers: Optional[list[Scorer]],
+        auxiliary_scorers: list[Scorer] | None,
         attack_id: ComponentIdentifier,
         attack_strategy_name: str,
-        memory_labels: Optional[dict[str, str]] = None,
-        parent_id: Optional[str] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
-        initial_prompt: Optional[Message] = None,
+        memory_labels: dict[str, str] | None = None,
+        parent_id: str | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
+        initial_prompt: Message | None = None,
     ) -> None:
         """
         Initialize a tree node.
@@ -353,21 +353,21 @@ class _TreeOfAttacksNode:
         # Execution results (populated after send_prompt_async)
         self.completed = False
         self.off_topic = False
-        self.objective_score: Optional[Score] = None
+        self.objective_score: Score | None = None
         self.auxiliary_scores: dict[str, Score] = {}
-        self.last_prompt_sent: Optional[str] = None
-        self.last_response: Optional[str] = None
-        self.error_message: Optional[str] = None
+        self.last_prompt_sent: str | None = None
+        self.last_response: str | None = None
+        self.error_message: str | None = None
 
         # Context from prepended conversation (for adversarial chat system prompt)
-        self._conversation_context: Optional[str] = None
+        self._conversation_context: str | None = None
 
         # Initial prompt for first turn (bypasses adversarial chat generation)
         # This supports multimodal messages
-        self._initial_prompt: Optional[Message] = initial_prompt
+        self._initial_prompt: Message | None = initial_prompt
 
         # Current objective (set when send_prompt_async is called)
-        self._objective: Optional[str] = None
+        self._objective: str | None = None
 
     async def initialize_with_prepended_conversation_async(
         self,
@@ -1924,8 +1924,8 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self,
         *,
         context: TAPAttackContext,
-        parent_id: Optional[str] = None,
-        initial_prompt: Optional[Message] = None,
+        parent_id: str | None = None,
+        initial_prompt: Message | None = None,
     ) -> _TreeOfAttacksNode:
         """
         Create a new attack node with the configured settings.
@@ -2036,7 +2036,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         unnormalized_score = round(1 + normalized_score * 9)
         return f"Score: {unnormalized_score}/10"
 
-    def _create_on_topic_scorer(self, objective: str) -> Optional[Scorer]:
+    def _create_on_topic_scorer(self, objective: str) -> Scorer | None:
         """
         Create an on-topic scorer if enabled, configured for the specific objective.
 
@@ -2186,7 +2186,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         return result
 
-    def _get_last_response_from_conversation(self, conversation_id: Optional[str]) -> Optional[MessagePiece]:
+    def _get_last_response_from_conversation(self, conversation_id: str | None) -> MessagePiece | None:
         """
         Retrieve the last response from a conversation.
 
@@ -2260,7 +2260,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self,
         *,
         objective: str,
-        memory_labels: Optional[dict[str, str]] = None,
+        memory_labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> TAPAttackResult: ...
 

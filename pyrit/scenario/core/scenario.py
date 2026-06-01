@@ -18,7 +18,7 @@ from abc import ABC
 from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, cast, get_origin
+from typing import TYPE_CHECKING, Any, ClassVar, cast, get_origin
 
 try:
     # Built-in on Python 3.11+. Fall back to the ``exceptiongroup`` backport on 3.10
@@ -177,7 +177,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         default_strategy: ScenarioStrategy,
         default_dataset_config: DatasetConfiguration,
         objective_scorer: Scorer,
-        scenario_result_id: Optional[Union[uuid.UUID, str]] = None,
+        scenario_result_id: uuid.UUID | str | None = None,
         include_default_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
@@ -223,10 +223,10 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         self._default_dataset_config = default_dataset_config
 
         # These will be set in initialize_async
-        self._objective_target: Optional[PromptTarget] = None
-        self._objective_target_identifier: Optional[ComponentIdentifier] = None
+        self._objective_target: PromptTarget | None = None
+        self._objective_target_identifier: ComponentIdentifier | None = None
         self._memory_labels: dict[str, str] = {}
-        self._max_concurrency: Optional[int] = None
+        self._max_concurrency: int | None = None
         self._max_retries: int = 0
 
         self._objective_scorer = objective_scorer
@@ -235,7 +235,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         self._name = name if name else type(self).__name__
         self._memory = CentralMemory.get_memory_instance()
         self._atomic_attacks: list[AtomicAttack] = []
-        self._scenario_result_id: Optional[str] = str(scenario_result_id) if scenario_result_id else None
+        self._scenario_result_id: str | None = str(scenario_result_id) if scenario_result_id else None
 
         # Store prepared strategies for use in _get_atomic_attacks_async
         self._scenario_strategies: list[ScenarioStrategy] = []
@@ -533,7 +533,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
     def _prepare_strategies(
         self,
-        strategies: Optional[Sequence[ScenarioStrategy]],
+        strategies: Sequence[ScenarioStrategy] | None,
     ) -> list[ScenarioStrategy]:
         """
         Resolve strategy inputs into a concrete list for this scenario.
@@ -558,11 +558,11 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         self,
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        scenario_strategies: Optional[Sequence[ScenarioStrategy]] = None,
-        dataset_config: Optional[DatasetConfiguration] = None,
+        scenario_strategies: Sequence[ScenarioStrategy] | None = None,
+        dataset_config: DatasetConfiguration | None = None,
         max_concurrency: int = 4,
         max_retries: int = 0,
-        memory_labels: Optional[dict[str, str]] = None,
+        memory_labels: dict[str, str] | None = None,
         include_baseline: bool | None = None,
     ) -> None:
         """
@@ -1413,7 +1413,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         for outcome in outcomes:
             if isinstance(outcome, BaseException):
                 logger.error(f"Atomic attack failed in scenario '{self._name}': {str(outcome)}")
-                error: Optional[BaseException] = outcome
+                error: BaseException | None = outcome
             else:
                 atomic_attack, atomic_results = outcome
                 error = self._partial_result_to_exception(atomic_attack=atomic_attack, atomic_results=atomic_results)

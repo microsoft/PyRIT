@@ -11,7 +11,7 @@ import logging
 import threading
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Optional, TypeVar
+from typing import Any, TypeVar
 
 from pyrit.common.path import (
     SCORER_EVALS_PATH,
@@ -53,7 +53,7 @@ def _metrics_to_registry_dict(metrics: ScorerMetrics) -> dict[str, Any]:
 
 
 def get_all_objective_metrics(
-    file_path: Optional[Path] = None,
+    file_path: Path | None = None,
 ) -> list[ScorerMetricsWithIdentity[ObjectiveScorerMetrics]]:
     """
     Load all objective scorer metrics with full scorer identity for comparison.
@@ -151,8 +151,8 @@ def _load_metrics_from_file(
 def find_objective_metrics_by_eval_hash(
     *,
     eval_hash: str,
-    file_path: Optional[Path] = None,
-) -> Optional[ObjectiveScorerMetrics]:
+    file_path: Path | None = None,
+) -> ObjectiveScorerMetrics | None:
     """
     Find objective scorer metrics by evaluation hash.
 
@@ -175,7 +175,7 @@ def find_harm_metrics_by_eval_hash(
     *,
     eval_hash: str,
     harm_category: str,
-) -> Optional[HarmScorerMetrics]:
+) -> HarmScorerMetrics | None:
     """
     Find harm scorer metrics by evaluation hash.
 
@@ -195,7 +195,7 @@ def _find_metrics_by_eval_hash(
     file_path: Path,
     eval_hash: str,
     metrics_class: type[M],
-) -> Optional[M]:
+) -> M | None:
     """
     Find scorer metrics by evaluation hash in a specific file.
 

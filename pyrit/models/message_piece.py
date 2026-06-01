@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 from uuid import uuid4
 
 from pyrit.common.deprecation import print_deprecation_message
@@ -58,26 +58,26 @@ class MessagePiece:
         *,
         role: ChatMessageRole,
         original_value: str,
-        original_value_sha256: Optional[str] = None,
-        converted_value: Optional[str] = None,
-        converted_value_sha256: Optional[str] = None,
-        id: Optional[uuid.UUID | str] = None,  # noqa: A002
-        conversation_id: Optional[str] = None,
+        original_value_sha256: str | None = None,
+        converted_value: str | None = None,
+        converted_value_sha256: str | None = None,
+        id: uuid.UUID | str | None = None,  # noqa: A002
+        conversation_id: str | None = None,
         sequence: int = -1,
-        labels: Optional[dict[str, str]] = None,
-        prompt_metadata: Optional[dict[str, Union[str, int]]] = None,
-        converter_identifiers: Optional[list[ComponentIdentifier]] = None,
-        prompt_target_identifier: Optional[ComponentIdentifier] = None,
-        attack_identifier: Optional[ComponentIdentifier] = None,
-        scorer_identifier: Optional[ComponentIdentifier] = None,
+        labels: dict[str, str] | None = None,
+        prompt_metadata: dict[str, str | int] | None = None,
+        converter_identifiers: list[ComponentIdentifier] | None = None,
+        prompt_target_identifier: ComponentIdentifier | None = None,
+        attack_identifier: ComponentIdentifier | None = None,
+        scorer_identifier: ComponentIdentifier | None = None,
         original_value_data_type: PromptDataType = "text",
-        converted_value_data_type: Optional[PromptDataType] = None,
+        converted_value_data_type: PromptDataType | None = None,
         response_error: PromptResponseError = "none",
         originator: Literal["attack", "converter", "undefined", "scorer"] = "undefined",
-        original_prompt_id: Optional[uuid.UUID] = None,
-        timestamp: Optional[datetime] = None,
-        scores: Optional[list[Score]] = None,
-        targeted_harm_categories: Optional[list[str]] = None,
+        original_prompt_id: uuid.UUID | None = None,
+        timestamp: datetime | None = None,
+        scores: list[Score] | None = None,
+        targeted_harm_categories: list[str] | None = None,
     ) -> None:
         """
         Initialize a MessagePiece.
@@ -153,9 +153,9 @@ class MessagePiece:
 
         self.converter_identifiers: list[ComponentIdentifier] = converter_identifiers if converter_identifiers else []
 
-        self.prompt_target_identifier: Optional[ComponentIdentifier] = prompt_target_identifier
+        self.prompt_target_identifier: ComponentIdentifier | None = prompt_target_identifier
 
-        self.attack_identifier: Optional[ComponentIdentifier] = attack_identifier
+        self.attack_identifier: ComponentIdentifier | None = attack_identifier
 
         # Handle scorer_identifier: normalize to ComponentIdentifier (handles dict with deprecation warning)
         if scorer_identifier is not None:
@@ -164,7 +164,7 @@ class MessagePiece:
                 new_item="MessagePiece(...)",
                 removed_in="0.15.0",
             )
-        self.scorer_identifier: Optional[ComponentIdentifier] = scorer_identifier if scorer_identifier else None
+        self.scorer_identifier: ComponentIdentifier | None = scorer_identifier if scorer_identifier else None
 
         self.original_value = original_value
 

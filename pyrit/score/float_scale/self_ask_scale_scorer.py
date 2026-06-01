@@ -3,7 +3,7 @@
 
 import enum
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 import yaml
 
@@ -45,9 +45,9 @@ class SelfAskScaleScorer(FloatScaleScorer):
         self,
         *,
         chat_target: PromptTarget,
-        scale_arguments_path: Optional[Union[Path, str]] = None,
-        system_prompt_path: Optional[Union[Path, str]] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        scale_arguments_path: Path | str | None = None,
+        system_prompt_path: Path | str | None = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the SelfAskScaleScorer.
@@ -102,7 +102,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the given message_piece using "self-ask" for the chat target.
 

@@ -5,7 +5,6 @@ import abc
 import random
 import re
 from re import Pattern
-from typing import Optional, Union
 
 
 class TextSelectionStrategy(abc.ABC):
@@ -133,7 +132,7 @@ class IndexSelectionStrategy(TextSelectionStrategy):
     Selects text based on absolute character indices.
     """
 
-    def __init__(self, *, start: int = 0, end: Optional[int] = None) -> None:
+    def __init__(self, *, start: int = 0, end: int | None = None) -> None:
         """
         Initialize the index selection strategy.
 
@@ -165,7 +164,7 @@ class RegexSelectionStrategy(TextSelectionStrategy):
     Selects text based on the first regex match.
     """
 
-    def __init__(self, *, pattern: Union[str, Pattern[str]]) -> None:
+    def __init__(self, *, pattern: str | Pattern[str]) -> None:
         """
         Initialize the regex selection strategy.
 
@@ -290,7 +289,7 @@ class ProportionSelectionStrategy(TextSelectionStrategy):
     Selects a proportion of text anchored to a specific position (start, end, middle, or random).
     """
 
-    def __init__(self, *, proportion: float, anchor: str = "start", seed: Optional[int] = None) -> None:
+    def __init__(self, *, proportion: float, anchor: str = "start", seed: int | None = None) -> None:
         """
         Initialize the proportion selection strategy.
 
@@ -473,7 +472,7 @@ class WordProportionSelectionStrategy(WordSelectionStrategy):
     Selects a random proportion of words.
     """
 
-    def __init__(self, *, proportion: float, seed: Optional[int] = None) -> None:
+    def __init__(self, *, proportion: float, seed: int | None = None) -> None:
         """
         Initialize the word proportion selection strategy.
 
@@ -515,7 +514,7 @@ class WordRegexSelectionStrategy(WordSelectionStrategy):
     Selects words that match a regex pattern.
     """
 
-    def __init__(self, *, pattern: Union[str, Pattern[str]]) -> None:
+    def __init__(self, *, pattern: str | Pattern[str]) -> None:
         """
         Initialize the word regex selection strategy.
 

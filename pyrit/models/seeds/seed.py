@@ -15,7 +15,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import yaml
 from jinja2 import StrictUndefined, Undefined
@@ -89,46 +89,46 @@ class Seed(YamlLoadable):
     value: str
 
     # SHA256 hash of the value, used for deduplication
-    value_sha256: Optional[str] = None
+    value_sha256: str | None = None
 
     # Unique identifier for the prompt
-    id: Optional[uuid.UUID] = field(default_factory=lambda: uuid.uuid4())
+    id: uuid.UUID | None = field(default_factory=lambda: uuid.uuid4())
 
     # Name of the prompt
-    name: Optional[str] = None
+    name: str | None = None
 
     # Name of the dataset this prompt belongs to
-    dataset_name: Optional[str] = None
+    dataset_name: str | None = None
 
     # Categories of harm associated with this prompt
-    harm_categories: Optional[Sequence[str]] = field(default_factory=list)
+    harm_categories: Sequence[str] | None = field(default_factory=list)
 
     # Description of the prompt
-    description: Optional[str] = None
+    description: str | None = None
 
     # Authors of the prompt
-    authors: Optional[Sequence[str]] = field(default_factory=list)
+    authors: Sequence[str] | None = field(default_factory=list)
 
     # Groups affiliated with the prompt
-    groups: Optional[Sequence[str]] = field(default_factory=list)
+    groups: Sequence[str] | None = field(default_factory=list)
 
     # Source of the prompt
-    source: Optional[str] = None
+    source: str | None = None
 
     # Date when the prompt was added to the dataset
-    date_added: Optional[datetime] = field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    date_added: datetime | None = field(default_factory=lambda: datetime.now(tz=timezone.utc))
 
     # User who added the prompt to the dataset
-    added_by: Optional[str] = None
+    added_by: str | None = None
 
     # Arbitrary metadata that can be attached to the prompt
-    metadata: Optional[dict[str, Union[str, int]]] = field(default_factory=dict)
+    metadata: dict[str, str | int] | None = field(default_factory=dict)
 
     # Unique identifier for the prompt group
-    prompt_group_id: Optional[uuid.UUID] = None
+    prompt_group_id: uuid.UUID | None = None
 
     # Alias for the prompt group
-    prompt_group_alias: Optional[str] = None
+    prompt_group_alias: str | None = None
 
     # Whether this seed represents a general attack technique (not tied to a specific objective)
     is_general_technique: bool = False
@@ -247,7 +247,7 @@ class Seed(YamlLoadable):
         return f"{{% raw %}}{value}{{% endraw %}}"
 
     @classmethod
-    def from_yaml_file(cls: type[T], file: Union[str, Path]) -> T:
+    def from_yaml_file(cls: type[T], file: str | Path) -> T:
         """
         Create a new Seed from a YAML file, marking it as a trusted Jinja2 template.
 
@@ -274,9 +274,9 @@ class Seed(YamlLoadable):
     @abc.abstractmethod
     def from_yaml_with_required_parameters(
         cls,
-        template_path: Union[str, Path],
+        template_path: str | Path,
         required_parameters: list[str],
-        error_message: Optional[str] = None,
+        error_message: str | None = None,
     ) -> Seed:
         """
         Load a Seed from a YAML file and validate that it contains specific parameters.

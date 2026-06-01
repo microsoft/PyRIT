@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 from dataclasses import dataclass
-from typing import Optional
 
 from pyrit.models import Message
 from pyrit.prompt_normalizer.prompt_converter_configuration import (
@@ -27,7 +26,7 @@ class NormalizerRequest:
         message: Message,
         request_converter_configurations: list[PromptConverterConfiguration] | None = None,
         response_converter_configurations: list[PromptConverterConfiguration] | None = None,
-        conversation_id: Optional[str] = None,
+        conversation_id: str | None = None,
     ) -> None:
         """
         Initialize a normalizer request.

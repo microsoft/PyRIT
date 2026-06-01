@@ -10,12 +10,11 @@ hint extraction for consistent error handling across OpenAI-based prompt targets
 
 import json
 import logging
-from typing import Optional, Union
 
 logger = logging.getLogger(__name__)
 
 
-def _extract_request_id_from_exception(exc: Exception) -> Optional[str]:
+def _extract_request_id_from_exception(exc: Exception) -> str | None:
     """
     Extract the x-request-id from an OpenAI SDK exception for logging/telemetry.
 
@@ -36,7 +35,7 @@ def _extract_request_id_from_exception(exc: Exception) -> Optional[str]:
     return None
 
 
-def _extract_retry_after_from_exception(exc: Exception) -> Optional[float]:
+def _extract_retry_after_from_exception(exc: Exception) -> float | None:
     """
     Extract the Retry-After header from a rate-limit exception for intelligent backoff.
 
@@ -61,7 +60,7 @@ def _extract_retry_after_from_exception(exc: Exception) -> Optional[float]:
     return None
 
 
-def _is_content_filter_error(data: Union[dict[str, object], str]) -> bool:
+def _is_content_filter_error(data: dict[str, object] | str) -> bool:
     """
     Check if error data indicates content filtering.
 
@@ -91,7 +90,7 @@ def _is_content_filter_error(data: Union[dict[str, object], str]) -> bool:
     return "content_filter" in lower or "policy_violation" in lower or "moderation_blocked" in lower
 
 
-def _extract_error_payload(exc: Exception) -> tuple[Union[dict[str, object], str], bool]:
+def _extract_error_payload(exc: Exception) -> tuple[dict[str, object] | str, bool]:
     """
     Extract error payload and detect content filter from an OpenAI SDK exception.
 

@@ -7,7 +7,7 @@ import logging  # noqa: TC003
 import uuid
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.logger import logger
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
@@ -32,10 +32,10 @@ class SingleTurnAttackContext(AttackContext[AttackParamsT]):
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     # System prompt for chat-based targets
-    system_prompt: Optional[str] = None
+    system_prompt: str | None = None
 
     # Arbitrary metadata that downstream attacks or scorers may attach
-    metadata: Optional[dict[str, Union[str, int]]] = None
+    metadata: dict[str, str | int] | None = None
 
 
 class SingleTurnAttackStrategy(AttackStrategy[SingleTurnAttackContext[Any], AttackResult], ABC):

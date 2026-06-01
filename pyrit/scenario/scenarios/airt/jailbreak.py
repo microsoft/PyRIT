@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 from pyrit.common import apply_defaults
 from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
@@ -90,9 +90,9 @@ class Jailbreak(Scenario):
     def __init__(
         self,
         *,
-        objective_scorer: Optional[TrueFalseScorer] = None,
-        scenario_result_id: Optional[str] = None,
-        num_templates: Optional[int] = None,
+        objective_scorer: TrueFalseScorer | None = None,
+        scenario_result_id: str | None = None,
+        num_templates: int | None = None,
         num_attempts: int = 1,
         jailbreak_names: list[str] | None = None,
         include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
@@ -132,7 +132,7 @@ class Jailbreak(Scenario):
 
         self._num_templates = num_templates
         self._num_attempts = num_attempts
-        self._adversarial_target: Optional[PromptTarget] = None
+        self._adversarial_target: PromptTarget | None = None
 
         # Note that num_templates and jailbreak_names are mutually exclusive.
         # If self._num_templates is None, then this returns all discoverable jailbreak templates.
@@ -170,7 +170,7 @@ class Jailbreak(Scenario):
             self._legacy_include_baseline = include_baseline
 
         # Will be resolved in _get_atomic_attacks_async
-        self._seed_groups: Optional[list[SeedAttackGroup]] = None
+        self._seed_groups: list[SeedAttackGroup] | None = None
 
     def _get_or_create_adversarial_target(self) -> PromptTarget:
         """
@@ -233,7 +233,7 @@ class Jailbreak(Scenario):
             request_converters=PromptConverterConfiguration.from_converters(converters=[jailbreak_converter])
         )
 
-        attack: Optional[Union[ManyShotJailbreakAttack, PromptSendingAttack, RolePlayAttack, SkeletonKeyAttack]] = None
+        attack: ManyShotJailbreakAttack | PromptSendingAttack | RolePlayAttack | SkeletonKeyAttack | None = None
         args: dict[str, Any] = {
             "objective_target": self._objective_target,
             "attack_scoring_config": AttackScoringConfig(objective_scorer=self._objective_scorer),

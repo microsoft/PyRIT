@@ -95,10 +95,10 @@ class AzureContentFilterScorer(FloatScaleScorer):
     def __init__(
         self,
         *,
-        endpoint: Optional[str | None] = None,
-        api_key: Optional[str | Callable[[], str | Awaitable[str]] | None] = None,
-        harm_categories: Optional[list[TextCategory]] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        endpoint: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        harm_categories: list[TextCategory] | None = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize an Azure Content Filter Scorer.
@@ -247,7 +247,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
 
         return [text[i : i + self.MAX_TEXT_LENGTH] for i in range(0, len(text), self.MAX_TEXT_LENGTH)]
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Evaluate the input text or image using the Azure Content Filter API.
 
@@ -343,7 +343,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
             for result in aggregated_results
         ]
 
-    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         """
         Build one neutral ``0.0`` fallback score per configured harm category.
 

@@ -10,7 +10,7 @@ import traceback
 import uuid
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Optional, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
 
 from pyrit.common.logger import logger
 from pyrit.exceptions.retry_collector import (
@@ -67,16 +67,16 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     related_conversations: set[ConversationReference] = field(default_factory=set)
 
     # Mutable overrides for attacks that generate these values internally
-    _next_message_override: Optional[Message] = None
-    _prepended_conversation_override: Optional[list[Message]] = None
-    _memory_labels_override: Optional[dict[str, str]] = None
+    _next_message_override: Message | None = None
+    _prepended_conversation_override: list[Message] | None = None
+    _memory_labels_override: dict[str, str] | None = None
 
     # Optional attribution from an upstream orchestrator (e.g. Scenario). When
     # set, the persistence path stamps attribution_parent_id + attribution_data
     # onto the resulting AttackResult so it can be located later for hydration
     # and resume. Set by AttackExecutor per-task before scheduling. Stays None
     # for ad-hoc/direct attack execution outside any orchestrator.
-    _attribution: Optional[AttackResultAttribution] = None
+    _attribution: AttackResultAttribution | None = None
 
     # Convenience properties that delegate to params or overrides
     @property
@@ -114,7 +114,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         self._prepended_conversation_override = value
 
     @property
-    def next_message(self) -> Optional[Message]:
+    def next_message(self) -> Message | None:
         """Optional message to send to the objective target."""
         # Check override first (for attacks that generate internally)
         if self._next_message_override is not None:
@@ -125,7 +125,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         return None
 
     @next_message.setter
-    def next_message(self, value: Optional[Message]) -> None:
+    def next_message(self, value: Message | None) -> None:
         """Set the next message (for attacks that generate internally)."""
         self._next_message_override = value
 
@@ -389,8 +389,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     def _create_identifier(
         self,
         *,
-        params: Optional[dict[str, Any]] = None,
-        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+        params: dict[str, Any] | None = None,
+        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct the attack strategy identifier.
@@ -408,7 +408,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Returns:
             ComponentIdentifier: The identifier for this attack strategy.
         """
-        all_children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = {
+        all_children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] = {
             "objective_target": self.get_objective_target().get_identifier(),
         }
 
@@ -465,7 +465,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         """
         return self._objective_target
 
-    def get_attack_scoring_config(self) -> Optional[AttackScoringConfig]:
+    def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
         Get the attack scoring configuration used by this strategy.
 
@@ -492,9 +492,9 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         self,
         *,
         objective: str,
-        next_message: Optional[Message] = None,
-        prepended_conversation: Optional[list[Message]] = None,
-        memory_labels: Optional[dict[str, str]] = None,
+        next_message: Message | None = None,
+        prepended_conversation: list[Message] | None = None,
+        memory_labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> AttackStrategyResultT: ...
 

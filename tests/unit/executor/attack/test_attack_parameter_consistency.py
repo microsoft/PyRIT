@@ -10,7 +10,6 @@ and memory_labels consistently according to the established contracts.
 
 import uuid
 from contextlib import suppress
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -911,7 +910,7 @@ def _assert_prepended_text_in_adversarial_context(
     *,
     prepended_conversation: list[Message],
     adversarial_chat_conversation_id: str,
-    adversarial_chat_mock: Optional[MagicMock] = None,
+    adversarial_chat_mock: MagicMock | None = None,
 ) -> None:
     """
     Assert that text content from prepended conversation appears in adversarial chat context.

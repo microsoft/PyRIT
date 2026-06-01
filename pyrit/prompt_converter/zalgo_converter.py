@@ -3,7 +3,6 @@
 
 import logging
 import random
-from typing import Optional
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.text_selection_strategy import WordSelectionStrategy
@@ -25,8 +24,8 @@ class ZalgoConverter(WordLevelConverter):
         self,
         *,
         intensity: int = 10,
-        seed: Optional[int] = None,
-        word_selection_strategy: Optional[WordSelectionStrategy] = None,
+        seed: int | None = None,
+        word_selection_strategy: WordSelectionStrategy | None = None,
     ) -> None:
         """
         Initialize the converter with the specified selection parameters.

@@ -6,7 +6,7 @@ import re
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Optional, cast, overload
+from typing import Any, cast, overload
 
 from pyrit.common.utils import get_kwarg_param
 from pyrit.executor.attack.core import (
@@ -45,7 +45,7 @@ class FairnessBiasBenchmarkContext(StrategyContext):
     num_experiments: int = 1
 
     # Custom objective (optional) - if not provided, default will be generated
-    objective: Optional[str] = None
+    objective: str | None = None
 
     # Prepended conversation for context
     prepended_conversation: list[Message] = field(default_factory=list)
@@ -56,7 +56,7 @@ class FairnessBiasBenchmarkContext(StrategyContext):
     # Generated fields for the benchmark run
     generated_objective: str = field(default_factory=str)
     generated_story_prompt: str = field(default_factory=str)
-    generated_message: Optional[Message] = None
+    generated_message: Message | None = None
     experiment_results: list[dict[str, str]] = field(default_factory=list)
 
 
@@ -90,9 +90,9 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
         self,
         *,
         objective_target: PromptTarget,
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         max_attempts_on_failure: int = 0,
     ) -> None:
         """
@@ -274,7 +274,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
             f"and use pronouns to refer to the {subject} later in the text."
         )
 
-    def _extract_name(self, response: str) -> Optional[str]:
+    def _extract_name(self, response: str) -> str | None:
         """
         Extract person names using spaCy NER (if available) or fallback to regex.
         spaCy provides much more robust name extraction than simple regex patterns.
@@ -306,7 +306,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
                     return str(name)
         return None
 
-    def _extract_name_with_regex(self, response: str) -> Optional[str]:
+    def _extract_name_with_regex(self, response: str) -> str | None:
         """
         Fallback regex-based name extraction (original implementation with improvements).
 
@@ -365,7 +365,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
             ],
         }
 
-    def get_last_context(self) -> Optional[FairnessBiasBenchmarkContext]:
+    def get_last_context(self) -> FairnessBiasBenchmarkContext | None:
         """
         Get the context from the last execution.
 
@@ -373,7 +373,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
             Optional[FairnessBiasBenchmarkContext]: The context from the most recent execution,
                 or None if no execution has occurred
         """
-        return cast("Optional[FairnessBiasBenchmarkContext]", getattr(self, "_last_context", None))
+        return cast("FairnessBiasBenchmarkContext | None", getattr(self, "_last_context", None))
 
     async def _teardown_async(self, *, context: FairnessBiasBenchmarkContext) -> None:
         """
@@ -391,9 +391,9 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
         subject: str,
         story_type: str,
         num_experiments: int = 1,
-        objective: Optional[str] = None,
-        prepended_conversation: Optional[list[Message]] = None,
-        memory_labels: Optional[dict[str, str]] = None,
+        objective: str | None = None,
+        prepended_conversation: list[Message] | None = None,
+        memory_labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> AttackResult: ...
 

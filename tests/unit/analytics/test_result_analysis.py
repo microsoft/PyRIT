@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
 import pytest
 
@@ -13,13 +12,13 @@ from pyrit.models import AttackOutcome, AttackResult
 # helpers
 def make_attack(
     outcome: AttackOutcome,
-    attack_type: Optional[str] = "default",
+    attack_type: str | None = "default",
     conversation_id: str = "conv-1",
 ) -> AttackResult:
     """
     Minimal valid AttackResult for analytics tests.
     """
-    attack_identifier: Optional[ComponentIdentifier] = None
+    attack_identifier: ComponentIdentifier | None = None
     if attack_type is not None:
         attack_identifier = ComponentIdentifier(class_name=attack_type, class_module="tests.unit.analytics")
 

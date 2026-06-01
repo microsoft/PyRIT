@@ -4,7 +4,7 @@
 import logging
 import uuid
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal
 
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
@@ -110,7 +110,7 @@ class _SIUODataset(_RemoteDatasetLoader):
         *,
         source: str = GEN_JSON_URL,
         source_type: Literal["public_url", "file"] = "public_url",
-        categories: Optional[list[SIUOCategory]] = None,
+        categories: list[SIUOCategory] | None = None,
     ) -> None:
         """
         Initialize the SIUO dataset loader.

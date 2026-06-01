@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional
+from typing import Literal
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -27,7 +27,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
         self,
         *,
         source: str = "Babelscape/ALERT",
-        category: Optional[Literal["alert", "alert_adversarial"]] = "alert_adversarial",
+        category: Literal["alert", "alert_adversarial"] | None = "alert_adversarial",
     ) -> None:
         """
         Initialize the Babelscape ALERT dataset loader.

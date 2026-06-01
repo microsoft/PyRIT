@@ -3,7 +3,7 @@
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     import azure.cognitiveservices.speech as speechsdk  # noqa: F401
@@ -49,10 +49,10 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
     def __init__(
         self,
         *,
-        azure_speech_region: Optional[str] = None,
-        azure_speech_key: Optional[str | Callable[[], str | Awaitable[str]]] = None,
-        azure_speech_resource_id: Optional[str] = None,
-        use_entra_auth: Optional[bool] = None,
+        azure_speech_region: str | None = None,
+        azure_speech_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        azure_speech_resource_id: str | None = None,
+        use_entra_auth: bool | None = None,
         synthesis_language: str = "en_US",
         synthesis_voice_name: str = "en-US-AvaNeural",
         output_format: AzureSpeechAudioFormat = "wav",

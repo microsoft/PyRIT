@@ -3,7 +3,6 @@
 
 import logging
 import random
-from typing import Optional
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType
@@ -45,9 +44,9 @@ class MathObfuscationConverter(PromptConverter):
         *,
         min_n: int = 2,
         max_n: int = 9,
-        hint: Optional[str] = None,
-        suffix: Optional[str] = None,
-        rng: Optional[random.Random] = None,
+        hint: str | None = None,
+        suffix: str | None = None,
+        rng: random.Random | None = None,
     ) -> None:
         """
         Initialize a MathObfuscationConverter instance.

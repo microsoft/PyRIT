@@ -6,7 +6,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 if TYPE_CHECKING:
     from pyrit.identifiers.component_identifier import ComponentIdentifier
@@ -29,13 +29,13 @@ class Score:
     score_type: ScoreType
 
     # The harms categories (e.g. ["hate", "violence"]) – can be multiple
-    score_category: Optional[list[str]]
+    score_category: list[str] | None
 
     # Extra data the scorer provides around the rationale of the score
     score_rationale: str
 
     # Custom metadata a scorer might use. This can vary by scorer.
-    score_metadata: Optional[dict[str, Union[str, int, float]]]
+    score_metadata: dict[str, str | int | float] | None
 
     # The identifier of the scorer class, including relevant information
     scorer_class_identifier: ComponentIdentifier
@@ -59,12 +59,12 @@ class Score:
         score_type: ScoreType,
         score_rationale: str,
         message_piece_id: str | uuid.UUID,
-        id: Optional[uuid.UUID | str] = None,  # noqa: A002
-        score_category: Optional[list[str]] = None,
-        score_metadata: Optional[dict[str, Union[str, int, float]]] = None,
+        id: uuid.UUID | str | None = None,  # noqa: A002
+        score_category: list[str] | None = None,
+        score_metadata: dict[str, str | int | float] | None = None,
         scorer_class_identifier: ComponentIdentifier,
-        timestamp: Optional[datetime] = None,
-        objective: Optional[str] = None,
+        timestamp: datetime | None = None,
+        objective: str | None = None,
     ) -> None:
         """
         Initialize a score object.
@@ -236,14 +236,14 @@ class UnvalidatedScore:
     raw_score_value: str
 
     score_value_description: str
-    score_category: Optional[list[str]]
+    score_category: list[str] | None
     score_rationale: str
-    score_metadata: Optional[dict[str, Union[str, int, float]]]
+    score_metadata: dict[str, str | int | float] | None
     scorer_class_identifier: ComponentIdentifier
     message_piece_id: uuid.UUID | str
-    objective: Optional[str]
-    id: Optional[uuid.UUID | str] = None
-    timestamp: Optional[datetime] = None
+    objective: str | None
+    id: uuid.UUID | str | None = None
+    timestamp: datetime | None = None
 
     def to_score(self, *, score_value: str, score_type: ScoreType) -> Score:
         """

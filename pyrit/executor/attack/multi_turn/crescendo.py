@@ -7,7 +7,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -74,7 +74,7 @@ class CrescendoAttackContext(MultiTurnAttackContext[Any]):
     """Context for the Crescendo attack strategy."""
 
     # Text that was refused by the target in the previous attempt (used for backtracking)
-    refused_text: Optional[str] = None
+    refused_text: str | None = None
 
     # Counter for number of backtracks performed during the attack
     backtrack_count: int = 0
@@ -144,12 +144,12 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         max_backtracks: int = 10,
         max_turns: int = 10,
-        prepended_conversation_config: Optional[PrependedConversationConfig] = None,
+        prepended_conversation_config: PrependedConversationConfig | None = None,
     ) -> None:
         """
         Initialize the Crescendo attack strategy.
@@ -249,7 +249,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         # Store the prepended conversation configuration
         self._prepended_conversation_config = prepended_conversation_config
 
-    def get_attack_scoring_config(self) -> Optional[AttackScoringConfig]:
+    def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
         Get the attack scoring configuration used by this strategy.
 
@@ -315,7 +315,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         )
 
         # Set up adversarial chat with prepended conversation
-        adversarial_chat_context: Optional[str] = None
+        adversarial_chat_context: str | None = None
         if context.prepended_conversation:
             # Build context string for system prompt
             normalizer = ConversationContextNormalizer()
@@ -740,7 +740,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         self._logger.debug(f"Backtracked conversation from {conversation_id} to {new_conversation_id}")
         return new_conversation_id
 
-    def _set_adversarial_chat_system_prompt_template(self, *, system_prompt_template_path: Union[Path, str]) -> None:
+    def _set_adversarial_chat_system_prompt_template(self, *, system_prompt_template_path: Path | str) -> None:
         """
         Set the system prompt template for the adversarial chat.
 

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -27,7 +26,7 @@ class ConversationReference(BaseModel):
 
     conversation_id: str
     conversation_type: ConversationType
-    description: Optional[str] = None
+    description: str | None = None
 
     def __hash__(self) -> int:
         """

@@ -337,8 +337,6 @@ ignore = [
     "DOC502",  # Raised exception is not explicitly raised
     "PERF203",  # try-except-in-loop (intentional per-item error handling)
     "SIM117",  # multiple-with-statements (combining often exceeds line length)
-    "UP007",  # non-pep604-annotation-union (keep Union[X, Y] syntax)
-    "UP045",  # non-pep604-annotation-optional (keep Optional[X] syntax)
 ]
 extend-select = [
     "D204",  # 1 blank line required after class docstring

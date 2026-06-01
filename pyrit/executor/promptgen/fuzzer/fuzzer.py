@@ -8,7 +8,7 @@ import random
 import textwrap
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional, Union, overload
+from typing import TYPE_CHECKING, Any, overload
 
 import numpy as np
 from colorama import Fore, Style
@@ -49,7 +49,7 @@ class _PromptNode:
     def __init__(
         self,
         template: str,
-        parent: Optional[_PromptNode] = None,
+        parent: _PromptNode | None = None,
     ) -> None:
         """
         Create the PromptNode instance.
@@ -64,7 +64,7 @@ class _PromptNode:
         self.level: int = 0 if parent is None else parent.level + 1
         self.visited_num = 0
         self.rewards: float = 0
-        self.parent: Optional[_PromptNode] = None
+        self.parent: _PromptNode | None = None
         if parent is not None:
             self.add_parent(parent)
 
@@ -155,7 +155,7 @@ class _MCTSExplorer:
         exploration = self.frequency_weight * np.sqrt(2 * np.log(step) / (node.visited_num + 0.01))
         return float(exploitation + exploration)
 
-    def update_rewards(self, path: list[_PromptNode], reward: float, last_node: Optional[_PromptNode] = None) -> None:
+    def update_rewards(self, path: list[_PromptNode], reward: float, last_node: _PromptNode | None = None) -> None:
         """
         Update rewards for nodes in the path.
 
@@ -183,19 +183,19 @@ class FuzzerContext(PromptGeneratorStrategyContext):
     # Per-execution input data
     prompts: list[str]
     prompt_templates: list[str]
-    max_query_limit: Optional[int] = None
+    max_query_limit: int | None = None
 
     # Tracking state
     total_target_query_count: int = 0
     total_jailbreak_count: int = 0
-    jailbreak_conversation_ids: list[Union[str, uuid.UUID]] = field(default_factory=list)
+    jailbreak_conversation_ids: list[str | uuid.UUID] = field(default_factory=list)
     executed_turns: int = 0
 
     # Tree structure
     initial_prompt_nodes: list[_PromptNode] = field(default_factory=list)
     new_prompt_nodes: list[_PromptNode] = field(default_factory=list)
     mcts_selected_path: list[_PromptNode] = field(default_factory=list)
-    last_choice_node: Optional[_PromptNode] = None
+    last_choice_node: _PromptNode | None = None
 
     # Optional memory labels to apply to the prompts
     memory_labels: dict[str, str] = field(default_factory=dict)
@@ -222,7 +222,7 @@ class FuzzerResult(PromptGeneratorStrategyResult):
 
     # Concrete fields instead of metadata storage
     successful_templates: list[str] = field(default_factory=list)
-    jailbreak_conversation_ids: list[Union[str, uuid.UUID]] = field(default_factory=list)
+    jailbreak_conversation_ids: list[str | uuid.UUID] = field(default_factory=list)
     total_queries: int = 0
     templates_explored: int = 0
 
@@ -540,8 +540,8 @@ class FuzzerGenerator(
         objective_target: PromptTarget,
         template_converters: list[FuzzerConverter],
         scoring_target: PromptTarget,
-        converter_config: Optional[StrategyConverterConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        converter_config: StrategyConverterConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         frequency_weight: float = _DEFAULT_FREQUENCY_WEIGHT,
         reward_penalty: float = _DEFAULT_REWARD_PENALTY,
         minimum_reward: float = _DEFAULT_MINIMUM_REWARD,
@@ -607,10 +607,10 @@ class FuzzerGenerator(
         *,
         objective_target: PromptTarget,
         template_converters: list[FuzzerConverter],
-        converter_config: Optional[StrategyConverterConfig] = None,
-        scorer: Optional[Scorer] = None,
+        converter_config: StrategyConverterConfig | None = None,
+        scorer: Scorer | None = None,
         scoring_success_threshold: float = 0.8,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         frequency_weight: float = _DEFAULT_FREQUENCY_WEIGHT,
         reward_penalty: float = _DEFAULT_REWARD_PENALTY,
         minimum_reward: float = _DEFAULT_MINIMUM_REWARD,
@@ -684,8 +684,8 @@ class FuzzerGenerator(
     def _create_identifier(
         self,
         *,
-        params: Optional[dict[str, Any]] = None,
-        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+        params: dict[str, Any] | None = None,
+        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct the identifier for this prompt generator.
@@ -698,7 +698,7 @@ class FuzzerGenerator(
         Returns:
             ComponentIdentifier: The identifier for this prompt generator.
         """
-        all_children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = {
+        all_children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] = {
             "objective_target": self._objective_target.get_identifier(),
         }
         if children:
@@ -1197,8 +1197,8 @@ class FuzzerGenerator(
         *,
         prompts: list[str],
         prompt_templates: list[str],
-        max_query_limit: Optional[int] = None,
-        memory_labels: Optional[dict[str, str]] = None,
+        max_query_limit: int | None = None,
+        memory_labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> FuzzerResult: ...
 

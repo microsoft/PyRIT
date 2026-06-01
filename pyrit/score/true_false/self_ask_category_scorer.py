@@ -3,7 +3,6 @@
 
 import enum
 from pathlib import Path
-from typing import Optional, Union
 
 import yaml
 
@@ -43,9 +42,9 @@ class SelfAskCategoryScorer(TrueFalseScorer):
         self,
         *,
         chat_target: PromptTarget,
-        content_classifier_path: Union[str, Path],
+        content_classifier_path: str | Path,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
-        validator: Optional[ScorerPromptValidator] = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize a new instance of the SelfAskCategoryScorer class.
@@ -130,7 +129,7 @@ class SelfAskCategoryScorer(TrueFalseScorer):
 
         return category_descriptions
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the given message using the chat target.
 

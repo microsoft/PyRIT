@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
@@ -32,11 +32,11 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
         *,
         chat_target: PromptTarget,
         system_prompt_format_string: str,
-        prompt_format_string: Optional[str] = None,
-        category: Optional[str] = None,
+        prompt_format_string: str | None = None,
+        category: str | None = None,
         min_value: int = 0,
         max_value: int = 100,
-        validator: Optional[ScorerPromptValidator] = None,
+        validator: ScorerPromptValidator | None = None,
         score_value_output_key: str = "score_value",
         rationale_output_key: str = "rationale",
         description_output_key: str = "description",
@@ -113,7 +113,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score a single message piece using the configured prompts and scale to [0, 1].
 

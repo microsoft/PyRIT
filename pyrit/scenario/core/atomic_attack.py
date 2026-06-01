@@ -61,7 +61,7 @@ class AtomicAttack:
         seed_groups: list[SeedAttackGroup],
         adversarial_chat: Optional["PromptTarget"] = None,
         objective_scorer: Optional["TrueFalseScorer"] = None,
-        memory_labels: Optional[dict[str, str]] = None,
+        memory_labels: dict[str, str] | None = None,
         **attack_execute_params: Any,
     ) -> None:
         """

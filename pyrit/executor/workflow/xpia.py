@@ -5,7 +5,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional, Protocol, Union, overload
+from typing import Any, Protocol, overload
 
 from pyrit.common.utils import combine_dict, get_kwarg_param
 from pyrit.executor.core import StrategyConverterConfig
@@ -65,7 +65,7 @@ class XPIAContext(WorkflowContext):
     attack_content: Message
 
     # Callback to execute after the attack prompt is positioned in the attack location
-    processing_callback: Optional[XPIAProcessingCallback] = None
+    processing_callback: XPIAProcessingCallback | None = None
 
     # Conversation ID for the attack setup target
     attack_setup_target_conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -74,7 +74,7 @@ class XPIAContext(WorkflowContext):
     processing_conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     # The prompt to send to the processing target (for test workflow)
-    processing_prompt: Optional[Message] = None
+    processing_prompt: Message | None = None
 
     # Additional labels that can be applied throughout the workflow
     memory_labels: dict[str, str] = field(default_factory=dict)
@@ -96,10 +96,10 @@ class XPIAResult(WorkflowResult):
     processing_response: str
 
     # Score if a scorer was used, None otherwise
-    score: Optional[Score] = None
+    score: Score | None = None
 
     # Response from the attack setup target
-    attack_setup_response: Optional[str] = None
+    attack_setup_response: str | None = None
 
     @property
     def success(self) -> bool:
@@ -145,9 +145,9 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
         self,
         *,
         attack_setup_target: PromptTarget,
-        scorer: Optional[Scorer] = None,
-        converter_config: Optional[StrategyConverterConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        scorer: Scorer | None = None,
+        converter_config: StrategyConverterConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         logger: logging.Logger = logger,
     ) -> None:
         """
@@ -178,8 +178,8 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
     def _create_identifier(
         self,
         *,
-        params: Optional[dict[str, Any]] = None,
-        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+        params: dict[str, Any] | None = None,
+        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct the identifier for this XPIA workflow.
@@ -192,7 +192,7 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
         Returns:
             ComponentIdentifier: The identifier for this XPIA workflow.
         """
-        all_children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = {
+        all_children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] = {
             "attack_setup_target": self._attack_setup_target.get_identifier(),
         }
         if self._scorer:
@@ -382,7 +382,7 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
         self._logger.info(f'Received the following response from the processing target "{processing_response}"')
         return processing_response
 
-    async def _score_response_async(self, *, processing_response: str) -> Optional[Score]:
+    async def _score_response_async(self, *, processing_response: str) -> Score | None:
         """
         Score the processing response if a scorer is provided.
 
@@ -429,9 +429,9 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
         self,
         *,
         attack_content: Message,
-        processing_callback: Optional[XPIAProcessingCallback] = None,
-        processing_prompt: Optional[Message] = None,
-        memory_labels: Optional[dict[str, str]] = None,
+        processing_callback: XPIAProcessingCallback | None = None,
+        processing_prompt: Message | None = None,
+        memory_labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> XPIAResult: ...
 
@@ -503,8 +503,8 @@ class XPIATestWorkflow(XPIAWorkflow):
         attack_setup_target: PromptTarget,
         processing_target: PromptTarget,
         scorer: Scorer,
-        converter_config: Optional[StrategyConverterConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        converter_config: StrategyConverterConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         logger: logging.Logger = logger,
     ) -> None:
         """
@@ -605,8 +605,8 @@ class XPIAManualProcessingWorkflow(XPIAWorkflow):
         *,
         attack_setup_target: PromptTarget,
         scorer: Scorer,
-        converter_config: Optional[StrategyConverterConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        converter_config: StrategyConverterConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         logger: logging.Logger = logger,
     ) -> None:
         """

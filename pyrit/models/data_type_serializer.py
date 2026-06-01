@@ -11,7 +11,7 @@ import time
 import wave
 from mimetypes import guess_type
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional, Union, get_args
+from typing import TYPE_CHECKING, Literal, get_args
 from urllib.parse import urlparse
 
 import aiofiles
@@ -30,8 +30,8 @@ AllowedCategories = Literal["seed-prompt-entries", "prompt-memory-entries"]
 def data_serializer_factory(
     *,
     data_type: PromptDataType,
-    value: Optional[str] = None,
-    extension: Optional[str] = None,
+    value: str | None = None,
+    extension: str | None = None,
     category: AllowedCategories,
 ) -> DataTypeSerializer:
     """
@@ -96,7 +96,7 @@ class DataTypeSerializer(abc.ABC):
     data_sub_directory: str
     file_extension: str
 
-    _file_path: Union[Path, str] | None = None
+    _file_path: Path | str | None = None
 
     @property
     def _memory(self) -> MemoryInterface:
@@ -134,7 +134,7 @@ class DataTypeSerializer(abc.ABC):
 
         """
 
-    async def save_data(self, data: bytes, output_filename: Optional[str] = None) -> None:
+    async def save_data(self, data: bytes, output_filename: str | None = None) -> None:
         """
         Save data to storage.
 
@@ -175,7 +175,7 @@ class DataTypeSerializer(abc.ABC):
         num_channels: int = 1,
         sample_width: int = 2,
         sample_rate: int = 16000,
-        output_filename: Optional[str] = None,
+        output_filename: str | None = None,
     ) -> None:
         """
         Save PCM16 or similarly formatted audio data to storage.
@@ -287,7 +287,7 @@ class DataTypeSerializer(abc.ABC):
         hash_object = hashlib.sha256(input_bytes)
         return hash_object.hexdigest()
 
-    async def get_data_filename(self, file_name: Optional[str] = None) -> Union[Path, str]:
+    async def get_data_filename(self, file_name: str | None = None) -> Path | str:
         """
         Generate or retrieve a unique filename for the data file.
 
@@ -431,7 +431,7 @@ class ErrorDataTypeSerializer(DataTypeSerializer):
 class URLDataTypeSerializer(DataTypeSerializer):
     """Serializer for URL values and URL-backed local file references."""
 
-    def __init__(self, *, category: str, prompt_text: str, extension: Optional[str] = None) -> None:
+    def __init__(self, *, category: str, prompt_text: str, extension: str | None = None) -> None:
         """
         Initialize a URL serializer.
 
@@ -461,7 +461,7 @@ class URLDataTypeSerializer(DataTypeSerializer):
 class ImagePathDataTypeSerializer(DataTypeSerializer):
     """Serializer for image path values stored on disk."""
 
-    def __init__(self, *, category: str, prompt_text: Optional[str] = None, extension: Optional[str] = None) -> None:
+    def __init__(self, *, category: str, prompt_text: str | None = None, extension: str | None = None) -> None:
         """
         Initialize an image-path serializer.
 
@@ -496,8 +496,8 @@ class AudioPathDataTypeSerializer(DataTypeSerializer):
         self,
         *,
         category: str,
-        prompt_text: Optional[str] = None,
-        extension: Optional[str] = None,
+        prompt_text: str | None = None,
+        extension: str | None = None,
     ) -> None:
         """
         Initialize an audio-path serializer.
@@ -533,8 +533,8 @@ class VideoPathDataTypeSerializer(DataTypeSerializer):
         self,
         *,
         category: str,
-        prompt_text: Optional[str] = None,
-        extension: Optional[str] = None,
+        prompt_text: str | None = None,
+        extension: str | None = None,
     ) -> None:
         """
         Initialize a video-path serializer.
@@ -570,8 +570,8 @@ class BinaryPathDataTypeSerializer(DataTypeSerializer):
         self,
         *,
         category: str,
-        prompt_text: Optional[str] = None,
-        extension: Optional[str] = None,
+        prompt_text: str | None = None,
+        extension: str | None = None,
     ) -> None:
         """
         Initialize a generic binary-path serializer.

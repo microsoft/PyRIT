@@ -13,8 +13,6 @@ from typing import (
     TYPE_CHECKING,
     Any,
     ClassVar,
-    Optional,
-    Union,
     cast,
 )
 
@@ -59,7 +57,7 @@ class Scorer(Identifiable, abc.ABC):
 
     # Evaluation configuration - maps input dataset files to a result file.
     # Specifies glob patterns for datasets and a result file name.
-    evaluation_file_mapping: Optional[ScorerEvalDatasetFiles] = None
+    evaluation_file_mapping: ScorerEvalDatasetFiles | None = None
 
     #: Capability requirements placed on the scorer's chat target (if any).
     #: Subclasses that use a chat target should override this and pass the
@@ -67,7 +65,7 @@ class Scorer(Identifiable, abc.ABC):
     #: validate it.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
-    _identifier: Optional[ComponentIdentifier] = None
+    _identifier: ComponentIdentifier | None = None
 
     #: When True, blocked responses that contain partial content
     #: (in prompt_metadata["partial_content"]) will be scored using that content
@@ -78,7 +76,7 @@ class Scorer(Identifiable, abc.ABC):
     #: (Chat Completions API) and ``OpenAIResponseTarget`` (Responses API).
     score_blocked_content: bool = False
 
-    def __init__(self, *, validator: ScorerPromptValidator, chat_target: Optional[PromptTarget] = None) -> None:
+    def __init__(self, *, validator: ScorerPromptValidator, chat_target: PromptTarget | None = None) -> None:
         """
         Initialize the Scorer.
 
@@ -146,8 +144,8 @@ class Scorer(Identifiable, abc.ABC):
     def _create_identifier(
         self,
         *,
-        params: Optional[dict[str, Any]] = None,
-        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+        params: dict[str, Any] | None = None,
+        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct the scorer identifier.
@@ -180,8 +178,8 @@ class Scorer(Identifiable, abc.ABC):
         self,
         message: Message,
         *,
-        objective: Optional[str] = None,
-        role_filter: Optional[ChatMessageRole] = None,
+        objective: str | None = None,
+        role_filter: ChatMessageRole | None = None,
         skip_on_error_result: bool = False,
         infer_objective_from_request: bool = False,
     ) -> list[Score]:
@@ -253,7 +251,7 @@ class Scorer(Identifiable, abc.ABC):
 
         return scores
 
-    async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
         """
         Score the given request response asynchronously.
 
@@ -286,11 +284,11 @@ class Scorer(Identifiable, abc.ABC):
         return [score for sublist in piece_score_lists for score in sublist]
 
     @abstractmethod
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         raise NotImplementedError
 
     @staticmethod
-    def _create_text_piece_from_blocked(piece: MessagePiece) -> Optional[MessagePiece]:
+    def _create_text_piece_from_blocked(piece: MessagePiece) -> MessagePiece | None:
         """
         Create a text-typed copy of a blocked MessagePiece using its partial content.
 
@@ -369,7 +367,7 @@ class Scorer(Identifiable, abc.ABC):
         ]
 
     @abstractmethod
-    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         """
         Return neutral fallback ``Score`` objects when ``_score_async`` produced no scores.
 
@@ -407,12 +405,12 @@ class Scorer(Identifiable, abc.ABC):
 
     async def evaluate_async(
         self,
-        file_mapping: Optional[ScorerEvalDatasetFiles] = None,
+        file_mapping: ScorerEvalDatasetFiles | None = None,
         *,
         num_scorer_trials: int = 3,
         update_registry_behavior: RegistryUpdateBehavior | None = None,
         max_concurrency: int = 10,
-    ) -> Optional[ScorerMetrics]:
+    ) -> ScorerMetrics | None:
         """
         Evaluate this scorer against human-labeled datasets.
 
@@ -461,7 +459,7 @@ class Scorer(Identifiable, abc.ABC):
         )
 
     @abstractmethod
-    def get_scorer_metrics(self) -> Optional[ScorerMetrics]:
+    def get_scorer_metrics(self) -> ScorerMetrics | None:
         """
         Get evaluation metrics for this scorer from the configured evaluation result file.
 
@@ -477,7 +475,7 @@ class Scorer(Identifiable, abc.ABC):
         """
         raise NotImplementedError("Subclasses must implement get_scorer_metrics")
 
-    async def score_text_async(self, text: str, *, objective: Optional[str] = None) -> list[Score]:
+    async def score_text_async(self, text: str, *, objective: str | None = None) -> list[Score]:
         """
         Scores the given text based on the task using the chat target.
 
@@ -500,7 +498,7 @@ class Scorer(Identifiable, abc.ABC):
         request.message_pieces[0].id = None
         return await self.score_async(request, objective=objective)
 
-    async def score_image_async(self, image_path: str, *, objective: Optional[str] = None) -> list[Score]:
+    async def score_image_async(self, image_path: str, *, objective: str | None = None) -> list[Score]:
         """
         Score the given image using the chat target.
 
@@ -528,9 +526,9 @@ class Scorer(Identifiable, abc.ABC):
         self,
         *,
         messages: Sequence[Message],
-        objectives: Optional[Sequence[str]] = None,
+        objectives: Sequence[str] | None = None,
         batch_size: int = 10,
-        role_filter: Optional[ChatMessageRole] = None,
+        role_filter: ChatMessageRole | None = None,
         skip_on_error_result: bool = False,
         infer_objective_from_request: bool = False,
     ) -> list[Score]:
@@ -580,7 +578,7 @@ class Scorer(Identifiable, abc.ABC):
         return [score for sublist in results for score in sublist]
 
     async def score_image_batch_async(
-        self, *, image_paths: Sequence[str], objectives: Optional[Sequence[str]] = None, batch_size: int = 10
+        self, *, image_paths: Sequence[str], objectives: Sequence[str] | None = None, batch_size: int = 10
     ) -> list[Score]:
         """
         Score a batch of images asynchronously.
@@ -640,15 +638,15 @@ class Scorer(Identifiable, abc.ABC):
         message_value: str,
         message_data_type: PromptDataType,
         scored_prompt_id: str,
-        prepended_text_message_piece: Optional[str] = None,
-        category: Optional[Sequence[str] | str] = None,
-        objective: Optional[str] = None,
+        prepended_text_message_piece: str | None = None,
+        category: Sequence[str] | str | None = None,
+        objective: str | None = None,
         score_value_output_key: str = "score_value",
         rationale_output_key: str = "rationale",
         description_output_key: str = "description",
         metadata_output_key: str = "metadata",
         category_output_key: str = "category",
-        attack_identifier: Optional[ComponentIdentifier] = None,
+        attack_identifier: ComponentIdentifier | None = None,
     ) -> UnvalidatedScore:
         """
         Send a request to a target, and take care of retries.
@@ -756,7 +754,7 @@ class Scorer(Identifiable, abc.ABC):
 
             # Validate and normalize category to a list of strings
             cat_val = category_response if category_response is not None else category
-            normalized_category: Optional[list[str]]
+            normalized_category: list[str] | None
             if cat_val is None:
                 normalized_category = None
             elif isinstance(cat_val, str):
@@ -771,7 +769,7 @@ class Scorer(Identifiable, abc.ABC):
 
             # Normalize metadata to a dictionary with string keys and string/int/float values
             raw_md = parsed_response.get(metadata_output_key)
-            normalized_md: Optional[dict[str, Union[str, int, float]]]
+            normalized_md: dict[str, str | int | float] | None
             if raw_md is None:
                 normalized_md = None
             elif isinstance(raw_md, dict):
@@ -838,10 +836,10 @@ class Scorer(Identifiable, abc.ABC):
     async def score_response_async(
         *,
         response: Message,
-        objective_scorer: Optional[Scorer] = None,
-        auxiliary_scorers: Optional[list[Scorer]] = None,
+        objective_scorer: Scorer | None = None,
+        auxiliary_scorers: list[Scorer] | None = None,
         role_filter: ChatMessageRole = "assistant",
-        objective: Optional[str] = None,
+        objective: str | None = None,
         skip_on_error_result: bool = True,
     ) -> dict[str, list[Score]]:
         """
@@ -916,7 +914,7 @@ class Scorer(Identifiable, abc.ABC):
         response: Message,
         scorers: list[Scorer],
         role_filter: ChatMessageRole = "assistant",
-        objective: Optional[str] = None,
+        objective: str | None = None,
         skip_on_error_result: bool = True,
     ) -> list[Score]:
         """

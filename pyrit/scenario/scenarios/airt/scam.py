@@ -3,7 +3,7 @@
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common import Parameter, apply_defaults
 from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
@@ -121,9 +121,9 @@ class Scam(Scenario):
     def __init__(
         self,
         *,
-        objective_scorer: Optional[TrueFalseScorer] = None,
-        adversarial_chat: Optional[PromptTarget] = None,
-        scenario_result_id: Optional[str] = None,
+        objective_scorer: TrueFalseScorer | None = None,
+        adversarial_chat: PromptTarget | None = None,
+        scenario_result_id: str | None = None,
         include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
@@ -166,7 +166,7 @@ class Scam(Scenario):
             self._legacy_include_baseline = include_baseline
 
         # Will be resolved in _get_atomic_attacks_async
-        self._seed_groups: Optional[list[SeedAttackGroup]] = None
+        self._seed_groups: list[SeedAttackGroup] | None = None
 
     def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
         """
@@ -201,7 +201,7 @@ class Scam(Scenario):
             raise ValueError(
                 "Scenario not properly initialized. Call await scenario.initialize_async() before running."
             )
-        attack_strategy: Optional[AttackStrategy[Any, Any]] = None
+        attack_strategy: AttackStrategy[Any, Any] | None = None
 
         if strategy == "persuasive_rta":
             # Set system prompt to generic persuasion persona

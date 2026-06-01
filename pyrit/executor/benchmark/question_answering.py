@@ -4,7 +4,7 @@
 import logging
 import textwrap
 from dataclasses import dataclass, field
-from typing import Any, Optional, overload
+from typing import Any, overload
 
 from pyrit.common.utils import get_kwarg_param
 from pyrit.executor.attack.core import (
@@ -45,7 +45,7 @@ class QuestionAnsweringBenchmarkContext(StrategyContext):
     # The generated question prompt for the benchmark
     generated_question_prompt: str = field(default_factory=str)
     # The generated message for the benchmark
-    generated_message: Optional[Message] = None
+    generated_message: Message | None = None
 
 
 class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, AttackResult]):
@@ -84,9 +84,9 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
         self,
         *,
         objective_target: PromptTarget,
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         objective_format_string: str = _DEFAULT_OBJECTIVE_FORMAT,
         question_asking_format_string: str = _DEFAULT_QUESTION_FORMAT,
         options_format_string: str = _DEFAULT_OPTIONS_FORMAT,
@@ -259,8 +259,8 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
         self,
         *,
         question_answering_entry: QuestionAnsweringEntry,
-        prepended_conversation: Optional[list[Message]] = None,
-        memory_labels: Optional[dict[str, str]] = None,
+        prepended_conversation: list[Message] | None = None,
+        memory_labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> AttackResult: ...
 

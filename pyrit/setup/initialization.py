@@ -3,7 +3,7 @@
 import logging
 import pathlib
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import dotenv
 
@@ -27,7 +27,7 @@ AZURE_SQL = "AzureSQL"
 MemoryDatabaseType = Literal["InMemory", "SQLite", "AzureSQL"]
 
 
-def _load_environment_files(env_files: Optional[Sequence[pathlib.Path]], *, silent: bool = False) -> None:
+def _load_environment_files(env_files: Sequence[pathlib.Path] | None, *, silent: bool = False) -> None:
     """
     Load environment files in the order they are provided.
     Later files override values from earlier files.
@@ -95,9 +95,7 @@ def _print_msg(message: str, quiet: bool, log: bool) -> None:
         logger.info(message)
 
 
-def _load_initializers_from_scripts(
-    *, script_paths: Sequence[Union[str, pathlib.Path]]
-) -> Sequence["PyRITInitializer"]:
+def _load_initializers_from_scripts(*, script_paths: Sequence[str | pathlib.Path]) -> Sequence["PyRITInitializer"]:
     """
     Load PyRITInitializer instances from external Python files.
 
@@ -228,11 +226,11 @@ async def _execute_initializers_async(*, initializers: Sequence["PyRITInitialize
 
 
 async def initialize_pyrit_async(
-    memory_db_type: Union[MemoryDatabaseType, str],
+    memory_db_type: MemoryDatabaseType | str,
     *,
-    initialization_scripts: Optional[Sequence[Union[str, pathlib.Path]]] = None,
-    initializers: Optional[Sequence["PyRITInitializer"]] = None,
-    env_files: Optional[Sequence[pathlib.Path]] = None,
+    initialization_scripts: Sequence[str | pathlib.Path] | None = None,
+    initializers: Sequence["PyRITInitializer"] | None = None,
+    env_files: Sequence[pathlib.Path] | None = None,
     silent: bool = False,
     **memory_instance_kwargs: Any,
 ) -> None:

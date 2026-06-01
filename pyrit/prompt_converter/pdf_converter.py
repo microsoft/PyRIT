@@ -5,7 +5,7 @@ import ast
 import hashlib
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pypdf import PageObject, PdfReader, PdfWriter
 from reportlab.lib.units import mm
@@ -39,7 +39,7 @@ class PDFConverter(PromptConverter):
 
     def __init__(
         self,
-        prompt_template: Optional[SeedPrompt] = None,
+        prompt_template: SeedPrompt | None = None,
         font_type: str = "Helvetica",
         font_size: int = 12,
         font_color: tuple[int, int, int] = (255, 255, 255),
@@ -47,8 +47,8 @@ class PDFConverter(PromptConverter):
         page_height: int = 297,
         column_width: int = 0,
         row_height: int = 10,
-        existing_pdf: Optional[Path] = None,
-        injection_items: Optional[list[dict[str, Any]]] = None,
+        existing_pdf: Path | None = None,
+        injection_items: list[dict[str, Any]] | None = None,
     ) -> None:
         """
         Initialize the converter with the specified parameters.
@@ -79,9 +79,9 @@ class PDFConverter(PromptConverter):
         self._row_height = row_height
 
         # Keeping the user's path here
-        self._existing_pdf_path: Optional[Path] = existing_pdf
+        self._existing_pdf_path: Path | None = existing_pdf
         # We store the file data in a separate BytesIO for type checker compatibility
-        self._existing_pdf_bytes: Optional[BytesIO] = None
+        self._existing_pdf_bytes: BytesIO | None = None
 
         self._injection_items = injection_items or []
 

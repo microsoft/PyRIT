@@ -3,7 +3,6 @@
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Optional
 
 from pyrit.models import AttackOutcome, AttackResult
 
@@ -12,7 +11,7 @@ from pyrit.models import AttackOutcome, AttackResult
 class AttackStats:
     """Statistics for attack analysis results."""
 
-    success_rate: Optional[float]
+    success_rate: float | None
     total_decided: int
     successes: int
     failures: int

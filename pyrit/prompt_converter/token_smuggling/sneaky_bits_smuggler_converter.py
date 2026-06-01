@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional
+from typing import Literal
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.token_smuggling.base import SmugglerConverter
@@ -25,8 +25,8 @@ class SneakyBitsSmugglerConverter(SmugglerConverter):
     def __init__(
         self,
         action: Literal["encode", "decode"] = "encode",
-        zero_char: Optional[str] = None,
-        one_char: Optional[str] = None,
+        zero_char: str | None = None,
+        one_char: str | None = None,
     ) -> None:
         """
         Initialize the converter with options for encoding/decoding in Sneaky Bits mode.

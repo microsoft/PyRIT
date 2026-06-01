@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 from pathlib import Path
-from typing import Optional, Union
 
 from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
@@ -27,8 +26,8 @@ class InsecureCodeScorer(FloatScaleScorer):
         self,
         *,
         chat_target: PromptTarget,
-        system_prompt_path: Optional[Union[str, Path]] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        system_prompt_path: str | Path | None = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the Insecure Code Scorer.
@@ -73,7 +72,7 @@ class InsecureCodeScorer(FloatScaleScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the given message piece using LLM to detect security vulnerabilities.
 

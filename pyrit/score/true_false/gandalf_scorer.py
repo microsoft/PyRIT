@@ -3,7 +3,6 @@
 
 import uuid
 from textwrap import dedent
-from typing import Optional
 
 import requests
 from openai import BadRequestError
@@ -37,7 +36,7 @@ class GandalfScorer(TrueFalseScorer):
         *,
         level: GandalfLevel,
         chat_target: PromptTarget,
-        validator: Optional[ScorerPromptValidator] = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
     ) -> None:
         """
@@ -143,7 +142,7 @@ class GandalfScorer(TrueFalseScorer):
             return ""
         return response_text
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the text based on the password found in the text.
 

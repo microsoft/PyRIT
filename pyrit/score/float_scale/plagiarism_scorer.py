@@ -3,7 +3,6 @@
 
 import re
 from enum import Enum
-from typing import Optional
 
 import numpy as np
 
@@ -39,7 +38,7 @@ class PlagiarismScorer(FloatScaleScorer):
         reference_text: str,
         metric: PlagiarismMetric = PlagiarismMetric.LCS,
         n: int = 5,
-        validator: Optional[ScorerPromptValidator] = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the PlagiarismScorer.
@@ -165,7 +164,7 @@ class PlagiarismScorer(FloatScaleScorer):
 
         raise ValueError("metric must be 'lcs', 'levenshtein', or 'jaccard'")
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the AI response against the reference text using the specified metric.
 

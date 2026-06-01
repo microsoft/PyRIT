@@ -7,7 +7,7 @@ import struct
 from collections.abc import MutableSequence, Sequence
 from contextlib import closing, suppress
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from sqlalchemy import and_, create_engine, event, exists, or_, text
 from sqlalchemy.engine.base import Engine
@@ -64,9 +64,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     def __init__(
         self,
         *,
-        connection_string: Optional[str] = None,
-        results_container_url: Optional[str] = None,
-        results_sas_token: Optional[str] = None,
+        connection_string: str | None = None,
+        results_container_url: str | None = None,
+        results_sas_token: str | None = None,
         verbose: bool = False,
         skip_schema_migration: bool = False,
     ) -> None:
@@ -91,12 +91,12 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             env_var_name=self.AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL, passed_value=results_container_url
         )
 
-        self._results_container_sas_token: Optional[str] = self._resolve_sas_token(
+        self._results_container_sas_token: str | None = self._resolve_sas_token(
             self.AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN, results_sas_token
         )
 
-        self._auth_token: Optional[AccessToken] = None
-        self._auth_token_expiry: Optional[int] = None
+        self._auth_token: AccessToken | None = None
+        self._auth_token_expiry: int | None = None
 
         self.results_path = self._results_container_url
 
@@ -114,7 +114,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         super().__init__()
 
     @staticmethod
-    def _resolve_sas_token(env_var_name: str, passed_value: Optional[str] = None) -> Optional[str]:
+    def _resolve_sas_token(env_var_name: str, passed_value: str | None = None) -> str | None:
         """
         Resolve the SAS token value, allowing a fallback to None for delegation SAS.
 
@@ -283,7 +283,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         return [or_(pme_match, are_match)]
 
-    def _get_metadata_conditions(self, *, prompt_metadata: dict[str, Union[str, int]]) -> list[TextClause]:
+    def _get_metadata_conditions(self, *, prompt_metadata: dict[str, str | int]) -> list[TextClause]:
         """
         Generate SQL conditions for filtering by prompt metadata.
 
@@ -308,7 +308,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         return [condition]
 
     def _get_message_pieces_prompt_metadata_conditions(
-        self, *, prompt_metadata: dict[str, Union[str, int]]
+        self, *, prompt_metadata: dict[str, str | int]
     ) -> list[TextClause]:
         """
         Generate SQL conditions for filtering message pieces by prompt metadata.
@@ -323,7 +323,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         return self._get_metadata_conditions(prompt_metadata=prompt_metadata)
 
-    def _get_seed_metadata_conditions(self, *, metadata: dict[str, Union[str, int]]) -> TextClause:
+    def _get_seed_metadata_conditions(self, *, metadata: dict[str, str | int]) -> TextClause:
         """
         Generate SQL condition for filtering seed prompts by metadata.
 
@@ -783,10 +783,10 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         self,
         model_class: type[Model],
         *,
-        conditions: Optional[Any] = None,
+        conditions: Any | None = None,
         distinct: bool = False,
         join_scores: bool = False,
-        order_by: Optional[Any] = None,
+        order_by: Any | None = None,
         limit: int | None = None,
     ) -> MutableSequence[Model]:
         """

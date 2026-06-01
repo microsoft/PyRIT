@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.models.message import Message
@@ -47,7 +47,7 @@ class SeedGroup(YamlLoadable):
     def __init__(
         self,
         *,
-        seeds: Sequence[Union[Seed, dict[str, Any]]],
+        seeds: Sequence[Seed | dict[str, Any]],
         is_jinja_template: bool = False,
     ) -> None:
         """
@@ -235,7 +235,7 @@ class SeedGroup(YamlLoadable):
     # Seed Accessors
     # =========================================================================
 
-    def _get_objective(self) -> Optional[SeedObjective]:
+    def _get_objective(self) -> SeedObjective | None:
         """
         Get the objective seed if present.
 
@@ -248,7 +248,7 @@ class SeedGroup(YamlLoadable):
                 return seed
         return None
 
-    def _get_simulated_conversation(self) -> Optional[SeedSimulatedConversation]:
+    def _get_simulated_conversation(self) -> SeedSimulatedConversation | None:
         """
         Get the simulated conversation seed if present.
 
@@ -267,7 +267,7 @@ class SeedGroup(YamlLoadable):
         return [seed for seed in self.seeds if isinstance(seed, SeedPrompt)]
 
     @property
-    def objective(self) -> Optional[SeedObjective]:
+    def objective(self) -> SeedObjective | None:
         """Get the objective for this group."""
         return self._get_objective()
 
@@ -291,7 +291,7 @@ class SeedGroup(YamlLoadable):
     # =========================================================================
 
     @property
-    def simulated_conversation_config(self) -> Optional[SeedSimulatedConversation]:
+    def simulated_conversation_config(self) -> SeedSimulatedConversation | None:
         """Get the simulated conversation configuration if set."""
         return self._simulated_conversation_config
 
@@ -305,7 +305,7 @@ class SeedGroup(YamlLoadable):
     # =========================================================================
 
     @property
-    def prepended_conversation(self) -> Optional[list[Message]]:
+    def prepended_conversation(self) -> list[Message] | None:
         """
         Returns Messages that should be prepended as conversation history.
 
@@ -335,7 +335,7 @@ class SeedGroup(YamlLoadable):
         return self._prompts_to_messages(list(self.prompts))
 
     @property
-    def next_message(self) -> Optional[Message]:
+    def next_message(self) -> Message | None:
         """
         Returns a Message containing only the last turn's prompts if it's a user message.
 
@@ -375,7 +375,7 @@ class SeedGroup(YamlLoadable):
 
         return self._prompts_to_messages(list(self.prompts))
 
-    def _get_last_sequence_role(self) -> Optional[str]:
+    def _get_last_sequence_role(self) -> str | None:
         """
         Get the role of the last sequence.
 

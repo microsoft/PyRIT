@@ -7,7 +7,7 @@ import logging
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any
 
 from msal_extensions import FilePersistence, build_encrypted_persistence
 
@@ -181,7 +181,7 @@ class CopilotAuthenticator(Authenticator):
             logger.error(f"Encryption unavailable ({e}) and fallback_to_plaintext is False. Cannot proceed.")
             raise
 
-    async def _get_cached_token_if_available_and_valid(self) -> Optional[dict[str, Any]]:
+    async def _get_cached_token_if_available_and_valid(self) -> dict[str, Any] | None:
         """
         Retrieve and validate cached token.
 
@@ -243,7 +243,7 @@ class CopilotAuthenticator(Authenticator):
                 logger.error(f"Failed to load cached token ({error_name}): {e}")
             return None
 
-    def _save_token_to_cache(self, *, token: str, expires_in: Optional[int] = None) -> None:
+    def _save_token_to_cache(self, *, token: str, expires_in: int | None = None) -> None:
         """
         Save token to persistent cache with metadata.
 
@@ -286,7 +286,7 @@ class CopilotAuthenticator(Authenticator):
         except Exception as e:
             logger.error(f"Failed to clear cache: {e}")
 
-    async def _fetch_access_token_with_playwright(self) -> Optional[str]:
+    async def _fetch_access_token_with_playwright(self) -> str | None:
         """
         Fetch access token using Playwright browser automation.
 
@@ -324,7 +324,7 @@ class CopilotAuthenticator(Authenticator):
         # If not on Windows or using the right loop already, proceed normally
         return await self._run_playwright_browser_automation()
 
-    async def _run_playwright_in_thread(self) -> Optional[str]:
+    async def _run_playwright_in_thread(self) -> str | None:
         """
         Run Playwright browser automation in a separate thread with ProactorEventLoop.
         This is needed on Windows when the main loop is SelectorEventLoop (e.g., in Jupyter).
@@ -333,21 +333,21 @@ class CopilotAuthenticator(Authenticator):
             Optional[str]: The bearer token if successfully retrieved, None otherwise.
         """
 
-        def run_in_new_loop() -> Optional[str]:
+        def run_in_new_loop() -> str | None:
             if sys.platform == "win32":
                 new_loop = asyncio.ProactorEventLoop()
             else:
                 new_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(new_loop)
             try:
-                result: Optional[str] = new_loop.run_until_complete(self._run_playwright_browser_automation())
+                result: str | None = new_loop.run_until_complete(self._run_playwright_browser_automation())
                 return result
             finally:
                 new_loop.close()
 
         return await asyncio.get_running_loop().run_in_executor(None, run_in_new_loop)
 
-    async def _run_playwright_browser_automation(self) -> Optional[str]:
+    async def _run_playwright_browser_automation(self) -> str | None:
         """
         Execute the actual Playwright browser automation to fetch the access token.
 

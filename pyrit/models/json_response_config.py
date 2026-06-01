@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -30,12 +30,12 @@ class _JsonResponseConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    json_schema: Optional[dict[str, Any]] = None
+    json_schema: dict[str, Any] | None = None
     schema_name: str = "CustomSchema"
     strict: bool = True
 
     @classmethod
-    def from_metadata(cls, *, metadata: Optional[dict[str, Any]]) -> _JsonResponseConfig:
+    def from_metadata(cls, *, metadata: dict[str, Any] | None) -> _JsonResponseConfig:
         if not metadata:
             return cls(enabled=False)
 

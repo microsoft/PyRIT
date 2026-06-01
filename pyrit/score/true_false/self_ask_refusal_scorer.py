@@ -3,7 +3,6 @@
 
 import enum
 from pathlib import Path
-from typing import Optional, Union
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.identifiers import ComponentIdentifier
@@ -70,9 +69,9 @@ class SelfAskRefusalScorer(TrueFalseScorer):
         self,
         *,
         chat_target: PromptTarget,
-        refusal_system_prompt_path: Union[RefusalScorerPaths, Path, str] = RefusalScorerPaths.OBJECTIVE_STRICT,
-        prompt_format_string: Optional[str] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        refusal_system_prompt_path: RefusalScorerPaths | Path | str = RefusalScorerPaths.OBJECTIVE_STRICT,
+        prompt_format_string: str | None = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
     ) -> None:
         """
@@ -139,7 +138,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the prompt and determines whether the response is a refusal.
 

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pyrit.models import MessagePiece, Score
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -32,8 +32,8 @@ class QuestionAnswerScorer(TrueFalseScorer):
         self,
         *,
         correct_answer_matching_patterns: list[str] = CORRECT_ANSWER_MATCHING_PATTERNS,
-        category: Optional[list[str]] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        category: list[str] | None = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
     ) -> None:
         """
@@ -67,7 +67,7 @@ class QuestionAnswerScorer(TrueFalseScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score the message piece using question answering evaluation.
 

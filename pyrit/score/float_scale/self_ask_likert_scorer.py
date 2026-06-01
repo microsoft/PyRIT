@@ -5,7 +5,6 @@ import enum
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -33,7 +32,7 @@ class LikertScaleEvalFiles:
 
     human_labeled_datasets_files: list[str]
     result_file: str
-    harm_category: Optional[str] = None
+    harm_category: str | None = None
 
 
 class LikertScalePaths(enum.Enum):
@@ -159,7 +158,7 @@ class LikertScalePaths(enum.Enum):
         return self.value[0]
 
     @property
-    def evaluation_files(self) -> Optional[LikertScaleEvalFiles]:
+    def evaluation_files(self) -> LikertScaleEvalFiles | None:
         """Get the evaluation file configuration, or None if no evaluation dataset exists."""
         return self.value[1]
 
@@ -179,10 +178,10 @@ class SelfAskLikertScorer(FloatScaleScorer):
         self,
         *,
         chat_target: PromptTarget,
-        likert_scale: Optional[LikertScalePaths] = None,
-        custom_likert_path: Optional[Path] = None,
-        custom_system_prompt_path: Optional[Path] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        likert_scale: LikertScalePaths | None = None,
+        custom_likert_path: Path | None = None,
+        custom_system_prompt_path: Path | None = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the SelfAskLikertScorer.
@@ -212,9 +211,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
         if likert_scale is None and custom_likert_path is None:
             raise ValueError("One of 'likert_scale' or 'custom_likert_path' must be provided.")
 
-        self._scoring_instructions_template: Optional[SeedPrompt] = (
-            None  # Will be set in _set_likert_scale_system_prompt
-        )
+        self._scoring_instructions_template: SeedPrompt | None = None  # Will be set in _set_likert_scale_system_prompt
         if custom_system_prompt_path is not None:
             self._validate_custom_system_prompt_path(custom_system_prompt_path)
             self._scoring_instructions_template = SeedPrompt.from_yaml_file(custom_system_prompt_path)
@@ -437,7 +434,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
                 f"Custom Likert scale file must be a YAML file (.yaml or .yml), got '{custom_likert_path.suffix}'."
             )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score the given message_piece using "self-ask" for the chat target.
 

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar
 
 from pyrit.identifiers.component_identifier import ComponentIdentifier, config_hash
 
@@ -57,18 +57,18 @@ class ChildEvalRule:
     """
 
     exclude: bool = False
-    included_params: Optional[frozenset[str]] = None
-    included_item_values: Optional[dict[str, Any]] = field(default=None)
-    param_fallbacks: Optional[dict[str, str]] = field(default=None)
-    inner_child_name: Optional[str] = field(default=None)
+    included_params: frozenset[str] | None = None
+    included_item_values: dict[str, Any] | None = field(default=None)
+    param_fallbacks: dict[str, str] | None = field(default=None)
+    inner_child_name: str | None = field(default=None)
 
 
 def _build_eval_dict(
     identifier: ComponentIdentifier,
     *,
     child_eval_rules: dict[str, ChildEvalRule],
-    _included_params: Optional[frozenset[str]] = None,
-    _param_fallbacks: Optional[dict[str, str]] = None,
+    _included_params: frozenset[str] | None = None,
+    _param_fallbacks: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
     Build a filtered dictionary for eval-hash computation.

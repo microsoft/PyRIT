@@ -7,7 +7,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Union, overload
+from typing import TYPE_CHECKING, Any, overload
 
 import yaml
 
@@ -103,9 +103,9 @@ class AnecdoctorGenerator(
         self,
         *,
         objective_target: PromptTarget,
-        processing_model: Optional[PromptTarget] = None,
-        converter_config: Optional[StrategyConverterConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        processing_model: PromptTarget | None = None,
+        converter_config: StrategyConverterConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
     ) -> None:
         """
         Initialize the Anecdoctor prompt generation strategy.
@@ -140,8 +140,8 @@ class AnecdoctorGenerator(
     def _create_identifier(
         self,
         *,
-        params: Optional[dict[str, Any]] = None,
-        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+        params: dict[str, Any] | None = None,
+        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct the identifier for this prompt generator.
@@ -154,7 +154,7 @@ class AnecdoctorGenerator(
         Returns:
             ComponentIdentifier: The identifier for this prompt generator.
         """
-        all_children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = {
+        all_children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] = {
             "objective_target": self._objective_target.get_identifier(),
         }
         if children:
@@ -280,7 +280,7 @@ class AnecdoctorGenerator(
 
     async def _send_examples_to_target_async(
         self, *, formatted_examples: str, context: AnecdoctorContext
-    ) -> Optional[Message]:
+    ) -> Message | None:
         """
         Send the formatted examples to the target model.
 
@@ -408,7 +408,7 @@ class AnecdoctorGenerator(
         content_type: str,
         language: str,
         evaluation_data: list[str],
-        memory_labels: Optional[dict[str, str]] = None,
+        memory_labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> AnecdoctorResult: ...
 

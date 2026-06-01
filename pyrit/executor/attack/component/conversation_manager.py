@@ -57,7 +57,7 @@ def get_adversarial_chat_messages(
     adversarial_chat_conversation_id: str,
     attack_identifier: ComponentIdentifier,
     adversarial_chat_target_identifier: ComponentIdentifier,
-    labels: Optional[dict[str, str]] = None,  # deprecated
+    labels: dict[str, str] | None = None,  # deprecated
 ) -> list[Message]:
     """
     Transform prepended conversation messages for adversarial chat with swapped roles.
@@ -147,7 +147,7 @@ async def build_conversation_context_string_async(messages: list[Message]) -> st
     return await normalizer.normalize_string_async(messages)
 
 
-def get_prepended_turn_count(prepended_conversation: Optional[list[Message]]) -> int:
+def get_prepended_turn_count(prepended_conversation: list[Message] | None) -> int:
     """
     Count the number of turns (assistant responses) in a prepended conversation.
 
@@ -192,7 +192,7 @@ class ConversationManager:
         self,
         *,
         attack_identifier: ComponentIdentifier,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        prompt_normalizer: PromptNormalizer | None = None,
     ) -> None:
         """
         Initialize the conversation manager.
@@ -220,9 +220,7 @@ class ConversationManager:
         conversation = self._memory.get_conversation(conversation_id=conversation_id)
         return list(conversation)
 
-    def get_last_message(
-        self, *, conversation_id: str, role: Optional[ChatMessageRole] = None
-    ) -> Optional[MessagePiece]:
+    def get_last_message(self, *, conversation_id: str, role: ChatMessageRole | None = None) -> MessagePiece | None:
         """
         Retrieve the most recent message from a conversation.
 
@@ -252,7 +250,7 @@ class ConversationManager:
         target: PromptTarget,
         conversation_id: str,
         system_prompt: str,
-        labels: Optional[dict[str, str]] = None,  # deprecated
+        labels: dict[str, str] | None = None,  # deprecated
     ) -> None:
         """
         Set or update the system prompt for a conversation.
@@ -289,10 +287,10 @@ class ConversationManager:
         context: "AttackContext[Any]",
         target: PromptTarget,
         conversation_id: str,
-        request_converters: Optional[list[PromptConverterConfiguration]] = None,
+        request_converters: list[PromptConverterConfiguration] | None = None,
         prepended_conversation_config: Optional["PrependedConversationConfig"] = None,
-        max_turns: Optional[int] = None,
-        memory_labels: Optional[dict[str, str]] = None,
+        max_turns: int | None = None,
+        memory_labels: dict[str, str] | None = None,
     ) -> ConversationState:
         """
         Initialize attack context with prepended conversation and merged labels.
@@ -439,9 +437,9 @@ class ConversationManager:
         *,
         prepended_conversation: list[Message],
         conversation_id: str,
-        request_converters: Optional[list[PromptConverterConfiguration]] = None,
+        request_converters: list[PromptConverterConfiguration] | None = None,
         prepended_conversation_config: Optional["PrependedConversationConfig"] = None,
-        max_turns: Optional[int] = None,
+        max_turns: int | None = None,
     ) -> int:
         """
         Add prepended conversation messages to memory for a chat target.
@@ -520,9 +518,9 @@ class ConversationManager:
         context: "AttackContext[Any]",
         prepended_conversation: list[Message],
         conversation_id: str,
-        request_converters: Optional[list[PromptConverterConfiguration]],
+        request_converters: list[PromptConverterConfiguration] | None,
         prepended_conversation_config: Optional["PrependedConversationConfig"],
-        max_turns: Optional[int],
+        max_turns: int | None,
     ) -> ConversationState:
         """
         Process prepended conversation for a chat target.
@@ -588,7 +586,7 @@ class ConversationManager:
         *,
         message: Message,
         request_converters: list[PromptConverterConfiguration],
-        apply_to_roles: Optional[list[ChatMessageRole]],
+        apply_to_roles: list[ChatMessageRole] | None,
     ) -> None:
         """
         Apply converters to message pieces.

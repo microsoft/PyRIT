@@ -16,7 +16,7 @@ from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 class TrueFalseInverterScorer(TrueFalseScorer):
     """A scorer that inverts a true false score."""
 
-    def __init__(self, *, scorer: TrueFalseScorer, validator: Optional[ScorerPromptValidator] = None) -> None:
+    def __init__(self, *, scorer: TrueFalseScorer, validator: ScorerPromptValidator | None = None) -> None:
         """
         Initialize the TrueFalseInverterScorer.
 
@@ -63,8 +63,8 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         self,
         message: Message,
         *,
-        objective: Optional[str] = None,
-        role_filter: Optional[ChatMessageRole] = None,
+        objective: str | None = None,
+        role_filter: ChatMessageRole | None = None,
     ) -> list[Score]:
         """
         Scores the piece using the underlying true-false scorer and returns the inverted score.
@@ -101,7 +101,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
 
         return [inv_score]
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Indicate that True False Inverter scorers do not support piecewise scoring.
 

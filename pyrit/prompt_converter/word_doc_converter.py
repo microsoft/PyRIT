@@ -7,7 +7,7 @@ import ast
 import hashlib
 from dataclasses import dataclass
 from io import BytesIO
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from docx import Document
 
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 class _WordDocInjectionConfig:
     """Configuration for how to inject content into a Word document."""
 
-    existing_docx: Optional[Path]
+    existing_docx: Path | None
     placeholder: str
 
 
@@ -66,8 +66,8 @@ class WordDocConverter(PromptConverter):
     def __init__(
         self,
         *,
-        prompt_template: Optional[SeedPrompt] = None,
-        existing_docx: Optional[Path] = None,
+        prompt_template: SeedPrompt | None = None,
+        existing_docx: Path | None = None,
         placeholder: str = "{{INJECTION_PLACEHOLDER}}",
     ) -> None:
         """
@@ -112,7 +112,7 @@ class WordDocConverter(PromptConverter):
         Returns:
             ComponentIdentifier: The identifier with converter-specific parameters.
         """
-        template_hash: Optional[str] = None
+        template_hash: str | None = None
         if self._prompt_template:
             template_hash = hashlib.sha256(str(self._prompt_template.value).encode("utf-8")).hexdigest()[:16]
 

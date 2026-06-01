@@ -5,7 +5,7 @@
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 import pandas as pd
 
@@ -126,8 +126,8 @@ class HumanLabeledDataset:
         entries: list[HumanLabeledEntry],
         metrics_type: MetricsType,
         version: str,
-        harm_definition: Optional[str] = None,
-        harm_definition_version: Optional[str] = None,
+        harm_definition: str | None = None,
+        harm_definition_version: str | None = None,
     ) -> None:
         """
         Initialize the HumanLabeledDataset.
@@ -156,7 +156,7 @@ class HumanLabeledDataset:
         self.version = version
         self.harm_definition = harm_definition
         self.harm_definition_version = harm_definition_version
-        self._harm_definition_obj: Optional[HarmDefinition] = None
+        self._harm_definition_obj: HarmDefinition | None = None
 
     def get_harm_definition(self) -> Optional["HarmDefinition"]:
         """
@@ -188,12 +188,12 @@ class HumanLabeledDataset:
     def from_csv(
         cls,
         *,
-        csv_path: Union[str, Path],
+        csv_path: str | Path,
         metrics_type: MetricsType,
-        dataset_name: Optional[str] = None,
-        version: Optional[str] = None,
-        harm_definition: Optional[str] = None,
-        harm_definition_version: Optional[str] = None,
+        dataset_name: str | None = None,
+        version: str | None = None,
+        harm_definition: str | None = None,
+        harm_definition_version: str | None = None,
     ) -> "HumanLabeledDataset":
         """
         Load a human-labeled dataset from a CSV file with standard column names.

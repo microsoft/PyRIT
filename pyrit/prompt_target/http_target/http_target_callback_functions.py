@@ -5,7 +5,7 @@
 import json
 import re
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
@@ -42,7 +42,7 @@ def get_http_target_json_response_callback_function(key: str) -> Callable[[reque
 
 
 def get_http_target_regex_matching_callback_function(
-    key: str, url: Optional[str] = None
+    key: str, url: str | None = None
 ) -> Callable[[requests.Response], str]:
     """
     Get a callback function that parses HTTP responses using regex matching.

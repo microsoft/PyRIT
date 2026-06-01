@@ -12,7 +12,7 @@ import random
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -44,22 +44,22 @@ class SeedDataset(YamlLoadable):
     are straightforward (e.g. ds.seeds[0].value).
     """
 
-    data_type: Optional[str]
-    name: Optional[str]
-    dataset_name: Optional[str]
-    harm_categories: Optional[Sequence[str]]
-    description: Optional[str]
-    authors: Optional[Sequence[str]]
-    groups: Optional[Sequence[str]]
-    source: Optional[str]
-    date_added: Optional[datetime]
-    added_by: Optional[str]
+    data_type: str | None
+    name: str | None
+    dataset_name: str | None
+    harm_categories: Sequence[str] | None
+    description: str | None
+    authors: Sequence[str] | None
+    groups: Sequence[str] | None
+    source: str | None
+    date_added: datetime | None
+    added_by: str | None
 
     # Now the actual prompts
     seeds: Sequence[Seed]
 
     @classmethod
-    def from_yaml_file(cls, file: Union[str, Path]) -> SeedDataset:
+    def from_yaml_file(cls, file: str | Path) -> SeedDataset:
         """
         Create a SeedDataset from a YAML file, marking nested seeds as trusted templates.
 
@@ -89,18 +89,18 @@ class SeedDataset(YamlLoadable):
     def __init__(
         self,
         *,
-        seeds: Optional[Union[Sequence[dict[str, Any]], Sequence[Seed]]] = None,
-        data_type: Optional[PromptDataType] = "text",
-        name: Optional[str] = None,
-        dataset_name: Optional[str] = None,
-        harm_categories: Optional[Sequence[str]] = None,
-        description: Optional[str] = None,
-        authors: Optional[Sequence[str]] = None,
-        groups: Optional[Sequence[str]] = None,
-        source: Optional[str] = None,
-        date_added: Optional[datetime] = None,
-        added_by: Optional[str] = None,
-        seed_type: Optional[SeedType] = None,
+        seeds: Sequence[dict[str, Any]] | Sequence[Seed] | None = None,
+        data_type: PromptDataType | None = "text",
+        name: str | None = None,
+        dataset_name: str | None = None,
+        harm_categories: Sequence[str] | None = None,
+        description: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        date_added: datetime | None = None,
+        added_by: str | None = None,
+        seed_type: SeedType | None = None,
         is_jinja_template: bool = False,
     ) -> None:
         """
@@ -215,9 +215,9 @@ class SeedDataset(YamlLoadable):
     def get_values(
         self,
         *,
-        first: Optional[PositiveInt] = None,
-        last: Optional[PositiveInt] = None,
-        harm_categories: Optional[Sequence[str]] = None,
+        first: PositiveInt | None = None,
+        last: PositiveInt | None = None,
+        harm_categories: Sequence[str] | None = None,
     ) -> Sequence[str]:
         """
         Extract and return prompt values from the dataset.
@@ -253,9 +253,7 @@ class SeedDataset(YamlLoadable):
 
         return first_part + last_part
 
-    def get_random_values(
-        self, *, number: PositiveInt, harm_categories: Optional[Sequence[str]] = None
-    ) -> Sequence[str]:
+    def get_random_values(self, *, number: PositiveInt, harm_categories: Sequence[str] | None = None) -> Sequence[str]:
         """
         Extract and return random prompt values from the dataset.
 

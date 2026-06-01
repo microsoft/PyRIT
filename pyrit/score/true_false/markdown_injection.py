@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import re
-from typing import Optional
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score
@@ -28,7 +27,7 @@ class MarkdownInjectionScorer(TrueFalseScorer):
     def __init__(
         self,
         *,
-        validator: Optional[ScorerPromptValidator] = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
     ) -> None:
         """
@@ -56,7 +55,7 @@ class MarkdownInjectionScorer(TrueFalseScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Check for markdown injection in the text. It returns True if markdown injection is detected, else False.
 

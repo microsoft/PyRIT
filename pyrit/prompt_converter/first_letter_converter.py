@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.text_selection_strategy import WordSelectionStrategy
@@ -18,7 +17,7 @@ class FirstLetterConverter(WordLevelConverter):
         self,
         *,
         letter_separator: str = " ",
-        word_selection_strategy: Optional[WordSelectionStrategy] = None,
+        word_selection_strategy: WordSelectionStrategy | None = None,
     ) -> None:
         """
         Initialize the converter with the specified letter separator and selection strategy.

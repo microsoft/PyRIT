@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import abc
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType
@@ -31,8 +31,8 @@ class WordLevelConverter(PromptConverter):
     def __init__(
         self,
         *,
-        word_selection_strategy: Optional[WordSelectionStrategy] = None,
-        word_split_separator: Optional[str] = " ",
+        word_selection_strategy: WordSelectionStrategy | None = None,
+        word_split_separator: str | None = " ",
         **kwargs: Any,
     ) -> None:
         """

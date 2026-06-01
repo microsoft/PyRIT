@@ -47,7 +47,7 @@ class MultiPromptSendingAttackParameters(AttackParameters):
     Only accepts objective and user_messages fields.
     """
 
-    user_messages: Optional[list[Message]] = None
+    user_messages: list[Message] | None = None
 
     @classmethod
     async def from_seed_group_async(
@@ -137,9 +137,9 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
         self,
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
     ) -> None:
         """
         Initialize the multi-prompt sending attack strategy.
@@ -179,7 +179,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             prompt_normalizer=self._prompt_normalizer,
         )
 
-    def get_attack_scoring_config(self) -> Optional[AttackScoringConfig]:
+    def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
         Get the attack scoring configuration used by this strategy.
 
@@ -301,10 +301,10 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
     def _determine_attack_outcome(
         self,
         *,
-        response: Optional[Message],
-        score: Optional[Score],
+        response: Message | None,
+        score: Score | None,
         context: MultiTurnAttackContext[Any],
-    ) -> tuple[AttackOutcome, Optional[str]]:
+    ) -> tuple[AttackOutcome, str | None]:
         """
         Determine the outcome of the attack based on the response and score.
 
@@ -340,7 +340,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
 
     async def _send_prompt_to_objective_target_async(
         self, *, current_message: Message, context: MultiTurnAttackContext[Any]
-    ) -> Optional[Message]:
+    ) -> Message | None:
         """
         Send the prompt to the target and return the response.
 
@@ -370,7 +370,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
                 attack_identifier=self.get_identifier(),
             )
 
-    async def _evaluate_response_async(self, *, response: Message, objective: str) -> Optional[Score]:
+    async def _evaluate_response_async(self, *, response: Message, objective: str) -> Score | None:
         """
         Evaluate the response against the objective using the configured scorers.
 

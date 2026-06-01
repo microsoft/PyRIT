@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pyrit.prompt_converter.word_level_converter import WordLevelConverter
 
@@ -29,7 +29,7 @@ class BinaryConverter(WordLevelConverter):
         self,
         *,
         bits_per_char: BinaryConverter.BitsPerChar = BitsPerChar.BITS_16,
-        word_selection_strategy: Optional[WordSelectionStrategy] = None,
+        word_selection_strategy: WordSelectionStrategy | None = None,
     ) -> None:
         """
         Initialize the converter with the specified bits per character and selection strategy.

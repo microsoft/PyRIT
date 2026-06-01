@@ -5,7 +5,6 @@ import logging
 import os
 import tempfile
 import uuid
-from typing import Optional
 
 import av
 
@@ -106,7 +105,7 @@ class AudioTranscriptHelper:  # noqa: B024
         self,
         *,
         text_capable_scorer: Scorer,
-        use_entra_auth: Optional[bool] = None,
+        use_entra_auth: bool | None = None,
     ) -> None:
         """
         Initialize the base audio scorer.
@@ -153,7 +152,7 @@ class AudioTranscriptHelper:  # noqa: B024
                 f"Supported types: {scorer._validator._supported_data_types}"
             )
 
-    async def _score_audio_async(self, *, message_piece: MessagePiece, objective: Optional[str] = None) -> list[Score]:
+    async def _score_audio_async(self, *, message_piece: MessagePiece, objective: str | None = None) -> list[Score]:
         """
         Transcribe audio and score the transcript.
 
@@ -265,7 +264,7 @@ class AudioTranscriptHelper:  # noqa: B024
             channels=self._DEFAULT_CHANNELS,
         )
 
-    def _extract_audio_from_video(self, video_path: str) -> Optional[str]:
+    def _extract_audio_from_video(self, video_path: str) -> str | None:
         """
         Extract audio track from a video file.
 
@@ -279,7 +278,7 @@ class AudioTranscriptHelper:  # noqa: B024
         return AudioTranscriptHelper.extract_audio_from_video(video_path)
 
     @staticmethod
-    def extract_audio_from_video(video_path: str) -> Optional[str]:
+    def extract_audio_from_video(video_path: str) -> str | None:
         """
         Extract audio track from a video file (static version).
 

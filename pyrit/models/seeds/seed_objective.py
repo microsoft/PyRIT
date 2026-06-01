@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
 from pyrit.common.path import PATHS_DICT
 from pyrit.models.seeds.seed import Seed
@@ -42,9 +42,9 @@ class SeedObjective(Seed):
     @classmethod
     def from_yaml_with_required_parameters(
         cls,
-        template_path: Union[str, Path],
+        template_path: str | Path,
         required_parameters: list[str],
-        error_message: Optional[str] = None,
+        error_message: str | None = None,
     ) -> SeedObjective:
         """
         Load a Seed from a YAML file. Because SeedObjectives do not have any parameters, the required_parameters

@@ -6,7 +6,7 @@ from __future__ import annotations
 import copy
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.utils import combine_dict
 from pyrit.models.message_piece import MessagePiece
@@ -24,7 +24,7 @@ class Message:
     This is a single request to a target. It can contain multiple message pieces.
     """
 
-    def __init__(self, message_pieces: Sequence[MessagePiece], *, skip_validation: Optional[bool] = False) -> None:
+    def __init__(self, message_pieces: Sequence[MessagePiece], *, skip_validation: bool | None = False) -> None:
         """
         Initialize a Message from one or more message pieces.
 
@@ -96,9 +96,9 @@ class Message:
     def get_pieces_by_type(
         self,
         *,
-        data_type: Optional[PromptDataType] = None,
-        original_value_data_type: Optional[PromptDataType] = None,
-        converted_value_data_type: Optional[PromptDataType] = None,
+        data_type: PromptDataType | None = None,
+        original_value_data_type: PromptDataType | None = None,
+        converted_value_data_type: PromptDataType | None = None,
     ) -> list[MessagePiece]:
         """
         Return all message pieces matching the given data type.
@@ -123,10 +123,10 @@ class Message:
     def get_piece_by_type(
         self,
         *,
-        data_type: Optional[PromptDataType] = None,
-        original_value_data_type: Optional[PromptDataType] = None,
-        converted_value_data_type: Optional[PromptDataType] = None,
-    ) -> Optional[MessagePiece]:
+        data_type: PromptDataType | None = None,
+        original_value_data_type: PromptDataType | None = None,
+        converted_value_data_type: PromptDataType | None = None,
+    ) -> MessagePiece | None:
         """
         Return the first message piece matching the given data type, or None.
 
@@ -376,7 +376,7 @@ class Message:
         *,
         prompt: str,
         role: ChatMessageRole,
-        prompt_metadata: Optional[dict[str, Union[str, int]]] = None,
+        prompt_metadata: dict[str, str | int] | None = None,
     ) -> Message:
         """
         Build a single-piece message from prompt text.
@@ -552,7 +552,7 @@ def construct_response_from_request(
     request: MessagePiece,
     response_text_pieces: list[str],
     response_type: PromptDataType = "text",
-    prompt_metadata: Optional[dict[str, Union[str, int]]] = None,
+    prompt_metadata: dict[str, str | int] | None = None,
     error: PromptResponseError = "none",
 ) -> Message:
     """

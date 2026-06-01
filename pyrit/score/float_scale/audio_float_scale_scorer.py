@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import MessagePiece, Score
@@ -24,8 +23,8 @@ class AudioFloatScaleScorer(FloatScaleScorer):
         self,
         *,
         text_capable_scorer: FloatScaleScorer,
-        validator: Optional[ScorerPromptValidator] = None,
-        use_entra_auth: Optional[bool] = None,
+        validator: ScorerPromptValidator | None = None,
+        use_entra_auth: bool | None = None,
     ) -> None:
         """
         Initialize the AudioFloatScaleScorer.
@@ -63,7 +62,7 @@ class AudioFloatScaleScorer(FloatScaleScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score an audio file by transcribing it and scoring the transcript.
 

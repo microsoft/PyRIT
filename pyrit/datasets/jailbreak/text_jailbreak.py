@@ -5,7 +5,7 @@ import logging
 import random
 import threading
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.path import JAILBREAK_TEMPLATES_PATH
 from pyrit.models import SeedPrompt
@@ -18,7 +18,7 @@ class TextJailBreak:
     A class that manages jailbreak datasets (like DAN, etc.).
     """
 
-    _template_cache: Optional[dict[str, list[Path]]] = None
+    _template_cache: dict[str, list[Path]] | None = None
     _cache_lock: threading.Lock = threading.Lock()
 
     @classmethod
@@ -99,9 +99,9 @@ class TextJailBreak:
     def __init__(
         self,
         *,
-        template_path: Optional[str] = None,
-        template_file_name: Optional[str] = None,
-        string_template: Optional[str] = None,
+        template_path: str | None = None,
+        template_file_name: str | None = None,
+        string_template: str | None = None,
         random_template: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -208,7 +208,7 @@ class TextJailBreak:
             self.template.value = self.template.render_template_value_silent(**kwargs)
 
     @classmethod
-    def get_jailbreak_templates(cls, num_templates: Optional[int] = None) -> list[str]:
+    def get_jailbreak_templates(cls, num_templates: int | None = None) -> list[str]:
         """
         Retrieve all jailbreaks from the JAILBREAK_TEMPLATES_PATH.
 

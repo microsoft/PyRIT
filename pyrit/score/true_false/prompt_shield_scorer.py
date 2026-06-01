@@ -4,7 +4,7 @@
 import json
 import logging
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece, Score, ScoreType
@@ -33,7 +33,7 @@ class PromptShieldScorer(TrueFalseScorer):
         self,
         *,
         prompt_shield_target: PromptShieldTarget,
-        validator: Optional[ScorerPromptValidator] = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
     ) -> None:
         """
@@ -65,7 +65,7 @@ class PromptShieldScorer(TrueFalseScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         conversation_id = str(uuid.uuid4())
 
         body = message_piece.original_value

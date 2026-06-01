@@ -5,7 +5,7 @@ import asyncio
 import copy
 import logging
 import traceback
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 from pyrit.common.deprecation import print_deprecation_message
@@ -63,11 +63,11 @@ class PromptNormalizer:
         *,
         message: Message,
         target: PromptTarget,
-        conversation_id: Optional[str] = None,
+        conversation_id: str | None = None,
         request_converter_configurations: list[PromptConverterConfiguration] | None = None,
         response_converter_configurations: list[PromptConverterConfiguration] | None = None,
-        labels: Optional[dict[str, str]] = None,
-        attack_identifier: Optional[ComponentIdentifier] = None,
+        labels: dict[str, str] | None = None,
+        attack_identifier: ComponentIdentifier | None = None,
     ) -> Message:
         """
         Send a single request to a target.
@@ -189,8 +189,8 @@ class PromptNormalizer:
         *,
         requests: list[NormalizerRequest],
         target: PromptTarget,
-        labels: Optional[dict[str, str]] = None,
-        attack_identifier: Optional[ComponentIdentifier] = None,
+        labels: dict[str, str] | None = None,
+        attack_identifier: ComponentIdentifier | None = None,
         batch_size: int = 10,
     ) -> list[Message]:
         """
@@ -305,10 +305,10 @@ class PromptNormalizer:
         self,
         conversation_id: str,
         should_convert: bool = True,
-        converter_configurations: Optional[list[PromptConverterConfiguration]] = None,
-        attack_identifier: Optional[ComponentIdentifier] = None,
-        prepended_conversation: Optional[list[Message]] = None,
-    ) -> Optional[list[Message]]:
+        converter_configurations: list[PromptConverterConfiguration] | None = None,
+        attack_identifier: ComponentIdentifier | None = None,
+        prepended_conversation: list[Message] | None = None,
+    ) -> list[Message] | None:
         """
         Process the prepended conversation by converting it if needed and adding it to memory.
 

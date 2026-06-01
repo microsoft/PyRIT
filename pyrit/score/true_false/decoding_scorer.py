@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
 from pyrit.analytics.text_matching import ExactTextMatching, TextMatching
 from pyrit.identifiers import ComponentIdentifier
@@ -31,10 +30,10 @@ class DecodingScorer(TrueFalseScorer):
     def __init__(
         self,
         *,
-        text_matcher: Optional[TextMatching] = None,
-        categories: Optional[list[str]] = None,
+        text_matcher: TextMatching | None = None,
+        categories: list[str] | None = None,
         aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
-        validator: Optional[ScorerPromptValidator] = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the DecodingScorer.
@@ -66,7 +65,7 @@ class DecodingScorer(TrueFalseScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score the given request piece based on text matching strategy.
 

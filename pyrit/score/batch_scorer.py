@@ -5,7 +5,6 @@ import logging
 import uuid
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Optional
 
 from pyrit.memory import CentralMemory
 from pyrit.models import (
@@ -47,17 +46,17 @@ class BatchScorer:
         self,
         *,
         scorer: Scorer,
-        attack_id: Optional[str | uuid.UUID] = None,
-        conversation_id: Optional[str | uuid.UUID] = None,
-        prompt_ids: Optional[list[str] | list[uuid.UUID]] = None,
-        labels: Optional[dict[str, str]] = None,
-        sent_after: Optional[datetime] = None,
-        sent_before: Optional[datetime] = None,
-        original_values: Optional[list[str]] = None,
-        converted_values: Optional[list[str]] = None,
-        data_type: Optional[str] = None,
-        not_data_type: Optional[str] = None,
-        converted_value_sha256: Optional[list[str]] = None,
+        attack_id: str | uuid.UUID | None = None,
+        conversation_id: str | uuid.UUID | None = None,
+        prompt_ids: list[str] | list[uuid.UUID] | None = None,
+        labels: dict[str, str] | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        original_values: list[str] | None = None,
+        converted_values: list[str] | None = None,
+        data_type: str | None = None,
+        not_data_type: str | None = None,
+        converted_value_sha256: list[str] | None = None,
         objective: str = "",
     ) -> list[Score]:
         """

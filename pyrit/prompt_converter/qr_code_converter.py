@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
 import segno
 
@@ -22,11 +21,11 @@ class QRCodeConverter(PromptConverter):
         border: int = 4,
         dark_color: tuple[int, int, int] = (0, 0, 0),
         light_color: tuple[int, int, int] = (255, 255, 255),
-        data_dark_color: Optional[tuple[int, int, int]] = None,
-        data_light_color: Optional[tuple[int, int, int]] = None,
-        finder_dark_color: Optional[tuple[int, int, int]] = None,
-        finder_light_color: Optional[tuple[int, int, int]] = None,
-        border_color: Optional[tuple[int, int, int]] = None,
+        data_dark_color: tuple[int, int, int] | None = None,
+        data_light_color: tuple[int, int, int] | None = None,
+        finder_dark_color: tuple[int, int, int] | None = None,
+        finder_light_color: tuple[int, int, int] | None = None,
+        border_color: tuple[int, int, int] | None = None,
     ) -> None:
         """
         Initialize the converter with specified parameters for QR code generation.

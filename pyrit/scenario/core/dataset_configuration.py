@@ -11,7 +11,7 @@ with either explicit SeedGroups or dataset names (mutually exclusive).
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pyrit.memory import CentralMemory
 from pyrit.models import SeedAttackGroup, SeedGroup
@@ -46,10 +46,10 @@ class DatasetConfiguration:
     def __init__(
         self,
         *,
-        seed_groups: Optional[list[SeedGroup]] = None,
-        dataset_names: Optional[list[str]] = None,
-        max_dataset_size: Optional[int] = None,
-        scenario_strategies: Optional[Sequence[ScenarioStrategy]] = None,
+        seed_groups: list[SeedGroup] | None = None,
+        dataset_names: list[str] | None = None,
+        max_dataset_size: int | None = None,
+        scenario_strategies: Sequence[ScenarioStrategy] | None = None,
     ) -> None:
         """
         Initialize a DatasetConfiguration.

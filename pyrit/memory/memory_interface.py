@@ -11,7 +11,7 @@ from collections.abc import MutableSequence, Sequence
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from sqlalchemy import MetaData, and_, not_, or_
 from sqlalchemy.engine.base import Engine
@@ -92,7 +92,7 @@ class MemoryInterface(abc.ABC):
         """Return a short unique suffix for bind-param deduplication."""
         return uuid.uuid4().hex[:8]
 
-    def __init__(self, embedding_model: Optional[Any] = None) -> None:
+    def __init__(self, embedding_model: Any | None = None) -> None:
         """
         Initialize the MemoryInterface.
 
@@ -109,7 +109,7 @@ class MemoryInterface(abc.ABC):
         # Ensure cleanup at process exit
         self.cleanup()
 
-    def enable_embedding(self, embedding_model: Optional[Any] = None) -> None:
+    def enable_embedding(self, embedding_model: Any | None = None) -> None:
         """
         Enable embedding functionality for the memory interface.
 
@@ -317,9 +317,7 @@ class MemoryInterface(abc.ABC):
         """
 
     @abc.abstractmethod
-    def _get_message_pieces_prompt_metadata_conditions(
-        self, *, prompt_metadata: dict[str, Union[str, int]]
-    ) -> list[Any]:
+    def _get_message_pieces_prompt_metadata_conditions(self, *, prompt_metadata: dict[str, str | int]) -> list[Any]:
         """
         Return a list of conditions for filtering memory entries based on prompt metadata.
 
@@ -332,7 +330,7 @@ class MemoryInterface(abc.ABC):
         """
 
     @abc.abstractmethod
-    def _get_seed_metadata_conditions(self, *, metadata: dict[str, Union[str, int]]) -> Any:
+    def _get_seed_metadata_conditions(self, *, metadata: dict[str, str | int]) -> Any:
         """
         Return a condition for filtering seed prompt entries based on prompt metadata.
 
@@ -361,10 +359,10 @@ class MemoryInterface(abc.ABC):
         self,
         model_class: type[Model],
         *,
-        conditions: Optional[Any] = None,
+        conditions: Any | None = None,
         distinct: bool = False,
         join_scores: bool = False,
-        order_by: Optional[Any] = None,
+        order_by: Any | None = None,
         limit: int | None = None,
     ) -> MutableSequence[Model]:
         """
@@ -392,7 +390,7 @@ class MemoryInterface(abc.ABC):
         distinct: bool = False,
         join_scores: bool = False,
         batch_size: int | None = None,
-        order_by: Optional[Any] = None,
+        order_by: Any | None = None,
         limit: int | None = None,
     ) -> MutableSequence[Model]:
         """
@@ -699,12 +697,12 @@ class MemoryInterface(abc.ABC):
     def get_scores(
         self,
         *,
-        score_ids: Optional[Sequence[str]] = None,
-        score_type: Optional[str] = None,
-        score_category: Optional[str] = None,
-        sent_after: Optional[datetime] = None,
-        sent_before: Optional[datetime] = None,
-        identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
+        score_ids: Sequence[str] | None = None,
+        score_type: str | None = None,
+        score_category: str | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        identifier_filters: Sequence[IdentifierFilter] | None = None,
     ) -> Sequence[Score]:
         """
         Retrieve a list of Score objects based on the specified filters.
@@ -763,19 +761,19 @@ class MemoryInterface(abc.ABC):
     def get_prompt_scores(
         self,
         *,
-        attack_id: Optional[str | uuid.UUID] = None,
-        role: Optional[str] = None,
-        conversation_id: Optional[str | uuid.UUID] = None,
-        prompt_ids: Optional[Sequence[str | uuid.UUID]] = None,
-        labels: Optional[dict[str, str]] = None,
-        prompt_metadata: Optional[dict[str, Union[str, int]]] = None,
-        sent_after: Optional[datetime] = None,
-        sent_before: Optional[datetime] = None,
-        original_values: Optional[Sequence[str]] = None,
-        converted_values: Optional[Sequence[str]] = None,
-        data_type: Optional[str] = None,
-        not_data_type: Optional[str] = None,
-        converted_value_sha256: Optional[Sequence[str]] = None,
+        attack_id: str | uuid.UUID | None = None,
+        role: str | None = None,
+        conversation_id: str | uuid.UUID | None = None,
+        prompt_ids: Sequence[str | uuid.UUID] | None = None,
+        labels: dict[str, str] | None = None,
+        prompt_metadata: dict[str, str | int] | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        original_values: Sequence[str] | None = None,
+        converted_values: Sequence[str] | None = None,
+        data_type: str | None = None,
+        not_data_type: str | None = None,
+        converted_value_sha256: Sequence[str] | None = None,
     ) -> Sequence[Score]:
         """
         Retrieve scores attached to message pieces based on the specified filters.
@@ -870,20 +868,20 @@ class MemoryInterface(abc.ABC):
     def get_message_pieces(
         self,
         *,
-        attack_id: Optional[str | uuid.UUID] = None,
-        role: Optional[str] = None,
-        conversation_id: Optional[str | uuid.UUID] = None,
-        prompt_ids: Optional[Sequence[str | uuid.UUID]] = None,
-        labels: Optional[dict[str, str]] = None,
-        prompt_metadata: Optional[dict[str, Union[str, int]]] = None,
-        sent_after: Optional[datetime] = None,
-        sent_before: Optional[datetime] = None,
-        original_values: Optional[Sequence[str]] = None,
-        converted_values: Optional[Sequence[str]] = None,
-        data_type: Optional[str] = None,
-        not_data_type: Optional[str] = None,
-        converted_value_sha256: Optional[Sequence[str]] = None,
-        identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
+        attack_id: str | uuid.UUID | None = None,
+        role: str | None = None,
+        conversation_id: str | uuid.UUID | None = None,
+        prompt_ids: Sequence[str | uuid.UUID] | None = None,
+        labels: dict[str, str] | None = None,
+        prompt_metadata: dict[str, str | int] | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        original_values: Sequence[str] | None = None,
+        converted_values: Sequence[str] | None = None,
+        data_type: str | None = None,
+        not_data_type: str | None = None,
+        converted_value_sha256: Sequence[str] | None = None,
+        identifier_filters: Sequence[IdentifierFilter] | None = None,
     ) -> Sequence[MessagePiece]:
         """
         Retrieve a list of MessagePiece objects based on the specified filters.
@@ -1155,7 +1153,7 @@ class MemoryInterface(abc.ABC):
         )
 
     def update_prompt_metadata_by_conversation_id(
-        self, *, conversation_id: str, prompt_metadata: dict[str, Union[str, int]]
+        self, *, conversation_id: str, prompt_metadata: dict[str, str | int]
     ) -> bool:
         """
         Update the metadata of prompt entries in memory for a given conversation ID.
@@ -1220,20 +1218,20 @@ class MemoryInterface(abc.ABC):
     def get_seeds(
         self,
         *,
-        value: Optional[str] = None,
-        value_sha256: Optional[Sequence[str]] = None,
-        dataset_name: Optional[str] = None,
-        dataset_name_pattern: Optional[str] = None,
-        data_types: Optional[Sequence[str]] = None,
-        harm_categories: Optional[Sequence[str]] = None,
-        added_by: Optional[str] = None,
-        authors: Optional[Sequence[str]] = None,
-        groups: Optional[Sequence[str]] = None,
-        source: Optional[str] = None,
-        seed_type: Optional[SeedType] = None,
-        parameters: Optional[Sequence[str]] = None,
-        metadata: Optional[dict[str, Union[str, int]]] = None,
-        prompt_group_ids: Optional[Sequence[uuid.UUID]] = None,
+        value: str | None = None,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
     ) -> Sequence[Seed]:
         """
         Retrieve a list of seed prompts based on the specified filters.
@@ -1315,7 +1313,7 @@ class MemoryInterface(abc.ABC):
             raise
 
     def _add_list_conditions(
-        self, field: InstrumentedAttribute[Any], conditions: list[Any], values: Optional[Sequence[str]] = None
+        self, field: InstrumentedAttribute[Any], conditions: list[Any], values: Sequence[str] | None = None
     ) -> None:
         if values:
             conditions.extend(field.contains(value) for value in values)
@@ -1352,7 +1350,7 @@ class MemoryInterface(abc.ABC):
             serialized_prompt_value = str(serializer.value)
         return serialized_prompt_value or ""
 
-    async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed], added_by: Optional[str] = None) -> None:
+    async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed], added_by: str | None = None) -> None:
         """
         Insert a list of seeds into the memory storage.
 
@@ -1429,7 +1427,7 @@ class MemoryInterface(abc.ABC):
             raise
 
     async def add_seed_groups_to_memory_async(
-        self, *, prompt_groups: Sequence[SeedGroup], added_by: Optional[str] = None
+        self, *, prompt_groups: Sequence[SeedGroup], added_by: str | None = None
     ) -> None:
         """
         Insert a list of seed groups into the memory storage.
@@ -1469,21 +1467,21 @@ class MemoryInterface(abc.ABC):
     def get_seed_groups(
         self,
         *,
-        value: Optional[str] = None,
-        value_sha256: Optional[Sequence[str]] = None,
-        dataset_name: Optional[str] = None,
-        dataset_name_pattern: Optional[str] = None,
-        data_types: Optional[Sequence[str]] = None,
-        harm_categories: Optional[Sequence[str]] = None,
-        added_by: Optional[str] = None,
-        authors: Optional[Sequence[str]] = None,
-        groups: Optional[Sequence[str]] = None,
-        source: Optional[str] = None,
-        seed_type: Optional[SeedType] = None,
-        parameters: Optional[Sequence[str]] = None,
-        metadata: Optional[dict[str, Union[str, int]]] = None,
-        prompt_group_ids: Optional[Sequence[uuid.UUID]] = None,
-        group_length: Optional[Sequence[int]] = None,
+        value: str | None = None,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
+        group_length: Sequence[int] | None = None,
     ) -> Sequence[SeedGroup]:
         """
         Retrieve groups of seed prompts based on the provided filtering criteria.
@@ -1552,18 +1550,18 @@ class MemoryInterface(abc.ABC):
     def export_conversations(
         self,
         *,
-        attack_id: Optional[str | uuid.UUID] = None,
-        conversation_id: Optional[str | uuid.UUID] = None,
-        prompt_ids: Optional[Sequence[str] | Sequence[uuid.UUID]] = None,
-        labels: Optional[dict[str, str]] = None,
-        sent_after: Optional[datetime] = None,
-        sent_before: Optional[datetime] = None,
-        original_values: Optional[Sequence[str]] = None,
-        converted_values: Optional[Sequence[str]] = None,
-        data_type: Optional[str] = None,
-        not_data_type: Optional[str] = None,
-        converted_value_sha256: Optional[Sequence[str]] = None,
-        file_path: Optional[Path] = None,
+        attack_id: str | uuid.UUID | None = None,
+        conversation_id: str | uuid.UUID | None = None,
+        prompt_ids: Sequence[str] | Sequence[uuid.UUID] | None = None,
+        labels: dict[str, str] | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        original_values: Sequence[str] | None = None,
+        converted_values: Sequence[str] | None = None,
+        data_type: str | None = None,
+        not_data_type: str | None = None,
+        converted_value_sha256: Sequence[str] | None = None,
+        file_path: Path | None = None,
         export_type: str = "json",
     ) -> Path:
         """
@@ -1698,20 +1696,20 @@ class MemoryInterface(abc.ABC):
     def get_attack_results(
         self,
         *,
-        attack_result_ids: Optional[Sequence[str]] = None,
-        conversation_id: Optional[str] = None,
-        objective: Optional[str] = None,
-        objective_sha256: Optional[Sequence[str]] = None,
-        outcome: Optional[str] = None,
-        attack_class: Optional[str] = None,
-        attack_classes: Optional[Sequence[str]] = None,
-        converter_classes: Optional[Sequence[str]] = None,
+        attack_result_ids: Sequence[str] | None = None,
+        conversation_id: str | None = None,
+        objective: str | None = None,
+        objective_sha256: Sequence[str] | None = None,
+        outcome: str | None = None,
+        attack_class: str | None = None,
+        attack_classes: Sequence[str] | None = None,
+        converter_classes: Sequence[str] | None = None,
         converter_classes_match: Literal["all", "any"] = "all",
-        has_converters: Optional[bool] = None,
-        targeted_harm_categories: Optional[Sequence[str]] = None,
-        labels: Optional[dict[str, str | Sequence[str]]] = None,
-        identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
-        scenario_result_id: Optional[str] = None,
+        has_converters: bool | None = None,
+        targeted_harm_categories: Sequence[str] | None = None,
+        labels: dict[str, str | Sequence[str]] | None = None,
+        identifier_filters: Sequence[IdentifierFilter] | None = None,
+        scenario_result_id: str | None = None,
     ) -> Sequence[AttackResult]:
         """
         Retrieve a list of AttackResult objects based on the specified filters.
@@ -2050,16 +2048,16 @@ class MemoryInterface(abc.ABC):
     def get_scenario_results(
         self,
         *,
-        scenario_result_ids: Optional[Sequence[str]] = None,
-        scenario_name: Optional[str] = None,
-        scenario_version: Optional[int] = None,
-        pyrit_version: Optional[str] = None,
-        added_after: Optional[datetime] = None,
-        added_before: Optional[datetime] = None,
-        labels: Optional[dict[str, str]] = None,
-        objective_target_endpoint: Optional[str] = None,
-        objective_target_model_name: Optional[str] = None,
-        identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
+        scenario_result_ids: Sequence[str] | None = None,
+        scenario_name: str | None = None,
+        scenario_version: int | None = None,
+        pyrit_version: str | None = None,
+        added_after: datetime | None = None,
+        added_before: datetime | None = None,
+        labels: dict[str, str] | None = None,
+        objective_target_endpoint: str | None = None,
+        objective_target_model_name: str | None = None,
+        identifier_filters: Sequence[IdentifierFilter] | None = None,
         limit: int | None = None,
     ) -> Sequence[ScenarioResult]:
         """

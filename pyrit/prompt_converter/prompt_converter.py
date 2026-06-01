@@ -6,7 +6,7 @@ import asyncio
 import inspect
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, get_args
 
 from pyrit import prompt_converter
 from pyrit.identifiers import ComponentIdentifier, Identifiable
@@ -57,7 +57,7 @@ class PromptConverter(Identifiable):
     #: ``super().__init__(converter_target=...)`` so the base class can validate it.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
-    _identifier: Optional[ComponentIdentifier] = None
+    _identifier: ComponentIdentifier | None = None
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
@@ -196,8 +196,8 @@ class PromptConverter(Identifiable):
     def _create_identifier(
         self,
         *,
-        params: Optional[dict[str, Any]] = None,
-        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+        params: dict[str, Any] | None = None,
+        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct and return the converter identifier.

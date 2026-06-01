@@ -19,7 +19,7 @@ Terminology:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Generic, Optional, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -54,8 +54,8 @@ class ClassEntry(Generic[T]):
         self,
         *,
         registered_class: type[T],
-        factory: Optional[Callable[..., T]] = None,
-        default_kwargs: Optional[dict[str, object]] = None,
+        factory: Callable[..., T] | None = None,
+        default_kwargs: dict[str, object] | None = None,
     ) -> None:
         """
         Initialize a class entry.
@@ -129,7 +129,7 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
         """
         # Maps registry names to ClassEntry wrappers
         self._class_entries: dict[str, ClassEntry[T]] = {}
-        self._metadata_cache: Optional[list[MetadataT]] = None
+        self._metadata_cache: list[MetadataT] | None = None
         self._discovered = False
         self._lazy_discovery = lazy_discovery
 
@@ -211,7 +211,7 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
             raise KeyError(f"'{name}' not found in registry. Available: {available}")
         return entry.registered_class
 
-    def get_entry(self, name: str) -> Optional[ClassEntry[T]]:
+    def get_entry(self, name: str) -> ClassEntry[T] | None:
         """
         Get the full ClassEntry for a registered class.
 
@@ -242,8 +242,8 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
     def list_metadata(
         self,
         *,
-        include_filters: Optional[dict[str, object]] = None,
-        exclude_filters: Optional[dict[str, object]] = None,
+        include_filters: dict[str, object] | None = None,
+        exclude_filters: dict[str, object] | None = None,
     ) -> list[MetadataT]:
         """
         List metadata for all registered classes, optionally filtered.
@@ -286,9 +286,9 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
         self,
         cls: type[T],
         *,
-        name: Optional[str] = None,
-        factory: Optional[Callable[..., T]] = None,
-        default_kwargs: Optional[dict[str, object]] = None,
+        name: str | None = None,
+        factory: Callable[..., T] | None = None,
+        default_kwargs: dict[str, object] | None = None,
     ) -> None:
         """
         Register a class with the registry.

@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Optional, TypeVar
+from typing import Any, TypeVar
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
@@ -61,14 +61,14 @@ class AttackResult(StrategyResult):
     # Composite identifier combining the attack strategy identity with
     # seed identifiers from the dataset.
     # Contains the attack strategy as children["attack"] plus optional seeds.
-    atomic_attack_identifier: Optional[ComponentIdentifier] = None
+    atomic_attack_identifier: ComponentIdentifier | None = None
 
     # Evidence
     # Model response generated in the final turn of the attack
-    last_response: Optional[MessagePiece] = None
+    last_response: MessagePiece | None = None
 
     # Score assigned to the final response by a scorer component
-    last_score: Optional[Score] = None
+    last_score: Score | None = None
 
     # Metrics
     # Total number of turns that were executed
@@ -82,7 +82,7 @@ class AttackResult(StrategyResult):
     outcome: AttackOutcome = AttackOutcome.UNDETERMINED
 
     # Optional reason for the outcome, providing additional context
-    outcome_reason: Optional[str] = None
+    outcome_reason: str | None = None
 
     # Wall-clock time the result was created or persisted.
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -114,7 +114,7 @@ class AttackResult(StrategyResult):
     attribution_data: dict[str, Any] | None = None
 
     @property
-    def attack_identifier(self) -> Optional[ComponentIdentifier]:
+    def attack_identifier(self) -> ComponentIdentifier | None:
         """
         Deprecated: use ``get_attack_strategy_identifier()`` or ``atomic_attack_identifier`` instead.
 
@@ -132,7 +132,7 @@ class AttackResult(StrategyResult):
         )
         return self.get_attack_strategy_identifier()
 
-    def get_attack_strategy_identifier(self) -> Optional[ComponentIdentifier]:
+    def get_attack_strategy_identifier(self) -> ComponentIdentifier | None:
         """
         Return the attack strategy identifier from the composite atomic identifier.
 

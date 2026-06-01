@@ -89,8 +89,8 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         self,
         message: Message,
         *,
-        objective: Optional[str] = None,
-        role_filter: Optional[ChatMessageRole] = None,
+        objective: str | None = None,
+        role_filter: ChatMessageRole | None = None,
     ) -> list[Score]:
         """
         Scores the piece using the underlying float-scale scorer and thresholds the resulting score.
@@ -174,7 +174,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
 
         return [score]
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Float Scale scorers do not support piecewise scoring.
 

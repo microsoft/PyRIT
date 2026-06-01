@@ -3,7 +3,6 @@
 
 import pathlib
 import uuid
-from typing import Optional
 
 from pyrit.common.apply_defaults import apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
@@ -24,8 +23,8 @@ class FuzzerExpandConverter(FuzzerConverter):
     def __init__(
         self,
         *,
-        converter_target: Optional[PromptTarget] = None,
-        prompt_template: Optional[SeedPrompt] = None,
+        converter_target: PromptTarget | None = None,
+        prompt_template: SeedPrompt | None = None,
     ) -> None:
         """Initialize the expand converter with optional chat target and prompt template."""
         prompt_template = (

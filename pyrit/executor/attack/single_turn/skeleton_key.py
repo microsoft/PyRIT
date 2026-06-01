@@ -3,7 +3,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -54,10 +54,10 @@ class SkeletonKeyAttack(PromptSendingAttack):
         self,
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
-        skeleton_key_prompt: Optional[str] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
+        skeleton_key_prompt: str | None = None,
         max_attempts_on_failure: int = 0,
     ) -> None:
         """
@@ -85,7 +85,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
         # Load skeleton key prompt
         self._skeleton_key_prompt = self._load_skeleton_key_prompt(skeleton_key_prompt)
 
-    def _load_skeleton_key_prompt(self, skeleton_key_prompt: Optional[str]) -> str:
+    def _load_skeleton_key_prompt(self, skeleton_key_prompt: str | None) -> str:
         """
         Load the skeleton key prompt from the provided string or default file.
 
@@ -135,7 +135,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
 
         return result
 
-    async def _send_skeleton_key_prompt_async(self, *, context: SingleTurnAttackContext[Any]) -> Optional[Message]:
+    async def _send_skeleton_key_prompt_async(self, *, context: SingleTurnAttackContext[Any]) -> Message | None:
         """
         Send the skeleton key prompt to the target to prime it for the attack.
 

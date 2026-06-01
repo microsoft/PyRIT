@@ -36,7 +36,7 @@ class FloatScaleScorer(Scorer):
     "blocked = True") should override ``_score_piece_async`` or ``_build_fallback_score``.
     """
 
-    def __init__(self, *, validator: ScorerPromptValidator, chat_target: Optional[PromptTarget] = None) -> None:
+    def __init__(self, *, validator: ScorerPromptValidator, chat_target: PromptTarget | None = None) -> None:
         """
         Initialize the FloatScaleScorer.
 
@@ -47,7 +47,7 @@ class FloatScaleScorer(Scorer):
         """
         super().__init__(validator=validator, chat_target=chat_target)
 
-    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         """
         Build a single-element list containing a neutral ``0.0`` score when no pieces could be scored.
 
@@ -139,15 +139,15 @@ class FloatScaleScorer(Scorer):
         message_value: str,
         message_data_type: PromptDataType,
         scored_prompt_id: str | UUID,
-        prepended_text_message_piece: Optional[str] = None,
-        category: Optional[str | UUID] = None,
-        objective: Optional[str] = None,
+        prepended_text_message_piece: str | None = None,
+        category: str | UUID | None = None,
+        objective: str | None = None,
         score_value_output_key: str = "score_value",
         rationale_output_key: str = "rationale",
         description_output_key: str = "description",
         metadata_output_key: str = "metadata",
         category_output_key: str = "category",
-        attack_identifier: Optional[ComponentIdentifier] = None,
+        attack_identifier: ComponentIdentifier | None = None,
     ) -> UnvalidatedScore:
         score: UnvalidatedScore | None = None
         try:

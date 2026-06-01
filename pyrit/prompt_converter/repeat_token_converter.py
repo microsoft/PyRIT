@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import re
-from typing import Literal, Optional
+from typing import Literal
 
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import PromptDataType
@@ -36,7 +36,7 @@ class RepeatTokenConverter(PromptConverter):
         *,
         token_to_repeat: str,
         times_to_repeat: int,
-        token_insert_mode: Optional[Literal["split", "prepend", "append", "repeat"]] = None,
+        token_insert_mode: Literal["split", "prepend", "append", "repeat"] | None = None,
     ) -> None:
         """
         Initialize the converter with the specified token, number of repetitions, and insertion mode.

@@ -4,7 +4,7 @@
 import enum
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 import yaml
 
@@ -106,10 +106,10 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
         self,
         *,
         chat_target: PromptTarget,
-        true_false_question_path: Optional[Union[str, Path]] = None,
-        true_false_question: Optional[TrueFalseQuestion] = None,
-        true_false_system_prompt_path: Optional[Union[str, Path]] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        true_false_question_path: str | Path | None = None,
+        true_false_question: TrueFalseQuestion | None = None,
+        true_false_system_prompt_path: str | Path | None = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
     ) -> None:
         """
@@ -191,7 +191,7 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the given message piece using "self-ask" for the chat target.
 

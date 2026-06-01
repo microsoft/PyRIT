@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from collections.abc import Sequence
-from typing import Optional, get_args
+from typing import get_args
 
 from pyrit.models import ChatMessageRole, Message, MessagePiece, PromptDataType
 
@@ -18,13 +18,13 @@ class ScorerPromptValidator:
     def __init__(
         self,
         *,
-        supported_data_types: Optional[Sequence[PromptDataType]] = None,
-        required_metadata: Optional[Sequence[str]] = None,
-        supported_roles: Optional[Sequence[ChatMessageRole]] = None,
-        max_pieces_in_response: Optional[int] = None,
-        max_text_length: Optional[int] = None,
-        enforce_all_pieces_valid: Optional[bool] = False,
-        raise_on_no_valid_pieces: Optional[bool] = False,
+        supported_data_types: Sequence[PromptDataType] | None = None,
+        required_metadata: Sequence[str] | None = None,
+        supported_roles: Sequence[ChatMessageRole] | None = None,
+        max_pieces_in_response: int | None = None,
+        max_text_length: int | None = None,
+        enforce_all_pieces_valid: bool | None = False,
+        raise_on_no_valid_pieces: bool | None = False,
         is_objective_required: bool = False,
     ) -> None:
         """
