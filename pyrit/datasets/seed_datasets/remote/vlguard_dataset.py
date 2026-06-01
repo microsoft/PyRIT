@@ -4,6 +4,7 @@
 import asyncio
 import json
 import logging
+import os
 import uuid
 import zipfile
 from enum import Enum
@@ -108,14 +109,14 @@ class _VLGuardDataset(_RemoteDatasetLoader):
             categories (list[VLGuardCategory] | None): List of VLGuard categories to filter by.
                 If None, all categories are included.
             token (str | None): HuggingFace authentication token for accessing the gated dataset.
-                If None, uses the default token from the environment or HuggingFace CLI login.
+                If not provided, reads from the ``HUGGINGFACE_TOKEN`` environment variable.
 
         Raises:
             ValueError: If any of the specified categories are invalid.
         """
         self.subset = subset
         self.categories = categories
-        self.token = token
+        self.token = token if token is not None else os.environ.get("HUGGINGFACE_TOKEN")
         self.source = f"https://huggingface.co/datasets/{_HF_REPO_ID}"
 
         if categories is not None:
