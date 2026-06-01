@@ -10,8 +10,7 @@ import pytest
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import SeedAttackGroup, SeedObjective
+from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective
 from pyrit.prompt_converter import Base64Converter
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import AtomicAttack, DatasetConfiguration, ScenarioCompositeStrategy

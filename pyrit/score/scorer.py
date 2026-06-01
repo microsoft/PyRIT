@@ -24,14 +24,16 @@ from pyrit.exceptions import (
     pyrit_json_retry,
     remove_markdown_json,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable, ScorerEvaluationIdentifier
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     ChatMessageRole,
+    ComponentIdentifier,
+    Identifiable,
     Message,
     MessagePiece,
     PromptDataType,
     Score,
+    ScorerEvaluationIdentifier,
     ScoreType,
     UnvalidatedScore,
 )

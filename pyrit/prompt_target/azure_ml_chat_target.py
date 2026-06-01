@@ -2,21 +2,23 @@
 # Licensed under the MIT license.
 
 import logging
-import warnings
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 from httpx import HTTPStatusError
 
+from pyrit.auth import ensure_async_token_provider
 from pyrit.common import default_values, net_utility
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     EmptyResponseException,
     RateLimitException,
     handle_bad_request_exception,
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.message_normalizer import ChatMessageNormalizer, MessageListNormalizer
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     construct_response_from_request,
 )
@@ -61,7 +63,7 @@ class AzureMLChatTarget(PromptTarget):
         self,
         *,
         endpoint: str | None = None,
-        api_key: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         model_name: str = "",
         message_normalizer: MessageListNormalizer[Any] | None = None,
         max_new_tokens: int = 400,
@@ -78,14 +80,18 @@ class AzureMLChatTarget(PromptTarget):
         Args:
             endpoint (str | None): The endpoint URL for the deployed Azure ML model.
                 Defaults to the value of the AZURE_ML_MANAGED_ENDPOINT environment variable.
-            api_key (str | None): The API key for accessing the Azure ML endpoint.
-                Defaults to the value of the `AZURE_ML_KEY` environment variable.
+            api_key (str | Callable[[], str | Awaitable[str]] | None): The API key for accessing
+                the Azure ML endpoint, or a callable that returns a bearer token (sync or async).
+                Pass a token provider (e.g. ``get_azure_async_token_provider("https://ml.azure.com/.default")``)
+                to authenticate with Microsoft Entra ID against an AML managed online endpoint.
+                Synchronous providers are automatically wrapped via ``ensure_async_token_provider``.
+                Defaults to the value of the ``AZURE_ML_KEY`` environment variable.
             model_name (str): The name of the model being used (e.g., "Llama-3.2-3B-Instruct").
                 Used for identification purposes. Defaults to empty string.
             message_normalizer (MessageListNormalizer[Any] | None): **Deprecated.** Use
                 ``custom_configuration`` with ``CapabilityHandlingPolicy`` instead. Previously used for
                 models that do not allow system prompts.
-                Will be removed in v0.15.0.
+                Will be removed in 0.15.0.
             max_new_tokens (int): The maximum number of tokens to generate in the response.
                 Defaults to 400.
             temperature (float): The temperature for generating diverse responses. 1.0 is most random,
@@ -120,13 +126,12 @@ class AzureMLChatTarget(PromptTarget):
                 raise ValueError(
                     "Cannot specify both 'message_normalizer' and 'custom_configuration'. "
                     "Use 'custom_configuration' only; 'message_normalizer' is deprecated and "
-                    "will be removed in v0.15.0."
+                    "will be removed in 0.15.0."
                 )
-            warnings.warn(
-                "Passing message_normalizer is deprecated. Use custom_configuration with "
-                "CapabilityHandlingPolicy instead. Will be removed in v0.15.0.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="AzureMLChatTarget(message_normalizer=...)",
+                new_item="AzureMLChatTarget(custom_configuration=...)",
+                removed_in="0.15.0",
             )
             # The legacy message_normalizer was primarily used to handle system prompts
             # for models that don't support them (e.g. GenericSystemSquashNormalizer).
@@ -181,7 +186,11 @@ class AzureMLChatTarget(PromptTarget):
             },
         )
 
-    def _initialize_vars(self, endpoint: str | None = None, api_key: str | None = None) -> None:
+    def _initialize_vars(
+        self,
+        endpoint: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+    ) -> None:
         """
         Set the endpoint and key for accessing the Azure ML model. Use this function to manually
         pass in your own endpoint uri and api key. Defaults to the values in the .env file for the variables
@@ -190,13 +199,30 @@ class AzureMLChatTarget(PromptTarget):
         in the .env file and call _set_env_configuration_vars rather than passing the uri and key directly to
         this function or the target constructor.
 
+        If ``api_key`` is a callable, it is treated as an Entra ID token provider.
+        The callable is stored on ``self._api_key_provider`` and resolved per-request
+        inside ``_get_headers_async``. Synchronous providers are wrapped via
+        ``ensure_async_token_provider``.
+
         Args:
-            endpoint (str, optional): The endpoint uri for the deployed Azure ML model.
-            api_key (str, optional): The API key for accessing the Azure ML endpoint.
+            endpoint (str | None): The endpoint uri for the deployed Azure ML model.
+            api_key (str | Callable[[], str | Awaitable[str]] | None):
+                The API key for accessing the Azure ML endpoint, or a callable
+                which returns a bearer token, or None to fall back to the
+                ``AZURE_ML_KEY`` env variable.
         """
         self._endpoint = default_values.get_required_value(
             env_var_name=self.endpoint_uri_environment_variable, passed_value=endpoint
         )
+
+        if callable(api_key):
+            normalized = ensure_async_token_provider(api_key)
+            provider = cast("Callable[[], Awaitable[str]]", normalized)
+            self._api_key_provider: Callable[[], Awaitable[str]] | None = provider
+            self._api_key = ""
+            return
+
+        self._api_key_provider = None
         self._api_key = default_values.get_required_value(
             env_var_name=self.api_key_environment_variable, passed_value=api_key
         )
@@ -258,14 +284,14 @@ class AzureMLChatTarget(PromptTarget):
         Args:
             messages (list[Message]): The message objects containing the role and content.
 
+        Returns:
+            str: The generated response message.
+
         Raises:
             EmptyResponseException: If the response from the chat is empty.
             Exception: For any other errors during the process.
-
-        Returns:
-            str: The generated response message.
         """
-        headers = self._get_headers()
+        headers = await self._get_headers_async()
         payload = await self._construct_http_body_async(messages)
 
         response = await net_utility.make_request_and_raise_if_error_async(
@@ -314,19 +340,25 @@ class AzureMLChatTarget(PromptTarget):
             }
         }
 
-    def _get_headers(self) -> dict[str, str]:
+    async def _get_headers_async(self) -> dict[str, str]:
         """
-        Headers for accessing inference endpoint deployed in AML.
+        Headers for accessing the AML inference endpoint.
+
+        Resolves the bearer token from the configured Entra ID token provider when one
+        is set; otherwise uses the static API key supplied at construction.
 
         Returns:
-            headers(dict): contains bearer token as AML key and content-type: JSON
+            headers(dict): contains bearer token (static key or freshly-acquired Entra
+            token) and content-type: JSON.
         """
-        headers: dict[str, str] = {
+        if self._api_key_provider is None:
+            token = self._api_key
+        else:
+            token = await self._api_key_provider()
+        return {
             "Content-Type": "application/json",
-            "Authorization": ("Bearer " + self._api_key),
+            "Authorization": "Bearer " + token,
         }
-
-        return headers
 
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         pass

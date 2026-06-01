@@ -8,18 +8,19 @@ from typing import TYPE_CHECKING, Optional
 import pytest
 
 from pyrit.common.utils import to_sha256
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
-from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
+    IdentifierFilter,
+    IdentifierType,
     MessagePiece,
     Score,
+    build_atomic_attack_identifier,
 )
 
 if TYPE_CHECKING:
@@ -557,8 +558,11 @@ def test_attack_result_with_attack_generation_conversation_ids(sqlite_instance: 
     adversarial_ids = {"adv_conv_1", "adv_conv_2", "adv_conv_3"}
 
     related_conversations: set[ConversationReference] = {
-        *(ConversationReference(cid, ConversationType.PRUNED) for cid in pruned_ids),
-        *(ConversationReference(cid, ConversationType.ADVERSARIAL) for cid in adversarial_ids),
+        *(ConversationReference(conversation_id=cid, conversation_type=ConversationType.PRUNED) for cid in pruned_ids),
+        *(
+            ConversationReference(conversation_id=cid, conversation_type=ConversationType.ADVERSARIAL)
+            for cid in adversarial_ids
+        ),
     }
 
     attack_result = AttackResult(

@@ -25,6 +25,7 @@ from pyrit.prompt_converter.azure_speech_audio_to_text_converter import AzureSpe
 from pyrit.prompt_converter.azure_speech_text_to_audio_converter import AzureSpeechTextToAudioConverter
 from pyrit.prompt_converter.base64_converter import Base64Converter
 from pyrit.prompt_converter.base2048_converter import Base2048Converter
+from pyrit.prompt_converter.bidi_converter import BidiConverter
 from pyrit.prompt_converter.bin_ascii_converter import BinAsciiConverter
 from pyrit.prompt_converter.binary_converter import BinaryConverter
 from pyrit.prompt_converter.braille_converter import BrailleConverter
@@ -41,6 +42,7 @@ from pyrit.prompt_converter.first_letter_converter import FirstLetterConverter
 from pyrit.prompt_converter.flip_converter import FlipConverter
 from pyrit.prompt_converter.image_color_saturation_converter import ImageColorSaturationConverter
 from pyrit.prompt_converter.image_compression_converter import ImageCompressionConverter
+from pyrit.prompt_converter.image_overlay_converter import ImageOverlayConverter
 from pyrit.prompt_converter.image_prompt_style_converter import ImagePromptStyleConverter
 from pyrit.prompt_converter.image_resizing_converter import ImageResizingConverter
 from pyrit.prompt_converter.image_rotation_converter import ImageRotationConverter
@@ -155,6 +157,7 @@ __all__ = [
     "AzureSpeechTextToAudioConverter",
     "Base2048Converter",
     "Base64Converter",
+    "BidiConverter",
     "BinAsciiConverter",
     "BinaryConverter",
     "BrailleConverter",
@@ -172,6 +175,7 @@ __all__ = [
     "FlipConverter",
     "ImageColorSaturationConverter",
     "ImageCompressionConverter",
+    "ImageOverlayConverter",
     "ImagePromptStyleConverter",
     "ImageResizingConverter",
     "ImageRotationConverter",

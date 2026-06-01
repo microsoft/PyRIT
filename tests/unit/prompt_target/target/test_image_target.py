@@ -566,9 +566,9 @@ def test_style_param_emits_deprecation_warning(patch_central_database):
             style="vivid",
         )
     deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    style_warnings = [w for w in deprecation_warnings if "'style'" in str(w.message)]
+    style_warnings = [w for w in deprecation_warnings if "style" in str(w.message)]
     assert len(style_warnings) == 1
-    assert "v0.15.0" in str(style_warnings[0].message)
+    assert "0.15.0" in str(style_warnings[0].message)
     assert "2026-05-12" in str(style_warnings[0].message)
     assert target.style == "vivid"
 
@@ -581,7 +581,9 @@ def test_no_style_does_not_emit_deprecation_warning(patch_central_database):
             endpoint="test",
             api_key="test",
         )
-    style_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning) and "'style'" in str(w.message)]
+    style_warnings = [
+        w for w in caught if issubclass(w.category, DeprecationWarning) and "OpenAIImageTarget(style" in str(w.message)
+    ]
     assert len(style_warnings) == 0
 
 
@@ -598,7 +600,7 @@ def test_deprecated_image_size_emits_warning(patch_central_database, deprecated_
     deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
     size_warnings = [w for w in deprecation_warnings if "image_size" in str(w.message)]
     assert len(size_warnings) == 1
-    assert "v0.15.0" in str(size_warnings[0].message)
+    assert "0.15.0" in str(size_warnings[0].message)
     assert "2026-05-12" in str(size_warnings[0].message)
     assert target.image_size == deprecated_size
 
@@ -630,7 +632,7 @@ def test_deprecated_quality_emits_warning(patch_central_database, deprecated_qua
     deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
     quality_warnings = [w for w in deprecation_warnings if "quality" in str(w.message)]
     assert len(quality_warnings) == 1
-    assert "v0.15.0" in str(quality_warnings[0].message)
+    assert "0.15.0" in str(quality_warnings[0].message)
     assert "2026-05-12" in str(quality_warnings[0].message)
     assert target.quality == deprecated_quality
 

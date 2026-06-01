@@ -8,8 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import SeedAttackGroup, SeedDataset, SeedGroup, SeedObjective
+from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedDataset, SeedGroup, SeedObjective
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.scenario.scenarios.airt import (
     Psychosocial,
@@ -288,13 +287,15 @@ class TestPsychosocialProperties:
 
         assert scenario.VERSION == 1
 
-    def test_get_strategy_class(self) -> None:
+    def test_get_strategy_class(self, mock_objective_scorer) -> None:
         """Test that the strategy class is PsychosocialStrategy."""
-        assert Psychosocial.get_strategy_class() == PsychosocialStrategy
+        scenario = Psychosocial(objective_scorer=mock_objective_scorer)
+        assert scenario._strategy_class == PsychosocialStrategy
 
-    def test_get_default_strategy(self) -> None:
+    def test_get_default_strategy(self, mock_objective_scorer) -> None:
         """Test that the default strategy is ALL."""
-        assert Psychosocial.get_default_strategy() == PsychosocialStrategy.ALL
+        scenario = Psychosocial(objective_scorer=mock_objective_scorer)
+        assert scenario._default_strategy == PsychosocialStrategy.ALL
 
     async def test_no_target_duplication_async(
         self,
@@ -364,8 +365,8 @@ class TestPsychosocialTargetRequirements:
             class_name="NonChatTarget", class_module="test"
         )
         # Configuration reports no EDITABLE_HISTORY support
-        non_chat_target.configuration.includes.side_effect = (
-            lambda *, capability: capability != CapabilityName.EDITABLE_HISTORY
+        non_chat_target.configuration.includes.side_effect = lambda *, capability: (
+            capability != CapabilityName.EDITABLE_HISTORY
         )
 
         with patch.object(Psychosocial, "_resolve_seed_groups", return_value=mock_resolved_seed_data):

@@ -11,9 +11,9 @@ from enum import Enum
 from typing import Any, Optional, TypeVar
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
-from pyrit.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.conversation_reference import ConversationReference, ConversationType
+from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.message_piece import MessagePiece
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import Score
@@ -250,7 +250,7 @@ class AttackResult(StrategyResult):
             "outcome_reason": self.outcome_reason,
             "timestamp": self.timestamp.isoformat(),
             "related_conversations": sorted(
-                [ref.to_dict() for ref in self.related_conversations],
+                [ref.model_dump(mode="json") for ref in self.related_conversations],
                 key=lambda r: r["conversation_id"],
             ),
             "metadata": self.metadata,
@@ -258,7 +258,7 @@ class AttackResult(StrategyResult):
             "error_message": self.error_message,
             "error_type": self.error_type,
             "error_traceback": self.error_traceback,
-            "retry_events": [e.to_dict() for e in self.retry_events],
+            "retry_events": [e.model_dump(mode="json") for e in self.retry_events],
             "total_retries": self.total_retries,
         }
 
@@ -291,13 +291,15 @@ class AttackResult(StrategyResult):
             timestamp=(
                 datetime.fromisoformat(data["timestamp"]) if data.get("timestamp") else datetime.now(timezone.utc)
             ),
-            related_conversations={ConversationReference.from_dict(r) for r in data.get("related_conversations", [])},
+            related_conversations={
+                ConversationReference.model_validate(r) for r in data.get("related_conversations", [])
+            },
             metadata=data.get("metadata", {}),
             labels=data.get("labels", {}),
             error_message=data.get("error_message"),
             error_type=data.get("error_type"),
             error_traceback=data.get("error_traceback"),
-            retry_events=[RetryEvent.from_dict(e) for e in data.get("retry_events", [])],
+            retry_events=[RetryEvent.model_validate(e) for e in data.get("retry_events", [])],
             total_retries=data.get("total_retries", 0),
         )
 

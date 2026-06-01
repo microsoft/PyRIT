@@ -9,8 +9,7 @@ import uuid
 import jsonschema
 import pytest
 
-from pyrit.identifiers.component_identifier import ComponentIdentifier
-from pyrit.models import MessagePiece
+from pyrit.models import ComponentIdentifier, MessagePiece
 from pyrit.prompt_target import OpenAIResponseTarget
 
 

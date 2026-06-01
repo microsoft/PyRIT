@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import warnings
 from typing import Any
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -12,7 +12,7 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 class PromptChatTarget(PromptTarget):
     """
     .. deprecated:: 0.14.0
-        ``PromptChatTarget`` is deprecated and will be removed in v0.16.0. Use
+        ``PromptChatTarget`` is deprecated and will be removed in 0.16.0. Use
         ``PromptTarget`` directly with a ``TargetConfiguration`` declaring
         ``supports_multi_turn=True`` and ``supports_editable_history=True``.
 
@@ -36,13 +36,13 @@ class PromptChatTarget(PromptTarget):
         Use PromptTarget with an appropriate TargetConfiguration instead.
         """
         super().__init_subclass__(**kwargs)
-        warnings.warn(
-            f"Subclassing PromptChatTarget is deprecated and will be removed in v0.16.0. "
-            f"Inherit from PromptTarget directly and declare supports_multi_turn=True and "
-            f"supports_editable_history=True in your _DEFAULT_CONFIGURATION. "
-            f"({cls.__name__})",
-            DeprecationWarning,
-            stacklevel=2,
+        print_deprecation_message(
+            old_item=f"PromptChatTarget (subclassed by {cls.__name__})",
+            new_item=(
+                "PromptTarget with a TargetConfiguration declaring "
+                "supports_multi_turn=True and supports_editable_history=True"
+            ),
+            removed_in="0.16.0",
         )
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -50,11 +50,12 @@ class PromptChatTarget(PromptTarget):
         Initialize the PromptChatTarget. This constructor is deprecated and will emit a warning.
         Use PromptTarget with an appropriate TargetConfiguration instead.
         """
-        warnings.warn(
-            "PromptChatTarget is deprecated and will be removed in v0.16.0. "
-            "Use PromptTarget directly with a TargetConfiguration declaring "
-            "supports_multi_turn=True and supports_editable_history=True.",
-            DeprecationWarning,
-            stacklevel=2,
+        print_deprecation_message(
+            old_item=PromptChatTarget,
+            new_item=(
+                "PromptTarget with a TargetConfiguration declaring "
+                "supports_multi_turn=True and supports_editable_history=True"
+            ),
+            removed_in="0.16.0",
         )
         super().__init__(*args, **kwargs)

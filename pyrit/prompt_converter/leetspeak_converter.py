@@ -4,7 +4,7 @@
 import random
 from typing import Optional
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.prompt_converter.text_selection_strategy import WordSelectionStrategy
 from pyrit.prompt_converter.word_level_converter import WordLevelConverter
 

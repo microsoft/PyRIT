@@ -15,8 +15,8 @@ from pyrit.executor.attack import (
     ContextComplianceAttack,
     SingleTurnAttackContext,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     MessagePiece,
     SeedDataset,

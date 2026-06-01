@@ -20,8 +20,8 @@ from pyrit.exceptions import (
     PyritException,
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     MessagePiece,
     PromptDataType,
@@ -418,12 +418,12 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
         if not json_config.enabled:
             return None
 
-        if json_config.schema:
+        if json_config.json_schema:
             return {
                 "format": {
                     "type": "json_schema",
                     "name": json_config.schema_name,
-                    "schema": json_config.schema,
+                    "schema": json_config.json_schema,
                     "strict": json_config.strict,
                 }
             }
