@@ -392,12 +392,11 @@ def render_class(
     """Render a class as markdown."""
     name = cls["name"]
     bases = cls.get("bases", [])
-    bases_str = f"({', '.join(bases)})" if bases else ""
 
     anchor = _class_anchor(module, name)
     parts = [f"({anchor})=", f"## `{name}`\n"]
-    if bases_str:
-        parts.append(f"Bases: `{bases_str[1:-1]}`\n")
+    if bases:
+        parts.append(f"Bases: {_format_bases(bases, symbol_index)}\n")
 
     ds = cls.get("docstring", {})
     text = _process_docstring_text(ds.get("text") if ds else None, symbol_index, current_class=name)
@@ -443,6 +442,38 @@ def render_alias(alias: dict) -> str:
     return "\n".join(parts)
 
 
+def _format_bases(bases: list[str], symbol_index: dict[str, list[SymbolEntry]] | None) -> str:
+    """Format class bases, linking resolvable symbols."""
+    rendered_bases = []
+    for base in bases:
+        rendered = f"`{base}`"
+        if symbol_index is not None:
+            rendered = _rewrite_symbol_refs(rendered, symbol_index)
+        rendered_bases.append(rendered)
+    return ", ".join(rendered_bases)
+
+
+def _format_reexport_alias(mod_name: str, alias_name: str, symbol_index: dict[str, list[SymbolEntry]] | None) -> str:
+    """Format a re-export alias name, preferring module-qualified lookup."""
+    rendered = f"`{alias_name}`"
+    if symbol_index is None:
+        return rendered
+
+    module_qualified = _resolve_symbol(f"{mod_name}.{alias_name}", symbol_index, current_class=None)
+    if module_qualified is not None:
+        return f"[{rendered}](#{module_qualified.anchor})"
+
+    return _rewrite_symbol_refs(rendered, symbol_index)
+
+
+def _format_reexport_target(target: str, symbol_index: dict[str, list[SymbolEntry]] | None) -> str:
+    """Format a re-export target, linking resolvable symbols."""
+    rendered = f"`{target}`"
+    if symbol_index is None:
+        return rendered
+    return _rewrite_symbol_refs(rendered, symbol_index)
+
+
 def render_module(
     data: dict,
     *,
@@ -454,6 +485,7 @@ def render_module(
     parts = [
         "---",
         f"short_title: {short_name}",
+        f"label: api-{_module_slug(mod_name)}",
         "---\n",
         f"# {mod_name}\n",
     ]
@@ -479,7 +511,9 @@ def render_module(
         parts.append("## Re-exports\n")
         for a in aliases:
             target = a.get("target", "")
-            parts.append(f"- `{a['name']}` → `{target}`\n")
+            alias_md = _format_reexport_alias(mod_name, a["name"], symbol_index)
+            target_md = _format_reexport_target(target, symbol_index)
+            parts.append(f"- {alias_md} → {target_md}\n")
 
     return "\n".join(parts)
 

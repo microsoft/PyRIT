@@ -9,7 +9,9 @@ from build_scripts.gen_api_md import (
     _method_anchor,
     _process_docstring_text,
     _rewrite_symbol_refs,
+    render_class,
     render_function,
+    render_module,
 )
 
 
@@ -348,3 +350,87 @@ def test_render_function_uses_method_anchor_when_class_name_given() -> None:
     assert "(api-pyrit_prompt_target-PromptTarget-validate)=" in out
     assert "#### `validate`" in out
     assert "[``send_prompt_async``](#api-pyrit_prompt_target-PromptTarget-send_prompt_async)" in out
+
+
+def test_render_class_links_known_base_but_keeps_external_bases_plain() -> None:
+    cls = {
+        "name": "AzureBlobStorageTarget",
+        "kind": "class",
+        "bases": ["PromptTarget", "str", "Enum"],
+    }
+    index = {
+        "PromptTarget": [
+            SymbolEntry(
+                module="pyrit.prompt_target",
+                kind="class",
+                name="PromptTarget",
+                qualname="PromptTarget",
+                anchor="api-pyrit_prompt_target-PromptTarget",
+            )
+        ]
+    }
+
+    out = render_class(cls, module="pyrit.prompt_target.azure_blob_storage_target", symbol_index=index)
+    assert "Bases: [`PromptTarget`](#api-pyrit_prompt_target-PromptTarget), `str`, `Enum`" in out
+
+
+def test_render_module_emits_page_label_frontmatter() -> None:
+    data = {"name": "pyrit.prompt_target", "members": []}
+    out = render_module(data, symbol_index={})
+
+    assert out.startswith("---\nshort_title: prompt_target\nlabel: api-pyrit_prompt_target\n---")
+
+
+def test_render_module_reexports_prefer_module_qualified_alias_and_link_targets() -> None:
+    data = {
+        "name": "pyrit.prompt_target",
+        "members": [
+            {
+                "name": "PromptTargetAlias",
+                "kind": "alias",
+                "target": "pyrit.prompt_target.PromptTarget",
+            }
+        ],
+    }
+    alias_entry = SymbolEntry(
+        module="pyrit.prompt_target",
+        kind="class",
+        name="PromptTargetAlias",
+        qualname="PromptTargetAlias",
+        anchor="api-pyrit_prompt_target-PromptTargetAlias",
+    )
+    target_entry = SymbolEntry(
+        module="pyrit.prompt_target",
+        kind="class",
+        name="PromptTarget",
+        qualname="PromptTarget",
+        anchor="api-pyrit_prompt_target-PromptTarget",
+    )
+    index = {
+        "PromptTargetAlias": [alias_entry],
+        "pyrit.prompt_target.PromptTargetAlias": [alias_entry],
+        "PromptTarget": [target_entry],
+        "pyrit.prompt_target.PromptTarget": [target_entry],
+    }
+
+    out = render_module(data, symbol_index=index)
+    assert "- [`PromptTargetAlias`](#api-pyrit_prompt_target-PromptTargetAlias) → " in out
+    assert "[`pyrit.prompt_target.PromptTarget`](#api-pyrit_prompt_target-PromptTarget)" in out
+
+
+def test_render_module_reexports_fall_back_to_short_name_alias_lookup() -> None:
+    data = {
+        "name": "pyrit.prompt_target",
+        "members": [{"name": "PromptTargetAlias", "kind": "alias", "target": "external.Type"}],
+    }
+    alias_entry = SymbolEntry(
+        module="pyrit.aliases",
+        kind="class",
+        name="PromptTargetAlias",
+        qualname="PromptTargetAlias",
+        anchor="api-pyrit_aliases-PromptTargetAlias",
+    )
+    index = {"PromptTargetAlias": [alias_entry]}
+
+    out = render_module(data, symbol_index=index)
+    assert "- [`PromptTargetAlias`](#api-pyrit_aliases-PromptTargetAlias) → `external.Type`" in out
