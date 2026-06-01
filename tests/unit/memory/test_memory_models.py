@@ -22,6 +22,7 @@ from pyrit.memory.memory_models import (
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
     MessagePiece,
@@ -30,9 +31,8 @@ from pyrit.models import (
     Score,
     SeedObjective,
     SeedPrompt,
+    build_atomic_attack_identifier,
 )
-from pyrit.models.identifiers import ComponentIdentifier
-from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 
 # ---------------------------------------------------------------------------
 # Helpers

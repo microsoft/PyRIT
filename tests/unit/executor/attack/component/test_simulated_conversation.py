@@ -14,6 +14,7 @@ from pyrit.executor.attack.multi_turn.simulated_conversation import (
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     Message,
     MessagePiece,
     NextMessageSystemPromptPaths,
@@ -21,7 +22,6 @@ from pyrit.models import (
     SeedPrompt,
     SimulatedTargetSystemPromptPaths,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import TrueFalseScorer
 

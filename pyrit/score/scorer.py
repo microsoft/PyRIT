@@ -27,14 +27,16 @@ from pyrit.exceptions import (
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     ChatMessageRole,
+    ComponentIdentifier,
+    Identifiable,
     Message,
     MessagePiece,
     PromptDataType,
     Score,
+    ScorerEvaluationIdentifier,
     ScoreType,
     UnvalidatedScore,
 )
-from pyrit.models.identifiers import ComponentIdentifier, Identifiable, ScorerEvaluationIdentifier
 from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 

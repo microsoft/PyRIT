@@ -98,9 +98,7 @@ def test_submodule_shim_forwards_every_name(shim_mod, new_mod, label):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         for name in shim_mod.__all__:
-            assert getattr(shim_mod, name) is getattr(new_mod, name), (
-                f"{label}.{name} did not forward to new module"
-            )
+            assert getattr(shim_mod, name) is getattr(new_mod, name), f"{label}.{name} did not forward to new module"
 
 
 @pytest.mark.parametrize("shim_mod, _new_mod, label", SUBMODULE_PAIRS)
@@ -113,9 +111,7 @@ def test_submodule_shim_warns_once_per_name(shim_mod, _new_mod, label):
             getattr(shim_mod, name)
 
         dep = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert len(dep) == 1, (
-            f"Expected 1 DeprecationWarning for {label}.{name}, got {len(dep)}"
-        )
+        assert len(dep) == 1, f"Expected 1 DeprecationWarning for {label}.{name}, got {len(dep)}"
         message = str(dep[0].message)
         assert f"pyrit.identifiers.{label}.{name}" in message
         assert f"pyrit.models.identifiers.{label}.{name}" in message
@@ -240,8 +236,7 @@ def test_no_internal_callers_of_deprecated_pyrit_identifiers_path():
 
     assert not offenders, (
         "Found internal imports from the deprecated `pyrit.identifiers` path. "
-        "Replace each with the equivalent `pyrit.models.identifiers...` import:\n"
-        + "\n".join(offenders)
+        "Replace each with the equivalent `pyrit.models.identifiers...` import:\n" + "\n".join(offenders)
     )
 
 

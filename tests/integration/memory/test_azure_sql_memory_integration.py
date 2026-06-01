@@ -18,12 +18,13 @@ from pyrit.memory.memory_models import (
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     MessagePiece,
     ScenarioIdentifier,
     ScenarioResult,
     SeedPrompt,
+    build_atomic_attack_identifier,
 )
-from pyrit.models.identifiers import ComponentIdentifier, build_atomic_attack_identifier
 
 
 def generate_test_id() -> str:

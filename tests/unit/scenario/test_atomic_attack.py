@@ -14,13 +14,13 @@ from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     SeedAttackGroup,
     SeedGroup,
     SeedObjective,
     SeedPrompt,
+    build_atomic_attack_identifier,
 )
-from pyrit.models.identifiers import ComponentIdentifier
-from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.scenario import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 

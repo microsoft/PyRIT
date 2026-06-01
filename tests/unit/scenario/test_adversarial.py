@@ -11,13 +11,13 @@ from pyrit.executor.attack import AttackAdversarialConfig
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ScenarioIdentifier,
     ScenarioResult,
     SeedAttackGroup,
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry

@@ -18,8 +18,8 @@ from pyrit.models import (
     AttackResult,
     Message,
     SeedDataset,
+    build_atomic_attack_identifier,
 )
-from pyrit.models.identifiers import build_atomic_attack_identifier
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 

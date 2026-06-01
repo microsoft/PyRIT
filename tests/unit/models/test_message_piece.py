@@ -14,6 +14,7 @@ from unit.mocks import MockPromptTarget, get_mock_target, get_sample_conversatio
 
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     MessagePiece,
     Score,
@@ -22,7 +23,6 @@ from pyrit.models import (
     group_message_pieces_into_conversations,
     sort_message_pieces,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_converter import Base64Converter
 
 

@@ -37,6 +37,8 @@ from pyrit.models import (
     AttackResult,
     ConversationStats,
     DataTypeSerializer,
+    IdentifierFilter,
+    IdentifierType,
     Message,
     MessagePiece,
     ScenarioResult,
@@ -50,7 +52,6 @@ from pyrit.models import (
     group_conversation_message_pieces_by_sequence,
     sort_message_pieces,
 )
-from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 
 if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement

@@ -16,11 +16,12 @@ from pyrit.executor.workflow.core import (
 )
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    ComponentIdentifier,
+    Identifiable,
     Message,
     MessagePiece,
     Score,
 )
-from pyrit.models.identifiers import ComponentIdentifier, Identifiable
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer

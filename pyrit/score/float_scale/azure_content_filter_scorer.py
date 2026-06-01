@@ -20,13 +20,13 @@ from azure.core.credentials import AzureKeyCredential
 from pyrit.auth import AsyncTokenProviderCredential, ensure_async_token_provider, get_azure_async_token_provider
 from pyrit.common import default_values
 from pyrit.models import (
+    ComponentIdentifier,
     DataTypeSerializer,
     Message,
     MessagePiece,
     Score,
     data_serializer_factory,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScorerByCategory,
 )

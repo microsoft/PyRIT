@@ -26,10 +26,8 @@ from pyrit.backend.services.attack_service import (
     AttackService,
     get_attack_service,
 )
-from pyrit.models import AttackOutcome, AttackResult
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, build_atomic_attack_identifier
 from pyrit.models.conversation_stats import ConversationStats
-from pyrit.models.identifiers import ComponentIdentifier
-from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 
 
 @pytest.fixture

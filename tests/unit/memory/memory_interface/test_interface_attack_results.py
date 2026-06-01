@@ -13,14 +13,15 @@ from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
+    IdentifierFilter,
+    IdentifierType,
     MessagePiece,
     Score,
+    build_atomic_attack_identifier,
 )
-from pyrit.models.identifiers import ComponentIdentifier
-from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
-from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

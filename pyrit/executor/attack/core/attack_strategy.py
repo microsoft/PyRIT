@@ -28,10 +28,11 @@ from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationReference,
+    Identifiable,
     Message,
 )
-from pyrit.models.identifiers import ComponentIdentifier, Identifiable
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:

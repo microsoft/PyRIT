@@ -12,12 +12,12 @@ from pyrit.executor.benchmark.question_answering import (
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     Message,
     MessagePiece,
     QuestionAnsweringEntry,
     QuestionChoice,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 
 # Fixtures at the top of the file

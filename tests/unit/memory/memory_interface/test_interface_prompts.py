@@ -14,13 +14,14 @@ from unit.mocks import get_mock_target
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
+    ComponentIdentifier,
+    IdentifierFilter,
+    IdentifierType,
     Message,
     MessagePiece,
     Score,
     SeedPrompt,
 )
-from pyrit.models.identifiers import ComponentIdentifier
-from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 
 
 def _test_scorer_id(name: str = "TestScorer") -> ComponentIdentifier:

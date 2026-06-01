@@ -16,8 +16,7 @@ from openai.types.chat import ChatCompletion
 
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.message_normalizer import GenericSystemSquashNormalizer
-from pyrit.models import Message, MessagePiece
-from pyrit.models.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.prompt_target import AzureMLChatTarget, OpenAIChatTarget
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityHandlingPolicy,

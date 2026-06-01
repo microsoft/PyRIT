@@ -25,8 +25,8 @@ from pyrit.models import (
     AttackResult,
     Message,
     Score,
+    build_atomic_attack_identifier,
 )
-from pyrit.models.identifiers import build_atomic_attack_identifier
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName

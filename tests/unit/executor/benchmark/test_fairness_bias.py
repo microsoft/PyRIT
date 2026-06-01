@@ -12,10 +12,10 @@ from pyrit.executor.benchmark.fairness_bias import (
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     Message,
     MessagePiece,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 
 

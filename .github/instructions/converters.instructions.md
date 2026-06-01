@@ -58,9 +58,8 @@ Exclude: retry counts, logging config, timeouts.
 ## Standard Imports
 
 ```python
-from pyrit.models import PromptDataType
+from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
-from pyrit.models.identifiers import ComponentIdentifier
 ```
 
 For LLM-based converters, also import:

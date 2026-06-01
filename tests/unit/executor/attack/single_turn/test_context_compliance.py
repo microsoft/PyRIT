@@ -16,12 +16,12 @@ from pyrit.executor.attack import (
     SingleTurnAttackContext,
 )
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     MessagePiece,
     SeedDataset,
     SeedPrompt,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import TrueFalseScorer

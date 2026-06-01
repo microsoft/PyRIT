@@ -4,8 +4,7 @@
 import re
 from typing import Optional
 
-from pyrit.models import MessagePiece, Score
-from pyrit.models.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,

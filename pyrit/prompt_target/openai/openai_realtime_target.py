@@ -16,11 +16,11 @@ from pyrit.exceptions import (
 )
 from pyrit.exceptions.exception_classes import ServerErrorException
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     construct_response_from_request,
     data_serializer_factory,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration

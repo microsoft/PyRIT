@@ -23,9 +23,7 @@ from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import MAX_IDENTIFIER_VALUE_LENGTH
-from pyrit.models import AttackResult, SeedAttackGroup
-from pyrit.models.identifiers import build_atomic_attack_identifier
-from pyrit.models.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
+from pyrit.models import AtomicAttackEvaluationIdentifier, AttackResult, SeedAttackGroup, build_atomic_attack_identifier
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
 if TYPE_CHECKING:

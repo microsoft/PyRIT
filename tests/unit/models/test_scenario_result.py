@@ -3,8 +3,8 @@
 
 import uuid
 
+from pyrit.models import ComponentIdentifier
 from pyrit.models.attack_result import AttackOutcome, AttackResult
-from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
 
 

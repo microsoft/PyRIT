@@ -53,14 +53,14 @@ from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationStats,
     ConversationType,
     MessagePiece,
     PromptDataType,
+    build_atomic_attack_identifier,
     data_serializer_factory,
 )
-from pyrit.models.identifiers import ComponentIdentifier
-from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 
 

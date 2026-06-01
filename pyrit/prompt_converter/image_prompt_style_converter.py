@@ -11,10 +11,10 @@ import yaml
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.models import (
+    ComponentIdentifier,
     PromptDataType,
     SeedPrompt,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.llm_generic_text_converter import LLMGenericTextConverter
 from pyrit.prompt_converter.prompt_converter import ConverterResult
 from pyrit.prompt_target import PromptTarget

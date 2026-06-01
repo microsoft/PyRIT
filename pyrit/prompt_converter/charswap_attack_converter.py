@@ -5,7 +5,7 @@ import random
 import string
 from typing import Optional
 
-from pyrit.models.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.prompt_converter.text_selection_strategy import (
     WordProportionSelectionStrategy,
     WordSelectionStrategy,

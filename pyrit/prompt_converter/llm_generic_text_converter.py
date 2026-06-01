@@ -12,12 +12,12 @@ from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.exceptions.exception_classes import _DynamicStopAfterAttempt, get_retry_max_num_attempts
 from pyrit.exceptions.exceptions_helpers import log_exception
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     MessagePiece,
     PromptDataType,
     SeedPrompt,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 

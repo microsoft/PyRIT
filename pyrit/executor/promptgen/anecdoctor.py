@@ -20,9 +20,10 @@ from pyrit.executor.promptgen.core import (
     PromptGeneratorStrategyResult,
 )
 from pyrit.models import (
+    ComponentIdentifier,
+    Identifiable,
     Message,
 )
-from pyrit.models.identifiers import ComponentIdentifier, Identifiable
 from pyrit.prompt_normalizer import PromptNormalizer
 
 if TYPE_CHECKING:

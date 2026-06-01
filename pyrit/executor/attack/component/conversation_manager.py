@@ -14,8 +14,7 @@ from pyrit.executor.attack.component.prepended_conversation_config import (
 )
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
-from pyrit.models import ChatMessageRole, Message, MessagePiece, Score
-from pyrit.models.identifiers import ComponentIdentifier
+from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
 )

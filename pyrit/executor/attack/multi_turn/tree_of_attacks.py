@@ -42,14 +42,15 @@ from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
     Message,
     MessagePiece,
     Score,
     SeedPrompt,
+    build_atomic_attack_identifier,
 )
-from pyrit.models.identifiers import ComponentIdentifier, build_atomic_attack_identifier
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements

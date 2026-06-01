@@ -35,8 +35,8 @@ from pyrit.models import (
     Message,
     Score,
     SeedPrompt,
+    build_atomic_attack_identifier,
 )
-from pyrit.models.identifiers import build_atomic_attack_identifier
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements

@@ -27,12 +27,12 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringCon
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     ChatMessageRole,
+    ComponentIdentifier,
     Message,
     MessagePiece,
     PromptDataType,
     Score,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer

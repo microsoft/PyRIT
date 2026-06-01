@@ -8,8 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import Message, MessagePiece, Score
-from pyrit.models.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.score import FloatScaleThresholdScorer
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator

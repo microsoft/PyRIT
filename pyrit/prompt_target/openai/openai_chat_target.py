@@ -15,13 +15,13 @@ from pyrit.exceptions import (
 )
 from pyrit.models import (
     ChatMessage,
+    ComponentIdentifier,
     DataTypeSerializer,
     Message,
     MessagePiece,
     construct_response_from_request,
     data_serializer_factory,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities

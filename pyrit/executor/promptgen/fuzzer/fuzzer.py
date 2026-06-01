@@ -25,12 +25,13 @@ from pyrit.executor.promptgen.core.prompt_generator_strategy import (
 )
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    ComponentIdentifier,
+    Identifiable,
     Message,
     Score,
     SeedGroup,
     SeedPrompt,
 )
-from pyrit.models.identifiers import ComponentIdentifier, Identifiable
 from pyrit.prompt_normalizer import NormalizerRequest, PromptNormalizer
 from pyrit.score import FloatScaleThresholdScorer, Scorer, SelfAskScaleScorer
 

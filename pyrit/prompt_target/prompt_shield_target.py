@@ -8,10 +8,10 @@ from typing import Any, Literal, Optional
 
 from pyrit.common import default_values, net_utility
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     construct_response_from_request,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute

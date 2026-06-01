@@ -8,8 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.models import SeedAttackGroup, SeedDataset, SeedGroup, SeedObjective
-from pyrit.models.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedDataset, SeedGroup, SeedObjective
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.scenario.scenarios.airt import (
     Psychosocial,
@@ -366,8 +365,8 @@ class TestPsychosocialTargetRequirements:
             class_name="NonChatTarget", class_module="test"
         )
         # Configuration reports no EDITABLE_HISTORY support
-        non_chat_target.configuration.includes.side_effect = (
-            lambda *, capability: capability != CapabilityName.EDITABLE_HISTORY
+        non_chat_target.configuration.includes.side_effect = lambda *, capability: (
+            capability != CapabilityName.EDITABLE_HISTORY
         )
 
         with patch.object(Psychosocial, "_resolve_seed_groups", return_value=mock_resolved_seed_data):

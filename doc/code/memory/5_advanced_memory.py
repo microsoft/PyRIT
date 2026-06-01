@@ -129,7 +129,7 @@ for result in results:
 # We can retrieve only the prompts that were sent to a specific target.
 
 # %%
-from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
+from pyrit.models import IdentifierFilter, IdentifierType
 
 filter_target_classes = ["OpenAIChatTarget", "TextTarget"]
 

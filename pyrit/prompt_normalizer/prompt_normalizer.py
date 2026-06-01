@@ -17,10 +17,10 @@ from pyrit.exceptions import (
 )
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     construct_response_from_request,
 )
-from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_normalizer import NormalizerRequest, PromptConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.batch_helper import batch_task_async

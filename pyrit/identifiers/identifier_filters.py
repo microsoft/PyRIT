@@ -21,9 +21,7 @@ _warned: set[str] = set()
 
 def __getattr__(name: str) -> Any:
     if name not in __all__:
-        raise AttributeError(
-            f"module 'pyrit.identifiers.identifier_filters' has no attribute {name!r}"
-        )
+        raise AttributeError(f"module 'pyrit.identifiers.identifier_filters' has no attribute {name!r}")
     if name not in _warned:
         print_deprecation_message(
             old_item=f"pyrit.identifiers.identifier_filters.{name}",

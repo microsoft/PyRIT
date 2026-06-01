@@ -7,8 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from pyrit.memory.central_memory import CentralMemory
-from pyrit.models import MessagePiece, Score
-from pyrit.models.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score import (
     FloatScaleScorer,
     TrueFalseCompositeScorer,
