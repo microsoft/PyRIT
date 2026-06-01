@@ -171,7 +171,9 @@ class Score:
             "score_category": self.score_category,
             "score_rationale": self.score_rationale,
             "score_metadata": self.score_metadata,
-            "scorer_class_identifier": self.scorer_class_identifier.to_dict() if self.scorer_class_identifier else None,
+            "scorer_class_identifier": (
+                self.scorer_class_identifier.model_dump() if self.scorer_class_identifier else None
+            ),
             "message_piece_id": str(self.message_piece_id),
             "timestamp": self.timestamp.isoformat(),
             "objective": self.objective,
@@ -215,7 +217,7 @@ class Score:
             score_rationale=data["score_rationale"],
             score_metadata=data.get("score_metadata"),
             scorer_class_identifier=(  # type: ignore[ty:invalid-argument-type]
-                ComponentIdentifier.from_dict(data["scorer_class_identifier"])
+                ComponentIdentifier.model_validate(data["scorer_class_identifier"])
                 if data.get("scorer_class_identifier")
                 else None
             ),

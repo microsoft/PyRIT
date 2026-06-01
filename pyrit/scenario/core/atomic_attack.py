@@ -444,8 +444,8 @@ class AtomicAttack:
                     memory.update_attack_result_by_id(
                         attack_result_id=result.attack_result_id,
                         update_fields={
-                            "atomic_attack_identifier": result.atomic_attack_identifier.to_dict(
-                                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+                            "atomic_attack_identifier": result.atomic_attack_identifier.model_dump(
+                                context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH},
                             ),
                         },
                     )

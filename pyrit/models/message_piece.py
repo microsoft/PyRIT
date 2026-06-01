@@ -345,12 +345,12 @@ class MessagePiece:
             "labels": self.labels,  # deprecated
             "targeted_harm_categories": self.targeted_harm_categories if self.targeted_harm_categories else None,
             "prompt_metadata": self.prompt_metadata,
-            "converter_identifiers": [conv.to_dict() for conv in self.converter_identifiers],
+            "converter_identifiers": [conv.model_dump() for conv in self.converter_identifiers],
             "prompt_target_identifier": (
-                self.prompt_target_identifier.to_dict() if self.prompt_target_identifier else None
+                self.prompt_target_identifier.model_dump() if self.prompt_target_identifier else None
             ),
-            "attack_identifier": self.attack_identifier.to_dict() if self.attack_identifier else None,
-            "scorer_identifier": self.scorer_identifier.to_dict() if self.scorer_identifier else None,
+            "attack_identifier": self.attack_identifier.model_dump() if self.attack_identifier else None,
+            "scorer_identifier": self.scorer_identifier.model_dump() if self.scorer_identifier else None,
             "original_value_data_type": self.original_value_data_type,
             "original_value": self.original_value,
             "original_value_sha256": self.original_value_sha256,
@@ -397,20 +397,24 @@ class MessagePiece:
             targeted_harm_categories=data.get("targeted_harm_categories"),
             prompt_metadata=data.get("prompt_metadata"),
             converter_identifiers=(
-                [ComponentIdentifier.from_dict(c) for c in data["converter_identifiers"]]
+                [ComponentIdentifier.model_validate(c) for c in data["converter_identifiers"]]
                 if data.get("converter_identifiers")
                 else None
             ),
             prompt_target_identifier=(
-                ComponentIdentifier.from_dict(data["prompt_target_identifier"])
+                ComponentIdentifier.model_validate(data["prompt_target_identifier"])
                 if data.get("prompt_target_identifier")
                 else None
             ),
             attack_identifier=(
-                ComponentIdentifier.from_dict(data["attack_identifier"]) if data.get("attack_identifier") else None
+                ComponentIdentifier.model_validate(data["attack_identifier"])
+                if data.get("attack_identifier")
+                else None
             ),
             scorer_identifier=(
-                ComponentIdentifier.from_dict(data["scorer_identifier"]) if data.get("scorer_identifier") else None
+                ComponentIdentifier.model_validate(data["scorer_identifier"])
+                if data.get("scorer_identifier")
+                else None
             ),
             original_value_data_type=data.get("original_value_data_type", "text"),
             original_value=data.get("original_value", ""),
