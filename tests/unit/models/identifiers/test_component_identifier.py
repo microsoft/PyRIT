@@ -5,8 +5,8 @@
 import pytest
 
 import pyrit
-from pyrit.identifiers import ComponentIdentifier, Identifiable, compute_eval_hash, config_hash
-from pyrit.identifiers.evaluation_identifier import ChildEvalRule, _build_eval_dict
+from pyrit.models.identifiers import ComponentIdentifier, Identifiable, compute_eval_hash, config_hash
+from pyrit.models.identifiers.evaluation_identifier import ChildEvalRule, _build_eval_dict
 
 # Test constants mirroring Scorer's ClassVars — keeps tests decoupled from pyrit.score
 _CHILD_EVAL_RULES: dict[str, ChildEvalRule] = {

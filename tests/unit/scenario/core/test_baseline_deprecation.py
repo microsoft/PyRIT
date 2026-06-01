@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.core import BaselineAttackPolicy, Scenario, ScenarioStrategy
 from pyrit.score import TrueFalseScorer

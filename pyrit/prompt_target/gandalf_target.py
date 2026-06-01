@@ -7,8 +7,7 @@ import logging
 from typing import Optional
 
 from pyrit.common import net_utility
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, construct_response_from_request
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute

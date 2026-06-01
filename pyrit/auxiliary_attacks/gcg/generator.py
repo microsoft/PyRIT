@@ -62,7 +62,7 @@ from pyrit.executor.promptgen.core.prompt_generator_strategy import (
     PromptGeneratorStrategyContext,
     PromptGeneratorStrategyResult,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable
+from pyrit.models import ComponentIdentifier, Identifiable
 
 logger = logging.getLogger(__name__)
 

@@ -11,7 +11,7 @@ before scenario execution. These models represent initializer metadata.
 from pydantic import BaseModel, Field
 
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.identifiers.class_name_utils import REGISTRY_NAME_PATTERN
+from pyrit.models import REGISTRY_NAME_PATTERN
 
 
 class InitializerParameterSummary(BaseModel):
