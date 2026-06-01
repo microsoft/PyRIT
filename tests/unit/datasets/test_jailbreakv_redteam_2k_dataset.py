@@ -80,7 +80,7 @@ async def test_fetch_dataset_filters_by_harm_category():
 
 
 async def test_fetch_dataset_empty_after_filter_raises():
-    loader = _JailbreakVRedteam2KDataset(harm_categories=[_HarmCategory.CHILD_ABUSE_CONTENT])
+    loader = _JailbreakVRedteam2KDataset(harm_categories=[_HarmCategory.CHILD_ABUSE])
     rows = [_row(question="Q1", policy="Hate Speech")]
 
     with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows)):

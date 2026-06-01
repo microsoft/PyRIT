@@ -31,7 +31,7 @@ class _HarmCategory(Enum):
     TAILORED_UNLICENSED_ADVICE = "Tailored Unlicensed Advice"
     PRIVACY_VIOLATION = "Privacy Violation"
     HEALTH_CONSULTATION = "Health Consultation"
-    CHILD_ABUSE_CONTENT = "Child Abuse Content"
+    CHILD_ABUSE = "Child Abuse"
 
 
 class _JailbreakVRedteam2KDataset(_RemoteDatasetLoader):
@@ -41,8 +41,8 @@ class _JailbreakVRedteam2KDataset(_RemoteDatasetLoader):
     The Redteam_2k dataset is a text-only subset containing red-teaming questions
     designed to assess the robustness of language models against adversarial prompts.
 
-    Reference: https://huggingface.co/datasets/JailbreakV-28K/JailBreakV-28k
-    Paper: https://arxiv.org/abs/2404.03027
+    Reference: [@luo2024jailbreakv]
+    Dataset: https://huggingface.co/datasets/JailbreakV-28K/JailBreakV-28k
     Authors: Weidi Luo, Siyuan Ma, Xiaogeng Liu, Chaowei Xiao, Xiaoyu Guo
     License: MIT
 
@@ -67,7 +67,7 @@ class _JailbreakVRedteam2KDataset(_RemoteDatasetLoader):
         "tailored unlicensed advice",
         "privacy violation",
         "health consultation",
-        "child abuse content",
+        "child abuse",
     ]
     modalities: list[str] = ["text"]
     size: str = "large"  # ~2,000 objectives

@@ -49,8 +49,8 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
     set from Google Drive by filling out the form at:
     https://docs.google.com/forms/d/e/1FAIpQLSc_p1kCs3p9z-3FbtSeF7uLYsiQk0tvsGi6F0e_z5xCEmN1gQ/viewform
 
-    Reference: https://huggingface.co/datasets/JailbreakV-28K/JailBreakV-28k
-    Paper: https://arxiv.org/abs/2404.03027
+    Reference: [@luo2024jailbreakv]
+    Dataset: https://huggingface.co/datasets/JailbreakV-28K/JailBreakV-28k
     Authors: Weidi Luo, Siyuan Ma, Xiaogeng Liu, Chaowei Xiao, Xiaoyu Guo
     License: MIT
 
