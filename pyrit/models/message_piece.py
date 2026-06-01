@@ -97,8 +97,8 @@ class MessagePiece(BaseModel):
     A single piece of a message exchanged with a target.
 
     Targets that accept multimodal input (e.g., text + image) are represented
-    as a list of :class:`MessagePiece` instances grouped under one
-    :class:`~pyrit.models.message.Message`.
+    as a list of ``MessagePiece`` instances grouped under one
+    ``Message``.
     """
 
     model_config = ConfigDict(
@@ -215,10 +215,10 @@ class MessagePiece(BaseModel):
 
     def to_message(self) -> Message:
         """
-        Wrap this piece in a single-piece :class:`Message`.
+        Wrap this piece in a single-piece ``Message``.
 
         Returns:
-            A new :class:`Message` containing only this piece.
+            A new ``Message`` containing only this piece.
         """
         from pyrit.models.message import Message
 
@@ -244,7 +244,7 @@ class MessagePiece(BaseModel):
 
     def has_error(self) -> bool:
         """
-        Return ``True`` when :attr:`response_error` is not ``"none"``.
+        Return ``True`` when ``response_error`` is not ``"none"``.
 
         Returns:
             ``True`` if the piece carries any non-``"none"`` error code.
@@ -253,7 +253,7 @@ class MessagePiece(BaseModel):
 
     def is_blocked(self) -> bool:
         """
-        Return ``True`` when :attr:`response_error` is ``"blocked"``.
+        Return ``True`` when ``response_error`` is ``"blocked"``.
 
         Returns:
             ``True`` if the response was blocked by the target / content filter.
@@ -265,7 +265,7 @@ class MessagePiece(BaseModel):
     # ------------------------------------------------------------------ #
     def to_dict(self) -> dict[str, Any]:
         """
-        Return a JSON-mode dict representation (DEPRECATED — use :meth:`model_dump`).
+        Return a JSON-mode dict representation (DEPRECATED — use ``model_dump``).
 
         Returns:
             A JSON-mode dict representation of the piece (same as
@@ -281,13 +281,13 @@ class MessagePiece(BaseModel):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> MessagePiece:
         """
-        Construct a MessagePiece from a dict (DEPRECATED — use :meth:`model_validate`).
+        Construct a MessagePiece from a dict (DEPRECATED — use ``model_validate``).
 
         Args:
             data: A dict matching the MessagePiece field schema.
 
         Returns:
-            A new :class:`MessagePiece` (same as ``cls.model_validate(data)``).
+            A new ``MessagePiece`` (same as ``cls.model_validate(data)``).
         """
         print_deprecation_message(
             old_item="MessagePiece.from_dict()",
@@ -298,7 +298,7 @@ class MessagePiece(BaseModel):
 
     def set_piece_not_in_database(self) -> None:
         """
-        Mark this piece as ephemeral (DEPRECATED — set :attr:`not_in_database` directly).
+        Mark this piece as ephemeral (DEPRECATED — set ``not_in_database`` directly).
 
         Example::
 
