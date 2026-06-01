@@ -49,16 +49,16 @@ from pyrit.backend.models.attacks import (
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.target_service import get_target_service
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationStats,
     ConversationType,
     MessagePiece,
     PromptDataType,
+    build_atomic_attack_identifier,
     data_serializer_factory,
 )
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
@@ -852,9 +852,12 @@ class AttackService:
         # Apply optional overrides to the fresh pieces before persisting
         for piece in all_pieces:
             if labels_override is not None:
-                piece.labels = dict(labels_override)  # deprecated
+                # TODO: ``labels`` is slated to move from MessagePiece onto
+                # AttackResult. Revisit this once that lands so we set labels
+                # on the attack result instead of mutating each piece.
+                piece.labels = dict(labels_override)
             if remap_assistant_to_simulated and piece.api_role == "assistant":
-                piece._role = "simulated_assistant"
+                piece.role = "simulated_assistant"
 
         if all_pieces:
             self._memory.add_message_pieces_to_memory(message_pieces=list(all_pieces))

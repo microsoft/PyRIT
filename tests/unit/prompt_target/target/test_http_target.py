@@ -72,6 +72,9 @@ async def test_send_prompt_async(mock_request, mock_http_target, mock_http_respo
             converted_value_data_type="text",
             prompt_target_identifier=None,
             attack_identifier=None,
+            conversation_id="",
+            labels={},
+            prompt_metadata={},
         )
     ]
     mock_request.return_value = mock_http_response
@@ -124,6 +127,9 @@ async def test_send_prompt_async_client_kwargs(patch_central_database):
                 converted_value_data_type="text",
                 prompt_target_identifier=None,
                 attack_identifier=None,
+                conversation_id="",
+                labels={},
+                prompt_metadata={},
             )
         ]
         mock_response = MagicMock()
@@ -160,6 +166,9 @@ async def test_send_prompt_regex_parse_async(mock_request, mock_http_target):
             converted_value_data_type="text",
             prompt_target_identifier=None,
             attack_identifier=None,
+            conversation_id="",
+            labels={},
+            prompt_metadata={},
         )
     ]
 
@@ -193,6 +202,9 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
             converted_value_data_type="text",
             prompt_target_identifier=None,
             attack_identifier=None,
+            conversation_id="",
+            labels={},
+            prompt_metadata={},
         )
     ]
     response = await mock_http_target.send_prompt_async(message=message)
@@ -218,6 +230,9 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
             converted_value_data_type="text",
             prompt_target_identifier=None,
             attack_identifier=None,
+            conversation_id="",
+            labels={},
+            prompt_metadata={},
         )
     ]
     await mock_http_target.send_prompt_async(message=second_message)
@@ -272,6 +287,9 @@ async def test_http_target_with_injected_client(patch_central_database):
                 converted_value_data_type="text",
                 prompt_target_identifier=None,
                 attack_identifier=None,
+                conversation_id="",
+                labels={},
+                prompt_metadata={},
             )
         ]
 

@@ -3,8 +3,7 @@
 
 from typing import Optional
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.registry.object_registries.scorer_registry import ScorerRegistry
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer import Scorer

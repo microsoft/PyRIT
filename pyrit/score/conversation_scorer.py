@@ -6,8 +6,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, cast
 from uuid import UUID
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -97,7 +96,7 @@ class ConversationScorer(Scorer, ABC):
         conversation_message = Message(
             message_pieces=[
                 MessagePiece(
-                    role=original_piece.get_role_for_storage(),
+                    role=original_piece.role,
                     original_value=conversation_text,
                     converted_value=conversation_text,
                     id=original_piece.id,

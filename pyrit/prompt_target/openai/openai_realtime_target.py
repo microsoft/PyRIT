@@ -15,8 +15,8 @@ from pyrit.exceptions import (
     pyrit_target_retry,
 )
 from pyrit.exceptions.exception_classes import ServerErrorException
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     construct_response_from_request,
     data_serializer_factory,

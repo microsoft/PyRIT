@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM mcr.microsoft.com/devcontainers/python:3.11-bookworm
+FROM mcr.microsoft.com/devcontainers/python:3.14-bookworm
 
 # Makes installation faster
 ENV UV_COMPILE_BYTECODE=1

@@ -15,10 +15,10 @@ from pyrit.executor.attack import (
     MultiPromptSendingAttackParameters,
     MultiTurnAttackContext,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     Message,
     MessagePiece,
     Score,

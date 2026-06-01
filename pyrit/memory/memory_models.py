@@ -31,15 +31,12 @@ from sqlalchemy.types import Uuid
 
 import pyrit
 from pyrit.common.utils import to_sha256
-from pyrit.identifiers.component_identifier import ComponentIdentifier
-from pyrit.identifiers.evaluation_identifier import (
-    AtomicAttackEvaluationIdentifier,
-    ScorerEvaluationIdentifier,
-)
 from pyrit.models import (
+    AtomicAttackEvaluationIdentifier,
     AttackOutcome,
     AttackResult,
     ChatMessageRole,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
     MessagePiece,
@@ -47,6 +44,7 @@ from pyrit.models import (
     ScenarioIdentifier,
     ScenarioResult,
     Score,
+    ScorerEvaluationIdentifier,
     Seed,
     SeedObjective,
     SeedPrompt,
@@ -225,7 +223,7 @@ class PromptMemoryEntry(Base):
             entry (MessagePiece): The message piece to convert into a database entry.
         """
         self.id = entry.id
-        self.role = entry._role
+        self.role = entry.role
         self.conversation_id = entry.conversation_id
         self.sequence = entry.sequence
         self.timestamp = entry.timestamp
@@ -298,7 +296,7 @@ class PromptMemoryEntry(Base):
             conversation_id=self.conversation_id,
             sequence=self.sequence,
             prompt_metadata=self.prompt_metadata,
-            converter_identifiers=converter_ids,
+            converter_identifiers=converter_ids or [],
             prompt_target_identifier=target_id,
             attack_identifier=attack_id,
             original_value_data_type=self.original_value_data_type,
@@ -307,9 +305,13 @@ class PromptMemoryEntry(Base):
             original_prompt_id=self.original_prompt_id,
             timestamp=_ensure_utc(self.timestamp),
         )
-        message_piece.scores = [score.get_score() for score in self.scores]
+        # Assign deprecated containers post-construction so the DB-load path
+        # does not trip the ``MessagePiece`` deprecation-kwarg validator.
+        # ``validate_assignment=False`` on the model makes this assignment
+        # bypass the model_validator entirely.
         message_piece.labels = self.labels or {}
         message_piece.targeted_harm_categories = self.targeted_harm_categories or []
+        message_piece.scores = [score.get_score() for score in self.scores]
         return message_piece
 
     def __str__(self) -> str:
@@ -912,7 +914,7 @@ class AttackResultEntry(Base):
             ComponentIdentifier.from_dict(self.atomic_attack_identifier) if self.atomic_attack_identifier else None
         )
         if atomic_id is None and self.attack_identifier:
-            from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+            from pyrit.models import build_atomic_attack_identifier
 
             atomic_id = build_atomic_attack_identifier(
                 attack_identifier=ComponentIdentifier.from_dict(self.attack_identifier),

@@ -31,8 +31,7 @@ from pyrit.backend.mappers.attack_mappers import (
 )
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import AttackOutcome, AttackResult
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.prompt_target import PromptTarget, TargetCapabilities
 
@@ -101,7 +100,6 @@ def _make_mock_piece(
     p.original_value_data_type = "text"
     p.response_error = "none"
     p.role = "user"
-    p.get_role_for_storage.return_value = "user"
     p.timestamp = datetime.now(timezone.utc)
     p.scores = []
     return p
