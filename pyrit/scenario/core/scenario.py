@@ -145,7 +145,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
     Subclasses must use the keyword-only constructor shape (``def __init__(self, *, ...)``);
     the contract is enforced at class-definition time via
-    :func:`pyrit.common.enforce_keyword_only_init`. See
+    ``enforce_keyword_only_init``. See
     ``.github/instructions/scenarios.instructions.md`` for the full contract.
     """
 

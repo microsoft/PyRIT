@@ -10,13 +10,13 @@ points that users routinely swap in and out. To make those swaps predictable,
 every subclass must use the keyword-only constructor shape mandated by the
 style guide: ``def __init__(self, *, ...)``.
 
-This module provides one shared helper, :func:`enforce_keyword_only_init`,
+This module provides one shared helper, ``enforce_keyword_only_init``,
 that bases invoke from their own ``__init_subclass__`` hook. The helper
 inspects the subclass's directly-defined ``__init__`` (not inherited) and
 classifies it as compliant or non-compliant. Non-compliant subclasses either
 raise ``TypeError`` at class definition time, or, if they opt in via the
 ``_lego_brick_legacy_init`` class attribute, emit a ``DeprecationWarning``
-via :func:`pyrit.common.deprecation.print_deprecation_message` and continue.
+via ``print_deprecation_message`` and continue.
 The opt-out is intended to be removed in ``0.16.0``.
 """
 
@@ -28,7 +28,7 @@ from inspect import Parameter
 from pyrit.common.deprecation import print_deprecation_message
 
 #: Class attribute name that opts a subclass into the legacy-init grace period.
-#: When ``True`` on a class, :func:`enforce_keyword_only_init` downgrades the
+#: When ``True`` on a class, ``enforce_keyword_only_init`` downgrades the
 #: ``TypeError`` to a ``DeprecationWarning`` until ``_LEGACY_REMOVED_IN``.
 LEGACY_INIT_OPT_OUT_ATTR = "_lego_brick_legacy_init"
 

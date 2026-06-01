@@ -58,7 +58,7 @@ class Scorer(Identifiable, abc.ABC):
 
     Subclasses must use the keyword-only constructor shape
     (``def __init__(self, *, ...)``); the contract is enforced at class
-    definition time via :func:`pyrit.common.enforce_keyword_only_init`. See
+    definition time via ``enforce_keyword_only_init``. See
     ``.github/instructions/scorers.instructions.md`` for the full contract.
     """
 

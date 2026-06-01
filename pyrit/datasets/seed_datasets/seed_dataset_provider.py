@@ -45,7 +45,7 @@ class SeedDatasetProvider(ABC):
         deprecation warning is emitted for subclasses that still override the
         legacy ``fetch_dataset`` instead of ``fetch_dataset_async``. The
         keyword-only ``__init__`` contract is also enforced via
-        :func:`pyrit.common.enforce_keyword_only_init`.
+        ``enforce_keyword_only_init``.
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
