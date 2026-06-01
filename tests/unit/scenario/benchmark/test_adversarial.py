@@ -31,7 +31,7 @@ These tests cover the new contract:
 """
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -50,6 +50,7 @@ from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core import BaselineAttackPolicy
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.scenarios.benchmark.adversarial import (
     AdversarialBenchmark,
     _build_benchmark_strategy,
@@ -482,8 +483,7 @@ class TestGetAtomicAttacksCrossProduct:
         target_a = TargetRegistry.get_registry_singleton().get_instance_by_name("adv_a")
         target_b = TargetRegistry.get_registry_singleton().get_instance_by_name("adv_b")
         injected_targets = {
-            call.kwargs["attack_adversarial_config_override"].target
-            for call in factory.create.call_args_list
+            call.kwargs["attack_adversarial_config_override"].target for call in factory.create.call_args_list
         }
         assert injected_targets == {target_a, target_b}
 
@@ -502,6 +502,14 @@ def _make_attack_result_with_outcome(outcome: AttackOutcome) -> MagicMock:
     """
     ar = MagicMock()
     ar.outcome = outcome
+    return ar
+
+
+def _make_attack_result_with_attribution(*, outcome: AttackOutcome, parent_collection: str) -> MagicMock:
+    """Like ``_make_attack_result_with_outcome`` but with attribution_data for parent-collection filtering."""
+    ar = MagicMock()
+    ar.outcome = outcome
+    ar.attribution_data = {"parent_collection": parent_collection}
     return ar
 
 
@@ -771,6 +779,52 @@ class TestSkipCachedFilter:
 
         assert len(result) == 1
 
+    async def test_use_cached_true_populates_precomputed_maps_for_skipped(self):
+        """Full pipeline: cache hit → _precomputed_cached_results/display_groups populated for skipped slot."""
+        bench = self._make_bench(use_cached=True)
+        cached_attack = _make_attack_result_with_attribution(
+            outcome=AttackOutcome.SUCCESS,
+            parent_collection="red_teaming__adv_a_harmbench",
+        )
+
+        with (
+            self._patch_identifier(),
+            patch(
+                "pyrit.scenario.core.atomic_attack.AtomicAttack.technique_eval_hash",
+                new_callable=lambda: property(lambda self: "cached_hash"),
+            ),
+            patch(self._ANALYTICS_PATH, return_value=[cached_attack]),
+        ):
+            result = await bench._get_atomic_attacks_async()
+
+        assert result == []
+        assert bench._precomputed_cached_results == {"red_teaming__adv_a_harmbench": [cached_attack]}
+        assert bench._precomputed_cached_display_groups == {"red_teaming__adv_a_harmbench": "adv_a"}
+
+    async def test_use_cached_true_filters_results_by_parent_collection(self):
+        """Cached rows whose parent_collection doesn't match the skipped slot are dropped."""
+        bench = self._make_bench(use_cached=True)
+        matching = _make_attack_result_with_attribution(
+            outcome=AttackOutcome.SUCCESS,
+            parent_collection="red_teaming__adv_a_harmbench",
+        )
+        wrong_parent = _make_attack_result_with_attribution(
+            outcome=AttackOutcome.SUCCESS,
+            parent_collection="red_teaming__adv_a_xstest",
+        )
+
+        with (
+            self._patch_identifier(),
+            patch(
+                "pyrit.scenario.core.atomic_attack.AtomicAttack.technique_eval_hash",
+                new_callable=lambda: property(lambda self: "cached_hash"),
+            ),
+            patch(self._ANALYTICS_PATH, return_value=[matching, wrong_parent]),
+        ):
+            await bench._get_atomic_attacks_async()
+
+        assert bench._precomputed_cached_results == {"red_teaming__adv_a_harmbench": [matching]}
+
 
 # ---------------------------------------------------------------------------
 # Real-memory coverage for _collect_cached_completion_pairs
@@ -972,3 +1026,87 @@ class TestCollectCachedCompletionPairsWithRealMemory:
         result = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
 
         assert result == {tech_hash}
+
+
+# ---------------------------------------------------------------------------
+# run_async cache injection
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestRunAsyncCacheInjection:
+    """Tests that prior results for use_cached-skipped attacks are injected into ScenarioResult."""
+
+    async def test_precomputed_results_injected_into_attack_results(self):
+        """Slots from prior runs appear in attack_results alongside freshly-executed results."""
+        bench = AdversarialBenchmark(
+            objective_scorer=MagicMock(spec=TrueFalseScorer),
+            use_cached=True,
+        )
+
+        result_x = MagicMock(spec=AttackResult)
+        result_y = MagicMock(spec=AttackResult)
+        result_z = MagicMock(spec=AttackResult)
+
+        # Simulate what _get_atomic_attacks_async populated for the two skipped attacks
+        bench._precomputed_cached_results = {
+            "technique_a__adv_target_harmbench": [result_x],
+            "technique_b__adv_target_harmbench": [result_y],
+        }
+        bench._precomputed_cached_display_groups = {
+            "technique_a__adv_target_harmbench": "adv_target",
+            "technique_b__adv_target_harmbench": "adv_target",
+        }
+
+        # Base run_async produced only the non-skipped attack's result
+        base_scenario_result = MagicMock()
+        base_scenario_result.attack_results = {"technique_c__adv_target_harmbench": [result_z]}
+        base_scenario_result._display_group_map = {}
+
+        with patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)):
+            result = await bench.run_async()
+
+        assert set(result.attack_results.keys()) == {
+            "technique_a__adv_target_harmbench",
+            "technique_b__adv_target_harmbench",
+            "technique_c__adv_target_harmbench",
+        }
+        assert result.attack_results["technique_a__adv_target_harmbench"] == [result_x]
+        assert result.attack_results["technique_b__adv_target_harmbench"] == [result_y]
+        assert result.attack_results["technique_c__adv_target_harmbench"] == [result_z]
+
+    async def test_display_group_map_updated_for_cached_attacks(self):
+        """Skipped attacks have their display group injected so get_display_groups aggregates correctly."""
+        bench = AdversarialBenchmark(
+            objective_scorer=MagicMock(spec=TrueFalseScorer),
+            use_cached=True,
+        )
+
+        bench._precomputed_cached_results = {"technique_a__adv_target_harmbench": [MagicMock(spec=AttackResult)]}
+        bench._precomputed_cached_display_groups = {"technique_a__adv_target_harmbench": "adv_target"}
+
+        base_scenario_result = MagicMock()
+        base_scenario_result.attack_results = {}
+        base_scenario_result._display_group_map = {}
+
+        with patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)):
+            result = await bench.run_async()
+
+        assert result._display_group_map["technique_a__adv_target_harmbench"] == "adv_target"
+
+    async def test_no_injection_when_no_cached_attacks(self):
+        """When all attacks were executed freshly, attack_results is returned unchanged."""
+        bench = AdversarialBenchmark(
+            objective_scorer=MagicMock(spec=TrueFalseScorer),
+            use_cached=False,
+        )
+
+        result_z = MagicMock(spec=AttackResult)
+        base_scenario_result = MagicMock()
+        base_scenario_result.attack_results = {"technique_c__adv_target_harmbench": [result_z]}
+        base_scenario_result._display_group_map = {}
+
+        with patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)):
+            result = await bench.run_async()
+
+        assert set(result.attack_results.keys()) == {"technique_c__adv_target_harmbench"}

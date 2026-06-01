@@ -12,8 +12,13 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.analytics import get_cached_results_for_technique
 from pyrit.common import Parameter, apply_defaults
 from pyrit.executor.attack import AttackAdversarialConfig, AttackScoringConfig
-from pyrit.models import ObjectiveTargetEvaluationIdentifier
-from pyrit.models import AttackOutcome, SeedAttackGroup
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    ObjectiveTargetEvaluationIdentifier,
+    ScenarioResult,
+    SeedAttackGroup,
+)
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -22,7 +27,6 @@ from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
-    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
     from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -168,6 +172,9 @@ class AdversarialBenchmark(Scenario):
             objective_scorer if objective_scorer else self._get_default_objective_scorer()
         )
         self._use_cached: bool = use_cached
+        self._precomputed_cached_results: dict[str, list[AttackResult]] = {}
+        self._precomputed_cached_display_groups: dict[str, str] = {}
+        self._cached_results_by_hash: dict[str, list[AttackResult]] = {}
 
         strategy_class = _build_benchmark_strategy()
 
@@ -224,9 +231,7 @@ class AdversarialBenchmark(Scenario):
 
         resolved_targets = self._resolve_adversarial_targets(target_names=target_names)
         all_factories = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()
-        selected_factories = [
-            all_factories[s.value] for s in self._scenario_strategies if s.value in all_factories
-        ]
+        selected_factories = [all_factories[s.value] for s in self._scenario_strategies if s.value in all_factories]
 
         scoring_config = AttackScoringConfig(objective_scorer=self._objective_scorer)
         seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
@@ -283,19 +288,27 @@ class AdversarialBenchmark(Scenario):
 
         cached_technique_hashes = self._collect_cached_completion_pairs(atomic_attacks=atomic_attacks)
         filtered = [c for c in atomic_attacks if c.technique_eval_hash not in cached_technique_hashes]
-        skipped = len(atomic_attacks) - len(filtered)
-        if skipped > 0:
+        skipped_attacks = [c for c in atomic_attacks if c.technique_eval_hash in cached_technique_hashes]
+        if skipped_attacks:
             logger.info(
                 "use_cached=True: skipping %d/%d atomic attack(s) already completed for the "
                 "current objective target (matched by technique_eval_hash × objective_target_eval_hash).",
-                skipped,
+                len(skipped_attacks),
                 len(atomic_attacks),
             )
-        # TODO: inject prior AttackResult rows for the skipped attacks into the current ScenarioResult
-        # so use_cached=True produces a complete result rather than a partial one.
-        # The skipped attacks' names are: [a.atomic_attack_name for a in atomic_attacks if a not in filtered]
-        # Fetch their results via get_cached_results_for_technique and add them as pre-populated slots
-        # in ScenarioResult.attack_results (requires overriding initialize_async or a post-populate hook).
+            # Pre-populate prior results for skipped attacks so run_async can surface them in
+            # ScenarioResult.attack_results. attribution_data["parent_collection"] records the
+            # original atomic_attack_name so results are attributed to the correct slot.
+            self._precomputed_cached_results = {}
+            self._precomputed_cached_display_groups = {}
+            for attack in skipped_attacks:
+                prior = self._cached_results_by_hash.get(attack.technique_eval_hash, [])
+                self._precomputed_cached_results[attack.atomic_attack_name] = [
+                    r
+                    for r in prior
+                    if r.attribution_data and r.attribution_data.get("parent_collection") == attack.atomic_attack_name
+                ]
+                self._precomputed_cached_display_groups[attack.atomic_attack_name] = attack.display_group
         return filtered
 
     def _resolve_adversarial_targets(self, *, target_names: list[str]) -> list[tuple[str, PromptTarget]]:
@@ -334,6 +347,28 @@ class AdversarialBenchmark(Scenario):
 
         return resolved
 
+    async def run_async(self) -> ScenarioResult:
+        """
+        Run the scenario and merge any precomputed cached results into the returned ``ScenarioResult``.
+
+        When ``use_cached=True`` skipped atomic attacks whose prior results were
+        loaded during ``_get_atomic_attacks_async``, this override attaches
+        those results (and their display-group labels) to the live scenario
+        result so the final report reflects both newly-executed and
+        cache-served runs.
+
+        Returns:
+            ScenarioResult: The scenario result with cached attack results merged
+            into ``attack_results`` and cached display groups merged into
+            ``_display_group_map``.
+        """
+        result = await super().run_async()
+        if self._precomputed_cached_results:
+            for attack_name, prior_results in self._precomputed_cached_results.items():
+                result.attack_results.setdefault(attack_name, []).extend(prior_results)
+            result._display_group_map.update(self._precomputed_cached_display_groups)
+        return result
+
     def _collect_cached_completion_pairs(self, *, atomic_attacks: list[AtomicAttack]) -> set[str]:
         """
         Return the set of ``technique_eval_hash`` values already cached for this scenario's objective target.
@@ -354,6 +389,11 @@ class AdversarialBenchmark(Scenario):
         × objective target) result counts as a hit, regardless of scenario
         name or ``VERSION``.
 
+        As a side effect, populates ``self._cached_results_by_hash`` with the
+        retrieved ``AttackResult`` lists keyed by technique eval hash so that
+        ``_get_atomic_attacks_async`` can build ``_precomputed_cached_results``
+        for injection into the final ``ScenarioResult`` by ``run_async``.
+
         Args:
             atomic_attacks: The candidate atomic attacks built earlier in
                 ``_get_atomic_attacks_async``. Only their
@@ -367,6 +407,7 @@ class AdversarialBenchmark(Scenario):
             than blocking the run.
         """
         cached_hashes: set[str] = set()
+        self._cached_results_by_hash: dict[str, list[AttackResult]] = {}
 
         if self._objective_target_identifier is None:
             return cached_hashes
@@ -400,5 +441,6 @@ class AdversarialBenchmark(Scenario):
                 continue
             if any(m.outcome in (AttackOutcome.SUCCESS, AttackOutcome.FAILURE) for m in matches):
                 cached_hashes.add(technique_eval_hash)
+                self._cached_results_by_hash[technique_eval_hash] = list(matches)
 
         return cached_hashes
