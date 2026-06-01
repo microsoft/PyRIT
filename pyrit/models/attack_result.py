@@ -240,7 +240,7 @@ class AttackResult(StrategyResult):
             "objective": self.objective,
             "attack_result_id": self.attack_result_id,
             "atomic_attack_identifier": (
-                self.atomic_attack_identifier.to_dict() if self.atomic_attack_identifier else None
+                self.atomic_attack_identifier.model_dump() if self.atomic_attack_identifier else None
             ),
             "last_response": self.last_response.model_dump(mode="json") if self.last_response else None,
             "last_score": self.last_score.to_dict() if self.last_score else None,
@@ -278,7 +278,7 @@ class AttackResult(StrategyResult):
             objective=data["objective"],
             attack_result_id=data.get("attack_result_id", str(uuid.uuid4())),
             atomic_attack_identifier=(
-                ComponentIdentifier.from_dict(data["atomic_attack_identifier"])
+                ComponentIdentifier.model_validate(data["atomic_attack_identifier"])
                 if data.get("atomic_attack_identifier")
                 else None
             ),
