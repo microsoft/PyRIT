@@ -556,7 +556,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             piece_data = piece.model_dump(mode="json")
             # Find associated scores
             piece_scores = [score for score in scores if score.message_piece_id == piece.id]
-            piece_data["scores"] = [score.to_dict() for score in piece_scores]
+            piece_data["scores"] = [score.model_dump(mode="json") for score in piece_scores]
             merged_data.append(piece_data)
 
         if not merged_data:

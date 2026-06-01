@@ -5,28 +5,28 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 from uuid import uuid4
 
 from pydantic import (
     AwareDatetime,
     BaseModel,
-    BeforeValidator,
     ConfigDict,
     Field,
-    PlainSerializer,
     model_validator,
 )
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.data_type_serializer import data_serializer_factory
-from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ChatMessageRole,
     PromptDataType,
     PromptResponseError,
 )
-from pyrit.models.score import Score
+from pyrit.models.score import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    ComponentIdentifierField,
+    Score,
+)
 
 if TYPE_CHECKING:
     from pyrit.models.message import Message
@@ -49,20 +49,9 @@ _DEPRECATED_KWARGS: tuple[tuple[str, str], ...] = (
 
 
 # Annotated alias for fields whose runtime type is ``ComponentIdentifier`` —
-# a non-Pydantic class that needs ``from_dict``/``to_dict`` round-tripping.
-# Drop this alias (and the corresponding ``Score`` one below) once
-# ``ComponentIdentifier`` / ``Score`` become Pydantic models (Phase 4 / 5).
-ComponentIdentifierField = Annotated[
-    ComponentIdentifier,
-    BeforeValidator(lambda v: ComponentIdentifier.from_dict(v) if isinstance(v, dict) else v),
-    PlainSerializer(lambda v: v.to_dict() if v is not None else None, return_type=Optional[dict]),
-]
-
-ScoreField = Annotated[
-    Score,
-    BeforeValidator(lambda v: Score.from_dict(v) if isinstance(v, dict) else v),
-    PlainSerializer(lambda v: v.to_dict(), return_type=dict),
-]
+# a non-Pydantic class that needs ``from_dict``/``to_dict`` round-tripping. It is
+# defined in ``pyrit.models.score`` (lower in the import graph) and re-imported
+# above. Drop this alias once ``ComponentIdentifier`` becomes a Pydantic model.
 
 
 def __getattr__(name: str) -> Any:
@@ -128,7 +117,7 @@ class MessagePiece(BaseModel):
     prompt_target_identifier: Optional[ComponentIdentifierField] = None
     attack_identifier: Optional[ComponentIdentifierField] = None
     scorer_identifier: Optional[ComponentIdentifierField] = None
-    scores: list[ScoreField] = Field(default_factory=list)
+    scores: list[Score] = Field(default_factory=list)
 
     # When True, the memory layer skips persisting this piece. Used for ephemeral
     # pieces a scorer creates to score arbitrary content; ``exclude=True`` keeps
