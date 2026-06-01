@@ -288,7 +288,7 @@ class PromptMemoryEntry(Base):
         if self.attack_identifier:
             attack_id = ComponentIdentifier.from_dict({**self.attack_identifier, "pyrit_version": stored_version})
 
-        return MessagePiece(
+        message_piece = MessagePiece(
             role=self.role,
             original_value=self.original_value,
             original_value_sha256=self.original_value_sha256,
@@ -297,9 +297,7 @@ class PromptMemoryEntry(Base):
             id=self.id,
             conversation_id=self.conversation_id,
             sequence=self.sequence,
-            labels=self.labels or {},
             prompt_metadata=self.prompt_metadata,
-            targeted_harm_categories=self.targeted_harm_categories or [],
             converter_identifiers=converter_ids or [],
             prompt_target_identifier=target_id,
             attack_identifier=attack_id,
@@ -308,8 +306,15 @@ class PromptMemoryEntry(Base):
             response_error=self.response_error,
             original_prompt_id=self.original_prompt_id,
             timestamp=_ensure_utc(self.timestamp),
-            scores=[score.get_score() for score in self.scores],
         )
+        # Assign deprecated containers post-construction so the DB-load path
+        # does not trip the ``MessagePiece`` deprecation-kwarg validator.
+        # ``validate_assignment=False`` on the model makes this assignment
+        # bypass the model_validator entirely.
+        message_piece.labels = self.labels or {}
+        message_piece.targeted_harm_categories = self.targeted_harm_categories or []
+        message_piece.scores = [score.get_score() for score in self.scores]
+        return message_piece
 
     def __str__(self) -> str:
         """

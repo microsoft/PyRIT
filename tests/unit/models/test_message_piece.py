@@ -5,6 +5,7 @@ import os
 import tempfile
 import time
 import uuid
+import warnings
 from collections.abc import MutableSequence
 from datetime import datetime, timedelta, timezone
 
@@ -1258,3 +1259,91 @@ class TestPhase3PydanticMigration:
         with pytest.raises(Exception) as exc_info:
             MessagePiece(role="user", original_value="hello", typo_field="oops")
         assert "typo_field" in str(exc_info.value) or "Extra" in str(exc_info.value)
+
+
+class TestMessagePieceDeprecationWarnings:
+    """Tests for deprecation warnings on parameters scheduled for removal."""
+
+    def _emit_deprecation_msgs(self, **kwargs) -> list[warnings.WarningMessage]:
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            MessagePiece(role="user", original_value="hello", **kwargs)
+        return [x for x in w if issubclass(x.category, DeprecationWarning)]
+
+    def test_scorer_identifier_emits_deprecation_warning(self):
+        scorer_id = ComponentIdentifier(class_name="X", class_module="x")
+        msgs = self._emit_deprecation_msgs(scorer_identifier=scorer_id)
+        assert any("scorer_identifier" in str(m.message) for m in msgs)
+
+    def test_scorer_identifier_omitted_no_warning(self):
+        msgs = self._emit_deprecation_msgs()
+        assert not any("scorer_identifier" in str(m.message) for m in msgs)
+
+    def test_originator_non_default_emits_deprecation_warning(self):
+        msgs = self._emit_deprecation_msgs(originator="attack")
+        assert any("originator" in str(m.message) for m in msgs)
+
+    def test_originator_default_no_warning(self):
+        msgs = self._emit_deprecation_msgs(originator="undefined")
+        assert not any("originator" in str(m.message) for m in msgs)
+
+    def test_scores_emits_deprecation_warning(self):
+        score = Score(
+            score_value="true",
+            score_value_description="d",
+            score_type="true_false",
+            score_rationale="r",
+            scorer_class_identifier=ComponentIdentifier(class_name="S", class_module="s"),
+            message_piece_id="mp-1",
+        )
+        msgs = self._emit_deprecation_msgs(scores=[score])
+        assert any("scores" in str(m.message) for m in msgs)
+
+    def test_scores_omitted_no_warning(self):
+        msgs = self._emit_deprecation_msgs()
+        assert not any("scores" in str(m.message) for m in msgs)
+
+    def test_targeted_harm_categories_emits_deprecation_warning(self):
+        msgs = self._emit_deprecation_msgs(targeted_harm_categories=["violence"])
+        assert any("targeted_harm_categories" in str(m.message) for m in msgs)
+
+    def test_targeted_harm_categories_omitted_no_warning(self):
+        msgs = self._emit_deprecation_msgs()
+        assert not any("targeted_harm_categories" in str(m.message) for m in msgs)
+
+    def test_labels_emits_deprecation_warning(self):
+        msgs = self._emit_deprecation_msgs(labels={"k": "v"})
+        assert any("labels" in str(m.message) for m in msgs)
+
+    def test_labels_omitted_no_warning(self):
+        msgs = self._emit_deprecation_msgs()
+        assert not any("labels" in str(m.message) for m in msgs)
+
+    def test_memory_load_roundtrip_does_not_emit_deprecation_warnings(self) -> None:
+        """Reconstructing a MessagePiece from PromptMemoryEntry must not emit deprecations.
+
+        The memory-layer load path assigns deprecated containers (``labels``,
+        ``scores``, ``targeted_harm_categories``) post-construction so the
+        deprecation-kwarg validator is not triggered. This regression-guards
+        that pattern.
+        """
+        from pyrit.memory.memory_models import PromptMemoryEntry
+
+        piece = MessagePiece(
+            role="user",
+            original_value="hello",
+            conversation_id="conv-deprec",
+        )
+        piece.labels = {"k": "v"}
+        piece.targeted_harm_categories = ["violence"]
+
+        entry = PromptMemoryEntry(entry=piece)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            reconstructed = entry.get_message_piece()
+
+        deprecation_msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert deprecation_msgs == [], [str(m.message) for m in deprecation_msgs]
+        assert reconstructed.labels == {"k": "v"}
+        assert reconstructed.targeted_harm_categories == ["violence"]
