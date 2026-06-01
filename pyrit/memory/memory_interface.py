@@ -1591,6 +1591,11 @@ class MemoryInterface(abc.ABC):
         Returns:
             Path: The path to the exported file.
         """
+        print_deprecation_message(
+            old_item="MemoryInterface.export_conversations",
+            new_item="the pyrit.output module or direct serialization of get_message_pieces results",
+            removed_in="0.15.0",
+        )
         data = self.get_message_pieces(
             attack_id=attack_id,
             conversation_id=conversation_id,

@@ -18,6 +18,7 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql.expression import TextClause
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.common.singleton import Singleton
 from pyrit.memory.memory_interface import MemoryInterface
@@ -499,6 +500,11 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Raises:
             ValueError: If the specified export format is not supported.
         """
+        print_deprecation_message(
+            old_item="SQLiteMemory.export_conversations",
+            new_item="the pyrit.output module or direct serialization of get_message_pieces results",
+            removed_in="0.15.0",
+        )
         # Import here to avoid circular import issues
         from pyrit.memory.memory_exporter import MemoryExporter
 
@@ -585,6 +591,11 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Args:
             export_type (str): The format to export the data in (defaults to "json").
         """
+        print_deprecation_message(
+            old_item="SQLiteMemory.export_all_tables",
+            new_item="the pyrit.output module or direct serialization of table query results",
+            removed_in="0.15.0",
+        )
         table_models = self.get_all_table_models()
 
         for model in table_models:
