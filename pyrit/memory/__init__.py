@@ -7,10 +7,11 @@ Provide functionality for storing and retrieving conversation history and embedd
 This package defines the core `MemoryInterface` and concrete implementations for different storage backends.
 """
 
+from typing import Any
+
 from pyrit.memory.azure_sql_memory import AzureSQLMemory
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_embedding import MemoryEmbedding
-from pyrit.memory.memory_exporter import MemoryExporter
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import AttackResultEntry, EmbeddingDataEntry, PromptMemoryEntry, SeedEntry
 from pyrit.memory.sqlite_memory import SQLiteMemory
@@ -27,3 +28,17 @@ __all__ = [
     "PromptMemoryEntry",
     "SeedEntry",
 ]
+
+
+def __getattr__(name: str) -> Any:  # noqa: N807 - module __getattr__ hook must use this name
+    if name == "MemoryExporter":
+        from pyrit.common.deprecation import print_deprecation_message
+        from pyrit.memory.memory_exporter import MemoryExporter
+
+        print_deprecation_message(
+            old_item="pyrit.memory.MemoryExporter",
+            new_item="the pyrit.output module or direct serialization",
+            removed_in="0.15.0",
+        )
+        return MemoryExporter
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

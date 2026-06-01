@@ -18,6 +18,7 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql.expression import TextClause
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.common.singleton import Singleton
 from pyrit.memory.memory_interface import MemoryInterface
@@ -39,7 +40,7 @@ class _ExportableConversationPiece:
     def __init__(self, data: dict[str, Any]) -> None:
         self._data = data
 
-    def to_dict(self) -> dict[str, Any]:
+    def model_dump(self, *, mode: str = "python") -> dict[str, Any]:
         return self._data
 
 
@@ -300,8 +301,15 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
     def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
         Insert a list of message pieces into the memory storage.
+
+        Pieces flagged via ``MessagePiece.not_in_memory = True`` are
+        silently filtered out so callers don't need to track persistence policy
+        themselves.
         """
-        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in message_pieces])
+        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_memory]
+        if not pieces_to_insert:
+            return
+        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in pieces_to_insert])
 
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
         """
@@ -499,6 +507,11 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Raises:
             ValueError: If the specified export format is not supported.
         """
+        print_deprecation_message(
+            old_item="SQLiteMemory.export_conversations",
+            new_item="the pyrit.output module or direct serialization of get_message_pieces results",
+            removed_in="0.15.0",
+        )
         # Import here to avoid circular import issues
         from pyrit.memory.memory_exporter import MemoryExporter
 
@@ -540,7 +553,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         # Merge conversations and scores - create the data structure manually
         merged_data = []
         for piece in message_pieces:
-            piece_data = piece.to_dict()
+            piece_data = piece.model_dump(mode="json")
             # Find associated scores
             piece_scores = [score for score in scores if score.message_piece_id == piece.id]
             piece_data["scores"] = [score.to_dict() for score in piece_scores]
@@ -585,6 +598,11 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Args:
             export_type (str): The format to export the data in (defaults to "json").
         """
+        print_deprecation_message(
+            old_item="SQLiteMemory.export_all_tables",
+            new_item="the pyrit.output module or direct serialization of table query results",
+            removed_in="0.15.0",
+        )
         table_models = self.get_all_table_models()
 
         for model in table_models:

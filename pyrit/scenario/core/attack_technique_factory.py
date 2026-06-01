@@ -32,8 +32,13 @@ from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackScoringConfig,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable, build_seed_identifier
-from pyrit.models import SeedAttackTechniqueGroup, SeedSimulatedConversation
+from pyrit.models import (
+    ComponentIdentifier,
+    Identifiable,
+    SeedAttackTechniqueGroup,
+    SeedSimulatedConversation,
+    build_seed_identifier,
+)
 from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemPromptPaths
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
