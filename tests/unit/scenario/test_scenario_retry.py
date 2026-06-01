@@ -169,44 +169,32 @@ class ConcreteScenario(Scenario):
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
     def __init__(self, atomic_attacks_to_return=None, objective_scorer=None, **kwargs):
-        # Get strategy_class from kwargs or use default
-        strategy_class = kwargs.pop("strategy_class", None) or self.get_strategy_class()
+        strategy_class = kwargs.pop("strategy_class", None) or _build_test_strategy()
 
         # Create a default mock scorer if not provided
         if objective_scorer is None:
             objective_scorer = MagicMock()
             objective_scorer.get_identifier.return_value = _mock_scorer_id("MockScorer")
 
+        kwargs.setdefault("default_strategy", strategy_class.ALL)
+        kwargs.setdefault("default_dataset_config", DatasetConfiguration())
         super().__init__(strategy_class=strategy_class, objective_scorer=objective_scorer, **kwargs)
         self._atomic_attacks_to_return = atomic_attacks_to_return or []
 
-    @classmethod
-    def get_strategy_class(cls):
-        """Return a mock strategy class for testing."""
-
-        # Return a simple mock strategy class for testing
-        class TestStrategy(ScenarioStrategy):
-            CONCRETE = ("concrete", {"concrete"})
-            ALL = ("all", {"all"})
-
-            @classmethod
-            def get_aggregate_tags(cls) -> set[str]:
-                return {"all"}
-
-        return TestStrategy
-
-    @classmethod
-    def get_default_strategy(cls):
-        """Return the default strategy for testing."""
-        return cls.get_strategy_class().ALL
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """Return the default dataset configuration for testing."""
-        return DatasetConfiguration()
-
     async def _get_atomic_attacks_async(self):
         return self._atomic_attacks_to_return
+
+
+def _build_test_strategy():
+    class TestStrategy(ScenarioStrategy):
+        CONCRETE = ("concrete", {"concrete"})
+        ALL = ("all", {"all"})
+
+        @classmethod
+        def get_aggregate_tags(cls) -> set[str]:
+            return {"all"}
+
+    return TestStrategy
 
 
 @pytest.fixture
@@ -291,6 +279,7 @@ class TestScenarioRetry:
         )
         await scenario.initialize_async(
             objective_target=mock_objective_target,
+            max_concurrency=1,
             max_retries=2,
         )
 
@@ -372,6 +361,7 @@ class TestScenarioRetry:
         )
         await scenario.initialize_async(
             objective_target=mock_objective_target,
+            max_concurrency=1,
             max_retries=3,
         )
 
@@ -408,6 +398,7 @@ class TestScenarioRetry:
         )
         await scenario.initialize_async(
             objective_target=mock_objective_target,
+            max_concurrency=1,
             max_retries=1,
         )
 

@@ -444,8 +444,8 @@ class TestCrescendoAttackInitialization:
         """Adversarial chat must natively support MULTI_TURN and SYSTEM_PROMPT."""
         from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
-        mock_adversarial_chat.configuration.includes.side_effect = lambda *, capability: capability != CapabilityName(
-            missing_capability
+        mock_adversarial_chat.configuration.includes.side_effect = lambda *, capability: (
+            capability != CapabilityName(missing_capability)
         )
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
 

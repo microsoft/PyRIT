@@ -11,6 +11,18 @@
 # %% [markdown]
 # # Auxiliary Attacks
 # %% [markdown]
+# > ⚠️ **Experimental module.** `pyrit.auxiliary_attacks` is experimental: its
+# > APIs may change in any release without a deprecation cycle. Importing the
+# > package (or any submodule) emits a `pyrit.exceptions.ExperimentalWarning`.
+# > Pin pyrit to a specific version if you depend on it. To silence the
+# > warning:
+# >
+# > ```python
+# > import warnings
+# > from pyrit.exceptions import ExperimentalWarning
+# > warnings.filterwarnings("ignore", category=ExperimentalWarning)
+# > ```
+# %% [markdown]
 # Auxiliary attacks cover a variety of techniques that do not fit into the core PyRIT functionality.
 #
 # These attack pipelines may be useful to run before orchestrating other attacks. For example, we provide an Azure Machine Learning (AML) pipeline for generating suffixes using the greedy coordinate gradient (GCG) [@zou2023gcg] algorithm.
