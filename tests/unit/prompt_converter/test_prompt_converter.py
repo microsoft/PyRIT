@@ -11,7 +11,6 @@ from pyrit.executor.promptgen.fuzzer import FuzzerConverter
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.models import PromptDataType, SeedPrompt
 from pyrit.prompt_converter import (
-    AddImageTextConverter,
     AddTextImageConverter,
     AnsiAttackConverter,
     AsciiArtConverter,
@@ -472,7 +471,6 @@ def is_speechsdk_installed():
 @pytest.mark.parametrize(
     "converter, expected_input_types, expected_output_types",
     [
-        (AddImageTextConverter(img_to_add="test.jpg"), ["text"], ["image_path"]),
         (AddTextImageConverter(text_to_add="test"), ["image_path"], ["image_path"]),
         (AnsiAttackConverter(), ["text"], ["text"]),
         (AsciiArtConverter(), ["text"], ["text"]),

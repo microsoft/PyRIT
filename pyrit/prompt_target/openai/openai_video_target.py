@@ -2,8 +2,8 @@
 # Licensed under the MIT license.
 
 import logging
-import os
 from mimetypes import guess_type
+from pathlib import Path
 from typing import Any, Optional, Union, cast
 
 from openai.types import VideoSeconds, VideoSize
@@ -327,7 +327,7 @@ class OpenAIVideoTarget(OpenAITarget):
                 f"Supported formats: {', '.join(self.SUPPORTED_IMAGE_FORMATS)}"
             )
 
-        filename = os.path.basename(image_path)
+        filename = Path(image_path).name
         return (filename, image_bytes, mime_type)
 
     async def _remix_and_poll_async(self, *, video_id: str, prompt: str) -> Any:

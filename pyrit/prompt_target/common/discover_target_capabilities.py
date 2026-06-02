@@ -38,11 +38,11 @@ This module exposes two complementary probes:
 import asyncio
 import json
 import logging
-import os
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
+from pathlib import Path
 
 from pyrit.common.path import DATASETS_PATH
 from pyrit.models import Message, MessagePiece, PromptDataType
@@ -835,7 +835,7 @@ def _create_test_message(
         asset_path = test_assets.get(modality)
         if asset_path is None:
             raise ValueError(f"No test asset configured for modality '{modality}'.")
-        if not os.path.isfile(asset_path):
+        if not Path(asset_path).is_file():
             raise FileNotFoundError(f"Test asset for modality '{modality}' not found at: {asset_path}")
 
         pieces.append(

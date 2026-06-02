@@ -152,17 +152,23 @@ class TestMessageDuplication:
 
     def test_duplicate_message_creates_new_timestamp(self, message: Message) -> None:
         """Test that duplicate_message creates new timestamps."""
-        import time
+        from datetime import timedelta, timezone
+        from unittest.mock import patch
 
         original_timestamps = [piece.timestamp for piece in message.message_pieces]
+        fake_now = max(original_timestamps) + timedelta(seconds=1)
 
-        time.sleep(0.01)  # Small delay to ensure different timestamp
-        duplicated = message.duplicate_message()
+        with patch("pyrit.models.messages.message.datetime") as mock_datetime:
+            mock_datetime.now.return_value = fake_now
+            duplicated = message.duplicate_message()
 
         for dup_piece in duplicated.message_pieces:
-            # Verify timestamp is newer than all original timestamps
+            # Every duplicated piece shares the new timestamp produced by duplicate_message.
+            assert dup_piece.timestamp == fake_now
+            # And it is strictly newer than every original timestamp.
             for orig_ts in original_timestamps:
-                assert dup_piece.timestamp >= orig_ts
+                assert dup_piece.timestamp > orig_ts
+        mock_datetime.now.assert_called_once_with(tz=timezone.utc)
 
     def test_duplicate_message_is_deep_copy(self, message: Message) -> None:
         """Test that duplicate_message creates a deep copy (modifications don't affect original)."""

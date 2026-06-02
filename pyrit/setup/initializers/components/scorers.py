@@ -228,11 +228,15 @@ class ScorerInitializer(PyRITInitializer):
 
         Each variant uses the default refusal prompt (OBJECTIVE_STRICT) but
         differs in model or prompt template. All are tagged ``REFUSAL``.
+
+        When an auto-grouped ``RoundRobinTarget`` wraps a target, it is
+        preferred over the individual endpoint to distribute scoring LLM
+        calls for rate-limit relief.
         """
-        gpt4o = self._get_chat_target(GPT4O_TARGET)
-        gpt5_4 = self._get_chat_target(GPT5_4_TARGET)
-        gpt5_1 = self._get_chat_target(GPT5_1_TARGET)
-        unsafe = self._get_chat_target(GPT4O_UNSAFE_TARGET)
+        gpt4o = self._get_chat_target_prefer_rr(GPT4O_TARGET)
+        gpt5_4 = self._get_chat_target_prefer_rr(GPT5_4_TARGET)
+        gpt5_1 = self._get_chat_target_prefer_rr(GPT5_1_TARGET)
+        unsafe = self._get_chat_target_prefer_rr(GPT4O_UNSAFE_TARGET)
         refusal_tag = [ScorerInitializerTags.REFUSAL]
 
         # Prompt template variants (all use gpt4o)
@@ -301,7 +305,7 @@ class ScorerInitializer(PyRITInitializer):
 
         These are standalone float-scale scorers (no compounds). All are tagged ``SCALE``.
         """
-        gpt4o_temp9 = self._get_chat_target(GPT4O_TEMP9_TARGET)
+        gpt4o_temp9 = self._get_chat_target_prefer_rr(GPT4O_TEMP9_TARGET)
         scale_tag = [ScorerInitializerTags.SCALE]
 
         self._try_register(
@@ -391,8 +395,9 @@ class ScorerInitializer(PyRITInitializer):
         Register self-ask likert scorer variants.
 
         Only scales with evaluation files are registered. All are tagged ``LIKERT``.
+        Prefers an auto-grouped round-robin target when available.
         """
-        gpt4o = self._get_chat_target(GPT4O_TARGET)
+        gpt4o = self._get_chat_target_prefer_rr(GPT4O_TARGET)
         likert_tag = [ScorerInitializerTags.LIKERT]
 
         for scale in LikertScalePaths:
@@ -414,7 +419,7 @@ class ScorerInitializer(PyRITInitializer):
 
         All are tagged ``TASK_ACHIEVED``.
         """
-        gpt4o_temp9 = self._get_chat_target(GPT4O_TEMP9_TARGET)
+        gpt4o_temp9 = self._get_chat_target_prefer_rr(GPT4O_TEMP9_TARGET)
         task_tag = [ScorerInitializerTags.TASK_ACHIEVED]
 
         self._try_register(
@@ -616,6 +621,37 @@ class ScorerInitializer(PyRITInitializer):
         """
         target_registry = TargetRegistry.get_registry_singleton()
         return target_registry.get_instance_by_name(target_name)
+
+    def _get_chat_target_prefer_rr(self, target_name: str) -> "PromptTarget | None":
+        """
+        Get a chat target, preferring an auto-grouped ``RoundRobinTarget`` that wraps it.
+
+        Computes the expected round-robin registry name from the individual
+        target's behavioral key (using the same ``_get_behavioral_key`` and
+        ``_generate_rr_name`` that ``TargetInitializer._auto_group_targets``
+        uses). If a round-robin with that name exists, returns it for
+        rate-limit distribution. Otherwise falls back to the individual target.
+
+        Args:
+            target_name: The registry name of the individual target.
+
+        Returns:
+            PromptTarget | None: The wrapping RoundRobinTarget if found,
+                the individual target otherwise, or None if not registered.
+        """
+        from pyrit.setup.initializers.components.targets import generate_rr_name, get_behavioral_key
+
+        target_registry = TargetRegistry.get_registry_singleton()
+        individual = target_registry.get_instance_by_name(target_name)
+        if individual is None:
+            return None
+
+        rr_name = generate_rr_name(get_behavioral_key(individual))
+        rr_target = target_registry.get_instance_by_name(rr_name)
+        if rr_target is not None:
+            return rr_target
+
+        return individual
 
     def _require_dependency(self, value: RequiredDependencyT | None, *, name: str) -> RequiredDependencyT:
         """

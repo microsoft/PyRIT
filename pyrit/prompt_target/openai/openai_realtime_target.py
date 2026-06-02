@@ -28,6 +28,23 @@ from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 logger = logging.getLogger(__name__)
 
+
+def _read_wav_sync(path: str) -> tuple[int, int, int, bytes]:
+    """
+    Read a WAV file synchronously.
+
+    Returns:
+        Tuple of ``(channels, sample_width, frame_rate, frames)`` extracted from the file.
+    """
+    with wave.open(path, "rb") as wav_file:
+        return (
+            wav_file.getnchannels(),
+            wav_file.getsampwidth(),
+            wav_file.getframerate(),
+            wav_file.readframes(wav_file.getnframes()),
+        )
+
+
 # Voices supported by the OpenAI Realtime API.
 # See: https://platform.openai.com/docs/guides/realtime-conversations#voice-options
 # For best quality, OpenAI recommends using "marin" or "cedar".
@@ -759,14 +776,7 @@ class RealtimeTarget(OpenAITarget):
         """
         connection = self._get_connection(conversation_id=conversation_id)
 
-        with wave.open(filename, "rb") as wav_file:
-            # Read WAV parameters
-            num_channels = wav_file.getnchannels()
-            sample_width = wav_file.getsampwidth()  # Should be 2 bytes for PCM16
-            frame_rate = wav_file.getframerate()
-            num_frames = wav_file.getnframes()
-
-            audio_content = wav_file.readframes(num_frames)
+        num_channels, sample_width, frame_rate, audio_content = await asyncio.to_thread(_read_wav_sync, filename)
 
         receive_tasks = asyncio.create_task(self.receive_events(conversation_id=conversation_id))
 

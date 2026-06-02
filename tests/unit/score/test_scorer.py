@@ -998,15 +998,15 @@ async def test_score_response_async_concurrent_execution():
 
     async def mock_aux_score_async(message: Message, **kwargs) -> list[Score]:
         call_order.append("aux_start")
-        # Simulate some async work
-        await asyncio.sleep(0.01)
+        # Yield so the other scorer can interleave (proves concurrent execution).
+        await asyncio.sleep(0)
         call_order.append("aux_end")
         return [MagicMock(spec=Score)]
 
     async def mock_obj_score_async(message: Message, **kwargs) -> list[Score]:
         call_order.append("obj_start")
-        # Simulate some async work
-        await asyncio.sleep(0.01)
+        # Yield so the other scorer can interleave (proves concurrent execution).
+        await asyncio.sleep(0)
         call_order.append("obj_end")
         score = MagicMock(spec=Score)
         score.get_value.return_value = True
