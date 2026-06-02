@@ -1,9 +1,0 @@
-# Async-suffix baseline — transitional allowlist of pre-existing violations.
-# Each entry is `<path>:<line>:<name>`. The line number is informational only;
-# baseline membership is keyed on (path, name).
-#
-# This file must shrink monotonically. After renaming a function to add the
-# `_async` suffix, remove its baseline entry in the same commit.
-#
-# To regenerate (only after a deliberate, reviewed cleanup):
-#   python build_scripts/check_async_suffix.py --write-baseline
