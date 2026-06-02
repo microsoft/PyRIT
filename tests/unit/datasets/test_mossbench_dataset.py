@@ -303,3 +303,40 @@ class TestMossBenchDataset:
             pytest.raises(ValueError, match="dict keyed by pid"),
         ):
             await dataset_loader.fetch_dataset_async(cache=False)
+
+    async def test_fetch_dataset_raises_when_filter_excludes_all_examples(self):
+        examples = [
+            _make_example(pid=1, over="type 1"),
+            _make_example(pid=2, over="type 1"),
+        ]
+        mock_data = _make_information_json(examples)
+        dataset_loader = _MossBenchDataset(oversensitivity_types=[MossBenchOversensitivityType.NEGATED_HARM])
+
+        with (
+            patch.object(dataset_loader, "_fetch_from_url", return_value=mock_data),
+            patch.object(
+                dataset_loader,
+                "_fetch_and_save_image_async",
+                side_effect=lambda *, image_url, pid: f"/fake/path/{pid}.png",
+            ),
+            pytest.raises(ValueError, match="MOSSBench SeedDataset cannot be empty"),
+        ):
+            await dataset_loader.fetch_dataset_async(cache=False)
+
+    async def test_fetch_dataset_raises_when_all_image_fetches_fail(self):
+        examples = [
+            _make_example(pid=1, over="type 1"),
+            _make_example(pid=2, over="type 2"),
+        ]
+        mock_data = _make_information_json(examples)
+        dataset_loader = _MossBenchDataset()
+
+        async def always_fail(*, image_url: str, pid: str) -> str:
+            raise RuntimeError("network error")
+
+        with (
+            patch.object(dataset_loader, "_fetch_from_url", return_value=mock_data),
+            patch.object(dataset_loader, "_fetch_and_save_image_async", side_effect=always_fail),
+            pytest.raises(ValueError, match="MOSSBench SeedDataset cannot be empty"),
+        ):
+            await dataset_loader.fetch_dataset_async(cache=False)

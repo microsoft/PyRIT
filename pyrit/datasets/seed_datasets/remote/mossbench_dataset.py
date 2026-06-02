@@ -5,7 +5,7 @@ import logging
 import uuid
 from collections.abc import Iterable
 from enum import Enum
-from typing import Any, Literal, Optional, cast
+from typing import Any, Literal, cast
 
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
@@ -134,7 +134,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         *,
         source: str = METADATA_URL,
         source_type: Literal["public_url", "file"] = "public_url",
-        oversensitivity_types: Optional[list[MossBenchOversensitivityType]] = None,
+        oversensitivity_types: list[MossBenchOversensitivityType] | None = None,
     ) -> None:
         """
         Initialize the MOSSBench dataset loader.
@@ -190,7 +190,9 @@ class _MossBenchDataset(_RemoteDatasetLoader):
             examples.
 
         Raises:
-            ValueError: If any example is missing required keys.
+            ValueError: If any example is missing required keys, or if no
+                example survives the configured ``oversensitivity_types``
+                filter and any image-fetch failures.
         """
         logger.info(f"Loading MOSSBench dataset from {self.source}")
 
@@ -221,6 +223,13 @@ class _MossBenchDataset(_RemoteDatasetLoader):
 
         if failed_image_count > 0:
             logger.warning(f"[MOSSBench] Skipped {failed_image_count} example(s) due to image fetch failures")
+
+        if not prompts:
+            raise ValueError(
+                "MOSSBench SeedDataset cannot be empty. Check your filter criteria "
+                "(oversensitivity_types) — all examples may have been filtered out "
+                "or skipped due to image fetch failures."
+            )
 
         logger.info(f"Successfully loaded {len(prompts)} prompts from MOSSBench dataset")
         return SeedDataset(seeds=prompts, dataset_name=self.dataset_name)
