@@ -9,65 +9,34 @@ Follow these coding standards to ensure consistent, readable, and maintainable c
 ## Async Code
 
 ### No Blocking I/O in Async Paths
-- **MANDATORY**: Inside `async def` functions, never call blocking I/O or blocking sleeps. Blocking calls stall the event loop and serialize all other concurrent work in the same process.
-- This rule applies transitively: a sync helper called from an `async def` is also part of the async path. Either make the helper non-blocking or wrap the call site with `asyncio.to_thread(...)`.
-
-#### Recommended replacements
-
-| Sync API in async path                | Replace with                                                       |
-|---------------------------------------|--------------------------------------------------------------------|
-| `open(...).read()` / `.write(...)`    | `async with aiofiles.open(...) as f: await f.read()/.write(...)`   |
-| `pathlib.Path.read_text/write_text`   | `await asyncio.to_thread(p.read_text, ...)` or `aiofiles`          |
-| `json.load(f)` / `yaml.safe_load(f)`  | Read text via `aiofiles`, then `json.loads(...)` / `yaml.safe_load(...)` on the string |
-| `requests.get/post(...)`              | `httpx.AsyncClient` (already used throughout PyRIT) or `pyrit.common.net_utility.make_request_and_raise_if_error_async` |
-| `time.sleep(...)`                     | `await asyncio.sleep(...)`                                         |
-| `subprocess.run/Popen(...)`           | `await asyncio.create_subprocess_exec(...)` / `_shell(...)`        |
-| Libraries with no async API (`wave`, `av`, `cv2`, `PIL.Image.open` from disk, `zipfile`) | `await asyncio.to_thread(_sync_helper, ...)` — wrap the whole blocking section in a sync helper |
-
-#### One-shot vs. hot-path I/O
-
-- I/O that happens **once at construction time** (`__init__` of a converter, scorer, or attack) is sync by design — constructors aren't async. That's fine. Where possible, prefer doing this work in `__init__` rather than on every async call.
-- I/O that happens **on every request / convert / score** must be non-blocking using the patterns above.
+- **MANDATORY**: Inside `async def` (and any sync helper reached from one), never call blocking I/O or `time.sleep`. They stall the event loop and serialize all concurrent work.
+- File I/O → `aiofiles` (already a project dep). HTTP → `httpx.AsyncClient` or `pyrit.common.net_utility.make_request_and_raise_if_error_async`. Sleeps → `asyncio.sleep`. Subprocess → `asyncio.create_subprocess_*`. Blocking-only libs (`wave`, `av`, `cv2`, `PIL.Image.open` from disk, `zipfile`, `yaml`, `json` reads from file) → wrap the blocking section in a sync helper and call via `await asyncio.to_thread(_helper, ...)`.
+- I/O that runs **once at construction time** (`__init__`) is sync by design; prefer doing one-shot reads there rather than on every async call.
 
 ```python
 # WRONG — blocks the event loop on every send
-async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+async def _send_async(self):
     with open(self.file_path, "rb") as fp:
-        file_bytes = fp.read()
-    ...
+        return fp.read()
 
 # CORRECT — async file read
-async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+async def _send_async(self):
     async with aiofiles.open(self.file_path, "rb") as fp:
-        file_bytes = await fp.read()
-    ...
+        return await fp.read()
 
-# WRONG — sync HTTP per score
-response = requests.post(self._endpoint, data=payload)
-
-# CORRECT — async HTTP via the shared helper
-response = await make_request_and_raise_if_error_async(
-    endpoint_uri=self._endpoint, method="POST", post_type="data", request_body=payload
-)
-
-# WRONG — sync wave open per send
-with wave.open(filename, "rb") as wav_file:
-    ...
+# WRONG — sync-only library called directly
+async def _read_audio_async(self, path):
+    with wave.open(path, "rb") as wav:
+        return wav.readframes(wav.getnframes())
 
 # CORRECT — wrap blocking lib in to_thread
-def _read_wav_sync(path: str) -> tuple[int, int, int, bytes]:
-    with wave.open(path, "rb") as wav_file:
-        return (
-            wav_file.getnchannels(),
-            wav_file.getsampwidth(),
-            wav_file.getframerate(),
-            wav_file.readframes(wav_file.getnframes()),
-        )
+def _read_wav_sync(path):
+    with wave.open(path, "rb") as wav:
+        return wav.readframes(wav.getnframes())
 
-num_channels, sample_width, frame_rate, audio_content = await asyncio.to_thread(_read_wav_sync, filename)
+async def _read_audio_async(self, path):
+    return await asyncio.to_thread(_read_wav_sync, path)
 ```
-
-`aiofiles` is already a project dependency, so no extra package is needed for file I/O.
 
 ## Function and Method Naming
 

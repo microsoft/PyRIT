@@ -369,13 +369,11 @@ class AnecdoctorGenerator(
         if self._processing_model is None:
             raise ValueError("self._processing_model is not initialized")
 
-        if self._kg_prompt_template is None:
-            raise ValueError("self._kg_prompt_template is not initialized")
-
         self._logger.debug("Extracting knowledge graph from evaluation data")
 
-        # Format the cached KG extraction prompt
-        kg_system_prompt = self._kg_prompt_template.format(language=context.language)
+        # Format the cached KG extraction prompt. _kg_prompt_template is set in __init__
+        # whenever _processing_model is set, so the guard above already implies it is non-None here.
+        kg_system_prompt = self._kg_prompt_template.format(language=context.language)  # type: ignore[ty:unresolved-attribute]
 
         # Create a separate conversation ID for KG extraction
         kg_conversation_id = str(uuid.uuid4())

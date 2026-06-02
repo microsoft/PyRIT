@@ -148,6 +148,8 @@ class AddImageVideoConverter(PromptConverter):
 
         video_path = self._video_path
         local_temp_path: Optional[Path] = None
+        cap: Optional[cv2.VideoCapture] = None
+        output_video: Optional[cv2.VideoWriter] = None
 
         try:
             if azure_storage_flag:
@@ -210,9 +212,11 @@ class AddImageVideoConverter(PromptConverter):
                 output_video.write(frame)
 
         finally:
-            # Release everything
-            cap.release()
-            output_video.release()
+            # Release everything (guarded — early raises may leave cap/output_video unbound)
+            if cap is not None:
+                cap.release()
+            if output_video is not None:
+                output_video.release()
             with contextlib.suppress(cv2.error):
                 cv2.destroyAllWindows()  # Not available in headless OpenCV builds
             if azure_storage_flag and local_temp_path is not None:
