@@ -286,16 +286,6 @@ class StreamingHandle(ABC):
         """Open the streaming connection for ``conversation_id`` and return the connection handle."""
 
     @abstractmethod
-    async def send_streaming_session_config_async(
-        self, *, connection: Any, conversation: "list[Any] | None" = None
-    ) -> None:
-        """Send the initial streaming session configuration over the wire."""
-
-    @abstractmethod
-    async def push_audio_chunk_async(self, *, connection: Any, pcm_bytes: bytes) -> None:
-        """Push a PCM16 audio chunk into the server's input buffer."""
-
-    @abstractmethod
     async def save_audio(
         self,
         audio_bytes: bytes,

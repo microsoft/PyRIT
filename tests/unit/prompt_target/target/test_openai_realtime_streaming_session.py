@@ -4,14 +4,15 @@
 """Unit tests for the internal _OpenAIRealtimeStreamingSession lifecycle."""
 
 import asyncio
+import base64
 import contextlib
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from pyrit.models import Message
+from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.realtime_audio import CommittedEvent, RealtimeTargetResult
 from pyrit.prompt_target.common.streaming import ServerVadConfig
 from pyrit.prompt_target.common.streaming.streaming_audio_target import (
@@ -47,6 +48,9 @@ def _build_target() -> MagicMock:
     target = MagicMock(name="RealtimeTarget")
     target.streaming = MagicMock(name="streaming")
     target.streaming.SAMPLE_RATE_HZ = 24000
+    # MagicMock auto-creates attributes; pin _server_vad to None so the session's
+    # ``_effective_vad`` capture defaults correctly when no per-session vad is passed.
+    target._server_vad = None
 
     connection = AsyncMock(name="connection")
     # AsyncMock auto-creates attributes as AsyncMock, but child attribute chains like
@@ -56,10 +60,7 @@ def _build_target() -> MagicMock:
     connection.input_audio_buffer.commit = AsyncMock(side_effect=_StubBadRequest("input_audio_buffer_commit_empty"))
 
     target.streaming.connect_async = AsyncMock(return_value=connection)
-    target.streaming.send_streaming_session_config_async = AsyncMock()
-    target.streaming.push_audio_chunk_async = AsyncMock()
     target.streaming.save_audio = AsyncMock(side_effect=lambda pcm, **kw: f"/tmp/audio-{uuid.uuid4().hex[:8]}.wav")
-    target.swap_user_audio_async = AsyncMock()
     target.get_identifier = MagicMock(
         return_value={"__type__": "RealtimeTarget", "__module__": "test", "id": "test-id"}
     )
@@ -72,9 +73,9 @@ def _make_request_response_async(
     transcripts: tuple[str, ...] = ("hi",),
     interrupted: bool = False,
 ) -> AsyncMock:
-    """AsyncMock for ``RealtimeTarget.request_response_async`` returning a resolved Future."""
+    """AsyncMock for ``session._request_response_async`` returning a resolved Future."""
 
-    async def _impl(*, connection: Any, dispatcher: Any) -> asyncio.Future:
+    async def _impl() -> asyncio.Future:
         future = asyncio.get_running_loop().create_future()
         future.set_result(
             RealtimeTargetResult(
@@ -86,6 +87,21 @@ def _make_request_response_async(
         return future
 
     return AsyncMock(side_effect=_impl)
+
+
+def _mock_session_wire(session: _OpenAIRealtimeStreamingSession) -> None:
+    """
+    Replace the session's websocket-facing private methods with AsyncMocks.
+
+    Every test that drives ``run_async`` needs these stubbed so the orchestration
+    code under test doesn't try to speak to a real connection. Tests can override
+    any individual mock (e.g. ``session._request_response_async = _make_request_response_async(...)``)
+    after this call.
+    """
+    session._send_streaming_session_config_async = AsyncMock()
+    session._push_audio_chunk_async = AsyncMock()
+    session._swap_user_audio_async = AsyncMock()
+    session._request_response_async = _make_request_response_async()
 
 
 def _build_normalizer() -> MagicMock:
@@ -191,7 +207,6 @@ def test_init_autogenerates_conversation_id_when_omitted():
 async def test_run_async_yields_one_message_per_committed_turn():
     """Two simulated server-VAD commits yield two assistant Messages and persist both user+assistant pairs."""
     target = _build_target()
-    target.request_response_async = _make_request_response_async(transcripts=("hello", " world"))
     normalizer = _build_normalizer()
 
     finish = asyncio.Event()
@@ -200,6 +215,8 @@ async def test_run_async_yields_one_message_per_committed_turn():
         audio_chunks=_paced_chunks([b"\x01" * 100, b"\x02" * 100], finish),
         prompt_normalizer=normalizer,
     )
+    _mock_session_wire(session)
+    session._request_response_async = _make_request_response_async(transcripts=("hello", " world"))
 
     with _patched_dispatcher():
         messages = await _run_session_with_events(
@@ -219,8 +236,8 @@ async def test_run_async_yields_one_message_per_committed_turn():
 
     # 2 turns * (user + assistant) = 4 persistence calls.
     assert normalizer.hash_and_persist_message_async.await_count == 4
-    # request_response_async called once per turn.
-    assert target.request_response_async.await_count == 2
+    # _request_response_async called once per turn.
+    assert session._request_response_async.await_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +248,6 @@ async def test_run_async_yields_one_message_per_committed_turn():
 async def test_run_async_marks_assistant_pieces_when_turn_interrupted():
     """When a turn is interrupted, STREAMING_INTERRUPTED_KEY must be set on text + audio pieces."""
     target = _build_target()
-    target.request_response_async = _make_request_response_async(interrupted=True)
     normalizer = _build_normalizer()
 
     finish = asyncio.Event()
@@ -240,6 +256,8 @@ async def test_run_async_marks_assistant_pieces_when_turn_interrupted():
         audio_chunks=_paced_chunks([b"\x01" * 100], finish),
         prompt_normalizer=normalizer,
     )
+    _mock_session_wire(session)
+    session._request_response_async = _make_request_response_async(interrupted=True)
 
     with _patched_dispatcher():
         messages = await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="item-1")])
@@ -257,7 +275,6 @@ async def test_run_async_marks_assistant_pieces_when_turn_interrupted():
 async def test_run_async_applies_response_converters_to_assistant_message():
     """Response converter configurations must be applied to the assembled assistant Message."""
     target = _build_target()
-    target.request_response_async = _make_request_response_async()
     normalizer = _build_normalizer()
 
     response_cfg = MagicMock(name="response_converter_cfg")
@@ -269,6 +286,7 @@ async def test_run_async_applies_response_converters_to_assistant_message():
         prompt_normalizer=normalizer,
         response_converter_configurations=[response_cfg],
     )
+    _mock_session_wire(session)
 
     with _patched_dispatcher():
         messages = await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="item-1")])
@@ -286,9 +304,8 @@ async def test_run_async_applies_response_converters_to_assistant_message():
 
 
 async def test_run_async_swaps_user_audio_and_records_identifiers_when_request_converters_present():
-    """With request converters: convert_audio_async + swap_user_audio_async run, identifiers reach user piece."""
+    """With request converters: convert_audio_async + _swap_user_audio_async run, identifiers reach user piece."""
     target = _build_target()
-    target.request_response_async = _make_request_response_async()
     normalizer = _build_normalizer()
     # Force convert_audio_async to return a NEW object so the session treats it as "converted".
     normalizer.convert_audio_async = AsyncMock(side_effect=lambda raw_pcm, **kw: b"converted" + raw_pcm)
@@ -313,13 +330,14 @@ async def test_run_async_swaps_user_audio_and_records_identifiers_when_request_c
         prompt_normalizer=normalizer,
         request_converter_configurations=[request_cfg],
     )
+    _mock_session_wire(session)
 
     with _patched_dispatcher():
         await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="item-A")])
 
     normalizer.convert_audio_async.assert_awaited_once()
-    target.swap_user_audio_async.assert_awaited_once()
-    swap_kwargs = target.swap_user_audio_async.await_args.kwargs
+    session._swap_user_audio_async.assert_awaited_once()
+    swap_kwargs = session._swap_user_audio_async.await_args.kwargs
     assert swap_kwargs["committed_event"].item_id == "item-A"
 
     assert len(persisted_user_messages) == 1
@@ -328,9 +346,8 @@ async def test_run_async_swaps_user_audio_and_records_identifiers_when_request_c
 
 
 async def test_run_async_skips_swap_and_identifiers_when_no_request_converters():
-    """Without request converters: no convert_audio_async, no swap_user_audio_async, empty identifiers."""
+    """Without request converters: no convert_audio_async, no _swap_user_audio_async, empty identifiers."""
     target = _build_target()
-    target.request_response_async = _make_request_response_async()
     normalizer = _build_normalizer()
 
     persisted_user_messages: list[Message] = []
@@ -347,12 +364,13 @@ async def test_run_async_skips_swap_and_identifiers_when_no_request_converters()
         audio_chunks=_paced_chunks([b"\x01" * 100], finish),
         prompt_normalizer=normalizer,
     )
+    _mock_session_wire(session)
 
     with _patched_dispatcher():
         await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="item-B")])
 
     normalizer.convert_audio_async.assert_not_called()
-    target.swap_user_audio_async.assert_not_called()
+    session._swap_user_audio_async.assert_not_called()
 
     assert len(persisted_user_messages) == 1
     assert persisted_user_messages[0].message_pieces[0].converter_identifiers == []
@@ -364,9 +382,8 @@ async def test_run_async_skips_swap_and_identifiers_when_no_request_converters()
 
 
 async def test_run_async_persists_prepended_conversation_and_forwards_vad_config():
-    """``prepended_conversation`` reaches normalizer.add_prepended_conversation_to_memory and session.update."""
+    """``prepended_conversation`` reaches normalizer.add_prepended_conversation_to_memory; vad reaches the session."""
     target = _build_target()
-    target.request_response_async = _make_request_response_async()
     normalizer = _build_normalizer()
 
     prepended = [MagicMock(name="prepended_message")]
@@ -387,16 +404,19 @@ async def test_run_async_persists_prepended_conversation_and_forwards_vad_config
         vad=vad,
         conversation_id="conv-prep",
     )
+    _mock_session_wire(session)
 
     with _patched_dispatcher():
         # No committed events; iterator is empty so producer exits immediately.
         async for _ in session.run_async():
             pytest.fail("no events were fired; session should yield nothing")
 
-    target.streaming.send_streaming_session_config_async.assert_awaited_once()
-    config_kwargs = target.streaming.send_streaming_session_config_async.await_args.kwargs
-    assert config_kwargs["conversation"] == prepended
-    assert config_kwargs["vad"] is vad
+    # Session captured the per-call vad as the effective config.
+    assert session._effective_vad is vad
+    # The session retained the prepended conversation (its config builder reads from it).
+    assert session._prepended_conversation == prepended
+    # The streaming session config was emitted exactly once.
+    session._send_streaming_session_config_async.assert_awaited_once()
 
     normalizer.add_prepended_conversation_to_memory.assert_awaited_once()
     prep_kwargs = normalizer.add_prepended_conversation_to_memory.await_args.kwargs
@@ -421,6 +441,7 @@ async def test_run_async_propagates_dispatcher_failure_via_failure_callback():
         audio_chunks=_paced_chunks([b"\x01" * 100], finish),
         prompt_normalizer=normalizer,
     )
+    _mock_session_wire(session)
 
     dispatcher_failure = RuntimeError("dispatch loop died")
 
@@ -453,7 +474,6 @@ async def test_run_async_propagates_dispatcher_failure_via_failure_callback():
 async def test_on_committed_trims_pre_speech_silence_before_persisting_user_audio():
     """``audio_start_ms`` past prefix_padding trims the snapshot before save_audio is called."""
     target = _build_target()
-    target.request_response_async = _make_request_response_async()
     normalizer = _build_normalizer()
 
     # 600ms buffer @ 24kHz mono PCM16 = 600 * 48 = 28800 bytes. We push it as one chunk
@@ -469,6 +489,7 @@ async def test_on_committed_trims_pre_speech_silence_before_persisting_user_audi
         prompt_normalizer=normalizer,
         vad=ServerVadConfig(prefix_padding_ms=100),
     )
+    _mock_session_wire(session)
 
     with _patched_dispatcher():
         await _run_session_with_events(
@@ -487,7 +508,6 @@ async def test_on_committed_trims_pre_speech_silence_before_persisting_user_audi
 async def test_on_committed_skips_trim_when_audio_start_ms_missing():
     """When ``audio_start_ms`` is None, the full buffer is persisted (no trim)."""
     target = _build_target()
-    target.request_response_async = _make_request_response_async()
     normalizer = _build_normalizer()
 
     bytes_per_ms = 48
@@ -501,6 +521,7 @@ async def test_on_committed_skips_trim_when_audio_start_ms_missing():
         prompt_normalizer=normalizer,
         vad=ServerVadConfig(prefix_padding_ms=100),
     )
+    _mock_session_wire(session)
 
     with _patched_dispatcher():
         await _run_session_with_events(
@@ -517,7 +538,6 @@ async def test_on_committed_skips_trim_when_audio_start_ms_missing():
 async def test_buffer_start_session_ms_advances_across_commits():
     """Second commit's server-relative ``audio_start_ms`` is mapped through ``_buffer_start_session_ms``."""
     target = _build_target()
-    target.request_response_async = _make_request_response_async()
     normalizer = _build_normalizer()
 
     bytes_per_ms = 48
@@ -548,6 +568,7 @@ async def test_buffer_start_session_ms_advances_across_commits():
         prompt_normalizer=normalizer,
         vad=ServerVadConfig(prefix_padding_ms=100),
     )
+    _mock_session_wire(session)
 
     async def _consume() -> None:
         async for _msg in session.run_async():
@@ -583,7 +604,6 @@ async def test_buffer_start_session_ms_advances_across_commits():
 async def test_attack_identifier_stamped_on_persisted_pieces_when_set():
     """When ``attack_identifier`` is provided, every persisted piece carries it."""
     target = _build_target()
-    target.request_response_async = _make_request_response_async()
     normalizer = _build_normalizer()
 
     persisted_messages: list[Message] = []
@@ -602,6 +622,7 @@ async def test_attack_identifier_stamped_on_persisted_pieces_when_set():
         prompt_normalizer=normalizer,
         attack_identifier=attack_id,
     )
+    _mock_session_wire(session)
 
     with _patched_dispatcher():
         await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="i")])
@@ -616,7 +637,6 @@ async def test_attack_identifier_stamped_on_persisted_pieces_when_set():
 async def test_attack_identifier_absent_when_not_provided():
     """Without ``attack_identifier``, persisted pieces have None attribution (back-compat)."""
     target = _build_target()
-    target.request_response_async = _make_request_response_async()
     normalizer = _build_normalizer()
 
     persisted_messages: list[Message] = []
@@ -632,6 +652,7 @@ async def test_attack_identifier_absent_when_not_provided():
         audio_chunks=_paced_chunks([b"\x01" * 96], finish),
         prompt_normalizer=normalizer,
     )
+    _mock_session_wire(session)
 
     with _patched_dispatcher():
         await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="i")])
@@ -666,13 +687,14 @@ async def test_persist_prepended_conversation_false_skips_memory_add():
         prepended_conversation=[MagicMock(name="prepended_message")],
         persist_prepended_conversation=False,
     )
+    _mock_session_wire(session)
 
     with _patched_dispatcher():
         async for _ in session.run_async():
             pytest.fail("no events were fired; session should yield nothing")
 
-    # send_streaming_session_config still gets the prepended conversation (system msg → instructions).
-    target.streaming.send_streaming_session_config_async.assert_awaited_once()
+    # _send_streaming_session_config still runs (it reads the prepended conversation for system msg).
+    session._send_streaming_session_config_async.assert_awaited_once()
     # But the memory write is skipped — the caller (e.g., the attack) has already persisted it.
     normalizer.add_prepended_conversation_to_memory.assert_not_called()
 
@@ -807,3 +829,193 @@ def test_trim_aligns_to_sample_frame_boundary():
     )
     # start_byte = 3 → aligned down to 2 → trimmed = buf[2:] = b"\x03..\x08" (6 bytes)
     assert out == b"\x03\x04\x05\x06\x07\x08"
+
+
+# ---------------------------------------------------------------------------
+# 13. Wire-level tests for the session's websocket-facing private helpers
+# ---------------------------------------------------------------------------
+
+
+_CLEAN_ENV = {"OPENAI_REALTIME_UNDERLYING_MODEL": ""}
+
+
+def _real_session_with_mock_connection(
+    sqlite_instance,
+    *,
+    server_vad: bool = True,
+    vad: ServerVadConfig | None = None,
+    prepended_conversation=None,
+):
+    """Build a real ``_OpenAIRealtimeStreamingSession`` over a real ``RealtimeTarget`` with a mock connection.
+
+    The session is wired to a real target (so the privates that delegate into
+    ``_set_system_prompt_and_config_vars`` work) but its connection is replaced
+    with an AsyncMock so wire calls are observable. Audio chunks iterator and
+    prompt normalizer are stubbed to whatever the caller wants — these tests
+    only exercise individual private helpers, not ``run_async``.
+    """
+    from pyrit.prompt_target import RealtimeTarget
+
+    with patch.dict("os.environ", _CLEAN_ENV):
+        target = RealtimeTarget(api_key="k", endpoint="wss://test_url", model_name="test", server_vad=server_vad)
+
+    async def _empty():
+        if False:
+            yield b""
+
+    session = _OpenAIRealtimeStreamingSession(
+        target=target,
+        audio_chunks=_empty(),
+        prompt_normalizer=MagicMock(name="normalizer"),
+        prepended_conversation=prepended_conversation,
+        vad=vad,
+    )
+    session._connection = AsyncMock(name="connection")
+    return session
+
+
+# --- _push_audio_chunk_async ------------------------------------------------
+
+
+async def test_push_audio_chunk_async_base64_encodes_and_appends(sqlite_instance):
+    session = _real_session_with_mock_connection(sqlite_instance)
+    pcm = b"\x33" * 480
+
+    await session._push_audio_chunk_async(pcm)
+
+    session._connection.input_audio_buffer.append.assert_awaited_once()
+    audio_b64 = session._connection.input_audio_buffer.append.call_args.kwargs["audio"]
+    assert base64.b64decode(audio_b64) == pcm
+
+
+async def test_push_audio_chunk_async_empty_is_noop(sqlite_instance):
+    session = _real_session_with_mock_connection(sqlite_instance)
+    await session._push_audio_chunk_async(b"")
+    session._connection.input_audio_buffer.append.assert_not_called()
+
+
+# --- _swap_user_audio_async -------------------------------------------------
+
+
+async def test_swap_user_audio_async_inserts_converted_then_deletes_original(sqlite_instance):
+    """``_swap_user_audio_async`` must insert the converted PCM then delete the original item."""
+    session = _real_session_with_mock_connection(sqlite_instance)
+    event = CommittedEvent(item_id="raw_swap_1")
+
+    await session._swap_user_audio_async(committed_event=event, converted_pcm=b"\xab" * 96)
+
+    session._connection.conversation.item.create.assert_awaited_once()
+    session._connection.conversation.item.delete.assert_awaited_once_with(item_id="raw_swap_1")
+    # Insert must precede delete: any future refactor that swaps the order or runs them
+    # concurrently would corrupt the streaming session — pin the ordering here.
+    create_index = session._connection.method_calls.index(call.conversation.item.create(item=ANY))
+    delete_index = session._connection.method_calls.index(call.conversation.item.delete(item_id="raw_swap_1"))
+    assert create_index < delete_index
+
+
+async def test_swap_user_audio_async_logs_and_swallows_delete_failure(sqlite_instance, caplog):
+    """Best-effort delete: if ``delete`` raises, ``swap`` logs a warning and returns normally."""
+    session = _real_session_with_mock_connection(sqlite_instance)
+    session._connection.conversation.item.delete.side_effect = RuntimeError("delete blew up")
+    event = CommittedEvent(item_id="raw_swap_fail")
+
+    with caplog.at_level("WARNING"):
+        await session._swap_user_audio_async(committed_event=event, converted_pcm=b"\x01" * 96)
+
+    session._connection.conversation.item.create.assert_awaited_once()
+    session._connection.conversation.item.delete.assert_awaited_once_with(item_id="raw_swap_fail")
+    # Even on delete failure, insert must have happened first.
+    create_index = session._connection.method_calls.index(call.conversation.item.create(item=ANY))
+    delete_index = session._connection.method_calls.index(call.conversation.item.delete(item_id="raw_swap_fail"))
+    assert create_index < delete_index
+    assert any("delete failed for raw_swap_fail" in record.message for record in caplog.records)
+
+
+# --- _request_response_async ------------------------------------------------
+
+
+async def test_request_response_async_registers_turn_and_sends_response_create(sqlite_instance):
+    """_request_response_async must register a fresh turn and call response.create."""
+    session = _real_session_with_mock_connection(sqlite_instance)
+    from pyrit.prompt_target.common.realtime_audio import RealtimeTurnState
+
+    dispatcher = MagicMock()
+    dispatcher.register_turn = MagicMock()
+    session._dispatcher = dispatcher
+
+    future = await session._request_response_async()
+
+    dispatcher.register_turn.assert_called_once()
+    registered_state = dispatcher.register_turn.call_args.args[0]
+    assert isinstance(registered_state, RealtimeTurnState)
+    assert registered_state.completion is future
+    session._connection.response.create.assert_awaited_once_with()
+
+
+async def test_request_response_async_future_resolves_with_dispatcher_result(sqlite_instance):
+    """The future returned by _request_response_async resolves when the turn ends."""
+    session = _real_session_with_mock_connection(sqlite_instance)
+    dispatcher = MagicMock()
+    expected_result = RealtimeTargetResult(audio_bytes=b"\xaa" * 96, transcripts=["ok"])
+
+    def _register(state):
+        state.completion.set_result(expected_result)
+
+    dispatcher.register_turn = MagicMock(side_effect=_register)
+    session._dispatcher = dispatcher
+
+    future = await session._request_response_async()
+    result = await future
+    assert result is expected_result
+
+
+async def test_request_response_async_propagates_register_turn_failure(sqlite_instance):
+    """If another turn is already pending, register_turn raises and request_response_async surfaces it."""
+    session = _real_session_with_mock_connection(sqlite_instance)
+    dispatcher = MagicMock()
+    dispatcher.register_turn = MagicMock(side_effect=RuntimeError("turn already pending"))
+    session._dispatcher = dispatcher
+
+    with pytest.raises(RuntimeError, match="turn already pending"):
+        await session._request_response_async()
+
+    session._connection.response.create.assert_not_called()
+
+
+# --- _send_streaming_session_config_async -----------------------------------
+
+
+async def test_send_streaming_session_config_async_emits_create_response_false(sqlite_instance):
+    """The streaming session config must flip create_response to False on turn_detection."""
+    session = _real_session_with_mock_connection(sqlite_instance, server_vad=True)
+    await session._send_streaming_session_config_async()
+    session._connection.session.update.assert_awaited_once()
+    config = session._connection.session.update.call_args.kwargs["session"]
+    assert config["audio"]["input"]["turn_detection"]["create_response"] is False
+
+
+async def test_send_streaming_session_config_async_requires_server_vad(sqlite_instance):
+    """Without server VAD on target or per-session vad, sending streaming session config must raise."""
+    session = _real_session_with_mock_connection(sqlite_instance, server_vad=False, vad=None)
+    with pytest.raises(ValueError, match="server VAD"):
+        await session._send_streaming_session_config_async()
+
+
+async def test_send_streaming_session_config_async_uses_system_message_from_conversation(sqlite_instance):
+    """If the prepended conversation begins with a system message, it becomes session instructions."""
+    system_msg = Message(
+        message_pieces=[
+            MessagePiece(
+                role="system",
+                original_value="You are a strict assistant.",
+                original_value_data_type="text",
+                converted_value="You are a strict assistant.",
+                converted_value_data_type="text",
+                conversation_id="x",
+            )
+        ]
+    )
+    session = _real_session_with_mock_connection(sqlite_instance, server_vad=True, prepended_conversation=[system_msg])
+    await session._send_streaming_session_config_async()
+    config = session._connection.session.update.call_args.kwargs["session"]
+    assert config["instructions"] == "You are a strict assistant."

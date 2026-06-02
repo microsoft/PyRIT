@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import logging
 import uuid
@@ -13,6 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pyrit.models import Message, MessagePiece
+from pyrit.prompt_target.common.realtime_audio import RealtimeTargetResult, RealtimeTurnState
 from pyrit.prompt_target.common.streaming.streaming_audio_target import (
     STREAMING_INTERRUPTED_KEY,
 )
@@ -127,6 +129,11 @@ class _OpenAIRealtimeStreamingSession:
         self._attack_identifier = attack_identifier
         self._persist_prepended_conversation = persist_prepended_conversation
 
+        # Resolve VAD once at session construction so config send and commit-time trim
+        # both see the same value, even if the target's ``_server_vad`` is mutated
+        # later. ``self._vad is None`` means "use target default", not "no VAD".
+        self._effective_vad: ServerVadConfig | None = self._vad if self._vad is not None else self._target._server_vad
+
         # Tee raw user audio so we can persist it per VAD-committed turn; the dispatcher
         # only surfaces ``CommittedEvent`` with an item id, not the bytes themselves.
         self._pending_chunks = bytearray()
@@ -160,16 +167,11 @@ class _OpenAIRealtimeStreamingSession:
             Message: One assembled assistant ``Message`` per turn. The matching user
             ``Message`` for each turn is persisted to memory but not yielded.
         """
-        target = self._target
-        streaming = target.streaming
+        streaming = self._target.streaming
 
         self._connection = await streaming.connect_async(conversation_id=self._conversation_id)
         try:
-            await streaming.send_streaming_session_config_async(
-                connection=self._connection,
-                conversation=self._prepended_conversation,
-                vad=self._vad,
-            )
+            await self._send_streaming_session_config_async()
             if self._persist_prepended_conversation:
                 await self._prompt_normalizer.add_prepended_conversation_to_memory(
                     conversation_id=self._conversation_id,
@@ -221,14 +223,13 @@ class _OpenAIRealtimeStreamingSession:
         assert self._queue is not None
 
         connection = self._connection
-        streaming = self._target.streaming
         try:
             async for chunk in self._audio_chunks:
                 if not chunk:
                     continue
                 async with self._pending_chunks_lock:
                     self._pending_chunks.extend(chunk)
-                await streaming.push_audio_chunk_async(connection=connection, pcm_bytes=chunk)
+                await self._push_audio_chunk_async(chunk)
 
             # Snapshot commit-event count before forcing a final commit so we can
             # detect whether the server accepted it (it produces a new committed
@@ -299,9 +300,7 @@ class _OpenAIRealtimeStreamingSession:
             if event.audio_start_ms is not None:
                 buffer_relative_audio_start_ms = event.audio_start_ms - self._buffer_start_session_ms
 
-            # ``self._vad is None`` means "use target default", not "no VAD".
-            effective_vad = self._vad if self._vad is not None else streaming.server_vad_config
-            prefix_padding_ms = effective_vad.prefix_padding_ms if effective_vad is not None else 0
+            prefix_padding_ms = self._effective_vad.prefix_padding_ms if self._effective_vad is not None else 0
 
             trimmed_pcm = _trim_snapshot_to_speech(
                 raw_buffer=raw_pcm,
@@ -345,18 +344,11 @@ class _OpenAIRealtimeStreamingSession:
                 num_channels=1,
                 sample_width_bytes=2,
             )
-            await target.swap_user_audio_async(
-                connection=self._connection,
-                committed_event=event,
-                converted_pcm=converted_pcm,
-            )
+            await self._swap_user_audio_async(committed_event=event, converted_pcm=converted_pcm)
         else:
             converted_pcm = raw_pcm
 
-        future = await target.request_response_async(
-            connection=self._connection,
-            dispatcher=self._dispatcher,
-        )
+        future = await self._request_response_async()
         result = await future
 
         raw_user_path = await streaming.save_audio(raw_pcm, num_channels=1, sample_width=2, sample_rate=sample_rate)
@@ -415,3 +407,101 @@ class _OpenAIRealtimeStreamingSession:
         await self._prompt_normalizer.hash_and_persist_message_async(message=user_message)
         await self._prompt_normalizer.hash_and_persist_message_async(message=assistant_message)
         return assistant_message
+
+    # ---- Wire helpers -------------------------------------------------------
+    # Private methods owning the session's websocket-level concerns: per-turn
+    # convert-swap, response triggering, and the streaming session config /
+    # audio chunk push that the producer uses. Kept here so ``RealtimeTarget``
+    # stays atomic-only.
+
+    async def _send_streaming_session_config_async(self) -> None:
+        """
+        Configure the realtime session for streaming use: server VAD with manual response creation.
+
+        Emits the same session config as the atomic path except ``turn_detection.create_response``
+        is forced to False so the streaming attack can swap the raw user audio item for converted
+        audio before triggering ``response.create``.
+
+        Raises:
+            ValueError: If neither the session's ``vad`` nor the target's ``_server_vad`` is set.
+        """
+        assert self._connection is not None
+        if self._effective_vad is None:
+            raise ValueError(
+                "_send_streaming_session_config_async requires server VAD; "
+                "pass vad=ServerVadConfig(...) or construct RealtimeTarget(server_vad=True)."
+            )
+        system_prompt = self._target._get_system_prompt_from_conversation(conversation=self._prepended_conversation)
+        config = self._target._set_system_prompt_and_config_vars(
+            system_prompt=system_prompt, server_vad=self._effective_vad
+        )
+        turn_detection = config.get("audio", {}).get("input", {}).get("turn_detection")
+        if turn_detection is not None:
+            turn_detection["create_response"] = False
+        await self._connection.session.update(session=config)
+
+    async def _push_audio_chunk_async(self, pcm_bytes: bytes) -> None:
+        """
+        Append a single PCM16 mono @ 24 kHz audio chunk to the server's input buffer.
+
+        Server VAD, when enabled on the session, decides when to commit and fire
+        response logic. Empty buffers are accepted as no-ops.
+        """
+        if not pcm_bytes:
+            return
+        assert self._connection is not None
+        audio_b64 = base64.b64encode(pcm_bytes).decode("ascii")
+        await self._connection.input_audio_buffer.append(audio=audio_b64)
+
+    async def _insert_user_audio_async(self, pcm_bytes: bytes) -> None:
+        """Insert a user message containing PCM16 mono @ 24 kHz audio into the conversation."""
+        assert self._connection is not None
+        audio_b64 = base64.b64encode(pcm_bytes).decode("ascii")
+        await self._connection.conversation.item.create(
+            item={
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_audio", "audio": audio_b64}],
+            }
+        )
+
+    async def _delete_conversation_item_async(self, item_id: str) -> None:
+        """Delete a conversation item by id (e.g. the server's raw user audio item)."""
+        assert self._connection is not None
+        await self._connection.conversation.item.delete(item_id=item_id)
+
+    async def _swap_user_audio_async(self, *, committed_event: CommittedEvent, converted_pcm: bytes) -> None:
+        """
+        Replace the server's just-committed user audio with converted PCM.
+
+        Inserts ``converted_pcm`` as a new user item then best-effort deletes the
+        original item identified by ``committed_event``. Insert precedes delete so
+        the converted audio is already in place if delete fails or races.
+        """
+        await self._insert_user_audio_async(converted_pcm)
+        try:
+            await self._delete_conversation_item_async(committed_event.item_id)
+        except Exception as e:
+            logger.warning(f"conversation.item.delete failed for {committed_event.item_id}: {e}")
+
+    async def _request_response_async(self) -> asyncio.Future[RealtimeTargetResult]:
+        """
+        Trigger ``response.create`` and return a future that resolves when the turn ends.
+
+        Constructs a fresh ``RealtimeTurnState``, binds it to the dispatcher as the
+        active turn, then sends ``response.create``. The dispatcher resolves the
+        returned future via ``response.done`` (with ``interrupted=False``) or via
+        the barge-in cancel path (with ``interrupted=True``).
+
+        Returns:
+            A future resolving to the ``RealtimeTargetResult`` for this turn.
+
+        Raises:
+            RuntimeError: If another turn is already pending on the dispatcher.
+        """
+        assert self._connection is not None
+        assert self._dispatcher is not None
+        state = RealtimeTurnState(completion=asyncio.get_running_loop().create_future())
+        self._dispatcher.register_turn(state)
+        await self._connection.response.create()
+        return state.completion

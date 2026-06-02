@@ -5,7 +5,7 @@ import asyncio
 import base64
 import wave
 from typing import Any
-from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -570,95 +570,6 @@ def test_server_vad_config_rejects_invalid_values(kwargs):
 # ---- Wire primitives for streaming attacks ---------------------------------------------------
 
 
-def _make_mock_connection():
-    """Return an AsyncMock connection with input_audio_buffer wired up."""
-    connection = AsyncMock()
-    connection.input_audio_buffer.append = AsyncMock()
-    connection.input_audio_buffer.commit = AsyncMock()
-    return connection
-
-
-async def test_push_audio_chunk_async_base64_encodes_and_appends(target):
-    connection = _make_mock_connection()
-    pcm = b"\x33" * 480
-
-    await target.streaming.push_audio_chunk_async(connection=connection, pcm_bytes=pcm)
-
-    connection.input_audio_buffer.append.assert_awaited_once()
-    audio_b64 = connection.input_audio_buffer.append.call_args.kwargs["audio"]
-    assert base64.b64decode(audio_b64) == pcm
-
-
-async def test_push_audio_chunk_async_empty_is_noop(target):
-    connection = _make_mock_connection()
-    await target.streaming.push_audio_chunk_async(connection=connection, pcm_bytes=b"")
-    connection.input_audio_buffer.append.assert_not_called()
-
-
-async def test_insert_user_audio_async_creates_input_audio_item(target):
-    connection = AsyncMock()
-    pcm = b"\x44" * 480
-
-    await target.insert_user_audio_async(connection=connection, pcm_bytes=pcm)
-
-    connection.conversation.item.create.assert_awaited_once()
-    item = connection.conversation.item.create.call_args.kwargs["item"]
-    assert item["type"] == "message"
-    assert item["role"] == "user"
-    assert item["content"][0]["type"] == "input_audio"
-    assert base64.b64decode(item["content"][0]["audio"]) == pcm
-
-
-async def test_delete_conversation_item_async_forwards_item_id(target):
-    connection = AsyncMock()
-
-    await target.delete_conversation_item_async(connection=connection, item_id="raw_item_99")
-
-    connection.conversation.item.delete.assert_awaited_once_with(item_id="raw_item_99")
-
-
-async def test_swap_user_audio_async_inserts_converted_then_deletes_original(target):
-    """``swap_user_audio_async`` must insert the converted PCM then delete the original item."""
-    connection = AsyncMock()
-    event = CommittedEvent(item_id="raw_swap_1")
-
-    await target.swap_user_audio_async(
-        connection=connection,
-        committed_event=event,
-        converted_pcm=b"\xab" * 96,
-    )
-
-    connection.conversation.item.create.assert_awaited_once()
-    connection.conversation.item.delete.assert_awaited_once_with(item_id="raw_swap_1")
-    # Insert must precede delete: any future refactor that swaps the order or runs them
-    # concurrently would corrupt the streaming session — pin the ordering here.
-    create_index = connection.method_calls.index(call.conversation.item.create(item=ANY))
-    delete_index = connection.method_calls.index(call.conversation.item.delete(item_id="raw_swap_1"))
-    assert create_index < delete_index
-
-
-async def test_swap_user_audio_async_logs_and_swallows_delete_failure(target, caplog):
-    """Best-effort delete: if ``delete`` raises, ``swap`` logs a warning and returns normally."""
-    connection = AsyncMock()
-    connection.conversation.item.delete.side_effect = RuntimeError("delete blew up")
-    event = CommittedEvent(item_id="raw_swap_fail")
-
-    with caplog.at_level("WARNING"):
-        await target.swap_user_audio_async(
-            connection=connection,
-            committed_event=event,
-            converted_pcm=b"\x01" * 96,
-        )
-
-    connection.conversation.item.create.assert_awaited_once()
-    connection.conversation.item.delete.assert_awaited_once_with(item_id="raw_swap_fail")
-    # Even on delete failure, insert must have happened first.
-    create_index = connection.method_calls.index(call.conversation.item.create(item=ANY))
-    delete_index = connection.method_calls.index(call.conversation.item.delete(item_id="raw_swap_fail"))
-    assert create_index < delete_index
-    assert any("delete failed for raw_swap_fail" in record.message for record in caplog.records)
-
-
 def _turn_state(*, response_id: str | None = "resp_abc", item_id: str | None = "item_xyz") -> RealtimeTurnState:
     """Build a turn state with the named ids preset; completion future is unused by cancel tests."""
     return RealtimeTurnState(
@@ -938,55 +849,6 @@ async def test_route_event_pending_speech_start_resets_after_commit():
     assert len(received) == 2
     assert received[0].audio_start_ms == 500
     assert received[1].audio_start_ms is None
-
-
-# Placeholder for R2 tests
-
-
-# ---- request_response_async (R2) -------------------------------------------------
-
-
-async def test_request_response_async_registers_turn_and_sends_response_create(target):
-    """request_response_async must register a fresh turn and call response.create."""
-    connection = AsyncMock()
-    dispatcher = MagicMock()
-    dispatcher.register_turn = MagicMock()
-
-    future = await target.request_response_async(connection=connection, dispatcher=dispatcher)
-
-    dispatcher.register_turn.assert_called_once()
-    registered_state = dispatcher.register_turn.call_args.args[0]
-    assert isinstance(registered_state, RealtimeTurnState)
-    assert registered_state.completion is future
-    connection.response.create.assert_awaited_once_with()
-
-
-async def test_request_response_async_future_resolves_with_dispatcher_result(target):
-    """The future returned by request_response_async resolves when the turn ends."""
-    connection = AsyncMock()
-    dispatcher = MagicMock()
-    expected_result = RealtimeTargetResult(audio_bytes=b"\xaa" * 96, transcripts=["ok"])
-
-    def _register(state):
-        state.completion.set_result(expected_result)
-
-    dispatcher.register_turn = MagicMock(side_effect=_register)
-
-    future = await target.request_response_async(connection=connection, dispatcher=dispatcher)
-    result = await future
-    assert result is expected_result
-
-
-async def test_request_response_async_propagates_register_turn_failure(target):
-    """If another turn is already pending, register_turn raises and request_response_async surfaces it."""
-    connection = AsyncMock()
-    dispatcher = MagicMock()
-    dispatcher.register_turn = MagicMock(side_effect=RuntimeError("turn already pending"))
-
-    with pytest.raises(RuntimeError, match="turn already pending"):
-        await target.request_response_async(connection=connection, dispatcher=dispatcher)
-
-    connection.response.create.assert_not_called()
 
 
 # ---- streaming handle wiring & config -----------------------------------------
