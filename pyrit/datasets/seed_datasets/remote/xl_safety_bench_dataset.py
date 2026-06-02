@@ -481,7 +481,7 @@ class _XLSafetyBenchJailbreakObjectivesDataset(_RemoteDatasetLoader):
     Each row of the per-country ``attack_prompts.csv`` files pairs a fully crafted
     adversarial ``attack_prompt`` with the underlying harmful goal it tries to elicit
     (``base_query_local`` / ``base_query_english``). This loader exposes the *goals*
-    as :class:`SeedObjective` instances so PyRIT attack strategies can run their own
+    as ``SeedObjective`` instances so PyRIT attack strategies can run their own
     multi-turn jailbreaks against them, independent of the paper's bundled attack
     prompts.
 
@@ -490,8 +490,8 @@ class _XLSafetyBenchJailbreakObjectivesDataset(_RemoteDatasetLoader):
     deduplicates by ``(country, base_query_local)`` and prefers the local-language
     text as ``SeedObjective.value`` (the English version is preserved in metadata).
 
-    The CSV's other variant is :class:`_XLSafetyBenchJailbreakDataset`, which emits
-    the polished attack prompts themselves as :class:`SeedPrompt` instances.
+    The CSV's other variant is ``_XLSafetyBenchJailbreakDataset``, which emits
+    the polished attack prompts themselves as ``SeedPrompt`` instances.
 
     Reference: [@choi2026xlsafetybench]
     Paper: https://arxiv.org/abs/2605.05662
@@ -873,7 +873,7 @@ def _make_jailbreak_country_sibling(country: XLSafetyBenchCountry, class_suffix:
     """
     Build a jailbreak sibling class pinned to ``country``.
 
-    The class subclasses :class:`_XLSafetyBenchJailbreakDataset` and freezes
+    The class subclasses ``_XLSafetyBenchJailbreakDataset`` and freezes
     ``countries=[country]`` in its initializer while exposing the same
     ``categories`` knob as the parent.
 
@@ -916,7 +916,7 @@ def _make_cultural_country_sibling(country: XLSafetyBenchCountry, class_suffix: 
     """
     Build a cultural sibling class pinned to ``country``.
 
-    The class subclasses :class:`_XLSafetyBenchCulturalDataset` and freezes
+    The class subclasses ``_XLSafetyBenchCulturalDataset`` and freezes
     ``countries=[country]`` while still allowing ``categories`` and
     ``language_mode`` to be customized per call.
 
