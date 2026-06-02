@@ -180,7 +180,7 @@ class SeedDataset(BaseModel):
         Create a SeedDataset from a YAML file, marking nested seeds as trusted templates.
 
         Thin shim that delegates to
-        :func:`pyrit.models.seeds.seed_loader.load_seed_dataset_from_yaml`; file I/O and
+        :func:`pyrit.models.seeds.yaml_seed_loader.load_seed_dataset_from_yaml`; file I/O and
         the ``is_jinja_template`` trust marker live in the loader module.
 
         Args:
@@ -193,7 +193,7 @@ class SeedDataset(BaseModel):
             FileNotFoundError: If the path does not resolve to an existing file.
             ValueError: If the YAML file is invalid or empty.
         """
-        from pyrit.models.seeds.seed_loader import load_seed_dataset_from_yaml
+        from pyrit.models.seeds.yaml_seed_loader import load_seed_dataset_from_yaml
 
         return load_seed_dataset_from_yaml(file)
 

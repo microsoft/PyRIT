@@ -242,7 +242,7 @@ class Seed(BaseModel):
         """
         Create a new Seed from a YAML file, marking it as a trusted Jinja2 template.
 
-        Thin shim that delegates to :func:`pyrit.models.seeds.seed_loader.load_seed_from_yaml`;
+        Thin shim that delegates to :func:`pyrit.models.seeds.yaml_seed_loader.load_seed_from_yaml`;
         file I/O and the ``is_jinja_template`` trust marker live in the loader module.
 
         Args:
@@ -255,6 +255,6 @@ class Seed(BaseModel):
             FileNotFoundError: If the path does not resolve to an existing file.
             ValueError: If the YAML file is invalid or empty.
         """
-        from pyrit.models.seeds.seed_loader import load_seed_from_yaml
+        from pyrit.models.seeds.yaml_seed_loader import load_seed_from_yaml
 
         return load_seed_from_yaml(file, cls=cls)

@@ -138,7 +138,7 @@ class SeedPrompt(Seed):
         Load a SeedPrompt from a YAML file and validate that it declares each required parameter.
 
         Thin shim that delegates to
-        :func:`pyrit.models.seeds.seed_loader.load_seed_prompt_from_yaml_with_required_parameters`.
+        :func:`pyrit.models.seeds.yaml_seed_loader.load_seed_prompt_from_yaml_with_required_parameters`.
 
         Args:
             template_path: Path to the YAML file containing the template.
@@ -151,7 +151,7 @@ class SeedPrompt(Seed):
         Raises:
             ValueError: If the template doesn't contain all required parameters.
         """
-        from pyrit.models.seeds.seed_loader import load_seed_prompt_from_yaml_with_required_parameters
+        from pyrit.models.seeds.yaml_seed_loader import load_seed_prompt_from_yaml_with_required_parameters
 
         return load_seed_prompt_from_yaml_with_required_parameters(
             template_path, required_parameters, error_message=error_message
