@@ -51,7 +51,7 @@ def _check_custom_initializers_allowed(request: Request) -> None:
     "",
     response_model=ListRegisteredInitializersResponse,
 )
-async def list_initializers(
+async def list_initializers(  # pyrit-async-suffix-exempt
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
     cursor: str | None = Query(None, description="Pagination cursor (initializer_name to start after)"),
 ) -> ListRegisteredInitializersResponse:
@@ -75,7 +75,7 @@ async def list_initializers(
         404: {"model": ProblemDetail, "description": "Initializer not found"},
     },
 )
-async def get_initializer(initializer_name: str) -> RegisteredInitializer:
+async def get_initializer(initializer_name: str) -> RegisteredInitializer:  # pyrit-async-suffix-exempt
     """
     Get details for a specific initializer.
 
@@ -106,7 +106,7 @@ async def get_initializer(initializer_name: str) -> RegisteredInitializer:
         409: {"model": ProblemDetail, "description": "Initializer name already registered"},
     },
 )
-async def register_initializer(
+async def register_initializer(  # pyrit-async-suffix-exempt
     request: Request,
     body: RegisterInitializerRequest,
 ) -> RegisteredInitializer:
@@ -144,7 +144,7 @@ async def register_initializer(
         404: {"model": ProblemDetail, "description": "Initializer not found"},
     },
 )
-async def unregister_initializer(
+async def unregister_initializer(  # pyrit-async-suffix-exempt
     request: Request,
     initializer_name: str,
 ) -> None:

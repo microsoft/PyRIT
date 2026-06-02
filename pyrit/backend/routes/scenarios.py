@@ -39,7 +39,7 @@ router = APIRouter(prefix="/scenarios", tags=["scenarios"])
     "/catalog",
     response_model=ListRegisteredScenariosResponse,
 )
-async def list_scenarios(
+async def list_scenarios(  # pyrit-async-suffix-exempt
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
     cursor: Optional[str] = Query(None, description="Pagination cursor (scenario_name to start after)"),
 ) -> ListRegisteredScenariosResponse:
@@ -63,7 +63,7 @@ async def list_scenarios(
         404: {"model": ProblemDetail, "description": "Scenario not found"},
     },
 )
-async def get_scenario(scenario_name: str) -> RegisteredScenario:
+async def get_scenario(scenario_name: str) -> RegisteredScenario:  # pyrit-async-suffix-exempt
     """
     Get details for a specific scenario.
 
@@ -98,7 +98,7 @@ async def get_scenario(scenario_name: str) -> RegisteredScenario:
         400: {"model": ProblemDetail, "description": "Invalid request (bad scenario/target/strategy)"},
     },
 )
-async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunSummary:
+async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunSummary:  # pyrit-async-suffix-exempt
     """
     Start a new scenario run as a background task.
 
@@ -121,7 +121,7 @@ async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunSummary:
     "/runs",
     response_model=ScenarioRunListResponse,
 )
-async def list_scenario_runs(limit: int = Query(100, ge=1)) -> ScenarioRunListResponse:
+async def list_scenario_runs(limit: int = Query(100, ge=1)) -> ScenarioRunListResponse:  # pyrit-async-suffix-exempt
     """
     List tracked scenario runs (most recent first).
 
@@ -142,7 +142,7 @@ async def list_scenario_runs(limit: int = Query(100, ge=1)) -> ScenarioRunListRe
         404: {"model": ProblemDetail, "description": "Run not found"},
     },
 )
-async def get_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:
+async def get_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:  # pyrit-async-suffix-exempt
     """
     Get the current status and result of a scenario run.
 
@@ -170,7 +170,7 @@ async def get_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:
         409: {"model": ProblemDetail, "description": "Run already in terminal state"},
     },
 )
-async def cancel_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:
+async def cancel_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:  # pyrit-async-suffix-exempt
     """
     Cancel a running scenario.
 
@@ -201,7 +201,7 @@ async def cancel_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:
         409: {"model": ProblemDetail, "description": "Run not yet completed"},
     },
 )
-async def get_scenario_run_results(scenario_result_id: str) -> dict:
+async def get_scenario_run_results(scenario_result_id: str) -> dict:  # pyrit-async-suffix-exempt
     """
     Get detailed results for a completed scenario run.
 

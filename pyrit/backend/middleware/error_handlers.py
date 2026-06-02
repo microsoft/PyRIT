@@ -20,7 +20,7 @@ def register_error_handlers(app: FastAPI) -> None:
     """Register all error handlers with the FastAPI app."""
 
     @app.exception_handler(RequestValidationError)
-    async def validation_exception_handler(
+    async def validation_exception_handler(  # pyrit-async-suffix-exempt
         request: Request,
         exc: RequestValidationError,
     ) -> JSONResponse:
@@ -56,7 +56,7 @@ def register_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(ValueError)
-    async def value_error_handler(
+    async def value_error_handler(  # pyrit-async-suffix-exempt
         request: Request,
         exc: ValueError,
     ) -> JSONResponse:
@@ -80,7 +80,7 @@ def register_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(FileNotFoundError)
-    async def not_found_handler(
+    async def not_found_handler(  # pyrit-async-suffix-exempt
         request: Request,
         exc: FileNotFoundError,
     ) -> JSONResponse:
@@ -104,7 +104,7 @@ def register_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(PermissionError)
-    async def permission_error_handler(
+    async def permission_error_handler(  # pyrit-async-suffix-exempt
         request: Request,
         exc: PermissionError,
     ) -> JSONResponse:
@@ -128,7 +128,7 @@ def register_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(NotImplementedError)
-    async def not_implemented_handler(
+    async def not_implemented_handler(  # pyrit-async-suffix-exempt
         request: Request,
         exc: NotImplementedError,
     ) -> JSONResponse:
@@ -152,7 +152,7 @@ def register_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(Exception)
-    async def generic_exception_handler(
+    async def generic_exception_handler(  # pyrit-async-suffix-exempt
         request: Request,
         exc: Exception,
     ) -> JSONResponse:

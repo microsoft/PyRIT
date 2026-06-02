@@ -400,7 +400,7 @@ class ConverterService:
                 original_value = str(serializer.value)
 
         converters = self._gather_converters(converter_ids=request.converter_ids)
-        steps, final_value, final_type = await self._apply_converters(
+        steps, final_value, final_type = await self._apply_converters_async(
             converters=converters, initial_value=original_value, initial_type=data_type
         )
 
@@ -602,7 +602,7 @@ class ConverterService:
             converters.append((conv_id, conv_type, conv_obj))
         return converters
 
-    async def _apply_converters(
+    async def _apply_converters_async(
         self,
         *,
         converters: list[tuple[str, str, Any]],

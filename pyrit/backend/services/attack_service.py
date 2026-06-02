@@ -338,7 +338,7 @@ class AttackService:
 
         # Store prepended conversation messages if provided
         if request.prepended_conversation:
-            await self._store_prepended_messages(
+            await self._store_prepended_messages_async(
                 conversation_id=conversation_id,
                 prepended=request.prepended_conversation,
                 labels=labels,  # deprecated
@@ -939,7 +939,7 @@ class AttackService:
             if piece.converted_value is None:
                 piece.converted_value = file_path
 
-    async def _store_prepended_messages(
+    async def _store_prepended_messages_async(
         self,
         *,
         conversation_id: str,

@@ -8,45 +8,6 @@
 # To regenerate (only after a deliberate, reviewed cleanup):
 #   python build_scripts/check_async_suffix.py --write-baseline
 
-pyrit/backend/middleware/error_handlers.py:23:validation_exception_handler
-pyrit/backend/middleware/error_handlers.py:59:value_error_handler
-pyrit/backend/middleware/error_handlers.py:83:not_found_handler
-pyrit/backend/middleware/error_handlers.py:107:permission_error_handler
-pyrit/backend/middleware/error_handlers.py:131:not_implemented_handler
-pyrit/backend/middleware/error_handlers.py:155:generic_exception_handler
-pyrit/backend/routes/attacks.py:71:list_attacks
-pyrit/backend/routes/attacks.py:150:get_attack_options
-pyrit/backend/routes/attacks.py:169:get_converter_options
-pyrit/backend/routes/attacks.py:194:create_attack
-pyrit/backend/routes/attacks.py:222:get_attack
-pyrit/backend/routes/attacks.py:250:update_attack
-pyrit/backend/routes/attacks.py:282:get_conversation_messages
-pyrit/backend/routes/attacks.py:323:get_conversations
-pyrit/backend/routes/attacks.py:354:create_related_conversation
-pyrit/backend/routes/attacks.py:397:update_main_conversation
-pyrit/backend/routes/attacks.py:440:add_message
-pyrit/backend/routes/converters.py:32:list_converters
-pyrit/backend/routes/converters.py:49:list_converter_catalog
-pyrit/backend/routes/converters.py:68:create_converter
-pyrit/backend/routes/converters.py:101:get_converter
-pyrit/backend/routes/converters.py:127:preview_conversion
-pyrit/backend/routes/initializers.py:54:list_initializers
-pyrit/backend/routes/initializers.py:78:get_initializer
-pyrit/backend/routes/initializers.py:109:register_initializer
-pyrit/backend/routes/initializers.py:147:unregister_initializer
-pyrit/backend/routes/labels.py:31:get_label_options
-pyrit/backend/routes/scenarios.py:42:list_scenarios
-pyrit/backend/routes/scenarios.py:66:get_scenario
-pyrit/backend/routes/scenarios.py:101:start_scenario_run
-pyrit/backend/routes/scenarios.py:124:list_scenario_runs
-pyrit/backend/routes/scenarios.py:145:get_scenario_run
-pyrit/backend/routes/scenarios.py:173:cancel_scenario_run
-pyrit/backend/routes/scenarios.py:204:get_scenario_run_results
-pyrit/backend/routes/targets.py:33:list_targets
-pyrit/backend/routes/targets.py:57:create_target
-pyrit/backend/routes/targets.py:92:get_target
-pyrit/backend/services/attack_service.py:942:_store_prepended_messages
-pyrit/backend/services/converter_service.py:605:_apply_converters
 pyrit/cli/api_client.py:257:_get_json
 pyrit/common/data_url_converter.py:48:convert_local_image_to_data_url
 pyrit/common/display_response.py:60:display_image_response
