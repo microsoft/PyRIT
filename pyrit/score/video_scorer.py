@@ -281,5 +281,5 @@ class VideoHelper:
 
         finally:
             # Clean up temporary audio file on success
-            if should_cleanup and audio_path and Path(audio_path).exists():
-                Path(audio_path).unlink()
+            if should_cleanup and audio_path:
+                Path(audio_path).unlink(missing_ok=True)

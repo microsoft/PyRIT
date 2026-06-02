@@ -246,8 +246,8 @@ class AudioTranscriptHelper:  # noqa: B024
             raise
         finally:
             # Clean up temporary WAV file if it exists (ie for scoring audio from videos)
-            if wav_path != audio_path and Path(wav_path).exists():
-                Path(wav_path).unlink()
+            if wav_path != audio_path:
+                Path(wav_path).unlink(missing_ok=True)
 
     def _ensure_wav_format(self, audio_path: str) -> str:
         """
