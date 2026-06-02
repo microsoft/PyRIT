@@ -211,6 +211,24 @@ class TestTargetInitializerTargetConfigs:
         assert "groq" in registry_names
         assert "google_gemini" in registry_names
 
+    def test_target_configs_have_unique_registry_names(self):
+        """Guard against typos: every ``registry_name`` in ``ENV_TARGET_CONFIGS`` must be unique.
+
+        Duplicate names would silently overwrite each other when
+        ``TargetInitializer`` registers them (per ``BaseInstanceRegistry.register``
+        semantics, characterized in ``test_target_registry.py``). Only the
+        second entry would survive in the registry, which breaks downstream
+        scenarios that resolve targets by name (e.g. ``AdversarialBenchmark``'s
+        ``adversarial_targets`` parameter) and is hard to diagnose. Tracked
+        as ``duplicate-registry-name`` in failure_mode_followups.
+        """
+        registry_names = [config.registry_name for config in TARGET_CONFIGS]
+        seen: dict[str, int] = {}
+        for name in registry_names:
+            seen[name] = seen.get(name, 0) + 1
+        duplicates = {name: count for name, count in seen.items() if count > 1}
+        assert not duplicates, f"Duplicate registry_name(s) in TARGET_CONFIGS: {duplicates}"
+
 
 class TestTargetInitializerGetInfo:
     """Tests for TargetInitializer.get_info_async method."""
@@ -400,3 +418,216 @@ class TestTargetInitializerDefaultObjectiveTarget:
             assert config.default_objective_target is False, (
                 f"Target {config.registry_name} should not have default_objective_target=True"
             )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestTargetInitializerConfigTagPropagation:
+    """Tests for TargetInitializer propagating ``TargetConfig.tags`` to the registry (F1c)."""
+
+    def setup_method(self) -> None:
+        """Reset registry before each test."""
+        TargetRegistry.reset_instance()
+
+    def teardown_method(self) -> None:
+        """Clean up after each test."""
+        TargetRegistry.reset_instance()
+        for var in [
+            "OBJECTIVE_SCORER_CHAT_ENDPOINT",
+            "OBJECTIVE_SCORER_CHAT_KEY",
+            "OBJECTIVE_SCORER_CHAT_MODEL",
+            "OPENAI_CHAT_ENDPOINT",
+            "OPENAI_CHAT_KEY",
+            "OPENAI_CHAT_MODEL",
+        ]:
+            os.environ.pop(var, None)
+
+    async def test_register_target_propagates_config_tags(self) -> None:
+        """
+        ``TargetConfig.tags`` should be added to the registry entry so the entire
+        ``TargetInitializerTags`` enum is queryable post-registration.
+        """
+        from pyrit.setup.initializers.components.targets import TargetInitializerTags
+
+        os.environ["OBJECTIVE_SCORER_CHAT_ENDPOINT"] = "https://test.openai.azure.com"
+        os.environ["OBJECTIVE_SCORER_CHAT_KEY"] = "test_key"
+        os.environ["OBJECTIVE_SCORER_CHAT_MODEL"] = "gpt-4o"
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert "objective_scorer_chat" in registry
+
+        scorer_entries = registry.get_by_tag(tag=TargetInitializerTags.SCORER)
+        assert any(entry.name == "objective_scorer_chat" for entry in scorer_entries), (
+            "objective_scorer_chat should be discoverable by the SCORER tag after F1c"
+        )
+
+        default_entries = registry.get_by_tag(tag=TargetInitializerTags.DEFAULT)
+        assert any(entry.name == "objective_scorer_chat" for entry in default_entries), (
+            "objective_scorer_chat declares both DEFAULT and SCORER tags; both must propagate"
+        )
+
+    async def test_register_target_no_tags_in_config_no_extra_add_tags(self) -> None:
+        """An empty ``config.tags`` list must not trigger an ``add_tags`` call (no spurious empty-list passes)."""
+        from unittest.mock import MagicMock, patch
+
+        from pyrit.setup.initializers.components.targets import TargetConfig, TargetInitializer
+
+        config = TargetConfig(
+            registry_name="empty_tags_target",
+            target_class=MagicMock(return_value=MagicMock()),
+            endpoint_var="EMPTY_TAGS_ENDPOINT",
+            key_var="",
+            tags=[],
+        )
+
+        os.environ["EMPTY_TAGS_ENDPOINT"] = "https://example.com"
+
+        try:
+            mock_registry = MagicMock()
+            with patch.object(TargetRegistry, "get_registry_singleton", return_value=mock_registry):
+                init = TargetInitializer()
+                init._register_target(config)
+
+            mock_registry.register_instance.assert_called_once()
+            mock_registry.add_tags.assert_not_called()
+        finally:
+            os.environ.pop("EMPTY_TAGS_ENDPOINT", None)
+
+    async def test_register_target_default_objective_tag_still_applied(self) -> None:
+        """
+        Regression: ``default_objective_target=True`` must still add the ``DEFAULT_OBJECTIVE_TARGET``
+        tag alongside any ``config.tags``.
+        """
+        from pyrit.setup.initializers.components.targets import TargetInitializerTags
+
+        os.environ["OPENAI_CHAT_ENDPOINT"] = "https://api.openai.com/v1"
+        os.environ["OPENAI_CHAT_KEY"] = "test_key"
+        os.environ["OPENAI_CHAT_MODEL"] = "gpt-4o"
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        default_objective_entries = registry.get_by_tag(tag=TargetInitializerTags.DEFAULT_OBJECTIVE_TARGET)
+        assert len(default_objective_entries) == 1
+        assert default_objective_entries[0].name == "openai_chat"
+
+        default_entries = registry.get_by_tag(tag=TargetInitializerTags.DEFAULT)
+        assert any(entry.name == "openai_chat" for entry in default_entries), (
+            "openai_chat's config.tags=[DEFAULT] must propagate even when default_objective_target=True"
+        )
+
+
+ADVERSARIAL_CHAT_VARIANTS: list[tuple[str, str]] = [
+    ("adversarial_chat_singleturn", "ADVERSARIAL_CHAT_SINGLETURN"),
+    ("adversarial_chat_multiturn", "ADVERSARIAL_CHAT_MULTITURN"),
+    ("adversarial_chat_reasoning", "ADVERSARIAL_CHAT_REASONING"),
+]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestTargetInitializerAdversarialChatVariants:
+    """Tests for the ``ADVERSARIAL_CHAT_{SINGLETURN,MULTITURN,REASONING}_*`` env-driven variants."""
+
+    def setup_method(self) -> None:
+        """Reset registry and clear variant env vars."""
+        TargetRegistry.reset_instance()
+        self._clear_variant_env_vars()
+
+    def teardown_method(self) -> None:
+        """Reset registry and clear variant env vars."""
+        TargetRegistry.reset_instance()
+        self._clear_variant_env_vars()
+
+    @staticmethod
+    def _clear_variant_env_vars() -> None:
+        for _, prefix in ADVERSARIAL_CHAT_VARIANTS:
+            for suffix in ("ENDPOINT", "KEY", "MODEL"):
+                os.environ.pop(f"{prefix}_{suffix}", None)
+
+    @staticmethod
+    def _set_variant_env_vars(prefix: str) -> None:
+        os.environ[f"{prefix}_ENDPOINT"] = "https://variant.openai.azure.com/openai/v1"
+        os.environ[f"{prefix}_KEY"] = "test_key"
+        os.environ[f"{prefix}_MODEL"] = "deployment-name"
+
+    @pytest.mark.parametrize(("registry_name", "env_prefix"), ADVERSARIAL_CHAT_VARIANTS)
+    async def test_variant_registers_with_default_tag(self, registry_name: str, env_prefix: str) -> None:
+        """Each variant registers with the ``DEFAULT`` tag when its env vars are set."""
+        from pyrit.setup.initializers.components.targets import TargetInitializerTags
+
+        self._set_variant_env_vars(env_prefix)
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert registry_name in registry
+
+        default_entries = registry.get_by_tag(tag=TargetInitializerTags.DEFAULT)
+        assert any(entry.name == registry_name for entry in default_entries)
+
+    @pytest.mark.parametrize(("registry_name", "env_prefix"), ADVERSARIAL_CHAT_VARIANTS)
+    async def test_variant_skips_when_env_vars_missing(self, registry_name: str, env_prefix: str) -> None:
+        """Variants skip gracefully when their env vars are missing (matches existing adversarial_chat behavior)."""
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert registry_name not in registry
+
+    @pytest.mark.parametrize(("registry_name", "env_prefix"), ADVERSARIAL_CHAT_VARIANTS)
+    async def test_variant_skips_when_model_env_var_missing(
+        self, registry_name: str, env_prefix: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Endpoint+key set but _MODEL unset must skip with a warning, not silently fall back to OPENAI_CHAT_MODEL."""
+        import logging
+
+        os.environ[f"{env_prefix}_ENDPOINT"] = "https://variant.openai.azure.com/openai/v1"
+        os.environ[f"{env_prefix}_KEY"] = "test_key"
+
+        try:
+            with caplog.at_level(logging.WARNING, logger="pyrit.setup.initializers.components.targets"):
+                init = TargetInitializer()
+                await init.initialize_async()
+
+            registry = TargetRegistry.get_registry_singleton()
+            assert registry_name not in registry
+
+            captured_messages = [r.message for r in caplog.records]
+            assert any(f"{env_prefix}_MODEL" in m for m in captured_messages), (
+                f"Expected a warning naming the missing {env_prefix}_MODEL env var; got: {captured_messages}"
+            )
+        finally:
+            os.environ.pop(f"{env_prefix}_ENDPOINT", None)
+            os.environ.pop(f"{env_prefix}_KEY", None)
+
+    async def test_double_initialize_async_is_idempotent(self) -> None:
+        """Re-running ``initialize_async`` with the same env state produces the same registry contents.
+
+        Regression guard for the duplicate-registration silent-overwrite path:
+        because env vars haven't changed between calls, the rebuilt entries
+        carry identical configuration. If anyone introduces non-idempotent
+        side-effects (e.g. tag accumulation, instance leaks) into
+        ``_register_target``, this test will catch it. Tracked as
+        ``duplicate-registry-name`` in failure_mode_followups.
+        """
+        from pyrit.setup.initializers.components.targets import TargetInitializerTags
+
+        for _, prefix in ADVERSARIAL_CHAT_VARIANTS:
+            self._set_variant_env_vars(prefix)
+
+        init = TargetInitializer()
+        await init.initialize_async()
+        registry = TargetRegistry.get_registry_singleton()
+        first_names = sorted(registry.get_names())
+        first_default_count = len(registry.get_by_tag(tag=TargetInitializerTags.DEFAULT))
+
+        await init.initialize_async()
+        second_names = sorted(registry.get_names())
+        second_default_count = len(registry.get_by_tag(tag=TargetInitializerTags.DEFAULT))
+
+        assert first_names == second_names
+        assert first_default_count == second_default_count

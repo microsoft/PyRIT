@@ -243,7 +243,7 @@ export function backendMessagesToFrontend(messages: BackendMessage[]): Message[]
  * Convert a frontend MessageAttachment (with File) to a backend MessagePieceRequest.
  */
 export async function attachmentToMessagePieceRequest(att: MessageAttachment): Promise<MessagePieceRequest> {
-  let base64Value = ''
+  let base64Value: string
   if (att.file) {
     base64Value = await fileToBase64(att.file)
   } else if (att.url.startsWith('data:')) {
