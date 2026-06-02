@@ -108,7 +108,7 @@ Ways to contribute: Check out our [target docs](./targets/0_prompt_targets.md). 
 
 The scoring engine is a component that gives feedback to the attack on what happened with the prompt. This could be as simple as "Was this prompt blocked?" or "Was our objective achieved?"
 
-Ways to contribute: Check out our [scoring docs](./scoring/0_scoring.md). Is there data you want to use to make decisions or analyze?
+Ways to contribute: Check out our [scoring docs](./scoring/0_scoring.ipynb). Is there data you want to use to make decisions or analyze?
 
 ## Memory
 
