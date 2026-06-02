@@ -298,7 +298,9 @@ def pyrit_scores_to_dto(scores: list[PyritScore]) -> list[Score]:
     return [
         Score(
             score_id=str(score.id),
-            scorer_type=score.scorer_class_identifier.class_name,
+            scorer_type=(
+                score.scorer_class_identifier.class_name or "Unknown" if score.scorer_class_identifier else "Unknown"
+            ),
             score_type=score.score_type,
             score_value=score.score_value,
             score_category=score.score_category,
