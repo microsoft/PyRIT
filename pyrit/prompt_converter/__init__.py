@@ -25,6 +25,7 @@ from pyrit.prompt_converter.azure_speech_audio_to_text_converter import AzureSpe
 from pyrit.prompt_converter.azure_speech_text_to_audio_converter import AzureSpeechTextToAudioConverter
 from pyrit.prompt_converter.base64_converter import Base64Converter
 from pyrit.prompt_converter.base2048_converter import Base2048Converter
+from pyrit.prompt_converter.bidi_converter import BidiConverter
 from pyrit.prompt_converter.bin_ascii_converter import BinAsciiConverter
 from pyrit.prompt_converter.binary_converter import BinaryConverter
 from pyrit.prompt_converter.braille_converter import BrailleConverter
@@ -70,6 +71,7 @@ from pyrit.prompt_converter.selective_text_converter import SelectiveTextConvert
 from pyrit.prompt_converter.string_join_converter import StringJoinConverter
 from pyrit.prompt_converter.suffix_append_converter import SuffixAppendConverter
 from pyrit.prompt_converter.superscript_converter import SuperscriptConverter
+from pyrit.prompt_converter.tatweel_converter import TatweelConverter
 from pyrit.prompt_converter.template_segment_converter import TemplateSegmentConverter
 from pyrit.prompt_converter.tense_converter import TenseConverter
 from pyrit.prompt_converter.text_selection_strategy import (
@@ -156,6 +158,7 @@ __all__ = [
     "AzureSpeechTextToAudioConverter",
     "Base2048Converter",
     "Base64Converter",
+    "BidiConverter",
     "BinAsciiConverter",
     "BinaryConverter",
     "BrailleConverter",
@@ -209,6 +212,7 @@ __all__ = [
     "StringJoinConverter",
     "SuffixAppendConverter",
     "SuperscriptConverter",
+    "TatweelConverter",
     "TemplateSegmentConverter",
     "TenseConverter",
     "TextJailbreakConverter",

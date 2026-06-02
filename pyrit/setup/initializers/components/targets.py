@@ -45,7 +45,6 @@ class TargetInitializerTags(str, Enum):
     SCORER = "scorer"
     ALL = "all"
     DEFAULT_OBJECTIVE_TARGET = "default_objective_target"
-    ADVERSARIAL = "adversarial"
 
 
 @dataclass
@@ -187,7 +186,30 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         model_var="ADVERSARIAL_CHAT_MODEL",
         underlying_model_var="ADVERSARIAL_CHAT_UNDERLYING_MODEL",
         temperature=1.2,
-        tags=[TargetInitializerTags.DEFAULT, TargetInitializerTags.ADVERSARIAL],
+    ),
+    TargetConfig(
+        registry_name="adversarial_chat_singleturn",
+        target_class=AzureMLChatTarget,
+        endpoint_var="ADVERSARIAL_CHAT_SINGLETURN_ENDPOINT",
+        key_var="ADVERSARIAL_CHAT_SINGLETURN_KEY",
+        model_var="ADVERSARIAL_CHAT_SINGLETURN_MODEL",
+        temperature=1.2,
+    ),
+    TargetConfig(
+        registry_name="adversarial_chat_multiturn",
+        target_class=AzureMLChatTarget,
+        endpoint_var="ADVERSARIAL_CHAT_MULTITURN_ENDPOINT",
+        key_var="ADVERSARIAL_CHAT_MULTITURN_KEY",
+        model_var="ADVERSARIAL_CHAT_MULTITURN_MODEL",
+        temperature=1.2,
+    ),
+    TargetConfig(
+        registry_name="adversarial_chat_reasoning",
+        target_class=AzureMLChatTarget,
+        endpoint_var="ADVERSARIAL_CHAT_REASONING_ENDPOINT",
+        key_var="ADVERSARIAL_CHAT_REASONING_KEY",
+        model_var="ADVERSARIAL_CHAT_REASONING_MODEL",
+        temperature=1.2,
     ),
     TargetConfig(
         registry_name="objective_scorer_chat",
@@ -573,6 +595,18 @@ class TargetInitializer(PyRITInitializer):
         model_name = os.getenv(config.model_var) if config.model_var else None
         underlying_model = os.getenv(config.underlying_model_var) if config.underlying_model_var else None
 
+        # Guard against silent fallback to a global OPENAI_CHAT_MODEL default when the
+        # declared per-config model env var is unset. Without this skip, the target
+        # registers cleanly but sends requests to the wrong model at runtime.
+        if config.model_var and not model_name:
+            logger.warning(
+                "Skipping target '%s': %s is not set. "
+                "All declared env vars (endpoint, key, model) must be present for this target to register.",
+                config.registry_name,
+                config.model_var,
+            )
+            return
+
         # Build kwargs for the target constructor
         kwargs: dict[str, Any] = {
             "endpoint": endpoint,
@@ -600,6 +634,8 @@ class TargetInitializer(PyRITInitializer):
         target = config.target_class(**kwargs)
         registry = TargetRegistry.get_registry_singleton()
         registry.register_instance(target, name=config.registry_name)
+        if config.tags:
+            registry.add_tags(name=config.registry_name, tags=list(config.tags))
         if config.default_objective_target:
             registry.add_tags(name=config.registry_name, tags=[TargetInitializerTags.DEFAULT_OBJECTIVE_TARGET])
         logger.info(f"Registered target: {config.registry_name}")

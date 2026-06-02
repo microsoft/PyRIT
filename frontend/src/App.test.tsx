@@ -88,21 +88,27 @@ jest.mock("./components/Chat/ChatWindow", () => {
   const MockChatWindow = ({
     onNewAttack,
     activeTarget,
+    attackResultId,
     conversationId,
+    activeConversationId,
     onConversationCreated,
     onSelectConversation,
     labels,
   }: {
     onNewAttack: () => void;
     activeTarget: unknown;
+    attackResultId: string | null;
     conversationId: string | null;
+    activeConversationId: string | null;
     onConversationCreated: (attackResultId: string, conversationId: string) => void;
     onSelectConversation: (convId: string) => void;
     labels: Record<string, string>;
   }) => {
     return (
       <div data-testid="chat-window">
+        <span data-testid="attack-result-id">{attackResultId ?? "none"}</span>
         <span data-testid="conversation-id">{conversationId ?? "none"}</span>
+        <span data-testid="active-conversation-id">{activeConversationId ?? "none"}</span>
         <span data-testid="has-target">{activeTarget ? "yes" : "no"}</span>
         <span data-testid="labels-operator">{labels.operator ?? ""}</span>
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
@@ -180,6 +186,12 @@ jest.mock("./components/History/AttackHistory", () => {
           data-testid="open-attack"
         >
           Open Attack
+        </button>
+        <button
+          onClick={() => onOpenAttack("ar-attack-2")}
+          data-testid="open-attack-2"
+        >
+          Open Attack 2
         </button>
       </div>
     );
@@ -417,6 +429,58 @@ describe("App", () => {
     await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-attack-1"));
     // Conversation should be cleared on error
     await waitFor(() => expect(screen.getByTestId("conversation-id")).toHaveTextContent("none"));
+  });
+
+  it("clears activeConversationId synchronously before fetching a new attack", async () => {
+    // Repro: in attack A the user branched into a related conversation, so
+    // activeConversationId points to a conv that does NOT belong to attack B.
+    // When the user clicks Open Attack on B, App.tsx must clear the stale
+    // conv id *before* flipping attackResultId — otherwise ChatWindow renders
+    // with (attackResultId=B, activeConversationId=A_conv) during the in-flight
+    // getAttack and issues GET /messages?conversation_id=A_conv → 400.
+
+    // Defer getAttack so we can inspect the intermediate render before it resolves.
+    let resolveGetAttack: (value: unknown) => void = () => {};
+    mockGetAttack.mockImplementation(
+      () => new Promise((resolve) => { resolveGetAttack = resolve })
+    );
+
+    render(<App />);
+
+    // Simulate: user is already on attack A with a branched conv selected.
+    fireEvent.click(screen.getByTestId("nav-chat"));
+    fireEvent.click(screen.getByTestId("set-conversation"));      // attack A, main conv-123
+    // Resolve the (unrelated) getAttack triggered earlier to keep state quiet
+    // — actually nothing called it yet because set-conversation routes through
+    // onConversationCreated, not handleOpenAttack. Proceed.
+    fireEvent.click(screen.getByTestId("select-conversation"));   // branched conv-456 in attack A
+    expect(screen.getByTestId("attack-result-id")).toHaveTextContent("ar-123");
+    expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-456");
+
+    // User clicks Open Attack on attack B in history.
+    fireEvent.click(screen.getByTestId("nav-history"));
+    fireEvent.click(screen.getByTestId("open-attack-2"));        // ar-attack-2
+
+    // BEFORE getAttack resolves: ChatWindow must NOT see the stale conv id
+    // alongside the new attack id. This is the invariant the fix establishes.
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "chat"
+    );
+    expect(screen.getByTestId("attack-result-id")).toHaveTextContent("ar-attack-2");
+    expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("none");
+    expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
+
+    // After getAttack resolves: the conv id belonging to attack B is committed.
+    resolveGetAttack({
+      attack_result_id: "ar-attack-2",
+      conversation_id: "attack-conv-2",
+      labels: {},
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("attack-conv-2")
+    );
+    expect(screen.getByTestId("conversation-id")).toHaveTextContent("attack-conv-2");
   });
 
   it("merges default labels from backend version API", async () => {

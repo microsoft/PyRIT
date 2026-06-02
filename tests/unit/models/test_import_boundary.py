@@ -45,13 +45,6 @@ ALLOWED_TOP_LEVEL: frozenset[str] = frozenset(
 # violations not in this list fail the test; entries that no longer match
 # source also fail.
 KNOWN_TOP_LEVEL_VIOLATIONS: dict[str, dict[str, str]] = {
-    "pyrit.models.attack_result": {
-        "pyrit.identifiers.atomic_attack_identifier": "phase-2",
-        "pyrit.identifiers.component_identifier": "phase-2",
-    },
-    "pyrit.models.message_piece": {
-        "pyrit.identifiers.component_identifier": "phase-2",
-    },
     "pyrit.models.message": {
         "pyrit.common.utils": "phase-4",
     },
@@ -92,13 +85,8 @@ KNOWN_LAZY_VIOLATIONS: dict[str, dict[str, str]] = {
         "pyrit.common.path": "phase-8",
     },
     "pyrit.models.scenario_result": {
-        "pyrit.identifiers.component_identifier": "phase-2-and-7",
-        "pyrit.identifiers.evaluation_identifier": "phase-2-and-7",
         "pyrit.score.scorer_evaluation.scorer_metrics": "phase-7",
         "pyrit.score.scorer_evaluation.scorer_metrics_io": "phase-7",
-    },
-    "pyrit.models.score": {
-        "pyrit.identifiers.component_identifier": "phase-5-and-2",
     },
     "pyrit.models.storage_io": {
         "pyrit.auth": "phase-8",

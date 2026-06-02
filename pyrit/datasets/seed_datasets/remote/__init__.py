@@ -51,8 +51,17 @@ from pyrit.datasets.seed_datasets.remote.dangerous_qa_dataset import (
 from pyrit.datasets.seed_datasets.remote.darkbench_dataset import (
     _DarkBenchDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.decoding_trust_toxicity_dataset import (
+    DecodingTrustToxicitySubset,
+    _DecodingTrustToxicityDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.equitymedqa_dataset import (
     _EquityMedQADataset,
+)  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.figstep_dataset import (
+    FigStepCategory,
+    FigStepVariant,
+    _FigStepDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.forbidden_questions_dataset import (
     _ForbiddenQuestionsDataset,
@@ -171,6 +180,9 @@ from pyrit.datasets.seed_datasets.remote.xstest_dataset import (
 __all__ = [
     "CoCoNotCategory",
     "CoCoNotSplit",
+    "DecodingTrustToxicitySubset",
+    "FigStepCategory",
+    "FigStepVariant",
     "HiXSTestLanguage",
     "MMSafetyBenchCategory",
     "MMSafetyBenchVariant",
@@ -199,7 +211,9 @@ __all__ = [
     "ComicJailbreakTemplateConfig",
     "_DangerousQADataset",
     "_DarkBenchDataset",
+    "_DecodingTrustToxicityDataset",
     "_EquityMedQADataset",
+    "_FigStepDataset",
     "_ForbiddenQuestionsDataset",
     "_HarmBenchDataset",
     "_HarmBenchMultimodalDataset",
