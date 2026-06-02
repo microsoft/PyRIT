@@ -6,9 +6,10 @@ from unittest.mock import patch
 
 import pytest
 
+from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry import TargetRegistry
 from pyrit.setup.initializers import TargetInitializer
-from pyrit.setup.initializers.components.targets import TARGET_CONFIGS
+from pyrit.setup.initializers.components.targets import TARGET_CONFIGS, generate_rr_name, get_behavioral_key
 
 
 class TestTargetInitializerBasic:
@@ -631,3 +632,277 @@ class TestTargetInitializerAdversarialChatVariants:
 
         assert first_names == second_names
         assert first_default_count == second_default_count
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestTargetInitializerAutoGroup:
+    """Tests for automatic round-robin grouping in TargetInitializer."""
+
+    # Env vars for the two unsafe-chat endpoints that share the same underlying model.
+    UNSAFE1_ENV: dict[str, str] = {
+        "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT": "https://unsafe1.openai.azure.com",
+        "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY": "key1",
+        "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL": "gpt-4o",
+        "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_UNDERLYING_MODEL": "gpt-4o",
+    }
+    UNSAFE2_ENV: dict[str, str] = {
+        "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2": "https://unsafe2.openai.azure.com",
+        "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_KEY2": "key2",
+        "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2": "gpt-4o",
+        "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_UNDERLYING_MODEL2": "gpt-4o",
+    }
+
+    # Env vars for the two regular gpt4o endpoints.
+    GPT4O_1_ENV: dict[str, str] = {
+        "AZURE_OPENAI_GPT4O_ENDPOINT": "https://gpt4o-1.openai.azure.com",
+        "AZURE_OPENAI_GPT4O_KEY": "key1",
+        "AZURE_OPENAI_GPT4O_MODEL": "gpt-4o-deploy1",
+        "AZURE_OPENAI_GPT4O_UNDERLYING_MODEL": "gpt-4o",
+    }
+    GPT4O_2_ENV: dict[str, str] = {
+        "AZURE_OPENAI_GPT4O_ENDPOINT2": "https://gpt4o-2.openai.azure.com",
+        "AZURE_OPENAI_GPT4O_KEY2": "key2",
+        "AZURE_OPENAI_GPT4O_MODEL2": "gpt-4o-deploy2",
+        "AZURE_OPENAI_GPT4O_UNDERLYING_MODEL2": "gpt-4o",
+    }
+
+    def setup_method(self) -> None:
+        """Reset registry and clear env vars before each test."""
+        TargetRegistry.reset_instance()
+        self._clear_env_vars()
+
+    def teardown_method(self) -> None:
+        """Clean up after each test."""
+        TargetRegistry.reset_instance()
+        self._clear_env_vars()
+
+    def _clear_env_vars(self) -> None:
+        all_vars = list(self.UNSAFE1_ENV) + list(self.UNSAFE2_ENV) + list(self.GPT4O_1_ENV) + list(self.GPT4O_2_ENV)
+        for var in all_vars:
+            os.environ.pop(var, None)
+
+    async def test_auto_groups_targets_with_same_underlying_model(self) -> None:
+        """Test that targets with the same underlying model are auto-grouped into a round-robin."""
+        from pyrit.prompt_target import RoundRobinTarget
+
+        os.environ.update(self.GPT4O_1_ENV)
+        os.environ.update(self.GPT4O_2_ENV)
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+
+        # Find the auto-generated round-robin by checking for RoundRobinTarget instances
+        rr_names = [
+            name for name in registry.get_names() if isinstance(registry.get_instance_by_name(name), RoundRobinTarget)
+        ]
+        assert len(rr_names) >= 1, "Expected at least one auto-grouped round-robin target"
+
+        # The gpt-4o round-robin should contain both gpt4o targets
+        rr = registry.get_instance_by_name("OpenAIChatTarget_gpt-4o_rr")
+        assert rr is not None
+        assert isinstance(rr, RoundRobinTarget)
+
+    async def test_individual_targets_still_accessible_after_auto_group(self) -> None:
+        """Test that individual member targets remain accessible after auto-grouping."""
+        os.environ.update(self.GPT4O_1_ENV)
+        os.environ.update(self.GPT4O_2_ENV)
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert registry.get_instance_by_name("azure_openai_gpt4o") is not None
+        assert registry.get_instance_by_name("azure_openai_gpt4o2") is not None
+
+    async def test_no_round_robin_when_single_target(self) -> None:
+        """Test that no round-robin is created when only one target has a given model."""
+        os.environ.update(self.GPT4O_1_ENV)
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert registry.get_instance_by_name("azure_openai_gpt4o") is not None
+        # No round-robin should exist
+        rr = registry.get_instance_by_name("OpenAIChatTarget_gpt-4o_rr")
+        assert rr is None
+
+    async def test_no_round_robin_when_no_targets(self) -> None:
+        """Test that no round-robin targets are created when no env vars are set."""
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert len(registry) == 0
+
+    async def test_different_temperatures_not_grouped(self) -> None:
+        """Test that targets with different temperatures are NOT grouped together."""
+        # Set up gpt4o endpoints — the base target (no temp) and temp9 variant share the same
+        # underlying model but have different temperatures, so they should be in separate groups.
+        os.environ.update(self.GPT4O_1_ENV)
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        base = registry.get_instance_by_name("azure_openai_gpt4o")
+        temp9 = registry.get_instance_by_name("azure_openai_gpt4o_temp9")
+
+        # Both should exist but have different behavioral keys
+        assert base is not None
+        assert temp9 is not None
+        assert get_behavioral_key(base) != get_behavioral_key(temp9)
+
+    async def test_different_target_classes_not_grouped(self) -> None:
+        """Test that targets of different classes are NOT grouped even with same model."""
+        os.environ.update(self.GPT4O_1_ENV)
+        os.environ["AZURE_OPENAI_RESPONSES_ENDPOINT"] = "https://responses.openai.azure.com"
+        os.environ["AZURE_OPENAI_RESPONSES_KEY"] = "key"
+        os.environ["AZURE_OPENAI_RESPONSES_MODEL"] = "gpt-4o-deploy"
+        os.environ["AZURE_OPENAI_RESPONSES_UNDERLYING_MODEL"] = "gpt-4o"
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        chat_target = registry.get_instance_by_name("azure_openai_gpt4o")
+        response_target = registry.get_instance_by_name("azure_openai_responses")
+
+        assert chat_target is not None
+        assert response_target is not None
+        assert get_behavioral_key(chat_target) != get_behavioral_key(response_target)
+
+        # Clean up
+        for var in [
+            "AZURE_OPENAI_RESPONSES_ENDPOINT",
+            "AZURE_OPENAI_RESPONSES_KEY",
+            "AZURE_OPENAI_RESPONSES_MODEL",
+            "AZURE_OPENAI_RESPONSES_UNDERLYING_MODEL",
+        ]:
+            os.environ.pop(var, None)
+
+    async def test_auto_group_disabled_when_false(self) -> None:
+        """Test that auto_group=False disables round-robin auto-grouping."""
+        from pyrit.prompt_target import RoundRobinTarget
+
+        os.environ.update(self.GPT4O_1_ENV)
+        os.environ.update(self.GPT4O_2_ENV)
+
+        init = TargetInitializer()
+        init.params = {"tags": ["default"], "auto_group": False}
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        # Individual targets should exist
+        assert registry.get_instance_by_name("azure_openai_gpt4o") is not None
+        assert registry.get_instance_by_name("azure_openai_gpt4o2") is not None
+        # But no round-robin should be created
+        rr_targets = [
+            name for name in registry.get_names() if isinstance(registry.get_instance_by_name(name), RoundRobinTarget)
+        ]
+        assert len(rr_targets) == 0
+
+    async def test_auto_group_three_targets_same_model(self) -> None:
+        """Test that 3 targets with the same underlying model are grouped into one round-robin."""
+        from pyrit.prompt_target import RoundRobinTarget
+
+        os.environ.update(self.GPT4O_1_ENV)
+        os.environ.update(self.GPT4O_2_ENV)
+        os.environ.update(self.UNSAFE1_ENV)
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        rr = registry.get_instance_by_name("OpenAIChatTarget_gpt-4o_rr")
+        assert rr is not None
+        assert isinstance(rr, RoundRobinTarget)
+        # Should have 3 inner targets (gpt4o, gpt4o2, unsafe_chat)
+        assert len(rr._targets) == 3
+
+
+class TestGetBehavioralKey:
+    """Tests for _get_behavioral_key helper function."""
+
+    def test_key_includes_class_name(self) -> None:
+        """Test that the behavioral key includes the target's class name."""
+        from tests.unit.mocks import MockPromptTarget
+
+        target = MockPromptTarget()
+        key = get_behavioral_key(target)
+        assert key[0] == "MockPromptTarget"
+
+    def test_same_model_same_temp_same_key(self) -> None:
+        """Test that targets with identical behavioral params produce the same key."""
+        target1 = OpenAIChatTarget(
+            endpoint="https://ep1.com", api_key="k1", model_name="d1", underlying_model="gpt-4o", temperature=0.5
+        )
+        target2 = OpenAIChatTarget(
+            endpoint="https://ep2.com", api_key="k2", model_name="d2", underlying_model="gpt-4o", temperature=0.5
+        )
+        assert get_behavioral_key(target1) == get_behavioral_key(target2)
+
+    def test_different_temp_different_key(self) -> None:
+        """Test that targets with different temperatures produce different keys."""
+        target1 = OpenAIChatTarget(
+            endpoint="https://ep1.com", api_key="k1", model_name="m1", underlying_model="gpt-4o", temperature=0.0
+        )
+        target2 = OpenAIChatTarget(
+            endpoint="https://ep2.com", api_key="k2", model_name="m2", underlying_model="gpt-4o", temperature=0.9
+        )
+        assert get_behavioral_key(target1) != get_behavioral_key(target2)
+
+    def test_different_underlying_model_different_key(self) -> None:
+        """Test that targets with different underlying models produce different keys."""
+        target1 = OpenAIChatTarget(endpoint="https://ep1.com", api_key="k1", model_name="m1", underlying_model="gpt-4o")
+        target2 = OpenAIChatTarget(
+            endpoint="https://ep2.com", api_key="k2", model_name="m2", underlying_model="gpt-3.5-turbo"
+        )
+        assert get_behavioral_key(target1) != get_behavioral_key(target2)
+
+    def test_falls_back_to_model_name_when_no_underlying_model(self) -> None:
+        """Test that model_name is used as fallback when underlying_model is not set."""
+        target1 = OpenAIChatTarget(endpoint="https://ep1.com", api_key="k1", model_name="gpt-4o")
+        target2 = OpenAIChatTarget(endpoint="https://ep2.com", api_key="k2", model_name="gpt-4o")
+        assert get_behavioral_key(target1) == get_behavioral_key(target2)
+
+    def test_different_top_p_different_key(self) -> None:
+        """Test that targets with different top_p produce different keys."""
+        target1 = OpenAIChatTarget(
+            endpoint="https://ep1.com", api_key="k1", model_name="m1", underlying_model="gpt-4o", top_p=0.9
+        )
+        target2 = OpenAIChatTarget(
+            endpoint="https://ep2.com", api_key="k2", model_name="m2", underlying_model="gpt-4o", top_p=0.5
+        )
+        assert get_behavioral_key(target1) != get_behavioral_key(target2)
+
+
+class TestGenerateRrName:
+    """Tests for _generate_rr_name helper function."""
+
+    def test_basic_name_generation(self) -> None:
+        """Test basic round-robin name generation from a behavioral key."""
+        key = ("OpenAIChatTarget", ("temperature", None), ("top_p", None), ("underlying_model_name", "gpt-4o"))
+        assert generate_rr_name(key) == "OpenAIChatTarget_gpt-4o_rr"
+
+    def test_name_includes_temperature(self) -> None:
+        """Test that non-default temperature is included in the name."""
+        key = ("OpenAIChatTarget", ("temperature", 0.0), ("top_p", None), ("underlying_model_name", "gpt-4o"))
+        assert generate_rr_name(key) == "OpenAIChatTarget_gpt-4o_temperature0.0_rr"
+
+    def test_name_includes_top_p(self) -> None:
+        """Test that non-default top_p is included in the name."""
+        key = ("OpenAIChatTarget", ("temperature", None), ("top_p", 0.9), ("underlying_model_name", "gpt-4o"))
+        assert generate_rr_name(key) == "OpenAIChatTarget_gpt-4o_top_p0.9_rr"
+
+    def test_name_includes_class_prefix_for_all_target_types(self) -> None:
+        """Test that all target types get their class name in the prefix."""
+        key = ("OpenAIResponseTarget", ("temperature", None), ("top_p", None), ("underlying_model_name", "gpt-4o"))
+        assert generate_rr_name(key) == "OpenAIResponseTarget_gpt-4o_rr"
+
+    def test_name_unknown_when_no_model(self) -> None:
+        """Test that 'unknown' is used when no underlying model is available."""
+        key = ("OpenAIChatTarget", ("temperature", None), ("top_p", None), ("underlying_model_name", None))
+        assert generate_rr_name(key) == "OpenAIChatTarget_unknown_rr"

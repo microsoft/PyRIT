@@ -3,7 +3,6 @@
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 
 import aiofiles
@@ -47,7 +46,7 @@ async def download_specific_files_async(
     Download specific files from a Hugging Face model repository.
     If file_patterns is None, downloads all files.
     """
-    os.makedirs(cache_dir, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
     available_files = get_available_files(model_id, token)
     # If no file patterns are provided, download all available files

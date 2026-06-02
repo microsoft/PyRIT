@@ -3,9 +3,9 @@
 
 import asyncio
 import logging
-import os
 import tempfile
 import uuid
+from pathlib import Path
 from typing import Optional
 
 import av
@@ -171,7 +171,7 @@ class AudioTranscriptHelper:  # noqa: B024
         """
         audio_path = message_piece.converted_value
 
-        if not os.path.exists(audio_path):
+        if not Path(audio_path).exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
         # Transcribe audio to text
@@ -206,7 +206,8 @@ class AudioTranscriptHelper:  # noqa: B024
 
         # Add context to indicate this was scored from audio transcription
         for score in transcript_scores:
-            score.score_rationale += f"\nAudio transcript scored: {score.score_rationale}"
+            existing_rationale = score.score_rationale or ""
+            score.score_rationale = existing_rationale + f"\nAudio transcript scored: {existing_rationale}"
 
         return transcript_scores
 
@@ -230,10 +231,10 @@ class AudioTranscriptHelper:  # noqa: B024
         logger.info(f"Audio transcription: WAV file path = {wav_path}")
 
         # Check if WAV file exists and has content
-        if not os.path.exists(wav_path):
+        if not Path(wav_path).exists():
             raise FileNotFoundError(f"WAV file does not exist at {wav_path}")
 
-        file_size = os.path.getsize(wav_path)
+        file_size = Path(wav_path).stat().st_size
         logger.info(f"Audio transcription: WAV file size = {file_size} bytes")
 
         try:
@@ -247,8 +248,8 @@ class AudioTranscriptHelper:  # noqa: B024
             raise
         finally:
             # Clean up temporary WAV file if it exists (ie for scoring audio from videos)
-            if wav_path != audio_path and os.path.exists(wav_path):
-                os.unlink(wav_path)
+            if wav_path != audio_path:
+                Path(wav_path).unlink(missing_ok=True)
 
     def _ensure_wav_format(self, audio_path: str) -> str:
         """

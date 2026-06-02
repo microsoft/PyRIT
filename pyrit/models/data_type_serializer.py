@@ -7,7 +7,6 @@ import abc
 import asyncio
 import base64
 import hashlib
-import os
 import time
 import wave
 from mimetypes import guess_type
@@ -227,7 +226,7 @@ class DataTypeSerializer(abc.ABC):
                 if self._memory.results_storage_io is None:
                     raise RuntimeError("self._memory.results_storage_io is not initialized")
                 await self._memory.results_storage_io.write_file_async(file_path, audio_data)
-            os.remove(local_temp_path)
+            local_temp_path.unlink()
 
         # If local, we can just save straight to disk and do not need to delete temp file after
         else:
@@ -488,8 +487,8 @@ class DataTypeSerializer(abc.ABC):
             str | None: File extension (including dot) or None if unavailable.
 
         """
-        _, ext = os.path.splitext(file_path)
-        return ext if ext else None
+        ext = Path(file_path).suffix
+        return ext or None
 
     @staticmethod
     def get_mime_type(file_path: str) -> str | None:

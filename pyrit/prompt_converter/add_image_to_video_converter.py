@@ -4,7 +4,6 @@
 import asyncio
 import contextlib
 import logging
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -220,7 +219,7 @@ class AddImageVideoConverter(PromptConverter):
             with contextlib.suppress(cv2.error):
                 cv2.destroyAllWindows()  # Not available in headless OpenCV builds
             if azure_storage_flag and local_temp_path is not None:
-                os.remove(local_temp_path)
+                local_temp_path.unlink()
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "image_path") -> ConverterResult:
         """

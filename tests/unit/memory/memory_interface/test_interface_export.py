@@ -58,7 +58,7 @@ def test_export_all_conversations_file_created(sqlite_instance: MemoryInterface)
                 MagicMock(
                     message_piece_id="1234",
                     score_value=10,
-                    to_dict=lambda: {"message_piece_id": "1234", "score_value": 10},
+                    model_dump=lambda mode="json": {"message_piece_id": "1234", "score_value": 10},
                 )
             ]
 
@@ -100,7 +100,7 @@ def test_export_all_conversations_with_scores_correct_data(sqlite_instance: Memo
             mock_score = MagicMock()
             mock_score.message_piece_id = "piece_id_1234"
             mock_score.score_value = 10
-            mock_score.to_dict.return_value = {"message_piece_id": "piece_id_1234", "score_value": 10}
+            mock_score.model_dump.return_value = {"message_piece_id": "piece_id_1234", "score_value": 10}
 
             mock_get_pieces.return_value = [mock_piece]
             mock_get_scores.return_value = [mock_score]
@@ -186,7 +186,7 @@ def test_export_all_conversations_with_scores_respects_export_type(
 
             mock_score = MagicMock()
             mock_score.message_piece_id = "piece_id_1234"
-            mock_score.to_dict.return_value = {"message_piece_id": "piece_id_1234", "score_value": 10}
+            mock_score.model_dump.return_value = {"message_piece_id": "piece_id_1234", "score_value": 10}
 
             mock_get_pieces.return_value = [mock_piece]
             mock_get_scores.return_value = [mock_score]
