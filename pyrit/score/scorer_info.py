@@ -82,15 +82,23 @@ def get_scorer_info() -> list[_ScorerInfo]:
 
     infos: list[_ScorerInfo] = []
     for name in score_package.__all__:
-        obj = getattr(score_package, name)
-        if not isinstance(obj, type) or not issubclass(obj, Scorer) or inspect.isabstract(obj):
-            continue
+        obj = getattr(score_package, name, None)
 
-        if issubclass(obj, FloatScaleScorer):
-            score_type = "float_scale"
-        elif issubclass(obj, TrueFalseScorer):
-            score_type = "true_false"
-        else:
+        # Guard against entries that aren't genuine classes. A test elsewhere in the suite
+        # may patch a ``pyrit.score`` export with a mock (e.g. ``autospec``/``spec=type``)
+        # that reports ``isinstance(obj, type) is True`` yet makes ``issubclass`` raise
+        # ``TypeError``; skip anything that isn't a real, concrete scorer subclass.
+        try:
+            if not isinstance(obj, type) or not issubclass(obj, Scorer) or inspect.isabstract(obj):
+                continue
+
+            if issubclass(obj, FloatScaleScorer):
+                score_type = "float_scale"
+            elif issubclass(obj, TrueFalseScorer):
+                score_type = "true_false"
+            else:
+                continue
+        except TypeError:
             continue
 
         infos.append(_ScorerInfo(name=name, score_type=score_type, uses_llm=_uses_chat_target(obj)))

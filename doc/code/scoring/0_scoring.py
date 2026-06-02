@@ -59,7 +59,7 @@ import pandas as pd
 from pyrit.score import get_scorer_info
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
-await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
+await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=True)  # type: ignore
 
 rows = [
     {
