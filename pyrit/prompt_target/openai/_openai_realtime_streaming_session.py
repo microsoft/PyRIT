@@ -14,10 +14,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pyrit.models import Message, MessagePiece
-from pyrit.prompt_target.common.realtime_audio import RealtimeTargetResult, RealtimeTurnState
-from pyrit.prompt_target.common.streaming import ServerVadConfig
-from pyrit.prompt_target.common.streaming.streaming_audio_target import (
+from pyrit.prompt_target.common.realtime_audio import (
     STREAMING_INTERRUPTED_KEY,
+    RealtimeTargetResult,
+    RealtimeTurnState,
+    ServerVadConfig,
 )
 from pyrit.prompt_target.openai.openai_realtime_target import _OpenAIRealtimeDispatcher
 

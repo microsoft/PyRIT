@@ -13,10 +13,11 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 import pytest
 
 from pyrit.models import Message, MessagePiece
-from pyrit.prompt_target.common.realtime_audio import CommittedEvent, RealtimeTargetResult
-from pyrit.prompt_target.common.streaming import ServerVadConfig
-from pyrit.prompt_target.common.streaming.streaming_audio_target import (
+from pyrit.prompt_target.common.realtime_audio import (
     STREAMING_INTERRUPTED_KEY,
+    CommittedEvent,
+    RealtimeTargetResult,
+    ServerVadConfig,
 )
 from pyrit.prompt_target.openai._openai_realtime_streaming_session import (
     _OpenAIRealtimeStreamingSession,
