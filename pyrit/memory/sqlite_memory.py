@@ -62,6 +62,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         db_path: Optional[Union[Path, str]] = None,
         verbose: bool = False,
         skip_schema_migration: bool = False,
+        silent: bool = False,
     ) -> None:
         """
         Initialize the SQLiteMemory instance.
@@ -72,6 +73,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             verbose (bool): Whether to enable verbose logging.
                 Defaults to False.
             skip_schema_migration (bool): Whether to skip schema migration.
+                Defaults to False.
+            silent (bool): If True, suppresses schema migration console output.
                 Defaults to False.
         """
         super().__init__()
@@ -85,7 +88,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         self.engine = self._create_engine(has_echo=verbose)
         self.SessionFactory = sessionmaker(bind=self.engine)
         if not skip_schema_migration:
-            self._run_schema_migration()
+            self._run_schema_migration(silent=silent)
 
     def _init_storage_io(self) -> None:
         # Handles disk-based storage for SQLite local memory.
@@ -556,7 +559,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             piece_data = piece.model_dump(mode="json")
             # Find associated scores
             piece_scores = [score for score in scores if score.message_piece_id == piece.id]
-            piece_data["scores"] = [score.to_dict() for score in piece_scores]
+            piece_data["scores"] = [score.model_dump(mode="json") for score in piece_scores]
             merged_data.append(piece_data)
 
         if not merged_data:

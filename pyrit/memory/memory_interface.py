@@ -1180,9 +1180,12 @@ class MemoryInterface(abc.ABC):
             conversation_id=conversation_id, update_fields={"prompt_metadata": prompt_metadata}
         )
 
-    def _run_schema_migration(self) -> None:
+    def _run_schema_migration(self, *, silent: bool = False) -> None:
         """
         Run schema migrations to ensure the database schema is up to date.
+
+        Args:
+            silent (bool): If True, suppresses Alembic console output. Defaults to False.
 
         Raises:
             ValueError: If an invalid schema handling option is provided.
@@ -1194,8 +1197,8 @@ class MemoryInterface(abc.ABC):
         logger.info("Running schema migration.")
         if self.engine is None:
             raise RuntimeError("Engine must be initialized to run schema migrations.")
-        run_schema_migrations(engine=self.engine)
-        check_schema_migrations(engine=self.engine)
+        run_schema_migrations(engine=self.engine, silent=silent)
+        check_schema_migrations(engine=self.engine, silent=silent)
 
     def reset_database(self) -> None:
         """

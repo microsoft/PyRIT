@@ -206,7 +206,8 @@ class AudioTranscriptHelper:  # noqa: B024
 
         # Add context to indicate this was scored from audio transcription
         for score in transcript_scores:
-            score.score_rationale += f"\nAudio transcript scored: {score.score_rationale}"
+            existing_rationale = score.score_rationale or ""
+            score.score_rationale = existing_rationale + f"\nAudio transcript scored: {existing_rationale}"
 
         return transcript_scores
 

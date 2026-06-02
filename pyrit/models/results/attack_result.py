@@ -243,7 +243,7 @@ class AttackResult(StrategyResult):
                 self.atomic_attack_identifier.model_dump() if self.atomic_attack_identifier else None
             ),
             "last_response": self.last_response.model_dump(mode="json") if self.last_response else None,
-            "last_score": self.last_score.to_dict() if self.last_score else None,
+            "last_score": self.last_score.model_dump(mode="json") if self.last_score else None,
             "executed_turns": self.executed_turns,
             "execution_time_ms": self.execution_time_ms,
             "outcome": self.outcome.value,
@@ -283,7 +283,7 @@ class AttackResult(StrategyResult):
                 else None
             ),
             last_response=(MessagePiece.model_validate(data["last_response"]) if data.get("last_response") else None),
-            last_score=Score.from_dict(data["last_score"]) if data.get("last_score") else None,
+            last_score=Score.model_validate(data["last_score"]) if data.get("last_score") else None,
             executed_turns=data.get("executed_turns", 0),
             execution_time_ms=data.get("execution_time_ms", 0),
             outcome=AttackOutcome(data.get("outcome", "undetermined")),
