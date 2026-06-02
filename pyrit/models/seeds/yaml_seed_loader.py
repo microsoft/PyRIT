@@ -11,8 +11,7 @@ instance can't know its own provenance; the loader can, so the
 ``is_jinja_template=True`` marker is set exactly once at this boundary.
 
 The ``from_yaml_file`` and ``from_yaml_with_required_parameters`` classmethods
-on the seed classes are thin shims that delegate here. See the plan-gist
-Phase 9.1 entry for the eventual move of this module to ``pyrit/io/seeds.py``.
+on the seed classes are thin shims that delegate here.
 """
 
 from __future__ import annotations
