@@ -762,10 +762,11 @@ def generate_rr_name(key: tuple) -> str:
     Generate a registry name for an auto-grouped round-robin target.
 
     Produces names like ``OpenAIChatTarget_gpt-4o_rr`` or
-    ``OpenAIChatTarget_gpt-4o_temp0.0_rr``.
+    ``OpenAIChatTarget_gpt-4o_temperature0.0_rr``. Dynamically includes
+    all non-None behavioral params from the key.
 
     Args:
-        key: The behavioral grouping key tuple from ``_get_behavioral_key``.
+        key: The behavioral grouping key tuple from ``get_behavioral_key``.
 
     Returns:
         A sanitized registry name string.
@@ -773,17 +774,13 @@ def generate_rr_name(key: tuple) -> str:
     class_name = key[0]
     param_dict = dict(key[1:])
 
-    effective_model = param_dict.get("underlying_model_name") or "unknown"
+    underlying_model = param_dict.pop("underlying_model_name", None) or "unknown"
+    parts = [class_name, underlying_model]
 
-    parts = [class_name, effective_model]
-
-    temperature = param_dict.get("temperature")
-    if temperature is not None:
-        parts.append(f"temp{temperature}")
-
-    top_p = param_dict.get("top_p")
-    if top_p is not None:
-        parts.append(f"top_p{top_p}")
+    for param, value in sorted(param_dict.items()):
+        if value is None:
+            continue
+        parts.append(f"{param}{value}")
 
     parts.append("rr")
 

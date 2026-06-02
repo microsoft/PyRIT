@@ -890,7 +890,7 @@ class TestGenerateRrName:
     def test_name_includes_temperature(self) -> None:
         """Test that non-default temperature is included in the name."""
         key = ("OpenAIChatTarget", ("temperature", 0.0), ("top_p", None), ("underlying_model_name", "gpt-4o"))
-        assert generate_rr_name(key) == "OpenAIChatTarget_gpt-4o_temp0.0_rr"
+        assert generate_rr_name(key) == "OpenAIChatTarget_gpt-4o_temperature0.0_rr"
 
     def test_name_includes_top_p(self) -> None:
         """Test that non-default top_p is included in the name."""
