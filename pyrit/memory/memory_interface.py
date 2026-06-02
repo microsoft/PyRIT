@@ -1320,7 +1320,7 @@ class MemoryInterface(abc.ABC):
         if values:
             conditions.extend(field.contains(value) for value in values)
 
-    async def _serialize_seed_value(self, prompt: Seed) -> str:
+    async def _serialize_seed_value_async(self, prompt: Seed) -> str:
         """
         Serialize the value of a seed prompt based on its data type.
 
@@ -1382,7 +1382,7 @@ class MemoryInterface(abc.ABC):
 
             # Handle serialization for image, audio & video SeedPrompts
             if prompt.data_type in ["image_path", "audio_path", "video_path"]:
-                serialized_prompt_value = await self._serialize_seed_value(prompt=prompt)
+                serialized_prompt_value = await self._serialize_seed_value_async(prompt=prompt)
                 prompt.value = serialized_prompt_value
 
             await prompt.set_sha256_value_async()

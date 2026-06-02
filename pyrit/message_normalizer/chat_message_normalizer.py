@@ -11,7 +11,7 @@ from pyrit.message_normalizer.message_normalizer import (
     MessageListNormalizer,
     MessageStringNormalizer,
     SystemMessageBehavior,
-    apply_system_message_behavior,
+    apply_system_message_behavior_async,
 )
 from pyrit.models import ChatMessage, DataTypeSerializer, Message
 from pyrit.models.message_piece import MessagePiece
@@ -78,7 +78,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
             raise ValueError("Messages list cannot be empty")
 
         # Apply system message preprocessing
-        processed_messages = await apply_system_message_behavior(messages, self.system_message_behavior)
+        processed_messages = await apply_system_message_behavior_async(messages, self.system_message_behavior)
 
         chat_messages: list[ChatMessage] = []
         for message in processed_messages:
@@ -144,13 +144,13 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
             return {"type": "image_url", "image_url": {"url": data_url}}
         if data_type == "audio_path":
             # Convert local audio to base64 for input_audio format
-            return await self._convert_audio_to_input_audio(content)
+            return await self._convert_audio_to_input_audio_async(content)
         if data_type == "url":
             # Direct URL (typically for images)
             return {"type": "image_url", "image_url": {"url": content}}
         raise ValueError(f"Data type '{data_type}' is not yet supported for chat message content.")
 
-    async def _convert_audio_to_input_audio(self, audio_path: str) -> dict[str, Any]:
+    async def _convert_audio_to_input_audio_async(self, audio_path: str) -> dict[str, Any]:
         """
         Convert a local audio file to OpenAI input_audio format.
 

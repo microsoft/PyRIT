@@ -8,9 +8,6 @@
 # To regenerate (only after a deliberate, reviewed cleanup):
 #   python build_scripts/check_async_suffix.py --write-baseline
 
-pyrit/memory/memory_interface.py:1323:_serialize_seed_value
-pyrit/message_normalizer/chat_message_normalizer.py:153:_convert_audio_to_input_audio
-pyrit/message_normalizer/message_normalizer.py:86:apply_system_message_behavior
 pyrit/models/data_type_serializer.py:137:save_data
 pyrit/models/data_type_serializer.py:154:save_b64_image
 pyrit/models/data_type_serializer.py:172:save_formatted_audio
