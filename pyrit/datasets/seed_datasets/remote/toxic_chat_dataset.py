@@ -8,7 +8,7 @@ from typing import Any
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,11 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: str = "lmsys/toxic-chat"
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "huge"  # 5082 real user-chatbot conversations from Chatbot Arena
+    tags: frozenset[str] = frozenset({"default", "safety", "multiturn"})
 
     OPENAI_MODERATION_THRESHOLD: float = 0.8
 
