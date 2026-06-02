@@ -4,12 +4,11 @@
 import warnings
 from datetime import datetime, timezone
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory.memory_models import AttackResultEntry
+from pyrit.models import ComponentIdentifier, build_atomic_attack_identifier
 from pyrit.models.attack_result import AttackOutcome, AttackResult
 from pyrit.models.conversation_reference import ConversationReference, ConversationType
-from pyrit.models.message_piece import MessagePiece
+from pyrit.models.messages.message_piece import MessagePiece
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import Score
 

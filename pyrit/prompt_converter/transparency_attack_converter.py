@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import base64
 import logging
 from io import BytesIO
@@ -9,8 +10,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType, data_serializer_factory
+from pyrit.models import ComponentIdentifier, PromptDataType, data_serializer_factory
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)
@@ -306,7 +306,7 @@ class TransparencyAttackConverter(PromptConverter):
 
         self._validate_input_image(prompt)
 
-        background_image = self._load_and_preprocess_image(prompt)
+        background_image = await asyncio.to_thread(self._load_and_preprocess_image, prompt)
         background_tensor = background_image * 0.5  # darkening for better blending optimization
 
         alpha = np.ones_like(background_tensor)  # optimized to determine transparency pattern

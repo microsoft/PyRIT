@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import abc
+import asyncio
 import base64
 import hashlib
 import os
@@ -25,6 +26,22 @@ if TYPE_CHECKING:
 
 # Define allowed categories for validation
 AllowedCategories = Literal["seed-prompt-entries", "prompt-memory-entries"]
+
+
+def _write_wav_sync(
+    path: str,
+    *,
+    num_channels: int,
+    sample_width: int,
+    sample_rate: int,
+    data: bytes,
+) -> None:
+    """Write PCM audio bytes to a WAV file synchronously."""
+    with wave.open(path, "wb") as wav_file:
+        wav_file.setnchannels(num_channels)
+        wav_file.setsampwidth(sample_width)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(data)
 
 
 def data_serializer_factory(
@@ -195,11 +212,14 @@ class DataTypeSerializer(abc.ABC):
         # save audio file locally first if in AzureStorageBlob so we can use wave.open to set audio parameters
         if self._is_azure_storage_url(str(file_path)):
             local_temp_path = Path(DB_DATA_PATH, "temp_audio.wav")
-            with wave.open(str(local_temp_path), "wb") as wav_file:
-                wav_file.setnchannels(num_channels)
-                wav_file.setsampwidth(sample_width)
-                wav_file.setframerate(sample_rate)
-                wav_file.writeframes(data)
+            await asyncio.to_thread(
+                _write_wav_sync,
+                str(local_temp_path),
+                num_channels=num_channels,
+                sample_width=sample_width,
+                sample_rate=sample_rate,
+                data=data,
+            )
 
             async with aiofiles.open(local_temp_path, "rb") as f:
                 audio_data = await f.read()
@@ -210,11 +230,14 @@ class DataTypeSerializer(abc.ABC):
 
         # If local, we can just save straight to disk and do not need to delete temp file after
         else:
-            with wave.open(str(file_path), "wb") as wav_file:
-                wav_file.setnchannels(num_channels)
-                wav_file.setsampwidth(sample_width)
-                wav_file.setframerate(sample_rate)
-                wav_file.writeframes(data)
+            await asyncio.to_thread(
+                _write_wav_sync,
+                str(file_path),
+                num_channels=num_channels,
+                sample_width=sample_width,
+                sample_rate=sample_rate,
+                data=data,
+            )
 
         self.value = str(file_path)
 

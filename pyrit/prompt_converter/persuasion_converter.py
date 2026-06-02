@@ -12,8 +12,8 @@ from pyrit.exceptions import (
     InvalidJsonException,
     remove_markdown_json,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     SeedPrompt,
 )

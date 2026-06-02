@@ -38,17 +38,18 @@ from pyrit.executor.attack.core.attack_config import (
 )
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
-from pyrit.identifiers import ComponentIdentifier, build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
     Message,
     MessagePiece,
     Score,
     SeedPrompt,
+    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
@@ -607,7 +608,7 @@ class _TreeOfAttacksNode:
             self.objective_target_conversation_id = str(uuid.uuid4())
 
         # Duplicate to ensure fresh IDs (avoids conflicts if message was already in memory)
-        message = self._initial_prompt.duplicate_message()
+        message = self._initial_prompt.duplicate()
         self._initial_prompt = None  # Clear for future turns
 
         # Store the prompt text for reference
@@ -650,8 +651,8 @@ class _TreeOfAttacksNode:
         used by the TAP algorithm to decide which branches to explore further.
 
         Blocked or errored responses are scored via the scorer's unified default behavior:
-        :class:`~pyrit.score.true_false.true_false_scorer.TrueFalseScorer` returns
-        ``Score(False)`` and :class:`~pyrit.score.float_scale.float_scale_scorer.FloatScaleScorer`
+        ``TrueFalseScorer`` returns
+        ``Score(False)`` and ``FloatScaleScorer``
         returns ``Score(0.0)`` whenever no supported pieces remain after validator filtering
         (the normal outcome for a blocked piece). This keeps blocked branches at the bottom
         of the priority queue without needing attack-level error mapping.
@@ -1338,7 +1339,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         Note:
             Blocked or errored target responses (e.g. content filter triggers from image
             generation targets) are scored ``0.0`` via the unified
-            :class:`~pyrit.score.float_scale.float_scale_scorer.FloatScaleScorer` default,
+            ``FloatScaleScorer`` default,
             which prevents premature pruning without any attack-level error mapping. To
             score partial content from blocked responses, set
             ``score_blocked_content=True`` on the objective scorer (requires

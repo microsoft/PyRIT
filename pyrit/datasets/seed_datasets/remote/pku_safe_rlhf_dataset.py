@@ -7,7 +7,7 @@ from typing import Literal, Optional
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,11 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
     Reference: https://huggingface.co/datasets/PKU-Alignment/PKU-SafeRLHF
     Paper: [@ji2024pkusaferlhf]
     """
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "huge"  # 73907 prompt-response pairs across 19 harm categories
+    tags: frozenset[str] = frozenset({"default", "safety"})
 
     def __init__(
         self,
