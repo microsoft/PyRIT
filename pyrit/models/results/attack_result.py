@@ -84,7 +84,7 @@ class AttackResult(StrategyResult):
     outcome_reason: Optional[str] = None
 
     # Wall-clock time the result was created or persisted.
-    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
 
     # Flexible conversation refs (nothing unused)
     related_conversations: set[ConversationReference] = Field(default_factory=set)
@@ -111,31 +111,6 @@ class AttackResult(StrategyResult):
     # and the corresponding DB columns remain NULL.
     attribution_parent_id: Optional[str] = None
     attribution_data: Optional[dict[str, Any]] = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _coerce_naive_timestamp(cls, data: Any) -> Any:
-        """
-        Coerce a naive ``timestamp`` (datetime or ISO string) to UTC.
-
-        ``AwareDatetime`` rejects naive datetimes that the legacy dataclass
-        accepted (e.g. SQLite-loaded timestamps). Mirror ``_ensure_utc`` so
-        existing naive inputs keep validating.
-
-        Returns:
-            The input ``data`` with a tz-aware ``timestamp`` when one was supplied.
-        """
-        if not isinstance(data, dict):
-            return data
-        data = dict(data)
-        ts = data.get("timestamp")
-        if isinstance(ts, str):
-            ts = datetime.fromisoformat(ts)
-        if isinstance(ts, datetime) and ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        if ts is not None:
-            data["timestamp"] = ts
-        return data
 
     @model_validator(mode="before")
     @classmethod

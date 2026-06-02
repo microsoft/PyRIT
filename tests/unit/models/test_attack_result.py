@@ -446,50 +446,45 @@ class TestAttackResultValidation:
         with pytest.raises(ValueError):
             AttackResult(conversation_id="c1", objective="test", not_a_field="boom")
 
-    def test_naive_datetime_timestamp_is_coerced_to_utc(self) -> None:
-        """A naive datetime passed at construction is coerced to tz-aware UTC."""
-        naive = datetime(2026, 1, 1, 12, 0, 0)  # noqa: DTZ001
-        result = AttackResult(conversation_id="c1", objective="test", timestamp=naive)
-        assert result.timestamp.tzinfo is timezone.utc
-        assert result.timestamp.replace(tzinfo=None) == naive
+    def test_naive_datetime_timestamp_is_rejected(self) -> None:
+        """Naive datetimes are rejected (AwareDatetime), matching Score/MessagePiece.
 
-    def test_naive_iso_string_timestamp_is_coerced_to_utc(self) -> None:
-        """A naive ISO-8601 string is parsed and coerced to tz-aware UTC."""
-        result = AttackResult(conversation_id="c1", objective="test", timestamp="2026-01-01T12:00:00")
-        assert result.timestamp.tzinfo is timezone.utc
-        assert result.timestamp.replace(tzinfo=None) == datetime(2026, 1, 1, 12, 0, 0)  # noqa: DTZ001
+        SQLite-loaded naive timestamps are normalized to UTC by the memory layer
+        (``AttackResultEntry.get_attack_result`` via ``_ensure_utc``) before they
+        ever reach this constructor, so the model itself stays strict.
+        """
+        naive = datetime(2026, 1, 1, 12, 0, 0)  # noqa: DTZ001
+        with pytest.raises(ValueError):
+            AttackResult(conversation_id="c1", objective="test", timestamp=naive)
 
     def test_aware_iso_string_timestamp_is_preserved(self) -> None:
         """An ISO string carrying an offset is parsed without altering the instant."""
         result = AttackResult(conversation_id="c1", objective="test", timestamp="2026-01-01T12:00:00+00:00")
         assert result.timestamp == datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
-    def test_deprecated_kwarg_and_naive_timestamp_together(self) -> None:
-        """Both before-validators apply: kwarg promoted, timestamp coerced, no extra-field error."""
+    def test_deprecated_kwarg_promotes_without_extra_field_error(self) -> None:
+        """The promote before-validator pops attack_identifier before extra='forbid' runs."""
         attack_id = ComponentIdentifier(class_name="TestAttack", class_module="tests.unit")
-        naive = datetime(2026, 1, 1, 12, 0, 0)  # noqa: DTZ001
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             result = AttackResult(
                 conversation_id="c1",
                 objective="test",
                 attack_identifier=attack_id,
-                timestamp=naive,
             )
 
         deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
         assert len(deprecation_warnings) >= 1
         assert result.atomic_attack_identifier is not None
-        assert result.timestamp.tzinfo is timezone.utc
 
     def test_model_validate_does_not_mutate_input_dict(self) -> None:
-        """Before-validators must copy, not mutate, the caller-provided payload dict."""
+        """The promote before-validator must copy, not mutate, the caller-provided payload dict."""
         attack_id = ComponentIdentifier(class_name="TestAttack", class_module="tests.unit")
         payload = {
             "conversation_id": "c1",
             "objective": "test",
             "attack_identifier": attack_id,
-            "timestamp": "2026-01-01T12:00:00",
+            "timestamp": "2026-01-01T12:00:00+00:00",
         }
         original = dict(payload)
         with warnings.catch_warnings(record=True):
