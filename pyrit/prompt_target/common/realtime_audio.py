@@ -11,6 +11,10 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
+from pyrit.prompt_target.common.streaming.streaming_audio_target import (
+    ServerVadConfig as ServerVadConfig,  # noqa: TC001
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,29 +24,6 @@ logger = logging.getLogger(__name__)
 #: to delete when swapping in converter-transformed audio. Exposed as a public
 #: constant so attacks can reference it without reaching into target internals.
 REALTIME_COMMITTED_ITEM_ID_KEY = "realtime_committed_item_id"
-
-
-@dataclass(frozen=True)
-class ServerVadConfig:
-    """Server-side voice activity detection (VAD) tuning for realtime audio targets."""
-
-    threshold: float = 0.4
-    prefix_padding_ms: int = 200
-    silence_duration_ms: int = 1500
-
-    def __post_init__(self) -> None:
-        """
-        Validate VAD tuning values.
-
-        Raises:
-            ValueError: If any field is outside its valid range.
-        """
-        if not 0.0 <= self.threshold <= 1.0:
-            raise ValueError(f"threshold must be in [0.0, 1.0], got {self.threshold}")
-        if self.prefix_padding_ms < 0:
-            raise ValueError(f"prefix_padding_ms must be non-negative, got {self.prefix_padding_ms}")
-        if self.silence_duration_ms < 0:
-            raise ValueError(f"silence_duration_ms must be non-negative, got {self.silence_duration_ms}")
 
 
 @dataclass
