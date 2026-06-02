@@ -11,37 +11,69 @@
 # %% [markdown]
 # # Benchmark Scenarios
 #
-# Benchmark scenarios are a subset of scenarios that compare the effectiveness of attacks across an axis that varies within the scenario itself. The axis can be many things; currently, the only benchmark variant is the adversarial benchmark, whose axis of change is the adversarial model used in attacks.
+# Benchmark scenarios compare attack effectiveness across an axis that varies within the scenario
+# itself. Currently the only benchmark variant is the adversarial benchmark, whose axis of change is
+# the **adversarial chat helper model** used in attacks. For full configuration options see
+# `pyrit_scan --help` and the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb).
 
 # %% [markdown]
 # ## Adversarial Benchmark
-# The adversarial benchmarking scenario (`AdversarialBenchmark`) compares the effectiveness of different adversarial models in successfully executing attacks against a target model.
+#
+# `AdversarialBenchmark` holds the objective target and dataset constant and varies the adversarial
+# chat model used to drive multi-turn attacks. Useful for evaluating which adversarial helper
+# models produce stronger or weaker attack success rates against the same target.
+#
+# Adversarial targets are user-provided via the `adversarial_targets` scenario parameter. Each name
+# must already be registered in `TargetRegistry` — typically by `TargetInitializer` from the
+# `ADVERSARIAL_CHAT_*` env vars (see `.env_example`). Use `pyrit_scan --list-targets` to see every
+# target currently registered.
+#
+# ```bash
+# pyrit_scan benchmark.adversarial \
+#   --initializers target load_default_datasets \
+#   --target openai_chat \
+#   --adversarial-targets adversarial_chat_singleturn adversarial_chat_multiturn \
+#   --max-dataset-size 4
+# ```
+#
+# Pass multiple `--adversarial-targets` values to compare across models in a single run.
+#
+# **Available strategies:** `light` (default — a quick snapshot using the cheaper techniques),
+# `single_turn`, `multi_turn`, plus one member per adversarial-capable source technique
+# (e.g. `red_teaming`, `tap`, `crescendo_simulated`). The `light` aggregate excludes `tap` and
+# `crescendo_simulated`, which can take hours.
+
+# %% [markdown]
+# ## Setup
 
 # %%
 from pyrit.output import output_scenario_async
 from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.scenarios.benchmark import AdversarialBenchmark
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-from pyrit.setup.initializers import LoadDefaultDatasets
+from pyrit.setup.initializers import LoadDefaultDatasets, ScorerInitializer, TargetInitializer
 
-await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[LoadDefaultDatasets()])  # type: ignore
-
-# Pass any number of adversarial PromptTarget instances (with chat-target
-# capabilities — multi-turn and editable history) as a list; AdversarialBenchmark
-# infers a label for each from its identifier and runs every benchmark-friendly
-# attack technique against the objective target with each adversarial model.
-adversarial_model = OpenAIChatTarget()
-
-benchmark_scenario = AdversarialBenchmark(adversarial_models=[adversarial_model])
-
-await benchmark_scenario.initialize_async(  # type: ignore
-    objective_target=OpenAIChatTarget(), max_concurrency=2
+await initialize_pyrit_async(  # type: ignore
+    memory_db_type=IN_MEMORY,
+    initializers=[TargetInitializer(), ScorerInitializer(), LoadDefaultDatasets()],
 )
 
-baseline_result = await benchmark_scenario.run_async()  # type: ignore
+objective_target = OpenAIChatTarget()
 
-# Resume handle: re-run with `AdversarialBenchmark(..., scenario_result_id=<this id>)` to pick
-# up where this run left off (constructor args must match the original run).
-print(f"Scenario result id: {baseline_result.id}")
+# %%
+dataset_config = DatasetConfiguration(dataset_names=["harmbench"], max_dataset_size=4)
 
-await output_scenario_async(baseline_result)
+scenario = AdversarialBenchmark()
+scenario.set_params_from_args(
+    args={"adversarial_targets": ["adversarial_chat_singleturn", "adversarial_chat_multiturn"]}
+)
+await scenario.initialize_async(  # type: ignore
+    objective_target=objective_target,
+    dataset_config=dataset_config,
+)
+
+scenario_result = await scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(scenario_result)

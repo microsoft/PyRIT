@@ -196,28 +196,43 @@ def calculate_score(
 
 The PyRIT docs build uses **MyST** (Markdown-flavoured), not reStructuredText.
 Do **not** use reST cross-reference roles in docstrings or module comments —
-they render as raw text under MyST and are inconsistent with the rest of the
-codebase, which uses plain double-backtick code spans for symbol names.
+they render as raw text under MyST. A pre-commit hook
+(`check_no_rest_roles`) blocks new ones from landing.
+
+Use plain double-backticks for symbol references. The API page generator
+(`build_scripts/gen_api_md.py`) automatically rewrites known PyRIT symbol
+names into MyST cross-reference links at build time, so you get clickable
+navigation in the rendered docs without any extra markup.
 
 ```python
-# WRONG — reST roles render as literal `:class:\`SeedPrompt\`` under MyST
+# WRONG — reST roles render as literal `:class:\`SeedPrompt\`` under MyST,
+# and the pre-commit guard will reject them
 """Returns a :class:`SeedPrompt` instance."""
 """Delegate to :func:`download_files_async` (deprecated alias)."""
 """See :meth:`PromptTarget.apply_capabilities` for details."""
 
-# CORRECT — plain double-backtick code span (matches existing convention)
+# CORRECT — plain double-backticks; gen_api_md.py auto-links these
 """Returns a ``SeedPrompt`` instance."""
 """Delegate to ``download_files_async`` (deprecated alias)."""
 """See ``PromptTarget.apply_capabilities`` for details."""
 ```
 
-Roles to avoid include `:class:`, `:func:`, `:meth:`, `:mod:`, `:attr:`,
-`:data:`, `:exc:`, `:obj:`, `:ref:`, and any `:py:*:` variants
-(e.g. `:py:class:`, `:py:func:`).
+The auto-linker resolves:
 
-If you genuinely need a Sphinx cross-reference (rare in PyRIT — most
-docstrings just name the symbol in backticks), use the MyST role syntax
-`` {class}`Name` `` instead. The default, though, is plain double-backticks.
+- bare class/function names (`` ``SeedPrompt`` ``)
+- `Class.method` references (`` ``PromptTarget.apply_capabilities`` ``)
+- fully-qualified paths (`` ``pyrit.models.SeedPrompt`` ``)
+- bare method names when the docstring is on the owning class
+  (`` ``send_prompt_async`` `` inside `PromptTarget`)
+
+Ambiguous short names (e.g. two unrelated classes both called `Scorer`)
+are left as plain code-spans; spell out the FQN when you need a stable
+cross-reference. Unknown names also stay as plain code-spans, so
+docstrings remain safe to write without consulting the symbol index.
+
+If you need an explicit MyST link in markdown documentation, use the
+standard syntax `` [`Name`](#api-pyrit_module-Name) `` — but inside
+Python docstrings this should be rare; plain backticks are the default.
 
 ### Class-Level Constants
 - Define constants as class attributes, not module-level
@@ -322,7 +337,7 @@ def process_items(self, *, items: list[str]) -> list[str]:
 
 ## Deprecations
 
-When deprecating a public class, function, method, parameter, or module path, use `pyrit.common.deprecation.print_deprecation_message` — never `warnings.warn` directly. It wraps `warnings.warn(..., DeprecationWarning, stacklevel=3)` with a consistent format so filtering still works.
+When deprecating a public class, function, method, parameter, or module path, use `pyrit.common.deprecation.print_deprecation_message` — **never** `warnings.warn` directly. It wraps `warnings.warn(..., DeprecationWarning, stacklevel=3)` with a consistent format so filtering still works.
 
 Set `removed_in` to **current version + 2 minor versions** (e.g. `0.14.x` → `removed_in="0.16.0"`). This gives one full release cycle of warning before removal.
 
@@ -339,6 +354,32 @@ def old_method(self, *, foo: str) -> None:
 ```
 
 `old_item` / `new_item` accept a class/callable (qualified name is generated) or a string.
+
+```python
+# INCORRECT - bypasses the helper, breaks consistent formatting and filtering
+import warnings
+warnings.warn("foo is deprecated, use bar", DeprecationWarning, stacklevel=2)
+```
+
+If you find yourself reaching for `warnings.warn` because the
+"`X` is deprecated and will be removed in `Y`. Use `Z` instead." template doesn't fit your message, **rework the message to fit the template** (e.g. lean on the docstring or a log line for any extra nuance). Do not stuff extra prose into `new_item` to work around the template.
+
+### Deprecating an argument with a non-default value
+
+To detect "user passed this argument" reliably, use a sentinel default (typically `None`) rather than the documented default, and warn whenever the value is not the sentinel — otherwise callers who explicitly pass the documented default get no warning even though they're using the deprecated path.
+
+```python
+# CORRECT - warns on any explicit value, including the old documented default of 1
+def run_async(self, *, max_concurrency: int | None = None) -> None:
+    if max_concurrency is not None:
+        print_deprecation_message(
+            old_item="run_async(max_concurrency=...)",
+            new_item="run_async(executor=AttackExecutor(max_concurrency=...))",
+            removed_in="0.16.0",
+        )
+    effective = max_concurrency if max_concurrency is not None else 1
+    ...
+```
 
 ## Pythonic Patterns
 

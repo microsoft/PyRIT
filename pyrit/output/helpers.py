@@ -11,8 +11,7 @@ deferred inside each ``*MemoryPrinter`` constructor, so importing this module (o
 
 import os
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import AttackResult, Message, Score
+from pyrit.models import AttackResult, ComponentIdentifier, Message, Score
 from pyrit.models.scenario_result import ScenarioResult
 from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
