@@ -15,13 +15,12 @@ from pyrit.exceptions import (
     pyrit_target_retry,
 )
 from pyrit.exceptions.exception_classes import ServerErrorException
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     construct_response_from_request,
     data_serializer_factory,
 )
-from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
@@ -58,7 +57,7 @@ class RealtimeTargetResult:
         return "".join(self.transcripts)
 
 
-class RealtimeTarget(OpenAITarget, PromptTarget):
+class RealtimeTarget(OpenAITarget):
     """
     A prompt target for Azure OpenAI Realtime API.
 

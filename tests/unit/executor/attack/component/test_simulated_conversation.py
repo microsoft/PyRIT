@@ -11,10 +11,10 @@ from pyrit.executor.attack import AttackConverterConfig, RTASystemPromptPaths
 from pyrit.executor.attack.multi_turn.simulated_conversation import (
     generate_simulated_conversation_async,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     Message,
     MessagePiece,
     NextMessageSystemPromptPaths,

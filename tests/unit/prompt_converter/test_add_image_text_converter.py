@@ -42,7 +42,7 @@ def test_add_image_text_converter_initialization(image_text_converter_sample_ima
 
 
 def test_add_image_text_converter_positional_arg_deprecation(image_text_converter_sample_image):
-    with pytest.warns(FutureWarning, match="Passing 'img_to_add' as a positional argument is deprecated"):
+    with pytest.warns(DeprecationWarning, match="Passing img_to_add as a positional argument to AddImageTextConverter"):
         converter = AddImageTextConverter(image_text_converter_sample_image)
     assert converter._img_to_add == image_text_converter_sample_image
 
@@ -58,12 +58,12 @@ def test_add_image_text_converter_too_many_positional_args_raises(image_text_con
 
 
 def test_add_image_text_converter_x_pos_y_pos_deprecation(image_text_converter_sample_image):
-    with pytest.warns(FutureWarning, match="x_pos and y_pos are deprecated"):
+    with pytest.warns(DeprecationWarning, match=r"AddImageTextConverter\(x_pos=\.\.\., y_pos=\.\.\.\)"):
         AddImageTextConverter(img_to_add=image_text_converter_sample_image, x_pos=50, y_pos=50)
 
 
 def test_add_image_text_converter_x_pos_y_pos_deprecation_default_value(image_text_converter_sample_image):
-    with pytest.warns(FutureWarning, match="x_pos and y_pos are deprecated"):
+    with pytest.warns(DeprecationWarning, match=r"AddImageTextConverter\(x_pos=\.\.\., y_pos=\.\.\.\)"):
         AddImageTextConverter(img_to_add=image_text_converter_sample_image, x_pos=10)
 
 
@@ -71,7 +71,7 @@ def test_add_image_text_converter_no_x_pos_y_pos_no_warning(image_text_converter
     import warnings
 
     with warnings.catch_warnings():
-        warnings.simplefilter("error", FutureWarning)
+        warnings.simplefilter("error", DeprecationWarning)
         AddImageTextConverter(img_to_add=image_text_converter_sample_image)
 
 

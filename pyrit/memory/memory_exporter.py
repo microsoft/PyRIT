@@ -69,7 +69,7 @@ class MemoryExporter:
             raise ValueError("Please provide a valid file path for exporting data.")
         if not data:
             raise ValueError("No data to export.")
-        export_data = [piece.to_dict() for piece in data]
+        export_data = [piece.model_dump(mode="json") for piece in data]
         with open(file_path, "w") as f:
             json.dump(export_data, f, indent=4)
 
@@ -90,7 +90,7 @@ class MemoryExporter:
             raise ValueError("Please provide a valid file path for exporting data.")
         if not data:
             raise ValueError("No data to export.")
-        export_data = [piece.to_dict() for piece in data]
+        export_data = [piece.model_dump(mode="json") for piece in data]
         fieldnames = list(export_data[0].keys())
         with open(file_path, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -113,7 +113,7 @@ class MemoryExporter:
             raise ValueError("Please provide a valid file path for exporting data.")
         if not data:
             raise ValueError("No data to export.")
-        export_data = [piece.to_dict() for piece in data]
+        export_data = [piece.model_dump(mode="json") for piece in data]
         fieldnames = list(export_data[0].keys())
         with open(file_path, "w", newline="") as f:
             f.write(f"| {' | '.join(fieldnames)} |\n")

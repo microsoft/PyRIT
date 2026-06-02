@@ -8,8 +8,7 @@ from typing import Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import SeedPrompt
+from pyrit.models import ComponentIdentifier, SeedPrompt
 from pyrit.prompt_converter.llm_generic_text_converter import LLMGenericTextConverter
 from pyrit.prompt_target import PromptTarget
 

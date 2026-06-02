@@ -30,6 +30,11 @@ repos:
         files: ^(doc/.*\.(py|ipynb|md)|doc/myst\.yml)$
         pass_filenames: false
         additional_dependencies: ['pyyaml']
+      - id: check-no-rest-roles
+        name: Reject Sphinx reST cross-reference roles
+        entry: python ./build_scripts/check_no_rest_roles.py
+        language: python
+        files: ^pyrit/.*\.py$
       - id: enforce_alembic_revision_immutability
         name: Enforce Alembic Revision Immutability
         entry: python ./build_scripts/enforce_alembic_revision_immutability.py

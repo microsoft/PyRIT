@@ -14,8 +14,7 @@ from pyrit.executor.promptgen.fuzzer import (
     FuzzerShortenConverter,
     FuzzerSimilarConverter,
 )
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
 
 
 @pytest.mark.parametrize(

@@ -9,7 +9,7 @@ import pandas as pd
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,11 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
     Trans-Centered Perspectives on Large Language Models."
     ACM Transactions on Computer-Human Interaction (2018).
     """
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "medium"  # 300 Quora questions on transgender / non-binary topics
+    tags: frozenset[str] = frozenset({"default", "safety", "bias"})
 
     RATINGS_URL = "https://zenodo.org/records/15482694/files/Ratings.xlsx?download=1"
     QUESTION_RESPONSE_PAIRS_URL = "https://zenodo.org/records/15482694/files/Question_Response_Pairs.xlsx?download=1"
