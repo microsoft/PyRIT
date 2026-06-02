@@ -140,25 +140,25 @@ class TestTransparencyAttackConverter:
             mock_serializer = MagicMock()
             mock_serializer.file_extension = "png"
             mock_serializer.value = "mock_image_path.png"
-            mock_serializer.save_b64_image = AsyncMock()
+            mock_serializer.save_b64_image_async = AsyncMock()
             mock_factory.return_value = mock_serializer
 
             converter = TransparencyAttackConverter(benign_image_path=sample_benign_image)
             attack_image = np.ones((10, 10), dtype=np.float32) * 0.5
             alpha = np.ones((10, 10), dtype=np.float32) * 0.7
 
-            result_path = await converter._save_blended_image(attack_image, alpha)
+            result_path = await converter._save_blended_image_async(attack_image, alpha)
 
             assert result_path == "mock_image_path.png"
             mock_factory.assert_called_once_with(category="prompt-memory-entries", data_type="image_path")
-            mock_serializer.save_b64_image.assert_called_once()
+            mock_serializer.save_b64_image_async.assert_called_once()
 
     async def test_convert_async_successful(self, sample_benign_image, sample_attack_image):
         with patch("pyrit.prompt_converter.transparency_attack_converter.data_serializer_factory") as mock_factory:
             mock_serializer = MagicMock()
             mock_serializer.file_extension = "png"
             mock_serializer.value = "output_image_path.png"
-            mock_serializer.save_b64_image = AsyncMock()
+            mock_serializer.save_b64_image_async = AsyncMock()
             mock_factory.return_value = mock_serializer
 
             converter = TransparencyAttackConverter(
@@ -172,14 +172,14 @@ class TestTransparencyAttackConverter:
             assert isinstance(result, ConverterResult)
             assert result.output_text == "output_image_path.png"
             assert result.output_type == "image_path"
-            mock_serializer.save_b64_image.assert_called_once()
+            mock_serializer.save_b64_image_async.assert_called_once()
 
     async def test_convert_async_early_convergence(self, sample_benign_image, sample_attack_image):
         with patch("pyrit.prompt_converter.transparency_attack_converter.data_serializer_factory") as mock_factory:
             mock_serializer = MagicMock()
             mock_serializer.file_extension = "png"
             mock_serializer.value = "output_image_path.png"
-            mock_serializer.save_b64_image = AsyncMock()
+            mock_serializer.save_b64_image_async = AsyncMock()
             mock_factory.return_value = mock_serializer
 
             # Use parameters that should trigger early convergence

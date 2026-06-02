@@ -77,7 +77,7 @@ class AddImageVideoConverter(PromptConverter):
             }
         )
 
-    async def _add_image_to_video(self, image_path: str, output_path: str) -> str:
+    async def _add_image_to_video_async(self, image_path: str, output_path: str) -> str:
         """
         Add an image to video.
 
@@ -109,8 +109,8 @@ class AddImageVideoConverter(PromptConverter):
         )
 
         # Open the video to ensure it exists
-        video_bytes = await input_video_data.read_data()
-        input_image_bytes = await input_image_data.read_data()
+        video_bytes = await input_video_data.read_data_async()
+        input_image_bytes = await input_image_data.read_data_async()
 
         azure_storage_flag = input_video_data._is_azure_storage_url(self._video_path)
 
@@ -241,10 +241,12 @@ class AddImageVideoConverter(PromptConverter):
         output_video_serializer = data_serializer_factory(category="prompt-memory-entries", data_type="video_path")
 
         if not self._output_path:
-            output_video_serializer.value = str(await output_video_serializer.get_data_filename())
+            output_video_serializer.value = str(await output_video_serializer.get_data_filename_async())
         else:
             output_video_serializer.value = self._output_path
 
         # Add video to the image
-        updated_video = await self._add_image_to_video(image_path=prompt, output_path=output_video_serializer.value)
+        updated_video = await self._add_image_to_video_async(
+            image_path=prompt, output_path=output_video_serializer.value
+        )
         return ConverterResult(output_text=str(updated_video), output_type="video_path")

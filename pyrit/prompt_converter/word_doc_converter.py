@@ -287,5 +287,5 @@ class WordDocConverter(PromptConverter):
             data_type="binary_path",
             extension=extension,
         )
-        await serializer.save_data(docx_bytes)
+        await serializer.save_data_async(docx_bytes)
         return serializer

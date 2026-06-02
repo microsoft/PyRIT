@@ -32,16 +32,16 @@ async def test_connect_success(target):
     mock_client.realtime.connect.return_value.__aenter__ = AsyncMock(return_value=mock_connection)
 
     with patch.object(target, "_get_openai_client", return_value=mock_client):
-        connection = await target.connect(conversation_id="test_conv")
+        connection = await target.connect_async(conversation_id="test_conv")
         assert connection == mock_connection
         mock_client.realtime.connect.assert_called_once_with(model="test")
-    await target.cleanup_target()
+    await target.cleanup_target_async()
 
 
 async def test_send_prompt_async(target):
     # Mock the necessary methods
-    target.connect = AsyncMock(return_value=AsyncMock())
-    target.send_config = AsyncMock()
+    target.connect_async = AsyncMock(return_value=AsyncMock())
+    target.send_config_async = AsyncMock()
     result = RealtimeTargetResult(audio_bytes=b"file", transcripts=["hello"])
     target.send_text_async = AsyncMock(return_value=("output.wav", result))
 
@@ -70,7 +70,7 @@ async def test_send_prompt_async(target):
     assert response[0].get_value(1) == "output.wav"
 
     # Clean up the WebSocket connections
-    await target.cleanup_target()
+    await target.cleanup_target_async()
 
 
 async def test_get_system_prompt_from_conversation_with_system_message(target):
@@ -126,8 +126,8 @@ async def test_get_system_prompt_empty_conversation(target):
 
 async def test_multiple_websockets_created_for_multiple_conversations(target):
     # Mock the necessary methods
-    target.connect = AsyncMock(return_value=AsyncMock())
-    target.send_config = AsyncMock()
+    target.connect_async = AsyncMock(return_value=AsyncMock())
+    target.send_config_async = AsyncMock()
     result = RealtimeTargetResult(audio_bytes=b"event1", transcripts=["event2"])
     target.send_text_async = AsyncMock(return_value=("output_audio_path", result))
 
@@ -161,7 +161,7 @@ async def test_multiple_websockets_created_for_multiple_conversations(target):
     assert "conversation_2" in target._existing_conversation
 
     # Clean up the WebSocket connections
-    await target.cleanup_target()
+    await target.cleanup_target_async()
     assert target._existing_conversation == {}
 
 
@@ -208,7 +208,7 @@ async def test_receive_events_empty_output(target: RealtimeTarget):
     mock_connection.__aiter__.return_value = [mock_event]
 
     with pytest.raises(ServerErrorException, match=r"\[server_error\] The server had an error processing your request"):
-        await target.receive_events(conversation_id)
+        await target.receive_events_async(conversation_id)
 
 
 async def test_receive_events_response_done_no_transcript_validation(target):
@@ -231,7 +231,7 @@ async def test_receive_events_response_done_no_transcript_validation(target):
     mock_connection.__aiter__.return_value = [mock_lifecycle_event, mock_event]
 
     # Should complete successfully — response.done is not stale because it was preceded by another event
-    result = await target.receive_events(conversation_id)
+    result = await target.receive_events_async(conversation_id)
     assert result is not None
     assert len(result.transcripts) == 0
     assert result.audio_bytes == b""
@@ -255,7 +255,7 @@ async def test_receive_events_audio_buffer_only(target):
     # Mock connection to yield both events
     mock_connection.__aiter__.return_value = [mock_audio_event, mock_done_event]
 
-    result = await target.receive_events(conversation_id)
+    result = await target.receive_events_async(conversation_id)
 
     # Should have audio buffer but no transcript
     assert len(result.transcripts) == 0
@@ -279,7 +279,7 @@ async def test_receive_events_error_event(target):
 
     # Error events now raise RuntimeError with details
     with pytest.raises(RuntimeError, match=r"Server error: \[invalid_request_error\] Invalid request"):
-        await target.receive_events(conversation_id)
+        await target.receive_events_async(conversation_id)
 
 
 async def test_receive_events_connection_closed(target):
@@ -291,7 +291,7 @@ async def test_receive_events_connection_closed(target):
     # Mock connection that returns empty list (simulates closed connection)
     mock_connection.__aiter__.return_value = []
 
-    result = await target.receive_events(conversation_id)
+    result = await target.receive_events_async(conversation_id)
     assert len(result.transcripts) == 0
     assert result.audio_bytes == b""
 
@@ -334,7 +334,7 @@ async def test_receive_events_with_audio_and_transcript(target):
         mock_done_event,
     ]
 
-    result = await target.receive_events(conversation_id)
+    result = await target.receive_events_async(conversation_id)
 
     # Result should have both audio buffer and transcript from deltas
     assert len(result.transcripts) == 2
@@ -349,8 +349,8 @@ async def test_multi_turn_reuses_connection(target):
     This ensures that the server-side conversation context is preserved.
     """
     mock_connection = AsyncMock()
-    target.connect = AsyncMock(return_value=mock_connection)
-    target.send_config = AsyncMock()
+    target.connect_async = AsyncMock(return_value=mock_connection)
+    target.send_config_async = AsyncMock()
     result = RealtimeTargetResult(audio_bytes=b"audio", transcripts=["response"])
     target.send_text_async = AsyncMock(return_value=("output.wav", result))
 
@@ -379,8 +379,8 @@ async def test_multi_turn_reuses_connection(target):
     await target.send_prompt_async(message=Message(message_pieces=[message_piece_2]))
 
     # Connection should only be created once for the conversation
-    target.connect.assert_called_once_with(conversation_id=conversation_id)
-    target.send_config.assert_called_once()
+    target.connect_async.assert_called_once_with(conversation_id=conversation_id)
+    target.send_config_async.assert_called_once()
 
     # Both turns should use the same connection
     assert target._existing_conversation[conversation_id] == mock_connection
@@ -388,7 +388,7 @@ async def test_multi_turn_reuses_connection(target):
     # send_text_async should have been called twice (once per turn)
     assert target.send_text_async.call_count == 2
 
-    await target.cleanup_target()
+    await target.cleanup_target_async()
 
 
 async def test_receive_events_skips_stale_response_done(target):
@@ -428,11 +428,75 @@ async def test_receive_events_skips_stale_response_done(target):
         real_done_event,
     ]
 
-    result = await target.receive_events(conversation_id)
+    result = await target.receive_events_async(conversation_id)
 
     # Should have processed through to the real response.done with actual audio
     assert result.audio_bytes == b"dummyaudio"
     assert result.transcripts == ["hello"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deprecated shim coverage: each ``<name>`` shim warns and forwards to ``<name>_async``.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def test_connect_emits_deprecation_warning_and_delegates(target):
+    with patch.object(target, "connect_async", new=AsyncMock(return_value="conn")) as mock_async:
+        with pytest.warns(DeprecationWarning, match="connect_async"):
+            result = await target.connect("conv-1")
+    assert result == "conn"
+    mock_async.assert_awaited_once_with(conversation_id="conv-1")
+
+
+async def test_send_config_emits_deprecation_warning_and_delegates(target):
+    with patch.object(target, "send_config_async", new=AsyncMock()) as mock_async:
+        with pytest.warns(DeprecationWarning, match="send_config_async"):
+            await target.send_config(conversation_id="conv-1")
+    mock_async.assert_awaited_once_with(conversation_id="conv-1", conversation=None)
+
+
+async def test_save_audio_emits_deprecation_warning_and_delegates(target):
+    with patch.object(target, "save_audio_async", new=AsyncMock(return_value="/path/audio.wav")) as mock_async:
+        with pytest.warns(DeprecationWarning, match="save_audio_async"):
+            result = await target.save_audio(b"audio_bytes")
+    assert result == "/path/audio.wav"
+    mock_async.assert_awaited_once_with(
+        audio_bytes=b"audio_bytes",
+        num_channels=1,
+        sample_width=2,
+        sample_rate=16000,
+        output_filename=None,
+    )
+
+
+async def test_cleanup_target_emits_deprecation_warning_and_delegates(target):
+    with patch.object(target, "cleanup_target_async", new=AsyncMock()) as mock_async:
+        with pytest.warns(DeprecationWarning, match="cleanup_target_async"):
+            await target.cleanup_target()
+    mock_async.assert_awaited_once()
+
+
+async def test_cleanup_conversation_emits_deprecation_warning_and_delegates(target):
+    with patch.object(target, "cleanup_conversation_async", new=AsyncMock()) as mock_async:
+        with pytest.warns(DeprecationWarning, match="cleanup_conversation_async"):
+            await target.cleanup_conversation("conv-1")
+    mock_async.assert_awaited_once_with(conversation_id="conv-1")
+
+
+async def test_send_response_create_emits_deprecation_warning_and_delegates(target):
+    with patch.object(target, "send_response_create_async", new=AsyncMock()) as mock_async:
+        with pytest.warns(DeprecationWarning, match="send_response_create_async"):
+            await target.send_response_create("conv-1")
+    mock_async.assert_awaited_once_with(conversation_id="conv-1")
+
+
+async def test_receive_events_emits_deprecation_warning_and_delegates(target):
+    result = RealtimeTargetResult(audio_bytes=b"", transcripts=["hi"])
+    with patch.object(target, "receive_events_async", new=AsyncMock(return_value=result)) as mock_async:
+        with pytest.warns(DeprecationWarning, match="receive_events_async"):
+            got = await target.receive_events("conv-1")
+    assert got is result
+    mock_async.assert_awaited_once_with(conversation_id="conv-1")
 
 
 def test_read_wav_sync_returns_wave_properties_and_frames(tmp_path):

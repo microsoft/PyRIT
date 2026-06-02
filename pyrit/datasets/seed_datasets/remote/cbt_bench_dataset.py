@@ -73,7 +73,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading CBT-Bench dataset from {self.source} (config={self.config})")
 
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.source,
             config=self.config,
             split=self.split,

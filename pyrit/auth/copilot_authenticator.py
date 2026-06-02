@@ -12,6 +12,7 @@ from typing import Any, Optional
 from msal_extensions import FilePersistence, build_encrypted_persistence
 
 from pyrit.auth.authenticator import Authenticator
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import PYRIT_CACHE_PATH
 
 logger = logging.getLogger(__name__)
@@ -113,7 +114,7 @@ class CopilotAuthenticator(Authenticator):
         logger.info("Refreshing access token...")
         self._clear_token_cache()
         self._current_claims = {}
-        token = await self._fetch_access_token_with_playwright()
+        token = await self._fetch_access_token_with_playwright_async()
 
         if not token:
             raise RuntimeError("Failed to refresh access token.")
@@ -132,7 +133,7 @@ class CopilotAuthenticator(Authenticator):
             str: A valid Bearer token for Microsoft Copilot.
         """
         async with self._token_fetch_lock:
-            cached_token = await self._get_cached_token_if_available_and_valid()
+            cached_token = await self._get_cached_token_if_available_and_valid_async()
             if cached_token and "access_token" in cached_token:
                 logger.info("Using cached access token.")
                 if "claims" in cached_token:
@@ -142,7 +143,7 @@ class CopilotAuthenticator(Authenticator):
             logger.info("No valid cached token found. Initiating browser authentication.")
             return await self.refresh_token_async()
 
-    async def get_claims(self) -> dict[str, Any]:
+    async def get_claims_async(self) -> dict[str, Any]:
         """
         Get the JWT claims from the current authentication token.
 
@@ -150,6 +151,20 @@ class CopilotAuthenticator(Authenticator):
             dict[str, Any]: The JWT claims decoded from the access token.
         """
         return self._current_claims or {}
+
+    async def get_claims(self) -> dict[str, Any]:  # pyrit-async-suffix-exempt
+        """
+        Return the JWT claims (deprecated alias of ``get_claims_async``).
+
+        Returns:
+            dict[str, Any]: The JWT claims decoded from the access token.
+        """
+        print_deprecation_message(
+            old_item="CopilotAuthenticator.get_claims",
+            new_item="CopilotAuthenticator.get_claims_async",
+            removed_in="0.16.0",
+        )
+        return await self.get_claims_async()
 
     @staticmethod
     def _create_persistent_cache(cache_file: str, fallback_to_plaintext: bool = False) -> Any:
@@ -181,7 +196,7 @@ class CopilotAuthenticator(Authenticator):
             logger.error(f"Encryption unavailable ({e}) and fallback_to_plaintext is False. Cannot proceed.")
             raise
 
-    async def _get_cached_token_if_available_and_valid(self) -> Optional[dict[str, Any]]:
+    async def _get_cached_token_if_available_and_valid_async(self) -> Optional[dict[str, Any]]:
         """
         Retrieve and validate cached token.
 
@@ -286,7 +301,7 @@ class CopilotAuthenticator(Authenticator):
         except Exception as e:
             logger.error(f"Failed to clear cache: {e}")
 
-    async def _fetch_access_token_with_playwright(self) -> Optional[str]:
+    async def _fetch_access_token_with_playwright_async(self) -> Optional[str]:
         """
         Fetch access token using Playwright browser automation.
 
@@ -317,14 +332,14 @@ class CopilotAuthenticator(Authenticator):
                         "Running on Windows with SelectorEventLoop. "
                         "Will run Playwright in a separate thread with ProactorEventLoop."
                     )
-                    return await self._run_playwright_in_thread()
+                    return await self._run_playwright_in_thread_async()
             except RuntimeError:
                 pass
 
         # If not on Windows or using the right loop already, proceed normally
-        return await self._run_playwright_browser_automation()
+        return await self._run_playwright_browser_automation_async()
 
-    async def _run_playwright_in_thread(self) -> Optional[str]:
+    async def _run_playwright_in_thread_async(self) -> Optional[str]:
         """
         Run Playwright browser automation in a separate thread with ProactorEventLoop.
         This is needed on Windows when the main loop is SelectorEventLoop (e.g., in Jupyter).
@@ -340,14 +355,14 @@ class CopilotAuthenticator(Authenticator):
                 new_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(new_loop)
             try:
-                result: Optional[str] = new_loop.run_until_complete(self._run_playwright_browser_automation())
+                result: Optional[str] = new_loop.run_until_complete(self._run_playwright_browser_automation_async())
                 return result
             finally:
                 new_loop.close()
 
         return await asyncio.get_running_loop().run_in_executor(None, run_in_new_loop)
 
-    async def _run_playwright_browser_automation(self) -> Optional[str]:
+    async def _run_playwright_browser_automation_async(self) -> Optional[str]:
         """
         Execute the actual Playwright browser automation to fetch the access token.
 
@@ -375,8 +390,8 @@ class CopilotAuthenticator(Authenticator):
                 context = await browser.new_context(no_viewport=True)
                 page = await context.new_page()
 
-                # response_handler >>>
-                async def response_handler(response: Any) -> None:
+                # response_handler_async >>>
+                async def response_handler_async(response: Any) -> None:
                     nonlocal bearer_token, token_expires_in
 
                     try:
@@ -405,9 +420,9 @@ class CopilotAuthenticator(Authenticator):
                     except Exception as e:
                         logger.error(f"Error handling response: {e}")
 
-                # ^^^ response_handler
+                # ^^^ response_handler_async
 
-                page.on("response", response_handler)
+                page.on("response", response_handler_async)
 
                 logger.info("Navigating to Office.com for authentication...")
                 await page.goto("https://www.office.com/")

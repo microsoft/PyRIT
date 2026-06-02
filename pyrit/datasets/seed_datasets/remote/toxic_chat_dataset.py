@@ -100,7 +100,7 @@ class _ToxicChatDataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading ToxicChat dataset from {self.HF_DATASET_NAME}")
 
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
             config=self.config,
             split=self.split,

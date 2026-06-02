@@ -323,7 +323,7 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
         """
         Display an image from a message piece in notebook environments.
 
-        Uses ``DataTypeSerializer.read_data`` for transparent storage access
+        Uses ``DataTypeSerializer.read_data_async`` for transparent storage access
         (local disk or Azure Blob) and ``IPython.display.Image`` for rendering.
         No-op outside notebook environments.
 
@@ -342,7 +342,7 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
 
         try:
             serializer = ImagePathDataTypeSerializer(category="", prompt_text=piece.converted_value)
-            image_bytes = await serializer.read_data()
+            image_bytes = await serializer.read_data_async()
         except Exception as e:
             logger.error(f"Failed to read image from {piece.converted_value}: {e}")
             return

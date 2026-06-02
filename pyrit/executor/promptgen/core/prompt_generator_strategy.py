@@ -47,7 +47,7 @@ class _DefaultPromptGeneratorStrategyEventHandler(
         """
         self._logger = logger
 
-    async def on_event(
+    async def on_event_async(
         self, event_data: StrategyEventData[PromptGeneratorStrategyContextT, PromptGeneratorStrategyResultT]
     ) -> None:
         """

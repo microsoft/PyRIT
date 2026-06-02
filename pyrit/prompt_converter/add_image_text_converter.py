@@ -308,5 +308,5 @@ class AddImageTextConverter(_BaseImageTextConverter):
         updated_img.save(image_bytes, format=image_type)
         image_str = base64.b64encode(image_bytes.getvalue())
         # Save image as generated UUID filename
-        await img_serializer.save_b64_image(data=image_str)
+        await img_serializer.save_b64_image_async(data=image_str)
         return ConverterResult(output_text=str(img_serializer.value), output_type="image_path")

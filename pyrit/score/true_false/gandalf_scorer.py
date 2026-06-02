@@ -77,7 +77,7 @@ class GandalfScorer(TrueFalseScorer):
         )
 
     @pyrit_target_retry
-    async def _check_for_password_in_conversation(self, conversation_id: str) -> str:
+    async def _check_for_password_in_conversation_async(self, conversation_id: str) -> str:
         """
         Check if the password is in the text and return the password if present, else empty.
 
@@ -165,7 +165,7 @@ class GandalfScorer(TrueFalseScorer):
         extracted_password = message_piece.converted_value
 
         if self._prompt_target:
-            extracted_password = await self._check_for_password_in_conversation(message_piece.conversation_id)
+            extracted_password = await self._check_for_password_in_conversation_async(message_piece.conversation_id)
 
         if not extracted_password:
             score = Score(
