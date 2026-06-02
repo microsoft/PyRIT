@@ -8,7 +8,6 @@
 # To regenerate (only after a deliberate, reviewed cleanup):
 #   python build_scripts/check_async_suffix.py --write-baseline
 
-pyrit/scenario/core/scenario.py:1350:worker
 pyrit/score/float_scale/azure_content_filter_scorer.py:406:_get_base64_image_data
 pyrit/score/float_scale/float_scale_scorer.py:134:_score_value_with_llm
 pyrit/score/scorer.py:635:_score_value_with_llm
