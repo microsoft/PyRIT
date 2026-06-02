@@ -19,6 +19,7 @@ from typing import (
 )
 
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.executor.attack.core.attack_strategy import (
     AttackStrategy,
     AttackStrategyContextT,
@@ -125,6 +126,10 @@ class AttackExecutor:
 
         Args:
             max_concurrency: Maximum number of concurrent attack executions (default: 1).
+                A single ``asyncio.Semaphore`` of this size is used internally to gate
+                both parameter-building (``from_seed_group_async``) and execution.
+                Sharing one ``AttackExecutor`` across multiple call sites therefore
+                shares a single concurrency budget across all of them.
 
         Raises:
             ValueError: If max_concurrency is not a positive integer.
@@ -132,6 +137,35 @@ class AttackExecutor:
         if max_concurrency <= 0:
             raise ValueError(f"max_concurrency must be a positive integer, got {max_concurrency}")
         self._max_concurrency = max_concurrency
+        # The semaphore is created lazily, NOT here. asyncio synchronization primitives
+        # (Semaphore, Lock, Event, ...) bind to whichever event loop is running on their
+        # first await and raise ``RuntimeError: <Semaphore> is bound to a different event
+        # loop`` if you reuse them under a different loop. That breaks callers who
+        # construct an AttackExecutor once (e.g. at module scope, or in a notebook helper)
+        # and then run it under more than one ``asyncio.run(...)`` invocation. By
+        # constructing the semaphore inside ``_get_semaphore()`` and rebuilding when the
+        # running loop changes, one AttackExecutor instance is safe to reuse across loops.
+        self._semaphore: Optional[asyncio.Semaphore] = None
+        self._semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def _get_semaphore(self) -> asyncio.Semaphore:
+        """
+        Return the internal semaphore, (re)building it when the running event loop changes.
+
+        Must be called from within a running event loop. The first call binds the
+        semaphore to that loop; subsequent calls reuse it as long as the same loop is
+        running. If the executor is reused under a *different* event loop later, the
+        semaphore is rebuilt so we don't leak the binding from the previous loop.
+
+        Returns:
+            asyncio.Semaphore: A semaphore bound to the currently running event loop,
+                with permits equal to ``self._max_concurrency``.
+        """
+        loop = asyncio.get_running_loop()
+        if self._semaphore is None or self._semaphore_loop is not loop:
+            self._semaphore = asyncio.Semaphore(self._max_concurrency)
+            self._semaphore_loop = loop
+        return self._semaphore
 
     async def execute_attack_from_seed_groups_async(
         self,
@@ -142,6 +176,7 @@ class AttackExecutor:
         objective_scorer: Optional["TrueFalseScorer"] = None,
         field_overrides: Optional[Sequence[dict[str, Any]]] = None,
         return_partial_on_failure: bool = False,
+        attribution: Optional[AttackResultAttribution] = None,
         **broadcast_fields: Any,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
@@ -163,6 +198,12 @@ class AttackExecutor:
                 from_seed_group() as overrides.
             return_partial_on_failure: If True, returns partial results when some
                 objectives fail. If False (default), raises the first exception.
+            attribution: Optional ``AttackResultAttribution`` stamped onto every
+                per-task ``AttackContext`` so the persisted ``AttackResultEntry``
+                row carries ``attribution_parent_id`` + ``attribution_data``.
+                When ``None`` (default), no attribution is applied. The same
+                attribution is shared across all tasks; per-task identity is
+                reconstructed from the row's own ``objective_sha256``.
             **broadcast_fields: Fields applied to all seed groups (e.g., memory_labels).
                 Per-seed-group field_overrides take precedence.
 
@@ -185,7 +226,7 @@ class AttackExecutor:
 
         # Build params list using from_seed_group_async with concurrency control
         # This can take time if the SeedSimulatedConversation generation is included
-        semaphore = asyncio.Semaphore(self._max_concurrency)
+        semaphore = self._get_semaphore()
 
         async def build_params(i: int, sg: SeedAttackGroup) -> AttackParameters:
             async with semaphore:
@@ -205,6 +246,7 @@ class AttackExecutor:
             attack=attack,
             params_list=params_list,
             return_partial_on_failure=return_partial_on_failure,
+            attribution=attribution,
         )
 
     async def execute_attack_async(
@@ -214,6 +256,7 @@ class AttackExecutor:
         objectives: Sequence[str],
         field_overrides: Optional[Sequence[dict[str, Any]]] = None,
         return_partial_on_failure: bool = False,
+        attribution: Optional[AttackResultAttribution] = None,
         **broadcast_fields: Any,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
@@ -228,6 +271,9 @@ class AttackExecutor:
                 must match the length of objectives.
             return_partial_on_failure: If True, returns partial results when some
                 objectives fail. If False (default), raises the first exception.
+            attribution: Optional ``AttackResultAttribution`` stamped onto every
+                per-task ``AttackContext`` so the persistence path can record
+                orchestrator linkage. When ``None``, no attribution is applied.
             **broadcast_fields: Fields applied to all objectives (e.g., memory_labels).
                 Per-objective field_overrides take precedence.
 
@@ -268,6 +314,7 @@ class AttackExecutor:
             attack=attack,
             params_list=params_list,
             return_partial_on_failure=return_partial_on_failure,
+            attribution=attribution,
         )
 
     async def _execute_with_params_list_async(
@@ -276,6 +323,7 @@ class AttackExecutor:
         attack: AttackStrategy[AttackStrategyContextT, AttackStrategyResultT],
         params_list: Sequence[AttackParameters],
         return_partial_on_failure: bool = False,
+        attribution: Optional[AttackResultAttribution] = None,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
         Execute attacks in parallel with a list of pre-built parameters.
@@ -287,19 +335,23 @@ class AttackExecutor:
             attack: The attack strategy to execute.
             params_list: List of AttackParameters, one per execution.
             return_partial_on_failure: If True, returns partial results on failure.
+            attribution: Optional ``AttackResultAttribution`` stamped onto every
+                per-task ``AttackContext`` so the persistence path can record
+                orchestrator linkage.
 
         Returns:
             AttackExecutorResult with completed results and any incomplete objectives.
         """
-        semaphore = asyncio.Semaphore(self._max_concurrency)
+        semaphore = self._get_semaphore()
 
-        async def run_one(params: AttackParameters) -> AttackStrategyResultT:
+        async def run_one(index: int, params: AttackParameters) -> AttackStrategyResultT:
             async with semaphore:
-                # Create context with params
                 context = attack._context_type(params=params)
+                if attribution is not None:
+                    context._attribution = attribution
                 return await attack.execute_with_context_async(context=context)
 
-        tasks = [run_one(p) for p in params_list]
+        tasks = [run_one(i, p) for i, p in enumerate(params_list)]
         results_or_exceptions = await asyncio.gather(*tasks, return_exceptions=True)
 
         return self._process_execution_results(

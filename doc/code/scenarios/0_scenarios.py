@@ -61,13 +61,13 @@
 #    - Include an `ALL` aggregate strategy that expands to all available strategies
 #    - Optionally override `_prepare_strategies()` for custom composition logic (see `FoundryComposite`)
 #
-# 2. **Scenario Class**: Extend `Scenario` and implement these abstract methods:
-#    - `get_strategy_class()`: Return your strategy enum class
-#    - `get_default_strategy()`: Return the default strategy (typically `YourStrategy.ALL`)
+# 2. **Scenario Class**: Extend `Scenario` and pass these to `super().__init__()`:
+#    - `strategy_class`: Your strategy enum class
+#    - `default_strategy`: The default strategy (typically `YourStrategy.ALL` or `YourStrategy.DEFAULT`)
 #    - The base class provides a default `_get_atomic_attacks_async()` that uses the factory/registry
 #      pattern. Override it only if your scenario needs custom attack construction logic.
 #
-# 3. **Default Dataset**: Implement `default_dataset_config()` to specify the datasets your scenario uses out of the box.
+# 3. **Default Dataset**: Pass `default_dataset_config=` to `super().__init__()` to specify the datasets your scenario uses out of the box.
 #    - Returns a `DatasetConfiguration` with one or more named datasets (e.g., `DatasetConfiguration(dataset_names=["my_dataset"])`)
 #    - Users can override this at runtime via `--dataset-names` in the CLI or by passing a custom `dataset_config` programmatically
 #
@@ -85,7 +85,7 @@
 #    - `max_retries`: Number of retry attempts on failure (default: 0)
 #    - `memory_labels`: Optional labels for tracking (optional)
 #    - `include_baseline`: Whether to prepend a baseline attack (defaults to the scenario type's
-#      `BASELINE_POLICY`; most scenarios default it on, `Jailbreak` defaults it off)
+#      `BASELINE_ATTACK_POLICY`; most scenarios default it on, `Jailbreak` defaults it off)
 #
 # ### Example Structure
 #
@@ -120,18 +120,6 @@ class MyScenario(Scenario):
 
     VERSION: int = 1
 
-    @classmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        return MyStrategy
-
-    @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        return MyStrategy.DEFAULT
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        return DatasetConfiguration(dataset_names=["dataset_name"], max_dataset_size=4)
-
     @apply_defaults
     def __init__(
         self,
@@ -146,7 +134,9 @@ class MyScenario(Scenario):
         super().__init__(
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
-            strategy_class=self.get_strategy_class(),
+            strategy_class=MyStrategy,
+            default_strategy=MyStrategy.DEFAULT,
+            default_dataset_config=DatasetConfiguration(dataset_names=["dataset_name"], max_dataset_size=4),
             scenario_result_id=scenario_result_id,
         )
 
@@ -165,9 +155,11 @@ class MyScenario(Scenario):
 # ## Existing Scenarios
 
 # %%
-from pyrit.cli.frontend_core import FrontendCore, print_scenarios_list_async
+from pyrit.backend.services.scenario_service import get_scenario_service
+from pyrit.cli._output import print_scenario_list
 
-await print_scenarios_list_async(context=FrontendCore())  # type: ignore
+response = await get_scenario_service().list_scenarios_async(limit=200)  # type: ignore
+print_scenario_list(items=[s.model_dump() for s in response.items])
 
 # %% [markdown]
 #
@@ -176,11 +168,11 @@ await print_scenarios_list_async(context=FrontendCore())  # type: ignore
 # Every scenario can optionally include a **baseline attack** — a `PromptSendingAttack` that sends
 # each objective directly to the target without any converters or multi-turn techniques. This is
 # controlled by the `include_baseline` parameter on `initialize_async`; when omitted, each
-# scenario falls back to its own `BASELINE_POLICY` class attribute (most scenarios default
+# scenario falls back to its own `BASELINE_ATTACK_POLICY` class attribute (most scenarios default
 # it on; `Jailbreak` defaults it off). See
 # [Common Scenario Parameters](./1_common_scenario_parameters.ipynb) for a worked example.
 #
-# Custom scenarios should choose their `BASELINE_POLICY` based on whether an unmodified
+# Custom scenarios should choose their `BASELINE_ATTACK_POLICY` based on whether an unmodified
 # prompt is a meaningful comparator for the scenario's strategies:
 #
 # - **`Enabled`** — the baseline is prepended by default and the caller can opt out. Use when an

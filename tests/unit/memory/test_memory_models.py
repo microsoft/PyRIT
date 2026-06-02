@@ -8,8 +8,6 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import ValidationError
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory.memory_models import (
     AttackResultEntry,
     ConversationMessageWithSimilarity,
@@ -24,6 +22,7 @@ from pyrit.memory.memory_models import (
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
     MessagePiece,
@@ -32,6 +31,7 @@ from pyrit.models import (
     Score,
     SeedObjective,
     SeedPrompt,
+    build_atomic_attack_identifier,
 )
 
 # ---------------------------------------------------------------------------
@@ -474,17 +474,3 @@ class TestScenarioResultEntry:
         entry = ScenarioResultEntry(entry=sr)
         conv_ids = entry.get_conversation_ids_by_attack_name()
         assert conv_ids == {}
-
-    def test_roundtrip_error_attack_result_ids(self):
-        sr = self._make_scenario_result(error_attack_result_ids=["err-1", "err-2"])
-        entry = ScenarioResultEntry(entry=sr)
-        assert entry.error_attack_result_ids_json is not None
-        recovered = entry.get_scenario_result()
-        assert recovered.error_attack_result_ids == ["err-1", "err-2"]
-
-    def test_roundtrip_error_attack_result_ids_none(self):
-        sr = self._make_scenario_result()
-        entry = ScenarioResultEntry(entry=sr)
-        assert entry.error_attack_result_ids_json is None
-        recovered = entry.get_scenario_result()
-        assert recovered.error_attack_result_ids == []

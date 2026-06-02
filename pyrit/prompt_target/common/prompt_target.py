@@ -6,9 +6,8 @@ import logging
 from typing import Any, Union, final
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Identifiable, Message, MessagePiece
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -94,11 +93,11 @@ class PromptTarget(Identifiable):
         1. Validates the message, fetches the conversation from memory, appends ``message``, and runs
            the normalization pipeline (system‑squash, history‑squash, etc.).
         2. Validates the normalized conversation against the target's capabilities.
-        3. Delegates to :meth:`_send_prompt_to_target_async` with the normalized
+        3. Delegates to ``_send_prompt_to_target_async`` with the normalized
            conversation.
 
         Subclasses MUST NOT override this method. Override
-        :meth:`_send_prompt_to_target_async` instead.
+        ``_send_prompt_to_target_async`` instead.
 
         Args:
             message (Message): The message to send.
@@ -121,7 +120,7 @@ class PromptTarget(Identifiable):
         """
         Target-specific send logic.
 
-        Called by :meth:`send_prompt_async` after validation and normalization.
+        Called by ``send_prompt_async`` after validation and normalization.
 
         Args:
             normalized_conversation (list[Message]): The full conversation
@@ -235,7 +234,7 @@ class PromptTarget(Identifiable):
         """
         source_piece = source.message_pieces[0]
         for piece in target_message.message_pieces:
-            piece.copy_lineage_from(source_piece)
+            piece.copy_lineage_from(source=source_piece)
 
     def set_model_name(self, *, model_name: str) -> None:
         """
@@ -263,7 +262,7 @@ class PromptTarget(Identifiable):
 
         If the target does not natively support system prompts, whether this
         call is ultimately honored depends on the target's
-        :class:`CapabilityHandlingPolicy`:
+        ``CapabilityHandlingPolicy``:
 
         * ``ADAPT`` — the normalization pipeline (e.g. system squash) will
           fold the system message into user content on the wire.
@@ -306,7 +305,7 @@ class PromptTarget(Identifiable):
                 converted_value=system_prompt,
                 prompt_target_identifier=self.get_identifier(),
                 attack_identifier=attack_identifier,
-                labels=labels,
+                labels=labels or {},
             ).to_message()
         )
 
@@ -388,7 +387,7 @@ class PromptTarget(Identifiable):
 
         Policy is preserved because it expresses user intent (ADAPT vs RAISE),
         independent of what the probe found. To change policy or normalizer
-        overrides, build a new :class:`TargetConfiguration` and pass it via
+        overrides, build a new ``TargetConfiguration`` and pass it via
         ``custom_configuration`` at construction time instead.
 
         Note:

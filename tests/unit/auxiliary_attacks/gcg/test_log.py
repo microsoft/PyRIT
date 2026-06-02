@@ -85,7 +85,7 @@ class TestGpuMemoryLogging:
     """Tests for GPU memory query and logging.
 
     Lives here (not test_lifecycle.py) so the tests don't transitively
-    depend on the GCG `train` module (which requires `ml_collections`,
+    depend on the GCG `train` module (which requires `torch`, `accelerate`,
     only installed with the `gcg` extra). The log module itself only
     uses stdlib imports, so these tests run in any CI environment.
     """

@@ -18,12 +18,13 @@ logger = logging.getLogger(__name__)
 
 PYRIT_MEMORY_ALEMBIC_VERSION_TABLE = "pyrit_memory_alembic_version"
 _HEAD_REVISION = "head"
+_INITIAL_REVISION = "ab8f2c1a9d07"
 _MEMORY_TABLES = {table.name for table in Base.metadata.sorted_tables}
 
 _ERROR_UNVERSIONED_SCHEMA_COMPARISON_FAILED = (
     "Detected an unversioned legacy memory schema (memory tables exist, but "
     "pyrit_memory_alembic_version is missing), "
-    "but failed to compare the existing schema against current models. "
+    "but failed to compare the existing schema against the initial pre-Alembic schema. "
     "This could be transient, or you may need to repair or rebuild the database "
     "before upgrading to this release."
 )
@@ -31,7 +32,7 @@ _ERROR_UNVERSIONED_SCHEMA_COMPARISON_FAILED = (
 _ERROR_UNVERSIONED_SCHEMA_MISMATCH = (
     "Detected an unversioned legacy memory schema (memory tables exist, but "
     "pyrit_memory_alembic_version is missing), "
-    "and it does not match current models. "
+    "and it does not match the initial pre-Alembic schema. "
     "Repair or rebuild the database before upgrading to this release."
 )
 
@@ -60,6 +61,21 @@ def _include_name_for_memory_schema(
         return table_name in _MEMORY_TABLES
 
     return True
+
+
+def _get_initial_metadata() -> MetaData:
+    """
+    Return the static MetaData representing the initial pre-Alembic baseline schema.
+
+    This is pinned directly in the initial migration script so it never changes
+    and avoids the overhead of spinning up a temporary in-memory database.
+
+    Returns:
+        MetaData: The pinned initial schema metadata.
+    """
+    from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import INITIAL_METADATA
+
+    return INITIAL_METADATA
 
 
 def _make_config(*, connection: Connection) -> Config:
@@ -103,13 +119,14 @@ def _validate_and_stamp_unversioned_memory_schema(*, config: Config, connection:
     if not _MEMORY_TABLES.intersection(table_names):
         return
 
-    # Unversioned memory schema detected; validate it matches current models
+    # Unversioned memory schema detected; validate it matches the initial pre-Alembic schema
     try:
+        initial_metadata = _get_initial_metadata()
         migration_context = MigrationContext.configure(
             connection=connection,
             opts={"compare_type": True, "include_name": _include_name_for_memory_schema},
         )
-        diffs = compare_metadata(migration_context, Base.metadata)
+        diffs = compare_metadata(migration_context, initial_metadata)
     except Exception as e:
         raise RuntimeError(_ERROR_UNVERSIONED_SCHEMA_COMPARISON_FAILED) from e
 
@@ -122,8 +139,8 @@ def _validate_and_stamp_unversioned_memory_schema(*, config: Config, connection:
             logger.warning(f"Required correction {index}: {diff}")
         raise RuntimeError(_ERROR_UNVERSIONED_SCHEMA_MISMATCH)
 
-    logger.warning(f"Detected matching unversioned memory schema; stamping revision {_HEAD_REVISION}")
-    command.stamp(config, _HEAD_REVISION)
+    logger.warning(f"Detected matching unversioned memory schema; stamping at initial revision {_INITIAL_REVISION}")
+    command.stamp(config, _INITIAL_REVISION)
 
 
 def run_schema_migrations(*, engine: Engine) -> None:

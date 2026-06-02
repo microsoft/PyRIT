@@ -61,6 +61,9 @@ jest.mock("./components/Layout/MainLayout", () => {
         <button onClick={onToggleTheme} data-testid="toggle-theme">
           Toggle Theme
         </button>
+        <button onClick={() => onNavigate("home")} data-testid="nav-home">
+          Home
+        </button>
         <button onClick={() => onNavigate("config")} data-testid="nav-config">
           Config
         </button>
@@ -85,21 +88,27 @@ jest.mock("./components/Chat/ChatWindow", () => {
   const MockChatWindow = ({
     onNewAttack,
     activeTarget,
+    attackResultId,
     conversationId,
+    activeConversationId,
     onConversationCreated,
     onSelectConversation,
     labels,
   }: {
     onNewAttack: () => void;
     activeTarget: unknown;
+    attackResultId: string | null;
     conversationId: string | null;
+    activeConversationId: string | null;
     onConversationCreated: (attackResultId: string, conversationId: string) => void;
     onSelectConversation: (convId: string) => void;
     labels: Record<string, string>;
   }) => {
     return (
       <div data-testid="chat-window">
+        <span data-testid="attack-result-id">{attackResultId ?? "none"}</span>
         <span data-testid="conversation-id">{conversationId ?? "none"}</span>
+        <span data-testid="active-conversation-id">{activeConversationId ?? "none"}</span>
         <span data-testid="has-target">{activeTarget ? "yes" : "no"}</span>
         <span data-testid="labels-operator">{labels.operator ?? ""}</span>
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
@@ -178,6 +187,12 @@ jest.mock("./components/History/AttackHistory", () => {
         >
           Open Attack
         </button>
+        <button
+          onClick={() => onOpenAttack("ar-attack-2")}
+          data-testid="open-attack-2"
+        >
+          Open Attack 2
+        </button>
       </div>
     );
   };
@@ -185,6 +200,41 @@ jest.mock("./components/History/AttackHistory", () => {
   return {
     __esModule: true,
     default: MockAttackHistory,
+  };
+});
+
+jest.mock("./components/Home/Home", () => {
+  const MockHome = ({
+    activeTarget,
+    onNavigate,
+    onOpenAttack,
+    labels,
+  }: {
+    activeTarget: unknown;
+    onNavigate: (view: string) => void;
+    onOpenAttack: (attackResultId: string) => void;
+    labels: Record<string, string>;
+  }) => {
+    return (
+      <div data-testid="home-view">
+        <span data-testid="home-has-target">{activeTarget ? "yes" : "no"}</span>
+        <span data-testid="home-labels-json">{JSON.stringify(labels)}</span>
+        <button onClick={() => onNavigate("config")} data-testid="home-go-config">
+          Go to config
+        </button>
+        <button
+          onClick={() => onOpenAttack("ar-home-attack")}
+          data-testid="home-open-attack"
+        >
+          Open Home Attack
+        </button>
+      </div>
+    );
+  };
+  MockHome.displayName = "MockHome";
+  return {
+    __esModule: true,
+    default: MockHome,
   };
 });
 
@@ -197,7 +247,7 @@ describe("App", () => {
   it("renders with FluentProvider and MainLayout", () => {
     render(<App />);
     expect(screen.getByTestId("main-layout")).toBeInTheDocument();
-    expect(screen.getByTestId("chat-window")).toBeInTheDocument();
+    expect(screen.getByTestId("home-view")).toBeInTheDocument();
   });
 
   it("starts in dark mode", () => {
@@ -229,8 +279,20 @@ describe("App", () => {
     );
   });
 
-  it("starts in chat view", () => {
+  it("starts in home view", () => {
     render(<App />);
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "home"
+    );
+    expect(screen.getByTestId("home-view")).toBeInTheDocument();
+  });
+
+  it("switches to chat view", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId("nav-chat"));
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
@@ -264,6 +326,7 @@ describe("App", () => {
   it("sets conversationId from chat window", () => {
     render(<App />);
 
+    fireEvent.click(screen.getByTestId("nav-chat"));
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
 
     fireEvent.click(screen.getByTestId("set-conversation"));
@@ -273,6 +336,7 @@ describe("App", () => {
   it("clears conversationId on new attack", () => {
     render(<App />);
 
+    fireEvent.click(screen.getByTestId("nav-chat"));
     fireEvent.click(screen.getByTestId("set-conversation"));
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-123");
 
@@ -283,7 +347,8 @@ describe("App", () => {
   it("sets active target from config page and passes to chat", () => {
     render(<App />);
 
-    // No target initially
+    // Switch to chat and confirm no target initially
+    fireEvent.click(screen.getByTestId("nav-chat"));
     expect(screen.getByTestId("has-target")).toHaveTextContent("no");
 
     // Switch to config and set target
@@ -322,6 +387,36 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByTestId("conversation-id")).toHaveTextContent("attack-conv-1"));
   });
 
+  it("opens attack from home and switches to chat", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-home-attack",
+      conversation_id: "home-conv-1",
+      labels: { operator: "roakey" },
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId("home-open-attack"));
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "chat"
+    );
+    await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-home-attack"));
+    await waitFor(() => expect(screen.getByTestId("conversation-id")).toHaveTextContent("home-conv-1"));
+  });
+
+  it("navigates to config from the home view", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId("home-go-config"));
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "config"
+    );
+    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+  });
+
   it("handles failed attack open gracefully", async () => {
     mockGetAttack.mockRejectedValue(new Error("Not found"));
     render(<App />);
@@ -336,6 +431,58 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByTestId("conversation-id")).toHaveTextContent("none"));
   });
 
+  it("clears activeConversationId synchronously before fetching a new attack", async () => {
+    // Repro: in attack A the user branched into a related conversation, so
+    // activeConversationId points to a conv that does NOT belong to attack B.
+    // When the user clicks Open Attack on B, App.tsx must clear the stale
+    // conv id *before* flipping attackResultId — otherwise ChatWindow renders
+    // with (attackResultId=B, activeConversationId=A_conv) during the in-flight
+    // getAttack and issues GET /messages?conversation_id=A_conv → 400.
+
+    // Defer getAttack so we can inspect the intermediate render before it resolves.
+    let resolveGetAttack: (value: unknown) => void = () => {};
+    mockGetAttack.mockImplementation(
+      () => new Promise((resolve) => { resolveGetAttack = resolve })
+    );
+
+    render(<App />);
+
+    // Simulate: user is already on attack A with a branched conv selected.
+    fireEvent.click(screen.getByTestId("nav-chat"));
+    fireEvent.click(screen.getByTestId("set-conversation"));      // attack A, main conv-123
+    // Resolve the (unrelated) getAttack triggered earlier to keep state quiet
+    // — actually nothing called it yet because set-conversation routes through
+    // onConversationCreated, not handleOpenAttack. Proceed.
+    fireEvent.click(screen.getByTestId("select-conversation"));   // branched conv-456 in attack A
+    expect(screen.getByTestId("attack-result-id")).toHaveTextContent("ar-123");
+    expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-456");
+
+    // User clicks Open Attack on attack B in history.
+    fireEvent.click(screen.getByTestId("nav-history"));
+    fireEvent.click(screen.getByTestId("open-attack-2"));        // ar-attack-2
+
+    // BEFORE getAttack resolves: ChatWindow must NOT see the stale conv id
+    // alongside the new attack id. This is the invariant the fix establishes.
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "chat"
+    );
+    expect(screen.getByTestId("attack-result-id")).toHaveTextContent("ar-attack-2");
+    expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("none");
+    expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
+
+    // After getAttack resolves: the conv id belonging to attack B is committed.
+    resolveGetAttack({
+      attack_result_id: "ar-attack-2",
+      conversation_id: "attack-conv-2",
+      labels: {},
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("attack-conv-2")
+    );
+    expect(screen.getByTestId("conversation-id")).toHaveTextContent("attack-conv-2");
+  });
+
   it("merges default labels from backend version API", async () => {
     mockedVersionApi.getVersion.mockResolvedValueOnce({
       version: "2.0.0",
@@ -348,6 +495,9 @@ describe("App", () => {
     await waitFor(() => {
       expect(mockedVersionApi.getVersion).toHaveBeenCalled();
     });
+
+    // Switch to chat to inspect labels
+    fireEvent.click(screen.getByTestId("nav-chat"));
 
     await waitFor(() => {
       expect(screen.getByTestId("labels-operator")).toHaveTextContent("default_user");
@@ -364,9 +514,12 @@ describe("App", () => {
 
     render(<App />);
 
+    // Home receives the same labels prop — assert there to avoid racing the
+    // async initLabels effect against a view-change re-render.
     await waitFor(() => {
-      expect(screen.getByTestId("labels-operator")).toHaveTextContent("test.user");
-      expect(screen.getByTestId("labels-json")).toHaveTextContent('"custom":"value"');
+      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      expect(labels).toContain('"operator":"test.user"');
+      expect(labels).toContain('"custom":"value"');
     });
   });
 
@@ -380,8 +533,9 @@ describe("App", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("labels-operator")).toHaveTextContent("override_user");
-      expect(screen.getByTestId("labels-json")).toHaveTextContent('"custom":"value"');
+      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      expect(labels).toContain('"operator":"override_user"');
+      expect(labels).toContain('"custom":"value"');
     });
   });
 
@@ -400,6 +554,8 @@ describe("App", () => {
 
   it("sets active conversation when onSelectConversation is called", () => {
     render(<App />);
+
+    fireEvent.click(screen.getByTestId("nav-chat"));
 
     // First create a conversation to have an attack
     fireEvent.click(screen.getByTestId("set-conversation"));

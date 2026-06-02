@@ -19,6 +19,7 @@ from pyrit.backend.services.scenario_run_service import (
     _DEFAULT_MAX_CONCURRENT_RUNS,
     ScenarioRunService,
 )
+from pyrit.models import AttackOutcome
 
 _REGISTRY_PATCH_BASE = "pyrit.registry"
 _MEMORY_PATCH = "pyrit.memory.CentralMemory.get_memory_instance"
@@ -39,6 +40,8 @@ def _make_request(
     initializers: list[str] | None = None,
     strategies: list[str] | None = None,
     scenario_result_id: str | None = None,
+    dataset_names: list[str] | None = None,
+    max_dataset_size: int | None = None,
 ) -> RunScenarioRequest:
     """Create a RunScenarioRequest for testing."""
     return RunScenarioRequest(
@@ -47,6 +50,8 @@ def _make_request(
         initializers=initializers,
         strategies=strategies,
         scenario_result_id=scenario_result_id,
+        dataset_names=dataset_names,
+        max_dataset_size=max_dataset_size,
     )
 
 
@@ -74,7 +79,6 @@ def _make_db_scenario_result(
     sr.display_group_map = {}
     sr.error_message = None
     sr.error_type = None
-    sr.error_attack_result_ids = []
     return sr
 
 
@@ -83,6 +87,9 @@ def mock_memory():
     """Patch CentralMemory.get_memory_instance to return a mock."""
     mock = MagicMock()
     mock.get_scenario_results.return_value = []
+    # Default: no error AttackResults linked to any scenario. Tests that exercise
+    # the error fallback path explicitly set get_attack_results.return_value.
+    mock.get_attack_results.return_value = []
     with patch(_MEMORY_PATCH, return_value=mock):
         yield mock
 
@@ -96,8 +103,8 @@ def mock_all_registries(mock_memory):
     mock_scenario_instance._scenario_result_id = "sr-uuid-1"
 
     mock_scenario_class = MagicMock(return_value=mock_scenario_instance)
-    mock_scenario_class.get_strategy_class.return_value = MagicMock()
-    mock_scenario_class.default_dataset_config.return_value = MagicMock()
+    mock_scenario_instance._strategy_class = MagicMock()
+    mock_scenario_instance._default_dataset_config = MagicMock()
 
     mock_sr = MagicMock()
     mock_sr.get_class.return_value = mock_scenario_class
@@ -200,8 +207,8 @@ class TestScenarioRunServiceStartRun:
         mock_strategy_class = MagicMock(side_effect=ValueError("not a valid strategy"))
         mock_strategy_class.__iter__ = MagicMock(return_value=iter([MagicMock(value="valid_strat")]))
 
-        mock_scenario_class = MagicMock()
-        mock_scenario_class.get_strategy_class.return_value = mock_strategy_class
+        mock_instance = MagicMock(_strategy_class=mock_strategy_class)
+        mock_scenario_class = MagicMock(return_value=mock_instance)
 
         mock_sr = MagicMock()
         mock_sr.get_class.return_value = mock_scenario_class
@@ -216,6 +223,61 @@ class TestScenarioRunServiceStartRun:
         ):
             with pytest.raises(ValueError, match="Strategy.*not found for scenario"):
                 await service.start_run_async(request=_make_request(strategies=["bad_strategy"]))
+
+    async def test_start_run_scenario_not_no_arg_instantiable_raises(self, mock_memory) -> None:
+        """If introspection is required and ``scenario_class()`` fails, surface a ValueError."""
+        service = ScenarioRunService()
+
+        # scenario_class() raises -> introspection fails
+        mock_scenario_class = MagicMock(side_effect=TypeError("missing required arg 'foo'"))
+
+        mock_sr = MagicMock()
+        mock_sr.get_class.return_value = mock_scenario_class
+
+        mock_tr = MagicMock()
+        mock_tr.get_instance_by_name.return_value = MagicMock()
+
+        with (
+            patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=mock_sr),
+            patch(f"{_REGISTRY_PATCH_BASE}.TargetRegistry.get_registry_singleton", return_value=mock_tr),
+            patch(f"{_REGISTRY_PATCH_BASE}.InitializerRegistry.get_registry_singleton"),
+        ):
+            with pytest.raises(ValueError, match="not instantiable without arguments"):
+                # strategies forces the introspection path
+                await service.start_run_async(request=_make_request(strategies=["any"]))
+
+    async def test_start_run_passes_valid_strategies_through(self, mock_all_registries) -> None:
+        """A valid strategy list is converted to enum values and forwarded to initialize_async."""
+        strategy_a = MagicMock(value="strat_a")
+        strategy_b = MagicMock(value="strat_b")
+
+        def _lookup(name):
+            return {"strat_a": strategy_a, "strat_b": strategy_b}[name]
+
+        mock_strategy_class = MagicMock(side_effect=_lookup)
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._strategy_class = mock_strategy_class
+
+        service = ScenarioRunService()
+        await service.start_run_async(request=_make_request(strategies=["strat_a", "strat_b"]))
+
+        init_call = scenario_instance.initialize_async.await_args
+        assert init_call.kwargs["scenario_strategies"] == [strategy_a, strategy_b]
+
+    async def test_start_run_max_dataset_size_uses_default_config(self, mock_all_registries) -> None:
+        """``max_dataset_size`` with no ``dataset_names`` reuses the scenario's default config."""
+        default_config = MagicMock()
+        default_config.max_dataset_size = 100  # original
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._default_dataset_config = default_config
+
+        service = ScenarioRunService()
+        await service.start_run_async(request=_make_request(max_dataset_size=5))
+
+        # max_dataset_size on the default config was overridden
+        assert default_config.max_dataset_size == 5
+        init_call = scenario_instance.initialize_async.await_args
+        assert init_call.kwargs["dataset_config"] is default_config
 
     async def test_start_run_exceeds_concurrent_limit(self, mock_all_registries) -> None:
         """Test that exceeding concurrent run limit raises ValueError."""
@@ -298,9 +360,14 @@ class TestScenarioRunServiceGetRun:
         assert fetched.status == ScenarioRunStatus.IN_PROGRESS
 
     def test_get_run_falls_back_to_persisted_error(self, mock_memory) -> None:
-        """Test that get_run extracts error from persisted error AttackResult when no active task."""
+        """Test that get_run extracts error from persisted error AttackResult when no active task.
+
+        After the foreign-key-based scenario linkage refactor, error
+        AttackResults are located via
+        ``get_attack_results(scenario_result_id=..., outcome=ERROR)`` rather
+        than via a per-scenario error_attack_result_ids manifest.
+        """
         db_result = _make_db_scenario_result(result_id="sr-fail", run_state="FAILED")
-        db_result.error_attack_result_ids = ["err-ar-1"]
 
         # Mock the error AttackResult lookup
         error_ar = MagicMock()
@@ -315,7 +382,10 @@ class TestScenarioRunServiceGetRun:
         assert fetched is not None
         assert fetched.error == "Connection refused"
         assert fetched.error_type == "ConnectionError"
-        mock_memory.get_attack_results.assert_called_once_with(attack_result_ids=["err-ar-1"])
+        mock_memory.get_attack_results.assert_called_once_with(
+            scenario_result_id="sr-fail",
+            outcome=AttackOutcome.ERROR,
+        )
 
 
 class TestScenarioRunServiceListRuns:
@@ -481,26 +551,12 @@ class TestScenarioRunServiceGetResults:
             service.get_run_results(scenario_result_id="sr-running")
 
     def test_get_results_returns_details_for_completed_run(self, mock_memory) -> None:
-        """Test that get_run_results returns full details for a completed run."""
+        """Test that get_run_results returns the ScenarioResult for a completed run."""
         from pyrit.models import AttackOutcome
 
         mock_attack_result = MagicMock()
-        mock_attack_result.attack_result_id = "ar-1"
-        mock_attack_result.conversation_id = "conv-1"
-        mock_attack_result.objective = "Extract info"
         mock_attack_result.outcome = AttackOutcome.SUCCESS
-        mock_attack_result.outcome_reason = "Model complied"
-        mock_attack_result.last_response = MagicMock(value="Here is the data")
-        mock_attack_result.last_score = MagicMock()
-        mock_attack_result.last_score.get_value.return_value = "1.0"
-        mock_attack_result.executed_turns = 3
-        mock_attack_result.execution_time_ms = 1500
-        mock_attack_result.timestamp = None
-        mock_attack_result.error_message = None
-        mock_attack_result.error_type = None
-        mock_attack_result.error_traceback = None
-        mock_attack_result.total_retries = 0
-        mock_attack_result.retry_events = []
+        mock_attack_result.objective = "Extract info"
 
         db_result = _make_db_scenario_result(
             result_id="sr-123",
@@ -511,16 +567,10 @@ class TestScenarioRunServiceGetResults:
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
-        detail = service.get_run_results(scenario_result_id="sr-123")
+        result = service.get_run_results(scenario_result_id="sr-123")
 
-        assert detail is not None
-        assert detail.run.scenario_result_id == "sr-123"
-        assert detail.run.objective_achieved_rate == 100
-        assert len(detail.attacks) == 1
-        assert detail.attacks[0].atomic_attack_name == "base64_attack"
-        assert detail.attacks[0].success_count == 1
-        assert detail.attacks[0].results[0].objective == "Extract info"
-        assert detail.attacks[0].results[0].outcome == "success"
+        assert result is db_result
+        assert result.attack_results["base64_attack"][0].outcome == AttackOutcome.SUCCESS
 
 
 class TestScenarioRunServiceProgressReporting:

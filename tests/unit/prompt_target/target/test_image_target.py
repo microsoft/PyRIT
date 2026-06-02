@@ -131,6 +131,42 @@ async def test_send_prompt_async_edit(
     os.remove(image_piece.original_value)
 
 
+async def test_send_prompt_async_edit_single_image_passes_tuple_not_list(
+    image_target: OpenAIImageTarget,
+):
+    image_piece = get_image_message_piece()
+    text_piece = MessagePiece(
+        role="user",
+        conversation_id=image_piece.conversation_id,
+        original_value="edit this image",
+        converted_value="edit this image",
+        original_value_data_type="text",
+        converted_value_data_type="text",
+    )
+
+    mock_response = MagicMock()
+    mock_image = MagicMock()
+    mock_image.b64_json = "aGVsbG8="
+    mock_response.data = [mock_image]
+
+    with patch.object(image_target._async_client.images, "edit", new_callable=AsyncMock) as mock_edit:
+        mock_edit.return_value = mock_response
+
+        resp = await image_target.send_prompt_async(message=Message([text_piece, image_piece]))
+        assert resp
+
+        call_kwargs = mock_edit.call_args[1]
+        assert isinstance(call_kwargs["image"], tuple)
+        assert len(call_kwargs["image"]) == 3
+
+        path = resp[0].message_pieces[0].original_value
+        if os.path.isfile(path):
+            os.remove(path)
+
+    if os.path.isfile(image_piece.original_value):
+        os.remove(image_piece.original_value)
+
+
 async def test_send_prompt_async_edit_multiple_images(
     image_target: OpenAIImageTarget,
 ):
@@ -530,9 +566,9 @@ def test_style_param_emits_deprecation_warning(patch_central_database):
             style="vivid",
         )
     deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    style_warnings = [w for w in deprecation_warnings if "'style'" in str(w.message)]
+    style_warnings = [w for w in deprecation_warnings if "style" in str(w.message)]
     assert len(style_warnings) == 1
-    assert "v0.15.0" in str(style_warnings[0].message)
+    assert "0.15.0" in str(style_warnings[0].message)
     assert "2026-05-12" in str(style_warnings[0].message)
     assert target.style == "vivid"
 
@@ -545,7 +581,9 @@ def test_no_style_does_not_emit_deprecation_warning(patch_central_database):
             endpoint="test",
             api_key="test",
         )
-    style_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning) and "'style'" in str(w.message)]
+    style_warnings = [
+        w for w in caught if issubclass(w.category, DeprecationWarning) and "OpenAIImageTarget(style" in str(w.message)
+    ]
     assert len(style_warnings) == 0
 
 
@@ -562,7 +600,7 @@ def test_deprecated_image_size_emits_warning(patch_central_database, deprecated_
     deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
     size_warnings = [w for w in deprecation_warnings if "image_size" in str(w.message)]
     assert len(size_warnings) == 1
-    assert "v0.15.0" in str(size_warnings[0].message)
+    assert "0.15.0" in str(size_warnings[0].message)
     assert "2026-05-12" in str(size_warnings[0].message)
     assert target.image_size == deprecated_size
 
@@ -594,7 +632,7 @@ def test_deprecated_quality_emits_warning(patch_central_database, deprecated_qua
     deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
     quality_warnings = [w for w in deprecation_warnings if "quality" in str(w.message)]
     assert len(quality_warnings) == 1
-    assert "v0.15.0" in str(quality_warnings[0].message)
+    assert "0.15.0" in str(quality_warnings[0].message)
     assert "2026-05-12" in str(quality_warnings[0].message)
     assert target.quality == deprecated_quality
 

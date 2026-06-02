@@ -20,7 +20,6 @@ from pyrit.registry.discovery import (
 )
 from pyrit.registry.object_registries import (
     AttackTechniqueRegistry,
-    AttackTechniqueSpec,
     BaseInstanceRegistry,
     ConverterRegistry,
     RegistryEntry,
@@ -49,6 +48,5 @@ __all__ = [
     "ScenarioRegistry",
     "ScorerRegistry",
     "TargetRegistry",
-    "AttackTechniqueSpec",
     "TagQuery",
 ]

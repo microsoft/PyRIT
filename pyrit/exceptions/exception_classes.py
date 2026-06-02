@@ -233,6 +233,19 @@ class MissingPromptPlaceholderException(PyritException):
         super().__init__(message=message)
 
 
+class ExperimentalWarning(FutureWarning):
+    """
+    Warning category for experimental PyRIT modules whose APIs may change at any time.
+
+    Modules emitting this warning are not covered by PyRIT's normal deprecation policy.
+    To silence it, filter the category before importing the experimental module::
+
+        import warnings
+        from pyrit.exceptions import ExperimentalWarning
+        warnings.filterwarnings("ignore", category=ExperimentalWarning)
+    """
+
+
 def pyrit_custom_result_retry(
     retry_function: Callable[..., bool], retry_max_num_attempts: Optional[int] = None
 ) -> Callable[..., Any]:

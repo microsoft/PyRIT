@@ -24,14 +24,16 @@ from pyrit.exceptions import (
     pyrit_json_retry,
     remove_markdown_json,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable, ScorerEvaluationIdentifier
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     ChatMessageRole,
+    ComponentIdentifier,
+    Identifiable,
     Message,
     MessagePiece,
     PromptDataType,
     Score,
+    ScorerEvaluationIdentifier,
     ScoreType,
     UnvalidatedScore,
 )
@@ -210,7 +212,7 @@ class Scorer(Identifiable, abc.ABC):
         """
         self._validator.validate(message, objective=objective)
 
-        if role_filter is not None and message.get_piece().get_role_for_storage() != role_filter:
+        if role_filter is not None and message.get_piece().role != role_filter:
             logger.debug("Skipping scoring due to role filter mismatch.")
             return []
 
@@ -245,7 +247,21 @@ class Scorer(Identifiable, abc.ABC):
             # Wrap non-PyRIT exceptions for better error tracing
             raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(e)}") from e
 
+        if not scores and scoring_message.message_pieces:
+            scores = self._build_fallback_score(message=scoring_message, objective=objective)
+
         self.validate_return_scores(scores=scores)
+
+        # For pieces flagged not-in-memory, drop the FK on any score that points at them
+        # so memory doesn't try to link a score to a piece that was never persisted.
+        ephemeral_piece_ids = {
+            piece.id for piece in scoring_message.message_pieces if piece.not_in_memory and piece.id is not None
+        }
+        if ephemeral_piece_ids:
+            for score in scores:
+                if score.message_piece_id in ephemeral_piece_ids:
+                    score.message_piece_id = None  # type: ignore[ty:invalid-assignment]
+
         self._memory.add_scores_to_memory(scores=scores)
 
         return scores
@@ -366,6 +382,32 @@ class Scorer(Identifiable, abc.ABC):
         ]
 
     @abstractmethod
+    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+        """
+        Return neutral fallback ``Score`` objects when ``_score_async`` produced no scores.
+
+        Called from ``score_async`` after ``_score_async`` returns an empty list and the
+        message still has pieces (e.g. the response was blocked, had an error, or no piece
+        matched the validator). Every ``Scorer`` subclass MUST implement this so that a
+        consistent "attack did not succeed" value is always returned and downstream
+        consumers do not need to special-case error handling.
+
+        Most scorers return a single-element list (e.g. ``FloatScaleScorer`` returns
+        ``[Score(0.0)]`` and ``TrueFalseScorer`` returns ``[Score(False)]``). Scorers
+        whose normal output shape is multiple scores per message (e.g. one per category)
+        should return one fallback score per logical output slot so downstream consumers
+        iterating by shape continue to work on blocked / error input.
+
+        Args:
+            message (Message): The (possibly substituted) message that was scored.
+            objective (Optional[str]): The objective associated with this scoring call.
+
+        Returns:
+            list[Score]: One or more fallback scores. Must not be empty.
+        """
+        ...
+
+    @abstractmethod
     def validate_return_scores(self, scores: list[Score]) -> None:
         """
         Validate the scores returned by the scorer. Because some scorers may require
@@ -468,7 +510,7 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
-        request.message_pieces[0].id = None
+        request.message_pieces[0].not_in_memory = True
         return await self.score_async(request, objective=objective)
 
     async def score_image_async(self, image_path: str, *, objective: Optional[str] = None) -> list[Score]:
@@ -492,7 +534,7 @@ class Scorer(Identifiable, abc.ABC):
             ]
         )
 
-        request.message_pieces[0].id = None
+        request.message_pieces[0].not_in_memory = True
         return await self.score_async(request, objective=objective)
 
     async def score_prompts_batch_async(

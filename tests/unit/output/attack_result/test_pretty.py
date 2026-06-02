@@ -5,10 +5,17 @@ import uuid
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory import MemoryInterface
-from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, MessagePiece, Score
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    ComponentIdentifier,
+    ConversationType,
+    Message,
+    MessagePiece,
+    Score,
+    build_atomic_attack_identifier,
+)
 from pyrit.models.conversation_reference import ConversationReference
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 
@@ -337,6 +344,12 @@ async def test_print_result_async_emits_deprecation_warning_and_still_writes(pri
     with pytest.warns(DeprecationWarning, match="print_result_async"):
         await printer.print_result_async(attack_result)
     assert "ATTACK RESULT" in capsys.readouterr().out
+
+
+async def test_print_conversation_async_emits_deprecation_warning(printer, attack_result, capsys):
+    with pytest.warns(DeprecationWarning, match="print_conversation_async"):
+        await printer.print_conversation_async(attack_result)
+    assert "No conversation found" in capsys.readouterr().out
 
 
 async def test_output_conversation_async_emits_deprecation_warning(printer, attack_result, capsys):

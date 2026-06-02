@@ -20,15 +20,14 @@ from pyrit.exceptions import (
     PyritException,
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     MessagePiece,
     PromptDataType,
     PromptResponseError,
 )
 from pyrit.models.json_response_config import _JsonResponseConfig
-from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
@@ -59,7 +58,7 @@ class MessagePieceType(str, Enum):
     MCP_APPROVAL_REQUEST = "mcp_approval_request"
 
 
-class OpenAIResponseTarget(OpenAITarget, PromptTarget):
+class OpenAIResponseTarget(OpenAITarget):
     """
     Enables communication with endpoints that support the OpenAI Response API.
 
@@ -418,12 +417,12 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
         if not json_config.enabled:
             return None
 
-        if json_config.schema:
+        if json_config.json_schema:
             return {
                 "format": {
                     "type": "json_schema",
                     "name": json_config.schema_name,
-                    "schema": json_config.schema,
+                    "schema": json_config.json_schema,
                     "strict": json_config.strict,
                 }
             }

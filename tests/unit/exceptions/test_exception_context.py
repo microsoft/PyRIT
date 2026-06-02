@@ -12,7 +12,7 @@ from pyrit.exceptions import (
     get_execution_context,
     set_execution_context,
 )
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 
 
 class TestExecutionContext:

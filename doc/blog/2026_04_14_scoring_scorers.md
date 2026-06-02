@@ -108,7 +108,7 @@ flowchart TB
 
 There are a few different ways to view metrics for specific scoring configurations.
 
-**Directly on a scorer instance:** Call `get_scorer_metrics()` on any scorer object to look up its saved metrics (if they exist), as described at the bottom of the [Scorer Evaluation Identifier](#scorer-evaluation-identifier) section above. See the [scorer metrics notebook](../code/scoring/8_scorer_metrics.ipynb) to try it yourself!
+**Directly on a scorer instance:** Call `get_scorer_metrics()` on any scorer object to look up its saved metrics (if they exist), as described at the bottom of the [Scorer Evaluation Identifier](#scorer-evaluation-identifier) section above. See the [scorer metrics notebook](../code/scoring/7_scorer_metrics.ipynb) to try it yourself!
 
 **Automatically in scenario output:** When running scenarios and printing results (i.e., in [pyrit_scan](../scanner/1_pyrit_scan.ipynb) or [pyrit_shell](../scanner/2_pyrit_shell.md)), metrics are automatically fetched and displayed alongside the attack results (as long as the scoring configuration has been evaluated before):
 
@@ -132,7 +132,7 @@ The framework checks the JSONL registry for an existing entry matching the score
 
 ![alt text](2026_04_14_running_evaluation.png)
 
-For the full walkthrough — including running objective and harm evaluations, configuring custom datasets, and comparing results — give the [scorer metrics notebook](../code/scoring/8_scorer_metrics.ipynb) a try!
+For the full walkthrough — including running objective and harm evaluations, configuring custom datasets, and comparing results — give the [scorer metrics notebook](../code/scoring/7_scorer_metrics.ipynb) a try!
 
 ## Closing Thoughts
 

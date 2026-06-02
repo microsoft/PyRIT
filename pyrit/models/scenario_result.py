@@ -12,7 +12,7 @@ import pyrit
 from pyrit.models import AttackOutcome, AttackResult
 
 if TYPE_CHECKING:
-    from pyrit.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
 
 logger = logging.getLogger(__name__)
@@ -105,9 +105,10 @@ class ScenarioResult:
         number_tries: int = 0,
         id: uuid.UUID | None = None,  # noqa: A002
         display_group_map: dict[str, str] | None = None,
-        error_attack_result_ids: list[str] | None = None,
         error_message: str | None = None,
         error_type: str | None = None,
+        error_attack_result_ids: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Initialize a scenario result.
@@ -127,11 +128,17 @@ class ScenarioResult:
             display_group_map (Optional[dict[str, str]]): Optional mapping of
                 atomic_attack_name → display group label. Used by the console
                 printer to aggregate results for user-facing output.
-            error_attack_result_ids (Optional[list[str]]): IDs of AttackResults that
-                contain error information. Used for quick error lookup without scanning
-                all attack results.
             error_message (Optional[str]): Scenario-level error message when the run fails.
             error_type (Optional[str]): Exception class name when the run fails.
+            error_attack_result_ids (Optional[list[str]]): IDs of attack results that
+                errored during the scenario run. Defaults to an empty list.
+            metadata (Optional[dict[str, Any]]): Free-form JSON metadata persisted
+                with the scenario result. Currently used to record
+                ``objective_hashes`` — the objective ``sha256`` set chosen
+                on the first run, replayed on resume so a fresh
+                ``random.sample`` can't silently change which objectives the
+                scenario operates on. Keys are not part of any public contract
+                and may evolve.
 
         """
         self.id = id if id is not None else uuid.uuid4()
@@ -148,9 +155,10 @@ class ScenarioResult:
         self.completion_time = completion_time if completion_time is not None else datetime.now(timezone.utc)
         self.number_tries = number_tries
         self._display_group_map = display_group_map or {}
-        self.error_attack_result_ids = error_attack_result_ids or []
         self.error_message = error_message
         self.error_type = error_type
+        self.error_attack_result_ids: list[str] = list(error_attack_result_ids) if error_attack_result_ids else []
+        self.metadata: dict[str, Any] = metadata if metadata is not None else {}
 
     @property
     def display_group_map(self) -> dict[str, str]:
@@ -286,7 +294,7 @@ class ScenarioResult:
 
         """
         # import here to avoid circular imports
-        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
+        from pyrit.models.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
         from pyrit.score.scorer_evaluation.scorer_metrics_io import (
             find_objective_metrics_by_eval_hash,
         )
@@ -309,10 +317,10 @@ class ScenarioResult:
             "id": str(self.id),
             "scenario_identifier": self.scenario_identifier.to_dict(),
             "objective_target_identifier": (
-                self.objective_target_identifier.to_dict() if self.objective_target_identifier else None
+                self.objective_target_identifier.model_dump() if self.objective_target_identifier else None
             ),
             "objective_scorer_identifier": (
-                self.objective_scorer_identifier.to_dict() if self.objective_scorer_identifier else None
+                self.objective_scorer_identifier.model_dump() if self.objective_scorer_identifier else None
             ),
             "scenario_run_state": self.scenario_run_state,
             "attack_results": {name: [r.to_dict() for r in results] for name, results in self.attack_results.items()},
@@ -337,18 +345,18 @@ class ScenarioResult:
         Returns:
             ScenarioResult: Reconstructed instance.
         """
-        from pyrit.identifiers.component_identifier import ComponentIdentifier
+        from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 
         result = cls(
             id=uuid.UUID(data["id"]) if data.get("id") else None,
             scenario_identifier=ScenarioIdentifier.from_dict(data["scenario_identifier"]),
             objective_target_identifier=(
-                ComponentIdentifier.from_dict(data["objective_target_identifier"])
+                ComponentIdentifier.model_validate(data["objective_target_identifier"])
                 if data.get("objective_target_identifier")
                 else None
             ),
             objective_scorer_identifier=(
-                ComponentIdentifier.from_dict(data["objective_scorer_identifier"])
+                ComponentIdentifier.model_validate(data["objective_scorer_identifier"])
                 if data.get("objective_scorer_identifier")
                 else None
             ),

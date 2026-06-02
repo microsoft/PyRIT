@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
@@ -110,7 +109,7 @@ class DiskStorageIO(StorageIO):
 
         """
         path = self._convert_to_path(path)
-        return os.path.exists(path)
+        return path.exists()
 
     async def is_file(self, path: Union[Path, str]) -> bool:
         """
@@ -124,7 +123,7 @@ class DiskStorageIO(StorageIO):
 
         """
         path = self._convert_to_path(path)
-        return os.path.isfile(path)
+        return path.is_file()
 
     async def create_directory_if_not_exists(self, path: Union[Path, str]) -> None:
         """
@@ -136,7 +135,7 @@ class DiskStorageIO(StorageIO):
         """
         directory_path = self._convert_to_path(path)
         if not directory_path.exists():
-            os.makedirs(directory_path, exist_ok=True)
+            directory_path.mkdir(parents=True, exist_ok=True)
 
     def _convert_to_path(self, path: Union[Path, str]) -> Path:
         """
@@ -300,9 +299,9 @@ class AzureBlobStorageIO(StorageIO):
         """
         Asynchronously reads the content of a file (blob) from Azure Blob Storage.
 
-        If the provided `path` is a full URL
-        (e.g., "https://account.blob.core.windows.net/container/dir1/dir2/sample.png"),
-        it extracts the relative blob path (e.g., "dir1/dir2/sample.png") to correctly access the blob.
+        If the provided ``path`` is a full URL
+        (e.g., ``https://account.blob.core.windows.net/container/dir1/dir2/sample.png``),
+        it extracts the relative blob path (e.g., ``dir1/dir2/sample.png``) to correctly access the blob.
         If a relative path is provided, it will use it as-is.
 
         Args:
@@ -313,10 +312,11 @@ class AzureBlobStorageIO(StorageIO):
             bytes: The content of the file (blob) as bytes.
 
         Example:
-            file_content =
-            await read_file("https://account.blob.core.windows.net/container/dir2/1726627689003831.png")
-            # Or using a relative path:
-            file_content = await read_file("dir1/dir2/1726627689003831.png")
+            ``file_content = await read_file("https://account.blob.core.windows.net/container/dir2/1726627689003831.png")``
+
+            Or using a relative path:
+
+            ``file_content = await read_file("dir1/dir2/1726627689003831.png")``
 
         """
         if not self._client_async:

@@ -11,9 +11,9 @@ from enum import Enum
 from typing import Any, Optional, TypeVar
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
-from pyrit.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.conversation_reference import ConversationReference, ConversationType
+from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.message_piece import MessagePiece
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import Score
@@ -104,6 +104,14 @@ class AttackResult(StrategyResult):
     # Retry tracking
     retry_events: list[RetryEvent] = field(default_factory=list)
     total_retries: int = 0
+
+    # Attribution / parent linkage (infrastructure-managed). Set by the attack
+    # persistence path when an AttackResultAttribution is present on the
+    # AttackContext. User code should not set these directly; ad-hoc
+    # AttackResults created outside an orchestrator leave both fields as None
+    # and the corresponding DB columns remain NULL.
+    attribution_parent_id: str | None = None
+    attribution_data: dict[str, Any] | None = None
 
     @property
     def attack_identifier(self) -> Optional[ComponentIdentifier]:
@@ -232,9 +240,9 @@ class AttackResult(StrategyResult):
             "objective": self.objective,
             "attack_result_id": self.attack_result_id,
             "atomic_attack_identifier": (
-                self.atomic_attack_identifier.to_dict() if self.atomic_attack_identifier else None
+                self.atomic_attack_identifier.model_dump() if self.atomic_attack_identifier else None
             ),
-            "last_response": self.last_response.to_dict() if self.last_response else None,
+            "last_response": self.last_response.model_dump(mode="json") if self.last_response else None,
             "last_score": self.last_score.to_dict() if self.last_score else None,
             "executed_turns": self.executed_turns,
             "execution_time_ms": self.execution_time_ms,
@@ -242,7 +250,7 @@ class AttackResult(StrategyResult):
             "outcome_reason": self.outcome_reason,
             "timestamp": self.timestamp.isoformat(),
             "related_conversations": sorted(
-                [ref.to_dict() for ref in self.related_conversations],
+                [ref.model_dump(mode="json") for ref in self.related_conversations],
                 key=lambda r: r["conversation_id"],
             ),
             "metadata": self.metadata,
@@ -250,7 +258,7 @@ class AttackResult(StrategyResult):
             "error_message": self.error_message,
             "error_type": self.error_type,
             "error_traceback": self.error_traceback,
-            "retry_events": [e.to_dict() for e in self.retry_events],
+            "retry_events": [e.model_dump(mode="json") for e in self.retry_events],
             "total_retries": self.total_retries,
         }
 
@@ -270,11 +278,11 @@ class AttackResult(StrategyResult):
             objective=data["objective"],
             attack_result_id=data.get("attack_result_id", str(uuid.uuid4())),
             atomic_attack_identifier=(
-                ComponentIdentifier.from_dict(data["atomic_attack_identifier"])
+                ComponentIdentifier.model_validate(data["atomic_attack_identifier"])
                 if data.get("atomic_attack_identifier")
                 else None
             ),
-            last_response=(MessagePiece.from_dict(data["last_response"]) if data.get("last_response") else None),
+            last_response=(MessagePiece.model_validate(data["last_response"]) if data.get("last_response") else None),
             last_score=Score.from_dict(data["last_score"]) if data.get("last_score") else None,
             executed_turns=data.get("executed_turns", 0),
             execution_time_ms=data.get("execution_time_ms", 0),
@@ -283,13 +291,15 @@ class AttackResult(StrategyResult):
             timestamp=(
                 datetime.fromisoformat(data["timestamp"]) if data.get("timestamp") else datetime.now(timezone.utc)
             ),
-            related_conversations={ConversationReference.from_dict(r) for r in data.get("related_conversations", [])},
+            related_conversations={
+                ConversationReference.model_validate(r) for r in data.get("related_conversations", [])
+            },
             metadata=data.get("metadata", {}),
             labels=data.get("labels", {}),
             error_message=data.get("error_message"),
             error_type=data.get("error_type"),
             error_traceback=data.get("error_traceback"),
-            retry_events=[RetryEvent.from_dict(e) for e in data.get("retry_events", [])],
+            retry_events=[RetryEvent.model_validate(e) for e in data.get("retry_events", [])],
             total_retries=data.get("total_retries", 0),
         )
 

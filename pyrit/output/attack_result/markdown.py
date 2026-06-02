@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import os
 from datetime import datetime, timezone
 
 from pyrit.common.deprecation import print_deprecation_message
@@ -26,6 +27,9 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         display_inline: bool = True,
         conversation_printer: MarkdownConversationPrinter | None = None,
         score_printer: MarkdownScorePrinter | None = None,
+        blur_images: bool = False,
+        blur_radius: int = 20,
+        blurred_dir: str | os.PathLike[str] | None = None,
     ) -> None:
         """
         Initialize the markdown printer.
@@ -38,6 +42,13 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
                 Defaults to a new MarkdownConversationPrinter with matching sink.
             score_printer (MarkdownScorePrinter | None): Score printer.
                 Defaults to a new MarkdownScorePrinter with matching sink.
+            blur_images (bool): If True, write a blurred copy of each referenced
+                image and link to it instead of the original. Forwarded to the default
+                conversation printer when one is not supplied. Defaults to False.
+            blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
+                Defaults to 20.
+            blurred_dir (str | PathLike | None): Directory to write blurred copies into
+                when ``blur_images`` is True. Defaults to None (sibling of the original).
         """
         super().__init__(sink=sink)
         self._display_inline = display_inline
@@ -45,6 +56,9 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         self._conversation_printer = conversation_printer or MarkdownConversationPrinter(
             sink=sink,
             score_printer=self._score_printer,
+            blur_images=blur_images,
+            blur_radius=blur_radius,
+            blurred_dir=blurred_dir,
         )
 
     async def render_async(
@@ -118,7 +132,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         include_adversarial_conversation: bool = False,
     ) -> None:
         """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_result_async", new_item="write_async", removed_in="2.0")
+        print_deprecation_message(old_item="print_result_async", new_item="write_async", removed_in="0.16.0")
         await self.write_async(
             result,
             include_auxiliary_scores=include_auxiliary_scores,
@@ -128,13 +142,13 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
 
     async def output_conversation_async(self, result: AttackResult, *, include_scores: bool = False) -> None:
         """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="output_conversation_async", new_item="write_async", removed_in="2.0")
+        print_deprecation_message(old_item="output_conversation_async", new_item="write_async", removed_in="0.16.0")
         lines = await self._get_conversation_markdown_async(result=result, include_scores=include_scores)
         await self._write_async("\n".join(lines))
 
     async def print_summary_async(self, result: AttackResult) -> None:
         """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="2.0")
+        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="0.16.0")
         markdown_lines = await self._get_summary_markdown_async(result)
         await self._write_async("\n".join(markdown_lines))
 
@@ -322,7 +336,15 @@ class MarkdownAttackResultMemoryPrinter(MarkdownAttackResultPrinter):
     All formatting logic lives in MarkdownAttackResultPrinter.
     """
 
-    def __init__(self, *, sink: Sink | None = None, display_inline: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        sink: Sink | None = None,
+        display_inline: bool = True,
+        blur_images: bool = False,
+        blur_radius: int = 20,
+        blurred_dir: str | os.PathLike[str] | None = None,
+    ) -> None:
         """
         Initialize the markdown printer with CentralMemory data source.
 
@@ -330,12 +352,24 @@ class MarkdownAttackResultMemoryPrinter(MarkdownAttackResultPrinter):
             sink (Sink | None): Output sink. Defaults to StdoutSink().
             display_inline (bool): Kept for backward compatibility but unused.
                 All output is routed through the sink. Defaults to True.
+            blur_images (bool): If True, write a blurred copy of each referenced
+                image and link to it instead of the original. Defaults to False.
+            blur_radius (int): Gaussian blur radius applied when ``blur_images`` is True.
+                Defaults to 20.
+            blurred_dir (str | PathLike | None): Directory to write blurred copies into.
+                Defaults to None (sibling of the original).
         """
         from pyrit.memory import CentralMemory
         from pyrit.output.conversation.markdown import MarkdownConversationMemoryPrinter
 
         score_printer = MarkdownScorePrinter(sink=sink)
-        conversation_printer = MarkdownConversationMemoryPrinter(sink=sink, score_printer=score_printer)
+        conversation_printer = MarkdownConversationMemoryPrinter(
+            sink=sink,
+            score_printer=score_printer,
+            blur_images=blur_images,
+            blur_radius=blur_radius,
+            blurred_dir=blurred_dir,
+        )
         super().__init__(
             sink=sink,
             display_inline=display_inline,

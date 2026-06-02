@@ -61,8 +61,13 @@ test.describe("Accessibility", () => {
   });
 
   test("should be navigable with keyboard", async ({ page }) => {
-    // Tab to the first interactive element
-    await page.keyboard.press("Tab");
+    // Wait for the sidebar to render so there is a focusable element for Tab
+    // to land on, and dispatch the Tab through `body` (rather than the bare
+    // keyboard) to guarantee the document has focus when the keystroke fires.
+    // Without both, Chromium sometimes leaves `:focus` empty under parallel
+    // worker load.
+    await expect(page.getByTitle("Home")).toBeVisible();
+    await page.locator("body").press("Tab");
     const focused = page.locator(":focus");
     await expect(focused).toBeVisible();
 
@@ -145,18 +150,20 @@ test.describe("Visual Consistency", () => {
   test("should render without layout shifts", async ({ page }) => {
     await page.goto("/");
 
-    // Wait for initial render
-    await expect(page.getByText("PyRIT Attack")).toBeVisible();
+    // Wait for initial render then navigate to chat to measure the chat ribbon
+    await expect(page.getByTitle("Chat")).toBeVisible();
+    await page.getByTitle("Chat").click();
+    const anchor = page.getByTestId("new-attack-btn");
+    await expect(anchor).toBeVisible();
 
     // Take measurements
-    const header = page.getByText("PyRIT Attack");
-    const initialBox = await header.boundingBox();
+    const initialBox = await anchor.boundingBox();
 
     // Wait a moment for any delayed renders
     await page.waitForTimeout(500);
 
     // Verify position hasn't changed
-    const finalBox = await header.boundingBox();
+    const finalBox = await anchor.boundingBox();
 
     if (initialBox && finalBox) {
       expect(finalBox.x).toBe(initialBox.x);

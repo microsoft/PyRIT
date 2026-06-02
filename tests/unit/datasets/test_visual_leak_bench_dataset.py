@@ -49,7 +49,6 @@ class TestVisualLeakBenchDataset:
         dataset = _VisualLeakBenchDataset()
         assert dataset.categories is None
         assert dataset.pii_types is None
-        assert dataset.max_examples is None
 
     def test_init_with_categories(self):
         """Test initialization with category filtering."""
@@ -83,11 +82,6 @@ class TestVisualLeakBenchDataset:
         with pytest.raises(ValueError, match="Expected VisualLeakBenchPIIType"):
             _VisualLeakBenchDataset(pii_types=["Email"])
 
-    def test_init_with_max_examples(self):
-        """Test initialization with max_examples."""
-        dataset = _VisualLeakBenchDataset(max_examples=10)
-        assert dataset.max_examples == 10
-
     async def test_fetch_dataset_ocr_creates_pair(self):
         """Test that OCR Injection example creates an image+text pair."""
         mock_data = [_make_ocr_example()]
@@ -107,7 +101,7 @@ class TestVisualLeakBenchDataset:
 
         assert image_prompt.prompt_group_id == text_prompt.prompt_group_id
         assert image_prompt.sequence == 0
-        assert text_prompt.sequence == 1
+        assert text_prompt.sequence == 0
         assert text_prompt.value == _VisualLeakBenchDataset.OCR_INJECTION_PROMPT
         assert image_prompt.value == "/fake/ocr.png"
 
@@ -218,24 +212,6 @@ class TestVisualLeakBenchDataset:
         assert len(dataset.seeds) == 2
         categories = [seed.harm_categories for seed in dataset.seeds]
         assert any("ocr_injection" in cats for cats in categories)
-
-    async def test_max_examples_limits_output(self):
-        """Test that max_examples limits the number of examples returned."""
-        mock_data = [
-            _make_ocr_example(filename="ocr_v2_0000.png"),
-            _make_ocr_example(filename="ocr_v2_0001.png"),
-            _make_ocr_example(filename="ocr_v2_0002.png"),
-        ]
-        loader = _VisualLeakBenchDataset(max_examples=2)
-
-        with (
-            patch.object(loader, "_fetch_from_url", return_value=mock_data),
-            patch.object(loader, "_fetch_and_save_image_async", return_value="/fake/img.png"),
-        ):
-            dataset = await loader.fetch_dataset_async(cache=False)
-
-        # max_examples=2 → at most 4 prompts (2 pairs)
-        assert len(dataset.seeds) <= 4
 
     async def test_all_images_fail_produces_empty_dataset(self):
         """Test that when all image downloads fail, no prompts are produced and SeedDataset raises."""
@@ -351,6 +327,7 @@ class TestVisualLeakBenchDataset:
 
 async def test_fetch_and_save_image_returns_cached_path():
     """Test that _fetch_and_save_image_async returns cached path when image already exists."""
+    from pathlib import Path
     from unittest.mock import AsyncMock, MagicMock
 
     mock_serializer = MagicMock()
@@ -363,7 +340,7 @@ async def test_fetch_and_save_image_returns_cached_path():
     mock_serializer.data_sub_directory = "/images"
 
     with patch(
-        "pyrit.datasets.seed_datasets.remote.visual_leak_bench_dataset.data_serializer_factory",
+        "pyrit.datasets.seed_datasets.remote._image_cache.data_serializer_factory",
         return_value=mock_serializer,
     ):
         loader = _VisualLeakBenchDataset()
@@ -371,6 +348,6 @@ async def test_fetch_and_save_image_returns_cached_path():
             image_url="https://example.com/img.png", example_id="test_001"
         )
 
-    expected_path = "/results/images/visual_leak_bench_test_001.png"
+    expected_path = str(Path("/results") / "images" / "visual_leak_bench_test_001.png")
     assert result == expected_path
     assert mock_serializer.value == expected_path

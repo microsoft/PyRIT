@@ -33,6 +33,13 @@
 # exploration. The tree visualization in the result provides insights into the attack's
 # decision-making process.
 #
+# PAIR (Prompt Automatic Iterative Refinement) [@chao2023pair] is the structural special
+# case of TAP with no tree expansion and no off-topic pruning -- i.e. parallel single-branch
+# iterative refinement. PyRIT exposes it as `PAIRAttack`, a thin `TAPAttack` subclass that
+# hardcodes `branching_factor=1` and `on_topic_checking_enabled=False`. Everything else
+# (target, scoring, converters, `tree_width`, `tree_depth`) is configured exactly the same
+# way as below.
+#
 # The results and intermediate interactions will be saved to memory according to the environment settings. For details, see the [Memory Configuration Guide](../../memory/0_memory.md).
 # %%
 import os
@@ -83,9 +90,10 @@ await output_attack_async(  # type: ignore
 # 1. **System Prompt**: Use `TAPSystemPromptPaths.IMAGE_GENERATION` to provide
 #    an adversarial system prompt tailored for image generation models.
 # 2. **Error Handling**: Image generation targets frequently return "blocked"
-#    responses due to content filters. TAP's `error_score_map` (default:
-#    `{"blocked": 0.0}`) automatically assigns a score of 0.0 to these responses
-#    instead of failing the branch, preventing premature pruning of all branches.
+#    responses due to content filters. PyRIT's default scorers (TrueFalseScorer
+#    and FloatScaleScorer) automatically return `False` / `0.0` for blocked
+#    responses, so blocked branches receive a score of `0.0` instead of failing
+#    the branch — preventing premature pruning of all branches.
 # 3. **Scoring**: The default TAP scorer automatically detects the target's output
 #    modalities. For image targets, it configures the scorer to accept `image_path`
 #    responses. The adversarial chat target (used for scoring) should be a multimodal

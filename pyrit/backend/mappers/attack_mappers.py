@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import logging
 import mimetypes
-import os
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional, cast
 from urllib.parse import quote, urlparse
 
@@ -178,7 +178,7 @@ def _resolve_media_url(*, value: Optional[str], data_type: str) -> Optional[str]
     if value.startswith(("http://", "https://", "data:")):
         return value
     # Local file path — construct a media endpoint URL
-    if os.path.isfile(value):
+    if Path(value).is_file():
         return f"/api/media?path={quote(str(value))}"
     return value
 
@@ -373,7 +373,7 @@ def _build_filename(
         source = value
         if source.startswith("http"):
             source = urlparse(source).path
-        ext = os.path.splitext(source)[1]  # e.g. ".png"
+        ext = Path(source).suffix  # e.g. ".png"
 
     if not ext:
         # Fallback: guess from mime type based on data type prefix
@@ -439,7 +439,7 @@ async def pyrit_messages_to_dto_async(pyrit_messages: list[PyritMessage]) -> lis
         messages.append(
             Message(
                 turn_number=first.sequence if first else 0,
-                role=first.get_role_for_storage() if first else "user",
+                role=first.role if first else "user",
                 pieces=pieces,
                 created_at=first.timestamp if first else datetime.now(timezone.utc),
             )
@@ -481,7 +481,7 @@ def request_piece_to_pyrit_message_piece(
             new_item="request_piece_to_pyrit_message_piece(...)",
             removed_in="0.16.0",
         )
-    metadata: Optional[dict[str, str | int]] = None
+    metadata: dict[str, str | int] = {}
     if piece.prompt_metadata:
         metadata = dict(piece.prompt_metadata)
     elif piece.mime_type:

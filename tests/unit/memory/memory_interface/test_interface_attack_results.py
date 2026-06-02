@@ -8,18 +8,19 @@ from typing import TYPE_CHECKING, Optional
 import pytest
 
 from pyrit.common.utils import to_sha256
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
-from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
+    IdentifierFilter,
+    IdentifierType,
     MessagePiece,
     Score,
+    build_atomic_attack_identifier,
 )
 
 if TYPE_CHECKING:
@@ -28,14 +29,17 @@ if TYPE_CHECKING:
 
 def create_message_piece(conversation_id: str, prompt_num: int, targeted_harm_categories=None, labels=None):
     """Helper function to create MessagePiece with optional targeted harm categories and labels."""
-    return MessagePiece(
-        role="user",
-        original_value=f"Test prompt {prompt_num}",
-        converted_value=f"Test prompt {prompt_num}",
-        conversation_id=conversation_id,
-        targeted_harm_categories=targeted_harm_categories,
-        labels=labels,
-    )
+    kwargs: dict = {
+        "role": "user",
+        "original_value": f"Test prompt {prompt_num}",
+        "converted_value": f"Test prompt {prompt_num}",
+        "conversation_id": conversation_id,
+    }
+    if targeted_harm_categories is not None:
+        kwargs["targeted_harm_categories"] = targeted_harm_categories
+    if labels is not None:
+        kwargs["labels"] = labels
+    return MessagePiece(**kwargs)
 
 
 def create_attack_result(
@@ -557,8 +561,11 @@ def test_attack_result_with_attack_generation_conversation_ids(sqlite_instance: 
     adversarial_ids = {"adv_conv_1", "adv_conv_2", "adv_conv_3"}
 
     related_conversations: set[ConversationReference] = {
-        *(ConversationReference(cid, ConversationType.PRUNED) for cid in pruned_ids),
-        *(ConversationReference(cid, ConversationType.ADVERSARIAL) for cid in adversarial_ids),
+        *(ConversationReference(conversation_id=cid, conversation_type=ConversationType.PRUNED) for cid in pruned_ids),
+        *(
+            ConversationReference(conversation_id=cid, conversation_type=ConversationType.ADVERSARIAL)
+            for cid in adversarial_ids
+        ),
     }
 
     attack_result = AttackResult(
