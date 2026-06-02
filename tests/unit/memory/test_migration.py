@@ -519,3 +519,37 @@ def test_generate_schema_migration_with_diffs_creates_revision():
                 mock_revision.assert_called_once()
         finally:
             engine.dispose()
+
+
+def test_check_schema_migrations_silent_suppresses_output(capsys):
+    """check_schema_migrations with silent=True must not print the Alembic message."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "check-silent-test.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            run_schema_migrations(engine=engine, silent=True)
+            capsys.readouterr()  # discard any output from setup
+
+            check_schema_migrations(engine=engine, silent=True)
+
+            captured = capsys.readouterr()
+            assert captured.out == ""
+        finally:
+            engine.dispose()
+
+
+def test_check_schema_migrations_not_silent_prints_output(capsys):
+    """check_schema_migrations without silent prints the Alembic schema-check message."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "check-loud-test.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            run_schema_migrations(engine=engine, silent=True)
+            capsys.readouterr()  # discard any output from setup
+
+            check_schema_migrations(engine=engine, silent=False)
+
+            captured = capsys.readouterr()
+            assert "No new upgrade operations detected." in captured.out
+        finally:
+            engine.dispose()
