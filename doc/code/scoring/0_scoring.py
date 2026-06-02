@@ -33,21 +33,6 @@
 #
 # The two are convertible: a `float_scale` score becomes `true_false` by applying a
 # threshold (see [Combining & stacking scorers](3_combining_scorers.ipynb)).
-#
-# ## Fast vs. slow
-#
-# Scorers fall on a speed/cost axis that the reference table below captures as **Uses LLM?**:
-#
-# - **Fast (no LLM)** — substring, keyword, and regex scorers run locally. They are
-#   deterministic, free, and need no credentials, so they are ideal for CI and for
-#   scoring large response sets.
-# - **Slow (LLM "self-ask")** — `SelfAsk*` scorers ask a chat target to reason about the
-#   response. They are flexible and handle nuance, but cost a model call per score and
-#   require a configured target.
-#
-# > A few scorers are fast but still call a network service: `AzureContentFilterScorer`
-# > and `PromptShieldScorer` use hosted **classifier** APIs (not a generative LLM), so they
-# > show `Uses LLM? = no` but still need an endpoint and credentials.
 # %% [markdown]
 # ## Scorer reference table
 #
