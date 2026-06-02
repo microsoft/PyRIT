@@ -44,10 +44,9 @@ def _paced_chunks(chunks: list[bytes], finish: asyncio.Event):
 
 
 def _build_target() -> MagicMock:
-    """Build a MagicMock target exposing the streaming + connection surface the session calls."""
+    """Build a MagicMock target exposing the connection + audio surface the session calls."""
     target = MagicMock(name="RealtimeTarget")
-    target.streaming = MagicMock(name="streaming")
-    target.streaming.SAMPLE_RATE_HZ = 24000
+    target.SAMPLE_RATE_HZ = 24000
     # MagicMock auto-creates attributes; pin _server_vad to None so the session's
     # ``_effective_vad`` capture defaults correctly when no per-session vad is passed.
     target._server_vad = None
@@ -59,8 +58,8 @@ def _build_target() -> MagicMock:
     connection.input_audio_buffer = MagicMock()
     connection.input_audio_buffer.commit = AsyncMock(side_effect=_StubBadRequest("input_audio_buffer_commit_empty"))
 
-    target.streaming.connect_async = AsyncMock(return_value=connection)
-    target.streaming.save_audio = AsyncMock(side_effect=lambda pcm, **kw: f"/tmp/audio-{uuid.uuid4().hex[:8]}.wav")
+    target._connect_async = AsyncMock(return_value=connection)
+    target.save_audio = AsyncMock(side_effect=lambda pcm, **kw: f"/tmp/audio-{uuid.uuid4().hex[:8]}.wav")
     target.get_identifier = MagicMock(
         return_value={"__type__": "RealtimeTarget", "__module__": "test", "id": "test-id"}
     )
@@ -500,7 +499,7 @@ async def test_on_committed_trims_pre_speech_silence_before_persisting_user_audi
 
     # start_ms = max(0, 500 - 100) = 400 → start_byte = 400 * 48 = 19200
     # trimmed length = 28800 - 19200 = 9600 bytes (200ms)
-    raw_save_call = target.streaming.save_audio.await_args_list[0]
+    raw_save_call = target.save_audio.await_args_list[0]
     saved_user_pcm = raw_save_call.args[0] if raw_save_call.args else raw_save_call.kwargs.get("pcm")
     assert len(saved_user_pcm) == 9600
 
@@ -530,7 +529,7 @@ async def test_on_committed_skips_trim_when_audio_start_ms_missing():
             events=[CommittedEvent(item_id="item-1", audio_start_ms=None)],
         )
 
-    raw_save_call = target.streaming.save_audio.await_args_list[0]
+    raw_save_call = target.save_audio.await_args_list[0]
     saved_user_pcm = raw_save_call.args[0] if raw_save_call.args else raw_save_call.kwargs.get("pcm")
     assert len(saved_user_pcm) == buffer_ms * bytes_per_ms
 
@@ -590,7 +589,7 @@ async def test_buffer_start_session_ms_advances_across_commits():
     # save_audio call ordering per turn: raw_user, assistant. We requested no request converters
     # so converted_user_path == raw_user_path and only one user save_audio fires per turn.
     # Across two turns: [user_t1, assistant_t1, user_t2, assistant_t2].
-    calls = target.streaming.save_audio.await_args_list
+    calls = target.save_audio.await_args_list
     assert len(calls) == 4
     assert len(calls[0].args[0]) == 9600
     assert len(calls[2].args[0]) == 14400

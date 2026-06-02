@@ -167,9 +167,7 @@ class _OpenAIRealtimeStreamingSession:
             Message: One assembled assistant ``Message`` per turn. The matching user
             ``Message`` for each turn is persisted to memory but not yielded.
         """
-        streaming = self._target.streaming
-
-        self._connection = await streaming.connect_async(conversation_id=self._conversation_id)
+        self._connection = await self._target._connect_async(conversation_id=self._conversation_id)
         try:
             await self._send_streaming_session_config_async()
             if self._persist_prepended_conversation:
@@ -286,8 +284,7 @@ class _OpenAIRealtimeStreamingSession:
             asyncio.CancelledError: Propagated when the dispatcher task is cancelled.
         """
         assert self._queue is not None
-        streaming = self._target.streaming
-        sample_rate = streaming.SAMPLE_RATE_HZ
+        sample_rate = self._target.SAMPLE_RATE_HZ
 
         async with self._pending_chunks_lock:
             raw_pcm = bytes(self._pending_chunks)
@@ -333,8 +330,7 @@ class _OpenAIRealtimeStreamingSession:
         assert self._dispatcher is not None
 
         target = self._target
-        streaming = target.streaming
-        sample_rate = streaming.SAMPLE_RATE_HZ
+        sample_rate = target.SAMPLE_RATE_HZ
 
         if self._request_converter_configurations:
             converted_pcm = await self._prompt_normalizer.convert_audio_async(
@@ -351,14 +347,14 @@ class _OpenAIRealtimeStreamingSession:
         future = await self._request_response_async()
         result = await future
 
-        raw_user_path = await streaming.save_audio(raw_pcm, num_channels=1, sample_width=2, sample_rate=sample_rate)
+        raw_user_path = await target.save_audio(raw_pcm, num_channels=1, sample_width=2, sample_rate=sample_rate)
         if converted_pcm is raw_pcm:
             converted_user_path = raw_user_path
         else:
-            converted_user_path = await streaming.save_audio(
+            converted_user_path = await target.save_audio(
                 converted_pcm, num_channels=1, sample_width=2, sample_rate=sample_rate
             )
-        assistant_audio_path = await streaming.save_audio(
+        assistant_audio_path = await target.save_audio(
             result.audio_bytes, num_channels=1, sample_width=2, sample_rate=sample_rate
         )
 

@@ -16,11 +16,9 @@ from pyrit.prompt_target.common.realtime_audio import (
     CommittedEvent,
     RealtimeTargetResult,
     RealtimeTurnState,
-    StreamingHandle,
 )
 from pyrit.prompt_target.openai.openai_realtime_target import (
     _OpenAIRealtimeDispatcher,
-    _RealtimeStreamingHandle,
 )
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
@@ -42,7 +40,7 @@ async def test_connect_success(target):
     mock_client.realtime.connect.return_value.__aenter__ = AsyncMock(return_value=mock_connection)
 
     with patch.object(target, "_get_openai_client", return_value=mock_client):
-        connection = await target.streaming.connect_async(conversation_id="test_conv")
+        connection = await target._connect_async(conversation_id="test_conv")
         assert connection == mock_connection
         mock_client.realtime.connect.assert_called_once_with(model="test")
     await target.cleanup_target()
@@ -50,7 +48,7 @@ async def test_connect_success(target):
 
 async def test_send_prompt_async(target):
     # Mock the necessary methods
-    target.streaming.connect_async = AsyncMock(return_value=AsyncMock())
+    target._connect_async = AsyncMock(return_value=AsyncMock())
     target.send_config = AsyncMock()
     result = RealtimeTargetResult(audio_bytes=b"file", transcripts=["hello"])
     target.send_text_async = AsyncMock(return_value=("output.wav", result))
@@ -85,7 +83,7 @@ async def test_send_prompt_async(target):
 
 async def test_send_prompt_async_propagates_interrupted_to_metadata(target):
     """When a turn result carries interrupted=True, both response pieces' metadata must reflect it."""
-    target.streaming.connect_async = AsyncMock(return_value=AsyncMock())
+    target._connect_async = AsyncMock(return_value=AsyncMock())
     target.send_config = AsyncMock()
     interrupted_result = RealtimeTargetResult(audio_bytes=b"partial", transcripts=["hi"], interrupted=True)
     target.send_text_async = AsyncMock(return_value=("partial.wav", interrupted_result))
@@ -111,7 +109,7 @@ async def test_send_prompt_async_propagates_interrupted_to_metadata(target):
 
 async def test_send_prompt_async_omits_interrupted_metadata_when_not_set(target):
     """A non-interrupted result must not write an interrupted key to MessagePiece metadata."""
-    target.streaming.connect_async = AsyncMock(return_value=AsyncMock())
+    target._connect_async = AsyncMock(return_value=AsyncMock())
     target.send_config = AsyncMock()
     normal_result = RealtimeTargetResult(audio_bytes=b"full", transcripts=["hi"])
     target.send_text_async = AsyncMock(return_value=("full.wav", normal_result))
@@ -188,7 +186,7 @@ async def test_get_system_prompt_empty_conversation(target):
 
 async def test_multiple_websockets_created_for_multiple_conversations(target):
     # Mock the necessary methods
-    target.streaming.connect_async = AsyncMock(return_value=AsyncMock())
+    target._connect_async = AsyncMock(return_value=AsyncMock())
     target.send_config = AsyncMock()
     result = RealtimeTargetResult(audio_bytes=b"event1", transcripts=["event2"])
     target.send_text_async = AsyncMock(return_value=("output_audio_path", result))
@@ -411,7 +409,7 @@ async def test_multi_turn_reuses_connection(target):
     This ensures that the server-side conversation context is preserved.
     """
     mock_connection = AsyncMock()
-    target.streaming.connect_async = AsyncMock(return_value=mock_connection)
+    target._connect_async = AsyncMock(return_value=mock_connection)
     target.send_config = AsyncMock()
     result = RealtimeTargetResult(audio_bytes=b"audio", transcripts=["response"])
     target.send_text_async = AsyncMock(return_value=("output.wav", result))
@@ -441,7 +439,7 @@ async def test_multi_turn_reuses_connection(target):
     await target.send_prompt_async(message=Message(message_pieces=[message_piece_2]))
 
     # Connection should only be created once for the conversation
-    target.streaming.connect_async.assert_called_once_with(conversation_id=conversation_id)
+    target._connect_async.assert_called_once_with(conversation_id=conversation_id)
     target.send_config.assert_called_once()
 
     # Both turns should use the same connection
@@ -851,38 +849,12 @@ async def test_route_event_pending_speech_start_resets_after_commit():
     assert received[1].audio_start_ms is None
 
 
-# ---- streaming handle wiring & config -----------------------------------------
+# ---- streaming wiring & config ------------------------------------------------
 
 
 def test_sample_rate_hz_class_constant():
     """SAMPLE_RATE_HZ is the single source of truth for the realtime PCM sample rate."""
-    assert _RealtimeStreamingHandle.SAMPLE_RATE_HZ == 24000
-
-
-def test_realtime_target_wires_streaming_handle(target):
-    """RealtimeTarget.__init__ instantiates and attaches its streaming handle."""
-    assert isinstance(target.streaming, _RealtimeStreamingHandle)
-    assert isinstance(target.streaming, StreamingHandle)
-
-
-def test_realtime_streaming_handle_has_no_abstract_methods():
-    """_RealtimeStreamingHandle implements every method on the StreamingHandle ABC."""
-    assert _RealtimeStreamingHandle.__abstractmethods__ == frozenset()
-
-
-def test_server_vad_config_returns_config_when_enabled(target):
-    """server_vad_config exposes the underlying ServerVadConfig when server VAD is enabled."""
-    target._server_vad = ServerVadConfig(prefix_padding_ms=250, silence_duration_ms=400)
-    cfg = target.streaming.server_vad_config
-    assert cfg is not None
-    assert cfg.prefix_padding_ms == 250
-    assert cfg.silence_duration_ms == 400
-
-
-def test_server_vad_config_returns_none_when_disabled(target):
-    """server_vad_config is None when server VAD is disabled."""
-    target._server_vad = None
-    assert target.streaming.server_vad_config is None
+    assert RealtimeTarget.SAMPLE_RATE_HZ == 24000
 
 
 # ---- send_prompt audio routing -------------------------------------------------
@@ -918,7 +890,7 @@ async def test_send_prompt_audio_path_calls_send_audio_async(target, tmp_path):
     )
     message = Message(message_pieces=[piece])
 
-    target.streaming.connect_async = AsyncMock(return_value=AsyncMock())
+    target._connect_async = AsyncMock(return_value=AsyncMock())
     target.send_config = AsyncMock()
     target.send_audio_async = AsyncMock(
         return_value=("/tmp/out.wav", RealtimeTargetResult(audio_bytes=b"", transcripts=["hi"])),

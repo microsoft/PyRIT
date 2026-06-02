@@ -9,7 +9,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any
 
 from pyrit.prompt_target.common.streaming.streaming_audio_target import (
     ServerVadConfig as ServerVadConfig,  # noqa: TC001
@@ -257,41 +257,3 @@ class RealtimeEventDispatcher(ABC):
         Args:
             state (RealtimeTurnState): The turn whose response should be cancelled.
         """
-
-
-class StreamingHandle(ABC):
-    """
-    Provider-agnostic websocket-level streaming surface for realtime targets.
-
-    Owns the low-level transport primitives a streaming session needs: opening
-    the connection, sending the initial session config, pushing PCM chunks, and
-    persisting audio to disk. Streaming attacks (e.g. ``BargeInAttack``) drive
-    these through a session object (see ``RealtimeTarget.open_streaming_session``)
-    rather than calling this handle directly. Concrete realtime providers
-    (OpenAI, Azure, etc.) provide a concrete subclass and assign it to
-    ``self.streaming`` on their target so the session can read provider-agnostic
-    config without knowing the concrete target type.
-    """
-
-    #: PCM sample rate in Hz negotiated by the provider's realtime protocol.
-    SAMPLE_RATE_HZ: ClassVar[int]
-
-    @property
-    @abstractmethod
-    def server_vad_config(self) -> "ServerVadConfig | None":
-        """Server VAD configuration in effect, or ``None`` if server VAD is disabled."""
-
-    @abstractmethod
-    async def connect_async(self, conversation_id: str) -> Any:
-        """Open the streaming connection for ``conversation_id`` and return the connection handle."""
-
-    @abstractmethod
-    async def save_audio(
-        self,
-        audio_bytes: bytes,
-        num_channels: int = 1,
-        sample_width: int = 2,
-        sample_rate: int = 16000,
-        output_filename: str | None = None,
-    ) -> str:
-        """Persist a PCM buffer to disk and return the file path."""
