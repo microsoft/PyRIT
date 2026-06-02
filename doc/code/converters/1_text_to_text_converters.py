@@ -87,6 +87,7 @@ print("Negation Trap:", await NegationTrapConverter().convert_async(prompt="your
 # %%
 from pyrit.prompt_converter import (
     AnsiAttackConverter,
+    ArabicPresentationFormConverter,
     BidiConverter,
     CharacterSpaceConverter,
     CharSwapConverter,
@@ -132,6 +133,8 @@ print("Diacritic:", await DiacriticConverter().convert_async(prompt=prompt))  # 
 print("Bidi:", await BidiConverter().convert_async(prompt=prompt))  # type: ignore
 # Tatweel inserts the Arabic kashida between adjacent Arabic letters
 print("Tatweel:", await TatweelConverter().convert_async(prompt="مرحبا"))  # type: ignore
+# Arabic presentation form substitutes Arabic letters with their isolated glyphs
+print("Arabic Presentation Form:", await ArabicPresentationFormConverter().convert_async(prompt="مرحبا"))  # type: ignore
 print("Superscript:", await SuperscriptConverter().convert_async(prompt=prompt))  # type: ignore
 print("Zalgo:", await ZalgoConverter().convert_async(prompt=prompt))  # type: ignore
 
