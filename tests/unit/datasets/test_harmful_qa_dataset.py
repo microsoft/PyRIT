@@ -55,3 +55,8 @@ class TestHarmfulQADataset:
         """Test dataset_name property."""
         loader = _HarmfulQADataset()
         assert loader.dataset_name == "harmful_qa"
+
+    def test_split_kwarg_emits_deprecation_warning(self):
+        """Passing the deprecated ``split`` kwarg emits a DeprecationWarning."""
+        with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
+            _HarmfulQADataset(split="train")

@@ -145,3 +145,9 @@ async def test_fetch_dataset(loader_class):
     assert all(isinstance(p, SeedPrompt) for p in dataset.seeds)
     actual_values = {seed.value for seed in dataset.seeds}
     assert actual_values == config["expected_values"]
+
+
+def test_forbidden_questions_split_kwarg_emits_deprecation_warning():
+    """Passing the deprecated ``split`` kwarg emits a DeprecationWarning."""
+    with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
+        _ForbiddenQuestionsDataset(split="default")

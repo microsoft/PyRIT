@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
+import warnings
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -30,14 +31,23 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
     CONFIG: str
     DESCRIPTION: str
 
-    def __init__(self, *, split: str = "train") -> None:
+    def __init__(self, *, split: str | None = None) -> None:
         """
         Initialize the OR-Bench dataset loader.
 
         Args:
-            split: Dataset split to load. Defaults to "train".
+            split: **Deprecated.** Every config of ``bench-llm/OR-Bench`` publishes only
+                the ``"train"`` split, so this kwarg has no effect. It will be removed in
+                v0.16.0.
         """
-        self.split = split
+        if split is not None:
+            warnings.warn(
+                "'split' is deprecated and will be removed in v0.16.0. "
+                "Every config of bench-llm/OR-Bench publishes only the 'train' split, "
+                "so this kwarg has no effect.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
@@ -54,7 +64,7 @@ class _ORBenchBaseDataset(_RemoteDatasetLoader):
         data = await self._fetch_from_huggingface(
             dataset_name=self.HF_DATASET_NAME,
             config=self.CONFIG,
-            split=self.split,
+            split="train",
             cache=cache,
         )
 

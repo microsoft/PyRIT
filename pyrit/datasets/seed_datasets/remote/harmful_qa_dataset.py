@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
+import warnings
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -31,15 +32,24 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
     def __init__(
         self,
         *,
-        split: str = "train",
+        split: str | None = None,
     ) -> None:
         """
         Initialize the HarmfulQA dataset loader.
 
         Args:
-            split: Dataset split to load. Defaults to "train".
+            split: **Deprecated.** Upstream ``declare-lab/HarmfulQA`` publishes only the
+                ``"train"`` split, so this kwarg has no effect. It will be removed in
+                v0.16.0.
         """
-        self.split = split
+        if split is not None:
+            warnings.warn(
+                "'split' is deprecated and will be removed in v0.16.0. "
+                "Upstream declare-lab/HarmfulQA publishes only the 'train' split, "
+                "so this kwarg has no effect.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
     @property
     def dataset_name(self) -> str:
@@ -60,7 +70,7 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
 
         data = await self._fetch_from_huggingface(
             dataset_name=self.HF_DATASET_NAME,
-            split=self.split,
+            split="train",
             cache=cache,
         )
 

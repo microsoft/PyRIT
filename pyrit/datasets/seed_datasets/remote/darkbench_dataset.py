@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import warnings
+
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
@@ -28,7 +30,7 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         *,
         dataset_name: str = "apart/darkbench",
         config: str = "default",
-        split: str = "train",
+        split: str | None = None,
     ) -> None:
         """
         Initialize the DarkBench dataset loader.
@@ -36,11 +38,20 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         Args:
             dataset_name: HuggingFace dataset identifier. Defaults to "apart/darkbench".
             config: Dataset configuration. Defaults to "default".
-            split: Dataset split to load. Defaults to "train".
+            split: **Deprecated.** Upstream ``apart/darkbench`` publishes only the
+                ``"train"`` split, so this kwarg has no effect. It will be removed in
+                v0.16.0.
         """
+        if split is not None:
+            warnings.warn(
+                "'split' is deprecated and will be removed in v0.16.0. "
+                "Upstream apart/darkbench publishes only the 'train' split, "
+                "so this kwarg has no effect.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.hf_dataset_name = dataset_name
         self.config = config
-        self.split = split
 
     @property
     def dataset_name(self) -> str:
@@ -65,7 +76,7 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         data = await self._fetch_from_huggingface(
             dataset_name=self.hf_dataset_name,
             config=self.config,
-            split=self.split,
+            split="train",
             cache=cache,
             data_files="darkbench.tsv",
         )
