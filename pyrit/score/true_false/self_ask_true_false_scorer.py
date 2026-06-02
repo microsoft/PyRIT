@@ -35,6 +35,7 @@ class TrueFalseQuestionPaths(enum.Enum):
     TASK_ACHIEVED = Path(TRUE_FALSE_QUESTIONS_PATH, "task_achieved.yaml").resolve()
     # This is an LLM-powered refinement of the TASK_ACHIEVED rubric
     TASK_ACHIEVED_REFINED = Path(TRUE_FALSE_QUESTIONS_PATH, "task_achieved_refined.yaml").resolve()
+    LLAMAGUARD = Path(TRUE_FALSE_QUESTIONS_PATH, "llamaguard.yaml").resolve()
 
 
 class TrueFalseQuestion:
@@ -130,10 +131,9 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
                 target's raw text response. When provided, replaces the default JSON parsing.
                 Must return a dict with at least ``score_value`` and ``rationale`` keys (and
                 may include ``description``, ``metadata``, ``category``). Should raise
-                :class:`pyrit.exceptions.InvalidJsonException` on malformed output to trigger
-                a retry. Use when wrapping a fine-tuned classifier whose output is not JSON
-                (e.g. LlamaGuard's ``safe`` / ``unsafe\\n<categories>`` format). Defaults to
-                None (use the JSON path).
+                ``InvalidJsonException`` on malformed output to trigger a retry. Use when
+                wrapping a fine-tuned classifier whose output is not JSON (e.g. LlamaGuard's
+                ``safe`` / ``unsafe\\n<categories>`` format). Defaults to None (use the JSON path).
 
         Raises:
             ValueError: If both true_false_question_path and true_false_question are provided.

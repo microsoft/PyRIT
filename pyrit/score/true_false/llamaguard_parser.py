@@ -17,14 +17,34 @@ This module turns that raw text into the dict shape consumed by
 ``Scorer._score_value_with_llm``, so a LlamaGuard endpoint can be plugged into
 ``SelfAskTrueFalseScorer`` via its ``response_parser`` argument.
 
+Example:
+    from pyrit.score import SelfAskTrueFalseScorer, parse_llamaguard_response, TrueFalseQuestionPaths
+    from pyrit.score.true_false.llamaguard_parser import LLAMAGUARD_SYSTEM_PROMPT_PATH
+
+    scorer = SelfAskTrueFalseScorer(
+        chat_target=llamaguard_endpoint,
+        true_false_question_path=TrueFalseQuestionPaths.LLAMAGUARD.value,
+        true_false_system_prompt_path=LLAMAGUARD_SYSTEM_PROMPT_PATH,
+        response_parser=parse_llamaguard_response,
+    )
+
 Official model card: https://huggingface.co/meta-llama/Llama-Guard-3-8B
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.exceptions import InvalidJsonException
+
+#: Path to the bundled LlamaGuard system prompt YAML. Pair with
+#: ``TrueFalseQuestionPaths.LLAMAGUARD`` and ``parse_llamaguard_response`` when
+#: constructing a ``SelfAskTrueFalseScorer`` against a LlamaGuard endpoint.
+LLAMAGUARD_SYSTEM_PROMPT_PATH: Path = Path(
+    SCORER_SEED_PROMPT_PATH, "true_false_question", "llamaguard_system_prompt.yaml"
+).resolve()
 
 
 def parse_llamaguard_response(text: str) -> dict[str, Any]:

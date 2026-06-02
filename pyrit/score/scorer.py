@@ -691,7 +691,7 @@ class Scorer(Identifiable, abc.ABC):
                 response text. Must return a dict containing at least ``score_value_output_key``
                 and ``rationale_output_key``; may also include ``description_output_key``,
                 ``metadata_output_key``, and ``category_output_key``. Should raise
-                :class:`InvalidJsonException` on malformed output so the ``@pyrit_json_retry``
+                ``InvalidJsonException`` on malformed output so the ``@pyrit_json_retry``
                 decorator retries the LLM call. Use when wrapping a fine-tuned classifier
                 whose output is not JSON (e.g. LlamaGuard's ``safe`` / ``unsafe\\n<categories>``
                 format). Defaults to None (use the JSON path).

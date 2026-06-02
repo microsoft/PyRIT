@@ -13,10 +13,6 @@ description: |
       pass the parser to SelfAskTrueFalseScorer's `response_parser` argument.
 
       Official model card: https://huggingface.co/meta-llama/Llama-Guard-3-8B
-parameters:
-  - true_description
-  - false_description
-  - metadata
 data_type: text
 value: |
       Task: Check if there is unsafe content in the user message according to the safety policy below.
