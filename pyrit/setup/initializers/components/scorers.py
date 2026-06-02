@@ -234,8 +234,8 @@ class ScorerInitializer(PyRITInitializer):
         calls for rate-limit relief.
         """
         gpt4o = self._get_chat_target_prefer_rr(GPT4O_TARGET)
-        gpt5_4 = self._get_chat_target(GPT5_4_TARGET)
-        gpt5_1 = self._get_chat_target(GPT5_1_TARGET)
+        gpt5_4 = self._get_chat_target_prefer_rr(GPT5_4_TARGET)
+        gpt5_1 = self._get_chat_target_prefer_rr(GPT5_1_TARGET)
         unsafe = self._get_chat_target_prefer_rr(GPT4O_UNSAFE_TARGET)
         refusal_tag = [ScorerInitializerTags.REFUSAL]
 
@@ -305,7 +305,7 @@ class ScorerInitializer(PyRITInitializer):
 
         These are standalone float-scale scorers (no compounds). All are tagged ``SCALE``.
         """
-        gpt4o_temp9 = self._get_chat_target(GPT4O_TEMP9_TARGET)
+        gpt4o_temp9 = self._get_chat_target_prefer_rr(GPT4O_TEMP9_TARGET)
         scale_tag = [ScorerInitializerTags.SCALE]
 
         self._try_register(
@@ -419,7 +419,7 @@ class ScorerInitializer(PyRITInitializer):
 
         All are tagged ``TASK_ACHIEVED``.
         """
-        gpt4o_temp9 = self._get_chat_target(GPT4O_TEMP9_TARGET)
+        gpt4o_temp9 = self._get_chat_target_prefer_rr(GPT4O_TEMP9_TARGET)
         task_tag = [ScorerInitializerTags.TASK_ACHIEVED]
 
         self._try_register(
