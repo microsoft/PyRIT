@@ -1009,7 +1009,7 @@ class MemoryInterface(abc.ABC):
 
         all_pieces: list[MessagePiece] = []
         for message in messages:
-            duplicated_message = message.duplicate_message()
+            duplicated_message = message.duplicate()
 
             for piece in duplicated_message.message_pieces:
                 piece.conversation_id = new_conversation_id

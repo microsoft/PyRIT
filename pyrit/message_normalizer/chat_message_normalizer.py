@@ -6,6 +6,8 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, Union
 
+import aiofiles
+
 from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.message_normalizer.message_normalizer import (
     MessageListNormalizer,
@@ -14,7 +16,7 @@ from pyrit.message_normalizer.message_normalizer import (
     apply_system_message_behavior_async,
 )
 from pyrit.models import ChatMessage, DataTypeSerializer, Message
-from pyrit.models.message_piece import MessagePiece
+from pyrit.models.messages.message_piece import MessagePiece
 
 if TYPE_CHECKING:
     from pyrit.models.literals import ChatMessageRole
@@ -176,7 +178,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
         if not os.path.isfile(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        with open(audio_path, "rb") as f:
-            audio_data = base64.b64encode(f.read()).decode("utf-8")
+        async with aiofiles.open(audio_path, "rb") as f:
+            audio_data = base64.b64encode(await f.read()).decode("utf-8")
 
         return {"type": "input_audio", "input_audio": {"data": audio_data, "format": audio_format}}

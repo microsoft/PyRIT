@@ -123,6 +123,11 @@ class AddImageTextConverter(_BaseImageTextConverter):
         self._bounding_box = bounding_box
         self._rotation = rotation
         self._center_text = center_text
+        # Load the base image once at construction time so the hot path (`_add_text_to_image`)
+        # doesn't do file I/O or image decode on each `convert_async` call.
+        with Image.open(self._img_to_add) as img:
+            img.load()
+            self._base_image = img.copy()
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -239,7 +244,7 @@ class AddImageTextConverter(_BaseImageTextConverter):
         if not text:
             raise ValueError("Please provide valid text value")
 
-        image = Image.open(self._img_to_add)
+        image = self._base_image.copy()
 
         if self._bounding_box:
             bounding_box = self._bounding_box
