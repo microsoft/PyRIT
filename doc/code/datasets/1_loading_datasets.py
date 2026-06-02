@@ -38,6 +38,7 @@
 # LLM-LAT [@sheshadri2024lat],
 # MedSafetyBench [@han2024medsafetybench],
 # Moral Integrity Corpus [@ziems2022mic],
+# MOSSBench [@li2024mossbench],
 # Multilingual Alignment Prism [@aakanksha2024multilingual],
 # Multilingual Vulnerabilities [@tang2025multilingual],
 # OR-Bench [@cui2024orbench],

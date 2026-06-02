@@ -14,7 +14,7 @@ from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
-from pyrit.models.message_piece import MessagePiece
+from pyrit.models.messages.message_piece import MessagePiece
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import Score
 from pyrit.models.strategy_result import StrategyResult
