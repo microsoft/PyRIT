@@ -106,6 +106,16 @@ class Score(BaseModel):
         Raises:
             ValueError: If the value is incompatible with the score-type constraints.
         """
+        self._check_score_value()
+        return self
+
+    def _check_score_value(self) -> None:
+        """
+        Validate ``score_value`` against ``score_type`` constraints.
+
+        Raises:
+            ValueError: If the value is incompatible with the score-type constraints.
+        """
         if self.score_type == "true_false" and str(self.score_value).lower() not in ("true", "false"):
             raise ValueError(f"True False scorers must have a score value of 'true' or 'false' not {self.score_value}")
         if self.score_type == "float_scale":
@@ -115,7 +125,6 @@ class Score(BaseModel):
                 raise ValueError(f"Float scale scorers require a numeric score value. Got {self.score_value}") from e
             if not (0 <= numeric <= 1):
                 raise ValueError(f"Float scale scorers must have a score value between 0 and 1. Got {self.score_value}")
-        return self
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -192,6 +201,24 @@ class Score(BaseModel):
             removed_in="0.16.0",
         )
         return cls.model_validate(data)
+
+    def validate(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        """
+        Re-run construction-time validation (DEPRECATED).
+
+        Validation now happens automatically when a ``Score`` is constructed, so
+        there is no need to call this. It is retained only as a no-op-style shim that
+        re-validates the current instance. Any positional/keyword arguments are ignored.
+
+        Raises:
+            ValueError: If the value is incompatible with the score-type constraints.
+        """
+        print_deprecation_message(
+            old_item="Score.validate()",
+            new_item="construction-time validation (Score(...))",
+            removed_in="0.16.0",
+        )
+        self._check_score_value()
 
 
 @dataclass

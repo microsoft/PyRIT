@@ -220,6 +220,22 @@ def test_from_dict_emits_warning_and_matches_model_validate():
     assert reconstructed.model_dump(mode="json") == serialized
 
 
+def test_validate_emits_warning_and_revalidates():
+    score = _make_score(score_type="true_false", score_value="true")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        score.validate()
+    msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert any("validate" in str(m.message) for m in msgs)
+
+
+def test_validate_raises_when_instance_made_invalid():
+    score = _make_score(score_type="true_false", score_value="true")
+    score.score_value = "maybe"
+    with pytest.raises(ValueError):
+        score.validate()
+
+
 # --------------------------------------------------------------------------- #
 # UnvalidatedScore
 # --------------------------------------------------------------------------- #
