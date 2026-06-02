@@ -299,7 +299,8 @@ class OpenAIImageTarget(OpenAITarget):
         # Construct request parameters for image editing
         image_edit_args: dict[str, Any] = {
             "model": self._model_name,
-            # Single image is sent as a tuple (mandatory for targets that support only one image input such as MAI modes), multiple images as a list
+            # Single image sent as a tuple (mandatory for targets that support only one image input such as MAI,
+            # also supported by other targets such as OpenAI). Multiple images always sent as a list.
             "image": image_files[0] if len(image_files) == 1 else image_files,
             "prompt": text_prompt,
             "size": self.image_size,
