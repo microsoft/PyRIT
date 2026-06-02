@@ -4,9 +4,8 @@
 from typing import Optional
 
 from pyrit.analytics.text_matching import ExactTextMatching, TextMatching
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory.central_memory import CentralMemory
-from pyrit.models import MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -111,7 +110,7 @@ class DecodingScorer(TrueFalseScorer):
                 score_category=self._score_categories,
                 score_rationale="",
                 scorer_class_identifier=self.get_identifier(),
-                message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+                message_piece_id=message_piece.id,
                 objective=objective,
             )
         ]

@@ -34,7 +34,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build devcontainer image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .devcontainer
           file: .devcontainer/Dockerfile
@@ -78,7 +78,7 @@ jobs:
           driver: docker
 
       - name: Build production image (local)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/Dockerfile
@@ -130,7 +130,7 @@ jobs:
           driver: docker
 
       - name: Build production image (PyPI)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/Dockerfile

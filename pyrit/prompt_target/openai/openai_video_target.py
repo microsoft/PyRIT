@@ -11,8 +11,8 @@ from openai.types import VideoSeconds, VideoSize
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     DataTypeSerializer,
     Message,
     MessagePiece,

@@ -12,7 +12,7 @@ from pyrit.datasets.seed_datasets.remote._image_cache import (
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,11 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
 
     Reference: [@palaskar2025vlsu]
     """
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT, Modality.IMAGE)
+    size: str = "huge"  # 11074 image-text safety annotations
+    tags: frozenset[str] = frozenset({"default", "safety", "multimodal"})
 
     def __init__(
         self,
