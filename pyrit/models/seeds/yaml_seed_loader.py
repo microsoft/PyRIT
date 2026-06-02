@@ -16,20 +16,19 @@ on the seed classes are thin shims that delegate here.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import yaml
 
 from pyrit.common.utils import verify_and_resolve_path
+from pyrit.models.seeds.seed import Seed
+from pyrit.models.seeds.seed_dataset import SeedDataset
+from pyrit.models.seeds.seed_prompt import SeedPrompt
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from pyrit.models.seeds.seed import Seed
-    from pyrit.models.seeds.seed_dataset import SeedDataset
-    from pyrit.models.seeds.seed_prompt import SeedPrompt
-
-T = TypeVar("T", bound="Seed")
+T = TypeVar("T", bound=Seed)
 
 # Seed model fields that callers may write as a bare string in YAML
 # (e.g. ``authors: Jane Doe``) but the model declares as ``list[str]``.
@@ -64,7 +63,7 @@ def _canonicalize_scalar_lists(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def _read_yaml(file: Union[str, Path]) -> dict[str, Any]:
+def _read_yaml(file: str | Path) -> dict[str, Any]:
     """
     Resolve, read, and parse a YAML file as a mapping.
 
@@ -91,7 +90,7 @@ def _read_yaml(file: Union[str, Path]) -> dict[str, Any]:
     return data
 
 
-def load_seed_from_yaml(file: Union[str, Path], *, cls: type[T]) -> T:
+def load_seed_from_yaml(file: str | Path, *, cls: type[T]) -> T:
     """
     Load a single seed of type ``cls`` from a YAML file.
 
@@ -117,7 +116,7 @@ def load_seed_from_yaml(file: Union[str, Path], *, cls: type[T]) -> T:
     return cls(**data)
 
 
-def load_seed_dataset_from_yaml(file: Union[str, Path]) -> SeedDataset:
+def load_seed_dataset_from_yaml(file: str | Path) -> SeedDataset:
     """
     Load a ``SeedDataset`` from a YAML file.
 
@@ -134,18 +133,16 @@ def load_seed_dataset_from_yaml(file: Union[str, Path]) -> SeedDataset:
         FileNotFoundError: If the path does not resolve to an existing file.
         ValueError: If the YAML is malformed, empty, or fails dataset validation.
     """
-    from pyrit.models.seeds.seed_dataset import SeedDataset
-
     data = _canonicalize_scalar_lists(_read_yaml(file))
     data["is_jinja_template"] = True
     return SeedDataset.from_dict(data)
 
 
 def load_seed_prompt_from_yaml_with_required_parameters(
-    template_path: Union[str, Path],
+    template_path: str | Path,
     required_parameters: list[str],
     *,
-    error_message: Optional[str] = None,
+    error_message: str | None = None,
 ) -> SeedPrompt:
     """
     Load a ``SeedPrompt`` and assert that its ``parameters`` field declares each required name.
@@ -161,8 +158,6 @@ def load_seed_prompt_from_yaml_with_required_parameters(
     Raises:
         ValueError: If the loaded prompt is missing any required parameter.
     """
-    from pyrit.models.seeds.seed_prompt import SeedPrompt
-
     sp = load_seed_from_yaml(template_path, cls=SeedPrompt)
     if sp.parameters is None or not all(p in sp.parameters for p in required_parameters):
         if error_message is None:
