@@ -29,11 +29,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Concrete leaf classes for the polymorphic seed list. Use SeedLeaf when you need a plain
-# typing alias (e.g. for local list[...] variables); use SeedUnion in Pydantic field annotations
-# so the discriminator is honored during validation.
-SeedLeaf = Union[SeedPrompt, SeedObjective, SeedSimulatedConversation]
-SeedUnion = Annotated[SeedLeaf, Field(discriminator="seed_type")]
+# Polymorphic union of seed types that can appear inside a SeedGroup. The discriminator
+# field ``seed_type`` is set per-leaf-class so Pydantic dispatches to the correct constructor
+# during validation. Exported so SeedDataset (and any future container) can reuse the same
+# tagged union for its own ``seeds`` field.
+SeedUnion = Annotated[
+    Union[SeedPrompt, SeedObjective, SeedSimulatedConversation],
+    Field(discriminator="seed_type"),
+]
 
 
 class SeedGroup(BaseModel):
@@ -119,7 +122,7 @@ class SeedGroup(BaseModel):
         simulated_conv = self._get_simulated_conversation()
         sorted_prompts = sorted(self.prompts, key=lambda p: p.sequence if p.sequence is not None else 0)
 
-        new_seeds: list[SeedLeaf] = []
+        new_seeds: list[SeedUnion] = []
         if objective:
             new_seeds.append(objective)
         if simulated_conv:
