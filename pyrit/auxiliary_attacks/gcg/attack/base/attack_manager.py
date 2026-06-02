@@ -654,7 +654,7 @@ class MultiPromptAttack:
         n_steps: int = 100,
         batch_size: int = 1024,
         topk: int = 256,
-        temp: int = 1,
+        temp: float = 1.0,
         allow_non_ascii: bool = True,
         target_weight: Optional[float] = None,
         control_weight: Optional[float] = None,

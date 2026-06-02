@@ -87,10 +87,11 @@ class SamplingStrategy(Protocol):
             batch_size (int): Number of candidate suffix rows to return.
             top_k (int): Number of top gradient positions per control slot
                 that the strategy is permitted to draw from.
-            temperature (float): Sampling temperature placeholder kept for API
-                compatibility with the legacy code path. The current default
-                strategy samples uniformly within the top-k and does not use
-                this value.
+            temperature (float): Sampling temperature. The current default
+                sampling strategy samples uniformly within the top-k and does
+                not use this value; it is part of the protocol so custom
+                strategies that need it (for example, softmax weighting) can
+                receive it.
             allow_non_ascii (bool): When False, the implementation must
                 ensure ``non_ascii_tokens`` are excluded from the candidate
                 vocabulary (typically by masking those positions of
