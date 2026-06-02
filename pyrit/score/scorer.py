@@ -746,7 +746,7 @@ class Scorer(Identifiable, abc.ABC):
             )
         )
 
-        scorer_llm_request = Message(message_pieces)
+        scorer_llm_request = Message(message_pieces=message_pieces)
         try:
             response = await prompt_target.send_prompt_async(message=scorer_llm_request)
         except Exception as ex:

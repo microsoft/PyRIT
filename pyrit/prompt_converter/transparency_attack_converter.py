@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import base64
 import logging
 from io import BytesIO
@@ -305,7 +306,7 @@ class TransparencyAttackConverter(PromptConverter):
 
         self._validate_input_image(prompt)
 
-        background_image = self._load_and_preprocess_image(prompt)
+        background_image = await asyncio.to_thread(self._load_and_preprocess_image, prompt)
         background_tensor = background_image * 0.5  # darkening for better blending optimization
 
         alpha = np.ones_like(background_tensor)  # optimized to determine transparency pattern

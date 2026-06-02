@@ -103,6 +103,10 @@ from pyrit.datasets.seed_datasets.remote.mlcommons_ailuminate_dataset import (
 from pyrit.datasets.seed_datasets.remote.moral_integrity_corpus_dataset import (
     _MICDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.mossbench_dataset import (
+    MossBenchOversensitivityType,
+    _MossBenchDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.msts_dataset import (
     _MSTSDataset,
 )  # noqa: F401
@@ -185,6 +189,7 @@ __all__ = [
     "FigStepCategory",
     "FigStepVariant",
     "HiXSTestLanguage",
+    "MossBenchOversensitivityType",
     "PromptIntelCategory",
     "PromptIntelSeverity",
     "SGXSTestLabel",
@@ -226,6 +231,7 @@ __all__ = [
     "_MedSafetyBenchDataset",
     "_MICDataset",
     "_MLCommonsAILuminateDataset",
+    "_MossBenchDataset",
     "_MSTSDataset",
     "_MultilingualVulnerabilityDataset",
     "_ORBench80KDataset",

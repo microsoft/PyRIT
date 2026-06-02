@@ -21,13 +21,29 @@ from pyrit.models import (
     construct_response_from_request,
     data_serializer_factory,
 )
-from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 logger = logging.getLogger(__name__)
+
+
+def _read_wav_sync(path: str) -> tuple[int, int, int, bytes]:
+    """
+    Read a WAV file synchronously.
+
+    Returns:
+        Tuple of ``(channels, sample_width, frame_rate, frames)`` extracted from the file.
+    """
+    with wave.open(path, "rb") as wav_file:
+        return (
+            wav_file.getnchannels(),
+            wav_file.getsampwidth(),
+            wav_file.getframerate(),
+            wav_file.readframes(wav_file.getnframes()),
+        )
+
 
 # Voices supported by the OpenAI Realtime API.
 # See: https://platform.openai.com/docs/guides/realtime-conversations#voice-options
@@ -58,7 +74,7 @@ class RealtimeTargetResult:
         return "".join(self.transcripts)
 
 
-class RealtimeTarget(OpenAITarget, PromptTarget):
+class RealtimeTarget(OpenAITarget):
     """
     A prompt target for Azure OpenAI Realtime API.
 
@@ -760,14 +776,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         """
         connection = self._get_connection(conversation_id=conversation_id)
 
-        with wave.open(filename, "rb") as wav_file:
-            # Read WAV parameters
-            num_channels = wav_file.getnchannels()
-            sample_width = wav_file.getsampwidth()  # Should be 2 bytes for PCM16
-            frame_rate = wav_file.getframerate()
-            num_frames = wav_file.getnframes()
-
-            audio_content = wav_file.readframes(num_frames)
+        num_channels, sample_width, frame_rate, audio_content = await asyncio.to_thread(_read_wav_sync, filename)
 
         receive_tasks = asyncio.create_task(self.receive_events(conversation_id=conversation_id))
 
