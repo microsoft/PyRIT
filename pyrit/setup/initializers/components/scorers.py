@@ -626,10 +626,11 @@ class ScorerInitializer(PyRITInitializer):
         """
         Get a chat target, preferring an auto-grouped ``RoundRobinTarget`` that wraps it.
 
-        Looks up the individual target by name. If found, scans the registry
-        for a ``RoundRobinTarget`` whose inner targets include it, returning
-        the round-robin for rate-limit distribution. Falls back to the
-        individual target if no wrapping round-robin exists.
+        Computes the expected round-robin registry name from the individual
+        target's behavioral key (using the same ``_get_behavioral_key`` and
+        ``_generate_rr_name`` that ``TargetInitializer._auto_group_targets``
+        uses). If a round-robin with that name exists, returns it for
+        rate-limit distribution. Otherwise falls back to the individual target.
 
         Args:
             target_name: The registry name of the individual target.
@@ -638,16 +639,17 @@ class ScorerInitializer(PyRITInitializer):
             PromptTarget | None: The wrapping RoundRobinTarget if found,
                 the individual target otherwise, or None if not registered.
         """
-        from pyrit.prompt_target import RoundRobinTarget
+        from pyrit.setup.initializers.components.targets import generate_rr_name, get_behavioral_key
 
         target_registry = TargetRegistry.get_registry_singleton()
         individual = target_registry.get_instance_by_name(target_name)
         if individual is None:
             return None
 
-        for entry in target_registry.get_all_instances():
-            if isinstance(entry.instance, RoundRobinTarget) and individual in entry.instance._targets:
-                return entry.instance
+        rr_name = generate_rr_name(get_behavioral_key(individual))
+        rr_target = target_registry.get_instance_by_name(rr_name)
+        if rr_target is not None:
+            return rr_target
 
         return individual
 

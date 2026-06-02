@@ -539,6 +539,14 @@ class TargetInitializer(PyRITInitializer):
         await initializer.initialize_async()
     """
 
+    def __init__(self) -> None:
+        """Initialize the TargetInitializer."""
+        super().__init__()
+        # Tracks registry names registered by this initializer so that
+        # _auto_group_targets only groups targets it owns — not targets
+        # that other code may have registered directly into the registry.
+        self._registered_names: list[str] = []
+
     @property
     def supported_parameters(self) -> list[Parameter]:
         """Get the list of parameters this initializer accepts."""
@@ -698,7 +706,7 @@ class TargetInitializer(PyRITInitializer):
             target = registry.get_instance_by_name(name)
             if target is None:
                 continue
-            key = _get_behavioral_key(target)
+            key = get_behavioral_key(target)
             groups[key].append((name, target))
 
         for key, members in groups.items():
@@ -714,13 +722,18 @@ class TargetInitializer(PyRITInitializer):
                 logger.debug(f"Skipping auto-group for behavioral key {key}: {ex}")
                 continue
 
-            rr_name = _generate_rr_name(key)
+            rr_name = generate_rr_name(key)
+
+            if rr_name in registry:
+                logger.debug(f"Skipping auto-group {rr_name}: name already exists in registry")
+                continue
+
             registry.register_instance(rr_target, name=rr_name)
 
             logger.info(f"Auto-grouped round-robin target: {rr_name} (members: {member_names})")
 
 
-def _get_behavioral_key(target: PromptTarget) -> tuple:
+def get_behavioral_key(target: PromptTarget) -> tuple:
     """
     Extract a hashable behavioral grouping key from a target's identifier.
 
@@ -744,7 +757,7 @@ def _get_behavioral_key(target: PromptTarget) -> tuple:
     return tuple(parts)
 
 
-def _generate_rr_name(key: tuple) -> str:
+def generate_rr_name(key: tuple) -> str:
     """
     Generate a registry name for an auto-grouped round-robin target.
 

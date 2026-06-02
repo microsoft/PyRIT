@@ -9,7 +9,7 @@ import pytest
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry import TargetRegistry
 from pyrit.setup.initializers import TargetInitializer
-from pyrit.setup.initializers.components.targets import TARGET_CONFIGS, _generate_rr_name, _get_behavioral_key
+from pyrit.setup.initializers.components.targets import TARGET_CONFIGS, generate_rr_name, get_behavioral_key
 
 
 class TestTargetInitializerBasic:
@@ -753,7 +753,7 @@ class TestTargetInitializerAutoGroup:
         # Both should exist but have different behavioral keys
         assert base is not None
         assert temp9 is not None
-        assert _get_behavioral_key(base) != _get_behavioral_key(temp9)
+        assert get_behavioral_key(base) != get_behavioral_key(temp9)
 
     async def test_different_target_classes_not_grouped(self) -> None:
         """Test that targets of different classes are NOT grouped even with same model."""
@@ -772,7 +772,7 @@ class TestTargetInitializerAutoGroup:
 
         assert chat_target is not None
         assert response_target is not None
-        assert _get_behavioral_key(chat_target) != _get_behavioral_key(response_target)
+        assert get_behavioral_key(chat_target) != get_behavioral_key(response_target)
 
         # Clean up
         for var in [
@@ -831,7 +831,7 @@ class TestGetBehavioralKey:
         from tests.unit.mocks import MockPromptTarget
 
         target = MockPromptTarget()
-        key = _get_behavioral_key(target)
+        key = get_behavioral_key(target)
         assert key[0] == "MockPromptTarget"
 
     def test_same_model_same_temp_same_key(self) -> None:
@@ -842,7 +842,7 @@ class TestGetBehavioralKey:
         target2 = OpenAIChatTarget(
             endpoint="https://ep2.com", api_key="k2", model_name="d2", underlying_model="gpt-4o", temperature=0.5
         )
-        assert _get_behavioral_key(target1) == _get_behavioral_key(target2)
+        assert get_behavioral_key(target1) == get_behavioral_key(target2)
 
     def test_different_temp_different_key(self) -> None:
         """Test that targets with different temperatures produce different keys."""
@@ -852,7 +852,7 @@ class TestGetBehavioralKey:
         target2 = OpenAIChatTarget(
             endpoint="https://ep2.com", api_key="k2", model_name="m2", underlying_model="gpt-4o", temperature=0.9
         )
-        assert _get_behavioral_key(target1) != _get_behavioral_key(target2)
+        assert get_behavioral_key(target1) != get_behavioral_key(target2)
 
     def test_different_underlying_model_different_key(self) -> None:
         """Test that targets with different underlying models produce different keys."""
@@ -860,13 +860,13 @@ class TestGetBehavioralKey:
         target2 = OpenAIChatTarget(
             endpoint="https://ep2.com", api_key="k2", model_name="m2", underlying_model="gpt-3.5-turbo"
         )
-        assert _get_behavioral_key(target1) != _get_behavioral_key(target2)
+        assert get_behavioral_key(target1) != get_behavioral_key(target2)
 
     def test_falls_back_to_model_name_when_no_underlying_model(self) -> None:
         """Test that model_name is used as fallback when underlying_model is not set."""
         target1 = OpenAIChatTarget(endpoint="https://ep1.com", api_key="k1", model_name="gpt-4o")
         target2 = OpenAIChatTarget(endpoint="https://ep2.com", api_key="k2", model_name="gpt-4o")
-        assert _get_behavioral_key(target1) == _get_behavioral_key(target2)
+        assert get_behavioral_key(target1) == get_behavioral_key(target2)
 
     def test_different_top_p_different_key(self) -> None:
         """Test that targets with different top_p produce different keys."""
@@ -876,7 +876,7 @@ class TestGetBehavioralKey:
         target2 = OpenAIChatTarget(
             endpoint="https://ep2.com", api_key="k2", model_name="m2", underlying_model="gpt-4o", top_p=0.5
         )
-        assert _get_behavioral_key(target1) != _get_behavioral_key(target2)
+        assert get_behavioral_key(target1) != get_behavioral_key(target2)
 
 
 class TestGenerateRrName:
@@ -885,24 +885,24 @@ class TestGenerateRrName:
     def test_basic_name_generation(self) -> None:
         """Test basic round-robin name generation from a behavioral key."""
         key = ("OpenAIChatTarget", ("temperature", None), ("top_p", None), ("underlying_model_name", "gpt-4o"))
-        assert _generate_rr_name(key) == "OpenAIChatTarget_gpt-4o_rr"
+        assert generate_rr_name(key) == "OpenAIChatTarget_gpt-4o_rr"
 
     def test_name_includes_temperature(self) -> None:
         """Test that non-default temperature is included in the name."""
         key = ("OpenAIChatTarget", ("temperature", 0.0), ("top_p", None), ("underlying_model_name", "gpt-4o"))
-        assert _generate_rr_name(key) == "OpenAIChatTarget_gpt-4o_temp0.0_rr"
+        assert generate_rr_name(key) == "OpenAIChatTarget_gpt-4o_temp0.0_rr"
 
     def test_name_includes_top_p(self) -> None:
         """Test that non-default top_p is included in the name."""
         key = ("OpenAIChatTarget", ("temperature", None), ("top_p", 0.9), ("underlying_model_name", "gpt-4o"))
-        assert _generate_rr_name(key) == "OpenAIChatTarget_gpt-4o_top_p0.9_rr"
+        assert generate_rr_name(key) == "OpenAIChatTarget_gpt-4o_top_p0.9_rr"
 
     def test_name_includes_class_prefix_for_all_target_types(self) -> None:
         """Test that all target types get their class name in the prefix."""
         key = ("OpenAIResponseTarget", ("temperature", None), ("top_p", None), ("underlying_model_name", "gpt-4o"))
-        assert _generate_rr_name(key) == "OpenAIResponseTarget_gpt-4o_rr"
+        assert generate_rr_name(key) == "OpenAIResponseTarget_gpt-4o_rr"
 
     def test_name_unknown_when_no_model(self) -> None:
         """Test that 'unknown' is used when no underlying model is available."""
         key = ("OpenAIChatTarget", ("temperature", None), ("top_p", None), ("underlying_model_name", None))
-        assert _generate_rr_name(key) == "OpenAIChatTarget_unknown_rr"
+        assert generate_rr_name(key) == "OpenAIChatTarget_unknown_rr"
