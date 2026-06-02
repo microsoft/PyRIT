@@ -287,7 +287,7 @@ class TestDefaultAttackStrategyEventHandler:
         )
 
         with patch("time.perf_counter", return_value=123.456):
-            await event_handler.on_event(event_data)
+            await event_handler.on_event_async(event_data)
 
         assert sample_attack_context.start_time == 123.456
 
@@ -300,7 +300,7 @@ class TestDefaultAttackStrategyEventHandler:
             context=sample_attack_context,
         )
 
-        await event_handler.on_event(event_data)
+        await event_handler.on_event_async(event_data)
         mock_logger.info.assert_called_once_with(f"Starting attack: {sample_attack_context.objective}")
 
     async def test_on_pre_execute_raises_on_none_context(self, event_handler, mock_logger):
@@ -318,7 +318,7 @@ class TestDefaultAttackStrategyEventHandler:
         event_data.context = None
 
         with pytest.raises(ValueError, match="Attack context is None"):
-            await event_handler.on_event(event_data)
+            await event_handler.on_event_async(event_data)
 
     async def test_on_post_execute_calculates_execution_time(
         self, event_handler, sample_attack_context, sample_attack_result, mock_logger
@@ -335,7 +335,7 @@ class TestDefaultAttackStrategyEventHandler:
         )
 
         with patch("time.perf_counter", return_value=100.5):  # 500ms later
-            await event_handler.on_event(event_data)
+            await event_handler.on_event_async(event_data)
 
         assert sample_attack_result.execution_time_ms == 500
 
@@ -354,7 +354,7 @@ class TestDefaultAttackStrategyEventHandler:
             result=sample_attack_result,
         )
 
-        await event_handler.on_event(event_data)
+        await event_handler.on_event_async(event_data)
 
         expected_message = f"{event_handler.__class__.__name__} achieved the objective. Reason: Test successful"
         mock_logger.info.assert_called_with(expected_message)
@@ -374,7 +374,7 @@ class TestDefaultAttackStrategyEventHandler:
             result=sample_attack_result,
         )
 
-        await event_handler.on_event(event_data)
+        await event_handler.on_event_async(event_data)
 
         expected_message = f"{event_handler.__class__.__name__} did not achieve the objective. Reason: Test failed"
         mock_logger.info.assert_called_with(expected_message)
@@ -394,7 +394,7 @@ class TestDefaultAttackStrategyEventHandler:
             result=sample_attack_result,
         )
 
-        await event_handler.on_event(event_data)
+        await event_handler.on_event_async(event_data)
 
         expected_message = f"{event_handler.__class__.__name__} outcome is undetermined. Reason: Not specified"
         mock_logger.info.assert_called_with(expected_message)
@@ -414,7 +414,7 @@ class TestDefaultAttackStrategyEventHandler:
             result=sample_attack_result,
         )
 
-        await event_handler.on_event(event_data)
+        await event_handler.on_event_async(event_data)
 
         expected_message = f"{event_handler.__class__.__name__} failed with an error. Reason: Connection timeout"
         mock_logger.info.assert_called_with(expected_message)
@@ -437,7 +437,7 @@ class TestDefaultAttackStrategyEventHandler:
             )
 
             with patch("time.perf_counter", return_value=100.1):
-                await handler.on_event(event_data)
+                await handler.on_event_async(event_data)
 
             mock_memory.add_attack_results_to_memory.assert_called_once_with(attack_results=[sample_result])
 
@@ -457,7 +457,7 @@ class TestDefaultAttackStrategyEventHandler:
         event_data.result = None
 
         with pytest.raises(ValueError, match="Attack result is None"):
-            await event_handler.on_event(event_data)
+            await event_handler.on_event_async(event_data)
 
     async def test_on_post_execute_attaches_retry_events(
         self, sample_attack_context, sample_attack_result, mock_memory
@@ -480,7 +480,7 @@ class TestDefaultAttackStrategyEventHandler:
                     context=sample_attack_context,
                     result=sample_attack_result,
                 )
-                await handler.on_event(event_data)
+                await handler.on_event_async(event_data)
 
             assert sample_attack_result.retry_events == [retry_event]
             assert sample_attack_result.total_retries == 1
@@ -502,7 +502,7 @@ class TestDefaultAttackStrategyEventHandler:
                     context=sample_attack_context,
                     result=sample_attack_result,
                 )
-                await handler.on_event(event_data)
+                await handler.on_event_async(event_data)
 
             # Empty collector means the guard `if collector and collector.events` is False
             assert not sample_attack_result.retry_events
@@ -525,7 +525,7 @@ class TestDefaultAttackStrategyEventHandler:
                     context=sample_attack_context,
                     error=RuntimeError("test error"),
                 )
-                await handler.on_event(event_data)
+                await handler.on_event_async(event_data)
 
             stored_result = mock_memory.add_attack_results_to_memory.call_args.kwargs["attack_results"][0]
             assert stored_result.outcome == AttackOutcome.ERROR
@@ -547,7 +547,7 @@ class TestDefaultAttackStrategyEventHandler:
                     context=sample_attack_context,
                     error=RuntimeError("test error"),
                 )
-                await handler.on_event(event_data)
+                await handler.on_event_async(event_data)
 
             stored_result = mock_memory.add_attack_results_to_memory.call_args.kwargs["attack_results"][0]
             assert stored_result.retry_events == []
@@ -570,7 +570,7 @@ class TestDefaultAttackStrategyEventHandler:
                     error=error,
                 )
                 with patch("time.perf_counter", return_value=100.5):
-                    await handler.on_event(event_data)
+                    await handler.on_event_async(event_data)
 
             mock_memory.add_attack_results_to_memory.assert_called_once()
             stored_result = mock_memory.add_attack_results_to_memory.call_args.kwargs["attack_results"][0]
@@ -591,11 +591,11 @@ class TestDefaultAttackStrategyEventHandler:
                 context=None,
                 error=RuntimeError("test"),
             )
-            await handler.on_event(event_data)
+            await handler.on_event_async(event_data)
             mock_memory.add_attack_results_to_memory.assert_not_called()
 
     async def test_on_event_handles_other_events(self, event_handler, sample_attack_context, mock_logger):
-        """Test that on_event handles events not in the specific handlers"""
+        """Test that on_event_async handles events not in the specific handlers"""
         event_data = StrategyEventData(
             event=StrategyEvent.ON_PRE_VALIDATE,  # Not specifically handled
             strategy_name="TestStrategy",
@@ -603,9 +603,9 @@ class TestDefaultAttackStrategyEventHandler:
             context=sample_attack_context,
         )
 
-        await event_handler.on_event(event_data)
+        await event_handler.on_event_async(event_data)
 
-        # Should call the generic _on method and log debug message
+        # Should call the generic _on_async method and log debug message
         mock_logger.debug.assert_called_once_with(
             f"Attack is in '{StrategyEvent.ON_PRE_VALIDATE.value}' stage for {event_handler.__class__.__name__}"
         )
@@ -632,7 +632,7 @@ class TestDefaultAttackStrategyEventHandler:
                 context=sample_attack_context,
                 result=sample_attack_result,
             )
-            await handler.on_event(event_data)
+            await handler.on_event_async(event_data)
 
         assert sample_attack_result.attribution_parent_id == "scenario-1"
         assert sample_attack_result.attribution_data == {
@@ -656,7 +656,7 @@ class TestDefaultAttackStrategyEventHandler:
                 context=sample_attack_context,
                 result=sample_attack_result,
             )
-            await handler.on_event(event_data)
+            await handler.on_event_async(event_data)
 
         assert sample_attack_result.attribution_parent_id is None
         assert sample_attack_result.attribution_data is None
@@ -681,7 +681,7 @@ class TestDefaultAttackStrategyEventHandler:
                 context=sample_attack_context,
                 error=RuntimeError("boom"),
             )
-            await handler.on_event(event_data)
+            await handler.on_event_async(event_data)
 
         # The error AttackResult was persisted; inspect what was sent to memory.
         call = mock_memory.add_attack_results_to_memory.call_args
@@ -738,7 +738,7 @@ class TestAttackStrategyIntegration:
         custom_handler_called = False
 
         class CustomEventHandler:
-            async def on_event(self, event_data):
+            async def on_event_async(self, event_data):
                 nonlocal custom_handler_called
                 custom_handler_called = True
 

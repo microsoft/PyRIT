@@ -8,30 +8,6 @@
 # To regenerate (only after a deliberate, reviewed cleanup):
 #   python build_scripts/check_async_suffix.py --write-baseline
 
-pyrit/executor/attack/core/attack_executor.py:231:build_params
-pyrit/executor/attack/core/attack_executor.py:347:run_one
-pyrit/executor/attack/core/attack_parameters.py:242:from_seed_group_async_wrapper
-pyrit/executor/attack/core/attack_strategy.py:154:on_event
-pyrit/executor/attack/core/attack_strategy.py:168:_on
-pyrit/executor/attack/core/attack_strategy.py:178:_on_pre_execute
-pyrit/executor/attack/core/attack_strategy.py:203:_on_post_execute
-pyrit/executor/attack/multi_turn/red_teaming.py:408:_build_adversarial_prompt
-pyrit/executor/attack/single_turn/role_play.py:160:_get_conversation_start
-pyrit/executor/benchmark/fairness_bias.py:208:_run_experiment
-pyrit/executor/core/strategy.py:104:on_event
-pyrit/executor/core/strategy.py:248:_handle_event
-pyrit/executor/core/strategy.py:280:_execution_context
-pyrit/executor/promptgen/core/prompt_generator_strategy.py:51:on_event
-pyrit/executor/workflow/core/workflow_strategy.py:61:on_event
-pyrit/executor/workflow/core/workflow_strategy.py:72:_on_pre_validate
-pyrit/executor/workflow/core/workflow_strategy.py:75:_on_post_validate
-pyrit/executor/workflow/core/workflow_strategy.py:78:_on_pre_setup
-pyrit/executor/workflow/core/workflow_strategy.py:81:_on_post_setup
-pyrit/executor/workflow/core/workflow_strategy.py:84:_on_pre_execute
-pyrit/executor/workflow/core/workflow_strategy.py:87:_on_post_execute
-pyrit/executor/workflow/core/workflow_strategy.py:90:_on_pre_teardown
-pyrit/executor/workflow/core/workflow_strategy.py:93:_on_post_teardown
-pyrit/executor/workflow/core/workflow_strategy.py:96:_on_error
 pyrit/memory/memory_interface.py:1323:_serialize_seed_value
 pyrit/message_normalizer/chat_message_normalizer.py:153:_convert_audio_to_input_audio
 pyrit/message_normalizer/message_normalizer.py:86:apply_system_message_behavior

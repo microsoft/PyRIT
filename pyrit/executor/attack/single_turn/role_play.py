@@ -129,7 +129,7 @@ class RolePlayAttack(PromptSendingAttack):
             context (SingleTurnAttackContext): The attack context containing attack parameters.
         """
         # Get role-play conversation start (turns 0 and 1)
-        context.prepended_conversation = await self._get_conversation_start() or []
+        context.prepended_conversation = await self._get_conversation_start_async() or []
 
         # Rephrase the objective using the LLM converter
         # This converts the user's objective into a role-play scenario
@@ -157,7 +157,7 @@ class RolePlayAttack(PromptSendingAttack):
         result = await converter.convert_async(prompt=objective, input_type="text")
         return result.output_text
 
-    async def _get_conversation_start(self) -> Optional[list[Message]]:
+    async def _get_conversation_start_async(self) -> Optional[list[Message]]:
         """
         Get the role-play conversation start messages.
 
