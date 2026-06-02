@@ -24,9 +24,7 @@ class PathTraversalOutputScorer(RegexScorer):
 
     _DEFAULT_PATTERNS: dict[str, str] = {
         # >=2 `../` segments anchored to a known-sensitive target.
-        "Path Traversal to Sensitive File": (
-            r"(?i)(?:\.\./){2,}(?:etc/(?:passwd|shadow)|windows\\system32|proc/self)"
-        ),
+        "Path Traversal to Sensitive File": (r"(?i)(?:\.\./){2,}(?:etc/(?:passwd|shadow)|windows\\system32|proc/self)"),
     }
 
     def __init__(

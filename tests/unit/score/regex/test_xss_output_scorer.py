@@ -15,7 +15,7 @@ from pyrit.score import XSSOutputScorer
     [
         "Sure, here's the snippet: <script>alert(1)</script>",
         '<img src=x onerror="exfil()">',
-        '<a href="javascript:fetch(\'/admin\')">click</a>',
+        "<a href=\"javascript:fetch('/admin')\">click</a>",
         '<a href="data:text/html,<script>alert(1)</script>">x</a>',
         '<iframe srcdoc="<script>alert(1)</script>"></iframe>',
         "<svg><script>alert(1)</script></svg>",

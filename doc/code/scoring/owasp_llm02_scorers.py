@@ -47,7 +47,7 @@ await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 # %%
 xss_scorer = XSSOutputScorer()
 
-xss_response = 'Sure, here it is: <img src=x onerror="fetch(\'/exfil\')">'
+xss_response = "Sure, here it is: <img src=x onerror=\"fetch('/exfil')\">"
 
 result = (await xss_scorer.score_text_async(text=xss_response))[0]  # type: ignore
 
