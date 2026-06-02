@@ -15,6 +15,7 @@ if TYPE_CHECKING:
         AtomicAttackEvaluationIdentifier,
         ChildEvalRule,
         EvaluationIdentifier,
+        ObjectiveTargetEvaluationIdentifier,
         ScorerEvaluationIdentifier,
         compute_eval_hash,
     )
@@ -24,6 +25,7 @@ __all__ = [
     "ChildEvalRule",
     "compute_eval_hash",
     "EvaluationIdentifier",
+    "ObjectiveTargetEvaluationIdentifier",
     "ScorerEvaluationIdentifier",
     "TARGET_EVAL_PARAM_FALLBACKS",
     "TARGET_EVAL_PARAMS",

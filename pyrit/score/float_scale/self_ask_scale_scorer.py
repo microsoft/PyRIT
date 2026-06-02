@@ -134,7 +134,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
             system_prompt=self._system_prompt,
             message_value=scoring_value,
             message_data_type=scoring_data_type,
-            scored_prompt_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+            scored_prompt_id=message_piece.id,
             prepended_text_message_piece=prepended_text,
             category=self._category,
             objective=objective,

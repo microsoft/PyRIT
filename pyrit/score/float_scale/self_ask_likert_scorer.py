@@ -454,7 +454,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
             system_prompt=self._system_prompt,
             message_value=message_piece.converted_value,
             message_data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+            scored_prompt_id=message_piece.id,
             category=self._score_category,
             attack_identifier=message_piece.attack_identifier,
             objective=objective,

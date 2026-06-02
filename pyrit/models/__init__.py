@@ -17,6 +17,9 @@ ComponentIdentifier``). The previous ``pyrit.identifiers`` location is kept as
 a deprecation shim through ``0.16.0``.
 """
 
+from typing import TYPE_CHECKING, Any
+
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.attack_result import AttackOutcome, AttackResult, AttackResultT
 from pyrit.models.chat_message import (
     ALLOWED_CHAT_MESSAGE_ROLES,
@@ -49,6 +52,7 @@ from pyrit.models.identifiers import (
     Identifiable,
     IdentifierFilter,
     IdentifierType,
+    ObjectiveTargetEvaluationIdentifier,
     ScorerEvaluationIdentifier,
     build_atomic_attack_identifier,
     build_seed_identifier,
@@ -58,7 +62,7 @@ from pyrit.models.identifiers import (
     snake_case_to_class_name,
     validate_registry_name,
 )
-from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptResponseError, SeedType
+from pyrit.models.literals import ChatMessageRole, Modality, PromptDataType, PromptResponseError, SeedType
 from pyrit.models.message import (
     Message,
     construct_response_from_request,
@@ -134,7 +138,9 @@ __all__ = [
     "ImagePathDataTypeSerializer",
     "Message",
     "MessagePiece",
+    "Modality",
     "NextMessageSystemPromptPaths",
+    "ObjectiveTargetEvaluationIdentifier",
     "PromptDataType",
     "PromptResponseError",
     "QuestionAnsweringDataset",
@@ -145,6 +151,7 @@ __all__ = [
     "Score",
     "ScoreType",
     "ScorerEvaluationIdentifier",
+    "ScorerIdentifier",
     "ScenarioIdentifier",
     "ScenarioResult",
     "Seed",
@@ -170,3 +177,30 @@ __all__ = [
     "VideoPathDataTypeSerializer",
     "RetryEvent",
 ]
+
+if TYPE_CHECKING:
+    # Type-only alias so static checkers can resolve ``from pyrit.models import ScorerIdentifier``.
+    # At runtime the symbol is served by ``__getattr__`` below so accessing it emits a one-shot
+    # DeprecationWarning per process. Will be removed in 0.16.0.
+    ScorerIdentifier = ComponentIdentifier
+
+# Deprecated rename aliases (pre-#1387 names that were collapsed into ComponentIdentifier).
+_DEPRECATED_RENAME_ALIASES: dict[str, Any] = {
+    "ScorerIdentifier": ComponentIdentifier,
+}
+
+_warned: set[str] = set()
+
+
+def __getattr__(name: str) -> Any:
+    if name in _DEPRECATED_RENAME_ALIASES:
+        target = _DEPRECATED_RENAME_ALIASES[name]
+        if name not in _warned:
+            print_deprecation_message(
+                old_item=f"{__name__}.{name}",
+                new_item=target,
+                removed_in="0.16.0",
+            )
+            _warned.add(name)
+        return target
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -3,13 +3,13 @@
 
 import base64
 import logging
-import warnings
 from io import BytesIO
 from typing import cast
 
 from PIL import Image, ImageFont
 from PIL.ImageFont import FreeTypeFont
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import ComponentIdentifier, PromptDataType, data_serializer_factory
 from pyrit.prompt_converter.base_image_text_converter import _BaseImageTextConverter
 from pyrit.prompt_converter.prompt_converter import ConverterResult
@@ -82,12 +82,10 @@ class AddImageTextConverter(_BaseImageTextConverter):
                 raise TypeError(f"AddImageTextConverter takes at most 1 positional argument, got {len(args)}")
             if img_to_add:
                 raise TypeError("Cannot pass img_to_add as both positional and keyword argument")
-            warnings.warn(
-                "Passing 'img_to_add' as a positional argument is deprecated. "
-                "Use img_to_add=... as a keyword argument. "
-                "It will be keyword-only starting in version 0.15.0.",
-                FutureWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="Passing img_to_add as a positional argument to AddImageTextConverter",
+                new_item="AddImageTextConverter(img_to_add=...) keyword argument",
+                removed_in="0.15.0",
             )
             img_to_add = args[0]
         if x_pos is not _UNSET or y_pos is not _UNSET:
@@ -95,11 +93,10 @@ class AddImageTextConverter(_BaseImageTextConverter):
                 raise ValueError(
                     "Cannot pass x_pos/y_pos together with bounding_box. Use bounding_box=(x, y, x2, y2) instead."
                 )
-            warnings.warn(
-                "x_pos and y_pos are deprecated. Use bounding_box=(x, y, x2, y2) instead. "
-                "They will be removed in version 0.15.0.",
-                FutureWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="AddImageTextConverter(x_pos=..., y_pos=...)",
+                new_item="AddImageTextConverter(bounding_box=(x1, y1, x2, y2))",
+                removed_in="0.15.0",
             )
         # Resolve defaults after deprecation check
         if x_pos is _UNSET:

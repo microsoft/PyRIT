@@ -12,16 +12,20 @@ This module provides:
   hash from a ``ComponentIdentifier``.
 * ``EvaluationIdentifier`` — abstract base that wraps a ``ComponentIdentifier``
   with domain-specific eval-hash configuration.  Concrete subclasses declare
-  per-child rules via a single ``CHILD_EVAL_RULES`` ClassVar.
+  per-child rules via ``CHILD_EVAL_RULES`` and (optionally) a root-level
+  ``OWN_RULE`` for leaf entities whose own params need filtering.
 * ``ScorerEvaluationIdentifier`` — scorer-domain concrete subclass.
 * ``AtomicAttackEvaluationIdentifier`` — attack-domain concrete subclass.
+* ``ObjectiveTargetEvaluationIdentifier`` — leaf-target subclass used by the
+  analytics layer to key cached results by behavioral target configuration.
 """
 
 from __future__ import annotations
 
 from abc import ABC
-from dataclasses import dataclass, field
 from typing import Any, ClassVar, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier, config_hash
 
@@ -30,8 +34,7 @@ TARGET_EVAL_PARAMS: frozenset[str] = frozenset({"underlying_model_name", "temper
 TARGET_EVAL_PARAM_FALLBACKS: dict[str, str] = {"underlying_model_name": "model_name"}
 
 
-@dataclass(frozen=True)
-class ChildEvalRule:
+class ChildEvalRule(BaseModel):
     """
     Per-child configuration for eval-hash computation.
 
@@ -56,11 +59,13 @@ class ChildEvalRule:
       matches the unwrapped inner target. ``None`` means no unwrapping.
     """
 
+    model_config = ConfigDict(frozen=True)
+
     exclude: bool = False
     included_params: Optional[frozenset[str]] = None
-    included_item_values: Optional[dict[str, Any]] = field(default=None)
-    param_fallbacks: Optional[dict[str, str]] = field(default=None)
-    inner_child_name: Optional[str] = field(default=None)
+    included_item_values: Optional[dict[str, Any]] = Field(default=None)
+    param_fallbacks: Optional[dict[str, str]] = Field(default=None)
+    inner_child_name: Optional[str] = Field(default=None)
 
 
 def _build_eval_dict(
@@ -169,6 +174,7 @@ def compute_eval_hash(
     identifier: ComponentIdentifier,
     *,
     child_eval_rules: dict[str, ChildEvalRule],
+    own_rule: Optional[ChildEvalRule] = None,
 ) -> str:
     """
     Compute a behavioral equivalence hash for evaluation grouping.
@@ -176,26 +182,43 @@ def compute_eval_hash(
     Unlike ``ComponentIdentifier.hash`` (which includes all params of self and
     children), the eval hash applies per-child rules to strip operational params
     (like endpoint, max_requests_per_minute), exclude children entirely, or
-    filter list items.  This ensures the same logical configuration on different
-    deployments produces the same eval hash.
+    filter list items.  ``own_rule`` extends this to the root entity itself,
+    which is required for leaf components (e.g., a target) whose own params
+    need filtering and which have no relevant children to delegate to. This
+    ensures the same logical configuration on different deployments produces
+    the same eval hash.
 
     Children not listed in ``child_eval_rules`` receive full recursive treatment.
 
-    When ``child_eval_rules`` is empty, no filtering occurs and the result
-    equals ``identifier.hash``.
+    When both ``child_eval_rules`` is empty and ``own_rule`` is ``None``, no
+    filtering occurs and the result equals ``identifier.hash``.
 
     Args:
         identifier (ComponentIdentifier): The component identity to compute
             the hash for.
         child_eval_rules (dict[str, ChildEvalRule]): Per-child eval rules.
+        own_rule (Optional[ChildEvalRule]): Rule applied to the root entity's
+            own params and fallbacks. Only ``included_params`` and
+            ``param_fallbacks`` are honored; ``exclude``, ``included_item_values``,
+            and ``inner_child_name`` are not meaningful at the root and will
+            raise ``ValueError`` if set. Defaults to None.
 
     Returns:
         str: A hex-encoded SHA256 hash suitable for eval registry keying.
 
     Raises:
-        RuntimeError: If the identifier's hash is None and child_eval_rules is empty.
+        RuntimeError: If the identifier's hash is None and no filtering is configured.
+        ValueError: If ``own_rule`` carries fields that are not meaningful at the root.
     """
-    if not child_eval_rules:
+    if own_rule is not None:
+        if own_rule.exclude:
+            raise ValueError("own_rule.exclude is not meaningful at the root entity")
+        if own_rule.included_item_values is not None:
+            raise ValueError("own_rule.included_item_values is not meaningful at the root entity")
+        if own_rule.inner_child_name is not None:
+            raise ValueError("own_rule.inner_child_name is not meaningful at the root entity")
+
+    if not child_eval_rules and own_rule is None:
         if identifier.hash is None:
             raise RuntimeError("hash should be set by __post_init__")
         return identifier.hash
@@ -203,6 +226,8 @@ def compute_eval_hash(
     eval_dict = _build_eval_dict(
         identifier,
         child_eval_rules=child_eval_rules,
+        _included_params=own_rule.included_params if own_rule else None,
+        _param_fallbacks=own_rule.param_fallbacks if own_rule else None,
     )
     return config_hash(eval_dict)
 
@@ -215,11 +240,16 @@ class EvaluationIdentifier(ABC):
     ``ChildEvalRule`` instances that control how each child is treated during
     eval-hash computation.  Children not listed receive full recursive treatment.
 
+    Leaf-entity subclasses (no relevant children to delegate to) may also set
+    ``OWN_RULE`` to filter the root entity's own params.  See
+    ``ObjectiveTargetEvaluationIdentifier`` for an example.
+
     The concrete ``eval_hash`` property delegates to the module-level
     ``compute_eval_hash`` free function.
     """
 
     CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]]
+    OWN_RULE: ClassVar[Optional[ChildEvalRule]] = None
 
     def __init__(self, identifier: ComponentIdentifier) -> None:
         """
@@ -228,7 +258,8 @@ class EvaluationIdentifier(ABC):
         If the identifier carries an ``eval_hash`` (preserved from a prior
         DB round-trip or set by the scorer), that value is used directly.
         Otherwise the eval hash is computed from the identifier's params
-        and children using the subclass's ``CHILD_EVAL_RULES``.
+        and children using the subclass's ``CHILD_EVAL_RULES`` and
+        ``OWN_RULE``.
         """
         self._identifier = identifier
         if identifier.eval_hash is not None:
@@ -237,6 +268,7 @@ class EvaluationIdentifier(ABC):
             self._eval_hash = compute_eval_hash(
                 identifier,
                 child_eval_rules=self.CHILD_EVAL_RULES,
+                own_rule=self.OWN_RULE,
             )
 
     @property
@@ -301,3 +333,28 @@ class AtomicAttackEvaluationIdentifier(EvaluationIdentifier):
         # attack_technique: not listed in rules — fully included in eval hash.
         # technique_seeds (nested inside attack_technique): also not listed — fully included.
     }
+
+
+class ObjectiveTargetEvaluationIdentifier(EvaluationIdentifier):
+    """
+    Evaluation identity for an objective target.
+
+    Mirrors how ``ScorerEvaluationIdentifier`` filters its inner
+    ``prompt_target`` child, except the target itself is the root of this
+    identifier (it has no children carrying behavioral configuration).  The
+    target's own params are filtered to the behavioral set
+    (``underlying_model_name``, ``temperature``, ``top_p``) via ``OWN_RULE``,
+    so the same logical target on different deployments produces the same
+    eval hash.
+
+    Wrapper targets (e.g., ``RoundRobinTarget``) are not unwrapped — the
+    caller must pass the inner target's ``ComponentIdentifier`` directly if
+    behavioral equivalence with the unwrapped form is desired.  This mirrors
+    the constraint on ``OWN_RULE`` (no ``inner_child_name`` at the root).
+    """
+
+    CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]] = {}
+    OWN_RULE: ClassVar[Optional[ChildEvalRule]] = ChildEvalRule(
+        included_params=TARGET_EVAL_PARAMS,
+        param_fallbacks=TARGET_EVAL_PARAM_FALLBACKS,
+    )
