@@ -8,9 +8,6 @@
 # To regenerate (only after a deliberate, reviewed cleanup):
 #   python build_scripts/check_async_suffix.py --write-baseline
 
-pyrit/prompt_normalizer/prompt_normalizer.py:237:convert_values
-pyrit/prompt_normalizer/prompt_normalizer.py:299:_calc_hash
-pyrit/prompt_normalizer/prompt_normalizer.py:304:add_prepended_conversation_to_memory
 pyrit/prompt_target/common/utils.py:51:set_max_rpm
 pyrit/prompt_target/gandalf_target.py:106:check_password
 pyrit/prompt_target/hugging_face/hugging_face_chat_target.py:231:load_model_and_tokenizer
