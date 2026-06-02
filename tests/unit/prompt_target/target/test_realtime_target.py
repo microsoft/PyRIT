@@ -10,11 +10,9 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 import pytest
 
 from pyrit.exceptions.exception_classes import ServerErrorException
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import RealtimeTarget, ServerVadConfig
 from pyrit.prompt_target.common.realtime_audio import (
-    REALTIME_COMMITTED_ITEM_ID_KEY,
     CommittedEvent,
     RealtimeTargetResult,
     RealtimeTurnState,
@@ -23,7 +21,6 @@ from pyrit.prompt_target.common.realtime_audio import (
 from pyrit.prompt_target.openai.openai_realtime_target import (
     _OpenAIRealtimeDispatcher,
     _RealtimeStreamingHandle,
-    _StreamingConversationState,
 )
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
@@ -1033,60 +1030,7 @@ async def test_route_event_pending_speech_start_resets_after_commit():
 # Placeholder for R2 tests
 
 
-# ---- subscribe_events_async + request_response_async (R2) ------------------------------------
-
-
-async def test_subscribe_events_async_returns_started_dispatcher(target):
-    """Subscription handle must be a started dispatcher; closing tears the task down."""
-    events = [_scripted_event("input_audio_buffer.committed", item_id="i_1")]
-
-    async def event_iter():
-        for e in events:
-            yield e
-        # Keep the iterator alive briefly so the dispatch task can run.
-        await asyncio.sleep(0.01)
-
-    connection = MagicMock()
-    connection.__aiter__ = lambda self_: event_iter()
-
-    received: list[CommittedEvent] = []
-
-    async def on_committed(event):
-        received.append(event)
-
-    dispatcher = await target.streaming.subscribe_events_async(
-        connection=connection, conversation_id="test_conv", on_user_audio_committed=on_committed
-    )
-    try:
-        # Yield until the dispatch loop processes the scripted event.
-        for _ in range(20):
-            if received:
-                break
-            await asyncio.sleep(0.01)
-        assert len(received) == 1 and received[0].item_id == "i_1"
-    finally:
-        await dispatcher.stop()
-
-
-async def test_subscribe_events_async_records_loop_failure_on_dispatcher(target):
-    """A dispatcher loop crash must be reachable via the dispatcher's ``failure`` property."""
-
-    async def boom_iter():
-        raise RuntimeError("loop kaboom")
-        yield  # pragma: no cover  # makes it a generator
-
-    connection = MagicMock()
-    connection.__aiter__ = lambda self_: boom_iter()
-
-    dispatcher = await target.streaming.subscribe_events_async(connection=connection, conversation_id="test_conv")
-    try:
-        for _ in range(50):
-            if dispatcher.failure is not None:
-                break
-            await asyncio.sleep(0.01)
-        assert isinstance(dispatcher.failure, RuntimeError)
-    finally:
-        await dispatcher.stop()
+# ---- request_response_async (R2) -------------------------------------------------
 
 
 async def test_request_response_async_registers_turn_and_sends_response_create(target):
@@ -1132,7 +1076,7 @@ async def test_request_response_async_propagates_register_turn_failure(target):
     connection.response.create.assert_not_called()
 
 
-# ---- streaming-mode state lifecycle ---------------------------------------------
+# ---- streaming handle wiring & config -----------------------------------------
 
 
 def test_sample_rate_hz_class_constant():
@@ -1166,88 +1110,7 @@ def test_server_vad_config_returns_none_when_disabled(target):
     assert target.streaming.server_vad_config is None
 
 
-async def test_subscribe_events_async_registers_streaming_state(target):
-    """Subscription must register per-conversation streaming state keyed by conversation_id."""
-
-    async def event_iter():
-        await asyncio.sleep(0)
-        return
-        yield  # pragma: no cover
-
-    connection = MagicMock()
-    connection.__aiter__ = lambda self_: event_iter()
-
-    assert "conv-A" not in target._streaming_state
-
-    dispatcher = await target.streaming.subscribe_events_async(connection=connection, conversation_id="conv-A")
-    try:
-        assert "conv-A" in target._streaming_state
-        assert target._streaming_state["conv-A"].dispatcher is dispatcher
-        # The lock is created lazily-but-default; just verify it's an asyncio.Lock.
-        assert isinstance(target._streaming_state["conv-A"].turn_lock, asyncio.Lock)
-    finally:
-        await dispatcher.stop()
-
-
-async def test_cleanup_conversation_clears_streaming_state(target):
-    """cleanup_conversation must stop the dispatcher and pop the streaming state entry."""
-    dispatcher = AsyncMock()
-    dispatcher.stop = AsyncMock()
-    target._streaming_state["conv-B"] = _StreamingConversationState(dispatcher=dispatcher)
-    target._existing_conversation["conv-B"] = AsyncMock()
-
-    await target.streaming.cleanup_conversation("conv-B")
-
-    dispatcher.stop.assert_awaited_once()
-    assert "conv-B" not in target._streaming_state
-    assert "conv-B" not in target._existing_conversation
-
-
-async def test_cleanup_conversation_is_safe_without_streaming_state(target):
-    """cleanup_conversation must not fail when no streaming state was registered."""
-    target._existing_conversation["conv-C"] = AsyncMock()
-
-    # Should not raise even though _streaming_state has no entry for conv-C.
-    await target.streaming.cleanup_conversation("conv-C")
-    assert "conv-C" not in target._existing_conversation
-
-
-async def test_cleanup_target_clears_all_streaming_state(target):
-    """cleanup_target must stop every active dispatcher before closing connections."""
-    dispatcher_a = AsyncMock()
-    dispatcher_a.stop = AsyncMock()
-    dispatcher_b = AsyncMock()
-    dispatcher_b.stop = AsyncMock()
-    target._streaming_state["conv-X"] = _StreamingConversationState(dispatcher=dispatcher_a)
-    target._streaming_state["conv-Y"] = _StreamingConversationState(dispatcher=dispatcher_b)
-    target._existing_conversation["conv-X"] = AsyncMock()
-    target._existing_conversation["conv-Y"] = AsyncMock()
-
-    await target.cleanup_target()
-
-    dispatcher_a.stop.assert_awaited_once()
-    dispatcher_b.stop.assert_awaited_once()
-    assert target._streaming_state == {}
-    assert target._existing_conversation == {}
-
-
-async def test_cleanup_target_swallows_dispatcher_stop_errors(target):
-    """A failing dispatcher.stop() must not prevent cleanup_target from proceeding."""
-    bad_dispatcher = AsyncMock()
-    bad_dispatcher.stop = AsyncMock(side_effect=RuntimeError("already stopped"))
-    target._streaming_state["conv-Z"] = _StreamingConversationState(dispatcher=bad_dispatcher)
-    connection = AsyncMock()
-    target._existing_conversation["conv-Z"] = connection
-
-    await target.cleanup_target()  # must not raise
-
-    bad_dispatcher.stop.assert_awaited_once()
-    connection.close.assert_awaited_once()
-    assert target._streaming_state == {}
-    assert target._existing_conversation == {}
-
-
-# ---- _send_streaming_turn_async / send_prompt routing -----------------------
+# ---- send_prompt audio routing -------------------------------------------------
 
 
 def _write_wav(
@@ -1267,63 +1130,8 @@ def _write_wav(
     return str(path)
 
 
-def _make_streaming_request(
-    *,
-    conversation_id: str,
-    wav_path: str,
-    converter_identifiers: list | None = None,
-    committed_item_id: str | None = None,
-) -> Message:
-    """Construct a streaming-mode request Message matching the attack's contract."""
-    metadata: dict[str, Any] = {}
-    if committed_item_id is not None:
-        metadata[REALTIME_COMMITTED_ITEM_ID_KEY] = committed_item_id
-    piece = MessagePiece(
-        role="user",
-        original_value=wav_path,
-        original_value_data_type="audio_path",
-        converted_value=wav_path,
-        converted_value_data_type="audio_path",
-        conversation_id=conversation_id,
-        prompt_metadata=metadata or None,
-        converter_identifiers=converter_identifiers or [],
-    )
-    return Message(message_pieces=[piece])
-
-
-def _register_streaming(target, conversation_id: str) -> tuple[MagicMock, AsyncMock]:
-    """Register streaming state for a conversation; return (dispatcher, connection)."""
-    dispatcher = MagicMock()
-    connection = AsyncMock()
-    target._streaming_state[conversation_id] = _StreamingConversationState(dispatcher=dispatcher)
-    target._existing_conversation[conversation_id] = connection
-    return dispatcher, connection
-
-
-async def test_send_prompt_routes_streaming_when_state_registered(target, tmp_path):
-    """When streaming state is registered, the streaming branch runs (no atomic send)."""
-    _register_streaming(target, "conv-R")
-    wav_path = _write_wav(tmp_path / "in.wav")
-    message = _make_streaming_request(conversation_id="conv-R", wav_path=wav_path)
-
-    target.swap_user_audio_async = AsyncMock()
-    target.streaming.save_audio = AsyncMock(return_value="/tmp/resp.wav")
-    completed_future: asyncio.Future = asyncio.get_running_loop().create_future()
-    completed_future.set_result(RealtimeTargetResult(audio_bytes=b"", transcripts=["ok"]))
-    target.request_response_async = AsyncMock(return_value=completed_future)
-    target.send_audio_async = AsyncMock()
-    target.send_text_async = AsyncMock()
-
-    responses = await target._send_prompt_to_target_async(normalized_conversation=[message])
-
-    target.request_response_async.assert_awaited_once()
-    target.send_audio_async.assert_not_called()
-    target.send_text_async.assert_not_called()
-    assert len(responses) == 1
-
-
-async def test_send_prompt_uses_atomic_path_when_no_streaming_state(target, tmp_path):
-    """Without streaming state, the atomic send_audio_async path runs as before."""
+async def test_send_prompt_audio_path_calls_send_audio_async(target, tmp_path):
+    """An audio_path message is routed through the atomic send_audio_async path."""
     wav_path = _write_wav(tmp_path / "in.wav")
     piece = MessagePiece(
         role="user",
@@ -1335,8 +1143,6 @@ async def test_send_prompt_uses_atomic_path_when_no_streaming_state(target, tmp_
     )
     message = Message(message_pieces=[piece])
 
-    target.swap_user_audio_async = AsyncMock()
-    target.request_response_async = AsyncMock()
     target.streaming.connect_async = AsyncMock(return_value=AsyncMock())
     target.send_config = AsyncMock()
     target.send_audio_async = AsyncMock(
@@ -1346,153 +1152,3 @@ async def test_send_prompt_uses_atomic_path_when_no_streaming_state(target, tmp_
     await target._send_prompt_to_target_async(normalized_conversation=[message])
 
     target.send_audio_async.assert_awaited_once()
-    target.swap_user_audio_async.assert_not_called()
-    target.request_response_async.assert_not_called()
-
-
-async def test_streaming_send_swaps_when_converters_ran(target, tmp_path):
-    """When converter_identifiers is non-empty, the swap call fires with the converted PCM."""
-    _, connection = _register_streaming(target, "conv-S")
-    converted_pcm = b"\x11\x22" * 48
-    wav_path = _write_wav(tmp_path / "converted.wav", pcm=converted_pcm)
-
-    converter_id = ComponentIdentifier(class_name="FakeConverter", class_module="tests.fake")
-    message = _make_streaming_request(
-        conversation_id="conv-S",
-        wav_path=wav_path,
-        converter_identifiers=[converter_id],
-        committed_item_id="item_xyz",
-    )
-
-    target.swap_user_audio_async = AsyncMock()
-    target.streaming.save_audio = AsyncMock(return_value="/tmp/resp.wav")
-    completed_future: asyncio.Future = asyncio.get_running_loop().create_future()
-    completed_future.set_result(RealtimeTargetResult(audio_bytes=b"\xaa" * 96, transcripts=["hello"]))
-    target.request_response_async = AsyncMock(return_value=completed_future)
-
-    responses = await target._send_prompt_to_target_async(normalized_conversation=[message])
-
-    target.swap_user_audio_async.assert_awaited_once()
-    swap_kwargs = target.swap_user_audio_async.call_args.kwargs
-    assert swap_kwargs["connection"] is connection
-    assert swap_kwargs["committed_event"].item_id == "item_xyz"
-    assert swap_kwargs["converted_pcm"] == converted_pcm
-    assert responses[0].message_pieces[0].converted_value == "hello"
-    assert responses[0].message_pieces[1].converted_value == "/tmp/resp.wav"
-
-
-async def test_streaming_send_skips_swap_when_no_converters(target, tmp_path):
-    """With no converters, the server's raw committed buffer is used: no swap."""
-    _register_streaming(target, "conv-N")
-    wav_path = _write_wav(tmp_path / "raw.wav")
-    message = _make_streaming_request(
-        conversation_id="conv-N",
-        wav_path=wav_path,
-        converter_identifiers=[],
-    )
-
-    target.swap_user_audio_async = AsyncMock()
-    target.streaming.save_audio = AsyncMock(return_value="/tmp/resp.wav")
-    completed_future: asyncio.Future = asyncio.get_running_loop().create_future()
-    completed_future.set_result(RealtimeTargetResult(audio_bytes=b"\xaa" * 96, transcripts=["ok"]))
-    target.request_response_async = AsyncMock(return_value=completed_future)
-
-    await target._send_prompt_to_target_async(normalized_conversation=[message])
-
-    target.swap_user_audio_async.assert_not_called()
-    target.request_response_async.assert_awaited_once()
-
-
-async def test_streaming_send_requires_item_id_when_converters_ran(target, tmp_path):
-    """A streaming request with converters but no committed item id is a contract violation."""
-    _register_streaming(target, "conv-X")
-    wav_path = _write_wav(tmp_path / "in.wav")
-    converter_id = ComponentIdentifier(class_name="FakeConverter", class_module="tests.fake")
-    message = _make_streaming_request(
-        conversation_id="conv-X",
-        wav_path=wav_path,
-        converter_identifiers=[converter_id],
-        committed_item_id=None,
-    )
-
-    with pytest.raises(ValueError, match="committed item id"):
-        await target._send_prompt_to_target_async(normalized_conversation=[message])
-
-
-async def test_streaming_send_rejects_wrong_audio_format(target, tmp_path):
-    """Converters must preserve mono PCM16 @ SAMPLE_RATE_HZ; mismatches raise."""
-    _register_streaming(target, "conv-F")
-    wav_path = _write_wav(tmp_path / "bad.wav", rate=16000)  # wrong rate
-    message = _make_streaming_request(conversation_id="conv-F", wav_path=wav_path)
-
-    with pytest.raises(ValueError, match="mono PCM16"):
-        await target._send_prompt_to_target_async(normalized_conversation=[message])
-
-
-async def test_send_prompt_propagates_interrupted_metadata_for_streaming(target, tmp_path):
-    """When the realtime turn future resolves with interrupted=True, both response pieces gain the flag."""
-    _register_streaming(target, "conv-I")
-    wav_path = _write_wav(tmp_path / "in.wav")
-    message = _make_streaming_request(conversation_id="conv-I", wav_path=wav_path)
-
-    target.streaming.save_audio = AsyncMock(return_value="/tmp/partial.wav")
-    completed_future: asyncio.Future = asyncio.get_running_loop().create_future()
-    completed_future.set_result(
-        RealtimeTargetResult(audio_bytes=b"\xaa" * 32, transcripts=["partial"], interrupted=True),
-    )
-    target.request_response_async = AsyncMock(return_value=completed_future)
-
-    responses = await target._send_prompt_to_target_async(normalized_conversation=[message])
-
-    assert len(responses) == 1
-    text_piece, audio_piece = responses[0].message_pieces
-    assert text_piece.prompt_metadata.get("interrupted") is True
-    assert audio_piece.prompt_metadata.get("interrupted") is True
-
-
-async def test_streaming_send_rejects_non_audio_piece(target, tmp_path):
-    """A text-typed piece routed to the streaming branch must surface a clear error."""
-    _register_streaming(target, "conv-T")
-    piece = MessagePiece(
-        role="user",
-        original_value="hello",
-        original_value_data_type="text",
-        converted_value="hello",
-        converted_value_data_type="text",
-        conversation_id="conv-T",
-    )
-    message = Message(message_pieces=[piece])
-
-    with pytest.raises(ValueError, match="audio_path"):
-        await target._send_prompt_to_target_async(normalized_conversation=[message])
-
-
-async def test_streaming_send_serializes_via_turn_lock(target, tmp_path):
-    """Two concurrent turns on the same conversation must run sequentially under the lock."""
-    _register_streaming(target, "conv-L")
-    wav_path = _write_wav(tmp_path / "in.wav")
-    message = _make_streaming_request(conversation_id="conv-L", wav_path=wav_path)
-
-    target.streaming.save_audio = AsyncMock(return_value="/tmp/r.wav")
-    active = 0
-    max_concurrent = 0
-
-    async def fake_request_response(*, connection, dispatcher):
-        nonlocal active, max_concurrent
-        active += 1
-        max_concurrent = max(max_concurrent, active)
-        # Yield control so a second turn would interleave if the lock weren't held.
-        await asyncio.sleep(0.01)
-        active -= 1
-        fut: asyncio.Future = asyncio.get_running_loop().create_future()
-        fut.set_result(RealtimeTargetResult(audio_bytes=b"\xaa" * 32, transcripts=["ok"]))
-        return fut
-
-    target.request_response_async = AsyncMock(side_effect=fake_request_response)
-
-    await asyncio.gather(
-        target._send_prompt_to_target_async(normalized_conversation=[message]),
-        target._send_prompt_to_target_async(normalized_conversation=[message]),
-    )
-
-    assert max_concurrent == 1

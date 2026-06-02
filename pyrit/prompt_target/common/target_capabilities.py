@@ -139,11 +139,11 @@ class TargetCapabilities:
     # Whether the target natively supports system prompts.
     supports_system_prompt: bool = False
 
-    # Whether the target supports the streaming barge-in API: pushing user audio chunks
-    # via ``push_audio_chunk_async``, subscribing to user-audio-committed events via
-    # ``subscribe_events_async``, swapping committed items via
-    # ``delete_conversation_item_async`` + ``insert_user_audio_async``, and triggering
-    # responses via ``request_response_async``. Required by ``BargeInAttack``.
+    # Whether the target supports the streaming barge-in API: opening a long-lived
+    # streaming session via ``open_streaming_session`` that pushes user audio chunks,
+    # delivers VAD-committed audio to the attack for converter work, swaps committed
+    # items in place, and drives manual ``response.create`` turns. Required by
+    # ``BargeInAttack``.
     supports_streaming_barge_in: bool = False
 
     # The input modalities supported by the target (e.g., "text", "image").

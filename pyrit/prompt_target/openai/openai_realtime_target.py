@@ -6,8 +6,6 @@ import base64
 import logging
 import re
 import wave
-from collections.abc import Callable, Coroutine
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Optional
 
 from openai import AsyncOpenAI
@@ -24,7 +22,6 @@ from pyrit.models import (
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.realtime_audio import (
-    REALTIME_COMMITTED_ITEM_ID_KEY,
     CommittedEvent,
     RealtimeEventDispatcher,
     RealtimeTargetResult,
@@ -53,30 +50,14 @@ logger = logging.getLogger(__name__)
 RealTimeVoice = Literal["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"]
 
 
-@dataclass
-class _StreamingConversationState:
-    """
-    Per-conversation streaming-mode bookkeeping for :class:`RealtimeTarget`.
-
-    Presence in :attr:`RealtimeTarget._streaming_state` is the signal that a
-    conversation should take the streaming swap-and-respond path inside
-    :meth:`RealtimeTarget._send_prompt_to_target_async` rather than the atomic
-    send_audio / send_text path. The lock serializes per-turn work so back-to-back
-    VAD commits cannot race on the dispatcher's single active-turn slot.
-    """
-
-    dispatcher: RealtimeEventDispatcher
-    turn_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-
-
 class _RealtimeStreamingHandle(StreamingHandle):
     """
     OpenAI Realtime API implementation of :class:`StreamingHandle`.
 
-    Owns the websocket-level streaming surface (connect, subscribe, push audio,
-    config, cleanup) and the audio persistence helper. Holds a back-reference to
-    its owning :class:`RealtimeTarget` so it can read per-target state
-    (server VAD config, OpenAI client, conversation registries).
+    Owns the websocket-level streaming surface (connect, push audio, config) and
+    the audio persistence helper. Holds a back-reference to its owning
+    :class:`RealtimeTarget` so it can read per-target state (server VAD config,
+    OpenAI client, conversation registries).
     """
 
     SAMPLE_RATE_HZ: ClassVar[int] = 24000
@@ -102,49 +83,6 @@ class _RealtimeStreamingHandle(StreamingHandle):
 
         logger.info("Successfully connected to AzureOpenAI Realtime API")
         return connection
-
-    async def subscribe_events_async(
-        self,
-        *,
-        connection: Any,
-        conversation_id: str,
-        on_user_audio_committed: (Callable[[CommittedEvent], Coroutine[Any, Any, None]] | None) = None,
-    ) -> RealtimeEventDispatcher:
-        """
-        Start consuming events from the connection and route them via the OpenAI dispatcher.
-
-        Also registers per-conversation streaming state so requests routed through
-        ``send_prompt_async`` for ``conversation_id`` take the streaming swap-and-respond
-        path inside ``_send_prompt_to_target_async`` instead of the atomic send_audio /
-        send_text path.
-
-        The returned dispatcher exposes ``stop()`` to tear down the background task and
-        drain in-flight callback tasks, and a ``failure`` property that callers can poll
-        between operations to detect a dead dispatch loop (e.g. websocket closed).
-
-        Args:
-            connection: Active Realtime API connection from ``connect_async``.
-            conversation_id: Conversation id for the realtime session. Used as the key
-                under which streaming state is registered.
-            on_user_audio_committed: Async callback fired when server VAD finalizes
-                a user audio buffer. Called as a background task.
-
-        Returns:
-            The started dispatcher. Pass it to ``request_response_async`` for turn
-            futures, poll ``failure`` for dispatch-loop errors, and call ``stop()``
-            (or ``cleanup_conversation``) to tear it down.
-        """
-        dispatcher = _OpenAIRealtimeDispatcher(
-            connection=connection,
-            on_user_audio_committed=on_user_audio_committed,
-        )
-        self._target._streaming_state[conversation_id] = _StreamingConversationState(dispatcher=dispatcher)
-        # Register the connection under the same key so cleanup_conversation /
-        # cleanup_target can find and close it without callers reaching into
-        # private state.
-        self._target._existing_conversation[conversation_id] = connection
-        await dispatcher.start()
-        return dispatcher
 
     async def send_streaming_session_config_async(
         self,
@@ -236,32 +174,6 @@ class _RealtimeStreamingHandle(StreamingHandle):
 
         return data.value
 
-    async def cleanup_conversation(self, conversation_id: str) -> None:
-        """
-        Disconnects from the Realtime API for a specific conversation.
-
-        Stops any active streaming dispatcher for the conversation before closing
-        the underlying connection. Safe to call when no streaming state exists.
-
-        Args:
-            conversation_id (str): The conversation ID to disconnect from.
-        """
-        streaming = self._target._streaming_state.pop(conversation_id, None)
-        if streaming is not None:
-            try:
-                await streaming.dispatcher.stop()
-            except Exception as e:
-                logger.warning(f"Error stopping dispatcher for {conversation_id}: {e}")
-
-        connection = self._target._existing_conversation.get(conversation_id)
-        if connection:
-            try:
-                await connection.close()
-                logger.info(f"Disconnected from {self._target._endpoint} with conversation ID: {conversation_id}")
-            except Exception as e:
-                logger.warning(f"Error closing connection for {conversation_id}: {e}")
-            del self._target._existing_conversation[conversation_id]
-
 
 class RealtimeTarget(OpenAITarget, PromptTarget):
     """
@@ -334,8 +246,9 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
             server_vad (bool | ServerVadConfig): Server-side voice activity detection (VAD).
                 ``False`` (default) keeps the existing atomic send/receive behavior.
                 ``True`` enables VAD with default tuning.
-                Pass a ``ServerVadConfig`` to enable with custom tuning. Streaming/interruption plumbing
-                arrives in subsequent changes; this currently only affects the emitted session config.
+                Pass a ``ServerVadConfig`` to enable with custom tuning. Streaming attacks
+                obtain a dedicated session via :meth:`open_streaming_session` and require
+                VAD to be enabled.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
@@ -352,12 +265,6 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
             self._server_vad = ServerVadConfig()
         else:
             self._server_vad = None
-
-        # Streaming-mode bookkeeping. Entries are added by ``subscribe_events_async`` and
-        # consumed by the streaming branch of ``_send_prompt_to_target_async``. The
-        # presence of a conversation_id key signals "this conversation is in streaming
-        # mode" so the target can route requests to the swap-and-respond path.
-        self._streaming_state: dict[str, _StreamingConversationState] = {}
 
         # Composition: streaming surface lives on a dedicated handle so the attack can
         # type against the provider-agnostic ``StreamingHandle`` ABC.
@@ -641,9 +548,9 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         """
         Asynchronously send a message to the OpenAI realtime target.
 
-        Routes to the streaming swap-and-respond path when streaming state is
-        registered for the conversation; otherwise dispatches to the atomic
-        send_audio / send_text path.
+        Dispatches to the atomic send_audio / send_text path based on the
+        request's data type. Streaming attacks bypass this entry point and drive
+        the connection through :class:`_OpenAIRealtimeStreamingSession` instead.
 
         Args:
             normalized_conversation (list[Message]): The full conversation
@@ -660,83 +567,31 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         conversation_id = message.message_pieces[0].conversation_id
         request = message.message_pieces[0]
 
-        streaming = self._streaming_state.get(conversation_id)
-        if streaming is not None:
-            # Streaming swap-and-respond path. The lock serializes per-turn work so
-            # back-to-back VAD commits cannot race on the dispatcher's single turn slot.
-            async with streaming.turn_lock:
-                if request.converted_value_data_type != "audio_path":
-                    raise ValueError(
-                        f"Streaming realtime requests must carry audio_path, got {request.converted_value_data_type!r}."
-                    )
+        if conversation_id not in self._existing_conversation:
+            connection = await self.streaming.connect_async(conversation_id=conversation_id)
+            self._existing_conversation[conversation_id] = connection
 
-                connection = self._existing_conversation[conversation_id]
+            # Only send config when creating a new connection
+            await self.send_config(conversation_id=conversation_id, conversation=normalized_conversation)
+            # Give the server a moment to process the session update
+            await asyncio.sleep(0.5)
 
-                with wave.open(request.converted_value, "rb") as wav_in:
-                    if (
-                        wav_in.getnchannels() != 1
-                        or wav_in.getsampwidth() != 2
-                        or wav_in.getframerate() != self.streaming.SAMPLE_RATE_HZ
-                    ):
-                        raise ValueError(
-                            f"Streaming audio must be mono PCM16 at {self.streaming.SAMPLE_RATE_HZ} Hz, got "
-                            f"channels={wav_in.getnchannels()} sampwidth={wav_in.getsampwidth()} "
-                            f"rate={wav_in.getframerate()}."
-                        )
-                    pcm_bytes = wav_in.readframes(wav_in.getnframes())
+        response_type = request.converted_value_data_type
 
-                # Only swap when converters ran. Otherwise the server's raw committed
-                # buffer is what we want and a swap would be wasted work.
-                if request.converter_identifiers:
-                    item_id = request.prompt_metadata.get(REALTIME_COMMITTED_ITEM_ID_KEY)
-                    if not item_id:
-                        raise ValueError(
-                            "Streaming request with converters requires the server's committed "
-                            f"item id in piece.prompt_metadata[{REALTIME_COMMITTED_ITEM_ID_KEY!r}]."
-                        )
-                    await self.swap_user_audio_async(
-                        connection=connection,
-                        committed_event=CommittedEvent(item_id=str(item_id)),
-                        converted_pcm=pcm_bytes,
-                    )
+        # Order of messages sent varies based on the data format of the prompt
+        if response_type == "audio_path":
+            output_audio_path, result = await self.send_audio_async(
+                filename=request.converted_value,
+                conversation_id=conversation_id,
+            )
 
-                turn_future = await self.request_response_async(
-                    connection=connection,
-                    dispatcher=streaming.dispatcher,
-                )
-                result: RealtimeTargetResult = await turn_future
-                output_audio_path = await self.streaming.save_audio(
-                    result.audio_bytes,
-                    num_channels=1,
-                    sample_width=2,
-                    sample_rate=self.streaming.SAMPLE_RATE_HZ,
-                )
+        elif response_type == "text":
+            output_audio_path, result = await self.send_text_async(
+                text=request.converted_value,
+                conversation_id=conversation_id,
+            )
         else:
-            if conversation_id not in self._existing_conversation:
-                connection = await self.streaming.connect_async(conversation_id=conversation_id)
-                self._existing_conversation[conversation_id] = connection
-
-                # Only send config when creating a new connection
-                await self.send_config(conversation_id=conversation_id, conversation=normalized_conversation)
-                # Give the server a moment to process the session update
-                await asyncio.sleep(0.5)
-
-            response_type = request.converted_value_data_type
-
-            # Order of messages sent varies based on the data format of the prompt
-            if response_type == "audio_path":
-                output_audio_path, result = await self.send_audio_async(
-                    filename=request.converted_value,
-                    conversation_id=conversation_id,
-                )
-
-            elif response_type == "text":
-                output_audio_path, result = await self.send_text_async(
-                    text=request.converted_value,
-                    conversation_id=conversation_id,
-                )
-            else:
-                raise ValueError(f"Unsupported response type: {response_type}")
+            raise ValueError(f"Unsupported response type: {response_type}")
 
         text_response_piece = construct_response_from_request(
             request=request, response_text_pieces=[result.flatten_transcripts()], response_type="text"
@@ -757,17 +612,10 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         """
         Disconnects from the Realtime API connections.
 
-        Stops any active streaming dispatchers before closing their underlying
-        websocket connections so the dispatch loops do not race with connection
-        shutdown. Safe to call multiple times.
+        Closes every connection cached in ``_existing_conversation`` and the
+        shared ``AsyncOpenAI`` client, swallowing per-connection errors so a
+        single bad close does not block the rest. Safe to call multiple times.
         """
-        for cid, streaming in list(self._streaming_state.items()):
-            try:
-                await streaming.dispatcher.stop()
-            except Exception as e:
-                logger.warning(f"Error stopping dispatcher for {cid}: {e}")
-        self._streaming_state = {}
-
         for conversation_id, connection in list(self._existing_conversation.items()):
             if connection:
                 try:
@@ -889,8 +737,8 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
 
         Args:
             connection: Active Realtime API connection.
-            dispatcher: Subscription handle previously returned by
-                ``subscribe_events_async``. Must not have another turn pending.
+            dispatcher: The dispatcher driving this connection. Must not have
+                another turn pending.
 
         Returns:
             Future resolved with the assembled ``RealtimeTargetResult`` when this

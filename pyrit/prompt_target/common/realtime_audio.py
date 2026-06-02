@@ -9,21 +9,13 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Protocol, runtime_checkable
+from typing import Any, ClassVar
 
 from pyrit.prompt_target.common.streaming.streaming_audio_target import (
     ServerVadConfig as ServerVadConfig,  # noqa: TC001
 )
 
 logger = logging.getLogger(__name__)
-
-
-#: Key under which streaming attacks stash the server-assigned item id of the most
-#: recently committed user audio buffer (in ``MessagePiece.prompt_metadata``). Realtime
-#: targets read this key in their streaming branch to identify which committed item
-#: to delete when swapping in converter-transformed audio. Exposed as a public
-#: constant so attacks can reference it without reaching into target internals.
-REALTIME_COMMITTED_ITEM_ID_KEY = "realtime_committed_item_id"
 
 
 @dataclass
@@ -269,14 +261,16 @@ class RealtimeEventDispatcher(ABC):
 
 class StreamingHandle(ABC):
     """
-    Provider-agnostic streaming surface owned by targets that declare ``STREAMING_BARGE_IN``.
+    Provider-agnostic websocket-level streaming surface for realtime targets.
 
-    A streaming attack (e.g. ``BargeInAttack``) interacts with the target's realtime
-    transport via ``target.streaming``, not via methods on the target itself. This keeps
-    the streaming surface out of ``PromptTarget`` while giving the attack a single typed
-    contract to program against. Concrete realtime providers (OpenAI, Azure, etc.) provide
-    a concrete ``StreamingHandle`` subclass and assign it to ``self.streaming`` in their
-    target's ``__init__``.
+    Owns the low-level transport primitives a streaming session needs: opening
+    the connection, sending the initial session config, pushing PCM chunks, and
+    persisting audio to disk. Streaming attacks (e.g. ``BargeInAttack``) drive
+    these through a session object (see ``RealtimeTarget.open_streaming_session``)
+    rather than calling this handle directly. Concrete realtime providers
+    (OpenAI, Azure, etc.) provide a concrete subclass and assign it to
+    ``self.streaming`` on their target so the session can read provider-agnostic
+    config without knowing the concrete target type.
     """
 
     #: PCM sample rate in Hz negotiated by the provider's realtime protocol.
@@ -290,16 +284,6 @@ class StreamingHandle(ABC):
     @abstractmethod
     async def connect_async(self, conversation_id: str) -> Any:
         """Open the streaming connection for ``conversation_id`` and return the connection handle."""
-
-    @abstractmethod
-    async def subscribe_events_async(
-        self,
-        *,
-        connection: Any,
-        conversation_id: str,
-        on_user_audio_committed: Callable[[CommittedEvent], Coroutine[Any, Any, None]] | None = None,
-    ) -> "RealtimeEventDispatcher":
-        """Spawn a background reader that routes server events and returns the dispatcher."""
 
     @abstractmethod
     async def send_streaming_session_config_async(
@@ -321,24 +305,3 @@ class StreamingHandle(ABC):
         output_filename: str | None = None,
     ) -> str:
         """Persist a PCM buffer to disk and return the file path."""
-
-    @abstractmethod
-    async def cleanup_conversation(self, conversation_id: str) -> None:
-        """Tear down any per-conversation state held by the target."""
-
-
-@runtime_checkable
-class SupportsStreamingBargeIn(Protocol):
-    """
-    Structural marker for targets that expose a streaming barge-in surface.
-
-    Used by ``BargeInAttack`` to validate at construction time that its objective
-    target wires a ``StreamingHandle`` on ``self.streaming``. Decoupled from
-    ``PromptTarget`` so the base class stays free of streaming-specific attributes.
-
-    Note: ``runtime_checkable`` Protocol ``isinstance`` checks attribute *presence*,
-    not value — a target that explicitly sets ``streaming = None`` would still pass
-    the check and fail at first method call instead of construction time.
-    """
-
-    streaming: StreamingHandle
