@@ -171,7 +171,7 @@ class OpenAITTSTarget(OpenAITarget):
             category="prompt-memory-entries", data_type="audio_path", extension=self._response_format
         )
 
-        await audio_response.save_data(data=audio_bytes)
+        await audio_response.save_data_async(data=audio_bytes)
 
         return construct_response_from_request(
             request=request, response_text_pieces=[str(audio_response.value)], response_type="audio_path"

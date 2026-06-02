@@ -1503,7 +1503,7 @@ async def test_save_audio_response_async_wav_format(patch_central_database):
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.wav"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1516,8 +1516,8 @@ async def test_save_audio_response_async_wav_format(patch_central_database):
         )
 
         # Verify save_data was called (not save_formatted_audio for wav)
-        mock_serializer.save_data.assert_called_once_with(audio_bytes)
-        mock_serializer.save_formatted_audio.assert_not_called()
+        mock_serializer.save_data_async.assert_called_once_with(audio_bytes)
+        mock_serializer.save_formatted_audio_async.assert_not_called()
 
         assert result == "/path/to/saved/audio.wav"
 
@@ -1538,7 +1538,7 @@ async def test_save_audio_response_async_mp3_format(patch_central_database):
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.mp3"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1551,7 +1551,7 @@ async def test_save_audio_response_async_mp3_format(patch_central_database):
         )
 
         # Verify save_data was called (not save_formatted_audio for mp3)
-        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+        mock_serializer.save_data_async.assert_called_once_with(audio_bytes)
 
         assert result == "/path/to/saved/audio.mp3"
 
@@ -1573,7 +1573,7 @@ async def test_save_audio_response_async_pcm16_format(patch_central_database):
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.wav"
-        mock_serializer.save_formatted_audio = AsyncMock()
+        mock_serializer.save_formatted_audio_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1586,14 +1586,14 @@ async def test_save_audio_response_async_pcm16_format(patch_central_database):
         )
 
         # Verify save_formatted_audio was called with correct PCM16 parameters
-        mock_serializer.save_formatted_audio.assert_called_once_with(
+        mock_serializer.save_formatted_audio_async.assert_called_once_with(
             data=audio_bytes,
             num_channels=1,
             sample_width=2,
             sample_rate=24000,
         )
         # save_data should not be called for pcm16
-        mock_serializer.save_data.assert_not_called()
+        mock_serializer.save_data_async.assert_not_called()
 
         assert result == "/path/to/saved/audio.wav"
 
@@ -1670,7 +1670,7 @@ async def test_save_audio_response_async_flac_format(patch_central_database):
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.flac"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1680,7 +1680,7 @@ async def test_save_audio_response_async_flac_format(patch_central_database):
             data_type="audio_path",
             extension=".flac",
         )
-        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+        mock_serializer.save_data_async.assert_called_once_with(audio_bytes)
 
         assert result == "/path/to/saved/audio.flac"
 
@@ -1701,7 +1701,7 @@ async def test_save_audio_response_async_opus_format(patch_central_database):
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.opus"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1711,7 +1711,7 @@ async def test_save_audio_response_async_opus_format(patch_central_database):
             data_type="audio_path",
             extension=".opus",
         )
-        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+        mock_serializer.save_data_async.assert_called_once_with(audio_bytes)
 
         assert result == "/path/to/saved/audio.opus"
 
@@ -1731,7 +1731,7 @@ async def test_save_audio_response_async_no_config_defaults_to_wav(patch_central
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.wav"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1742,7 +1742,7 @@ async def test_save_audio_response_async_no_config_defaults_to_wav(patch_central
             data_type="audio_path",
             extension=".wav",
         )
-        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+        mock_serializer.save_data_async.assert_called_once_with(audio_bytes)
 
         assert result == "/path/to/saved/audio.wav"
 
@@ -1772,7 +1772,7 @@ async def test_construct_message_from_response_audio_transcript_has_metadata(
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/audio.wav"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)

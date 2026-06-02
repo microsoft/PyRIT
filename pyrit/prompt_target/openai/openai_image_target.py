@@ -290,8 +290,8 @@ class OpenAIImageTarget(OpenAITarget):
                 category="prompt-memory-entries", value=image_path, data_type="image_path"
             )
 
-            image_name = str(await img_serializer.get_data_filename())
-            image_bytes = await img_serializer.read_data()
+            image_name = str(await img_serializer.get_data_filename_async())
+            image_bytes = await img_serializer.read_data_async()
             image_type = img_serializer.get_mime_type(image_path)
 
             image_files.append((image_name, image_bytes, image_type))
@@ -342,7 +342,7 @@ class OpenAIImageTarget(OpenAITarget):
             data_type="image_path",
             extension=extension,
         )
-        await data.save_data(data=image_bytes)
+        await data.save_data_async(data=image_bytes)
 
         return construct_response_from_request(
             request=request, response_text_pieces=[data.value], response_type="image_path"

@@ -329,7 +329,7 @@ async def test_send_prompt_async_image_converter(mock_memory_instance):
 
         normalizer = PromptNormalizer()
         # Mock the async read_file method
-        normalizer._memory.results_storage_io.read_file = AsyncMock(return_value=b"mocked data")
+        normalizer._memory.results_storage_io.read_file_async = AsyncMock(return_value=b"mocked data")
 
         message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
         response = await normalizer.send_prompt_async(

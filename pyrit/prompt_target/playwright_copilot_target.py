@@ -634,7 +634,7 @@ class PlaywrightCopilotTarget(PromptTarget):
 
                         # Save the image using data serializer
                         serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
-                        await serializer.save_b64_image(data=data)
+                        await serializer.save_b64_image_async(data=data)
                         image_path = serializer.value
                         logger.debug(f"Saved image to: {image_path}")
                         image_pieces.append((image_path, "image_path"))

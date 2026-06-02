@@ -247,14 +247,14 @@ class MessagePiece:
             data_type=self.original_value_data_type,
             value=self.original_value,
         )
-        self.original_value_sha256 = await original_serializer.get_sha256()
+        self.original_value_sha256 = await original_serializer.get_sha256_async()
 
         converted_serializer = data_serializer_factory(
             category="prompt-memory-entries",
             data_type=self.converted_value_data_type,
             value=self.converted_value,
         )
-        self.converted_value_sha256 = await converted_serializer.get_sha256()
+        self.converted_value_sha256 = await converted_serializer.get_sha256_async()
 
     @property
     def api_role(self) -> ChatMessageRole:

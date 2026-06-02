@@ -281,7 +281,7 @@ class TransparencyAttackConverter(PromptConverter):
             la_pil.save(image_buffer, format="PNG")
             image_str = base64.b64encode(image_buffer.getvalue())
 
-            await img_serializer.save_b64_image(data=image_str.decode())
+            await img_serializer.save_b64_image_async(data=image_str.decode())
             return img_serializer.value
         except Exception as e:
             raise ValueError(f"Failed to save blended image: {e}") from e

@@ -436,5 +436,5 @@ class PDFConverter(PromptConverter):
             data_type="binary_path",
             extension=extension,
         )
-        await pdf_serializer.save_data(pdf_bytes)
+        await pdf_serializer.save_data_async(pdf_bytes)
         return pdf_serializer

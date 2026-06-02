@@ -110,7 +110,7 @@ class AddImageVideoConverter(PromptConverter):
         )
 
         # Open the video to ensure it exists
-        video_bytes = await input_video_data.read_data()
+        video_bytes = await input_video_data.read_data_async()
 
         azure_storage_flag = input_video_data._is_azure_storage_url(self._video_path)
         video_path = self._video_path
@@ -140,7 +140,7 @@ class AddImageVideoConverter(PromptConverter):
 
             # Load and resize the overlay image
 
-            input_image_bytes = await input_image_data.read_data()
+            input_image_bytes = await input_image_data.read_data_async()
             image_np_arr = np.frombuffer(input_image_bytes, np.uint8)
             decoded = cv2.imdecode(image_np_arr, cv2.IMREAD_UNCHANGED)
             if decoded is None:
@@ -209,7 +209,7 @@ class AddImageVideoConverter(PromptConverter):
         output_video_serializer = data_serializer_factory(category="prompt-memory-entries", data_type="video_path")
 
         if not self._output_path:
-            output_video_serializer.value = str(await output_video_serializer.get_data_filename())
+            output_video_serializer.value = str(await output_video_serializer.get_data_filename_async())
         else:
             output_video_serializer.value = self._output_path
 

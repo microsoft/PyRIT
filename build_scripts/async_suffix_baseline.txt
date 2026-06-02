@@ -8,28 +8,6 @@
 # To regenerate (only after a deliberate, reviewed cleanup):
 #   python build_scripts/check_async_suffix.py --write-baseline
 
-pyrit/models/data_type_serializer.py:137:save_data
-pyrit/models/data_type_serializer.py:154:save_b64_image
-pyrit/models/data_type_serializer.py:172:save_formatted_audio
-pyrit/models/data_type_serializer.py:221:read_data
-pyrit/models/data_type_serializer.py:248:read_data_base64
-pyrit/models/data_type_serializer.py:259:get_sha256
-pyrit/models/data_type_serializer.py:290:get_data_filename
-pyrit/models/storage_io.py:37:read_file
-pyrit/models/storage_io.py:43:write_file
-pyrit/models/storage_io.py:49:path_exists
-pyrit/models/storage_io.py:55:is_file
-pyrit/models/storage_io.py:61:create_directory_if_not_exists
-pyrit/models/storage_io.py:72:read_file
-pyrit/models/storage_io.py:87:write_file
-pyrit/models/storage_io.py:100:path_exists
-pyrit/models/storage_io.py:114:is_file
-pyrit/models/storage_io.py:128:create_directory_if_not_exists
-pyrit/models/storage_io.py:298:read_file
-pyrit/models/storage_io.py:341:write_file
-pyrit/models/storage_io.py:364:path_exists
-pyrit/models/storage_io.py:389:is_file
-pyrit/models/storage_io.py:414:create_directory_if_not_exists
 pyrit/output/scorer/base.py:61:print_objective_scorer
 pyrit/output/scorer/base.py:71:print_harm_scorer
 pyrit/prompt_converter/add_image_to_video_converter.py:81:_add_image_to_video

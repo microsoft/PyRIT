@@ -742,7 +742,7 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         mock_serializer = MagicMock()
         mock_serializer.value = "/saved/image/path.png"
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
 
         with patch(
             "pyrit.prompt_target.playwright_copilot_target.data_serializer_factory", return_value=mock_serializer
@@ -751,7 +751,7 @@ class TestPlaywrightCopilotTargetMultimodal:
 
         assert len(result) == 1
         assert result[0] == ("/saved/image/path.png", "image_path")
-        mock_serializer.save_b64_image.assert_awaited_once()
+        mock_serializer.save_b64_image_async.assert_awaited_once()
 
     async def test_process_image_elements_non_data_url(self, mock_page):
         """Test processing image elements with non-data URLs."""
@@ -783,7 +783,7 @@ class TestPlaywrightCopilotTargetMultimodal:
         mock_img.get_attribute.return_value = "data:image/png;base64,invalid"
 
         mock_serializer = MagicMock()
-        mock_serializer.save_b64_image = AsyncMock(side_effect=Exception("Save failed"))
+        mock_serializer.save_b64_image_async = AsyncMock(side_effect=Exception("Save failed"))
 
         with patch(
             "pyrit.prompt_target.playwright_copilot_target.data_serializer_factory", return_value=mock_serializer

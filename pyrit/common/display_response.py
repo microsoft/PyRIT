@@ -35,12 +35,12 @@ async def display_image_response_async(response_piece: MessagePiece) -> None:
         try:
             if memory.results_storage_io is None:
                 raise RuntimeError("Storage IO not initialized")
-            image_bytes = await memory.results_storage_io.read_file(image_location)
+            image_bytes = await memory.results_storage_io.read_file_async(image_location)
         except Exception as e:
             if isinstance(memory.results_storage_io, AzureBlobStorageIO):
                 try:
                     # Fallback to reading from disk if the storage IO fails
-                    image_bytes = await DiskStorageIO().read_file(image_location)
+                    image_bytes = await DiskStorageIO().read_file_async(image_location)
                 except Exception as exc:
                     logger.error(f"Failed to read image from {image_location}. Full exception: {str(exc)}")
                     return

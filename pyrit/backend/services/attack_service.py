@@ -933,7 +933,7 @@ class AttackService:
                 data_type=cast("PromptDataType", piece.data_type),
                 extension=ext,
             )
-            await serializer.save_b64_image(data=value)
+            await serializer.save_b64_image_async(data=value)
             file_path = serializer.value
             piece.original_value = file_path
             if piece.converted_value is None:

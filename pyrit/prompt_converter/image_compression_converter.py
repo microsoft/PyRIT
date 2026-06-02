@@ -242,7 +242,7 @@ class ImageCompressionConverter(PromptConverter):
         if input_type == "url":
             # We need to save the downloaded content locally and return the local path
             img_serializer.file_extension = original_format.lower()
-            await img_serializer.save_data(original_img_bytes)
+            await img_serializer.save_data_async(original_img_bytes)
             return ConverterResult(output_text=str(img_serializer.value), output_type="image_path")
         return ConverterResult(output_text=prompt, output_type="image_path")
 
@@ -289,7 +289,7 @@ class ImageCompressionConverter(PromptConverter):
 
         # Read the image data into memory as bytes for processing
         original_img_bytes = (
-            await self._read_image_from_url(prompt) if input_type == "url" else await img_serializer.read_data()
+            await self._read_image_from_url(prompt) if input_type == "url" else await img_serializer.read_data_async()
         )
         original_img = Image.open(BytesIO(original_img_bytes))
 
@@ -323,7 +323,7 @@ class ImageCompressionConverter(PromptConverter):
 
         # Convert compressed bytes to base64 for storage via the serializer
         image_str = base64.b64encode(compressed_bytes_value)
-        await img_serializer.save_b64_image(data=image_str.decode())
+        await img_serializer.save_b64_image_async(data=image_str.decode())
 
         compression_ratio = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
         logger.info(f"Image compressed: {original_size} → {compressed_size} ({compression_ratio:.1f}% reduction)")

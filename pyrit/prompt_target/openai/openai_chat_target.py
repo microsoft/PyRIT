@@ -493,7 +493,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
 
         if audio_format == "pcm16":
             # Raw PCM needs WAV headers - OpenAI uses 24kHz mono PCM16
-            await audio_serializer.save_formatted_audio(
+            await audio_serializer.save_formatted_audio_async(
                 data=audio_bytes,
                 num_channels=1,
                 sample_width=2,
@@ -501,7 +501,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             )
         else:
             # wav, mp3, flac, opus are already properly formatted
-            await audio_serializer.save_data(audio_bytes)
+            await audio_serializer.save_data_async(audio_bytes)
 
         return audio_serializer.value
 
@@ -633,7 +633,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
                         data_type="audio_path",
                         extension=ext,
                     )
-                    base64_data = await audio_serializer.read_data_base64()
+                    base64_data = await audio_serializer.read_data_base64_async()
                     audio_format = ext.lower().lstrip(".")
                     input_audio_entry = {"data": base64_data, "format": audio_format}
                     entry = {"type": "input_audio", "input_audio": input_audio_entry}

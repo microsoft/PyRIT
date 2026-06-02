@@ -131,7 +131,7 @@ async def test_convert_async_custom_font_and_size():
         result = await converter.convert_async(prompt=prompt)
         assert isinstance(result, ConverterResult)
         assert result.output_text == "mock_url"
-        serializer_mock.save_data.assert_called_once()
+        serializer_mock.save_data_async.assert_called_once()
 
 
 def test_input_supported(pdf_converter_no_template):

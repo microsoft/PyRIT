@@ -103,13 +103,13 @@ async def test_add_image_to_video_raises_when_decode_returns_none(tmp_path, vide
     converter = AddImageVideoConverter(video_path=video_converter_sample_video, output_path=output_path)
 
     mock_image_serializer = AsyncMock()
-    mock_image_serializer.read_data = AsyncMock(return_value=b"not_valid_image_data")
+    mock_image_serializer.read_data_async = AsyncMock(return_value=b"not_valid_image_data")
     mock_image_serializer._is_azure_storage_url = lambda x: False
 
     mock_video_serializer = AsyncMock()
     with open(video_converter_sample_video, "rb") as f:
         video_bytes = f.read()
-    mock_video_serializer.read_data = AsyncMock(return_value=video_bytes)
+    mock_video_serializer.read_data_async = AsyncMock(return_value=video_bytes)
     mock_video_serializer._is_azure_storage_url = lambda x: False
 
     def factory_side_effect(*, category, data_type, value):

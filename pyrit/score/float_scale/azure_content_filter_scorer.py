@@ -418,4 +418,4 @@ class AzureContentFilterScorer(FloatScaleScorer):
         image_serializer = data_serializer_factory(
             category="prompt-memory-entries", value=image_path, data_type="image_path", extension=ext
         )
-        return await image_serializer.read_data_base64()
+        return await image_serializer.read_data_base64_async()

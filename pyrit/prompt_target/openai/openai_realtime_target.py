@@ -419,7 +419,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         """
         data = data_serializer_factory(category="prompt-memory-entries", data_type="audio_path")
 
-        await data.save_formatted_audio(
+        await data.save_formatted_audio_async(
             data=audio_bytes,
             output_filename=output_filename,
             num_channels=num_channels,

@@ -316,7 +316,7 @@ class OpenAIVideoTarget(OpenAITarget):
         image_serializer = data_serializer_factory(
             value=image_path, data_type="image_path", category="prompt-memory-entries"
         )
-        image_bytes = await image_serializer.read_data()
+        image_bytes = await image_serializer.read_data_async()
 
         mime_type = DataTypeSerializer.get_mime_type(image_path)
         if not mime_type:
@@ -443,7 +443,7 @@ class OpenAIVideoTarget(OpenAITarget):
         """
         # Save video using data serializer
         data = data_serializer_factory(category="prompt-memory-entries", data_type="video_path")
-        await data.save_data(data=video_data)
+        await data.save_data_async(data=video_data)
         video_path = data.value
 
         logger.info(f"Video saved to: {video_path}")

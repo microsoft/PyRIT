@@ -1342,13 +1342,13 @@ class MemoryInterface(abc.ABC):
         serialized_prompt_value = None
         if prompt.data_type == "image_path":
             # Read the image
-            original_img_bytes = await serializer.read_data_base64()
+            original_img_bytes = await serializer.read_data_base64_async()
             # Save the image
-            await serializer.save_b64_image(original_img_bytes)
+            await serializer.save_b64_image_async(original_img_bytes)
             serialized_prompt_value = str(serializer.value)
         elif prompt.data_type in ["audio_path", "video_path"]:
-            audio_bytes = await serializer.read_data()
-            await serializer.save_data(data=audio_bytes)
+            audio_bytes = await serializer.read_data_async()
+            await serializer.save_data_async(data=audio_bytes)
             serialized_prompt_value = str(serializer.value)
         return serialized_prompt_value or ""
 
