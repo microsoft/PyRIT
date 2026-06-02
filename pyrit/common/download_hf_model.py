@@ -3,9 +3,9 @@
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 
+import aiofiles
 import httpx
 from huggingface_hub import HfApi
 
@@ -46,7 +46,7 @@ async def download_specific_files_async(
     Download specific files from a Hugging Face model repository.
     If file_patterns is None, downloads all files.
     """
-    os.makedirs(cache_dir, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
     available_files = get_available_files(model_id, token)
     # If no file patterns are provided, download all available files
@@ -107,9 +107,9 @@ async def download_file_async(url: str, token: str, download_dir: Path, num_spli
         chunks = await asyncio.gather(*tasks)
 
         # Write chunks to the file in order
-        with open(file_path, "wb") as f:
+        async with aiofiles.open(file_path, "wb") as f:
             for chunk in chunks:
-                f.write(chunk)
+                await f.write(chunk)
         logger.info(f"Downloaded {file_name} to {file_path}")
 
 

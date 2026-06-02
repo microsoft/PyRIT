@@ -3,10 +3,11 @@
 
 import logging
 import mimetypes
-import os
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Literal, Optional
 
+import aiofiles
 import httpx
 
 from pyrit.models import (
@@ -127,10 +128,10 @@ class HTTPXAPITarget(HTTPTarget):
         # If user didn't set file_path, see if the PDF path is in converted_value
         if not self.file_path:
             possible_path = message_piece.converted_value
-            if isinstance(possible_path, str) and os.path.exists(possible_path):
+            if isinstance(possible_path, str) and Path(possible_path).exists():
                 logger.info(f"HTTPXApiTarget: auto-using file_path from {possible_path}")
                 self.file_path = possible_path
-        elif not os.path.exists(self.file_path):
+        elif not Path(self.file_path).exists():
             raise FileNotFoundError(f"File not found: {self.file_path}")
 
         if not self.http_url:
@@ -140,13 +141,13 @@ class HTTPXAPITarget(HTTPTarget):
 
         async with httpx.AsyncClient(http2=http2_version, **self.httpx_client_kwargs) as client:
             try:
-                if self.file_path and os.path.exists(self.file_path):
+                if self.file_path and Path(self.file_path).exists():
                     # Handle file upload (only for POST & PUT)
-                    filename = os.path.basename(self.file_path)
+                    filename = Path(self.file_path).name
                     mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
-                    with open(self.file_path, "rb") as fp:
-                        file_bytes = fp.read()
+                    async with aiofiles.open(self.file_path, "rb") as fp:
+                        file_bytes = await fp.read()
 
                     files = {"file": (filename, file_bytes, mime_type)}
 

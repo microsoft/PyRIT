@@ -168,6 +168,7 @@ project:
             - file: code/scoring/7_scorer_metrics.ipynb
             - file: code/scoring/credential_leak_scorer.ipynb
             - file: code/scoring/insecure_code_scorer.ipynb
+            - file: code/scoring/owasp_llm02_scorers.ipynb
             - file: code/scoring/persuasion_full_conversation_scorer.ipynb
             - file: code/scoring/prompt_shield_scorer.ipynb
             - file: code/scoring/generic_scorers.ipynb

@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING, Annotated, Any, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pyrit.models.message import Message
-from pyrit.models.message_piece import MessagePiece
+from pyrit.models.messages.message import Message
+from pyrit.models.messages.message_piece import MessagePiece
 from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt

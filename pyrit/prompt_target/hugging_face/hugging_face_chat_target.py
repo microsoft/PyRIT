@@ -4,7 +4,6 @@
 import asyncio
 import json
 import logging
-import os
 import warnings
 from pathlib import Path
 from typing import Any, cast
@@ -264,12 +263,12 @@ class HuggingFaceChatTarget(PromptTarget):
                 self._load_from_path(self.model_path, **optional_model_kwargs)
             else:
                 # Define the default Hugging Face cache directory
-                cache_dir = os.path.join(
-                    os.path.expanduser("~"),
-                    ".cache",
-                    "huggingface",
-                    "hub",
-                    f"models--{(self.model_id or '').replace('/', '--')}",
+                cache_dir = (
+                    Path.home()
+                    / ".cache"
+                    / "huggingface"
+                    / "hub"
+                    / f"models--{(self.model_id or '').replace('/', '--')}"
                 )
 
                 if self.necessary_files is None:
@@ -279,7 +278,7 @@ class HuggingFaceChatTarget(PromptTarget):
                         self.model_id or "",
                         None,
                         self.huggingface_token,  # type: ignore[ty:invalid-argument-type]
-                        Path(cache_dir),
+                        cache_dir,
                     )
                 else:
                     # Download only the necessary files
