@@ -95,22 +95,6 @@ class Score(BaseModel):
         """
         return {} if value is None else value
 
-    @field_validator("timestamp", mode="before")
-    @classmethod
-    def _ensure_aware_timestamp(cls, value: Any) -> Any:
-        """
-        Attach UTC to naive datetimes (preserves the legacy constructor behavior).
-
-        Returns:
-            The input ``value``, with ``tzinfo=utc`` applied when it is a naive datetime,
-            or ``now(utc)`` when ``value`` is ``None``.
-        """
-        if value is None:
-            return datetime.now(tz=timezone.utc)
-        if isinstance(value, datetime) and value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value
-
     @model_validator(mode="after")
     def _validate_score_value(self) -> Score:
         """

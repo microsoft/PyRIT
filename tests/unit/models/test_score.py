@@ -42,10 +42,16 @@ def test_score_metadata_none_coerced_to_empty_dict():
     assert score.score_metadata == {}
 
 
-def test_naive_timestamp_is_made_aware():
+def test_aware_timestamp_is_preserved():
+    aware = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    score = _make_score(timestamp=aware)
+    assert score.timestamp == aware
+
+
+def test_naive_timestamp_is_rejected():
     naive = datetime(2026, 1, 15, 12, 0, 0)  # noqa: DTZ001
-    score = _make_score(timestamp=naive)
-    assert score.timestamp.tzinfo == timezone.utc
+    with pytest.raises(ValidationError):
+        _make_score(timestamp=naive)
 
 
 def test_extra_kwarg_is_forbidden():
