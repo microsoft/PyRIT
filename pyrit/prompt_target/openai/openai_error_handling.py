@@ -15,6 +15,51 @@ from typing import Optional, Union
 logger = logging.getLogger(__name__)
 
 
+# Empirically-observed markers in OpenAI / Azure OpenAI / MAI error payloads that
+# indicate the response was blocked by a content filter or safety system.
+#
+# There is no canonical spec for these — providers expose the signal through
+# different field names (``error.code``, ``finish_reason``, ``incomplete_details.reason``,
+# free-form ``error.message``) and the exact wording evolves over time. Rather than
+# try to track every (provider, field) combination as an exact match, we scan the
+# entire payload as a substring search for resilience: adding support for a new
+# provider variant is then a one-line change to the set below.
+#
+# Each marker below is justified by a concrete provider response shape:
+#   - ``content_filter``           - OpenAI ``finish_reason``; Azure ``error.code``;
+#                                    Azure ``content_filter_results`` field name.
+#   - ``content_safety_violation`` - MAI image models ``error.code`` (added in PR #1890).
+#   - ``policy_violation``         - Substring of Azure's ``content_policy_violation``
+#                                    and OpenAI moderation's ``usage_policy_violation``.
+#   - ``moderation_blocked``       - OpenAI moderation ``error.code``.
+CONTENT_FILTER_MARKERS = frozenset(
+    {
+        "content_filter",
+        "content_safety_violation",
+        "policy_violation",
+        "moderation_blocked",
+    }
+)
+
+# OpenAI uses ``error.code == "invalid_prompt"`` for both model-level safety blocks
+# (e.g. CBRN topics) and unrelated failures (e.g. schema validation errors), so the
+# code alone is too generic to treat as a content-filter signal. Only treat
+# ``invalid_prompt`` as content filtering when the message text contains one of these
+# safety markers.
+#
+#   - "limited access"             - "we've limited access to this content for safety..."
+#   - "safety"                     - generic safety-system wording.
+#   - "usage policy"               - "your prompt was flagged as potentially violating
+#                                    our usage policy."
+SAFETY_MESSAGE_MARKERS = frozenset(
+    {
+        "limited access",
+        "safety",
+        "usage policy",
+    }
+)
+
+
 def _extract_request_id_from_exception(exc: Exception) -> Optional[str]:
     """
     Extract the x-request-id from an OpenAI SDK exception for logging/telemetry.
@@ -65,6 +110,10 @@ def _is_content_filter_error(data: Union[dict[str, object], str]) -> bool:
     """
     Check if error data indicates content filtering.
 
+    Performs a substring scan over the payload (JSON-dumped for dicts, ``str()`` for
+    strings) against ``CONTENT_FILTER_MARKERS``. The ``invalid_prompt`` code is
+    handled separately because it requires inspecting both the code and the message.
+
     Args:
         data: Either a dict (parsed JSON) or string (error text).
 
@@ -72,23 +121,14 @@ def _is_content_filter_error(data: Union[dict[str, object], str]) -> bool:
         True if content filtering is detected, False otherwise.
     """
     if isinstance(data, dict):
-        # Check for explicit content_filter or moderation_blocked codes
         error_obj = data.get("error")
-        code = error_obj.get("code") if isinstance(error_obj, dict) else None  # type: ignore[ty:invalid-argument-type]
-        if code in ["content_filter", "content_safety_violation", "moderation_blocked"]:
-            return True
-        # OpenAI uses "invalid_prompt" for model-level safety blocks (e.g. CBRN topics).
-        # Only treat it as a content filter when the message indicates a safety block,
-        # not for other invalid_prompt reasons (e.g. malformed schemas).
-        if code == "invalid_prompt":
-            message = error_obj.get("message", "") if isinstance(error_obj, dict) else ""  # type: ignore[ty:no-matching-overload]
-            if "limited access" in str(message).lower() or "safety" in str(message).lower():
-                return True
-        # Heuristic: Azure sometimes uses other codes with policy-related content
-        return "content_filter" in json.dumps(data).lower()
-    # String-based heuristic search
-    lower = str(data).lower()
-    return "content_filter" in lower or "policy_violation" in lower or "moderation_blocked" in lower
+        if isinstance(error_obj, dict) and error_obj.get("code") == "invalid_prompt":  # type: ignore[ty:invalid-argument-type]
+            message = str(error_obj.get("message", "")).lower()  # type: ignore[ty:no-matching-overload]
+            return any(marker in message for marker in SAFETY_MESSAGE_MARKERS)
+        haystack = json.dumps(data).lower()
+    else:
+        haystack = str(data).lower()
+    return any(marker in haystack for marker in CONTENT_FILTER_MARKERS)
 
 
 def _extract_error_payload(exc: Exception) -> tuple[Union[dict[str, object], str], bool]:
@@ -100,9 +140,10 @@ def _extract_error_payload(exc: Exception) -> tuple[Union[dict[str, object], str
     2. Fall back to e.body attribute
     3. Fall back to str(e)
 
-    It also attempts to detect whether the error is due to content filtering by:
-    - Checking for error.code == "content_filter"
-    - Searching for "content_filter" or "policy_violation" keywords in the payload
+    It also attempts to detect whether the error is due to content filtering by
+    delegating to ``_is_content_filter_error``, which scans the payload for the
+    markers in ``CONTENT_FILTER_MARKERS`` (or, for ``invalid_prompt`` errors,
+    inspects the message for ``SAFETY_MESSAGE_MARKERS``).
 
     Args:
         exc: An exception from the OpenAI SDK (typically BadRequestError).

@@ -378,11 +378,7 @@ def handle_bad_request_exception(
         RuntimeError: If the response does not match bad-request content-filter conditions.
 
     """
-    if (
-        "content_filter" in response_text
-        or "Invalid prompt: your prompt was flagged as potentially violating our usage policy." in response_text
-        or is_content_filter
-    ):
+    if "content_filter" in response_text or is_content_filter:
         # Handle bad request error when content filter system detects harmful content
         bad_request_exception = BadRequestException(status_code=error_code, message=response_text)
         resp_text = bad_request_exception.process_exception()
