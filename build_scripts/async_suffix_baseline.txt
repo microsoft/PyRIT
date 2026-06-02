@@ -8,7 +8,6 @@
 # To regenerate (only after a deliberate, reviewed cleanup):
 #   python build_scripts/check_async_suffix.py --write-baseline
 
-pyrit/cli/api_client.py:257:_get_json
 pyrit/common/data_url_converter.py:48:convert_local_image_to_data_url
 pyrit/common/display_response.py:60:display_image_response
 pyrit/common/download_hf_model.py:131:download_specific_files
