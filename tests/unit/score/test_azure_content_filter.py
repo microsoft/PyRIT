@@ -92,6 +92,30 @@ async def test_score_piece_async_image(patch_central_database, image_message_pie
     os.remove(image_message_piece.converted_value)
 
 
+async def test_get_base64_image_data_async_returns_serializer_base64(patch_central_database):
+    scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
+
+    piece = MessagePiece(
+        role="user",
+        original_value="image.png",
+        converted_value="image.png",
+        converted_value_data_type="image_path",
+    )
+
+    mock_serializer = MagicMock()
+    mock_serializer.read_data_base64_async = AsyncMock(return_value="ZmFrZS1iYXNlNjQ=")
+
+    with patch(
+        "pyrit.score.float_scale.azure_content_filter_scorer.data_serializer_factory",
+        return_value=mock_serializer,
+    ) as mock_factory:
+        result = await scorer._get_base64_image_data_async(piece)
+
+    assert result == "ZmFrZS1iYXNlNjQ="
+    mock_factory.assert_called_once()
+    mock_serializer.read_data_base64_async.assert_awaited_once()
+
+
 def test_default_category():
     scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar")
     assert len(scorer._harm_categories) == 4

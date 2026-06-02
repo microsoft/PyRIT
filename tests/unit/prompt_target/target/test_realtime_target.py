@@ -430,3 +430,67 @@ async def test_receive_events_skips_stale_response_done(target):
     # Should have processed through to the real response.done with actual audio
     assert result.audio_bytes == b"dummyaudio"
     assert result.transcripts == ["hello"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deprecated shim coverage: each ``<name>`` shim warns and forwards to ``<name>_async``.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def test_connect_emits_deprecation_warning_and_delegates(target):
+    with patch.object(target, "connect_async", new=AsyncMock(return_value="conn")) as mock_async:
+        with pytest.warns(DeprecationWarning, match="connect_async"):
+            result = await target.connect("conv-1")
+    assert result == "conn"
+    mock_async.assert_awaited_once_with(conversation_id="conv-1")
+
+
+async def test_send_config_emits_deprecation_warning_and_delegates(target):
+    with patch.object(target, "send_config_async", new=AsyncMock()) as mock_async:
+        with pytest.warns(DeprecationWarning, match="send_config_async"):
+            await target.send_config(conversation_id="conv-1")
+    mock_async.assert_awaited_once_with(conversation_id="conv-1", conversation=None)
+
+
+async def test_save_audio_emits_deprecation_warning_and_delegates(target):
+    with patch.object(target, "save_audio_async", new=AsyncMock(return_value="/path/audio.wav")) as mock_async:
+        with pytest.warns(DeprecationWarning, match="save_audio_async"):
+            result = await target.save_audio(b"audio_bytes")
+    assert result == "/path/audio.wav"
+    mock_async.assert_awaited_once_with(
+        audio_bytes=b"audio_bytes",
+        num_channels=1,
+        sample_width=2,
+        sample_rate=16000,
+        output_filename=None,
+    )
+
+
+async def test_cleanup_target_emits_deprecation_warning_and_delegates(target):
+    with patch.object(target, "cleanup_target_async", new=AsyncMock()) as mock_async:
+        with pytest.warns(DeprecationWarning, match="cleanup_target_async"):
+            await target.cleanup_target()
+    mock_async.assert_awaited_once()
+
+
+async def test_cleanup_conversation_emits_deprecation_warning_and_delegates(target):
+    with patch.object(target, "cleanup_conversation_async", new=AsyncMock()) as mock_async:
+        with pytest.warns(DeprecationWarning, match="cleanup_conversation_async"):
+            await target.cleanup_conversation("conv-1")
+    mock_async.assert_awaited_once_with(conversation_id="conv-1")
+
+
+async def test_send_response_create_emits_deprecation_warning_and_delegates(target):
+    with patch.object(target, "send_response_create_async", new=AsyncMock()) as mock_async:
+        with pytest.warns(DeprecationWarning, match="send_response_create_async"):
+            await target.send_response_create("conv-1")
+    mock_async.assert_awaited_once_with(conversation_id="conv-1")
+
+
+async def test_receive_events_emits_deprecation_warning_and_delegates(target):
+    result = RealtimeTargetResult(audio_bytes=b"", transcripts=["hi"])
+    with patch.object(target, "receive_events_async", new=AsyncMock(return_value=result)) as mock_async:
+        with pytest.warns(DeprecationWarning, match="receive_events_async"):
+            got = await target.receive_events("conv-1")
+    assert got is result
+    mock_async.assert_awaited_once_with(conversation_id="conv-1")

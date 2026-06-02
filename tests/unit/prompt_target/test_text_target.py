@@ -94,3 +94,14 @@ async def test_cleanup_target_does_nothing():
     target = TextTarget(text_stream=io.StringIO())
     # Should not raise
     await target.cleanup_target_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_cleanup_target_emits_deprecation_warning_and_delegates():
+    from unittest.mock import AsyncMock, patch
+
+    target = TextTarget(text_stream=io.StringIO())
+    with patch.object(target, "cleanup_target_async", new=AsyncMock()) as mock_async:
+        with pytest.warns(DeprecationWarning, match="cleanup_target_async"):
+            await target.cleanup_target()
+    mock_async.assert_awaited_once()

@@ -629,3 +629,35 @@ async def test_add_prepended_conversation_to_memory(mock_memory_instance):
     assert result[0].message_pieces[0].conversation_id == conv_id
     assert result[0].message_pieces[0].attack_identifier == attack_id
     mock_memory_instance.add_message_to_memory.assert_called_once()
+
+
+async def test_convert_values_emits_deprecation_warning_and_delegates(mock_memory_instance, response: Message):
+    normalizer = PromptNormalizer()
+    response_converter = PromptConverterConfiguration(converters=[Base64Converter()], indexes_to_apply=[0])
+    with patch.object(normalizer, "convert_values_async", new=AsyncMock()) as mock_async:
+        with pytest.warns(DeprecationWarning, match="convert_values_async"):
+            await normalizer.convert_values(converter_configurations=[response_converter], message=response)
+    mock_async.assert_awaited_once_with(converter_configurations=[response_converter], message=response)
+
+
+async def test_add_prepended_conversation_to_memory_emits_deprecation_warning_and_delegates(mock_memory_instance):
+    normalizer = PromptNormalizer()
+    with patch.object(
+        normalizer, "add_prepended_conversation_to_memory_async", new=AsyncMock(return_value=None)
+    ) as mock_async:
+        with pytest.warns(DeprecationWarning, match="add_prepended_conversation_to_memory_async"):
+            result = await normalizer.add_prepended_conversation_to_memory(
+                conversation_id="conv-1",
+                should_convert=False,
+                converter_configurations=None,
+                attack_identifier=None,
+                prepended_conversation=None,
+            )
+    assert result is None
+    mock_async.assert_awaited_once_with(
+        conversation_id="conv-1",
+        should_convert=False,
+        converter_configurations=None,
+        attack_identifier=None,
+        prepended_conversation=None,
+    )
