@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-import functools
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional, TypeVar
+
+from pydantic import AwareDatetime, Field, model_validator
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.conversation_reference import ConversationReference, ConversationType
@@ -43,7 +43,6 @@ class AttackOutcome(str, Enum):
     UNDETERMINED = "undetermined"
 
 
-@dataclass
 class AttackResult(StrategyResult):
     """Base class for all attack results."""
 
@@ -56,7 +55,7 @@ class AttackResult(StrategyResult):
 
     # Database-assigned unique ID for this AttackResult row.
     # Auto-generated if not provided (e.g. when loading from DB, the persisted ID is passed in).
-    attack_result_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    attack_result_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
 
     # Composite identifier combining the attack strategy identity with
     # seed identifiers from the dataset.
@@ -85,24 +84,24 @@ class AttackResult(StrategyResult):
     outcome_reason: Optional[str] = None
 
     # Wall-clock time the result was created or persisted.
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Flexible conversation refs (nothing unused)
-    related_conversations: set[ConversationReference] = field(default_factory=set)
+    related_conversations: set[ConversationReference] = Field(default_factory=set)
 
     # Arbitrary metadata
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     # labels associated with this attack result
-    labels: dict[str, str] = field(default_factory=dict)
+    labels: dict[str, str] = Field(default_factory=dict)
 
     # Error information (populated when attack fails with exception)
-    error_message: str | None = None
-    error_type: str | None = None
-    error_traceback: str | None = None
+    error_message: Optional[str] = None
+    error_type: Optional[str] = None
+    error_traceback: Optional[str] = None
 
     # Retry tracking
-    retry_events: list[RetryEvent] = field(default_factory=list)
+    retry_events: list[RetryEvent] = Field(default_factory=list)
     total_retries: int = 0
 
     # Attribution / parent linkage (infrastructure-managed). Set by the attack
@@ -110,8 +109,62 @@ class AttackResult(StrategyResult):
     # AttackContext. User code should not set these directly; ad-hoc
     # AttackResults created outside an orchestrator leave both fields as None
     # and the corresponding DB columns remain NULL.
-    attribution_parent_id: str | None = None
-    attribution_data: dict[str, Any] | None = None
+    attribution_parent_id: Optional[str] = None
+    attribution_data: Optional[dict[str, Any]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_naive_timestamp(cls, data: Any) -> Any:
+        """
+        Coerce a naive ``timestamp`` (datetime or ISO string) to UTC.
+
+        ``AwareDatetime`` rejects naive datetimes that the legacy dataclass
+        accepted (e.g. SQLite-loaded timestamps). Mirror ``_ensure_utc`` so
+        existing naive inputs keep validating.
+
+        Returns:
+            The input ``data`` with a tz-aware ``timestamp`` when one was supplied.
+        """
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        ts = data.get("timestamp")
+        if isinstance(ts, str):
+            ts = datetime.fromisoformat(ts)
+        if isinstance(ts, datetime) and ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        if ts is not None:
+            data["timestamp"] = ts
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _promote_deprecated_attack_identifier(cls, data: Any) -> Any:
+        """
+        Promote the deprecated ``attack_identifier`` kwarg to ``atomic_attack_identifier``.
+
+        Runs ahead of ``extra="forbid"`` so the legacy kwarg is consumed before
+        Pydantic would reject it. Emits a deprecation warning when present.
+
+        Returns:
+            The input ``data`` with ``attack_identifier`` removed and (when it was
+            set and ``atomic_attack_identifier`` was not) promoted.
+        """
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        attack_identifier = data.pop("attack_identifier", None)
+        if attack_identifier is not None:
+            print_deprecation_message(
+                old_item="AttackResult(attack_identifier=...)",
+                new_item="AttackResult(atomic_attack_identifier=...)",
+                removed_in="0.15.0",
+            )
+            if data.get("atomic_attack_identifier") is None:
+                data["atomic_attack_identifier"] = build_atomic_attack_identifier(
+                    attack_identifier=attack_identifier,
+                )
+        return data
 
     @property
     def attack_identifier(self) -> Optional[ComponentIdentifier]:
@@ -232,9 +285,19 @@ class AttackResult(StrategyResult):
         """
         Serialize this attack result to a JSON-compatible dictionary.
 
+        Deprecated: use ``model_dump(mode="json")`` for the canonical Pydantic
+        serialization. This shim preserves the legacy wire shape (base fields
+        only, raw ``metadata``, sorted ``related_conversations``) through the
+        deprecation window.
+
         Returns:
             dict[str, Any]: Serialized payload suitable for REST APIs or persistence.
         """
+        print_deprecation_message(
+            old_item="AttackResult.to_dict()",
+            new_item="AttackResult.model_dump(mode='json')",
+            removed_in="0.16.0",
+        )
         return {
             "conversation_id": self.conversation_id,
             "objective": self.objective,
@@ -267,12 +330,21 @@ class AttackResult(StrategyResult):
         """
         Reconstruct an AttackResult from a dictionary.
 
+        Deprecated: use ``model_validate(...)`` for the canonical Pydantic
+        deserialization. This shim accepts the legacy ``to_dict()`` wire shape
+        (base fields only) through the deprecation window.
+
         Args:
             data (dict[str, Any]): Dictionary as produced by to_dict().
 
         Returns:
             AttackResult: Reconstructed instance.
         """
+        print_deprecation_message(
+            old_item="AttackResult.from_dict(...)",
+            new_item="AttackResult.model_validate(...)",
+            removed_in="0.16.0",
+        )
         return cls(
             conversation_id=data["conversation_id"],
             objective=data["objective"],
@@ -302,42 +374,3 @@ class AttackResult(StrategyResult):
             retry_events=[RetryEvent.model_validate(e) for e in data.get("retry_events", [])],
             total_retries=data.get("total_retries", 0),
         )
-
-
-def _add_attack_identifier_compat(cls: type) -> type:
-    """
-    Wrap a dataclass ``__init__`` to accept the deprecated ``attack_identifier`` kwarg.
-
-    When ``attack_identifier`` is passed, it is automatically promoted to
-    ``atomic_attack_identifier`` via ``build_atomic_attack_identifier`` and a
-    deprecation warning is emitted.
-
-    Args:
-        cls: The dataclass to wrap.
-
-    Returns:
-        The same class with a wrapped ``__init__``.
-
-    """
-    original_init = cls.__init__
-
-    @functools.wraps(original_init)
-    def wrapped_init(self: Any, *args: Any, **kwargs: Any) -> None:
-        attack_identifier = kwargs.pop("attack_identifier", None)
-        if attack_identifier is not None:
-            print_deprecation_message(
-                old_item="AttackResult(attack_identifier=...)",
-                new_item="AttackResult(atomic_attack_identifier=...)",
-                removed_in="0.15.0",
-            )
-            if kwargs.get("atomic_attack_identifier") is None:
-                kwargs["atomic_attack_identifier"] = build_atomic_attack_identifier(
-                    attack_identifier=attack_identifier,
-                )
-        original_init(self, *args, **kwargs)
-
-    cls.__init__ = wrapped_init  # type: ignore[ty:invalid-assignment]
-    return cls
-
-
-_add_attack_identifier_compat(AttackResult)
