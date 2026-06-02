@@ -181,7 +181,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
 
         for language in self.languages:
             split_name = _LANGUAGE_TO_SPLIT[language]
-            split_data = await self._fetch_from_huggingface(
+            split_data = await self._fetch_from_huggingface_async(
                 dataset_name=_HF_REPO_ID,
                 split=split_name,
                 cache=cache,

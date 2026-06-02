@@ -8,15 +8,6 @@
 # To regenerate (only after a deliberate, reviewed cleanup):
 #   python build_scripts/check_async_suffix.py --write-baseline
 
-pyrit/datasets/seed_datasets/local/local_dataset_loader.py:79:_parse_metadata
-pyrit/datasets/seed_datasets/remote/equitymedqa_dataset.py:151:_get_sub_dataset
-pyrit/datasets/seed_datasets/remote/remote_dataset_loader.py:287:_fetch_from_huggingface
-pyrit/datasets/seed_datasets/remote/remote_dataset_loader.py:359:_parse_metadata
-pyrit/datasets/seed_datasets/remote/remote_dataset_loader.py:389:_fetch_zip_from_url
-pyrit/datasets/seed_datasets/seed_dataset_provider.py:103:fetch_dataset
-pyrit/datasets/seed_datasets/seed_dataset_provider.py:123:_parse_metadata
-pyrit/datasets/seed_datasets/seed_dataset_provider.py:316:fetch_single_dataset
-pyrit/datasets/seed_datasets/seed_dataset_provider.py:342:fetch_with_semaphore
 pyrit/executor/attack/core/attack_executor.py:231:build_params
 pyrit/executor/attack/core/attack_executor.py:347:run_one
 pyrit/executor/attack/core/attack_parameters.py:242:from_seed_group_async_wrapper

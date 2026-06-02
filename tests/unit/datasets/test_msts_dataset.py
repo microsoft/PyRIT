@@ -126,7 +126,7 @@ async def test_fetch_dataset_returns_paired_prompts(english_rows):
     loader = _MSTSDataset()
 
     with (
-        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=english_rows)),
+        patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=english_rows)),
         patch.object(
             loader,
             "_fetch_and_save_image_async",
@@ -155,7 +155,7 @@ async def test_prompt_pair_shares_group_id(english_rows):
     loader = _MSTSDataset()
 
     with (
-        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=english_rows[:2])),
+        patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=english_rows[:2])),
         patch.object(
             loader,
             "_fetch_and_save_image_async",
@@ -180,7 +180,7 @@ async def test_text_modifier_filter_excludes_intention_rows(english_rows):
     loader = _MSTSDataset(text_modifiers=["assistance"])
 
     with (
-        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=english_rows)),
+        patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=english_rows)),
         patch.object(
             loader,
             "_fetch_and_save_image_async",
@@ -201,7 +201,7 @@ async def test_language_filter_loads_only_requested_splits(english_rows):
     mock_fetch = AsyncMock(return_value=english_rows)
 
     with (
-        patch.object(loader, "_fetch_from_huggingface", new=mock_fetch),
+        patch.object(loader, "_fetch_from_huggingface_async", new=mock_fetch),
         patch.object(
             loader,
             "_fetch_and_save_image_async",
@@ -221,7 +221,7 @@ async def test_failed_image_is_skipped(english_rows):
     loader = _MSTSDataset()
 
     with (
-        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=english_rows)),
+        patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=english_rows)),
         patch.object(
             loader,
             "_fetch_and_save_image_async",
@@ -238,7 +238,7 @@ async def test_metadata_includes_msts_fields(english_rows):
     loader = _MSTSDataset()
 
     with (
-        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=english_rows[:1])),
+        patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=english_rows[:1])),
         patch.object(
             loader,
             "_fetch_and_save_image_async",
@@ -274,7 +274,7 @@ async def test_metadata_handles_none_nullable_fields():
     row["hazard_subcategory"] = None
 
     with (
-        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=[row])),
+        patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=[row])),
         patch.object(
             loader,
             "_fetch_and_save_image_async",

@@ -121,7 +121,7 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         Fetch the CoCoNot subset and return it as a SeedDataset.
 
         Iterates ``self._resolved_splits()`` and calls the inherited
-        ``_fetch_from_huggingface`` once per split, then filters by
+        ``_fetch_from_huggingface_async`` once per split, then filters by
         ``self._categories`` if set.
 
         Args:
@@ -141,7 +141,7 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
 
         for split in self._resolved_splits():
             logger.info(f"Loading CoCoNot rows (config={self.CONFIG}, split={split})")
-            rows = await self._fetch_from_huggingface(
+            rows = await self._fetch_from_huggingface_async(
                 dataset_name=self.HF_DATASET_NAME,
                 config=self.CONFIG,
                 split=split,

@@ -86,7 +86,7 @@ class _CategoricalHarmfulQADataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading CategoricalHarmfulQA dataset from {self.HF_DATASET_NAME} (language={self.language})")
 
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
             split=self.language,
             cache=cache,
