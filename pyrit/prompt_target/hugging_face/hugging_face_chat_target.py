@@ -4,7 +4,6 @@
 import asyncio
 import json
 import logging
-import os
 import warnings
 from pathlib import Path
 from typing import Any, cast
@@ -19,8 +18,7 @@ from transformers import (
 from pyrit.common import default_values
 from pyrit.common.download_hf_model import download_specific_files_async
 from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, construct_response_from_request
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -265,12 +263,12 @@ class HuggingFaceChatTarget(PromptTarget):
                 self._load_from_path(self.model_path, **optional_model_kwargs)
             else:
                 # Define the default Hugging Face cache directory
-                cache_dir = os.path.join(
-                    os.path.expanduser("~"),
-                    ".cache",
-                    "huggingface",
-                    "hub",
-                    f"models--{(self.model_id or '').replace('/', '--')}",
+                cache_dir = (
+                    Path.home()
+                    / ".cache"
+                    / "huggingface"
+                    / "hub"
+                    / f"models--{(self.model_id or '').replace('/', '--')}"
                 )
 
                 if self.necessary_files is None:
@@ -280,7 +278,7 @@ class HuggingFaceChatTarget(PromptTarget):
                         self.model_id or "",
                         None,
                         self.huggingface_token,  # type: ignore[ty:invalid-argument-type]
-                        Path(cache_dir),
+                        cache_dir,
                     )
                 else:
                     # Download only the necessary files

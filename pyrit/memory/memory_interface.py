@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory.memory_exporter import MemoryExporter
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -38,6 +37,8 @@ from pyrit.models import (
     AttackResult,
     ConversationStats,
     DataTypeSerializer,
+    IdentifierFilter,
+    IdentifierType,
     Message,
     MessagePiece,
     ScenarioResult,
@@ -683,6 +684,14 @@ class MemoryInterface(abc.ABC):
     def add_scores_to_memory(self, *, scores: Sequence[Score]) -> None:
         """
         Insert a list of scores into the memory storage.
+
+        Callers that produce scores for pieces flagged via
+        ``MessagePiece.not_in_memory = True`` should null out
+        ``message_piece_id`` on those scores before calling this method so the
+        score itself can still be persisted without a dangling piece linkage.
+        Persisting the score even without a piece is intentional: aggregate
+        analytics (e.g. refusal rate over a batch) still want the score row
+        even when the scored content was never a real conversation turn.
         """
         for score in scores:
             if score.message_piece_id:
@@ -693,7 +702,7 @@ class MemoryInterface(abc.ABC):
                     continue
                 # auto-link score to the original prompt id if the prompt is a duplicate
                 if pieces[0].original_prompt_id != pieces[0].id:
-                    score.message_piece_id = pieces[0].original_prompt_id
+                    score.message_piece_id = pieces[0].original_prompt_id  # type: ignore[ty:invalid-assignment]
         self._insert_entries(entries=[ScoreEntry(entry=score) for score in scores])
 
     def get_scores(
@@ -1000,7 +1009,7 @@ class MemoryInterface(abc.ABC):
 
         all_pieces: list[MessagePiece] = []
         for message in messages:
-            duplicated_message = message.duplicate_message()
+            duplicated_message = message.duplicate()
 
             for piece in duplicated_message.message_pieces:
                 piece.conversation_id = new_conversation_id
@@ -1171,9 +1180,12 @@ class MemoryInterface(abc.ABC):
             conversation_id=conversation_id, update_fields={"prompt_metadata": prompt_metadata}
         )
 
-    def _run_schema_migration(self) -> None:
+    def _run_schema_migration(self, *, silent: bool = False) -> None:
         """
         Run schema migrations to ensure the database schema is up to date.
+
+        Args:
+            silent (bool): If True, suppresses Alembic console output. Defaults to False.
 
         Raises:
             ValueError: If an invalid schema handling option is provided.
@@ -1185,8 +1197,8 @@ class MemoryInterface(abc.ABC):
         logger.info("Running schema migration.")
         if self.engine is None:
             raise RuntimeError("Engine must be initialized to run schema migrations.")
-        run_schema_migrations(engine=self.engine)
-        check_schema_migrations(engine=self.engine)
+        run_schema_migrations(engine=self.engine, silent=silent)
+        check_schema_migrations(engine=self.engine, silent=silent)
 
     def reset_database(self) -> None:
         """
@@ -1591,6 +1603,11 @@ class MemoryInterface(abc.ABC):
         Returns:
             Path: The path to the exported file.
         """
+        print_deprecation_message(
+            old_item="MemoryInterface.export_conversations",
+            new_item="the pyrit.output module or direct serialization of get_message_pieces results",
+            removed_in="0.15.0",
+        )
         data = self.get_message_pieces(
             attack_id=attack_id,
             conversation_id=conversation_id,

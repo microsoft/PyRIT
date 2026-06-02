@@ -12,7 +12,7 @@ import pyrit
 from pyrit.models import AttackOutcome, AttackResult
 
 if TYPE_CHECKING:
-    from pyrit.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
 
 logger = logging.getLogger(__name__)
@@ -294,7 +294,7 @@ class ScenarioResult:
 
         """
         # import here to avoid circular imports
-        from pyrit.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
+        from pyrit.models.identifiers.evaluation_identifier import ScorerEvaluationIdentifier
         from pyrit.score.scorer_evaluation.scorer_metrics_io import (
             find_objective_metrics_by_eval_hash,
         )
@@ -317,10 +317,10 @@ class ScenarioResult:
             "id": str(self.id),
             "scenario_identifier": self.scenario_identifier.to_dict(),
             "objective_target_identifier": (
-                self.objective_target_identifier.to_dict() if self.objective_target_identifier else None
+                self.objective_target_identifier.model_dump() if self.objective_target_identifier else None
             ),
             "objective_scorer_identifier": (
-                self.objective_scorer_identifier.to_dict() if self.objective_scorer_identifier else None
+                self.objective_scorer_identifier.model_dump() if self.objective_scorer_identifier else None
             ),
             "scenario_run_state": self.scenario_run_state,
             "attack_results": {name: [r.to_dict() for r in results] for name, results in self.attack_results.items()},
@@ -345,18 +345,18 @@ class ScenarioResult:
         Returns:
             ScenarioResult: Reconstructed instance.
         """
-        from pyrit.identifiers.component_identifier import ComponentIdentifier
+        from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 
         result = cls(
             id=uuid.UUID(data["id"]) if data.get("id") else None,
             scenario_identifier=ScenarioIdentifier.from_dict(data["scenario_identifier"]),
             objective_target_identifier=(
-                ComponentIdentifier.from_dict(data["objective_target_identifier"])
+                ComponentIdentifier.model_validate(data["objective_target_identifier"])
                 if data.get("objective_target_identifier")
                 else None
             ),
             objective_scorer_identifier=(
-                ComponentIdentifier.from_dict(data["objective_scorer_identifier"])
+                ComponentIdentifier.model_validate(data["objective_scorer_identifier"])
                 if data.get("objective_scorer_identifier")
                 else None
             ),

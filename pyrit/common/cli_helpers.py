@@ -45,10 +45,10 @@ def validate_log_level(*, log_level: str) -> int:
 
 def validate_log_level_argparse(value: Any) -> int:
     """
-    Argparse-compatible wrapper around :func:`validate_log_level`.
+    Argparse-compatible wrapper around ``validate_log_level``.
 
     Adapts the keyword-only validator to argparse's positional ``type=`` calling
-    convention and converts ``ValueError`` to :class:`argparse.ArgumentTypeError`.
+    convention and converts ``ValueError`` to ``argparse.ArgumentTypeError``.
 
     Args:
         value: Log level string supplied by argparse.

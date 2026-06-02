@@ -15,7 +15,6 @@ from pyrit.executor.attack.single_turn.single_turn_attack_strategy import (
     SingleTurnAttackContext,
     SingleTurnAttackStrategy,
 )
-from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -23,6 +22,7 @@ from pyrit.models import (
     ConversationType,
     Message,
     Score,
+    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -293,7 +293,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         """
         if context.next_message:
             # Deep copy the message to preserve all fields, then assign new IDs
-            return context.next_message.duplicate_message()
+            return context.next_message.duplicate()
 
         return Message.from_prompt(prompt=context.objective, role="user")
 

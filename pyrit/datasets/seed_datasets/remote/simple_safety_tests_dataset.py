@@ -6,7 +6,7 @@ import logging
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,11 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: str = "Bertievidgen/SimpleSafetyTests"
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "small"  # 100 critical safety test prompts
+    tags: frozenset[str] = frozenset({"safety"})
 
     def __init__(
         self,
