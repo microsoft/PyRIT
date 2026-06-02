@@ -611,7 +611,7 @@ class TestHarmbenchMetadataInScenario:
         assert isinstance(metadata.tags, set)
         assert "default" in metadata.tags
         assert "safety" in metadata.tags
-        assert metadata.size == {"large"}
+        assert metadata.size == {"medium"}
         assert metadata.modalities == {"text"}
         assert isinstance(metadata.harm_categories, set)
         assert "cybercrime" in metadata.harm_categories
