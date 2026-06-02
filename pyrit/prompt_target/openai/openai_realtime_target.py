@@ -93,7 +93,6 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         voice: Optional[RealTimeVoice] = None,
         existing_convo: Optional[dict[str, Any]] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
-        server_vad: bool | ServerVadConfig = False,
         **kwargs: Any,
     ) -> None:
         """
@@ -117,12 +116,6 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
             existing_convo (dict[str, websockets.WebSocketClientProtocol], Optional): Existing conversations.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
-            server_vad (bool | ServerVadConfig): Server-side voice activity detection (VAD).
-                ``False`` (default) keeps the existing atomic send/receive behavior.
-                ``True`` enables VAD with default tuning.
-                Pass a ``ServerVadConfig`` to enable with custom tuning. Streaming attacks
-                obtain a dedicated session via :meth:`open_streaming_session` and require
-                VAD to be enabled.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
@@ -133,13 +126,6 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         self._existing_conversation = existing_convo if existing_convo is not None else {}
         self._realtime_client: Optional[AsyncOpenAI] = None
 
-        if isinstance(server_vad, ServerVadConfig):
-            self._server_vad: Optional[ServerVadConfig] = server_vad
-        elif server_vad:
-            self._server_vad = ServerVadConfig()
-        else:
-            self._server_vad = None
-
     def open_streaming_session(
         self,
         *,
@@ -149,7 +135,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         request_converter_configurations: "list[PromptConverterConfiguration] | None" = None,
         response_converter_configurations: "list[PromptConverterConfiguration] | None" = None,
         prepended_conversation: list[Message] | None = None,
-        vad: ServerVadConfig | None = None,
+        server_vad: bool | ServerVadConfig = True,
         attack_identifier: "ComponentIdentifier | None" = None,
         persist_prepended_conversation: bool = True,
     ) -> "_OpenAIRealtimeStreamingSession":
@@ -174,8 +160,9 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
                 before persistence.
             prepended_conversation: Optional conversation history. The leading system
                 message becomes session instructions.
-            vad: Optional per-call VAD tuning. When ``None``, falls back to the target's
-                constructor-set ``server_vad``.
+            server_vad: Server-side voice activity detection. ``True`` (default) enables
+                VAD with default tuning. Pass a ``ServerVadConfig`` for custom tuning, or
+                ``False`` to disable (sending streaming config will then raise).
             attack_identifier: Stamped on every persisted user / assistant piece for
                 attribution. Pass the caller's identifier so live messages share the
                 provenance contract of prepended messages.
@@ -198,7 +185,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
             request_converter_configurations=request_converter_configurations,
             response_converter_configurations=response_converter_configurations,
             prepended_conversation=prepended_conversation,
-            vad=vad,
+            server_vad=server_vad,
             attack_identifier=attack_identifier,
             persist_prepended_conversation=persist_prepended_conversation,
         )
@@ -323,13 +310,13 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
 
         Args:
             system_prompt: The system prompt to use in the session configuration.
-            server_vad: Optional VAD override. When None, falls back to the target's
-                constructor-set ``self._server_vad``.
+            server_vad: When provided, emits a ``turn_detection`` block tuned by this
+                config. The atomic path always omits it (server VAD is a streaming-only
+                concept); the streaming session passes its resolved VAD here.
 
         Returns:
             dict: Session configuration dictionary.
         """
-        effective_vad = server_vad if server_vad is not None else self._server_vad
         session_config = {
             "type": "realtime",
             "instructions": system_prompt,
@@ -353,12 +340,12 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
             },
         }
 
-        if effective_vad is not None:
+        if server_vad is not None:
             session_config["audio"]["input"]["turn_detection"] = {  # type: ignore[ty:invalid-assignment]
                 "type": "server_vad",
-                "threshold": effective_vad.threshold,
-                "prefix_padding_ms": effective_vad.prefix_padding_ms,
-                "silence_duration_ms": effective_vad.silence_duration_ms,
+                "threshold": server_vad.threshold,
+                "prefix_padding_ms": server_vad.prefix_padding_ms,
+                "silence_duration_ms": server_vad.silence_duration_ms,
                 "create_response": True,
                 "interrupt_response": True,
             }

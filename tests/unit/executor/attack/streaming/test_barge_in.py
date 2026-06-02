@@ -24,7 +24,7 @@ _CLEAN_ENV = {"OPENAI_REALTIME_UNDERLYING_MODEL": ""}
 @pytest.fixture
 @patch.dict("os.environ", _CLEAN_ENV)
 def vad_target(sqlite_instance):
-    return RealtimeTarget(api_key="test_key", endpoint="wss://test_url", model_name="test", server_vad=True)
+    return RealtimeTarget(api_key="test_key", endpoint="wss://test_url", model_name="test")
 
 
 async def _aiter(chunks: list[bytes]) -> AsyncIterator[bytes]:
@@ -67,15 +67,6 @@ def test_constructor_succeeds_with_vad_target(vad_target):
     """A RealtimeTarget declares STREAMING_BARGE_IN — construction succeeds."""
     attack = BargeInAttack(objective_target=vad_target)
     assert attack.get_objective_target() is vad_target
-
-
-def test_constructor_succeeds_even_without_server_vad_enabled(sqlite_instance):
-    """Capability check passes; server VAD is a runtime config concern surfaced when used."""
-    with patch.dict("os.environ", _CLEAN_ENV):
-        no_vad = RealtimeTarget(api_key="k", endpoint="wss://test_url", model_name="test")
-    # Construction succeeds — capability is about the target type, not server_vad config.
-    attack = BargeInAttack(objective_target=no_vad)
-    assert attack.get_objective_target() is no_vad
 
 
 # ---- Context validation ----------------------------------------------------------------------

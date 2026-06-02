@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.realtime_audio import RealtimeTargetResult, RealtimeTurnState
+from pyrit.prompt_target.common.streaming import ServerVadConfig
 from pyrit.prompt_target.common.streaming.streaming_audio_target import (
     STREAMING_INTERRUPTED_KEY,
 )
@@ -31,7 +32,6 @@ if TYPE_CHECKING:
     from pyrit.identifiers import ComponentIdentifier
     from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
     from pyrit.prompt_target.common.realtime_audio import CommittedEvent
-    from pyrit.prompt_target.common.streaming import ServerVadConfig
     from pyrit.prompt_target.openai.openai_realtime_target import RealtimeTarget
 
 
@@ -114,7 +114,7 @@ class _OpenAIRealtimeStreamingSession:
         request_converter_configurations: list[PromptConverterConfiguration] | None = None,
         response_converter_configurations: list[PromptConverterConfiguration] | None = None,
         prepended_conversation: list[Message] | None = None,
-        vad: ServerVadConfig | None = None,
+        server_vad: bool | ServerVadConfig = True,
         attack_identifier: ComponentIdentifier | None = None,
         persist_prepended_conversation: bool = True,
     ) -> None:
@@ -125,14 +125,18 @@ class _OpenAIRealtimeStreamingSession:
         self._request_converter_configurations = request_converter_configurations or []
         self._response_converter_configurations = response_converter_configurations or []
         self._prepended_conversation = prepended_conversation or []
-        self._vad = vad
         self._attack_identifier = attack_identifier
         self._persist_prepended_conversation = persist_prepended_conversation
 
-        # Resolve VAD once at session construction so config send and commit-time trim
-        # both see the same value, even if the target's ``_server_vad`` is mutated
-        # later. ``self._vad is None`` means "use target default", not "no VAD".
-        self._effective_vad: ServerVadConfig | None = self._vad if self._vad is not None else self._target._server_vad
+        # Normalize server_vad once at construction so config send and commit-time trim
+        # both see the same value. ``True`` uses default tuning; pass a ``ServerVadConfig``
+        # for custom tuning, ``False`` to disable (sending streaming config then raises).
+        if isinstance(server_vad, ServerVadConfig):
+            self._effective_vad: ServerVadConfig | None = server_vad
+        elif server_vad:
+            self._effective_vad = ServerVadConfig()
+        else:
+            self._effective_vad = None
 
         # Tee raw user audio so we can persist it per VAD-committed turn; the dispatcher
         # only surfaces ``CommittedEvent`` with an item id, not the bytes themselves.
@@ -419,13 +423,13 @@ class _OpenAIRealtimeStreamingSession:
         audio before triggering ``response.create``.
 
         Raises:
-            ValueError: If neither the session's ``vad`` nor the target's ``_server_vad`` is set.
+            ValueError: If server VAD is disabled for this session.
         """
         assert self._connection is not None
         if self._effective_vad is None:
             raise ValueError(
                 "_send_streaming_session_config_async requires server VAD; "
-                "pass vad=ServerVadConfig(...) or construct RealtimeTarget(server_vad=True)."
+                "pass server_vad=True or server_vad=ServerVadConfig(...) when opening the session."
             )
         system_prompt = self._target._get_system_prompt_from_conversation(conversation=self._prepended_conversation)
         config = self._target._set_system_prompt_and_config_vars(

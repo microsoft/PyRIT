@@ -47,9 +47,6 @@ def _build_target() -> MagicMock:
     """Build a MagicMock target exposing the connection + audio surface the session calls."""
     target = MagicMock(name="RealtimeTarget")
     target.SAMPLE_RATE_HZ = 24000
-    # MagicMock auto-creates attributes; pin _server_vad to None so the session's
-    # ``_effective_vad`` capture defaults correctly when no per-session vad is passed.
-    target._server_vad = None
 
     connection = AsyncMock(name="connection")
     # AsyncMock auto-creates attributes as AsyncMock, but child attribute chains like
@@ -400,7 +397,7 @@ async def test_run_async_persists_prepended_conversation_and_forwards_vad_config
         audio_chunks=_empty(),
         prompt_normalizer=normalizer,
         prepended_conversation=prepended,
-        vad=vad,
+        server_vad=vad,
         conversation_id="conv-prep",
     )
     _mock_session_wire(session)
@@ -486,7 +483,7 @@ async def test_on_committed_trims_pre_speech_silence_before_persisting_user_audi
         target=target,
         audio_chunks=_paced_chunks([chunk], finish),
         prompt_normalizer=normalizer,
-        vad=ServerVadConfig(prefix_padding_ms=100),
+        server_vad=ServerVadConfig(prefix_padding_ms=100),
     )
     _mock_session_wire(session)
 
@@ -518,7 +515,7 @@ async def test_on_committed_skips_trim_when_audio_start_ms_missing():
         target=target,
         audio_chunks=_paced_chunks([chunk], finish),
         prompt_normalizer=normalizer,
-        vad=ServerVadConfig(prefix_padding_ms=100),
+        server_vad=ServerVadConfig(prefix_padding_ms=100),
     )
     _mock_session_wire(session)
 
@@ -565,7 +562,7 @@ async def test_buffer_start_session_ms_advances_across_commits():
         target=target,
         audio_chunks=_gated_chunks(),
         prompt_normalizer=normalizer,
-        vad=ServerVadConfig(prefix_padding_ms=100),
+        server_vad=ServerVadConfig(prefix_padding_ms=100),
     )
     _mock_session_wire(session)
 
@@ -711,7 +708,7 @@ def test_open_streaming_session_forwards_kwargs_to_session_constructor(sqlite_in
     """``RealtimeTarget.open_streaming_session`` is a thin pass-through to the session ctor."""
     from pyrit.prompt_target import RealtimeTarget
 
-    target = RealtimeTarget(api_key="k", endpoint="wss://test_url", model_name="test", server_vad=True)
+    target = RealtimeTarget(api_key="k", endpoint="wss://test_url", model_name="test")
     normalizer = _build_normalizer()
 
     async def _empty():
@@ -742,7 +739,7 @@ def test_open_streaming_session_forwards_kwargs_to_session_constructor(sqlite_in
             request_converter_configurations=req_cfgs,
             response_converter_configurations=resp_cfgs,
             prepended_conversation=prepended,
-            vad=vad,
+            server_vad=vad,
             attack_identifier=attack_id,
             persist_prepended_conversation=False,
         )
@@ -754,7 +751,7 @@ def test_open_streaming_session_forwards_kwargs_to_session_constructor(sqlite_in
     assert captured["request_converter_configurations"] is req_cfgs
     assert captured["response_converter_configurations"] is resp_cfgs
     assert captured["prepended_conversation"] is prepended
-    assert captured["vad"] is vad
+    assert captured["server_vad"] is vad
     assert captured["attack_identifier"] is attack_id
     assert captured["persist_prepended_conversation"] is False
 
@@ -841,8 +838,7 @@ _CLEAN_ENV = {"OPENAI_REALTIME_UNDERLYING_MODEL": ""}
 def _real_session_with_mock_connection(
     sqlite_instance,
     *,
-    server_vad: bool = True,
-    vad: ServerVadConfig | None = None,
+    server_vad: bool | ServerVadConfig = True,
     prepended_conversation=None,
 ):
     """Build a real ``_OpenAIRealtimeStreamingSession`` over a real ``RealtimeTarget`` with a mock connection.
@@ -856,7 +852,7 @@ def _real_session_with_mock_connection(
     from pyrit.prompt_target import RealtimeTarget
 
     with patch.dict("os.environ", _CLEAN_ENV):
-        target = RealtimeTarget(api_key="k", endpoint="wss://test_url", model_name="test", server_vad=server_vad)
+        target = RealtimeTarget(api_key="k", endpoint="wss://test_url", model_name="test")
 
     async def _empty():
         if False:
@@ -867,7 +863,7 @@ def _real_session_with_mock_connection(
         audio_chunks=_empty(),
         prompt_normalizer=MagicMock(name="normalizer"),
         prepended_conversation=prepended_conversation,
-        vad=vad,
+        server_vad=server_vad,
     )
     session._connection = AsyncMock(name="connection")
     return session
@@ -994,8 +990,8 @@ async def test_send_streaming_session_config_async_emits_create_response_false(s
 
 
 async def test_send_streaming_session_config_async_requires_server_vad(sqlite_instance):
-    """Without server VAD on target or per-session vad, sending streaming session config must raise."""
-    session = _real_session_with_mock_connection(sqlite_instance, server_vad=False, vad=None)
+    """Without server VAD on the session, sending streaming session config must raise."""
+    session = _real_session_with_mock_connection(sqlite_instance, server_vad=False)
     with pytest.raises(ValueError, match="server VAD"):
         await session._send_streaming_session_config_async()
 

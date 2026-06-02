@@ -508,17 +508,9 @@ def test_session_config_omits_turn_detection_when_vad_disabled(target):
     assert config["instructions"] == "test prompt"
 
 
-@patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
-def test_session_config_emits_server_vad_block_with_defaults(sqlite_instance):
-    """server_vad=True must emit defaults."""
-    vad_target = RealtimeTarget(
-        api_key="test_key",
-        endpoint="wss://test_url",
-        model_name="test",
-        server_vad=True,
-    )
-
-    config = vad_target._set_system_prompt_and_config_vars(system_prompt="test prompt")
+def test_session_config_emits_server_vad_block_with_defaults(target):
+    """Passing ``server_vad=ServerVadConfig()`` must emit the default tuning."""
+    config = target._set_system_prompt_and_config_vars(system_prompt="test prompt", server_vad=ServerVadConfig())
 
     turn_detection = config["audio"]["input"]["turn_detection"]
     assert turn_detection == {
@@ -531,19 +523,12 @@ def test_session_config_emits_server_vad_block_with_defaults(sqlite_instance):
     }
 
 
-@patch.dict("os.environ", _CLEAN_UNDERLYING_MODEL_ENV)
-def test_session_config_honors_custom_vad_tuning(sqlite_instance):
+def test_session_config_honors_custom_vad_tuning(target):
     """Passing a ServerVadConfig must flow through to the emitted turn_detection block."""
-    vad_target = RealtimeTarget(
-        api_key="test_key",
-        endpoint="wss://test_url",
-        model_name="test",
+    turn_detection = target._set_system_prompt_and_config_vars(
+        system_prompt="x",
         server_vad=ServerVadConfig(threshold=0.7, prefix_padding_ms=350, silence_duration_ms=800),
-    )
-
-    turn_detection = vad_target._set_system_prompt_and_config_vars(system_prompt="x")["audio"]["input"][
-        "turn_detection"
-    ]
+    )["audio"]["input"]["turn_detection"]
 
     assert turn_detection["threshold"] == 0.7
     assert turn_detection["prefix_padding_ms"] == 350
