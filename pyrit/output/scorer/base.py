@@ -5,7 +5,7 @@ from abc import abstractmethod
 from typing import Any
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.output.base import PrinterBase
 
 

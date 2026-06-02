@@ -6,8 +6,7 @@ import logging
 import uuid
 from typing import Any
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece, Score, ScoreType
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoreType
 from pyrit.prompt_target import PromptShieldTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
@@ -103,7 +102,7 @@ class PromptShieldScorer(TrueFalseScorer):
             score_metadata=meta,  # type: ignore[ty:invalid-argument-type]
             score_rationale="",
             scorer_class_identifier=self.get_identifier(),
-            message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+            message_piece_id=message_piece.id,
             objective=objective,
         )
 

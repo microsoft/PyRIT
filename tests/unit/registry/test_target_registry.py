@@ -4,8 +4,7 @@
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.object_registries.target_registry import TargetRegistry
 
@@ -137,6 +136,25 @@ class TestTargetRegistryRegisterInstance:
         self.registry.register_instance(target2, name="target_2")
 
         assert len(self.registry) == 2
+
+    def test_register_instance_with_duplicate_name_silently_overwrites(self):
+        """Characterization: re-registering an existing name silently replaces the prior entry.
+
+        BaseInstanceRegistry.register is plain dict assignment; there is no
+        collision check, warning, or error. This test pins the current behavior
+        so any future tightening (warn, raise, idempotent skip) is an
+        intentional decision rather than a silent regression. Tracked as
+        ``duplicate-registry-name`` in failure_mode_followups for the PR
+        review batch.
+        """
+        first = MockPromptTarget(model_name="first")
+        second = MockPromptTarget(model_name="second")
+
+        self.registry.register_instance(first, name="same_name")
+        self.registry.register_instance(second, name="same_name")
+
+        assert len(self.registry) == 1
+        assert self.registry.get("same_name") is second
 
 
 @pytest.mark.usefixtures("patch_central_database")

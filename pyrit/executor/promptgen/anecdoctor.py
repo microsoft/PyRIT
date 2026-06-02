@@ -19,8 +19,9 @@ from pyrit.executor.promptgen.core import (
     PromptGeneratorStrategyContext,
     PromptGeneratorStrategyResult,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.models import (
+    ComponentIdentifier,
+    Identifiable,
     Message,
 )
 from pyrit.prompt_normalizer import PromptNormalizer

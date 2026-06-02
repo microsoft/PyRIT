@@ -6,8 +6,7 @@ from pathlib import Path
 from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import MessagePiece, Score, SeedPrompt
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -92,7 +91,7 @@ class InsecureCodeScorer(FloatScaleScorer):
             system_prompt=self._system_prompt,
             message_value=message_piece.original_value,
             message_data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+            scored_prompt_id=message_piece.id,
             category=self._harm_category,
             objective=objective,
             attack_identifier=message_piece.attack_identifier,

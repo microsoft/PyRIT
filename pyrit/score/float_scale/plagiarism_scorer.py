@@ -6,8 +6,7 @@ from enum import Enum
 
 import numpy as np
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -185,7 +184,7 @@ class PlagiarismScorer(FloatScaleScorer):
                 score_metadata=None,
                 score_type="float_scale",
                 score_rationale="Score is deterministic.",
-                message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+                message_piece_id=message_piece.id,
                 scorer_class_identifier=self.get_identifier(),
             )
         ]

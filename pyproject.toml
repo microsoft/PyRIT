@@ -141,7 +141,6 @@ speech = [
 # all includes all functional dependencies excluding the ones from the "dev" dependency group
 all = [
     "accelerate>=1.7.0",
-    "av>=14.0.0",
     "azure-ai-ml>=1.32.0",
     "azure-cognitiveservices-speech>=1.44.0",
     "flask>=3.1.3",
@@ -150,10 +149,9 @@ all = [
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
+    "pyarrow>=22.0.0; python_version >= '3.14'",
     "spacy>=3.8.13,!=3.8.14",  # 3.8.14 missing cp314 wheels
     "torch>=2.7.0",
-    "types-PyYAML>=6.0.12.20250516",
-    "types-requests>=2.31.0.20250515",
 ]
 
 [project.scripts]

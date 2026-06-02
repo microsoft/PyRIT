@@ -7,8 +7,7 @@ from typing import Any
 from pyrit.exceptions.exception_classes import (
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, construct_response_from_request
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
@@ -131,7 +130,7 @@ class OpenAICompletionTarget(OpenAITarget):
         message = normalized_conversation[-1]
         message_piece = message.message_pieces[0]
 
-        logger.info(f"Sending the following prompt to the prompt target: {message_piece}")
+        logger.info(f"Sending the following prompt to the prompt target: {message_piece.converted_value}")
 
         # Build request parameters
         body_parameters = {

@@ -14,7 +14,7 @@ from pyrit.score.true_false.true_false_score_aggregator import (
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
-    from pyrit.identifiers import ComponentIdentifier
+    from pyrit.models import ComponentIdentifier
 
 
 class QuestionAnswerScorer(TrueFalseScorer):
@@ -106,7 +106,7 @@ class QuestionAnswerScorer(TrueFalseScorer):
                     else "No matching text found in response"
                 ),
                 scorer_class_identifier=self.get_identifier(),
-                message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+                message_piece_id=message_piece.id,
                 objective=objective,
             )
         ]

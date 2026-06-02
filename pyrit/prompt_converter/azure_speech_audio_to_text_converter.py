@@ -12,8 +12,7 @@ if TYPE_CHECKING:
 from pyrit.auth.azure_auth import get_speech_config, get_speech_config_async
 from pyrit.common import default_values
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType, data_serializer_factory
+from pyrit.models import ComponentIdentifier, PromptDataType, data_serializer_factory
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)

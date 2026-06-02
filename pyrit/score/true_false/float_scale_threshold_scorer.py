@@ -7,8 +7,7 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import ChatMessageRole, Message, MessagePiece, Score
+from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleAggregatorFunc,
     FloatScaleScoreAggregator,

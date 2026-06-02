@@ -9,9 +9,8 @@ from collections.abc import Generator, MutableSequence, Sequence
 from contextlib import AbstractAsyncContextManager
 from unittest.mock import MagicMock, patch
 
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import AzureSQLMemory, CentralMemory, PromptMemoryEntry
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, limit_requests_per_minute
 
 
@@ -152,7 +151,7 @@ class MockPromptTarget(PromptTarget):
                     converted_value=system_prompt,
                     conversation_id=conversation_id,
                     attack_identifier=attack_identifier,
-                    labels=labels,
+                    labels=labels or {},
                 ).to_message()
             )
 

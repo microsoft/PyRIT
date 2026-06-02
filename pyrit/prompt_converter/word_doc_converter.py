@@ -18,7 +18,7 @@ from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConve
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from pyrit.identifiers import ComponentIdentifier
+    from pyrit.models import ComponentIdentifier
     from pyrit.models.data_type_serializer import DataTypeSerializer
 
 
