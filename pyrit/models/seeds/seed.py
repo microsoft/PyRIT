@@ -13,11 +13,11 @@ import logging
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Annotated, Any, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
 
 from jinja2 import StrictUndefined, Undefined
 from jinja2.sandbox import SandboxedEnvironment
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 
@@ -29,29 +29,6 @@ logger = logging.getLogger(__name__)
 
 # TypeVar for generic return type in class methods
 T = TypeVar("T", bound="Seed")
-
-
-def coerce_str_to_list(value: Any) -> Any:
-    """
-    Coerce a bare string into a single-element list, leaving other values unchanged.
-
-    YAML seed files commonly specify list-typed fields as a single scalar (e.g. ``authors: Jane Doe``)
-    rather than a list. This wraps such a value so it satisfies a ``list[str]`` field type.
-
-    Args:
-        value: The raw field value provided during validation.
-
-    Returns:
-        The value wrapped in a list if it was a bare string, otherwise unchanged.
-    """
-    if isinstance(value, str):
-        return [value]
-    return value
-
-
-# Annotated type for list[str] fields that should accept a bare string as a one-element list.
-# Use this for any seed list field populated from YAML where authors/groups/etc. may be scalars.
-StrOrList = Annotated[list[str], BeforeValidator(coerce_str_to_list)]
 
 
 class PartialUndefined(Undefined):
@@ -120,16 +97,16 @@ class Seed(BaseModel):
     dataset_name: Optional[str] = None
 
     # Categories of harm associated with this prompt
-    harm_categories: Optional[StrOrList] = Field(default_factory=list)
+    harm_categories: Optional[list[str]] = Field(default_factory=list)
 
     # Description of the prompt
     description: Optional[str] = None
 
     # Authors of the prompt
-    authors: Optional[StrOrList] = Field(default_factory=list)
+    authors: Optional[list[str]] = Field(default_factory=list)
 
     # Groups affiliated with the prompt
-    groups: Optional[StrOrList] = Field(default_factory=list)
+    groups: Optional[list[str]] = Field(default_factory=list)
 
     # Source of the prompt
     source: Optional[str] = None

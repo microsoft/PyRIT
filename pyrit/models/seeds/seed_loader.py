@@ -32,6 +32,38 @@ if TYPE_CHECKING:
 
 T = TypeVar("T", bound="Seed")
 
+# Seed model fields that callers may write as a bare string in YAML
+# (e.g. ``authors: Jane Doe``) but the model declares as ``list[str]``.
+# The loader wraps such scalars before constructing the model so the model
+# itself can stay strict and YAML's "scalar-or-sequence" idiom doesn't leak
+# into the data class.
+_SCALAR_OR_LIST_FIELDS: tuple[str, ...] = ("harm_categories", "authors", "groups", "parameters")
+
+
+def _canonicalize_scalar_lists(data: dict[str, Any]) -> dict[str, Any]:
+    """
+    Wrap bare-string values into single-element lists for known list-typed seed fields.
+
+    Mutates ``data`` in place and recurses into nested ``seeds`` entries so
+    dataset/group YAML files (which carry both top-level defaults and a list of seed
+    dicts) are normalized in one pass.
+
+    Args:
+        data: A YAML-decoded mapping representing a seed, group, or dataset.
+
+    Returns:
+        The same mapping, with scalar values on known list fields wrapped into lists.
+    """
+    for key in _SCALAR_OR_LIST_FIELDS:
+        if isinstance(data.get(key), str):
+            data[key] = [data[key]]
+    seeds = data.get("seeds")
+    if isinstance(seeds, list):
+        for seed in seeds:
+            if isinstance(seed, dict):
+                _canonicalize_scalar_lists(seed)
+    return data
+
 
 def _read_yaml(file: Union[str, Path]) -> dict[str, Any]:
     """
@@ -65,7 +97,10 @@ def load_seed_from_yaml(file: Union[str, Path], *, cls: type[T]) -> T:
     Load a single seed of type ``cls`` from a YAML file.
 
     The seed is marked ``is_jinja_template=True`` because the file is treated
-    as a trusted, vetted local template at this boundary.
+    as a trusted, vetted local template at this boundary. Bare-string values
+    for known list-typed fields (``authors``, ``harm_categories``, ``groups``,
+    ``parameters``) are wrapped into single-element lists so the model itself
+    can stay strict about its shape.
 
     Args:
         file: Path to the YAML file containing the seed definition.
@@ -78,7 +113,7 @@ def load_seed_from_yaml(file: Union[str, Path], *, cls: type[T]) -> T:
         FileNotFoundError: If the path does not resolve to an existing file.
         ValueError: If the YAML is malformed, empty, or fails validation for ``cls``.
     """
-    data = _read_yaml(file)
+    data = _canonicalize_scalar_lists(_read_yaml(file))
     data["is_jinja_template"] = True
     return cls(**data)
 
@@ -102,7 +137,7 @@ def load_seed_dataset_from_yaml(file: Union[str, Path]) -> SeedDataset:
     """
     from pyrit.models.seeds.seed_dataset import SeedDataset
 
-    data = _read_yaml(file)
+    data = _canonicalize_scalar_lists(_read_yaml(file))
     data["is_jinja_template"] = True
     return SeedDataset.from_dict(data)
 

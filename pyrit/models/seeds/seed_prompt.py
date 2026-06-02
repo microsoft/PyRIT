@@ -20,7 +20,7 @@ from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydanti
     ChatMessageRole,
     PromptDataType,
 )
-from pyrit.models.seeds.seed import Seed, StrOrList
+from pyrit.models.seeds.seed import Seed
 
 if TYPE_CHECKING:
     import uuid
@@ -49,7 +49,7 @@ class SeedPrompt(Seed):
     sequence: int = 0
 
     # Parameters that can be used in the prompt template
-    parameters: Optional[StrOrList] = Field(default_factory=list)
+    parameters: Optional[list[str]] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _render_and_infer_data_type(self) -> SeedPrompt:

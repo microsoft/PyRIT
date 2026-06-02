@@ -147,3 +147,73 @@ def test_classmethod_shims_delegate_to_loader(tmp_path):
 
     assert via_classmethod.value == via_function.value
     assert via_classmethod.is_jinja_template == via_function.is_jinja_template is True
+
+
+# ----- Scalar-to-list canonicalization (loader-side YAML accommodation) -----
+
+
+def test_load_seed_from_yaml_canonicalizes_scalar_authors_to_list(tmp_path):
+    yaml_file = _write(tmp_path, "p.yaml", "value: hi\nauthors: Jane Doe\n")
+
+    loaded = load_seed_from_yaml(yaml_file, cls=SeedPrompt)
+
+    assert loaded.authors == ["Jane Doe"]
+
+
+def test_load_seed_from_yaml_canonicalizes_scalar_parameters(tmp_path):
+    yaml_file = _write(
+        tmp_path,
+        "p.yaml",
+        "value: hello {{ name }}\nparameters: name\n",
+    )
+
+    loaded = load_seed_from_yaml(yaml_file, cls=SeedPrompt)
+
+    assert loaded.parameters == ["name"]
+
+
+def test_load_seed_from_yaml_passes_through_list_authors_unchanged(tmp_path):
+    yaml_file = _write(
+        tmp_path,
+        "p.yaml",
+        "value: hi\nauthors:\n  - Alice\n  - Bob\n",
+    )
+
+    loaded = load_seed_from_yaml(yaml_file, cls=SeedPrompt)
+
+    assert loaded.authors == ["Alice", "Bob"]
+
+
+def test_load_seed_dataset_from_yaml_canonicalizes_top_level_and_nested(tmp_path):
+    yaml_file = _write(
+        tmp_path,
+        "ds.yaml",
+        (
+            "name: tiny\n"
+            "authors: Top Author\n"
+            "harm_categories: harm-1\n"
+            "seeds:\n"
+            "  - value: a\n"
+            "    authors: Seed Author\n"
+            "    groups: g1\n"
+            "  - value: b\n"
+        ),
+    )
+
+    dataset = load_seed_dataset_from_yaml(yaml_file)
+
+    # Top-level scalars wrapped; dataset-level harm_categories propagates to seeds.
+    assert dataset.harm_categories == ["harm-1"]
+    # Per-seed scalar authors is wrapped before dataset-level merge with ["Top Author"].
+    assert sorted(dataset.seeds[0].authors or []) == sorted(["Top Author", "Seed Author"])
+    assert dataset.seeds[0].groups == ["g1"]
+    # Pure inheritance from dataset defaults still works for the second seed.
+    assert dataset.seeds[1].authors == ["Top Author"]
+
+
+def test_model_now_rejects_programmatic_scalar_string():
+    """The wrap-scalar accommodation has moved to the loader; the model is strict."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError):
+        SeedPrompt(value="hi", authors="not a list")  # type: ignore[arg-type]

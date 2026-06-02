@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.models.literals import SeedType  # noqa: TC001  (runtime-required by Pydantic field annotations)
-from pyrit.models.seeds.seed import Seed, StrOrList
+from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_attack_group import SeedAttackGroup
 from pyrit.models.seeds.seed_group import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     SeedGroup,
@@ -84,10 +84,10 @@ class SeedDataset(BaseModel):
     data_type: Optional[str] = "text"
     name: Optional[str] = None
     dataset_name: Optional[str] = None
-    harm_categories: Optional[StrOrList] = None
+    harm_categories: Optional[list[str]] = None
     description: Optional[str] = None
-    authors: Optional[StrOrList] = Field(default_factory=list)
-    groups: Optional[StrOrList] = Field(default_factory=list)
+    authors: Optional[list[str]] = Field(default_factory=list)
+    groups: Optional[list[str]] = Field(default_factory=list)
     source: Optional[str] = None
     date_added: Optional[datetime] = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
     added_by: Optional[str] = None
