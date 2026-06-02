@@ -62,7 +62,7 @@ from pyrit.models.identifiers import (
     snake_case_to_class_name,
     validate_registry_name,
 )
-from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptResponseError, SeedType
+from pyrit.models.literals import ChatMessageRole, Modality, PromptDataType, PromptResponseError, SeedType
 from pyrit.models.message import (
     Message,
     construct_response_from_request,
@@ -138,6 +138,7 @@ __all__ = [
     "ImagePathDataTypeSerializer",
     "Message",
     "MessagePiece",
+    "Modality",
     "NextMessageSystemPromptPaths",
     "ObjectiveTargetEvaluationIdentifier",
     "PromptDataType",

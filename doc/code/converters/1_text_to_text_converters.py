@@ -103,6 +103,7 @@ from pyrit.prompt_converter import (
     RepeatTokenConverter,
     StringJoinConverter,
     SuperscriptConverter,
+    TatweelConverter,
     UnicodeConfusableConverter,
     UnicodeReplacementConverter,
     UnicodeSubstitutionConverter,
@@ -129,6 +130,8 @@ print("Diacritic:", await DiacriticConverter().convert_async(prompt=prompt))  # 
 
 # Bidi [@boucher2023trojan] wraps text in Unicode bidirectional control characters
 print("Bidi:", await BidiConverter().convert_async(prompt=prompt))  # type: ignore
+# Tatweel inserts the Arabic kashida between adjacent Arabic letters
+print("Tatweel:", await TatweelConverter().convert_async(prompt="مرحبا"))  # type: ignore
 print("Superscript:", await SuperscriptConverter().convert_async(prompt=prompt))  # type: ignore
 print("Zalgo:", await ZalgoConverter().convert_async(prompt=prompt))  # type: ignore
 
