@@ -34,6 +34,7 @@
 # HarmBench [@mazeika2024harmbench],
 # HarmfulQA [@bhardwaj2023harmfulqa],
 # JailbreakBench [@chao2024jailbreakbench],
+# JailbreakV-28K [@luo2024jailbreakv],
 # LLM-LAT [@sheshadri2024lat],
 # MedSafetyBench [@han2024medsafetybench],
 # Moral Integrity Corpus [@ziems2022mic],

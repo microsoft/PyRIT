@@ -79,6 +79,12 @@ from pyrit.datasets.seed_datasets.remote.hixstest_dataset import (
     HiXSTestLanguage,
     _HiXSTestDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.jailbreakv_28k_dataset import (
+    _JailbreakV28KDataset,
+)  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.jailbreakv_redteam_2k_dataset import (
+    _JailbreakVRedteam2KDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.jbb_behaviors_dataset import (
     _JBBBehaviorsDataset,
 )  # noqa: F401
@@ -212,6 +218,8 @@ __all__ = [
     "_HarmBenchMultimodalDataset",
     "_HarmfulQADataset",
     "_HiXSTestDataset",
+    "_JailbreakV28KDataset",
+    "_JailbreakVRedteam2KDataset",
     "_JBBBehaviorsDataset",
     "_LibrAIDoNotAnswerDataset",
     "_LLMLatentAdversarialTrainingDataset",
