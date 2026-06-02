@@ -613,7 +613,7 @@ class OpenAIResponseTarget(OpenAITarget):
 
             # Create a new message with the tool output
             tool_piece = self._make_tool_piece(tool_output, tool_call_section["call_id"], reference_piece=message_piece)
-            tool_message = Message(message_pieces=[tool_piece], skip_validation=True)
+            tool_message = Message(message_pieces=[tool_piece])
 
             # Add tool output message to conversation and responses list
             working_conversation.append(tool_message)

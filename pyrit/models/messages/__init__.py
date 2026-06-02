@@ -2,17 +2,13 @@
 # Licensed under the MIT license.
 
 """
-Backward-compatibility shim.
+Messages module - message types and helpers for PyRIT.
 
-``Message`` and the conversation helpers now live in ``pyrit.models.messages``.
-Import from there (or from ``pyrit.models``) instead. This module re-exports the
-public names so existing ``from pyrit.models.message import ...`` imports keep
-working.
+- MessagePiece: A single piece of a message exchanged with a target.
+- Message: One request/response to a target, made up of one or more pieces.
+- conversations: Free functions that operate on collections of messages/pieces.
 """
 
-from typing import Any
-
-from pyrit.models.messages import message as _message
 from pyrit.models.messages.conversations import (
     construct_response_from_request,
     flatten_to_message_pieces,
@@ -21,17 +17,15 @@ from pyrit.models.messages.conversations import (
     group_message_pieces_into_conversations,
 )
 from pyrit.models.messages.message import Message
-
-
-def __getattr__(name: str) -> Any:
-    return getattr(_message, name)
-
+from pyrit.models.messages.message_piece import MessagePiece, sort_message_pieces
 
 __all__ = [
     "Message",
+    "MessagePiece",
     "construct_response_from_request",
     "flatten_to_message_pieces",
     "get_all_values",
     "group_conversation_message_pieces_by_sequence",
     "group_message_pieces_into_conversations",
+    "sort_message_pieces",
 ]
