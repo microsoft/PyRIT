@@ -8,7 +8,7 @@ SeedObjective class for representing seed objectives.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Literal, Optional, Union
 
 from pydantic import model_validator
 
@@ -23,6 +23,13 @@ logger = logging.getLogger(__name__)
 
 class SeedObjective(Seed):
     """Represents a seed objective with various attributes and metadata."""
+
+    # Discriminator field for the polymorphic Seed union (see seed_group.SeedUnion).
+    seed_type: Literal["objective"] = "objective"
+
+    # Objectives are always text. Narrowing the base field rejects non-text values up-front
+    # rather than silently dropping them downstream.
+    data_type: Literal["text"] = "text"
 
     @model_validator(mode="after")
     def _validate_and_render(self) -> SeedObjective:

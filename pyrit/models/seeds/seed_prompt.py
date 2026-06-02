@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Literal, Optional, Union
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, model_validator
 from tinytag import TinyTag
 
 from pyrit.common.path import PATHS_DICT
@@ -20,7 +20,7 @@ from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydanti
     ChatMessageRole,
     PromptDataType,
 )
-from pyrit.models.seeds.seed import Seed, coerce_str_to_list
+from pyrit.models.seeds.seed import Seed, StrOrList
 
 if TYPE_CHECKING:
     import uuid
@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 class SeedPrompt(Seed):
     """Represents a seed prompt with various attributes and metadata."""
 
+    # Discriminator field for the polymorphic Seed union (see seed_group.SeedUnion).
+    seed_type: Literal["prompt"] = "prompt"
+
     # The type of data this prompt represents (e.g., text, image_path, audio_path, video_path)
     # This field overrides the base default to allow per-prompt data types inferred from the value
     data_type: Optional[PromptDataType] = None
@@ -46,21 +49,7 @@ class SeedPrompt(Seed):
     sequence: int = 0
 
     # Parameters that can be used in the prompt template
-    parameters: Optional[list[str]] = Field(default_factory=list)
-
-    @field_validator("parameters", mode="before")
-    @classmethod
-    def _coerce_parameters_to_list(cls, value: object) -> object:
-        """
-        Coerce a bare string ``parameters`` value into a single-element list.
-
-        Args:
-            value: The raw field value provided during validation.
-
-        Returns:
-            The value wrapped in a list if it was a bare string, otherwise unchanged.
-        """
-        return coerce_str_to_list(value)
+    parameters: Optional[StrOrList] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _render_and_infer_data_type(self) -> SeedPrompt:

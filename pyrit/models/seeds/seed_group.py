@@ -13,9 +13,9 @@ from __future__ import annotations
 import logging
 import uuid
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Annotated, Any, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, SerializeAsAny, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.models.message import Message
 from pyrit.models.message_piece import MessagePiece
@@ -28,6 +28,12 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
+
+# Concrete leaf classes for the polymorphic seed list. Use SeedLeaf when you need a plain
+# typing alias (e.g. for local list[...] variables); use SeedUnion in Pydantic field annotations
+# so the discriminator is honored during validation.
+SeedLeaf = Union[SeedPrompt, SeedObjective, SeedSimulatedConversation]
+SeedUnion = Annotated[SeedLeaf, Field(discriminator="seed_type")]
 
 
 class SeedGroup(BaseModel):
@@ -45,19 +51,22 @@ class SeedGroup(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
-    seeds: list[SerializeAsAny[Seed]]
+    seeds: list[SeedUnion]
 
     @model_validator(mode="before")
     @classmethod
     def _coerce_seeds(cls, data: Any) -> Any:
         """
-        Coerce raw seed dicts into concrete Seed subclasses before validation.
+        Normalize dict seed inputs so the polymorphic discriminator can dispatch.
 
-        ``is_jinja_template`` is a construction-time flag (not a stored field): it is consumed
-        here and propagated to each dict seed so trusted YAML values are rendered as templates.
+        Concrete Seed instances pass through; dicts are tagged with a default
+        ``seed_type="prompt"`` when missing and have the construction-time
+        ``is_jinja_template`` flag propagated in. ``data_type`` is stripped for
+        non-prompt seeds because they narrow it to ``Literal["text"]``; dataset-level
+        defaults must not bleed into them.
 
         Returns:
-            Any: The input data with ``seeds`` replaced by concrete Seed instances.
+            The data with normalized ``seeds`` (passes through unchanged if not a dict).
 
         Raises:
             ValueError: If the group has no seeds or a seed has an unsupported type.
@@ -71,29 +80,27 @@ class SeedGroup(BaseModel):
         if not raw_seeds:
             raise ValueError("SeedGroup cannot be empty.")
 
-        coerced: list[Seed] = []
+        normalized: list[Any] = []
         for seed in raw_seeds:
             if isinstance(seed, Seed):
-                coerced.append(seed)
-            elif isinstance(seed, dict):
-                seed = dict(seed)
-                seed["is_jinja_template"] = is_jinja_template
-                seed_type = seed.pop("seed_type", None)
-
-                if seed_type == "simulated_conversation":
-                    # SeedSimulatedConversation doesn't use data_type (always text)
-                    seed.pop("data_type", None)
-                    coerced.append(SeedSimulatedConversation.from_dict(seed))
-                elif seed_type == "objective":
-                    # SeedObjective doesn't use data_type (always text)
-                    seed.pop("data_type", None)
-                    coerced.append(SeedObjective(**seed))
-                else:
-                    coerced.append(SeedPrompt(**seed))
-            else:
+                normalized.append(seed)
+                continue
+            if not isinstance(seed, dict):
                 raise ValueError(f"Invalid seed type: {type(seed)}")
+            seed = dict(seed)
+            seed.setdefault("seed_type", "prompt")
+            seed["is_jinja_template"] = is_jinja_template
+            if seed["seed_type"] == "prompt":
+                seed.setdefault("role", "user")
+            else:
+                # Non-prompt seeds narrow data_type to Literal["text"] and don't have
+                # role/sequence/parameters fields. Drop them so dataset/group-level
+                # defaults don't bleed in and trip extra="forbid".
+                for prompt_only in ("data_type", "role", "sequence", "parameters"):
+                    seed.pop(prompt_only, None)
+            normalized.append(seed)
 
-        data["seeds"] = coerced
+        data["seeds"] = normalized
         return data
 
     @model_validator(mode="after")
@@ -106,13 +113,13 @@ class SeedGroup(BaseModel):
         Returns:
             SeedGroup: The validated, reordered group.
         """
-        self.validate()
+        self._check_invariants()
 
         objective = self._get_objective()
         simulated_conv = self._get_simulated_conversation()
         sorted_prompts = sorted(self.prompts, key=lambda p: p.sequence if p.sequence is not None else 0)
 
-        new_seeds: list[Seed] = []
+        new_seeds: list[SeedLeaf] = []
         if objective:
             new_seeds.append(objective)
         if simulated_conv:
@@ -125,13 +132,13 @@ class SeedGroup(BaseModel):
     # Validation
     # =========================================================================
 
-    def validate(self) -> None:
+    def _check_invariants(self) -> None:
         """
         Validate the seed group state.
 
-        This method can be called after external modifications to seeds
-        to ensure the group remains in a valid state. It is automatically
-        called during initialization.
+        Renamed from ``validate`` because that name shadows ``BaseModel.validate`` and
+        would silently return ``None`` instead of constructing when called on the class.
+        Subclasses override this hook to add stronger invariants.
 
         Raises:
             ValueError: If validation fails.

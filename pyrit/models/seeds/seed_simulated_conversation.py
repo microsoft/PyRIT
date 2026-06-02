@@ -19,7 +19,7 @@ import importlib.metadata
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 from pydantic import field_validator, model_validator
 
@@ -68,7 +68,16 @@ class SeedSimulatedConversation(Seed):
 
     """
 
-    # value is computed from the config in the after-validator; it must not be supplied directly.
+    # Discriminator field for the polymorphic Seed union (see seed_group.SeedUnion).
+    seed_type: Literal["simulated_conversation"] = "simulated_conversation"
+
+    # Simulated conversations are always text. Narrowing the base field rejects non-text values
+    # up-front rather than silently dropping them downstream.
+    data_type: Literal["text"] = "text"
+
+    # value is computed from the config in the after-validator. The base default of "" plus a
+    # before-validator that strips any user-supplied value keeps round-trips clean: a dumped
+    # value comes back in, is dropped, then is recomputed (and matches if the config matches).
     value: str = ""
 
     # Simulated conversations are general techniques by default.
@@ -80,6 +89,22 @@ class SeedSimulatedConversation(Seed):
     simulated_target_system_prompt_path: Path = SimulatedTargetSystemPromptPaths.COMPLIANT.value
     next_message_system_prompt_path: Optional[Path] = None
     pyrit_version: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_user_value(cls, data: Any) -> Any:
+        """
+        Drop any user-supplied ``value`` from dict input; it is always recomputed in the
+        after-validator. This keeps round-tripping clean and makes the API honest about the
+        fact that ``value`` is a derived JSON serialization of the config.
+
+        Returns:
+            The data with ``value`` removed if it was a dict; otherwise the input unchanged.
+        """
+        if isinstance(data, dict) and "value" in data:
+            data = dict(data)
+            data.pop("value", None)
+        return data
 
     @field_validator("simulated_target_system_prompt_path", mode="before")
     @classmethod
@@ -119,40 +144,6 @@ class SeedSimulatedConversation(Seed):
             "pyrit_version": self.pyrit_version,
         }
         return json.dumps(config, sort_keys=True, separators=(",", ":"))
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> SeedSimulatedConversation:
-        """
-        Create a SeedSimulatedConversation from a dictionary, typically from YAML.
-
-        Expected format:
-            num_turns: 3
-            adversarial_chat_system_prompt_path: path/to/adversarial.yaml
-            simulated_target_system_prompt_path: path/to/simulated.yaml  # optional
-
-        Args:
-            data: Dictionary containing the configuration.
-
-        Returns:
-            A new SeedSimulatedConversation instance.
-
-        Raises:
-            ValueError: If required configuration fields are missing.
-
-        """
-        adversarial_path = data.get("adversarial_chat_system_prompt_path")
-        if not adversarial_path:
-            raise ValueError("adversarial_chat_system_prompt_path is required")
-
-        return cls(
-            num_turns=data.get("num_turns", 3),
-            sequence=data.get("sequence", 0),
-            adversarial_chat_system_prompt_path=adversarial_path,
-            simulated_target_system_prompt_path=(
-                data.get("simulated_target_system_prompt_path") or SimulatedTargetSystemPromptPaths.COMPLIANT.value
-            ),
-            next_message_system_prompt_path=data.get("next_message_system_prompt_path"),
-        )
 
     @classmethod
     def from_yaml_with_required_parameters(

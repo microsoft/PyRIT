@@ -15,20 +15,18 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pyrit.common import utils
 from pyrit.common.utils import verify_and_resolve_path
 from pyrit.models.literals import SeedType  # noqa: TC001  (runtime-required by Pydantic field annotations)
-from pyrit.models.seeds.seed import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
-    Seed,
-    coerce_str_to_list,
-)
+from pyrit.models.seeds.seed import Seed, StrOrList
 from pyrit.models.seeds.seed_attack_group import SeedAttackGroup
-from pyrit.models.seeds.seed_group import SeedGroup
+from pyrit.models.seeds.seed_group import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    SeedGroup,
+    SeedUnion,
+)
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
-from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversation
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -37,6 +35,43 @@ if TYPE_CHECKING:
     from pydantic.types import PositiveInt
 
 logger = logging.getLogger(__name__)
+
+# Dataset-level defaults that get merged into each dict seed when missing on the seed.
+# date_added/added_by/metadata are intentionally excluded — per-seed Pydantic defaults
+# (default_factory) are the source of truth.
+_SCALAR_DEFAULT_KEYS = ("name", "description", "source")
+_LIST_DEFAULT_KEYS = ("harm_categories", "authors", "groups")
+
+
+def _merge_unique(left: Any, right: Any) -> list[str]:
+    """
+    Concatenate two list-or-str inputs into a deterministic, order-preserving deduped list.
+
+    Treats ``None`` as empty, accepts bare strings as single-element lists, and preserves the
+    order of first occurrence (left first, then any new items from right). Used instead of
+    ``utils.combine_list`` because the latter goes through ``set()`` and is nondeterministic
+    across processes for non-trivial inputs.
+
+    Args:
+        left: First list (or string) of values; falsy values are treated as empty.
+        right: Second list (or string) of values; falsy values are treated as empty.
+
+    Returns:
+        list[str]: Deduplicated concatenation, preserving first-occurrence order.
+    """
+
+    def _as_list(v: Any) -> list[str]:
+        if not v:
+            return []
+        return [v] if isinstance(v, str) else list(v)
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in _as_list(left) + _as_list(right):
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
 
 
 class SeedDataset(BaseModel):
@@ -51,10 +86,10 @@ class SeedDataset(BaseModel):
     data_type: Optional[str] = "text"
     name: Optional[str] = None
     dataset_name: Optional[str] = None
-    harm_categories: Optional[list[str]] = None
+    harm_categories: Optional[StrOrList] = None
     description: Optional[str] = None
-    authors: Optional[list[str]] = Field(default_factory=list)
-    groups: Optional[list[str]] = Field(default_factory=list)
+    authors: Optional[StrOrList] = Field(default_factory=list)
+    groups: Optional[StrOrList] = Field(default_factory=list)
     source: Optional[str] = None
     date_added: Optional[datetime] = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
     added_by: Optional[str] = None
@@ -62,22 +97,32 @@ class SeedDataset(BaseModel):
     seed_type: Optional[SeedType] = None
 
     # The actual prompts
-    seeds: list[SerializeAsAny[Seed]]
+    seeds: list[SeedUnion]
 
     @model_validator(mode="before")
     @classmethod
     def _build_seeds(cls, data: Any) -> Any:
         """
-        Convert dict seed entries into concrete Seed subclasses, merging dataset-level defaults.
+        Merge dataset-level defaults into each dict seed and normalize for the discriminator.
 
-        ``is_jinja_template`` is a construction-time flag (consumed here, not stored) that marks
-        seed values as trusted Jinja2 templates.
+        Concrete Seed instances pass through unchanged. For dict seeds:
+
+        - ``seed_type`` defaults to the dataset's ``seed_type`` or ``"prompt"``.
+        - ``is_jinja_template`` (construction-time flag, popped from the dataset) is propagated.
+        - Scalar defaults (name, dataset_name, description, source) fall back to the dataset's
+          when the seed has none.
+        - List defaults (harm_categories, authors, groups) are concatenated with deterministic
+          order-preserving dedup (dataset values first, then seed-only additions).
+        - For prompts: ``data_type`` falls back to the dataset's; ``role`` defaults to ``"user"``.
+        - For objective/simulated_conversation: ``data_type``/``role``/``sequence``/
+          ``parameters`` are stripped — they aren't valid fields on those classes and a
+          dataset-level value (e.g. ``data_type: image_path``) would otherwise be rejected.
 
         Returns:
-            Any: The input data with ``seeds`` replaced by built Seed instances.
+            The data with normalized ``seeds`` (passes through unchanged if not a dict).
 
         Raises:
-            ValueError: If the dataset has no seeds.
+            ValueError: If the dataset has no seeds or contains an unsupported seed entry.
         """
         if not isinstance(data, dict):
             return data
@@ -88,71 +133,47 @@ class SeedDataset(BaseModel):
         if not raw_seeds:
             raise ValueError("SeedDataset cannot be empty.")
 
-        default_data_type = data.get("data_type", "text")
-        default_name = data.get("name")
-        default_dataset_name = data.get("dataset_name")
-        default_description = data.get("description")
-        default_source = data.get("source")
-        dataset_seed_type = data.get("seed_type")
+        default_seed_type = data.get("seed_type") or "prompt"
+        default_data_type = data.get("data_type") or "text"
+        default_dataset_name = data.get("dataset_name") or data.get("name")
 
-        built: list[Seed] = []
+        normalized: list[Any] = []
         for p in raw_seeds:
-            if isinstance(p, dict):
-                p_seed_type = p.get("seed_type", dataset_seed_type)
-
-                base_params: dict[str, Any] = {
-                    "value_sha256": p.get("value_sha256"),
-                    "id": uuid.uuid4(),
-                    "name": p.get("name") or default_name,
-                    "dataset_name": p.get("dataset_name") or default_dataset_name or default_name,
-                    "harm_categories": p.get("harm_categories", []),
-                    "description": p.get("description") or default_description,
-                    "authors": p.get("authors", []),
-                    "groups": p.get("groups", []),
-                    "source": p.get("source") or default_source,
-                    "date_added": p.get("date_added"),
-                    "added_by": p.get("added_by"),
-                    "metadata": p.get("metadata", {}),
-                    "prompt_group_id": p.get("prompt_group_id"),
-                    "is_jinja_template": is_jinja_template,
-                }
-
-                if p_seed_type == "simulated_conversation":
-                    _adv_path = p.get("adversarial_chat_system_prompt_path")
-                    _sim_path = p.get("simulated_target_system_prompt_path")
-                    _sc_kwargs: dict[str, Any] = {**base_params, "num_turns": p.get("num_turns", 3)}
-                    if _adv_path is not None:
-                        _sc_kwargs["adversarial_chat_system_prompt_path"] = str(_adv_path)
-                    if _sim_path is not None:
-                        _sc_kwargs["simulated_target_system_prompt_path"] = str(_sim_path)
-                    built.append(SeedSimulatedConversation(**_sc_kwargs))
-                elif p_seed_type == "objective":
-                    base_params["value"] = p["value"]
-                    built.append(SeedObjective(**base_params))
-                else:  # prompt
-                    base_params["value"] = p["value"]
-                    built.append(
-                        SeedPrompt(
-                            **base_params,
-                            data_type=p.get("data_type") or default_data_type,
-                            role=p.get("role", "user"),
-                            sequence=p.get("sequence", 0),
-                            parameters=p.get("parameters") or [],
-                        )
-                    )
-            elif isinstance(p, (SeedPrompt, SeedObjective, SeedSimulatedConversation)):
-                built.append(p)
-            else:
+            if isinstance(p, Seed):
+                normalized.append(p)
+                continue
+            if not isinstance(p, dict):
                 raise ValueError(
                     "Seeds should be dicts or Seed objects (SeedPrompt, SeedObjective, SeedSimulatedConversation)."
                 )
 
-        data["seeds"] = built
-        for key in ("harm_categories", "authors", "groups"):
-            data[key] = coerce_str_to_list(data.get(key))
-        data["authors"] = data.get("authors") or []
-        data["groups"] = data.get("groups") or []
-        data["date_added"] = data.get("date_added") or datetime.now(tz=timezone.utc)
+            p = dict(p)
+            seed_type = p.setdefault("seed_type", default_seed_type)
+            p["is_jinja_template"] = is_jinja_template
+
+            for key in _SCALAR_DEFAULT_KEYS:
+                if not p.get(key) and data.get(key) is not None:
+                    p[key] = data.get(key)
+            if not p.get("dataset_name") and default_dataset_name is not None:
+                p["dataset_name"] = default_dataset_name
+
+            for key in _LIST_DEFAULT_KEYS:
+                p[key] = _merge_unique(data.get(key), p.get(key))
+
+            if seed_type == "prompt":
+                if not p.get("data_type"):
+                    p["data_type"] = default_data_type
+                p.setdefault("role", "user")
+            else:
+                # Non-prompt seeds narrow data_type to Literal["text"] and don't have
+                # role/sequence/parameters fields. Drop those so dataset-level defaults
+                # don't bleed in and trip extra="forbid" on the leaf class.
+                for prompt_only in ("data_type", "role", "sequence", "parameters"):
+                    p.pop(prompt_only, None)
+
+            normalized.append(p)
+
+        data["seeds"] = normalized
         return data
 
     @classmethod
@@ -243,56 +264,36 @@ class SeedDataset(BaseModel):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SeedDataset:
         """
-        Build a SeedDataset by merging top-level defaults into each item in `seeds`.
+        Build a SeedDataset, assigning per-seed ``prompt_group_id`` by alias.
+
+        Default merging now lives in :meth:`_build_seeds` so direct construction and
+        ``from_dict`` produce equivalent results. This method handles the YAML-only
+        concerns: rejecting pre-set ``prompt_group_id`` on input seeds and resolving
+        ``prompt_group_alias`` into a shared ``prompt_group_id``.
 
         Args:
             data (Dict[str, Any]): Dataset payload with top-level defaults and seed entries.
 
         Returns:
-            SeedDataset: Constructed dataset with merged defaults.
+            SeedDataset: Constructed dataset.
 
         Raises:
-            ValueError: If any seed entry includes a pre-set prompt_group_id.
-
+            ValueError: If any seed entry includes a pre-set ``prompt_group_id``.
         """
-        # Pop out the seeds section
-        seeds_data = data.pop("seeds", [])
+        data = dict(data)
 
-        dataset_defaults = data  # everything else is top-level
+        # Shallow-copy each dict seed so alias resolution doesn't mutate caller-owned dicts;
+        # non-dict seeds (e.g. Seed instances) pass through untouched.
+        seeds_data: list[Any] = [dict(seed) if isinstance(seed, dict) else seed for seed in data.get("seeds", [])]
 
-        merged_seeds: list[dict[str, Any]] = []
-        for p in seeds_data:
-            # Merge dataset-level fields with the prompt-level fields
-            merged = utils.combine_dict(dataset_defaults, p)
-
-            merged["harm_categories"] = utils.combine_list(
-                dataset_defaults.get("harm_categories", []),
-                p.get("harm_categories", []),
-            )
-
-            merged["authors"] = utils.combine_list(
-                dataset_defaults.get("authors", []),
-                p.get("authors", []),
-            )
-
-            merged["groups"] = utils.combine_list(
-                dataset_defaults.get("groups", []),
-                p.get("groups", []),
-            )
-
-            if "data_type" not in merged:
-                merged["data_type"] = dataset_defaults.get("data_type", "text")
-
-            merged_seeds.append(merged)
-
-        for seed in merged_seeds:
+        dict_seeds = [s for s in seeds_data if isinstance(s, dict)]
+        for seed in dict_seeds:
             if "prompt_group_id" in seed:
                 raise ValueError("prompt_group_id should not be set in seed data")
+        cls._set_seed_group_id_by_alias(dict_seeds)
 
-        SeedDataset._set_seed_group_id_by_alias(seed_prompts=merged_seeds)
-
-        # Now create the dataset with the newly merged prompt dicts
-        return cls.model_validate({"seeds": merged_seeds, **dataset_defaults})
+        data["seeds"] = seeds_data
+        return cls.model_validate(data)
 
     def render_template_value(self, **kwargs: object) -> None:
         """

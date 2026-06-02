@@ -114,7 +114,7 @@ class AtomicAttack:
 
         # Validate each seed group to ensure they are in a valid state
         for sg in seed_groups:
-            sg.validate()
+            sg._check_invariants()
 
         self._seed_groups = seed_groups
         self._validate_unique_objective_hashes()

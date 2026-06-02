@@ -31,7 +31,7 @@ class SeedAttackGroup(SeedGroup):
     next_message, etc.) is inherited from SeedGroup.
     """
 
-    def validate(self) -> None:
+    def _check_invariants(self) -> None:
         """
         Validate the seed attack group state.
 
@@ -41,7 +41,7 @@ class SeedAttackGroup(SeedGroup):
             ValueError: If validation fails.
 
         """
-        super().validate()
+        super()._check_invariants()
         self._enforce_exactly_one_objective()
 
     def _enforce_exactly_one_objective(self) -> None:

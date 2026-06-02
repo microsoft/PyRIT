@@ -13,12 +13,12 @@ import logging
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Annotated, Any, Optional, TypeVar, Union
 
 import yaml
 from jinja2 import StrictUndefined, Undefined
 from jinja2.sandbox import SandboxedEnvironment
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 from pyrit.common.utils import verify_and_resolve_path
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
@@ -49,6 +49,11 @@ def coerce_str_to_list(value: Any) -> Any:
     if isinstance(value, str):
         return [value]
     return value
+
+
+# Annotated type for list[str] fields that should accept a bare string as a one-element list.
+# Use this for any seed list field populated from YAML where authors/groups/etc. may be scalars.
+StrOrList = Annotated[list[str], BeforeValidator(coerce_str_to_list)]
 
 
 class PartialUndefined(Undefined):
@@ -117,16 +122,16 @@ class Seed(BaseModel):
     dataset_name: Optional[str] = None
 
     # Categories of harm associated with this prompt
-    harm_categories: Optional[list[str]] = Field(default_factory=list)
+    harm_categories: Optional[StrOrList] = Field(default_factory=list)
 
     # Description of the prompt
     description: Optional[str] = None
 
     # Authors of the prompt
-    authors: Optional[list[str]] = Field(default_factory=list)
+    authors: Optional[StrOrList] = Field(default_factory=list)
 
     # Groups affiliated with the prompt
-    groups: Optional[list[str]] = Field(default_factory=list)
+    groups: Optional[StrOrList] = Field(default_factory=list)
 
     # Source of the prompt
     source: Optional[str] = None
@@ -156,22 +161,8 @@ class Seed(BaseModel):
 
     # The type of data this seed represents (e.g., text, image_path, audio_path, video_path).
     # SeedPrompt overrides the default to None and infers it from the value; other seed types
-    # keep "text".
+    # narrow it to Literal["text"].
     data_type: PromptDataType = "text"
-
-    @field_validator("harm_categories", "authors", "groups", mode="before")
-    @classmethod
-    def _coerce_str_to_list(cls, value: Any) -> Any:
-        """
-        Coerce a bare string into a single-element list for these list-typed fields.
-
-        Args:
-            value: The raw field value provided during validation.
-
-        Returns:
-            The value wrapped in a list if it was a bare string, otherwise unchanged.
-        """
-        return coerce_str_to_list(value)
 
     def render_template_value(self, **kwargs: Any) -> str:
         """

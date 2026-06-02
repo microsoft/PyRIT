@@ -32,7 +32,7 @@ class SeedAttackTechniqueGroup(SeedGroup):
     # ``None`` (default) appends at the end; an integer inserts before that position.
     insertion_index: Optional[int] = None
 
-    def validate(self) -> None:
+    def _check_invariants(self) -> None:
         """
         Validate the seed attack technique group state.
 
@@ -42,7 +42,7 @@ class SeedAttackTechniqueGroup(SeedGroup):
         Raises:
             ValueError: If validation fails.
         """
-        super().validate()
+        super()._check_invariants()
         self._enforce_all_general_strategy()
         self._enforce_no_objectives()
 

@@ -120,7 +120,7 @@ class AttackParameters:
             )
 
         # Validate seed_group state before extracting parameters
-        seed_group.validate()
+        seed_group._check_invariants()
 
         # SeedAttackGroup validates in __init__ that objective is set
         if seed_group.objective is None:

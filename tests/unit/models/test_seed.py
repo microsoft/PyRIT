@@ -16,12 +16,13 @@ from pyrit.common.path import DATASETS_PATH
 from pyrit.models import (
     Message,
     MessagePiece,
+    SeedAttackGroup,
     SeedDataset,
     SeedGroup,
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.models.seeds import SeedSimulatedConversation
+from pyrit.models.seeds import SeedSimulatedConversation, SimulatedTargetSystemPromptPaths
 
 
 @pytest.fixture
@@ -1139,6 +1140,65 @@ def test_seed_group_preserves_polymorphic_subclasses():
     assert isinstance(rebuilt.objective, SeedObjective)
     assert any(isinstance(s, SeedPrompt) for s in rebuilt.seeds)
     assert group.next_message.get_value() == "Hello"
+
+
+def test_seed_group_round_trip_preserves_subclasses():
+    """model_validate(model_dump()) must reconstruct the original subclass instances, not coerce to base Seed."""
+    objective = SeedObjective(value="goal")
+    prompt = SeedPrompt(value="hi", role="user", sequence=0)
+    group = SeedGroup(seeds=[objective, prompt])
+
+    rt = SeedGroup.model_validate(group.model_dump())
+
+    assert [type(s).__name__ for s in rt.seeds] == [type(s).__name__ for s in group.seeds]
+    assert isinstance(rt.objective, SeedObjective)
+    assert rt.objective.value == "goal"
+
+
+def test_seed_attack_group_round_trip_preserves_subclasses():
+    """The original blocking bug: SeedAttackGroup(model_validate(model_dump())) must work."""
+    sag = SeedAttackGroup(
+        seeds=[
+            SeedObjective(value="objective"),
+            SeedPrompt(value="hi", data_type="text", role="user", sequence=0),
+        ]
+    )
+    rt = SeedAttackGroup.model_validate(sag.model_dump())
+    assert isinstance(rt.objective, SeedObjective)
+    assert rt.objective.value == "objective"
+    assert any(isinstance(s, SeedPrompt) for s in rt.seeds)
+
+
+def test_seed_simulated_conversation_round_trip():
+    """SeedSimulatedConversation's computed ``value`` round-trips through both python and json modes."""
+    sc = SeedSimulatedConversation(
+        adversarial_chat_system_prompt_path=SimulatedTargetSystemPromptPaths.COMPLIANT.value,
+        num_turns=4,
+    )
+    rt_py = SeedSimulatedConversation.model_validate(sc.model_dump())
+    rt_json = SeedSimulatedConversation.model_validate(sc.model_dump(mode="json"))
+    assert rt_py.value == sc.value
+    assert rt_json.value == sc.value
+    assert rt_py.num_turns == 4
+
+
+def test_seed_objective_rejects_non_text_data_type():
+    """SeedObjective locks ``data_type`` to ``"text"``."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        SeedObjective(value="goal", data_type="image_path")
+
+
+def test_seed_simulated_conversation_rejects_non_text_data_type():
+    """SeedSimulatedConversation locks ``data_type`` to ``"text"``."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        SeedSimulatedConversation(
+            adversarial_chat_system_prompt_path=SimulatedTargetSystemPromptPaths.COMPLIANT.value,
+            data_type="image_path",
+        )
 
 
 def test_next_message_single_turn_with_objective():
