@@ -28,7 +28,7 @@ from pyrit.score.true_false.true_false_score_aggregator import (
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
-    from pyrit.identifiers import ComponentIdentifier
+    from pyrit.models.identifiers import ComponentIdentifier
 
 logger = logging.getLogger(__name__)
 
