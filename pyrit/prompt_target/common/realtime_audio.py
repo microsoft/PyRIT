@@ -130,6 +130,46 @@ class RealtimeEventDispatcher(ABC):
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
 
+    async def drain_callbacks(self) -> None:
+        """
+        Wait for in-flight on_user_audio_committed callback tasks to complete.
+
+        Unlike :meth:`stop`, callbacks are not cancelled — they run to completion.
+        Use during graceful shutdown when the caller needs the final VAD-committed
+        turn to finish its convert-and-respond work before tearing down the
+        dispatcher.
+        """
+        while self._callback_tasks:
+            pending = list(self._callback_tasks)
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    def add_failure_callback(self, callback: Callable[[BaseException], None]) -> None:
+        """
+        Register a callback fired if the dispatch loop terminates abnormally.
+
+        The callback is invoked exactly once with the exception that killed the
+        dispatch loop. Cancellation via :meth:`stop` does NOT trigger the callback.
+        Use to bridge dispatcher failures to a session-level consumer that would
+        otherwise block forever waiting on a turn future that will never resolve.
+
+        Args:
+            callback: Sync callable receiving the dispatch-loop exception.
+
+        Raises:
+            RuntimeError: If called before :meth:`start`.
+        """
+        if self._task is None:
+            raise RuntimeError("add_failure_callback must be called after start()")
+
+        def _on_done(task: asyncio.Task[None]) -> None:
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is not None:
+                callback(exc)
+
+        self._task.add_done_callback(_on_done)
+
     def register_turn(self, state: RealtimeTurnState) -> None:
         """
         Bind a new turn as the active turn.

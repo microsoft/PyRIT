@@ -139,7 +139,11 @@ class _RealtimeStreamingHandle(StreamingHandle):
         return dispatcher
 
     async def send_streaming_session_config_async(
-        self, *, connection: Any, conversation: list[Message] | None = None
+        self,
+        *,
+        connection: Any,
+        conversation: list[Message] | None = None,
+        vad: ServerVadConfig | None = None,
     ) -> None:
         """
         Configure the realtime session for streaming use: server VAD with manual response creation.
@@ -153,17 +157,21 @@ class _RealtimeStreamingHandle(StreamingHandle):
             conversation: Optional conversation history; if its first message is a system
                 message, its text becomes the session's instructions. Defaults to None,
                 in which case the default system prompt is used.
+            vad: Optional per-call VAD tuning. When provided, overrides the target's
+                constructor-set ``_server_vad``. When None, falls back to the target's
+                constructor value (existing behavior).
 
         Raises:
-            ValueError: If the target was constructed without server VAD.
+            ValueError: If neither ``vad`` nor the target's ``_server_vad`` is set.
         """
-        if self._target._server_vad is None:
+        effective_vad = vad if vad is not None else self._target._server_vad
+        if effective_vad is None:
             raise ValueError(
                 "send_streaming_session_config_async requires server VAD; "
-                "construct RealtimeTarget(server_vad=True) or pass a ServerVadConfig."
+                "pass vad=ServerVadConfig(...) or construct RealtimeTarget(server_vad=True)."
             )
         system_prompt = self._target._get_system_prompt_from_conversation(conversation=conversation or [])
-        config = self._target._set_system_prompt_and_config_vars(system_prompt=system_prompt)
+        config = self._target._set_system_prompt_and_config_vars(system_prompt=system_prompt, server_vad=effective_vad)
         turn_detection = config.get("audio", {}).get("input", {}).get("turn_detection")
         if turn_detection is not None:
             turn_detection["create_response"] = False
@@ -458,17 +466,22 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
 
         return self._realtime_client
 
-    def _set_system_prompt_and_config_vars(self, system_prompt: str) -> dict[str, Any]:
+    def _set_system_prompt_and_config_vars(
+        self, system_prompt: str, *, server_vad: ServerVadConfig | None = None
+    ) -> dict[str, Any]:
         """
         Create session configuration for OpenAI client.
         Uses the Azure GA format with nested audio config.
 
         Args:
             system_prompt: The system prompt to use in the session configuration.
+            server_vad: Optional VAD override. When None, falls back to the target's
+                constructor-set ``self._server_vad``.
 
         Returns:
             dict: Session configuration dictionary.
         """
+        effective_vad = server_vad if server_vad is not None else self._server_vad
         session_config = {
             "type": "realtime",
             "instructions": system_prompt,
@@ -492,12 +505,12 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
             },
         }
 
-        if self._server_vad is not None:
+        if effective_vad is not None:
             session_config["audio"]["input"]["turn_detection"] = {  # type: ignore[ty:invalid-assignment]
                 "type": "server_vad",
-                "threshold": self._server_vad.threshold,
-                "prefix_padding_ms": self._server_vad.prefix_padding_ms,
-                "silence_duration_ms": self._server_vad.silence_duration_ms,
+                "threshold": effective_vad.threshold,
+                "prefix_padding_ms": effective_vad.prefix_padding_ms,
+                "silence_duration_ms": effective_vad.silence_duration_ms,
                 "create_response": True,
                 "interrupt_response": True,
             }

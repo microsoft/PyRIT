@@ -378,6 +378,19 @@ class PromptNormalizer:
         tasks = [asyncio.create_task(piece.set_sha256_values_async()) for piece in request.message_pieces]
         await asyncio.gather(*tasks)
 
+    async def hash_and_persist_message_async(self, *, message: Message) -> None:
+        """
+        Hash and persist a Message to memory.
+
+        Use when a target assembles a Message outside the ``send_prompt_async`` flow
+        (e.g. streaming sessions that yield per-turn Messages directly).
+
+        Args:
+            message (Message): The message to hash and persist.
+        """
+        await self._calc_hash(request=message)
+        self.memory.add_message_to_memory(request=message)
+
     async def add_prepended_conversation_to_memory(
         self,
         conversation_id: str,
