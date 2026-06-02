@@ -15,7 +15,39 @@ from sqlalchemy import create_engine, inspect, text
 
 from pyrit.memory.alembic.versions import ab8f2c1a9d07_pre_alembic_release_schema
 from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import _CustomUUID
-from pyrit.memory.migration import check_schema_migrations, generate_schema_migration, run_schema_migrations
+from pyrit.memory.migration import (
+    ALEMBIC_OUTPUT_PREFIX,
+    _PrefixedTextStream,
+    check_schema_migrations,
+    generate_schema_migration,
+    run_schema_migrations,
+)
+
+
+def test_prefixed_text_stream_prefixes_each_line():
+    """_PrefixedTextStream prepends the prefix to the start of each line, across separate writes."""
+    import io
+
+    buffer = io.StringIO()
+    stream = _PrefixedTextStream(stream=buffer, prefix="[tag] ")
+
+    # Alembic writes the message and the trailing newline as separate calls.
+    assert stream.write("first line") == len("first line")
+    assert stream.write("\n") == 1
+    stream.write("second\nthird\n")
+
+    assert buffer.getvalue() == "[tag] first line\n[tag] second\n[tag] third\n"
+
+
+def test_prefixed_text_stream_delegates_attributes():
+    """_PrefixedTextStream delegates unknown attributes (e.g. encoding) to the wrapped stream."""
+    import io
+
+    buffer = io.StringIO()
+    stream = _PrefixedTextStream(stream=buffer, prefix="[tag] ")
+
+    assert stream.getvalue() == ""
+    stream.flush()  # delegated, should not raise
 
 
 def test_alembic_env_raises_when_no_connection():
@@ -539,7 +571,7 @@ def test_check_schema_migrations_silent_suppresses_output(capsys):
 
 
 def test_check_schema_migrations_not_silent_prints_output(capsys):
-    """check_schema_migrations without silent prints the Alembic schema-check message."""
+    """check_schema_migrations without silent prints the Alembic message tagged as Alembic output."""
     with tempfile.TemporaryDirectory() as temp_dir:
         db_path = os.path.join(temp_dir, "check-loud-test.db")
         engine = create_engine(f"sqlite:///{db_path}")
@@ -550,6 +582,6 @@ def test_check_schema_migrations_not_silent_prints_output(capsys):
             check_schema_migrations(engine=engine, silent=False)
 
             captured = capsys.readouterr()
-            assert "No new upgrade operations detected." in captured.out
+            assert f"{ALEMBIC_OUTPUT_PREFIX}No new upgrade operations detected." in captured.out
         finally:
             engine.dispose()

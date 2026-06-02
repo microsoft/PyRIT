@@ -5,7 +5,7 @@ import io
 import logging
 import sys
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO, cast
 
 from alembic import command
 from alembic.autogenerate.api import compare_metadata
@@ -23,6 +23,10 @@ PYRIT_MEMORY_ALEMBIC_VERSION_TABLE = "pyrit_memory_alembic_version"
 _HEAD_REVISION = "head"
 _INITIAL_REVISION = "ab8f2c1a9d07"
 _MEMORY_TABLES = {table.name for table in Base.metadata.sorted_tables}
+
+# Prefix applied to Alembic's own console output (e.g. "No new upgrade operations
+# detected.") so it can be disambiguated from PyRIT/REST API output downstream.
+ALEMBIC_OUTPUT_PREFIX = "[pyrit:alembic] "
 
 _ERROR_UNVERSIONED_SCHEMA_COMPARISON_FAILED = (
     "Detected an unversioned legacy memory schema (memory tables exist, but "
@@ -148,12 +152,73 @@ def _validate_and_stamp_unversioned_memory_schema(*, config: Config, connection:
     command.stamp(config, _INITIAL_REVISION)
 
 
+class _PrefixedTextStream:
+    """
+    Wrap a text stream and prefix each written line with a fixed tag.
+
+    Alembic writes its console messages directly to the configured stream (e.g. via
+    ``Config.print_stdout``). Wrapping the underlying stream lets PyRIT tag that output
+    so it is identifiable as Alembic-originated rather than PyRIT or REST API output.
+    Attribute access (e.g. ``encoding``, ``flush``) delegates to the wrapped stream.
+    """
+
+    def __init__(self, *, stream: TextIO, prefix: str) -> None:
+        """
+        Initialize the prefixing stream wrapper.
+
+        Args:
+            stream (TextIO): The underlying stream that prefixed text is written to.
+            prefix (str): The prefix prepended to the start of each line.
+        """
+        self._stream = stream
+        self._prefix = prefix
+        self._at_line_start = True
+
+    def write(self, text: str) -> int:
+        """
+        Write text to the underlying stream, prefixing the start of each line.
+
+        Args:
+            text (str): The text to write.
+
+        Returns:
+            int: The number of characters of the original text written.
+        """
+        if not text:
+            return 0
+
+        chunks: list[str] = []
+        for char in text:
+            if self._at_line_start and char != "\n":
+                chunks.append(self._prefix)
+                self._at_line_start = False
+            chunks.append(char)
+            if char == "\n":
+                self._at_line_start = True
+
+        self._stream.write("".join(chunks))
+        return len(text)
+
+    def __getattr__(self, name: str) -> Any:
+        """
+        Delegate any other attribute access to the wrapped stream.
+
+        Args:
+            name (str): The attribute name being accessed.
+
+        Returns:
+            Any: The corresponding attribute from the wrapped stream.
+        """
+        return getattr(self._stream, name)
+
+
 def _migration_stdout(*, silent: bool) -> TextIO:
     """
     Resolve the stream Alembic command output is written to.
 
     When silent, output is swallowed by an in-memory buffer. Otherwise the current
-    ``sys.stdout`` is used (resolved at call time so redirections are respected).
+    ``sys.stdout`` is used (resolved at call time so redirections are respected),
+    wrapped so each Alembic line is tagged with ``ALEMBIC_OUTPUT_PREFIX``.
 
     Args:
         silent (bool): If True, returns an in-memory buffer that discards output.
@@ -161,7 +226,9 @@ def _migration_stdout(*, silent: bool) -> TextIO:
     Returns:
         TextIO: The stream to pass to the Alembic config.
     """
-    return io.StringIO() if silent else sys.stdout
+    if silent:
+        return io.StringIO()
+    return cast("TextIO", _PrefixedTextStream(stream=sys.stdout, prefix=ALEMBIC_OUTPUT_PREFIX))
 
 
 def run_schema_migrations(*, engine: Engine, silent: bool = False) -> None:

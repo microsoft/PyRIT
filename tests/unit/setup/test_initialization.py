@@ -189,11 +189,11 @@ class TestInitializePyritSilent:
         assert captured.out == ""
 
     async def test_initialize_not_silent_prints_migration_message(self, capsys):
-        """Without silent, the Alembic schema-check message is printed (guards the silent behavior)."""
+        """Without silent, the Alembic schema-check message is printed and tagged as Alembic output."""
         await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=False)
 
         captured = capsys.readouterr()
-        assert "No new upgrade operations detected." in captured.out
+        assert "[pyrit:alembic] No new upgrade operations detected." in captured.out
 
 
 class TestLoadEnvironmentFiles:
