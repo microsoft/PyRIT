@@ -285,7 +285,7 @@ class _CoCoNotContrastDataset(_CoCoNotBaseDataset):
     CONFIG: str = "contrast"
     SPLITS: tuple[str, ...] = ("test",)
     size: str = "medium"
-    tags: set[str] = set()
+    tags: set[str] = {"safety", "refusal"}
     DEFAULT_DESCRIPTION: str = (
         "CoCoNot contrast set — 379 benign prompts that look superficially similar to "
         "refusal-target prompts but should be complied with. Used to measure "

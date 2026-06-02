@@ -12,7 +12,7 @@ from pyrit.datasets.seed_datasets.remote._image_cache import (
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +73,8 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
     )
 
     tags: frozenset[str] = frozenset({"default", "safety", "privacy"})
-    size: str = "large"
-    modalities: tuple[str, ...] = ("image", "text")
+    size: str = "large"  # 2000 image-text PII / OCR-injection prompts
+    modalities: tuple[Modality, ...] = (Modality.IMAGE, Modality.TEXT)
     harm_categories: tuple[str, ...] = ("privacy", "pii_leakage", "ocr_injection")
 
     def __init__(

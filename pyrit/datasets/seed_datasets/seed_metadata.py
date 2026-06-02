@@ -26,6 +26,51 @@ SeedDatasetSizeCategory = Literal["tiny", "small", "medium", "large", "huge"]
 
 SeedDatasetSourceType = Literal["remote", "local"]
 
+# Canonical, *advisory* tag vocabulary for SeedDatasetMetadata.tags.
+#
+# Loaders may set custom tags, but contributors should reuse this vocabulary
+# whenever it fits to keep `SeedDatasetFilter` discovery consistent across
+# datasets. The metadata parser does NOT enforce this list — it is enforced as
+# a soft contract via tests/unit/datasets/test_seed_dataset_provider.py.
+#
+# Rule for the special "default" tag (applied when authoring/registering a
+# loader, not enforced at runtime): a dataset should be tagged "default" only
+# when ALL of the following hold:
+#
+#   1. Ungated  — no HuggingFace token, API key, auth, or signup required.
+#   2. Citable  — peer-reviewed paper or established benchmark, not a personal
+#                 collection or unpublished registry.
+#   3. Single-call — `await loader.fetch_dataset_async()` works with no
+#                    manual download or setup (auto-cached per-asset fetches
+#                    are fine).
+#   4. Size >= medium (>=100 prompts).
+#   5. Broadly applicable — not narrowly scoped to a vertical-specific domain
+#                           (e.g., medical, legal, cybersecurity). Cross-cutting
+#                           axes like `privacy`, `bias`, `multimodal`,
+#                           `multilingual`, `refusal`, and `jailbreak` DO count
+#                           as broadly applicable.
+RECOMMENDED_TAGS: frozenset[str] = frozenset(
+    {
+        "default",  # see rule above
+        "safety",  # universal for any harm/red-team content
+        "multimodal",  # image+text, audio+text, etc.
+        "multilingual",  # multiple natural languages
+        "privacy",  # privacy / PII content
+        "jailbreak",  # adversarial / jailbreak templates
+        "bias",  # fairness / bias-focused
+        "medical",  # medical / health domain
+        "legal",  # legal domain
+        "cybersecurity",  # cybersecurity / malware domain
+        "refusal",  # refusal-evaluation oriented (over-refusal, false-refusal, etc.)
+        "synthetic",  # programmatically generated content
+        "multiturn",  # multi-turn conversations
+        "agent_security",  # agentic-AI threat models (tool poisoning, context exfiltration, etc.)
+        "prompt_injection",  # direct or indirect prompt-injection payloads
+        "ethics",  # moral-judgment / values evaluation (e.g., moral foundations theory)
+        "toxicity",  # toxicity / hate-speech / profanity (e.g., RealToxicityPrompts, Perspective API)
+    }
+)
+
 
 class SeedDatasetLoadTime(Enum):
     """Approximate time to load a dataset. Used to skip slow datasets in fast runs."""

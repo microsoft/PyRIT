@@ -12,7 +12,7 @@ import requests
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,11 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
     Warning: This dataset contains adversarial prompts designed to exploit LLMs.
     Use responsibly and consult your legal department before using for testing.
     """
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "medium"  # indicator count varies with registry contents; gated by API key
+    tags: frozenset[str] = frozenset({"safety", "jailbreak", "cybersecurity"})
 
     API_BASE_URL = "https://api.promptintel.novahunting.ai/api/v1"
     PROMPT_WEB_URL = "https://promptintel.novahunting.ai/prompt"

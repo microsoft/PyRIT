@@ -12,7 +12,7 @@ from pyrit.datasets.seed_datasets.remote._image_cache import (
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Seed, SeedDataset, SeedObjective, SeedPrompt
+from pyrit.models import Modality, Seed, SeedDataset, SeedObjective, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +92,8 @@ class _ComicJailbreakDataset(_RemoteDatasetLoader):
         "sexual",
         "privacy",
     )
-    modalities: tuple[str, ...] = ("text", "image")
-    size: str = "large"  # 300 goals × 5 templates
+    modalities: tuple[Modality, ...] = (Modality.TEXT, Modality.IMAGE)
+    size: str = "large"  # 3501 image-text jailbreak prompts
     tags: frozenset[str] = frozenset({"safety", "multimodal"})
 
     def __init__(
