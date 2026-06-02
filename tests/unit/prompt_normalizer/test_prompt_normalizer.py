@@ -329,7 +329,7 @@ async def test_send_prompt_async_image_converter(mock_memory_instance):
 
         normalizer = PromptNormalizer()
         # Mock the async read_file method
-        normalizer._memory.results_storage_io.read_file = AsyncMock(return_value=b"mocked data")
+        normalizer._memory.results_storage_io.read_file_async = AsyncMock(return_value=b"mocked data")
 
         message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
         response = await normalizer.send_prompt_async(
@@ -447,7 +447,7 @@ async def test_convert_response_values_index(mock_memory_instance, response: Mes
 
     normalizer = PromptNormalizer()
 
-    await normalizer.convert_values(converter_configurations=[response_converter], message=response)
+    await normalizer.convert_values_async(converter_configurations=[response_converter], message=response)
     assert response.get_value() == "SGVsbG8=", "Converter should be applied here"
     assert response.get_value(1) == "part 2", "Converter should not be applied since we specified only 0"
 
@@ -459,7 +459,7 @@ async def test_convert_response_values_type(mock_memory_instance, response: Mess
 
     normalizer = PromptNormalizer()
 
-    await normalizer.convert_values(converter_configurations=[response_converter], message=response)
+    await normalizer.convert_values_async(converter_configurations=[response_converter], message=response)
     assert response.get_value() == "SGVsbG8="
     assert response.get_value(1) == "cGFydCAy"
 
@@ -539,13 +539,13 @@ class TestPromptNormalizerConverterContext:
         ContextCapturingConverter.captured_context = None
 
     async def test_convert_values_sets_converter_context(self, mock_memory_instance):
-        """Test that convert_values sets CONVERTER execution context."""
+        """Test that convert_values_async sets CONVERTER execution context."""
         normalizer = PromptNormalizer()
         message = Message.from_prompt(prompt="test", role="user")
 
         converter_config = PromptConverterConfiguration(converters=[ContextCapturingConverter()])
 
-        await normalizer.convert_values(converter_configurations=[converter_config], message=message)
+        await normalizer.convert_values_async(converter_configurations=[converter_config], message=message)
 
         # The converter should have captured the execution context
         captured = ContextCapturingConverter.captured_context
@@ -566,7 +566,7 @@ class TestPromptNormalizerConverterContext:
             attack_identifier=get_mock_attack_identifier("TestAttack"),
             objective_target_conversation_id="conv-456",
         ):
-            await normalizer.convert_values(converter_configurations=[converter_config], message=message)
+            await normalizer.convert_values_async(converter_configurations=[converter_config], message=message)
 
         # The converter should have captured the context with inherited values
         captured = ContextCapturingConverter.captured_context
@@ -583,7 +583,7 @@ class TestPromptNormalizerConverterContext:
         converter_config = PromptConverterConfiguration(converters=[FailingConverter()])
 
         with pytest.raises(RuntimeError, match="Converter failed"):
-            await normalizer.convert_values(converter_configurations=[converter_config], message=message)
+            await normalizer.convert_values_async(converter_configurations=[converter_config], message=message)
 
     async def test_convert_values_context_includes_converter_identifier(self, mock_memory_instance):
         """Test that converter context includes the converter's identifier."""
@@ -593,7 +593,7 @@ class TestPromptNormalizerConverterContext:
         converter = ContextCapturingConverter()
         converter_config = PromptConverterConfiguration(converters=[converter])
 
-        await normalizer.convert_values(converter_configurations=[converter_config], message=message)
+        await normalizer.convert_values_async(converter_configurations=[converter_config], message=message)
 
         captured = ContextCapturingConverter.captured_context
         assert captured is not None
@@ -617,7 +617,7 @@ async def test_add_prepended_conversation_to_memory(mock_memory_instance):
     piece = MessagePiece(role="user", original_value="prepended text", conversation_id="old-id")
     message = Message(message_pieces=[piece])
 
-    result = await normalizer.add_prepended_conversation_to_memory(
+    result = await normalizer.add_prepended_conversation_to_memory_async(
         conversation_id=conv_id,
         should_convert=False,
         attack_identifier=attack_id,
@@ -629,3 +629,35 @@ async def test_add_prepended_conversation_to_memory(mock_memory_instance):
     assert result[0].message_pieces[0].conversation_id == conv_id
     assert result[0].message_pieces[0].attack_identifier == attack_id
     mock_memory_instance.add_message_to_memory.assert_called_once()
+
+
+async def test_convert_values_emits_deprecation_warning_and_delegates(mock_memory_instance, response: Message):
+    normalizer = PromptNormalizer()
+    response_converter = PromptConverterConfiguration(converters=[Base64Converter()], indexes_to_apply=[0])
+    with patch.object(normalizer, "convert_values_async", new=AsyncMock()) as mock_async:
+        with pytest.warns(DeprecationWarning, match="convert_values_async"):
+            await normalizer.convert_values(converter_configurations=[response_converter], message=response)
+    mock_async.assert_awaited_once_with(converter_configurations=[response_converter], message=response)
+
+
+async def test_add_prepended_conversation_to_memory_emits_deprecation_warning_and_delegates(mock_memory_instance):
+    normalizer = PromptNormalizer()
+    with patch.object(
+        normalizer, "add_prepended_conversation_to_memory_async", new=AsyncMock(return_value=None)
+    ) as mock_async:
+        with pytest.warns(DeprecationWarning, match="add_prepended_conversation_to_memory_async"):
+            result = await normalizer.add_prepended_conversation_to_memory(
+                conversation_id="conv-1",
+                should_convert=False,
+                converter_configurations=None,
+                attack_identifier=None,
+                prepended_conversation=None,
+            )
+    assert result is None
+    mock_async.assert_awaited_once_with(
+        conversation_id="conv-1",
+        should_convert=False,
+        converter_configurations=None,
+        attack_identifier=None,
+        prepended_conversation=None,
+    )

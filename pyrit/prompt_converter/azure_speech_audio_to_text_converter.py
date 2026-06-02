@@ -165,7 +165,7 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
         audio_serializer = data_serializer_factory(
             category="prompt-memory-entries", data_type="audio_path", value=prompt
         )
-        audio_bytes = await audio_serializer.read_data()
+        audio_bytes = await audio_serializer.read_data_async()
 
         try:
             speech_config = await get_speech_config_async(

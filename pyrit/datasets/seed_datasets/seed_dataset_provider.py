@@ -100,7 +100,7 @@ class SeedDatasetProvider(ABC):
         )
         return await self.fetch_dataset(cache=cache)
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:  # pyrit-async-suffix-exempt
         """
         Fetch the dataset (deprecated alias of ``fetch_dataset_async``).
 
@@ -120,7 +120,7 @@ class SeedDatasetProvider(ABC):
         )
         return await self.fetch_dataset_async(cache=cache)
 
-    async def _parse_metadata(self) -> Optional[SeedDatasetMetadata]:
+    async def _parse_metadata_async(self) -> Optional[SeedDatasetMetadata]:
         """
         Parse provider-specific metadata into the shared schema.
 
@@ -168,7 +168,7 @@ class SeedDatasetProvider(ABC):
                 provider = provider_class()
 
                 # Parser ensures a standard metadata format
-                metadata = await provider._parse_metadata()
+                metadata = await provider._parse_metadata_async()
 
                 if filters:
                     # "all" bypasses metadata filtering and returns every dataset
@@ -313,7 +313,7 @@ class SeedDatasetProvider(ABC):
             if invalid_names:
                 raise ValueError(f"Dataset(s) not found: {invalid_names}. Available datasets: {available_names}")
 
-        async def fetch_single_dataset(
+        async def fetch_single_dataset_async(
             provider_name: str, provider_class: type["SeedDatasetProvider"]
         ) -> Optional[tuple[str, SeedDataset]]:
             """
@@ -339,7 +339,7 @@ class SeedDatasetProvider(ABC):
         total_count = len(cls._registry)
         pbar = tqdm(total=total_count, desc="Loading datasets - this can take a few minutes", unit="dataset")
 
-        async def fetch_with_semaphore(
+        async def fetch_with_semaphore_async(
             provider_name: str, provider_class: type["SeedDatasetProvider"]
         ) -> Optional[tuple[str, SeedDataset]]:
             """
@@ -349,13 +349,13 @@ class SeedDatasetProvider(ABC):
                 Optional[Tuple[str, SeedDataset]]: Tuple of provider name and dataset, or None if filtered.
             """
             async with semaphore:
-                result = await fetch_single_dataset(provider_name, provider_class)
+                result = await fetch_single_dataset_async(provider_name, provider_class)
                 pbar.update(1)
                 return result
 
         # Fetch all datasets with controlled concurrency and progress bar
         tasks = [
-            fetch_with_semaphore(provider_name, provider_class)
+            fetch_with_semaphore_async(provider_name, provider_class)
             for provider_name, provider_class in cls._registry.items()
         ]
 

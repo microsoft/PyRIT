@@ -68,7 +68,7 @@ class TestCBTBenchDataset:
         """Test fetching CBT-Bench dataset with mocked data."""
         loader = _CBTBenchDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data):
+        with patch.object(loader, "_fetch_from_huggingface_async", return_value=mock_cbt_bench_data):
             dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
@@ -94,7 +94,7 @@ class TestCBTBenchDataset:
             split="test",
         )
 
-        with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data) as mock_fetch:
+        with patch.object(loader, "_fetch_from_huggingface_async", return_value=mock_cbt_bench_data) as mock_fetch:
             dataset = await loader.fetch_dataset_async(cache=False)
 
             assert len(dataset.seeds) == 2
@@ -109,7 +109,7 @@ class TestCBTBenchDataset:
         """Test that items with only situation (no thoughts) still work."""
         loader = _CBTBenchDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data_missing_thoughts):
+        with patch.object(loader, "_fetch_from_huggingface_async", return_value=mock_cbt_bench_data_missing_thoughts):
             dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 1
@@ -119,7 +119,7 @@ class TestCBTBenchDataset:
         """Test that an empty dataset raises ValueError."""
         loader = _CBTBenchDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data_empty):
+        with patch.object(loader, "_fetch_from_huggingface_async", return_value=mock_cbt_bench_data_empty):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
                 await loader.fetch_dataset_async()
 
@@ -127,7 +127,7 @@ class TestCBTBenchDataset:
         """Test that metadata includes the config name."""
         loader = _CBTBenchDataset(config="distortions_seed")
 
-        with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data):
+        with patch.object(loader, "_fetch_from_huggingface_async", return_value=mock_cbt_bench_data):
             dataset = await loader.fetch_dataset_async()
 
             for seed in dataset.seeds:
@@ -137,7 +137,7 @@ class TestCBTBenchDataset:
         """Test that source URL is correctly set."""
         loader = _CBTBenchDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data):
+        with patch.object(loader, "_fetch_from_huggingface_async", return_value=mock_cbt_bench_data):
             dataset = await loader.fetch_dataset_async()
 
             for seed in dataset.seeds:

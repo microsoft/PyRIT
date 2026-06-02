@@ -317,7 +317,7 @@ class TestCopilotAuthenticatorCachedTokenRetrieval:
             return_value=mock_persistent_cache,
         ):
             authenticator = CopilotAuthenticator()
-            result = asyncio.run(authenticator._get_cached_token_if_available_and_valid())
+            result = asyncio.run(authenticator._get_cached_token_if_available_and_valid_async())
             assert result is not None
             assert result["access_token"] == "cached.token.value"
 
@@ -337,7 +337,7 @@ class TestCopilotAuthenticatorCachedTokenRetrieval:
             return_value=mock_persistent_cache,
         ):
             authenticator = CopilotAuthenticator()
-            result = asyncio.run(authenticator._get_cached_token_if_available_and_valid())
+            result = asyncio.run(authenticator._get_cached_token_if_available_and_valid_async())
             assert result is None
 
     def test_get_cached_token_within_expiry_buffer(self, mock_env_vars, mock_persistent_cache):
@@ -356,7 +356,7 @@ class TestCopilotAuthenticatorCachedTokenRetrieval:
             return_value=mock_persistent_cache,
         ):
             authenticator = CopilotAuthenticator()
-            result = asyncio.run(authenticator._get_cached_token_if_available_and_valid())
+            result = asyncio.run(authenticator._get_cached_token_if_available_and_valid_async())
             assert result is None  # default buffer is 300 seconds, so should return None
 
     def test_get_cached_token_no_cache_file(self, mock_env_vars, mock_persistent_cache):
@@ -368,7 +368,7 @@ class TestCopilotAuthenticatorCachedTokenRetrieval:
             return_value=mock_persistent_cache,
         ):
             authenticator = CopilotAuthenticator()
-            result = asyncio.run(authenticator._get_cached_token_if_available_and_valid())
+            result = asyncio.run(authenticator._get_cached_token_if_available_and_valid_async())
             assert result is None
 
     def test_get_cached_token_wrong_user(self, mock_env_vars, mock_persistent_cache):
@@ -387,7 +387,7 @@ class TestCopilotAuthenticatorCachedTokenRetrieval:
             return_value=mock_persistent_cache,
         ):
             authenticator = CopilotAuthenticator()
-            result = asyncio.run(authenticator._get_cached_token_if_available_and_valid())
+            result = asyncio.run(authenticator._get_cached_token_if_available_and_valid_async())
             assert result is None
 
     def test_get_cached_token_no_upn_in_claims(self, mock_env_vars, mock_persistent_cache):
@@ -406,7 +406,7 @@ class TestCopilotAuthenticatorCachedTokenRetrieval:
             return_value=mock_persistent_cache,
         ):
             authenticator = CopilotAuthenticator()
-            result = asyncio.run(authenticator._get_cached_token_if_available_and_valid())
+            result = asyncio.run(authenticator._get_cached_token_if_available_and_valid_async())
             assert result is None
 
     def test_get_cached_token_missing_access_token(self, mock_env_vars, mock_persistent_cache):
@@ -423,7 +423,7 @@ class TestCopilotAuthenticatorCachedTokenRetrieval:
             return_value=mock_persistent_cache,
         ):
             authenticator = CopilotAuthenticator()
-            result = asyncio.run(authenticator._get_cached_token_if_available_and_valid())
+            result = asyncio.run(authenticator._get_cached_token_if_available_and_valid_async())
             assert result is None
 
     def test_get_cached_token_invalid_json(self, mock_env_vars, mock_persistent_cache):
@@ -436,7 +436,7 @@ class TestCopilotAuthenticatorCachedTokenRetrieval:
             return_value=mock_persistent_cache,
         ):
             authenticator = CopilotAuthenticator()
-            result = asyncio.run(authenticator._get_cached_token_if_available_and_valid())
+            result = asyncio.run(authenticator._get_cached_token_if_available_and_valid_async())
             assert result is None
 
 
@@ -472,7 +472,7 @@ class TestCopilotAuthenticatorTokenRetrieval:
                 return_value=mock_persistent_cache,
             ),
             patch(
-                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._fetch_access_token_with_playwright",
+                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._fetch_access_token_with_playwright_async",
                 new_callable=AsyncMock,
                 return_value="new.fetched.token",
             ) as mock_fetch,
@@ -516,7 +516,7 @@ class TestCopilotAuthenticatorTokenRetrieval:
                 return_value=mock_persistent_cache,
             ),
             patch(
-                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._fetch_access_token_with_playwright",
+                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._fetch_access_token_with_playwright_async",
                 new_callable=AsyncMock,
                 side_effect=mock_fetch,
             ),
@@ -547,7 +547,7 @@ class TestCopilotAuthenticatorTokenRefresh:
                 return_value=mock_persistent_cache,
             ),
             patch(
-                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._fetch_access_token_with_playwright",
+                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._fetch_access_token_with_playwright_async",
                 new_callable=AsyncMock,
                 return_value="refreshed.token",
             ),
@@ -565,7 +565,7 @@ class TestCopilotAuthenticatorTokenRefresh:
                 return_value=mock_persistent_cache,
             ),
             patch(
-                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._fetch_access_token_with_playwright",
+                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._fetch_access_token_with_playwright_async",
                 new_callable=AsyncMock,
                 return_value="refreshed.token",
             ) as mock_fetch,
@@ -584,7 +584,7 @@ class TestCopilotAuthenticatorTokenRefresh:
                 return_value=mock_persistent_cache,
             ),
             patch(
-                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._fetch_access_token_with_playwright",
+                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._fetch_access_token_with_playwright_async",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
@@ -602,7 +602,7 @@ class TestCopilotAuthenticatorTokenRefresh:
                 return_value=mock_persistent_cache,
             ),
             patch(
-                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._fetch_access_token_with_playwright",
+                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._fetch_access_token_with_playwright_async",
                 new_callable=AsyncMock,
                 return_value="refreshed.token",
             ),
@@ -626,7 +626,7 @@ class TestCopilotAuthenticatorGetClaims:
             authenticator = CopilotAuthenticator()
             test_claims = {"upn": "test@example.com", "aud": "sydney"}
             authenticator._current_claims = test_claims
-            claims = await authenticator.get_claims()
+            claims = await authenticator.get_claims_async()
             assert claims == test_claims
 
     async def test_get_claims_returns_empty_dict_when_no_claims(self, mock_env_vars, mock_persistent_cache):
@@ -637,8 +637,21 @@ class TestCopilotAuthenticatorGetClaims:
             return_value=mock_persistent_cache,
         ):
             authenticator = CopilotAuthenticator()
-            claims = await authenticator.get_claims()
+            claims = await authenticator.get_claims_async()
             assert claims == {}
+
+    async def test_get_claims_emits_deprecation_warning_and_delegates(self, mock_env_vars, mock_persistent_cache):
+        """Deprecated ``get_claims`` shim warns and forwards to ``get_claims_async``."""
+
+        with patch(
+            "pyrit.auth.copilot_authenticator.CopilotAuthenticator._create_persistent_cache",
+            return_value=mock_persistent_cache,
+        ):
+            authenticator = CopilotAuthenticator()
+            authenticator._current_claims = {"upn": "shim@example.com"}
+            with pytest.warns(DeprecationWarning, match="get_claims_async"):
+                claims = await authenticator.get_claims()
+            assert claims == {"upn": "shim@example.com"}
 
 
 class TestCopilotAuthenticatorPlaywrightIntegration:
@@ -691,7 +704,7 @@ class TestCopilotAuthenticatorPlaywrightIntegration:
         ):
             authenticator = CopilotAuthenticator()
             with pytest.raises(RuntimeError, match="Playwright is not installed"):
-                await authenticator._fetch_access_token_with_playwright()
+                await authenticator._fetch_access_token_with_playwright_async()
 
     async def test_fetch_token_with_playwright_success(self, mock_env_vars, mock_persistent_cache):
         """Test successful token fetch with Playwright."""
@@ -753,7 +766,7 @@ class TestCopilotAuthenticatorPlaywrightIntegration:
             patch("jwt.decode", return_value={"upn": "test@example.com"}),
         ):
             authenticator = CopilotAuthenticator()
-            token = await authenticator._fetch_access_token_with_playwright()
+            token = await authenticator._fetch_access_token_with_playwright_async()
 
             assert token == "captured.bearer.token"
             mock_browser.close.assert_called_once()
@@ -777,7 +790,7 @@ class TestCopilotAuthenticatorPlaywrightIntegration:
             patch("playwright.async_api.async_playwright", return_value=mock_async_playwright),
         ):
             authenticator = CopilotAuthenticator()
-            token = await authenticator._fetch_access_token_with_playwright()
+            token = await authenticator._fetch_access_token_with_playwright_async()
             assert token is None
 
     async def test_fetch_token_sanitizes_password_in_errors(self, mock_env_vars, mock_persistent_cache):
@@ -800,7 +813,7 @@ class TestCopilotAuthenticatorPlaywrightIntegration:
             patch("pyrit.auth.copilot_authenticator.logger") as mock_logger,
         ):
             authenticator = CopilotAuthenticator()
-            await authenticator._fetch_access_token_with_playwright()
+            await authenticator._fetch_access_token_with_playwright_async()
 
             # Verify password was sanitized in error log
             logged_messages = [str(call) for call in mock_logger.error.call_args_list]
@@ -840,7 +853,7 @@ class TestCopilotAuthenticatorPlaywrightIntegration:
             patch("asyncio.sleep", new_callable=AsyncMock),  # mock sleep to speed up test
         ):
             authenticator = CopilotAuthenticator(token_capture_timeout_seconds=1)
-            token = await authenticator._fetch_access_token_with_playwright()
+            token = await authenticator._fetch_access_token_with_playwright_async()
             assert token is None
             mock_browser.close.assert_called_once()
 
@@ -873,17 +886,17 @@ class TestCopilotAuthenticatorPlaywrightIntegration:
             patch("playwright.async_api.async_playwright", return_value=mock_async_playwright),
         ):
             authenticator = CopilotAuthenticator()
-            token = await authenticator._fetch_access_token_with_playwright()
+            token = await authenticator._fetch_access_token_with_playwright_async()
             assert token is None
             mock_context.close.assert_called_once()
             mock_browser.close.assert_called_once()
 
 
 class TestAuthenticateWithPlaywrightGuards:
-    """Test null guards in _run_playwright_browser_automation."""
+    """Test null guards in _run_playwright_browser_automation_async."""
 
     async def test_authenticate_returns_none_when_username_is_none(self, mock_persistent_cache):
-        """Test that _run_playwright_browser_automation returns None when username is None."""
+        """Test that _run_playwright_browser_automation_async returns None when username is None."""
         with (
             patch.dict(
                 os.environ,
@@ -922,11 +935,11 @@ class TestAuthenticateWithPlaywrightGuards:
                 "sys.modules",
                 {"playwright": MagicMock(), "playwright.async_api": mock_pw_module},
             ):
-                result = await authenticator._run_playwright_browser_automation()
+                result = await authenticator._run_playwright_browser_automation_async()
                 assert result is None
 
     async def test_authenticate_returns_none_when_password_is_none(self, mock_persistent_cache):
-        """Test that _run_playwright_browser_automation returns None when password is None."""
+        """Test that _run_playwright_browser_automation_async returns None when password is None."""
         with (
             patch.dict(
                 os.environ,
@@ -966,5 +979,5 @@ class TestAuthenticateWithPlaywrightGuards:
                 "sys.modules",
                 {"playwright": MagicMock(), "playwright.async_api": mock_pw_module},
             ):
-                result = await authenticator._run_playwright_browser_automation()
+                result = await authenticator._run_playwright_browser_automation_async()
                 assert result is None

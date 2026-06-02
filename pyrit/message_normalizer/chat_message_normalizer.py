@@ -13,7 +13,7 @@ from pyrit.message_normalizer.message_normalizer import (
     MessageListNormalizer,
     MessageStringNormalizer,
     SystemMessageBehavior,
-    apply_system_message_behavior,
+    apply_system_message_behavior_async,
 )
 from pyrit.models import ChatMessage, DataTypeSerializer, Message
 from pyrit.models.messages.message_piece import MessagePiece
@@ -80,7 +80,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
             raise ValueError("Messages list cannot be empty")
 
         # Apply system message preprocessing
-        processed_messages = await apply_system_message_behavior(messages, self.system_message_behavior)
+        processed_messages = await apply_system_message_behavior_async(messages, self.system_message_behavior)
 
         chat_messages: list[ChatMessage] = []
         for message in processed_messages:

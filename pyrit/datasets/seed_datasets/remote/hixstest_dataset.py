@@ -111,7 +111,7 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading HiXSTest dataset from {self.HF_DATASET_NAME} (language={self.language.value})")
 
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
             split=self.split,
             cache=cache,

@@ -27,7 +27,7 @@ class _ConcreteOpenAITarget(OpenAITarget):
     def _get_provider_examples(self) -> dict[str, str]:
         return {}
 
-    async def _construct_message_from_response(self, response, request):
+    async def _construct_message_from_response_async(self, response, request):
         raise NotImplementedError
 
     def _validate_request(self, *, normalized_conversation) -> None:

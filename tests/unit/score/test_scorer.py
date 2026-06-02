@@ -173,7 +173,7 @@ async def test_scorer_send_chat_target_async_bad_json_exception_retries(bad_json
     chat_target.send_prompt_async = AsyncMock(return_value=[bad_json_resp])
     scorer = MockScorer()
     with pytest.raises(InvalidJsonException):
-        await scorer._score_value_with_llm(
+        await scorer._score_value_with_llm_async(
             prompt_target=chat_target,
             system_prompt="system_prompt",
             message_value="message_value",
@@ -195,7 +195,7 @@ async def test_scorer_score_value_with_llm_exception_display_prompt_id():
     scorer = MockScorer()
 
     with pytest.raises(Exception, match="Error scoring prompt with original prompt ID: 123"):
-        await scorer._score_value_with_llm(
+        await scorer._score_value_with_llm_async(
             prompt_target=chat_target,
             system_prompt="system_prompt",
             message_value="message_value",
@@ -221,7 +221,7 @@ async def test_scorer_score_value_with_llm_use_provided_attack_identifier(good_j
     expected_attack_identifier = ComponentIdentifier(class_name="TestAttack", class_module="test.module")
     expected_scored_prompt_id = "123"
 
-    await scorer._score_value_with_llm(
+    await scorer._score_value_with_llm_async(
         prompt_target=chat_target,
         system_prompt=expected_system_prompt,
         message_value="message_value",
@@ -253,7 +253,7 @@ async def test_scorer_score_value_with_llm_does_not_add_score_prompt_id_for_empt
 
     expected_system_prompt = "system_prompt"
 
-    await scorer._score_value_with_llm(
+    await scorer._score_value_with_llm_async(
         prompt_target=chat_target,
         system_prompt=expected_system_prompt,
         message_value="message_value",
@@ -282,7 +282,7 @@ async def test_scorer_send_chat_target_async_good_response(good_json):
 
     scorer = MockScorer()
 
-    await scorer._score_value_with_llm(
+    await scorer._score_value_with_llm_async(
         prompt_target=chat_target,
         system_prompt="system_prompt",
         message_value="message_value",
@@ -306,7 +306,7 @@ async def test_scorer_remove_markdown_json_called(good_json):
     scorer = MockScorer()
 
     with patch("pyrit.score.scorer.remove_markdown_json", wraps=remove_markdown_json) as mock_remove_markdown_json:
-        await scorer._score_value_with_llm(
+        await scorer._score_value_with_llm_async(
             prompt_target=chat_target,
             system_prompt="system_prompt",
             message_value="message_value",
@@ -330,7 +330,7 @@ async def test_score_value_with_llm_prepended_text_message_piece_creates_multipi
 
     scorer = MockScorer()
 
-    await scorer._score_value_with_llm(
+    await scorer._score_value_with_llm_async(
         prompt_target=chat_target,
         system_prompt="system_prompt",
         message_value="test_image.png",
@@ -373,7 +373,7 @@ async def test_score_value_with_llm_no_prepended_text_creates_single_piece_messa
 
     scorer = MockScorer()
 
-    await scorer._score_value_with_llm(
+    await scorer._score_value_with_llm_async(
         prompt_target=chat_target,
         system_prompt="system_prompt",
         message_value="objective: test\nresponse: some text",
@@ -408,7 +408,7 @@ async def test_score_value_with_llm_prepended_text_works_with_audio(good_json):
 
     scorer = MockScorer()
 
-    await scorer._score_value_with_llm(
+    await scorer._score_value_with_llm_async(
         prompt_target=chat_target,
         system_prompt="system_prompt",
         message_value="test_audio.wav",
@@ -1602,7 +1602,7 @@ async def test_score_value_with_llm_skips_reasoning_piece(good_json):
 
     scorer = MockScorer()
 
-    result = await scorer._score_value_with_llm(
+    result = await scorer._score_value_with_llm_async(
         prompt_target=chat_target,
         system_prompt="system_prompt",
         message_value="message_value",

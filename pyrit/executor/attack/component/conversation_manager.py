@@ -604,7 +604,7 @@ class ConversationManager:
                 continue
 
             temp_message = Message(message_pieces=[piece])
-            await self._prompt_normalizer.convert_values(
+            await self._prompt_normalizer.convert_values_async(
                 message=temp_message,
                 converter_configurations=request_converters,
             )

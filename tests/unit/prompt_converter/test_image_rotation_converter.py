@@ -100,8 +100,8 @@ async def test_image_rotation_converter_format_preservation_and_conversion(
 
     with patch("pyrit.prompt_converter.base_image_to_image_converter.data_serializer_factory") as mock_factory:
         mock_serializer = AsyncMock()
-        mock_serializer.read_data.return_value = image_bytes
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.read_data_async.return_value = image_bytes
+        mock_serializer.save_b64_image_async = AsyncMock()
         # Set the value to match input format initially
         mock_serializer.value = f"test_image.{input_format.lower()}"
         # Mock the file_extension property to be settable
@@ -111,8 +111,8 @@ async def test_image_rotation_converter_format_preservation_and_conversion(
         await converter.convert_async(prompt=f"test_image.{input_format.lower()}", input_type="image_path")
 
         # Verify the save method was called
-        mock_serializer.save_b64_image.assert_called_once()
-        mock_serializer.read_data.assert_called_once()
+        mock_serializer.save_b64_image_async.assert_called_once()
+        mock_serializer.read_data_async.assert_called_once()
 
         # Check that file extension was updated correctly
         expected_extension = expected_output_format.lower()
@@ -158,10 +158,10 @@ async def test_image_rotation_converter_convert_async_url_input(sample_image_byt
         mock_serializer = AsyncMock()
         mock_serializer.file_extension = "jpeg"
         mock_serializer.value = "rotated_image.webp"
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
-        with patch.object(converter, "_read_image_from_url") as mock_read_url:
+        with patch.object(converter, "_read_image_from_url_async") as mock_read_url:
             mock_read_url.return_value = image_bytes
 
             result = await converter.convert_async(prompt=test_url, input_type="url")
@@ -169,7 +169,7 @@ async def test_image_rotation_converter_convert_async_url_input(sample_image_byt
             assert result.output_text == "rotated_image.webp"
             assert result.output_type == "image_path"
             assert mock_serializer.file_extension == "webp"
-            mock_serializer.save_b64_image.assert_called_once()
+            mock_serializer.save_b64_image_async.assert_called_once()
 
 
 async def test_image_rotation_converter_url_format_conversion(sample_image_bytes):
@@ -182,10 +182,10 @@ async def test_image_rotation_converter_url_format_conversion(sample_image_bytes
         mock_serializer = AsyncMock()
         mock_serializer.file_extension = "jpeg"
         mock_serializer.value = "converted_image.webp"
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
-        with patch.object(converter, "_read_image_from_url") as mock_read_url:
+        with patch.object(converter, "_read_image_from_url_async") as mock_read_url:
             mock_read_url.return_value = large_image_bytes
 
             result = await converter.convert_async(prompt=test_url, input_type="url")
@@ -194,7 +194,7 @@ async def test_image_rotation_converter_url_format_conversion(sample_image_bytes
             assert result.output_type == "image_path"
             # Verify file extension was updated to match WEBP output format
             assert mock_serializer.file_extension == "webp"
-            mock_serializer.save_b64_image.assert_called_once()
+            mock_serializer.save_b64_image_async.assert_called_once()
 
 
 async def test_image_rotation_converter_invalid_url():
@@ -212,7 +212,7 @@ async def test_image_rotation_converter_corrupted_image_bytes():
     corrupted_bytes = b"notanimagefile"
     with patch("pyrit.prompt_converter.base_image_to_image_converter.data_serializer_factory") as mock_factory:
         mock_serializer = AsyncMock()
-        mock_serializer.read_data.return_value = corrupted_bytes
+        mock_serializer.read_data_async.return_value = corrupted_bytes
         mock_factory.return_value = mock_serializer
         with pytest.raises(Exception):  # noqa: B017
             await converter.convert_async(prompt="corrupted.png", input_type="image_path")
@@ -228,7 +228,7 @@ async def test_image_rotation_converter_output_format_fallback():
     with patch("pyrit.prompt_converter.base_image_to_image_converter.data_serializer_factory") as mock_factory:
         mock_serializer = AsyncMock()
         mock_factory.return_value = mock_serializer
-        mock_serializer.read_data.return_value = img_bytes
+        mock_serializer.read_data_async.return_value = img_bytes
         await converter.convert_async(prompt="test.tiff", input_type="image_path")
         assert mock_serializer.file_extension == "jpeg"
 

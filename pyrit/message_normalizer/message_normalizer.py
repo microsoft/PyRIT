@@ -4,6 +4,7 @@
 import abc
 from typing import Any, Generic, Literal, Protocol, TypeVar
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import Message
 
 # Type alias for system message handling strategies
@@ -83,7 +84,9 @@ class MessageStringNormalizer(abc.ABC):
         """
 
 
-async def apply_system_message_behavior(messages: list[Message], behavior: SystemMessageBehavior) -> list[Message]:
+async def apply_system_message_behavior_async(
+    messages: list[Message], behavior: SystemMessageBehavior
+) -> list[Message]:
     """
     Apply a system message behavior to a list of messages.
 
@@ -116,3 +119,24 @@ async def apply_system_message_behavior(messages: list[Message], behavior: Syste
         return [msg for msg in messages if msg.api_role != "system"]
     # This should never happen due to Literal type, but handle it gracefully
     raise ValueError(f"Unknown system message behavior: {behavior}")
+
+
+async def apply_system_message_behavior(  # pyrit-async-suffix-exempt
+    messages: list[Message], behavior: SystemMessageBehavior
+) -> list[Message]:
+    """
+    Apply a system message behavior to a list of messages (deprecated alias of ``apply_system_message_behavior_async``).
+
+    Args:
+        messages: The list of Message objects to process.
+        behavior: How to handle system messages.
+
+    Returns:
+        The processed list of Message objects.
+    """
+    print_deprecation_message(
+        old_item="pyrit.message_normalizer.message_normalizer.apply_system_message_behavior",
+        new_item="pyrit.message_normalizer.message_normalizer.apply_system_message_behavior_async",
+        removed_in="0.16.0",
+    )
+    return await apply_system_message_behavior_async(messages, behavior)

@@ -57,7 +57,7 @@ Each `SeedPrompt` / `SeedObjective` must carry:
 
 ## Set class-level dataset metadata when known
 
-`_parse_metadata` on `_RemoteDatasetLoader` reads class attributes matching `SeedDatasetMetadata` fields. Declare what you can know statically as class-level constants so dataset discovery/filtering works:
+`_parse_metadata_async` on `_RemoteDatasetLoader` reads class attributes matching `SeedDatasetMetadata` fields. Declare what you can know statically as class-level constants so dataset discovery/filtering works:
 
 ```python
 class _MyDataset(_RemoteDatasetLoader):
