@@ -8,7 +8,10 @@ import pytest
 from pyrit.exceptions.exception_classes import ServerErrorException
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import RealtimeTarget
-from pyrit.prompt_target.openai.openai_realtime_target import RealtimeTargetResult
+from pyrit.prompt_target.openai.openai_realtime_target import (
+    RealtimeTargetResult,
+    _read_wav_sync,
+)
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
 _CLEAN_UNDERLYING_MODEL_ENV = {
@@ -430,3 +433,26 @@ async def test_receive_events_skips_stale_response_done(target):
     # Should have processed through to the real response.done with actual audio
     assert result.audio_bytes == b"dummyaudio"
     assert result.transcripts == ["hello"]
+
+
+def test_read_wav_sync_returns_wave_properties_and_frames(tmp_path):
+    """_read_wav_sync should return (channels, sample_width, frame_rate, frames) from a real WAV file."""
+    import wave
+
+    wav_path = tmp_path / "sample.wav"
+    num_channels = 1
+    sample_width = 2
+    sample_rate = 16000
+    frames = b"\x01\x00\x02\x00\x03\x00\x04\x00"
+
+    with wave.open(str(wav_path), "wb") as wav_file:
+        wav_file.setnchannels(num_channels)
+        wav_file.setsampwidth(sample_width)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(frames)
+
+    channels, width, rate, audio = _read_wav_sync(str(wav_path))
+    assert channels == num_channels
+    assert width == sample_width
+    assert rate == sample_rate
+    assert audio == frames

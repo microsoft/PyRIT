@@ -7,6 +7,7 @@ import os
 from collections.abc import Callable
 from typing import Any, Literal, Optional
 
+import aiofiles
 import httpx
 
 from pyrit.models import (
@@ -145,8 +146,8 @@ class HTTPXAPITarget(HTTPTarget):
                     filename = os.path.basename(self.file_path)
                     mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
-                    with open(self.file_path, "rb") as fp:
-                        file_bytes = fp.read()
+                    async with aiofiles.open(self.file_path, "rb") as fp:
+                        file_bytes = await fp.read()
 
                     files = {"file": (filename, file_bytes, mime_type)}
 
