@@ -962,7 +962,7 @@ def test_seed_dataset_dict_to_seed_prompt_all_base_params():
         # SeedPrompt-specific fields
         "role": "assistant",
         "sequence": 5,
-        "parameters": {"param1": "val1"},
+        "parameters": ["param1"],
         "seed_type": "prompt",
     }
 
@@ -990,7 +990,7 @@ def test_seed_dataset_dict_to_seed_prompt_all_base_params():
     # Verify SeedPrompt-specific fields
     assert seed.role == "assistant"
     assert seed.sequence == 5
-    assert seed.parameters == {"param1": "val1"}
+    assert seed.parameters == ["param1"]
 
 
 def test_seed_dataset_dict_to_seed_objective_all_base_params():
@@ -1098,7 +1098,7 @@ def test_seed_dataset_uses_dataset_defaults_for_missing_params():
     # These should use sensible defaults
     assert seed.role == "user"
     assert seed.sequence == 0
-    assert seed.parameters == {}
+    assert seed.parameters == []
 
 
 def test_next_message_single_turn_no_objective():
@@ -1110,6 +1110,34 @@ def test_next_message_single_turn_no_objective():
     assert group.prepended_conversation is None
     assert group.next_message is not None
     assert len(group.next_message.message_pieces) == 1
+
+
+def test_seed_group_preserves_polymorphic_subclasses():
+    """list[Seed] must preserve concrete subclasses: instances pass through and model_dump keeps subclass fields."""
+    objective = SeedObjective(value="Reach the goal")
+    prompt = SeedPrompt(value="Hello", role="user", sequence=0)
+    group = SeedGroup(seeds=[objective, prompt])
+
+    # Instances are preserved, not coerced down to the base Seed.
+    assert isinstance(group.objective, SeedObjective)
+    assert any(isinstance(s, SeedPrompt) for s in group.seeds)
+
+    # SerializeAsAny keeps subclass-specific fields on dump (SeedPrompt has role/parameters, SeedObjective does not).
+    dumped = group.model_dump()
+    by_value = {s["value"]: s for s in dumped["seeds"]}
+    assert by_value["Hello"]["role"] == "user"
+    assert "parameters" in by_value["Hello"]
+    assert "role" not in by_value["Reach the goal"]
+
+    # Dict reconstruction uses the seed_type discriminator (the path used by YAML/dataset inputs).
+    rebuilt = SeedGroup(
+        seeds=[
+            {"value": "Reach the goal", "seed_type": "objective"},
+            {"value": "Hello", "role": "user", "sequence": 0, "seed_type": "prompt"},
+        ]
+    )
+    assert isinstance(rebuilt.objective, SeedObjective)
+    assert any(isinstance(s, SeedPrompt) for s in rebuilt.seeds)
     assert group.next_message.get_value() == "Hello"
 
 

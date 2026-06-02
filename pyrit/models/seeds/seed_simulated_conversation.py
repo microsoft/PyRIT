@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import enum
 import hashlib
+import importlib.metadata
 import json
 import logging
 from pathlib import Path
 from typing import Any, Optional, Union
 
-import pyrit
+from pydantic import field_validator, model_validator
+
 from pyrit.common.path import EXECUTOR_SIMULATED_TARGET_PATH
 from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_prompt import SeedPrompt
@@ -66,64 +68,37 @@ class SeedSimulatedConversation(Seed):
 
     """
 
-    def __init__(
-        self,
-        *,
-        adversarial_chat_system_prompt_path: Union[str, Path],
-        simulated_target_system_prompt_path: Optional[Union[str, Path]] = None,
-        next_message_system_prompt_path: Optional[Union[str, Path]] = None,
-        num_turns: int = 3,
-        sequence: int = 0,
-        pyrit_version: Optional[str] = None,
-        **kwargs: Any,
-    ) -> None:
-        """
-        Initialize a SeedSimulatedConversation.
+    # value is computed from the config in the after-validator; it must not be supplied directly.
+    value: str = ""
 
-        Args:
-            adversarial_chat_system_prompt_path: Path to YAML file containing the adversarial
-                chat system prompt.
-            simulated_target_system_prompt_path: Optional path to YAML file containing
-                the simulated target system prompt. Defaults to the compliant prompt.
-            next_message_system_prompt_path: Optional path to YAML file containing the system
-                prompt for generating a final user message. If provided, after the simulated
-                conversation is generated, a single LLM call generates a user message that
-                attempts to get the target to fulfill the objective. Defaults to None
-                (no next message generation).
-            num_turns: Number of conversation turns to generate. Defaults to 3.
-            sequence: The starting sequence number for generated turns. When combined with
-                static SeedPrompts, this determines where the simulated turns are inserted.
-                Defaults to 0.
-            pyrit_version: PyRIT version for reproducibility tracking. Defaults to current version.
-            **kwargs: Additional arguments passed to the Seed base class.
+    # Simulated conversations are general techniques by default.
+    is_general_technique: bool = True
 
-        Raises:
-            ValueError: If num_turns is not positive or sequence is negative.
+    num_turns: int = 3
+    sequence: int = 0
+    adversarial_chat_system_prompt_path: Path
+    simulated_target_system_prompt_path: Path = SimulatedTargetSystemPromptPaths.COMPLIANT.value
+    next_message_system_prompt_path: Optional[Path] = None
+    pyrit_version: Optional[str] = None
 
-        """
-        # Apply default for simulated target system prompt if not provided
-        if simulated_target_system_prompt_path is None:
-            simulated_target_system_prompt_path = SimulatedTargetSystemPromptPaths.COMPLIANT.value
-        if num_turns <= 0:
+    @field_validator("simulated_target_system_prompt_path", mode="before")
+    @classmethod
+    def _default_simulated_target_path(cls, value: Any) -> Any:
+        # Reconstruction from memory may pass an explicit None; fall back to the compliant default.
+        if value is None:
+            return SimulatedTargetSystemPromptPaths.COMPLIANT.value
+        return value
+
+    @model_validator(mode="after")
+    def _validate_and_compute_value(self) -> SeedSimulatedConversation:
+        if self.num_turns <= 0:
             raise ValueError("num_turns must be a positive integer")
-        if sequence < 0:
+        if self.sequence < 0:
             raise ValueError("sequence must be a non-negative integer")
-
-        self.adversarial_chat_system_prompt_path = Path(adversarial_chat_system_prompt_path)
-        self.simulated_target_system_prompt_path = Path(simulated_target_system_prompt_path)
-        self.next_message_system_prompt_path = (
-            Path(next_message_system_prompt_path) if next_message_system_prompt_path else None
-        )
-        self.num_turns = num_turns
-        self.sequence = sequence
-        self.pyrit_version = pyrit_version or pyrit.__version__
-
-        # Compute value and pass to parent
-        # Remove 'value' from kwargs if present since we compute it
-        kwargs.pop("value", None)
-        # Default is_general_technique to True for simulated conversations
-        kwargs.setdefault("is_general_technique", True)
-        super().__init__(value=self._compute_value(), **kwargs)
+        if not self.pyrit_version:
+            self.pyrit_version = importlib.metadata.version("pyrit")
+        self.value = self._compute_value()
+        return self
 
     def _compute_value(self) -> str:
         """
@@ -173,7 +148,9 @@ class SeedSimulatedConversation(Seed):
             num_turns=data.get("num_turns", 3),
             sequence=data.get("sequence", 0),
             adversarial_chat_system_prompt_path=adversarial_path,
-            simulated_target_system_prompt_path=data.get("simulated_target_system_prompt_path"),
+            simulated_target_system_prompt_path=(
+                data.get("simulated_target_system_prompt_path") or SimulatedTargetSystemPromptPaths.COMPLIANT.value
+            ),
             next_message_system_prompt_path=data.get("next_message_system_prompt_path"),
         )
 

@@ -15,10 +15,15 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, model_validator
 
 from pyrit.common import utils
 from pyrit.common.utils import verify_and_resolve_path
-from pyrit.common.yaml_loadable import YamlLoadable
+from pyrit.models.literals import SeedType  # noqa: TC001  (runtime-required by Pydantic field annotations)
+from pyrit.models.seeds.seed import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    Seed,
+    coerce_str_to_list,
+)
 from pyrit.models.seeds.seed_attack_group import SeedAttackGroup
 from pyrit.models.seeds.seed_group import SeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
@@ -31,32 +36,124 @@ if TYPE_CHECKING:
 
     from pydantic.types import PositiveInt
 
-    from pyrit.models.literals import PromptDataType, SeedType
-    from pyrit.models.seeds.seed import Seed
-
 logger = logging.getLogger(__name__)
 
 
-class SeedDataset(YamlLoadable):
+class SeedDataset(BaseModel):
     """
     SeedDataset manages seed prompts plus optional top-level defaults.
     Prompts are stored as a Sequence[Seed], so references to prompt properties
     are straightforward (e.g. ds.seeds[0].value).
     """
 
-    data_type: Optional[str]
-    name: Optional[str]
-    dataset_name: Optional[str]
-    harm_categories: Optional[Sequence[str]]
-    description: Optional[str]
-    authors: Optional[Sequence[str]]
-    groups: Optional[Sequence[str]]
-    source: Optional[str]
-    date_added: Optional[datetime]
-    added_by: Optional[str]
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
-    # Now the actual prompts
-    seeds: Sequence[Seed]
+    data_type: Optional[str] = "text"
+    name: Optional[str] = None
+    dataset_name: Optional[str] = None
+    harm_categories: Optional[list[str]] = None
+    description: Optional[str] = None
+    authors: Optional[list[str]] = Field(default_factory=list)
+    groups: Optional[list[str]] = Field(default_factory=list)
+    source: Optional[str] = None
+    date_added: Optional[datetime] = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    added_by: Optional[str] = None
+    # The default seed type for items that don't specify their own ("prompt", "objective", ...).
+    seed_type: Optional[SeedType] = None
+
+    # The actual prompts
+    seeds: list[SerializeAsAny[Seed]]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _build_seeds(cls, data: Any) -> Any:
+        """
+        Convert dict seed entries into concrete Seed subclasses, merging dataset-level defaults.
+
+        ``is_jinja_template`` is a construction-time flag (consumed here, not stored) that marks
+        seed values as trusted Jinja2 templates.
+
+        Returns:
+            Any: The input data with ``seeds`` replaced by built Seed instances.
+
+        Raises:
+            ValueError: If the dataset has no seeds.
+        """
+        if not isinstance(data, dict):
+            return data
+
+        data = dict(data)
+        is_jinja_template = data.pop("is_jinja_template", False)
+        raw_seeds = data.get("seeds")
+        if not raw_seeds:
+            raise ValueError("SeedDataset cannot be empty.")
+
+        default_data_type = data.get("data_type", "text")
+        default_name = data.get("name")
+        default_dataset_name = data.get("dataset_name")
+        default_description = data.get("description")
+        default_source = data.get("source")
+        dataset_seed_type = data.get("seed_type")
+
+        built: list[Seed] = []
+        for p in raw_seeds:
+            if isinstance(p, dict):
+                p_seed_type = p.get("seed_type", dataset_seed_type)
+
+                base_params: dict[str, Any] = {
+                    "value_sha256": p.get("value_sha256"),
+                    "id": uuid.uuid4(),
+                    "name": p.get("name") or default_name,
+                    "dataset_name": p.get("dataset_name") or default_dataset_name or default_name,
+                    "harm_categories": p.get("harm_categories", []),
+                    "description": p.get("description") or default_description,
+                    "authors": p.get("authors", []),
+                    "groups": p.get("groups", []),
+                    "source": p.get("source") or default_source,
+                    "date_added": p.get("date_added"),
+                    "added_by": p.get("added_by"),
+                    "metadata": p.get("metadata", {}),
+                    "prompt_group_id": p.get("prompt_group_id"),
+                    "is_jinja_template": is_jinja_template,
+                }
+
+                if p_seed_type == "simulated_conversation":
+                    _adv_path = p.get("adversarial_chat_system_prompt_path")
+                    _sim_path = p.get("simulated_target_system_prompt_path")
+                    _sc_kwargs: dict[str, Any] = {**base_params, "num_turns": p.get("num_turns", 3)}
+                    if _adv_path is not None:
+                        _sc_kwargs["adversarial_chat_system_prompt_path"] = str(_adv_path)
+                    if _sim_path is not None:
+                        _sc_kwargs["simulated_target_system_prompt_path"] = str(_sim_path)
+                    built.append(SeedSimulatedConversation(**_sc_kwargs))
+                elif p_seed_type == "objective":
+                    base_params["value"] = p["value"]
+                    built.append(SeedObjective(**base_params))
+                else:  # prompt
+                    base_params["value"] = p["value"]
+                    built.append(
+                        SeedPrompt(
+                            **base_params,
+                            data_type=p.get("data_type") or default_data_type,
+                            role=p.get("role", "user"),
+                            sequence=p.get("sequence", 0),
+                            parameters=p.get("parameters") or [],
+                        )
+                    )
+            elif isinstance(p, (SeedPrompt, SeedObjective, SeedSimulatedConversation)):
+                built.append(p)
+            else:
+                raise ValueError(
+                    "Seeds should be dicts or Seed objects (SeedPrompt, SeedObjective, SeedSimulatedConversation)."
+                )
+
+        data["seeds"] = built
+        for key in ("harm_categories", "authors", "groups"):
+            data[key] = coerce_str_to_list(data.get(key))
+        data["authors"] = data.get("authors") or []
+        data["groups"] = data.get("groups") or []
+        data["date_added"] = data.get("date_added") or datetime.now(tz=timezone.utc)
+        return data
 
     @classmethod
     def from_yaml_file(cls, file: Union[str, Path]) -> SeedDataset:
@@ -82,135 +179,7 @@ class SeedDataset(YamlLoadable):
             raise ValueError(f"YAML file '{file}' is empty.")
 
         yaml_data["is_jinja_template"] = True
-        if hasattr(cls, "from_dict") and callable(getattr(cls, "from_dict")):  # noqa: B009
-            return cls.from_dict(yaml_data)
-        return cls(**yaml_data)
-
-    def __init__(
-        self,
-        *,
-        seeds: Optional[Union[Sequence[dict[str, Any]], Sequence[Seed]]] = None,
-        data_type: Optional[PromptDataType] = "text",
-        name: Optional[str] = None,
-        dataset_name: Optional[str] = None,
-        harm_categories: Optional[Sequence[str]] = None,
-        description: Optional[str] = None,
-        authors: Optional[Sequence[str]] = None,
-        groups: Optional[Sequence[str]] = None,
-        source: Optional[str] = None,
-        date_added: Optional[datetime] = None,
-        added_by: Optional[str] = None,
-        seed_type: Optional[SeedType] = None,
-        is_jinja_template: bool = False,
-    ) -> None:
-        """
-        Initialize the dataset.
-        Typically, you'll call from_dict or from_yaml_file so that top-level defaults
-        are merged into each seed. If you're passing seeds directly, they can be
-        either a list of Seed objects or seed dictionaries (which then get
-        converted to Seed objects).
-
-        Args:
-            seeds: List of seed dictionaries or Seed objects.
-            data_type: Default data type for seeds.
-            name: Name of the dataset.
-            dataset_name: Dataset name for categorization.
-            harm_categories: List of harm categories.
-            description: Description of the dataset.
-            authors: List of authors.
-            groups: List of groups.
-            source: Source of the dataset.
-            date_added: Date when the dataset was added.
-            added_by: User who added the dataset.
-            seed_type: The type of seeds in this dataset ("prompt", "objective", or "simulated_conversation").
-            is_jinja_template: When True, seed values are Jinja2 templates. Set by from_yaml_file.
-
-        Raises:
-            ValueError: If seeds are missing or contain invalid/contradictory seed definitions.
-
-        """
-        if not seeds:
-            raise ValueError("SeedDataset cannot be empty.")
-
-        input_seeds = seeds
-
-        # Store top-level fields
-        self.data_type = data_type
-        self.name = name
-        self.dataset_name = dataset_name
-
-        self.harm_categories = harm_categories
-        self.description = description
-        self.authors = authors or []
-        self.groups = groups or []
-        self.source = source
-        self.date_added = date_added or datetime.now(tz=timezone.utc)
-        self.added_by = added_by
-
-        # Convert any dictionaries in `seeds` to SeedPrompt and/or SeedObjective objects
-        self.seeds = []
-        for p in input_seeds:
-            if isinstance(p, dict):
-                p_seed_type = p.get("seed_type", seed_type)  # type: ignore[ty:no-matching-overload]
-
-                effective_type: SeedType = "prompt"
-                if p_seed_type == "objective":
-                    effective_type = "objective"
-                elif p_seed_type == "simulated_conversation":
-                    effective_type = "simulated_conversation"
-                elif p_seed_type == "prompt":
-                    effective_type = "prompt"
-
-                # Extract common base parameters (from Seed base class) with dataset defaults.
-                # Note: If Seed base class param names change, update here too.
-                # SeedSimulatedConversation computes its own value, so we don't require it.
-                base_params = {
-                    "value_sha256": p.get("value_sha256"),  # type: ignore[ty:invalid-argument-type]
-                    "id": uuid.uuid4(),
-                    "name": p.get("name") or self.name,  # type: ignore[ty:invalid-argument-type]
-                    "dataset_name": p.get("dataset_name") or self.dataset_name or self.name,  # type: ignore[ty:invalid-argument-type]
-                    "harm_categories": p.get("harm_categories", []),  # type: ignore[ty:no-matching-overload]
-                    "description": p.get("description") or self.description,  # type: ignore[ty:invalid-argument-type]
-                    "authors": p.get("authors", []),  # type: ignore[ty:no-matching-overload]
-                    "groups": p.get("groups", []),  # type: ignore[ty:no-matching-overload]
-                    "source": p.get("source") or self.source,  # type: ignore[ty:invalid-argument-type]
-                    "date_added": p.get("date_added"),  # type: ignore[ty:invalid-argument-type]
-                    "added_by": p.get("added_by"),  # type: ignore[ty:invalid-argument-type]
-                    "metadata": p.get("metadata", {}),  # type: ignore[ty:no-matching-overload]
-                    "prompt_group_id": p.get("prompt_group_id"),  # type: ignore[ty:invalid-argument-type]
-                    "is_jinja_template": is_jinja_template,
-                }
-
-                if effective_type == "simulated_conversation":
-                    _adv_path = p.get("adversarial_chat_system_prompt_path")  # type: ignore[ty:invalid-argument-type]
-                    _sim_path = p.get("simulated_target_system_prompt_path")  # type: ignore[ty:invalid-argument-type]
-                    _sc_kwargs: dict[str, Any] = {**base_params, "num_turns": p.get("num_turns", 3)}  # type: ignore[ty:no-matching-overload]
-                    if _adv_path is not None:
-                        _sc_kwargs["adversarial_chat_system_prompt_path"] = str(_adv_path)
-                    if _sim_path is not None:
-                        _sc_kwargs["simulated_target_system_prompt_path"] = str(_sim_path)
-                    self.seeds.append(SeedSimulatedConversation(**_sc_kwargs))  # type: ignore[ty:invalid-argument-type]
-                elif effective_type == "objective":
-                    # SeedObjective inherits data_type="text" from base Seed property
-                    base_params["value"] = p["value"]  # type: ignore[ty:invalid-argument-type]
-                    self.seeds.append(SeedObjective(**base_params))  # type: ignore[ty:invalid-argument-type]
-                else:  # prompt
-                    base_params["value"] = p["value"]  # type: ignore[ty:invalid-argument-type]
-                    self.seeds.append(
-                        SeedPrompt(
-                            **base_params,  # type: ignore[ty:invalid-argument-type]
-                            data_type=p.get("data_type") or self.data_type,  # type: ignore[ty:invalid-argument-type]
-                            role=p.get("role", "user"),  # type: ignore[ty:no-matching-overload]
-                            sequence=p.get("sequence", 0),  # type: ignore[ty:no-matching-overload]
-                            parameters=p.get("parameters", {}),  # type: ignore[ty:no-matching-overload]
-                        )
-                    )
-            elif isinstance(p, (SeedPrompt, SeedObjective, SeedSimulatedConversation)):
-                self.seeds.append(p)
-            else:
-                raise ValueError(
-                    "Seeds should be dicts or Seed objects (SeedPrompt, SeedObjective, SeedSimulatedConversation)."
-                )
+        return cls.from_dict(yaml_data)
 
     def get_values(
         self,
@@ -291,7 +260,7 @@ class SeedDataset(YamlLoadable):
 
         dataset_defaults = data  # everything else is top-level
 
-        merged_seeds = []
+        merged_seeds: list[dict[str, Any]] = []
         for p in seeds_data:
             # Merge dataset-level fields with the prompt-level fields
             merged = utils.combine_dict(dataset_defaults, p)
@@ -323,7 +292,7 @@ class SeedDataset(YamlLoadable):
         SeedDataset._set_seed_group_id_by_alias(seed_prompts=merged_seeds)
 
         # Now create the dataset with the newly merged prompt dicts
-        return cls(seeds=merged_seeds, **dataset_defaults)
+        return cls.model_validate({"seeds": merged_seeds, **dataset_defaults})
 
     def render_template_value(self, **kwargs: object) -> None:
         """

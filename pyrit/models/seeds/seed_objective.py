@@ -8,8 +8,9 @@ SeedObjective class for representing seed objectives.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union
+
+from pydantic import model_validator
 
 from pyrit.common.path import PATHS_DICT
 from pyrit.models.seeds.seed import Seed
@@ -20,15 +21,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@dataclass
 class SeedObjective(Seed):
     """Represents a seed objective with various attributes and metadata."""
 
-    is_general_technique: bool = False
-
-    def __post_init__(self) -> None:
+    @model_validator(mode="after")
+    def _validate_and_render(self) -> SeedObjective:
         """
         Post-initialization to render the template to replace existing values.
+
+        Returns:
+            SeedObjective: The validated, rendered objective.
 
         Raises:
             ValueError: If is_general_technique is True.
@@ -37,7 +39,8 @@ class SeedObjective(Seed):
             raise ValueError("SeedObjective cannot be a general technique.")
         # Only trusted templates are rendered through Jinja — see seed_prompt.py for details.
         if self.is_jinja_template:
-            self.value = super().render_template_value_silent(**PATHS_DICT)
+            self.value = self.render_template_value_silent(**PATHS_DICT)
+        return self
 
     @classmethod
     def from_yaml_with_required_parameters(

@@ -9,31 +9,46 @@ This module is the foundation for all seed types in PyRIT.
 
 from __future__ import annotations
 
-import abc
 import logging
 import re
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
 
 import yaml
 from jinja2 import StrictUndefined, Undefined
 from jinja2.sandbox import SandboxedEnvironment
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from pyrit.common.utils import verify_and_resolve_path
-from pyrit.common.yaml_loadable import YamlLoadable
+from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterator
     from pathlib import Path
-
-    from pyrit.models.literals import PromptDataType
 
 logger = logging.getLogger(__name__)
 
 # TypeVar for generic return type in class methods
 T = TypeVar("T", bound="Seed")
+
+
+def coerce_str_to_list(value: Any) -> Any:
+    """
+    Coerce a bare string into a single-element list, leaving other values unchanged.
+
+    YAML seed files commonly specify list-typed fields as a single scalar (e.g. ``authors: Jane Doe``)
+    rather than a list. This wraps such a value so it satisfies a ``list[str]`` field type.
+
+    Args:
+        value: The raw field value provided during validation.
+
+    Returns:
+        The value wrapped in a list if it was a bare string, otherwise unchanged.
+    """
+    if isinstance(value, str):
+        return [value]
+    return value
 
 
 class PartialUndefined(Undefined):
@@ -81,9 +96,10 @@ class PartialUndefined(Undefined):
         return True  # Ensures it doesn't evaluate to False
 
 
-@dataclass
-class Seed(YamlLoadable):
+class Seed(BaseModel):
     """Represents seed data with various attributes and metadata."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     # The actual prompt value, which can be a string or a file path
     value: str
@@ -92,7 +108,7 @@ class Seed(YamlLoadable):
     value_sha256: Optional[str] = None
 
     # Unique identifier for the prompt
-    id: Optional[uuid.UUID] = field(default_factory=lambda: uuid.uuid4())
+    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4)
 
     # Name of the prompt
     name: Optional[str] = None
@@ -101,28 +117,28 @@ class Seed(YamlLoadable):
     dataset_name: Optional[str] = None
 
     # Categories of harm associated with this prompt
-    harm_categories: Optional[Sequence[str]] = field(default_factory=list)
+    harm_categories: Optional[list[str]] = Field(default_factory=list)
 
     # Description of the prompt
     description: Optional[str] = None
 
     # Authors of the prompt
-    authors: Optional[Sequence[str]] = field(default_factory=list)
+    authors: Optional[list[str]] = Field(default_factory=list)
 
     # Groups affiliated with the prompt
-    groups: Optional[Sequence[str]] = field(default_factory=list)
+    groups: Optional[list[str]] = Field(default_factory=list)
 
     # Source of the prompt
     source: Optional[str] = None
 
     # Date when the prompt was added to the dataset
-    date_added: Optional[datetime] = field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    date_added: Optional[datetime] = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
 
     # User who added the prompt to the dataset
     added_by: Optional[str] = None
 
     # Arbitrary metadata that can be attached to the prompt
-    metadata: Optional[dict[str, Union[str, int]]] = field(default_factory=dict)
+    metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
 
     # Unique identifier for the prompt group
     prompt_group_id: Optional[uuid.UUID] = None
@@ -138,15 +154,24 @@ class Seed(YamlLoadable):
     # to prevent template injection. Trusted sources (YAML files) set this to True automatically.
     is_jinja_template: bool = False
 
-    @property
-    def data_type(self) -> PromptDataType:
-        """
-        Return the data type for this seed.
+    # The type of data this seed represents (e.g., text, image_path, audio_path, video_path).
+    # SeedPrompt overrides the default to None and infers it from the value; other seed types
+    # keep "text".
+    data_type: PromptDataType = "text"
 
-        Base implementation returns 'text'. SeedPrompt overrides this
-        to support multiple data types (image_path, audio_path, etc.).
+    @field_validator("harm_categories", "authors", "groups", mode="before")
+    @classmethod
+    def _coerce_str_to_list(cls, value: Any) -> Any:
         """
-        return "text"
+        Coerce a bare string into a single-element list for these list-typed fields.
+
+        Args:
+            value: The raw field value provided during validation.
+
+        Returns:
+            The value wrapped in a list if it was a bare string, otherwise unchanged.
+        """
+        return coerce_str_to_list(value)
 
     def render_template_value(self, **kwargs: Any) -> str:
         """
@@ -271,7 +296,6 @@ class Seed(YamlLoadable):
         return cls(**yaml_data)
 
     @classmethod
-    @abc.abstractmethod
     def from_yaml_with_required_parameters(
         cls,
         template_path: Union[str, Path],
@@ -280,6 +304,9 @@ class Seed(YamlLoadable):
     ) -> Seed:
         """
         Load a Seed from a YAML file and validate that it contains specific parameters.
+
+        The base implementation simply loads the file; subclasses that support parameters
+        (e.g. SeedPrompt) override this to enforce ``required_parameters``.
 
         Args:
             template_path: Path to the YAML file containing the template.
@@ -290,3 +317,4 @@ class Seed(YamlLoadable):
             Seed: The loaded and validated seed of the specific subclass type.
 
         """
+        return cls.from_yaml_file(template_path)

@@ -11,15 +11,10 @@ Extends SeedGroup to enforce that all seeds have is_general_technique=True.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Union
+from typing import Optional
 
 from pyrit.models.seeds.seed_group import SeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from pyrit.models.seeds.seed import Seed
 
 
 class SeedAttackTechniqueGroup(SeedGroup):
@@ -33,33 +28,9 @@ class SeedAttackTechniqueGroup(SeedGroup):
     next_message, etc.) is inherited from SeedGroup.
     """
 
-    def __init__(
-        self,
-        *,
-        seeds: Sequence[Union[Seed, dict[str, Any]]],
-        insertion_index: int | None = None,
-    ) -> None:
-        """
-        Initialize a SeedAttackTechniqueGroup.
-
-        Args:
-            seeds: Sequence of seeds. All seeds must have is_general_technique=True.
-            insertion_index: Where to insert technique seeds when merging into a
-                SeedAttackGroup via ``with_technique()``. ``None`` (default) appends
-                at the end. An integer inserts before that position in the target
-                group's seed list.
-
-        Raises:
-            ValueError: If seeds is empty.
-            ValueError: If any seed does not have is_general_technique=True.
-        """
-        self._insertion_index = insertion_index
-        super().__init__(seeds=seeds)
-
-    @property
-    def insertion_index(self) -> int | None:
-        """Where to insert technique seeds when merging, or None to append at end."""
-        return self._insertion_index
+    # Where to insert technique seeds when merging into a SeedAttackGroup via ``with_technique()``.
+    # ``None`` (default) appends at the end; an integer inserts before that position.
+    insertion_index: Optional[int] = None
 
     def validate(self) -> None:
         """

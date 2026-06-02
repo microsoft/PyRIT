@@ -13,9 +13,10 @@ from __future__ import annotations
 import logging
 import uuid
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional
 
-from pyrit.common.yaml_loadable import YamlLoadable
+from pydantic import BaseModel, ConfigDict, SerializeAsAny, model_validator
+
 from pyrit.models.message import Message
 from pyrit.models.message_piece import MessagePiece
 from pyrit.models.seeds.seed import Seed
@@ -29,7 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SeedGroup(YamlLoadable):
+class SeedGroup(BaseModel):
     """
     A container for grouping prompts that need to be sent together.
 
@@ -42,72 +43,83 @@ class SeedGroup(YamlLoadable):
     All prompts in the group share the same `prompt_group_id`.
     """
 
-    seeds: list[Seed]
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
-    def __init__(
-        self,
-        *,
-        seeds: Sequence[Union[Seed, dict[str, Any]]],
-        is_jinja_template: bool = False,
-    ) -> None:
+    seeds: list[SerializeAsAny[Seed]]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_seeds(cls, data: Any) -> Any:
         """
-        Initialize a SeedGroup.
+        Coerce raw seed dicts into concrete Seed subclasses before validation.
 
-        Args:
-            seeds: Sequence of seeds. Can include:
-                - SeedObjective (or dict with seed_type="objective")
-                - SeedSimulatedConversation (or dict with seed_type="simulated_conversation")
-                - SeedPrompt for prompts (or dict with seed_type="prompt" or no seed_type)
-            is_jinja_template: When True, seed values are treated as Jinja2 templates.
-                Set automatically by from_yaml_file for trusted sources.
+        ``is_jinja_template`` is a construction-time flag (not a stored field): it is consumed
+        here and propagated to each dict seed so trusted YAML values are rendered as templates.
+
+        Returns:
+            Any: The input data with ``seeds`` replaced by concrete Seed instances.
 
         Raises:
-            ValueError: If seeds is empty.
-            ValueError: If multiple objectives are provided.
-            ValueError: If SeedPrompt sequences overlap with SeedSimulatedConversation range.
-
+            ValueError: If the group has no seeds or a seed has an unsupported type.
         """
-        if not seeds:
+        if not isinstance(data, dict):
+            return data
+
+        data = dict(data)
+        is_jinja_template = data.pop("is_jinja_template", False)
+        raw_seeds = data.get("seeds")
+        if not raw_seeds:
             raise ValueError("SeedGroup cannot be empty.")
 
-        self.seeds = []
-        for seed in seeds:
+        coerced: list[Seed] = []
+        for seed in raw_seeds:
             if isinstance(seed, Seed):
-                self.seeds.append(seed)
+                coerced.append(seed)
             elif isinstance(seed, dict):
+                seed = dict(seed)
                 seed["is_jinja_template"] = is_jinja_template
                 seed_type = seed.pop("seed_type", None)
 
                 if seed_type == "simulated_conversation":
                     # SeedSimulatedConversation doesn't use data_type (always text)
                     seed.pop("data_type", None)
-                    self.seeds.append(SeedSimulatedConversation.from_dict(seed))
+                    coerced.append(SeedSimulatedConversation.from_dict(seed))
                 elif seed_type == "objective":
                     # SeedObjective doesn't use data_type (always text)
                     seed.pop("data_type", None)
-                    self.seeds.append(SeedObjective(**seed))
+                    coerced.append(SeedObjective(**seed))
                 else:
-                    self.seeds.append(SeedPrompt(**seed))
+                    coerced.append(SeedPrompt(**seed))
             else:
                 raise ValueError(f"Invalid seed type: {type(seed)}")
 
-        # Validate and normalize the seeds
+        data["seeds"] = coerced
+        return data
+
+    @model_validator(mode="after")
+    def _finalize(self) -> SeedGroup:
+        """
+        Validate the group and reorder seeds into canonical order.
+
+        Canonical order is: objective, simulated_conversation, then prompts sorted by sequence.
+
+        Returns:
+            SeedGroup: The validated, reordered group.
+        """
         self.validate()
 
-        # Extract simulated conversation config
-        self._simulated_conversation_config = self._get_simulated_conversation()
-
-        # Reconstruct seeds in canonical order: objective, simulated_conversation, sorted prompts
         objective = self._get_objective()
-        simulated_conv = self._simulated_conversation_config
+        simulated_conv = self._get_simulated_conversation()
         sorted_prompts = sorted(self.prompts, key=lambda p: p.sequence if p.sequence is not None else 0)
 
-        self.seeds = []
+        new_seeds: list[Seed] = []
         if objective:
-            self.seeds.append(objective)
+            new_seeds.append(objective)
         if simulated_conv:
-            self.seeds.append(simulated_conv)
-        self.seeds.extend(sorted_prompts)
+            new_seeds.append(simulated_conv)
+        new_seeds.extend(sorted_prompts)
+        self.seeds = new_seeds
+        return self
 
     # =========================================================================
     # Validation
@@ -293,12 +305,12 @@ class SeedGroup(YamlLoadable):
     @property
     def simulated_conversation_config(self) -> Optional[SeedSimulatedConversation]:
         """Get the simulated conversation configuration if set."""
-        return self._simulated_conversation_config
+        return self._get_simulated_conversation()
 
     @property
     def has_simulated_conversation(self) -> bool:
         """Check if this group uses simulated conversation generation."""
-        return self._simulated_conversation_config is not None
+        return self._get_simulated_conversation() is not None
 
     # =========================================================================
     # Message Extraction

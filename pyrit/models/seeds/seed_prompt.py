@@ -9,32 +9,33 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional, Union
 
+from pydantic import Field, field_validator, model_validator
 from tinytag import TinyTag
 
 from pyrit.common.path import PATHS_DICT
 from pyrit.models import DataTypeSerializer
-from pyrit.models.seeds.seed import Seed
+from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    ChatMessageRole,
+    PromptDataType,
+)
+from pyrit.models.seeds.seed import Seed, coerce_str_to_list
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Sequence
     from pathlib import Path
 
     from pyrit.models import Message
-    from pyrit.models.literals import ChatMessageRole, PromptDataType
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
 class SeedPrompt(Seed):
     """Represents a seed prompt with various attributes and metadata."""
 
     # The type of data this prompt represents (e.g., text, image_path, audio_path, video_path)
-    # This field shadows the base class property to allow per-prompt data types
+    # This field overrides the base default to allow per-prompt data types inferred from the value
     data_type: Optional[PromptDataType] = None
 
     # Role of the prompt in a conversation (e.g., "user", "assistant")
@@ -45,11 +46,29 @@ class SeedPrompt(Seed):
     sequence: int = 0
 
     # Parameters that can be used in the prompt template
-    parameters: Optional[Sequence[str]] = field(default_factory=list)
+    parameters: Optional[list[str]] = Field(default_factory=list)
 
-    def __post_init__(self) -> None:
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def _coerce_parameters_to_list(cls, value: object) -> object:
+        """
+        Coerce a bare string ``parameters`` value into a single-element list.
+
+        Args:
+            value: The raw field value provided during validation.
+
+        Returns:
+            The value wrapped in a list if it was a bare string, otherwise unchanged.
+        """
+        return coerce_str_to_list(value)
+
+    @model_validator(mode="after")
+    def _render_and_infer_data_type(self) -> SeedPrompt:
         """
         Render template placeholders and infer data_type after initialization.
+
+        Returns:
+            SeedPrompt: The validated prompt with rendered value and inferred data_type.
 
         Raises:
             ValueError: If file-based data type cannot be inferred from extension.
@@ -78,6 +97,8 @@ class SeedPrompt(Seed):
                     raise ValueError(f"Unable to infer data_type from file extension: {ext}")
             else:
                 self.data_type = "text"
+
+        return self
 
     def set_encoding_metadata(self) -> None:
         """
