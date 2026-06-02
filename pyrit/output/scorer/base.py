@@ -58,7 +58,9 @@ class ScorerPrinterBase(PrinterBase):
             str: The rendered scorer information text.
         """
 
-    async def print_objective_scorer(self, *, scorer_identifier: ComponentIdentifier) -> None:
+    async def print_objective_scorer(
+        self, *, scorer_identifier: ComponentIdentifier
+    ) -> None:  # pyrit-async-suffix-exempt
         """
         Use ``write_async`` instead. This method is deprecated.
 
@@ -68,7 +70,9 @@ class ScorerPrinterBase(PrinterBase):
         print_deprecation_message(old_item="print_objective_scorer", new_item="write_async", removed_in="0.16.0")
         await self.write_async(scorer_identifier=scorer_identifier)
 
-    async def print_harm_scorer(self, *, scorer_identifier: ComponentIdentifier, harm_category: str) -> None:
+    async def print_harm_scorer(
+        self, *, scorer_identifier: ComponentIdentifier, harm_category: str
+    ) -> None:  # pyrit-async-suffix-exempt
         """
         Use ``write_async`` instead. This method is deprecated.
 

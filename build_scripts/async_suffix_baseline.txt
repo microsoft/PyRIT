@@ -8,8 +8,6 @@
 # To regenerate (only after a deliberate, reviewed cleanup):
 #   python build_scripts/check_async_suffix.py --write-baseline
 
-pyrit/output/scorer/base.py:61:print_objective_scorer
-pyrit/output/scorer/base.py:71:print_harm_scorer
 pyrit/prompt_converter/add_image_to_video_converter.py:81:_add_image_to_video
 pyrit/prompt_converter/base_image_to_image_converter.py:128:_read_image_from_url
 pyrit/prompt_converter/image_compression_converter.py:221:_handle_original_image_fallback
