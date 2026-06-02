@@ -7,8 +7,3 @@
 #
 # To regenerate (only after a deliberate, reviewed cleanup):
 #   python build_scripts/check_async_suffix.py --write-baseline
-
-pyrit/score/float_scale/azure_content_filter_scorer.py:406:_get_base64_image_data
-pyrit/score/float_scale/float_scale_scorer.py:134:_score_value_with_llm
-pyrit/score/scorer.py:635:_score_value_with_llm
-pyrit/score/true_false/gandalf_scorer.py:80:_check_for_password_in_conversation

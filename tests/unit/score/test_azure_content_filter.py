@@ -78,7 +78,7 @@ async def test_score_piece_async_image(patch_central_database, image_message_pie
     # Patch _get_base64_image_data to avoid actual file IO
     # Return a valid base64 string (represents a tiny 1x1 PNG image)
     valid_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-    with patch.object(scorer, "_get_base64_image_data", AsyncMock(return_value=valid_base64)):
+    with patch.object(scorer, "_get_base64_image_data_async", AsyncMock(return_value=valid_base64)):
         scores = await scorer._score_piece_async(image_message_piece)
     assert len(scores) == 1
     score = scores[0]

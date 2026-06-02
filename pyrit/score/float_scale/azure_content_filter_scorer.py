@@ -288,7 +288,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
                 filter_results.append(text_result)
 
         elif message_piece.converted_value_data_type == "image_path":
-            base64_encoded_data = await self._get_base64_image_data(message_piece)
+            base64_encoded_data = await self._get_base64_image_data_async(message_piece)
             # Decode base64 string to raw bytes for Azure API
             image_data = ImageData(content=base64.b64decode(base64_encoded_data))
             image_request_options = AnalyzeImageOptions(
@@ -403,7 +403,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
             for category in self._harm_categories
         ]
 
-    async def _get_base64_image_data(self, message_piece: MessagePiece) -> str:
+    async def _get_base64_image_data_async(self, message_piece: MessagePiece) -> str:
         """
         Get base64-encoded image data from a message piece.
 
