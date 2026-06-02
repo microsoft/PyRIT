@@ -261,7 +261,7 @@ class OpenAIImageTarget(OpenAITarget):
             image_generation_args["background"] = self.background
 
         # Use unified error handler for consistent error handling
-        return await self._handle_openai_request(
+        return await self._handle_openai_request_async(
             api_call=lambda: self._client.images.generate(**image_generation_args),
             request=message,
         )
@@ -314,12 +314,12 @@ class OpenAIImageTarget(OpenAITarget):
         if self.background:
             image_edit_args["background"] = self.background
 
-        return await self._handle_openai_request(
+        return await self._handle_openai_request_async(
             api_call=lambda: self._client.images.edit(**image_edit_args),
             request=message,
         )
 
-    async def _construct_message_from_response(self, response: Any, request: Any) -> Message:
+    async def _construct_message_from_response_async(self, response: Any, request: Any) -> Message:
         """
         Construct a Message from an ImagesResponse.
 
@@ -334,7 +334,7 @@ class OpenAIImageTarget(OpenAITarget):
             EmptyResponseException: If the image generation returned an empty response.
         """
         image_data = response.data[0]
-        image_bytes = await self._get_image_bytes(image_data)
+        image_bytes = await self._get_image_bytes_async(image_data)
 
         extension = self.output_format or "png"
         data = data_serializer_factory(
@@ -348,7 +348,7 @@ class OpenAIImageTarget(OpenAITarget):
             request=request, response_text_pieces=[data.value], response_type="image_path"
         )
 
-    async def _get_image_bytes(self, image_data: Any) -> bytes:
+    async def _get_image_bytes_async(self, image_data: Any) -> bytes:
         """
         Extract image bytes from the API response.
 

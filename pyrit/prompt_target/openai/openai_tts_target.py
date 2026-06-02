@@ -140,7 +140,7 @@ class OpenAITTSTarget(OpenAITarget):
             body_parameters["speed"] = self._speed
 
         # Use unified error handler for consistent error handling
-        response = await self._handle_openai_request(
+        response = await self._handle_openai_request_async(
             api_call=lambda: self._client.audio.speech.create(
                 model=str(body_parameters["model"]),
                 voice=str(body_parameters["voice"]),
@@ -152,7 +152,7 @@ class OpenAITTSTarget(OpenAITarget):
         )
         return [response]
 
-    async def _construct_message_from_response(self, response: Any, request: Any) -> Message:
+    async def _construct_message_from_response_async(self, response: Any, request: Any) -> Message:
         """
         Construct a Message from a TTS audio response.
 

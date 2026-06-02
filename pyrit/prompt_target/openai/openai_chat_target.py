@@ -234,10 +234,10 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
 
         logger.info(f"Sending the following prompt to the prompt target: {message}")
 
-        body = await self._construct_request_body(conversation=normalized_conversation, json_config=json_config)
+        body = await self._construct_request_body_async(conversation=normalized_conversation, json_config=json_config)
 
         # Use unified error handling - automatically detects ChatCompletion and validates
-        response = await self._handle_openai_request(
+        response = await self._handle_openai_request_async(
             api_call=lambda: self._client.chat.completions.create(**body),
             request=message,
         )
@@ -378,7 +378,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             and self._audio_response_config.prefer_transcript_for_history
         )
 
-    async def _construct_message_from_response(self, response: Any, request: MessagePiece) -> Message:
+    async def _construct_message_from_response_async(self, response: Any, request: MessagePiece) -> Message:
         """
         Construct a Message from a ChatCompletion response.
 
@@ -650,7 +650,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             chat_messages.append(chat_message.model_dump(exclude_none=True))
         return chat_messages
 
-    async def _construct_request_body(
+    async def _construct_request_body_async(
         self, *, conversation: MutableSequence[Message], json_config: _JsonResponseConfig
     ) -> dict[str, Any]:
         messages = await self._build_chat_messages_async(conversation)

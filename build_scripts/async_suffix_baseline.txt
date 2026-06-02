@@ -8,27 +8,6 @@
 # To regenerate (only after a deliberate, reviewed cleanup):
 #   python build_scripts/check_async_suffix.py --write-baseline
 
-pyrit/prompt_target/openai/openai_chat_target.py:381:_construct_message_from_response
-pyrit/prompt_target/openai/openai_chat_target.py:653:_construct_request_body
-pyrit/prompt_target/openai/openai_completion_target.py:158:_construct_message_from_response
-pyrit/prompt_target/openai/openai_image_target.py:322:_construct_message_from_response
-pyrit/prompt_target/openai/openai_image_target.py:351:_get_image_bytes
-pyrit/prompt_target/openai/openai_realtime_target.py:245:connect
-pyrit/prompt_target/openai/openai_realtime_target.py:299:send_config
-pyrit/prompt_target/openai/openai_realtime_target.py:400:save_audio
-pyrit/prompt_target/openai/openai_realtime_target.py:462:cleanup_conversation
-pyrit/prompt_target/openai/openai_realtime_target.py:479:send_response_create
-pyrit/prompt_target/openai/openai_realtime_target.py:489:receive_events
-pyrit/prompt_target/openai/openai_realtime_target.py:813:_construct_message_from_response
-pyrit/prompt_target/openai/openai_response_target.py:222:_construct_input_item_from_piece
-pyrit/prompt_target/openai/openai_response_target.py:362:_construct_request_body
-pyrit/prompt_target/openai/openai_response_target.py:533:_construct_message_from_response
-pyrit/prompt_target/openai/openai_response_target.py:753:_execute_call_section
-pyrit/prompt_target/openai/openai_target.py:397:_handle_openai_request
-pyrit/prompt_target/openai/openai_target.py:523:_construct_message_from_response
-pyrit/prompt_target/openai/openai_tts_target.py:155:_construct_message_from_response
-pyrit/prompt_target/openai/openai_video_target.py:379:_construct_message_from_response
-pyrit/prompt_target/openai/openai_video_target.py:430:_save_video_response
 pyrit/scenario/core/scenario.py:1350:worker
 pyrit/score/float_scale/azure_content_filter_scorer.py:406:_get_base64_image_data
 pyrit/score/float_scale/float_scale_scorer.py:134:_score_value_with_llm
