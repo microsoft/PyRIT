@@ -26,15 +26,14 @@ from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 ScoreType = Literal["true_false", "float_scale", "unknown"]
 
 
-# Annotated alias for fields whose runtime type is ``ComponentIdentifier`` — a
-# non-Pydantic ``@dataclass`` that needs ``from_dict`` / ``to_dict`` round-tripping.
-# Defined here (rather than in ``message_piece.py``) because ``score.py`` sits lower
-# in the import graph; ``message_piece`` imports it from here. Drop this alias once
-# ``ComponentIdentifier`` itself becomes a Pydantic model.
+# Annotated alias that round-trips ``ComponentIdentifier`` fields through the flat
+# dict storage shape. ``ComponentIdentifier`` is a Pydantic model with a custom flat
+# serializer. Defined here (rather than in ``message_piece.py``) because ``score.py``
+# sits lower in the import graph; ``message_piece`` imports it from here.
 ComponentIdentifierField = Annotated[
     ComponentIdentifier,
-    BeforeValidator(lambda v: ComponentIdentifier.from_dict(v) if isinstance(v, dict) else v),
-    PlainSerializer(lambda v: v.to_dict() if v is not None else None, return_type=Optional[dict]),
+    BeforeValidator(lambda v: ComponentIdentifier.model_validate(v) if isinstance(v, dict) else v),
+    PlainSerializer(lambda v: v.model_dump() if v is not None else None, return_type=Optional[dict]),
 ]
 
 

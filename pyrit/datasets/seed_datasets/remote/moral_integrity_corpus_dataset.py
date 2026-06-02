@@ -32,7 +32,7 @@ class _MICDataset(_RemoteDatasetLoader):
     harm_categories = {"care", "fairness", "loyalty", "authority", "sanctity", "liberty"}
     modalities = ["text"]
     size = "huge"
-    tags = ["moral", "ethics", "dialogue"]
+    tags = {"safety", "ethics", "multiturn"}
     VALID_SPLITS = ["train", "dev", "test"]
     AUTHORS = ["Caleb Ziems", "Jane Yu", "Yi-Chia Wang", "Alon Halevy", "Diyi Yang"]
 

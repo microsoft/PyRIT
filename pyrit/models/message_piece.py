@@ -48,10 +48,9 @@ _DEPRECATED_KWARGS: tuple[tuple[str, str], ...] = (
 )
 
 
-# Annotated alias for fields whose runtime type is ``ComponentIdentifier`` —
-# a non-Pydantic class that needs ``from_dict``/``to_dict`` round-tripping. It is
-# defined in ``pyrit.models.score`` (lower in the import graph) and re-imported
-# above. Drop this alias once ``ComponentIdentifier`` becomes a Pydantic model.
+# ``ComponentIdentifierField`` (and ``Score``) are imported from ``pyrit.models.score``
+# above. Both round-trip through the flat dict storage shape via their own Pydantic
+# serializers, so no local annotated aliases are needed here.
 
 
 def __getattr__(name: str) -> Any:

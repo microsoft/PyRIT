@@ -213,6 +213,53 @@ class TestCoCoNotRefusalDataset:
         with pytest.raises(ValueError, match="Expected CoCoNotSplit"):
             _CoCoNotRefusalDataset(splits=[CoCoNotCategory.SAFETY])  # type: ignore[ty:invalid-argument-type]
 
+    async def test_rows_with_empty_prompts_are_skipped(self) -> None:
+        """Upstream rows with empty/whitespace ``prompt`` are dropped, not turned into empty seeds.
+
+        Regression test for the end_to_end ``test_fetch_dataset[_CoCoNotRefusalDataset]``
+        failure, where an empty-prompt row in ``original.train`` (wildchats subcategory)
+        produced a SeedObjective with ``value=""`` and tripped the loader-wide
+        ``seed.value`` invariant.
+        """
+        loader = _CoCoNotRefusalDataset(splits=[CoCoNotSplit.TRAIN])
+        rows_with_empty = [
+            {
+                "id": "ok",
+                "prompt": "real prompt",
+                "response": "",
+                "category": "Indeterminate requests",
+                "subcategory": "fine",
+            },
+            {
+                "id": "empty",
+                "prompt": "",
+                "response": "",
+                "category": "Indeterminate requests",
+                "subcategory": "wildchats",
+            },
+            {
+                "id": "whitespace",
+                "prompt": "   ",
+                "response": "",
+                "category": "Indeterminate requests",
+                "subcategory": "wildchats",
+            },
+            {
+                "id": "missing",
+                "response": "",
+                "category": "Indeterminate requests",
+                "subcategory": "wildchats",
+            },
+        ]
+        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows_with_empty)):
+            dataset = await loader.fetch_dataset_async()
+
+        assert len(dataset.seeds) == 1
+        kept = dataset.seeds[0]
+        assert kept.value == "real prompt"
+        assert kept.metadata is not None
+        assert kept.metadata["id"] == "ok"
+
 
 class TestCoCoNotContrastDataset:
     """Tests for the CoCoNot contrast (over-refusal) sibling (`contrast.test`)."""
