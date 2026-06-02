@@ -17,7 +17,6 @@ leaks the absolute on-disk location of memory artifacts
 """
 
 from pathlib import PureWindowsPath
-from typing import Optional
 from urllib.parse import urlparse
 
 from pyrit.models import ConversationStats
@@ -33,7 +32,7 @@ _MEDIA_LABEL: dict[str, str] = {
 }
 
 
-def _derive_basename(value: str) -> Optional[str]:
+def _derive_basename(value: str) -> str | None:
     """
     Return a display-safe basename for *value*.
 
@@ -59,10 +58,10 @@ def _derive_basename(value: str) -> Optional[str]:
 
 def format_last_message_preview(
     *,
-    value: Optional[str],
-    data_type: Optional[str],
+    value: str | None,
+    data_type: str | None,
     max_len: int = ConversationStats.PREVIEW_MAX_LEN,
-) -> Optional[str]:
+) -> str | None:
     """
     Build a display string for ``ConversationStats.last_message_preview``.
 
