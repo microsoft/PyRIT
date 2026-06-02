@@ -3,11 +3,11 @@
 
 import os
 import tempfile
-import time
 import uuid
 import warnings
 from collections.abc import MutableSequence
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 from unit.mocks import MockPromptTarget, get_mock_target, get_sample_conversations
@@ -41,14 +41,16 @@ def test_id_set():
 
 
 def test_datetime_set():
-    now = datetime.now(tz=timezone.utc)
-    time.sleep(0.1)
-    entry = MessagePiece(
-        role="user",
-        original_value="Hello",
-        converted_value="Hello",
-    )
-    assert entry.timestamp > now
+    fake_now = datetime(2099, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    with patch("pyrit.models.messages.message_piece.datetime") as mock_datetime:
+        mock_datetime.now.return_value = fake_now
+        entry = MessagePiece(
+            role="user",
+            original_value="Hello",
+            converted_value="Hello",
+        )
+    assert entry.timestamp == fake_now
+    mock_datetime.now.assert_called_once_with(tz=timezone.utc)
 
 
 def test_converters_serialize():
