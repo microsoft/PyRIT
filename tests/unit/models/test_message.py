@@ -425,3 +425,43 @@ class TestMessagePydanticShape:
         assert original_ids.isdisjoint(duplicated_ids)
         duplicated.message_pieces[0].original_value = "changed"
         assert message.message_pieces[0].original_value == "First piece"
+
+    def test_to_dict_keeps_legacy_keys_while_model_dump_is_canonical(self) -> None:
+        message = Message.from_prompt(prompt="hi", role="user")
+        with pytest.warns(DeprecationWarning):
+            legacy = message.to_dict()
+        assert set(legacy) == {
+            "role",
+            "converted_value",
+            "conversation_id",
+            "sequence",
+            "converted_value_data_type",
+            "pieces",
+        }
+        assert set(message.model_dump()) == {"message_pieces"}
+
+
+class TestMessageModuleLayout:
+    """Lock in the messages-package layout and its backward-compatible re-exports."""
+
+    def test_conversation_helpers_live_in_conversations_module(self) -> None:
+        from pyrit.models import messages
+        from pyrit.models.messages import conversations
+
+        for name in (
+            "get_all_values",
+            "flatten_to_message_pieces",
+            "group_conversation_message_pieces_by_sequence",
+            "group_message_pieces_into_conversations",
+            "construct_response_from_request",
+        ):
+            assert getattr(conversations, name) is getattr(messages, name)
+
+    def test_legacy_module_paths_reexport_same_objects(self) -> None:
+        import pyrit.models.message as legacy_message
+        import pyrit.models.message_piece as legacy_message_piece
+        from pyrit.models.messages.message import Message as PackagedMessage
+        from pyrit.models.messages.message_piece import MessagePiece as PackagedMessagePiece
+
+        assert legacy_message.Message is PackagedMessage
+        assert legacy_message_piece.MessagePiece is PackagedMessagePiece
