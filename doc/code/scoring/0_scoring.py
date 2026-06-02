@@ -60,16 +60,6 @@ pd.set_option("display.max_rows", None)
 print(df.to_string(index=False))
 
 # %% [markdown]
-# ## Scorer categories
-#
-# - **[True/False scorers](1_true_false_scorers.ipynb)**: boolean scorers, fast (substring,
-#   keyword, regex) and slow (self-ask refusal, classification, question-answering).
-# - **[Float-scale scorers](2_float_scale_scorers.ipynb)**: 0–1 severity scorers
-#   (Azure Content Safety, Likert, scale, insecure-code, plagiarism).
-# - **[Combining & stacking scorers](3_combining_scorers.ipynb)**: compose, invert, and
-#   threshold scorers, and score whole conversations.
-# - **[Scorer metrics](4_scorer_metrics.ipynb)**: measure and compare scorer accuracy.
-#
 # ## The class hierarchy
 #
 # Every scorer derives from the abstract `Scorer` class through one of three intermediate
