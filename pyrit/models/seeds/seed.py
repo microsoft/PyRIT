@@ -15,12 +15,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Annotated, Any, Optional, TypeVar, Union
 
-import yaml
 from jinja2 import StrictUndefined, Undefined
 from jinja2.sandbox import SandboxedEnvironment
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
-from pyrit.common.utils import verify_and_resolve_path
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 
 if TYPE_CHECKING:
@@ -267,6 +265,9 @@ class Seed(BaseModel):
         """
         Create a new Seed from a YAML file, marking it as a trusted Jinja2 template.
 
+        Thin shim that delegates to :func:`pyrit.models.seeds.seed_loader.load_seed_from_yaml`;
+        file I/O and the ``is_jinja_template`` trust marker live in the loader module.
+
         Args:
             file: The input file path.
 
@@ -274,38 +275,9 @@ class Seed(BaseModel):
             A new Seed of the specific subclass type.
 
         Raises:
-            ValueError: If the YAML file is invalid.
+            FileNotFoundError: If the path does not resolve to an existing file.
+            ValueError: If the YAML file is invalid or empty.
         """
-        file = verify_and_resolve_path(file)
+        from pyrit.models.seeds.seed_loader import load_seed_from_yaml
 
-        try:
-            yaml_data = yaml.safe_load(file.read_text("utf-8"))
-        except yaml.YAMLError as exc:
-            raise ValueError(f"Invalid YAML file '{file}': {exc}") from exc
-
-        yaml_data["is_jinja_template"] = True
-        return cls(**yaml_data)
-
-    @classmethod
-    def from_yaml_with_required_parameters(
-        cls,
-        template_path: Union[str, Path],
-        required_parameters: list[str],
-        error_message: Optional[str] = None,
-    ) -> Seed:
-        """
-        Load a Seed from a YAML file and validate that it contains specific parameters.
-
-        The base implementation simply loads the file; subclasses that support parameters
-        (e.g. SeedPrompt) override this to enforce ``required_parameters``.
-
-        Args:
-            template_path: Path to the YAML file containing the template.
-            required_parameters: List of parameter names that must exist in the template.
-            error_message: Custom error message if validation fails. If None, a default message is used.
-
-        Returns:
-            Seed: The loaded and validated seed of the specific subclass type.
-
-        """
-        return cls.from_yaml_file(template_path)
+        return load_seed_from_yaml(file, cls=cls)

@@ -14,10 +14,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pyrit.common.utils import verify_and_resolve_path
 from pyrit.models.literals import SeedType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 from pyrit.models.seeds.seed import Seed, StrOrList
 from pyrit.models.seeds.seed_attack_group import SeedAttackGroup
@@ -181,6 +179,10 @@ class SeedDataset(BaseModel):
         """
         Create a SeedDataset from a YAML file, marking nested seeds as trusted templates.
 
+        Thin shim that delegates to
+        :func:`pyrit.models.seeds.seed_loader.load_seed_dataset_from_yaml`; file I/O and
+        the ``is_jinja_template`` trust marker live in the loader module.
+
         Args:
             file: The input file path.
 
@@ -188,19 +190,12 @@ class SeedDataset(BaseModel):
             SeedDataset: The loaded dataset.
 
         Raises:
-            ValueError: If the YAML file is invalid.
+            FileNotFoundError: If the path does not resolve to an existing file.
+            ValueError: If the YAML file is invalid or empty.
         """
-        file = verify_and_resolve_path(file)
-        try:
-            yaml_data = yaml.safe_load(file.read_text("utf-8"))
-        except yaml.YAMLError as exc:
-            raise ValueError(f"Invalid YAML file '{file}': {exc}") from exc
+        from pyrit.models.seeds.seed_loader import load_seed_dataset_from_yaml
 
-        if yaml_data is None:
-            raise ValueError(f"YAML file '{file}' is empty.")
-
-        yaml_data["is_jinja_template"] = True
-        return cls.from_dict(yaml_data)
+        return load_seed_dataset_from_yaml(file)
 
     def get_values(
         self,

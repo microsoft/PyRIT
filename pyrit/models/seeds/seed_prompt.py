@@ -135,7 +135,10 @@ class SeedPrompt(Seed):
         error_message: Optional[str] = None,
     ) -> SeedPrompt:
         """
-        Load a Seed from a YAML file and validate that it contains specific parameters.
+        Load a SeedPrompt from a YAML file and validate that it declares each required parameter.
+
+        Thin shim that delegates to
+        :func:`pyrit.models.seeds.seed_loader.load_seed_prompt_from_yaml_with_required_parameters`.
 
         Args:
             template_path: Path to the YAML file containing the template.
@@ -143,20 +146,16 @@ class SeedPrompt(Seed):
             error_message: Custom error message if validation fails. If None, a default message is used.
 
         Returns:
-            SeedPrompt: The loaded and validated SeedPrompt of the specific subclass type.
+            SeedPrompt: The loaded and validated SeedPrompt.
 
         Raises:
             ValueError: If the template doesn't contain all required parameters.
-
         """
-        sp = cls.from_yaml_file(template_path)
+        from pyrit.models.seeds.seed_loader import load_seed_prompt_from_yaml_with_required_parameters
 
-        if sp.parameters is None or not all(param in sp.parameters for param in required_parameters):
-            if error_message is None:
-                error_message = f"Template must have these parameters: {', '.join(required_parameters)}"
-            raise ValueError(f"{error_message}: '{sp}'")
-
-        return sp
+        return load_seed_prompt_from_yaml_with_required_parameters(
+            template_path, required_parameters, error_message=error_message
+        )
 
     @staticmethod
     def from_messages(

@@ -145,38 +145,6 @@ class SeedSimulatedConversation(Seed):
         }
         return json.dumps(config, sort_keys=True, separators=(",", ":"))
 
-    @classmethod
-    def from_yaml_with_required_parameters(
-        cls,
-        template_path: Union[str, Path],
-        required_parameters: list[str],
-        error_message: Optional[str] = None,
-    ) -> SeedSimulatedConversation:
-        """
-        Load a SeedSimulatedConversation from a YAML file and validate required parameters.
-
-        Args:
-            template_path: Path to the YAML file containing the config.
-            required_parameters: List of parameter names that must exist.
-            error_message: Custom error message if validation fails.
-
-        Returns:
-            The loaded and validated SeedSimulatedConversation.
-
-        Raises:
-            ValueError: If required parameters are missing.
-
-        """
-        instance = cls.from_yaml_file(template_path)
-
-        # Check required parameters
-        for param in required_parameters:
-            if not hasattr(instance, param) or getattr(instance, param) is None:
-                msg = error_message or f"Missing required parameter: {param}"
-                raise ValueError(msg)
-
-        return instance
-
     def get_identifier(self) -> dict[str, Any]:
         """
         Get an identifier dict capturing this configuration for comparison/storage.
