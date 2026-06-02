@@ -218,7 +218,7 @@ class ImageCompressionConverter(PromptConverter):
         image.save(compressed_bytes, output_format, **save_kwargs)
         return compressed_bytes, output_format
 
-    async def _handle_original_image_fallback(
+    async def _handle_original_image_fallback_async(
         self,
         prompt: str,
         input_type: PromptDataType,
@@ -246,7 +246,7 @@ class ImageCompressionConverter(PromptConverter):
             return ConverterResult(output_text=str(img_serializer.value), output_type="image_path")
         return ConverterResult(output_text=prompt, output_type="image_path")
 
-    async def _read_image_from_url(self, url: str) -> bytes:
+    async def _read_image_from_url_async(self, url: str) -> bytes:
         """
         Download data from URL and returns the content as bytes.
 
@@ -289,7 +289,9 @@ class ImageCompressionConverter(PromptConverter):
 
         # Read the image data into memory as bytes for processing
         original_img_bytes = (
-            await self._read_image_from_url(prompt) if input_type == "url" else await img_serializer.read_data_async()
+            await self._read_image_from_url_async(prompt)
+            if input_type == "url"
+            else await img_serializer.read_data_async()
         )
         original_img = Image.open(BytesIO(original_img_bytes))
 
@@ -299,7 +301,7 @@ class ImageCompressionConverter(PromptConverter):
         # This is to avoid unnecessary processing and potential quality loss for images that are already small
         if not self._should_compress(original_size):
             logger.warning(f"Image too small ({original_size} bytes), skipping compression")
-            return await self._handle_original_image_fallback(
+            return await self._handle_original_image_fallback_async(
                 prompt, input_type, img_serializer, original_img_bytes, original_format
             )
 
@@ -312,7 +314,7 @@ class ImageCompressionConverter(PromptConverter):
         # Sometimes compression can actually increase file size so we check if we should fallback to the original
         if self._fallback_to_original and compressed_size >= original_size:
             logger.warning(f"Compression increased file size ({original_size} → {compressed_size}), using original")
-            return await self._handle_original_image_fallback(
+            return await self._handle_original_image_fallback_async(
                 prompt, input_type, img_serializer, original_img_bytes, original_format
             )
 

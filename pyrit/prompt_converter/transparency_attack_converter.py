@@ -256,7 +256,7 @@ class TransparencyAttackConverter(PromptConverter):
 
         return la_image
 
-    async def _save_blended_image(self, attack_image: np.ndarray, alpha: np.ndarray) -> str:
+    async def _save_blended_image_async(self, attack_image: np.ndarray, alpha: np.ndarray) -> str:
         """
         Save the blended image with transparency as a PNG file.
 
@@ -342,5 +342,5 @@ class TransparencyAttackConverter(PromptConverter):
             alpha = optimizer.update(params=alpha, grads=grad_alpha)
             alpha = np.clip(alpha, 0.0, 1.0)
 
-        image_path = await self._save_blended_image(background_tensor, alpha)
+        image_path = await self._save_blended_image_async(background_tensor, alpha)
         return ConverterResult(output_text=image_path, output_type="image_path")

@@ -147,7 +147,7 @@ class TestTransparencyAttackConverter:
             attack_image = np.ones((10, 10), dtype=np.float32) * 0.5
             alpha = np.ones((10, 10), dtype=np.float32) * 0.7
 
-            result_path = await converter._save_blended_image(attack_image, alpha)
+            result_path = await converter._save_blended_image_async(attack_image, alpha)
 
             assert result_path == "mock_image_path.png"
             mock_factory.assert_called_once_with(category="prompt-memory-entries", data_type="image_path")

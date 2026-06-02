@@ -63,7 +63,7 @@ async def test_add_image_video_converter_invalid_image_path(tmp_path, video_conv
     output_path = str(tmp_path / "output_video.mp4")
     converter = AddImageVideoConverter(video_path=video_converter_sample_video, output_path=output_path)
     with pytest.raises(FileNotFoundError):
-        await converter._add_image_to_video(image_path="invalid_image.png", output_path=output_path)
+        await converter._add_image_to_video_async(image_path="invalid_image.png", output_path=output_path)
 
 
 @pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
@@ -71,14 +71,16 @@ async def test_add_image_video_converter_invalid_video_path(tmp_path, video_conv
     output_path = str(tmp_path / "output_video.mp4")
     converter = AddImageVideoConverter(video_path="invalid_video.mp4", output_path=output_path)
     with pytest.raises(FileNotFoundError):
-        await converter._add_image_to_video(image_path=video_converter_sample_image, output_path=output_path)
+        await converter._add_image_to_video_async(image_path=video_converter_sample_image, output_path=output_path)
 
 
 @pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
 async def test_add_image_video_converter(tmp_path, video_converter_sample_video, video_converter_sample_image):
     output_path = str(tmp_path / "output_video.mp4")
     converter = AddImageVideoConverter(video_path=video_converter_sample_video, output_path=output_path)
-    result_path = await converter._add_image_to_video(image_path=video_converter_sample_image, output_path=output_path)
+    result_path = await converter._add_image_to_video_async(
+        image_path=video_converter_sample_image, output_path=output_path
+    )
     assert result_path == output_path
 
 
@@ -122,4 +124,4 @@ async def test_add_image_to_video_raises_when_decode_returns_none(tmp_path, vide
         side_effect=factory_side_effect,
     ):
         with pytest.raises(ValueError, match="Failed to decode overlay image"):
-            await converter._add_image_to_video(image_path="fake_image.png", output_path=output_path)
+            await converter._add_image_to_video_async(image_path="fake_image.png", output_path=output_path)

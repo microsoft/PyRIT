@@ -78,7 +78,7 @@ class AddImageVideoConverter(PromptConverter):
             }
         )
 
-    async def _add_image_to_video(self, image_path: str, output_path: str) -> str:
+    async def _add_image_to_video_async(self, image_path: str, output_path: str) -> str:
         """
         Add an image to video.
 
@@ -214,5 +214,7 @@ class AddImageVideoConverter(PromptConverter):
             output_video_serializer.value = self._output_path
 
         # Add video to the image
-        updated_video = await self._add_image_to_video(image_path=prompt, output_path=output_video_serializer.value)
+        updated_video = await self._add_image_to_video_async(
+            image_path=prompt, output_path=output_video_serializer.value
+        )
         return ConverterResult(output_text=str(updated_video), output_type="video_path")

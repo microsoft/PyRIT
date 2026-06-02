@@ -143,7 +143,7 @@ async def test_image_color_saturation_converter_convert_async_url_input(sample_i
         mock_serializer.save_b64_image_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
-        with patch.object(converter, "_read_image_from_url") as mock_read_url:
+        with patch.object(converter, "_read_image_from_url_async") as mock_read_url:
             mock_read_url.return_value = image_bytes
 
             result = await converter.convert_async(prompt=test_url, input_type="url")
@@ -167,7 +167,7 @@ async def test_image_color_saturation_converter_url_format_conversion(sample_ima
         mock_serializer.save_b64_image_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
-        with patch.object(converter, "_read_image_from_url") as mock_read_url:
+        with patch.object(converter, "_read_image_from_url_async") as mock_read_url:
             mock_read_url.return_value = large_image_bytes
 
             result = await converter.convert_async(prompt=test_url, input_type="url")

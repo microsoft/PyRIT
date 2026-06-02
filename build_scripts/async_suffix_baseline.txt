@@ -8,13 +8,6 @@
 # To regenerate (only after a deliberate, reviewed cleanup):
 #   python build_scripts/check_async_suffix.py --write-baseline
 
-pyrit/prompt_converter/add_image_to_video_converter.py:81:_add_image_to_video
-pyrit/prompt_converter/base_image_to_image_converter.py:128:_read_image_from_url
-pyrit/prompt_converter/image_compression_converter.py:221:_handle_original_image_fallback
-pyrit/prompt_converter/image_compression_converter.py:249:_read_image_from_url
-pyrit/prompt_converter/pdf_converter.py:419:_serialize_pdf
-pyrit/prompt_converter/prompt_converter.py:179:_replace_text_match
-pyrit/prompt_converter/transparency_attack_converter.py:259:_save_blended_image
 pyrit/prompt_normalizer/prompt_normalizer.py:237:convert_values
 pyrit/prompt_normalizer/prompt_normalizer.py:299:_calc_hash
 pyrit/prompt_normalizer/prompt_normalizer.py:304:add_prepended_conversation_to_memory
