@@ -19,8 +19,9 @@ from pyrit.executor.promptgen.core import (
     PromptGeneratorStrategyContext,
     PromptGeneratorStrategyResult,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.models import (
+    ComponentIdentifier,
+    Identifiable,
     Message,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
@@ -134,8 +135,14 @@ class AnecdoctorGenerator(
         # Prepare the system prompt template based on whether we're using knowledge graph
         if self._processing_model:
             self._system_prompt_template = self._load_prompt_from_yaml(yaml_filename=self._ANECDOCTOR_USE_KG_YAML)
+            # Also preload the KG extraction prompt so `_extract_knowledge_graph_async` doesn't
+            # repeat the file read + YAML parse on each invocation.
+            self._kg_prompt_template: Optional[str] = self._load_prompt_from_yaml(
+                yaml_filename=self._ANECDOCTOR_BUILD_KG_YAML
+            )
         else:
             self._system_prompt_template = self._load_prompt_from_yaml(yaml_filename=self._ANECDOCTOR_USE_FEWSHOT_YAML)
+            self._kg_prompt_template = None
 
     def _create_identifier(
         self,
@@ -364,9 +371,9 @@ class AnecdoctorGenerator(
 
         self._logger.debug("Extracting knowledge graph from evaluation data")
 
-        # Load and format the KG extraction prompt
-        kg_prompt_template = self._load_prompt_from_yaml(yaml_filename=self._ANECDOCTOR_BUILD_KG_YAML)
-        kg_system_prompt = kg_prompt_template.format(language=context.language)
+        # Format the cached KG extraction prompt. _kg_prompt_template is set in __init__
+        # whenever _processing_model is set, so the guard above already implies it is non-None here.
+        kg_system_prompt = self._kg_prompt_template.format(language=context.language)  # type: ignore[ty:unresolved-attribute]
 
         # Create a separate conversation ID for KG extraction
         kg_conversation_id = str(uuid.uuid4())

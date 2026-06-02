@@ -400,6 +400,105 @@ async def test_save_formatted_audio_raises_when_results_storage_io_none():
                         await serializer.save_formatted_audio(data=b"\x00\x01\x02")
 
 
+async def test_save_formatted_audio_writes_local_wav_via_to_thread(sqlite_instance, tmp_path):
+    """save_formatted_audio (local-disk path) should produce a readable WAV via _write_wav_sync."""
+    import wave
+
+    from pyrit.models import data_serializer_factory as factory
+
+    serializer = factory(category="prompt-memory-entries", data_type="audio_path")
+    output_path = tmp_path / "out.wav"
+    with patch.object(serializer, "get_data_filename", new_callable=AsyncMock, return_value=str(output_path)):
+        pcm = b"\x01\x00\x02\x00\x03\x00\x04\x00"
+        await serializer.save_formatted_audio(
+            data=pcm,
+            num_channels=1,
+            sample_width=2,
+            sample_rate=16000,
+        )
+
+    assert os.path.exists(serializer.value)
+    assert serializer.value == str(output_path)
+    with wave.open(str(output_path), "rb") as wav_file:
+        assert wav_file.getnchannels() == 1
+        assert wav_file.getsampwidth() == 2
+        assert wav_file.getframerate() == 16000
+        assert wav_file.readframes(wav_file.getnframes()) == pcm
+
+
+def test_write_wav_sync_produces_readable_wav(tmp_path):
+    """_write_wav_sync should produce a WAV file readable by wave.open with the same metadata and frames."""
+    import wave
+
+    from pyrit.models.data_type_serializer import _write_wav_sync
+
+    out_path = tmp_path / "direct.wav"
+    pcm = b"\x10\x00\x20\x00\x30\x00\x40\x00"
+    _write_wav_sync(
+        str(out_path),
+        num_channels=2,
+        sample_width=2,
+        sample_rate=8000,
+        data=pcm,
+    )
+
+    assert out_path.exists()
+    with wave.open(str(out_path), "rb") as wav_file:
+        assert wav_file.getnchannels() == 2
+        assert wav_file.getsampwidth() == 2
+        assert wav_file.getframerate() == 8000
+        assert wav_file.readframes(wav_file.getnframes()) == pcm
+
+
+async def test_save_formatted_audio_writes_azure_wav_via_storage_io(sqlite_instance, tmp_path):
+    """Azure-storage branch should round-trip data through _write_wav_sync to storage_io.write_file."""
+    import wave
+
+    from pyrit.common import path as common_path
+    from pyrit.models import data_serializer_factory as factory
+
+    captured: dict[str, bytes] = {}
+
+    async def _capture_write(file_path, data):
+        captured["data"] = data
+        captured["path"] = str(file_path)
+
+    mock_storage_io = MagicMock()
+    mock_storage_io.write_file = AsyncMock(side_effect=_capture_write)
+    mock_memory = MagicMock()
+    mock_memory.results_storage_io = mock_storage_io
+
+    serializer = factory(category="prompt-memory-entries", data_type="audio_path")
+    azure_url = "https://account.blob.core.windows.net/container/audio/test.wav"
+
+    pcm = b"\xaa\xbb\xcc\xdd\xee\xff\x00\x11"
+    with patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory):
+        with patch.object(serializer, "get_data_filename", new_callable=AsyncMock, return_value=azure_url):
+            # Redirect DB_DATA_PATH so the temp_audio.wav write lands in tmp_path
+            with patch.object(common_path, "DB_DATA_PATH", str(tmp_path)):
+                from pyrit.models import data_type_serializer as dts_module
+
+                with patch.object(dts_module, "DB_DATA_PATH", str(tmp_path)):
+                    await serializer.save_formatted_audio(
+                        data=pcm,
+                        num_channels=1,
+                        sample_width=2,
+                        sample_rate=16000,
+                    )
+
+    assert captured["path"] == azure_url
+    # Bytes written to storage_io must be a valid WAV with the requested metadata + frames
+    written_wav = tmp_path / "written.wav"
+    written_wav.write_bytes(captured["data"])
+    with wave.open(str(written_wav), "rb") as wav_file:
+        assert wav_file.getnchannels() == 1
+        assert wav_file.getsampwidth() == 2
+        assert wav_file.getframerate() == 16000
+        assert wav_file.readframes(wav_file.getnframes()) == pcm
+    # Temp file should be cleaned up
+    assert not (tmp_path / "temp_audio.wav").exists()
+
+
 async def test_get_data_filename_raises_when_results_storage_io_none():
     serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
     serializer._file_path = None
