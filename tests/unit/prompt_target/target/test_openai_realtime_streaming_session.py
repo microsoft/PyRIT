@@ -443,3 +443,367 @@ async def test_run_async_propagates_dispatcher_failure_via_failure_callback():
 
         with pytest.raises(RuntimeError, match="dispatch loop died"):
             await asyncio.gather(_consume(), _fire_failure())
+
+
+# ---------------------------------------------------------------------------
+# 8. Trim: pre-speech silence is stripped using audio_start_ms before persistence
+# ---------------------------------------------------------------------------
+
+
+async def test_on_committed_trims_pre_speech_silence_before_persisting_user_audio():
+    """``audio_start_ms`` past prefix_padding trims the snapshot before save_audio is called."""
+    target = _build_target()
+    target.request_response_async = _make_request_response_async()
+    normalizer = _build_normalizer()
+
+    # 600ms buffer @ 24kHz mono PCM16 = 600 * 48 = 28800 bytes. We push it as one chunk
+    # so the trim computation is easy to reason about.
+    bytes_per_ms = 48
+    buffer_ms = 600
+    chunk = b"\xaa" * (buffer_ms * bytes_per_ms)
+    finish = asyncio.Event()
+
+    session = _OpenAIRealtimeStreamingSession(
+        target=target,
+        audio_chunks=_paced_chunks([chunk], finish),
+        prompt_normalizer=normalizer,
+        vad=ServerVadConfig(prefix_padding_ms=100),
+    )
+
+    with _patched_dispatcher():
+        await _run_session_with_events(
+            session,
+            finish=finish,
+            events=[CommittedEvent(item_id="item-1", audio_start_ms=500)],
+        )
+
+    # start_ms = max(0, 500 - 100) = 400 → start_byte = 400 * 48 = 19200
+    # trimmed length = 28800 - 19200 = 9600 bytes (200ms)
+    raw_save_call = target.streaming.save_audio.await_args_list[0]
+    saved_user_pcm = raw_save_call.args[0] if raw_save_call.args else raw_save_call.kwargs.get("pcm")
+    assert len(saved_user_pcm) == 9600
+
+
+async def test_on_committed_skips_trim_when_audio_start_ms_missing():
+    """When ``audio_start_ms`` is None, the full buffer is persisted (no trim)."""
+    target = _build_target()
+    target.request_response_async = _make_request_response_async()
+    normalizer = _build_normalizer()
+
+    bytes_per_ms = 48
+    buffer_ms = 200
+    chunk = b"\xbb" * (buffer_ms * bytes_per_ms)
+    finish = asyncio.Event()
+
+    session = _OpenAIRealtimeStreamingSession(
+        target=target,
+        audio_chunks=_paced_chunks([chunk], finish),
+        prompt_normalizer=normalizer,
+        vad=ServerVadConfig(prefix_padding_ms=100),
+    )
+
+    with _patched_dispatcher():
+        await _run_session_with_events(
+            session,
+            finish=finish,
+            events=[CommittedEvent(item_id="item-1", audio_start_ms=None)],
+        )
+
+    raw_save_call = target.streaming.save_audio.await_args_list[0]
+    saved_user_pcm = raw_save_call.args[0] if raw_save_call.args else raw_save_call.kwargs.get("pcm")
+    assert len(saved_user_pcm) == buffer_ms * bytes_per_ms
+
+
+async def test_buffer_start_session_ms_advances_across_commits():
+    """Second commit's server-relative ``audio_start_ms`` is mapped through ``_buffer_start_session_ms``."""
+    target = _build_target()
+    target.request_response_async = _make_request_response_async()
+    normalizer = _build_normalizer()
+
+    bytes_per_ms = 48
+    # Turn 1 buffer: 600ms, audio_start_ms=500 (server-relative) → trims 400ms = 19200 bytes.
+    # After turn 1, _buffer_start_session_ms advances to 600.
+    # Turn 2 buffer: 400ms, audio_start_ms=800 (server-relative) → buffer-relative = 200.
+    #   start_ms = max(0, 200 - 100) = 100 → 100*48 = 4800 bytes trimmed.
+    #   trimmed length = 19200 - 4800 = 14400 bytes (300ms).
+    chunk1 = b"\xaa" * (600 * bytes_per_ms)
+    chunk2 = b"\xbb" * (400 * bytes_per_ms)
+
+    # Per-chunk gating so the second chunk lands AFTER commit #1 fires; otherwise the
+    # producer would drain both chunks into the buffer before any commit and turn 1
+    # would see 1000ms of audio (advancing _buffer_start_session_ms past turn 2's
+    # event.audio_start_ms).
+    gate2 = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def _gated_chunks():
+        yield chunk1
+        await gate2.wait()
+        yield chunk2
+        await finish.wait()
+
+    session = _OpenAIRealtimeStreamingSession(
+        target=target,
+        audio_chunks=_gated_chunks(),
+        prompt_normalizer=normalizer,
+        vad=ServerVadConfig(prefix_padding_ms=100),
+    )
+
+    async def _consume() -> None:
+        async for _msg in session.run_async():
+            pass
+
+    async def _fire() -> None:
+        await asyncio.sleep(0)
+        await session._on_committed(CommittedEvent(item_id="t1", audio_start_ms=500))
+        gate2.set()
+        # Give the producer time to drain chunk2 into _pending_chunks.
+        for _ in range(20):
+            await asyncio.sleep(0)
+        await session._on_committed(CommittedEvent(item_id="t2", audio_start_ms=800))
+        finish.set()
+
+    with _patched_dispatcher():
+        await asyncio.gather(_consume(), _fire())
+
+    # save_audio call ordering per turn: raw_user, assistant. We requested no request converters
+    # so converted_user_path == raw_user_path and only one user save_audio fires per turn.
+    # Across two turns: [user_t1, assistant_t1, user_t2, assistant_t2].
+    calls = target.streaming.save_audio.await_args_list
+    assert len(calls) == 4
+    assert len(calls[0].args[0]) == 9600
+    assert len(calls[2].args[0]) == 14400
+
+
+# ---------------------------------------------------------------------------
+# 9. attack_identifier is stamped on persisted user + assistant pieces
+# ---------------------------------------------------------------------------
+
+
+async def test_attack_identifier_stamped_on_persisted_pieces_when_set():
+    """When ``attack_identifier`` is provided, every persisted piece carries it."""
+    target = _build_target()
+    target.request_response_async = _make_request_response_async()
+    normalizer = _build_normalizer()
+
+    persisted_messages: list[Message] = []
+
+    async def _capture(*, message: Message) -> None:
+        persisted_messages.append(message)
+
+    normalizer.hash_and_persist_message_async = AsyncMock(side_effect=_capture)
+
+    attack_id = {"__type__": "BargeInAttack", "__module__": "test", "id": "attack-42"}
+
+    finish = asyncio.Event()
+    session = _OpenAIRealtimeStreamingSession(
+        target=target,
+        audio_chunks=_paced_chunks([b"\x01" * 96], finish),
+        prompt_normalizer=normalizer,
+        attack_identifier=attack_id,
+    )
+
+    with _patched_dispatcher():
+        await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="i")])
+
+    # Expect one user message + one assistant message (two pieces) — three pieces total.
+    all_pieces = [piece for msg in persisted_messages for piece in msg.message_pieces]
+    assert len(all_pieces) == 3
+    for piece in all_pieces:
+        assert piece.attack_identifier == attack_id
+
+
+async def test_attack_identifier_absent_when_not_provided():
+    """Without ``attack_identifier``, persisted pieces have None attribution (back-compat)."""
+    target = _build_target()
+    target.request_response_async = _make_request_response_async()
+    normalizer = _build_normalizer()
+
+    persisted_messages: list[Message] = []
+
+    async def _capture(*, message: Message) -> None:
+        persisted_messages.append(message)
+
+    normalizer.hash_and_persist_message_async = AsyncMock(side_effect=_capture)
+
+    finish = asyncio.Event()
+    session = _OpenAIRealtimeStreamingSession(
+        target=target,
+        audio_chunks=_paced_chunks([b"\x01" * 96], finish),
+        prompt_normalizer=normalizer,
+    )
+
+    with _patched_dispatcher():
+        await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="i")])
+
+    all_pieces = [piece for msg in persisted_messages for piece in msg.message_pieces]
+    assert len(all_pieces) == 3
+    for piece in all_pieces:
+        assert piece.attack_identifier is None
+
+
+# ---------------------------------------------------------------------------
+# 10. persist_prepended_conversation=False skips the prepended-memory write
+# ---------------------------------------------------------------------------
+
+
+async def test_persist_prepended_conversation_false_skips_memory_add():
+    """``persist_prepended_conversation=False`` skips ``add_prepended_conversation_to_memory``."""
+    target = _build_target()
+    normalizer = _build_normalizer()
+
+    finish = asyncio.Event()
+    finish.set()
+
+    async def _empty():
+        if False:
+            yield b""
+
+    session = _OpenAIRealtimeStreamingSession(
+        target=target,
+        audio_chunks=_empty(),
+        prompt_normalizer=normalizer,
+        prepended_conversation=[MagicMock(name="prepended_message")],
+        persist_prepended_conversation=False,
+    )
+
+    with _patched_dispatcher():
+        async for _ in session.run_async():
+            pytest.fail("no events were fired; session should yield nothing")
+
+    # send_streaming_session_config still gets the prepended conversation (system msg → instructions).
+    target.streaming.send_streaming_session_config_async.assert_awaited_once()
+    # But the memory write is skipped — the caller (e.g., the attack) has already persisted it.
+    normalizer.add_prepended_conversation_to_memory.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 11. Factory passthrough: RealtimeTarget.open_streaming_session forwards every kwarg
+# ---------------------------------------------------------------------------
+
+
+_CLEAN_ENV = {"OPENAI_REALTIME_UNDERLYING_MODEL": ""}
+
+
+@patch.dict("os.environ", _CLEAN_ENV)
+def test_open_streaming_session_forwards_kwargs_to_session_constructor(sqlite_instance):
+    """``RealtimeTarget.open_streaming_session`` is a thin pass-through to the session ctor."""
+    from pyrit.prompt_target import RealtimeTarget
+
+    target = RealtimeTarget(api_key="k", endpoint="wss://test_url", model_name="test", server_vad=True)
+    normalizer = _build_normalizer()
+
+    async def _empty():
+        if False:
+            yield b""
+
+    chunks = _empty()
+    prepended = [MagicMock(name="prepended_message")]
+    req_cfgs = [MagicMock(name="req_cfg")]
+    resp_cfgs = [MagicMock(name="resp_cfg")]
+    vad = ServerVadConfig(prefix_padding_ms=42)
+    attack_id = {"__type__": "BargeInAttack", "id": "x"}
+
+    captured: dict[str, Any] = {}
+
+    def _fake_session_ctor(**kwargs):
+        captured.update(kwargs)
+        return MagicMock(name="session")
+
+    with patch(
+        "pyrit.prompt_target.openai._openai_realtime_streaming_session._OpenAIRealtimeStreamingSession",
+        side_effect=_fake_session_ctor,
+    ):
+        target.open_streaming_session(
+            audio_chunks=chunks,
+            prompt_normalizer=normalizer,
+            conversation_id="conv-X",
+            request_converter_configurations=req_cfgs,
+            response_converter_configurations=resp_cfgs,
+            prepended_conversation=prepended,
+            vad=vad,
+            attack_identifier=attack_id,
+            persist_prepended_conversation=False,
+        )
+
+    assert captured["target"] is target
+    assert captured["audio_chunks"] is chunks
+    assert captured["prompt_normalizer"] is normalizer
+    assert captured["conversation_id"] == "conv-X"
+    assert captured["request_converter_configurations"] is req_cfgs
+    assert captured["response_converter_configurations"] is resp_cfgs
+    assert captured["prepended_conversation"] is prepended
+    assert captured["vad"] is vad
+    assert captured["attack_identifier"] is attack_id
+    assert captured["persist_prepended_conversation"] is False
+
+
+# ---------------------------------------------------------------------------
+# 12. Direct unit tests for the _trim_snapshot_to_speech helper
+# ---------------------------------------------------------------------------
+
+
+def test_trim_returns_full_buffer_when_audio_start_ms_none():
+    from pyrit.prompt_target.openai._openai_realtime_streaming_session import _trim_snapshot_to_speech
+
+    buf = b"\xaa" * (100 * 48)
+    out = _trim_snapshot_to_speech(raw_buffer=buf, sample_rate_hz=24000, audio_start_ms=None, prefix_padding_ms=300)
+    assert out is buf
+
+
+def test_trim_returns_full_buffer_when_audio_start_ms_zero():
+    from pyrit.prompt_target.openai._openai_realtime_streaming_session import _trim_snapshot_to_speech
+
+    buf = b"\xaa" * (100 * 48)
+    out = _trim_snapshot_to_speech(raw_buffer=buf, sample_rate_hz=24000, audio_start_ms=0, prefix_padding_ms=300)
+    assert out is buf
+
+
+def test_trim_raises_on_negative_audio_start_ms():
+    from pyrit.prompt_target.openai._openai_realtime_streaming_session import _trim_snapshot_to_speech
+
+    with pytest.raises(ValueError, match="must be >= 0"):
+        _trim_snapshot_to_speech(raw_buffer=b"\x00" * 100, sample_rate_hz=24000, audio_start_ms=-1, prefix_padding_ms=0)
+
+
+def test_trim_keeps_prefix_padding_window():
+    """``audio_start_ms - prefix_padding_ms`` is the trim point; padding before speech is kept."""
+    from pyrit.prompt_target.openai._openai_realtime_streaming_session import _trim_snapshot_to_speech
+
+    # 1000ms buffer; speech starts at 700ms with 200ms padding → trim at 500ms = 24000 bytes.
+    buf = b"\xaa" * (1000 * 48)
+    out = _trim_snapshot_to_speech(raw_buffer=buf, sample_rate_hz=24000, audio_start_ms=700, prefix_padding_ms=200)
+    assert len(out) == 500 * 48
+
+
+def test_trim_returns_full_buffer_when_trim_would_exceed_length():
+    """Defensive: when the computed trim is beyond the buffer, return the original buffer."""
+    from pyrit.prompt_target.openai._openai_realtime_streaming_session import _trim_snapshot_to_speech
+
+    # 100ms buffer; speech "starts" at 5000ms with 0 padding → trim past end.
+    buf = b"\xaa" * (100 * 48)
+    out = _trim_snapshot_to_speech(raw_buffer=buf, sample_rate_hz=24000, audio_start_ms=5000, prefix_padding_ms=0)
+    assert out is buf
+
+
+def test_trim_aligns_to_sample_frame_boundary():
+    """Trim must align to ``sample_width_bytes * channels`` so PCM frames aren't split."""
+    from pyrit.prompt_target.openai._openai_realtime_streaming_session import _trim_snapshot_to_speech
+
+    # An odd start_byte (e.g., 1) must be rounded down to 0 for sample_width=2.
+    buf = b"\x01\x02\x03\x04\x05\x06\x07\x08"
+    # Construct an audio_start_ms that lands on byte 1 to trigger alignment:
+    # bytes_per_ms = 24000 * 2 // 1000 = 48 → no fine-grained way to land on byte 1.
+    # Instead pick rate=1000Hz so bytes_per_ms = 1000*2//1000 = 2; audio_start_ms=1 → start_byte=2.
+    # That's already aligned. Use sample_width=2 with a contrived offset by inspecting math:
+    # For rate=500Hz (so bytes_per_ms = 1), audio_start_ms=3 → start_byte=3 → must align to 2.
+    out = _trim_snapshot_to_speech(
+        raw_buffer=buf,
+        sample_rate_hz=500,
+        audio_start_ms=3,
+        prefix_padding_ms=0,
+        sample_width_bytes=2,
+        channels=1,
+    )
+    # start_byte = 3 → aligned down to 2 → trimmed = buf[2:] = b"\x03..\x08" (6 bytes)
+    assert out == b"\x03\x04\x05\x06\x07\x08"

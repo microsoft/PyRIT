@@ -8,7 +8,7 @@ import re
 import wave
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Literal, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Optional
 
 from openai import AsyncOpenAI
 
@@ -36,6 +36,14 @@ from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+    from pyrit.prompt_target.openai._openai_realtime_streaming_session import (
+        _OpenAIRealtimeStreamingSession,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -354,6 +362,69 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         # Composition: streaming surface lives on a dedicated handle so the attack can
         # type against the provider-agnostic ``StreamingHandle`` ABC.
         self.streaming = _RealtimeStreamingHandle(target=self)
+
+    def open_streaming_session(
+        self,
+        *,
+        audio_chunks: "AsyncIterator[bytes]",
+        prompt_normalizer: "PromptNormalizer",
+        conversation_id: str | None = None,
+        request_converter_configurations: "list[PromptConverterConfiguration] | None" = None,
+        response_converter_configurations: "list[PromptConverterConfiguration] | None" = None,
+        prepended_conversation: list[Message] | None = None,
+        vad: ServerVadConfig | None = None,
+        attack_identifier: "ComponentIdentifier | None" = None,
+        persist_prepended_conversation: bool = True,
+    ) -> "_OpenAIRealtimeStreamingSession":
+        """
+        Open a new server-VAD streaming session bound to this target.
+
+        Returns:
+            A fresh :class:`_OpenAIRealtimeStreamingSession`. Drive it by iterating
+            ``await session.run_async()``; one assistant ``Message`` is yielded per
+            VAD-committed turn, and the matching user message is persisted to memory
+            (but not yielded). The session owns its websocket connection + dispatcher
+            for the duration of ``run_async``.
+
+        Args:
+            audio_chunks: Async iterator yielding PCM16 mono bytes at the target's
+                ``streaming.SAMPLE_RATE_HZ`` rate.
+            prompt_normalizer: Normalizer used to apply converters and persist messages.
+            conversation_id: Conversation id for this session. Auto-generated when omitted.
+            request_converter_configurations: Converters applied to each committed user turn
+                before swap-and-respond.
+            response_converter_configurations: Converters applied to each assistant turn
+                before persistence.
+            prepended_conversation: Optional conversation history. The leading system
+                message becomes session instructions.
+            vad: Optional per-call VAD tuning. When ``None``, falls back to the target's
+                constructor-set ``server_vad``.
+            attack_identifier: Stamped on every persisted user / assistant piece for
+                attribution. Pass the caller's identifier so live messages share the
+                provenance contract of prepended messages.
+            persist_prepended_conversation: When ``True`` (default), the session writes
+                ``prepended_conversation`` to memory itself. Pass ``False`` when the
+                caller already persisted the prepended conversation (e.g. via
+                ``ConversationManager.initialize_context_async``) to avoid double-writes.
+        """
+        # Local import: the session module imports ``_OpenAIRealtimeDispatcher`` from
+        # this module, so a module-level import here would be circular.
+        from pyrit.prompt_target.openai._openai_realtime_streaming_session import (
+            _OpenAIRealtimeStreamingSession,
+        )
+
+        return _OpenAIRealtimeStreamingSession(
+            target=self,
+            audio_chunks=audio_chunks,
+            prompt_normalizer=prompt_normalizer,
+            conversation_id=conversation_id,
+            request_converter_configurations=request_converter_configurations,
+            response_converter_configurations=response_converter_configurations,
+            prepended_conversation=prepended_conversation,
+            vad=vad,
+            attack_identifier=attack_identifier,
+            persist_prepended_conversation=persist_prepended_conversation,
+        )
 
     def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_REALTIME_MODEL"

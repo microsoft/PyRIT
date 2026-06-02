@@ -26,6 +26,7 @@ except ImportError:  # pragma: no cover - openai is a hard dependency for this m
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from pyrit.identifiers import ComponentIdentifier
     from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
     from pyrit.prompt_target.common.realtime_audio import CommittedEvent
     from pyrit.prompt_target.common.streaming import ServerVadConfig
@@ -33,6 +34,51 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _trim_snapshot_to_speech(
+    *,
+    raw_buffer: bytes,
+    sample_rate_hz: int,
+    audio_start_ms: int | None,
+    prefix_padding_ms: int,
+    sample_width_bytes: int = 2,
+    channels: int = 1,
+) -> bytes:
+    """
+    Trim leading pre-speech silence from a raw mic snapshot.
+
+    Server VAD reports where speech began via ``audio_start_ms``. The session's
+    local accumulator captures every chunk pushed since the last commit — including
+    seconds of pre-speech silence — so without a trim the converted audio that
+    gets swapped into the server's committed item would be much longer than
+    what the server actually committed, causing the model to hear leading silence.
+
+    Returns:
+        The trimmed PCM. Returns ``raw_buffer`` unchanged when ``audio_start_ms`` is
+        ``None`` or ``0``, or when the computed trim would leave nothing.
+
+    Raises:
+        ValueError: If ``audio_start_ms`` is negative.
+    """
+    if audio_start_ms is None:
+        logger.warning(
+            "audio_start_ms missing on commit; returning full buffer (converter audio may include leading silence)."
+        )
+        return raw_buffer
+    if audio_start_ms == 0:
+        return raw_buffer
+    if audio_start_ms < 0:
+        raise ValueError(f"audio_start_ms must be >= 0, got {audio_start_ms}")
+    bytes_per_ms = sample_rate_hz * sample_width_bytes * channels // 1000
+    start_ms = max(0, audio_start_ms - prefix_padding_ms)
+    start_byte = start_ms * bytes_per_ms
+    # Align to sample frame boundary so the trimmed buffer doesn't start mid-sample.
+    frame_bytes = sample_width_bytes * channels
+    start_byte -= start_byte % frame_bytes
+    if start_byte >= len(raw_buffer):
+        return raw_buffer
+    return raw_buffer[start_byte:]
 
 
 @dataclass(frozen=True)
@@ -52,7 +98,7 @@ class _OpenAIRealtimeStreamingSession:
     Per-conversation lifecycle owner for one OpenAI Realtime streaming exchange.
 
     Internal to :mod:`pyrit.prompt_target.openai`. Constructed and consumed only by
-    :meth:`RealtimeTarget.send_streaming_prompt_async`; downstream code should depend on
+    :meth:`RealtimeTarget.open_streaming_session`; downstream code should depend on
     the ``AsyncIterator[Message]`` contract, never on this class directly.
     """
 
@@ -67,6 +113,8 @@ class _OpenAIRealtimeStreamingSession:
         response_converter_configurations: list[PromptConverterConfiguration] | None = None,
         prepended_conversation: list[Message] | None = None,
         vad: ServerVadConfig | None = None,
+        attack_identifier: ComponentIdentifier | None = None,
+        persist_prepended_conversation: bool = True,
     ) -> None:
         self._target = target
         self._audio_chunks = audio_chunks
@@ -76,11 +124,19 @@ class _OpenAIRealtimeStreamingSession:
         self._response_converter_configurations = response_converter_configurations or []
         self._prepended_conversation = prepended_conversation or []
         self._vad = vad
+        self._attack_identifier = attack_identifier
+        self._persist_prepended_conversation = persist_prepended_conversation
 
         # Tee raw user audio so we can persist it per VAD-committed turn; the dispatcher
         # only surfaces ``CommittedEvent`` with an item id, not the bytes themselves.
         self._pending_chunks = bytearray()
         self._pending_chunks_lock = asyncio.Lock()
+
+        # Session-time (ms) at which the current buffer started accumulating. Used to
+        # convert the server's session-relative ``audio_start_ms`` into a buffer-relative
+        # offset for trimming. Advanced under ``_pending_chunks_lock`` so back-to-back
+        # commits cannot interleave with the snapshot/trim.
+        self._buffer_start_session_ms: int = 0
 
         # Serializes per-turn convert/swap/respond/persist work so two server-VAD
         # commits firing back-to-back cannot interleave.
@@ -114,11 +170,12 @@ class _OpenAIRealtimeStreamingSession:
                 conversation=self._prepended_conversation,
                 vad=self._vad,
             )
-            await self._prompt_normalizer.add_prepended_conversation_to_memory(
-                conversation_id=self._conversation_id,
-                should_convert=False,
-                prepended_conversation=self._prepended_conversation,
-            )
+            if self._persist_prepended_conversation:
+                await self._prompt_normalizer.add_prepended_conversation_to_memory(
+                    conversation_id=self._conversation_id,
+                    should_convert=False,
+                    prepended_conversation=self._prepended_conversation,
+                )
 
             self._queue = asyncio.Queue()
             self._dispatcher = _OpenAIRealtimeDispatcher(
@@ -216,25 +273,50 @@ class _OpenAIRealtimeStreamingSession:
 
     async def _on_committed(self, event: CommittedEvent) -> None:
         """
-        Dispatcher-side callback: snapshot raw audio now, then run the turn under the lock.
+        Dispatcher-side callback: snapshot raw audio + trim now, then run the turn under the lock.
+
+        Snapshot, trim, and ``_buffer_start_session_ms`` advance all happen under
+        ``_pending_chunks_lock`` so back-to-back commits (the dispatcher schedules
+        callbacks as background tasks) cannot interleave and corrupt the trim or
+        the offset bookkeeping. The slow convert/swap/respond work then runs
+        outside this lock, gated by ``_turn_lock``.
 
         Raises:
             asyncio.CancelledError: Propagated when the dispatcher task is cancelled.
         """
         assert self._queue is not None
-        # Snapshot the user audio buffered up to this commit BEFORE acquiring the
-        # turn lock. Anything pushed afterward belongs to the next turn; without
-        # this early snapshot, lock contention with a slow prior turn would let
-        # the next turn's audio leak into this turn's persisted file.
+        streaming = self._target.streaming
+        sample_rate = streaming.SAMPLE_RATE_HZ
+
         async with self._pending_chunks_lock:
             raw_pcm = bytes(self._pending_chunks)
             self._pending_chunks.clear()
+
+            bytes_per_ms = sample_rate * 2 // 1000  # PCM16 mono
+            buffer_duration_ms = len(raw_pcm) // bytes_per_ms if bytes_per_ms else 0
+
+            buffer_relative_audio_start_ms: int | None = None
+            if event.audio_start_ms is not None:
+                buffer_relative_audio_start_ms = event.audio_start_ms - self._buffer_start_session_ms
+
+            # ``self._vad is None`` means "use target default", not "no VAD".
+            effective_vad = self._vad if self._vad is not None else streaming.server_vad_config
+            prefix_padding_ms = effective_vad.prefix_padding_ms if effective_vad is not None else 0
+
+            trimmed_pcm = _trim_snapshot_to_speech(
+                raw_buffer=raw_pcm,
+                sample_rate_hz=sample_rate,
+                audio_start_ms=buffer_relative_audio_start_ms,
+                prefix_padding_ms=prefix_padding_ms,
+            )
+            self._buffer_start_session_ms += buffer_duration_ms
+
         # Signal the producer that a committed event was observed so a forced final
         # commit can verify the server actually processed it.
         self._commit_observed.set()
         try:
             async with self._turn_lock:
-                message = await self._handle_committed_turn_async(event=event, raw_pcm=raw_pcm)
+                message = await self._handle_committed_turn_async(event=event, raw_pcm=trimmed_pcm)
             await self._queue.put(message)
         except asyncio.CancelledError:
             raise
@@ -297,6 +379,7 @@ class _OpenAIRealtimeStreamingSession:
             converted_value_data_type="audio_path",
             conversation_id=self._conversation_id,
             prompt_target_identifier=target_identifier,
+            attack_identifier=self._attack_identifier,
         )
         for cfg in self._request_converter_configurations:
             user_piece.converter_identifiers.extend(converter.get_identifier() for converter in cfg.converters)
@@ -308,6 +391,7 @@ class _OpenAIRealtimeStreamingSession:
             original_value_data_type="text",
             conversation_id=self._conversation_id,
             prompt_target_identifier=target_identifier,
+            attack_identifier=self._attack_identifier,
         )
         assistant_audio_piece = MessagePiece(
             role="assistant",
@@ -315,6 +399,7 @@ class _OpenAIRealtimeStreamingSession:
             original_value_data_type="audio_path",
             conversation_id=self._conversation_id,
             prompt_target_identifier=target_identifier,
+            attack_identifier=self._attack_identifier,
         )
         if result.interrupted:
             assistant_text_piece.prompt_metadata[STREAMING_INTERRUPTED_KEY] = True
