@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass
 
-from pyrit.models.strategy_result import StrategyResult
+from pyrit.models.results.strategy_result import StrategyResult
 
 
 @dataclass
