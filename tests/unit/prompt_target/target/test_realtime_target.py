@@ -32,7 +32,7 @@ async def test_connect_success(target):
         connection = await target.connect(conversation_id="test_conv")
         assert connection == mock_connection
         mock_client.realtime.connect.assert_called_once_with(model="test")
-    await target.cleanup_target()
+    await target.cleanup_target_async()
 
 
 async def test_send_prompt_async(target):
@@ -67,7 +67,7 @@ async def test_send_prompt_async(target):
     assert response[0].get_value(1) == "output.wav"
 
     # Clean up the WebSocket connections
-    await target.cleanup_target()
+    await target.cleanup_target_async()
 
 
 async def test_get_system_prompt_from_conversation_with_system_message(target):
@@ -158,7 +158,7 @@ async def test_multiple_websockets_created_for_multiple_conversations(target):
     assert "conversation_2" in target._existing_conversation
 
     # Clean up the WebSocket connections
-    await target.cleanup_target()
+    await target.cleanup_target_async()
     assert target._existing_conversation == {}
 
 
@@ -385,7 +385,7 @@ async def test_multi_turn_reuses_connection(target):
     # send_text_async should have been called twice (once per turn)
     assert target.send_text_async.call_count == 2
 
-    await target.cleanup_target()
+    await target.cleanup_target_async()
 
 
 async def test_receive_events_skips_stale_response_done(target):

@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import IO, Optional
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -96,5 +97,14 @@ class TextTarget(PromptTarget):
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         pass
 
-    async def cleanup_target(self) -> None:
+    async def cleanup_target_async(self) -> None:
         """Target does not require cleanup."""
+
+    async def cleanup_target(self) -> None:  # pyrit-async-suffix-exempt
+        """Use ``cleanup_target_async`` instead; this is a deprecated alias."""
+        print_deprecation_message(
+            old_item="pyrit.prompt_target.TextTarget.cleanup_target",
+            new_item="pyrit.prompt_target.TextTarget.cleanup_target_async",
+            removed_in="0.16.0",
+        )
+        await self.cleanup_target_async()

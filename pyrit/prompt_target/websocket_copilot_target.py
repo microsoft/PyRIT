@@ -355,7 +355,7 @@ class WebSocketCopilotTarget(PromptTarget):
         logger.info(f"Created annotation for image with docId: {annotation}")
         return annotation
 
-    async def _build_prompt_message(
+    async def _build_prompt_message_async(
         self,
         *,
         message_pieces: list[MessagePiece],
@@ -471,7 +471,7 @@ class WebSocketCopilotTarget(PromptTarget):
         logger.debug(f"Built prompt message: {result}")
         return result
 
-    async def _connect_and_send(
+    async def _connect_and_send_async(
         self,
         *,
         message_pieces: list[MessagePiece],
@@ -505,7 +505,7 @@ class WebSocketCopilotTarget(PromptTarget):
 
         inputs = [
             {"protocol": "json", "version": 1},  # the handshake message, we expect PING in response
-            await self._build_prompt_message(  # the actual user prompt, we expect FINAL_CONTENT in response
+            await self._build_prompt_message_async(  # the actual user prompt, we expect FINAL_CONTENT in response
                 message_pieces=message_pieces,
                 session_id=session_id,
                 copilot_conversation_id=copilot_conversation_id,
@@ -678,7 +678,7 @@ class WebSocketCopilotTarget(PromptTarget):
         )
 
         try:
-            response_text = await self._connect_and_send(
+            response_text = await self._connect_and_send_async(
                 message_pieces=list(message.message_pieces),
                 session_id=session_id,
                 copilot_conversation_id=copilot_conversation_id,

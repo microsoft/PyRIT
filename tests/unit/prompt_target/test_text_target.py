@@ -93,4 +93,4 @@ async def test_send_prompt_async_appends_newline(sample_entries: MutableSequence
 async def test_cleanup_target_does_nothing():
     target = TextTarget(text_stream=io.StringIO())
     # Should not raise
-    await target.cleanup_target()
+    await target.cleanup_target_async()

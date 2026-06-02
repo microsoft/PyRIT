@@ -17,6 +17,7 @@ from transformers import (
 )
 
 from pyrit.common import default_values
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.download_hf_model import download_specific_files_async
 from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
 from pyrit.identifiers import ComponentIdentifier
@@ -173,7 +174,7 @@ class HuggingFaceChatTarget(PromptTarget):
         if self.use_cuda and not torch.cuda.is_available():
             raise RuntimeError("CUDA requested but not available.")
 
-        self.load_model_and_tokenizer_task = asyncio.create_task(self.load_model_and_tokenizer())
+        self.load_model_and_tokenizer_task = asyncio.create_task(self.load_model_and_tokenizer_async())
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -228,7 +229,7 @@ class HuggingFaceChatTarget(PromptTarget):
             logger.error(f"Invalid HuggingFace model ID {self.model_id}: {e}")
             return False
 
-    async def load_model_and_tokenizer(self) -> None:
+    async def load_model_and_tokenizer_async(self) -> None:
         """
         Load the model and tokenizer, download if necessary.
 
@@ -322,6 +323,15 @@ class HuggingFaceChatTarget(PromptTarget):
         except Exception as e:
             logger.error(f"Error loading model {self.model_id}: {e}")
             raise
+
+    async def load_model_and_tokenizer(self) -> None:  # pyrit-async-suffix-exempt
+        """Use ``load_model_and_tokenizer_async`` instead; this is a deprecated alias."""
+        print_deprecation_message(
+            old_item="pyrit.prompt_target.HuggingFaceChatTarget.load_model_and_tokenizer",
+            new_item="pyrit.prompt_target.HuggingFaceChatTarget.load_model_and_tokenizer_async",
+            removed_in="0.16.0",
+        )
+        await self.load_model_and_tokenizer_async()
 
     @limit_requests_per_minute
     @pyrit_target_retry

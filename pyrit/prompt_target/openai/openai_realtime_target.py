@@ -11,6 +11,7 @@ from typing import Any, Literal, Optional
 
 from openai import AsyncOpenAI
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
@@ -429,7 +430,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
 
         return data.value
 
-    async def cleanup_target(self) -> None:
+    async def cleanup_target_async(self) -> None:
         """
         Disconnects from the Realtime API connections.
         """
@@ -448,6 +449,15 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
             except Exception as e:
                 logger.warning(f"Error closing realtime client: {e}")
             self._realtime_client = None
+
+    async def cleanup_target(self) -> None:  # pyrit-async-suffix-exempt
+        """Use ``cleanup_target_async`` instead; this is a deprecated alias."""
+        print_deprecation_message(
+            old_item="pyrit.prompt_target.RealtimeTarget.cleanup_target",
+            new_item="pyrit.prompt_target.RealtimeTarget.cleanup_target_async",
+            removed_in="0.16.0",
+        )
+        await self.cleanup_target_async()
 
     async def cleanup_conversation(self, conversation_id: str) -> None:
         """
