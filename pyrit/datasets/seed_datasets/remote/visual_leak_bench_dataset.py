@@ -12,7 +12,7 @@ from pyrit.datasets.seed_datasets.remote._image_cache import (
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +73,8 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
     )
 
     tags: frozenset[str] = frozenset({"default", "safety", "privacy"})
-    size: str = "large"
-    modalities: tuple[str, ...] = ("image", "text")
+    size: str = "large"  # 2000 image-text PII / OCR-injection prompts
+    modalities: tuple[Modality, ...] = (Modality.IMAGE, Modality.TEXT)
     harm_categories: tuple[str, ...] = ("privacy", "pii_leakage", "ocr_injection")
 
     def __init__(
@@ -84,7 +84,6 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         source_type: Literal["public_url", "file"] = "public_url",
         categories: Optional[list[VisualLeakBenchCategory]] = None,
         pii_types: Optional[list[VisualLeakBenchPIIType]] = None,
-        max_examples: Optional[int] = None,
     ) -> None:
         """
         Initialize the VisualLeakBench dataset loader.
@@ -98,9 +97,6 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
                 VisualLeakBenchCategory.PII_LEAKAGE.
             pii_types: List of PII types to include (only relevant for PII_LEAKAGE category).
                 If None, all PII types are included.
-            max_examples: Maximum number of examples to fetch. Each example produces 2 prompts
-                (image + text). If None, fetches all examples. Useful for testing or quick
-                validations.
 
         Raises:
             ValueError: If any of the specified categories or pii_types are invalid.
@@ -109,7 +105,6 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         self.source_type: Literal["public_url", "file"] = source_type
         self.categories = categories
         self.pii_types = pii_types
-        self.max_examples = max_examples
 
         if categories is not None:
             self._validate_enums(categories, VisualLeakBenchCategory, "category")
@@ -169,9 +164,6 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
                 continue
 
             prompts.extend(pair)
-
-            if self.max_examples is not None and len(prompts) >= self.max_examples * 2:
-                break
 
         if failed_image_count > 0:
             logger.warning(f"[VisualLeakBench] Skipped {failed_image_count} image(s) due to fetch failures")

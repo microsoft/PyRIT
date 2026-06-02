@@ -33,6 +33,13 @@
 # exploration. The tree visualization in the result provides insights into the attack's
 # decision-making process.
 #
+# PAIR (Prompt Automatic Iterative Refinement) [@chao2023pair] is the structural special
+# case of TAP with no tree expansion and no off-topic pruning -- i.e. parallel single-branch
+# iterative refinement. PyRIT exposes it as `PAIRAttack`, a thin `TAPAttack` subclass that
+# hardcodes `branching_factor=1` and `on_topic_checking_enabled=False`. Everything else
+# (target, scoring, converters, `tree_width`, `tree_depth`) is configured exactly the same
+# way as below.
+#
 # The results and intermediate interactions will be saved to memory according to the environment settings. For details, see the [Memory Configuration Guide](../../memory/0_memory.md).
 # %%
 import os

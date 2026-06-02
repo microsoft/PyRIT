@@ -4,8 +4,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.42.1.51946",
-      "templateHash": "18109486080685095591"
+      "version": "0.41.2.15936",
+      "templateHash": "16381559389474872325"
     }
   },
   "parameters": {
@@ -81,10 +81,18 @@
         "description": "PyRIT initializer to run. Default \"target airt\" registers target configs + attack defaults."
       }
     },
+    "envSecretName": {
+      "type": "string",
+      "defaultValue": "env-global",
+      "metadata": {
+        "description": "Key Vault secret name containing the .env file contents (all endpoints, models, and API keys). The secret is mounted as an env var and PyRIT parses it at startup."
+      }
+    },
     "envFileContents": {
       "type": "securestring",
+      "defaultValue": "",
       "metadata": {
-        "description": "Contents of the .env file (endpoints, models, API keys). Passed inline to the Container App as a secure secret. Marked @secure() so the value is stripped from deployment history."
+        "description": "Optional raw .env file contents. If provided, this is used directly instead of reading from Key Vault."
       }
     },
     "cpuCores": {
@@ -216,6 +224,7 @@
     "createLogAnalytics": "[equals(parameters('logAnalyticsWorkspaceId'), '')]",
     "createVnet": "[and(parameters('enablePrivateEndpoint'), equals(parameters('infrastructureSubnetId'), ''))]",
     "createAcr": "[and(equals(parameters('acrResourceId'), ''), equals(parameters('acrName'), ''))]",
+    "useInlineEnvFile": "[not(equals(parameters('envFileContents'), ''))]",
     "effectiveAcrName": "[if(variables('createAcr'), format('{0}acr', replace(parameters('appName'), '-', '')), if(not(equals(parameters('acrName'), '')), parameters('acrName'), last(split(parameters('acrResourceId'), '/'))))]",
     "effectiveAcrServer": "[format('{0}.azurecr.io', variables('effectiveAcrName'))]",
     "keyVaultName": "[last(split(parameters('keyVaultResourceId'), '/'))]"
@@ -426,10 +435,7 @@
             }
           ],
           "secrets": [
-            {
-              "name": "env-file",
-              "value": "[parameters('envFileContents')]"
-            }
+            "[if(variables('useInlineEnvFile'), createObject('name', 'env-file', 'value', parameters('envFileContents')), createObject('name', 'env-file', 'keyVaultUrl', format('https://{0}{1}/secrets/{2}', variables('keyVaultName'), environment().suffixes.keyvaultDns, parameters('envSecretName')), 'identity', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName')))))]"
           ]
         },
         "template": {
@@ -485,10 +491,6 @@
                 {
                   "name": "AZURE_CLIENT_ID",
                   "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName'))), '2023-01-31').clientId]"
-                },
-                {
-                  "name": "PYRIT_CORS_ORIGINS",
-                  "value": "[format('https://{0}.{1}', parameters('appName'), reference(resourceId('Microsoft.App/managedEnvironments', format('{0}-env', parameters('appName'))), '2024-10-02-preview').defaultDomain)]"
                 }
               ]
             }

@@ -26,9 +26,9 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TAPAttackScoringConfig,
     _TreeOfAttacksNode,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
     Message,
@@ -236,8 +236,8 @@ class AttackBuilder:
         )
         target.capabilities.supports_multi_turn = supports_multi_turn
         target.capabilities.output_modalities = frozenset({frozenset(["text"])})
-        target.configuration.includes.side_effect = (
-            lambda capability: capability == CapabilityName.MULTI_TURN and supports_multi_turn
+        target.configuration.includes.side_effect = lambda capability: (
+            capability == CapabilityName.MULTI_TURN and supports_multi_turn
         )
         target.configuration.capabilities.output_modalities = frozenset({frozenset(["text"])})
         return cast("PromptTarget", target)

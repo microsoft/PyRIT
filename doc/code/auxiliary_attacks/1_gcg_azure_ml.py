@@ -13,6 +13,18 @@
 # # 1. Generating GCG Suffixes Using Azure Machine Learning
 
 # %% [markdown]
+# > ⚠️ **Experimental module.** `pyrit.auxiliary_attacks` is experimental: its
+# > APIs may change in any release without a deprecation cycle. Importing the
+# > package below emits a `pyrit.exceptions.ExperimentalWarning`. Pin pyrit to
+# > a specific version if you depend on it. To silence the warning:
+# >
+# > ```python
+# > import warnings
+# > from pyrit.exceptions import ExperimentalWarning
+# > warnings.filterwarnings("ignore", category=ExperimentalWarning)
+# > ```
+
+# %% [markdown]
 # This notebook shows how to generate GCG [@zou2023gcg] suffixes using Azure Machine Learning (AML), which consists of three main steps:
 # 1. Connect to an Azure Machine Learning (AML) workspace.
 # 2. Create AML Environment with the Python dependencies.
@@ -98,28 +110,64 @@ ml_client.environments.create_or_update(env_docker_context)
 # invoked as a module so the uploaded code snapshot takes priority over the
 # Docker-installed package (Python's `-m` flag puts the cwd at the front of `sys.path`).
 #
+# The new public API takes a typed ``GCGConfig`` (strategy) and a separate
+# ``GCGDataConfig`` (CSV paths/counts). We build both locally with whatever
+# overrides we want, serialize each into a JSON file the AML job can read as
+# an input, and ship those paths through the job command. Defaults come from
+# the dataclasses in ``pyrit.auxiliary_attacks.gcg.config``; goals and targets
+# flow into ``GCGGenerator.execute_async`` at runtime, not through the config.
+#
 # We also have to specify a GPU compute target. In our experience, a GPU instance with
 # at least 24GB of vRAM is required (e.g., Standard_NC24ads_A100_v4).
 #
 # Depending on the compute instance you use, you may encounter "out of memory" errors.
-# In this case, we recommend training on a smaller model or lowering `n_train_data` or `batch_size`.
+# In this case, we recommend training on a smaller model or lowering ``data.n_train_data``
+# or ``algorithm.batch_size``.
 
 # %%
-from azure.ai.ml import Output, command
+import tempfile
+
+from pyrit.auxiliary_attacks.gcg import (
+    GCGAlgorithmConfig,
+    GCGConfig,
+    GCGDataConfig,
+    GCGModelConfig,
+    GCGOutputConfig,
+)
+
+config = GCGConfig(
+    models=[GCGModelConfig(name="meta-llama/Llama-2-7b-chat-hf")],
+    algorithm=GCGAlgorithmConfig(n_steps=5, batch_size=64, test_steps=1),
+    output=GCGOutputConfig(result_prefix="gcg_suffix"),
+)
+data_config = GCGDataConfig(
+    train_data=("https://raw.githubusercontent.com/llm-attacks/llm-attacks/main/data/advbench/harmful_behaviors.csv"),
+    n_train_data=5,
+    n_test_data=0,
+)
+
+# Write the configs into a tempdir so AML can mount them as separate job inputs.
+config_dir = Path(tempfile.mkdtemp(prefix="gcg-aml-config-"))
+config_path = config_dir / "config.json"
+data_path = config_dir / "data.json"
+config.to_json_file(config_path)
+data_config.to_json_file(data_path)
+
+# %%
+from azure.ai.ml import Input, Output, command
 
 job = command(
     code=Path(HOME_PATH),
     command=(
         "python -m pyrit.auxiliary_attacks.gcg.experiments.run"
-        " --model_name llama_2"
-        " --setup single"
-        " --n_train_data 5"
-        " --n_test_data 0"
-        " --n_steps 5"
-        " --batch_size 64"
-        " --output_dir ${{outputs.results}}"
+        " --config ${{inputs.config}}"
+        " --data ${{inputs.data}}"
+        " --output-dir ${{outputs.results}}"
     ),
-    inputs={},
+    inputs={
+        "config": Input(type="uri_file", path=str(config_path)),
+        "data": Input(type="uri_file", path=str(data_path)),
+    },
     outputs={"results": Output(type="uri_folder")},
     environment=f"{env_docker_context.name}:{env_docker_context.version}",
     environment_variables={"HUGGINGFACE_TOKEN": os.environ["HUGGINGFACE_TOKEN"]},
@@ -141,9 +189,11 @@ print(f"Studio URL: {returned_job.studio_url}")
 # The next cell polls the job until it reaches a terminal state (~20-30
 # minutes for the small 5-step baseline above), then downloads the named
 # `results` output and prints the final suffix. The runner writes its
-# result file as `individual_behaviors_<model>_gcg_<timestamp>.json` into
-# the directory Azure ML mounted for the `results` output, so it ends up
-# under `<download_dir>/named-outputs/results/` once we download. The
+# result file as `<result_prefix>_<timestamp>.json` (with `result_prefix`
+# coming from the `GCGConfig` we built above, plus the AML output mount
+# prepended by `--output-dir`). For our config, that resolves to
+# `gcg_suffix_<timestamp>.json` under
+# `<download_dir>/named-outputs/results/` once we download. The
 # `controls` array in that file contains one entry per training step, and
 # the last entry is the final adversarial suffix that, appended to the user
 # prompt, was optimized to elicit the target response.
@@ -171,7 +221,7 @@ assert current_status == "Completed", f"Job did not complete successfully: {curr
 download_dir = Path(tempfile.mkdtemp(prefix="gcg-aml-"))
 ml_client.jobs.download(name=returned_job.name, download_path=str(download_dir), all=True)
 
-result_files = list(download_dir.rglob("individual_behaviors_*_gcg_*.json"))
+result_files = list(download_dir.rglob("gcg_suffix_*.json"))
 if not result_files:
     print(f"No GCG result file found under {download_dir}. Files captured:")
     for p in sorted(download_dir.rglob("*")):

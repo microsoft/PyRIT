@@ -20,15 +20,14 @@ from pyrit.exceptions import (
     PyritException,
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     MessagePiece,
     PromptDataType,
     PromptResponseError,
 )
 from pyrit.models.json_response_config import _JsonResponseConfig
-from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
@@ -59,7 +58,7 @@ class MessagePieceType(str, Enum):
     MCP_APPROVAL_REQUEST = "mcp_approval_request"
 
 
-class OpenAIResponseTarget(OpenAITarget, PromptTarget):
+class OpenAIResponseTarget(OpenAITarget):
     """
     Enables communication with endpoints that support the OpenAI Response API.
 
@@ -614,7 +613,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptTarget):
 
             # Create a new message with the tool output
             tool_piece = self._make_tool_piece(tool_output, tool_call_section["call_id"], reference_piece=message_piece)
-            tool_message = Message(message_pieces=[tool_piece], skip_validation=True)
+            tool_message = Message(message_pieces=[tool_piece])
 
             # Add tool output message to conversation and responses list
             working_conversation.append(tool_message)

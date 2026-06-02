@@ -17,7 +17,9 @@ Usage:
 """
 
 import json
+import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 # Import sibling script for post-generation TOC validation.
@@ -31,6 +33,45 @@ API_MD_DIR = Path("doc/api")
 EXCLUDED_MODULES = {
     "pyrit.backend",
 }
+
+
+@dataclass(frozen=True)
+class SymbolEntry:
+    """A resolved API symbol that can be cross-referenced from a docstring."""
+
+    module: str  # dotted module path, e.g. "pyrit.prompt_target"
+    kind: str  # "class" | "function" | "method"
+    name: str  # short name (last segment)
+    qualname: str  # "PromptTarget" or "PromptTarget.send_prompt_async"
+    anchor: str  # MyST label, e.g. "api-pyrit_prompt_target-PromptTarget"
+
+
+# Backtick code spans that look like Python identifiers (with optional
+# dotted paths) — candidates for symbol cross-reference rewriting. Matches
+# either `name` or ``name``. The leading negative lookbehind prevents
+# touching spans inside an already-rendered MyST link such as
+# ``[`Name`](#anchor)`` and also prevents the single-backtick branch from
+# matching the inner portion of a ``\u0060\u0060Name\u0060\u0060`` pair.
+# A leading tilde or dot is tolerated because reST cross-reference syntax
+# like ``:class:`~pyrit.foo.Bar``` may have leaked through earlier cleanups.
+_SYMBOL_REF_RE = re.compile(r"(?<![\[`])(``([~.]?[A-Za-z_][\w.]*)``|`([~.]?[A-Za-z_][\w.]*)`)")
+
+
+def _module_slug(module: str) -> str:
+    """Convert a dotted module path to a MyST-label-safe slug."""
+    return module.replace(".", "_")
+
+
+def _class_anchor(module: str, class_name: str) -> str:
+    return f"api-{_module_slug(module)}-{class_name}"
+
+
+def _function_anchor(module: str, func_name: str) -> str:
+    return f"api-{_module_slug(module)}-{func_name}"
+
+
+def _method_anchor(module: str, class_name: str, method_name: str) -> str:
+    return f"api-{_module_slug(module)}-{class_name}-{method_name}"
 
 
 def render_params(params: list[dict]) -> str:
@@ -122,7 +163,182 @@ def _escape_docstring_examples(text: str) -> str:
     return "\n".join(result)
 
 
-def render_function(func: dict, heading_level: str = "###") -> str:
+def _build_symbol_index(modules: list[dict]) -> dict[str, list[SymbolEntry]]:
+    """Build a lookup of every API symbol that the rewriter can target.
+
+    The returned dict is keyed by both the short name (e.g. ``"PromptTarget"``,
+    ``"send_prompt_async"``) and several qualified forms
+    (``"PromptTarget.send_prompt_async"``, ``"pyrit.prompt_target.PromptTarget"``,
+    ``"pyrit.prompt_target.PromptTarget.send_prompt_async"``). Each entry holds
+    the module, kind, and final anchor that ``_rewrite_symbol_refs`` will link
+    to.
+
+    Multiple entries under the same key indicate an ambiguous reference; the
+    rewriter intentionally skips those so we don't pick a wrong target.
+    """
+    index: dict[str, list[SymbolEntry]] = {}
+
+    def _add(key: str, entry: SymbolEntry) -> None:
+        index.setdefault(key, []).append(entry)
+
+    for module in modules:
+        mod_name = module.get("name", "")
+        for member in module.get("members", []):
+            kind = member.get("kind", "")
+            name = member.get("name", "")
+            if not name or name.startswith("_"):
+                continue
+            if kind == "class":
+                entry = SymbolEntry(
+                    module=mod_name,
+                    kind="class",
+                    name=name,
+                    qualname=name,
+                    anchor=_class_anchor(mod_name, name),
+                )
+                _add(name, entry)
+                _add(f"{mod_name}.{name}", entry)
+                for method in member.get("methods", []) or []:
+                    mname = method.get("name", "")
+                    if not mname or mname.startswith("_"):
+                        continue
+                    m_entry = SymbolEntry(
+                        module=mod_name,
+                        kind="method",
+                        name=mname,
+                        qualname=f"{name}.{mname}",
+                        anchor=_method_anchor(mod_name, name, mname),
+                    )
+                    _add(mname, m_entry)
+                    _add(f"{name}.{mname}", m_entry)
+                    _add(f"{mod_name}.{name}.{mname}", m_entry)
+            elif kind == "function":
+                entry = SymbolEntry(
+                    module=mod_name,
+                    kind="function",
+                    name=name,
+                    qualname=name,
+                    anchor=_function_anchor(mod_name, name),
+                )
+                _add(name, entry)
+                _add(f"{mod_name}.{name}", entry)
+    return index
+
+
+def _resolve_symbol(raw: str, index: dict[str, list[SymbolEntry]], current_class: str | None) -> SymbolEntry | None:
+    """Return the cross-reference target for a bare backtick-quoted symbol.
+
+    ``raw`` is the contents between backticks — already stripped of surrounding
+    syntax. The lookup is conservative: if more than one symbol matches, we
+    return ``None`` to leave the original markup untouched. Trailing tilde
+    prefixes (``~pyrit.foo.Bar``) and leading dots are tolerated because they
+    occasionally survive Sphinx-style imports.
+    """
+    cleaned = raw.lstrip("~").lstrip(".")
+    if not cleaned:
+        return None
+
+    # Try the literal lookup first (handles FQN and Class.method forms).
+    entries = index.get(cleaned)
+    if entries and len(entries) == 1:
+        return entries[0]
+
+    # When inside a class context, a bare method name should resolve to that
+    # class's method even if other classes share the same method name.
+    if current_class and "." not in cleaned:
+        scoped = index.get(f"{current_class}.{cleaned}")
+        if scoped and len(scoped) == 1:
+            return scoped[0]
+
+    return None
+
+
+def _rewrite_symbol_refs(
+    text: str,
+    index: dict[str, list[SymbolEntry]],
+    *,
+    current_class: str | None = None,
+) -> str:
+    """Convert ``Name`` / ``Class.method`` backtick spans to MyST links.
+
+    Fenced code blocks are preserved verbatim so doctest examples and Python
+    snippets don't get mangled. Within prose, each backtick code span is
+    looked up against ``index``; matches become ``[`Name`](#anchor)`` links,
+    and everything else is left unchanged.
+    """
+    if not text:
+        return text
+
+    lines = text.split("\n")
+    output: list[str] = []
+    in_fence = False
+    fence_marker: str | None = None
+
+    for line in lines:
+        stripped = line.lstrip()
+        if not in_fence and stripped.startswith(("```", "~~~")):
+            in_fence = True
+            fence_marker = stripped[:3]
+            output.append(line)
+            continue
+        if in_fence:
+            output.append(line)
+            if stripped.startswith(fence_marker or "```"):
+                in_fence = False
+                fence_marker = None
+            continue
+
+        def _sub(match: re.Match[str]) -> str:
+            full = match.group(1)
+            symbol = match.group(2) or match.group(3) or ""
+            entry = _resolve_symbol(symbol, index, current_class)
+            if entry is None:
+                return full
+            return f"[{full}](#{entry.anchor})"
+
+        output.append(_SYMBOL_REF_RE.sub(_sub, line))
+
+    return "\n".join(output)
+
+
+def _rewrite_param_table(params: list[dict], index: dict[str, list[SymbolEntry]], current_class: str | None) -> None:
+    """Run the symbol rewriter over parameter descriptions in-place."""
+    for p in params:
+        if p.get("desc"):
+            p["desc"] = _rewrite_symbol_refs(p["desc"], index, current_class=current_class)
+
+
+def _rewrite_returns_or_raises(
+    items: list[dict], index: dict[str, list[SymbolEntry]], current_class: str | None
+) -> None:
+    """Run the symbol rewriter over returns/raises description text in-place."""
+    for item in items:
+        if item.get("desc"):
+            item["desc"] = _rewrite_symbol_refs(item["desc"], index, current_class=current_class)
+
+
+def _process_docstring_text(
+    text: str | None,
+    symbol_index: dict[str, list[SymbolEntry]] | None,
+    current_class: str | None,
+) -> str | None:
+    """Apply doctest-fence wrapping then symbol cross-reference rewriting."""
+    if not text:
+        return text
+    escaped = _escape_docstring_examples(text)
+    if symbol_index is None:
+        return escaped
+    return _rewrite_symbol_refs(escaped, symbol_index, current_class=current_class)
+
+
+def render_function(
+    func: dict,
+    *,
+    heading_level: str = "###",
+    module: str,
+    class_name: str | None = None,
+    symbol_index: dict[str, list[SymbolEntry]] | None = None,
+) -> str:
     """Render a function as markdown."""
     name = func["name"]
     is_async = func.get("is_async", False)
@@ -131,54 +347,88 @@ def render_function(func: dict, heading_level: str = "###") -> str:
     ret = func.get("returns_annotation", "")
     ret_str = f" → {ret}" if ret else ""
 
-    # Heading shows just the name; full signature in a code block below
-    parts = [f"{heading_level} `{prefix}{name}`\n"]
+    anchor = _method_anchor(module, class_name, name) if class_name else _function_anchor(module, name)
+
+    # Anchor label precedes the heading so MyST cross-refs can target it.
+    parts = [f"({anchor})=", f"{heading_level} `{prefix}{name}`\n"]
     parts.append(f"```python\n{prefix}{name}{sig}{ret_str}\n```\n")
 
     ds = func.get("docstring", {})
     if ds:
-        if ds.get("text"):
-            parts.append(_escape_docstring_examples(ds["text"]) + "\n")
-        params_table = render_params(ds.get("params", []))
+        text = _process_docstring_text(ds.get("text"), symbol_index, current_class=class_name)
+        if text:
+            parts.append(text + "\n")
+        params = list(ds.get("params", []))
+        if params and symbol_index is not None:
+            params = [dict(p) for p in params]
+            _rewrite_param_table(params, symbol_index, class_name)
+        params_table = render_params(params)
         if params_table:
             parts.append(params_table + "\n")
-        returns = render_returns(ds.get("returns", []))
-        if returns:
-            parts.append(returns + "\n")
-        raises = render_raises(ds.get("raises", []))
-        if raises:
-            parts.append(raises + "\n")
+        returns = list(ds.get("returns", []))
+        if returns and symbol_index is not None:
+            returns = [dict(r) for r in returns]
+            _rewrite_returns_or_raises(returns, symbol_index, class_name)
+        returns_md = render_returns(returns)
+        if returns_md:
+            parts.append(returns_md + "\n")
+        raises = list(ds.get("raises", []))
+        if raises and symbol_index is not None:
+            raises = [dict(r) for r in raises]
+            _rewrite_returns_or_raises(raises, symbol_index, class_name)
+        raises_md = render_raises(raises)
+        if raises_md:
+            parts.append(raises_md + "\n")
 
     return "\n".join(parts)
 
 
-def render_class(cls: dict) -> str:
+def render_class(
+    cls: dict,
+    *,
+    module: str,
+    symbol_index: dict[str, list[SymbolEntry]] | None = None,
+) -> str:
     """Render a class as markdown."""
     name = cls["name"]
     bases = cls.get("bases", [])
     bases_str = f"({', '.join(bases)})" if bases else ""
 
-    parts = [f"## `{name}`\n"]
+    anchor = _class_anchor(module, name)
+    parts = [f"({anchor})=", f"## `{name}`\n"]
     if bases_str:
         parts.append(f"Bases: `{bases_str[1:-1]}`\n")
 
     ds = cls.get("docstring", {})
-    if ds and ds.get("text"):
-        parts.append(_escape_docstring_examples(ds["text"]) + "\n")
+    text = _process_docstring_text(ds.get("text") if ds else None, symbol_index, current_class=name)
+    if text:
+        parts.append(text + "\n")
 
     # __init__
     init = cls.get("init")
     if init:
         init_ds = init.get("docstring", {})
         if init_ds and init_ds.get("params"):
+            init_params = [dict(p) for p in init_ds["params"]]
+            if symbol_index is not None:
+                _rewrite_param_table(init_params, symbol_index, name)
             parts.append("**Constructor Parameters:**\n")
-            parts.append(render_params(init_ds["params"]) + "\n")
+            parts.append(render_params(init_params) + "\n")
 
     # Methods
     methods = cls.get("methods", [])
     if methods:
         parts.append("**Methods:**\n")
-        parts.extend(render_function(m, heading_level="####") for m in methods)
+        parts.extend(
+            render_function(
+                m,
+                heading_level="####",
+                module=module,
+                class_name=name,
+                symbol_index=symbol_index,
+            )
+            for m in methods
+        )
 
     return "\n".join(parts)
 
@@ -193,7 +443,11 @@ def render_alias(alias: dict) -> str:
     return "\n".join(parts)
 
 
-def render_module(data: dict) -> str:
+def render_module(
+    data: dict,
+    *,
+    symbol_index: dict[str, list[SymbolEntry]] | None = None,
+) -> str:
     """Render a full module page."""
     mod_name = data["name"]
     short_name = mod_name.rsplit(".", 1)[-1]
@@ -205,8 +459,9 @@ def render_module(data: dict) -> str:
     ]
 
     ds = data.get("docstring", {})
-    if ds and ds.get("text"):
-        parts.append(ds["text"] + "\n")
+    text = _process_docstring_text(ds.get("text") if ds else None, symbol_index, current_class=None)
+    if text:
+        parts.append(text + "\n")
 
     members = data.get("members", [])
 
@@ -216,9 +471,9 @@ def render_module(data: dict) -> str:
 
     if functions:
         parts.append("## Functions\n")
-        parts.extend(render_function(f) for f in functions)
+        parts.extend(render_function(f, module=mod_name, symbol_index=symbol_index) for f in functions)
 
-    parts.extend(render_class(cls) for cls in classes)
+    parts.extend(render_class(cls, module=mod_name, symbol_index=symbol_index) for cls in classes)
 
     if aliases:
         parts.append("## Re-exports\n")
@@ -368,12 +623,16 @@ def main() -> None:
         _build_definition_index(data, definition_index, name_to_modules)
     _resolve_aliases(modules, definition_index, name_to_modules)
 
+    # Build a symbol index over the post-resolution module tree so the
+    # docstring rewriter can turn backticked names into MyST cross-references.
+    symbol_index = _build_symbol_index(modules)
+
     # Generate per-module pages
     for data in modules:
         mod_name = data["name"]
         slug = mod_name.replace(".", "_")
         md_path = API_MD_DIR / f"{slug}.md"
-        content = render_module(data)
+        content = render_module(data, symbol_index=symbol_index)
         members = data.get("members", [])
         rendered_count = sum(1 for m in members if m.get("kind") in ("class", "function"))
         md_path.write_text(content, encoding="utf-8")
@@ -386,10 +645,18 @@ def main() -> None:
         members = data.get("members", [])
         slug = mod_name.replace(".", "_")
 
-        classes = [f"`{m['name']}`" for m in members if m.get("kind") == "class"]
-        functions = [f"`{m['name']}()`" for m in members if m.get("kind") == "function"]
-        rendered_count = len(classes) + len(functions)
-        preview_items = (classes + functions)[:8]
+        # Link each class/function in the preview directly to its anchor so the
+        # index page is a fast jumping-off point.
+        class_links = [
+            f"[`{m['name']}`](#{_class_anchor(mod_name, m['name'])})" for m in members if m.get("kind") == "class"
+        ]
+        function_links = [
+            f"[`{m['name']}()`](#{_function_anchor(mod_name, m['name'])})"
+            for m in members
+            if m.get("kind") == "function"
+        ]
+        rendered_count = len(class_links) + len(function_links)
+        preview_items = (class_links + function_links)[:8]
         preview = ", ".join(preview_items)
         if rendered_count > len(preview_items):
             preview += f" ... ({rendered_count} total)"
