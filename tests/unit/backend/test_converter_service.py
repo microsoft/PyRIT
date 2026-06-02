@@ -412,6 +412,7 @@ def _try_instantiate_converter(converter_name: str):
     # Converters requiring external credentials or resources that can't be mocked
     # at the constructor level — these validate env vars / files in __init__ body
     skip_converters = {
+        "AddImageTextConverter",  # requires a real image file on disk (loaded eagerly in __init__)
         "AzureSpeechAudioToTextConverter",  # requires AZURE_SPEECH_REGION env var
         "AzureSpeechTextToAudioConverter",  # requires AZURE_SPEECH_REGION env var
         "TransparencyAttackConverter",  # requires a real JPEG image file on disk
@@ -419,7 +420,6 @@ def _try_instantiate_converter(converter_name: str):
 
     # Converter-specific overrides for params with validation
     overrides: dict = {
-        "AddImageTextConverter": {"img_to_add": "test_image.png"},
         "AddTextImageConverter": {"text_to_add": "test text"},
         "CodeChameleonConverter": {"encrypt_type": "reverse"},
         "SearchReplaceConverter": {"pattern": "foo", "replace": "bar"},

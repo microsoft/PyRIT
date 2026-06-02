@@ -755,7 +755,9 @@ class TestSendAndCheckTimeout:
         target = MockPromptTarget()
 
         async def _hang(**_kwargs: object) -> list[Message]:
-            await asyncio.sleep(10)
+            # Block on an Event that's never set so the probe truly cannot
+            # complete on its own; per_probe_timeout_s must cut it off.
+            await asyncio.Event().wait()
             return _ok_response()
 
         target._send_prompt_to_target_async = AsyncMock(side_effect=_hang)  # type: ignore[method-assign]
