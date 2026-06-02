@@ -6,7 +6,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Annotated, Any, Literal, Optional, Union
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from pydantic import (
@@ -33,7 +33,7 @@ ScoreType = Literal["true_false", "float_scale", "unknown"]
 ComponentIdentifierField = Annotated[
     ComponentIdentifier,
     BeforeValidator(lambda v: ComponentIdentifier.model_validate(v) if isinstance(v, dict) else v),
-    PlainSerializer(lambda v: v.model_dump() if v is not None else None, return_type=Optional[dict]),
+    PlainSerializer(lambda v: v.model_dump() if v is not None else None, return_type=dict | None),
 ]
 
 
@@ -52,22 +52,22 @@ class Score(BaseModel):
     score_value: str
 
     # Value that can include a description of the score value
-    score_value_description: Optional[str] = None
+    score_value_description: str | None = None
 
     # The type of the scorer; e.g. "true_false" or "float_scale"
     score_type: ScoreType
 
     # The harms categories (e.g. ["hate", "violence"]) – can be multiple
-    score_category: Optional[list[str]] = None
+    score_category: list[str] | None = None
 
     # Extra data the scorer provides around the rationale of the score
-    score_rationale: Optional[str] = None
+    score_rationale: str | None = None
 
     # Custom metadata a scorer might use. This can vary by scorer.
-    score_metadata: Optional[dict[str, Union[str, int, float]]] = Field(default_factory=dict)
+    score_metadata: dict[str, str | int | float] | None = Field(default_factory=dict)
 
     # The identifier of the scorer class, including relevant information
-    scorer_class_identifier: Optional[ComponentIdentifierField] = None
+    scorer_class_identifier: ComponentIdentifierField | None = None
 
     # This is the ID of the MessagePiece that the score is scoring. Note a scorer can
     # generate an additional request. This is NOT that, but the ID associated with what
@@ -78,7 +78,7 @@ class Score(BaseModel):
     timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
 
     # The task based on which the text is scored (the original attacker model's objective).
-    objective: Optional[str] = None
+    objective: str | None = None
 
     # ------------------------------------------------------------------ #
     # Validators
@@ -231,14 +231,14 @@ class UnvalidatedScore:
     raw_score_value: str
 
     score_value_description: str
-    score_category: Optional[list[str]]
+    score_category: list[str] | None
     score_rationale: str
-    score_metadata: Optional[dict[str, Union[str, int, float]]]
+    score_metadata: dict[str, str | int | float] | None
     scorer_class_identifier: ComponentIdentifier
     message_piece_id: uuid.UUID | str
-    objective: Optional[str]
-    id: Optional[uuid.UUID | str] = None
-    timestamp: Optional[datetime] = None
+    objective: str | None
+    id: uuid.UUID | str | None = None
+    timestamp: datetime | None = None
 
     def to_score(self, *, score_value: str, score_type: ScoreType) -> Score:
         """
