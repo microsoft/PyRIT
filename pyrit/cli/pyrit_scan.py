@@ -49,7 +49,7 @@ Examples:
 
   # Run rapid response with specific datasets and concurrency
   pyrit_scan airt.rapid_response --target openai_chat
-    --strategies prompt_sending --dataset-names airt_hate
+    --strategies role_play --dataset-names airt_hate
     --max-dataset-size 5 --max-concurrency 4
 
   # Run multi-turn red team agent with labels for tracking

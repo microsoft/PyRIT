@@ -12,7 +12,7 @@ import requests
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,11 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
     Use responsibly and consult your legal department before using for testing.
     """
 
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "medium"  # indicator count varies with registry contents; gated by API key
+    tags: frozenset[str] = frozenset({"safety", "jailbreak", "cybersecurity"})
+
     API_BASE_URL = "https://api.promptintel.novahunting.ai/api/v1"
     PROMPT_WEB_URL = "https://promptintel.novahunting.ai/prompt"
     MAX_PAGE_LIMIT = 100
@@ -75,7 +80,6 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
         severity: Optional[PromptIntelSeverity] = None,
         categories: Optional[list[PromptIntelCategory]] = None,
         search: Optional[str] = None,
-        max_prompts: Optional[int] = None,
     ) -> None:
         """
         Initialize the PromptIntel dataset loader.
@@ -87,7 +91,6 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
                 When multiple categories are specified, separate API requests are made for each
                 category and results are merged with deduplication.
             search: Search term to filter prompts by title and content. Defaults to None.
-            max_prompts: Maximum number of prompts to fetch. Defaults to None (all available).
 
         Raises:
             ValueError: If an invalid severity or category is provided.
@@ -103,7 +106,6 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
         self._severity = severity
         self._categories = categories
         self._search = search
-        self._max_prompts = max_prompts
         self.source = "https://promptintel.novahunting.ai"
 
     @property
@@ -177,20 +179,11 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
                         seen_ids.add(record_id)
                         all_prompts.append(record)
 
-                # Check if we've reached the max_prompts limit
-                if self._max_prompts and len(all_prompts) >= self._max_prompts:
-                    all_prompts = all_prompts[: self._max_prompts]
-                    break
-
                 # Check if there are more pages
                 total_pages = pagination.get("pages", 1)
                 if page >= total_pages:
                     break
                 page += 1
-
-            # Also break the outer loop if max_prompts reached
-            if self._max_prompts and len(all_prompts) >= self._max_prompts:
-                break
 
         return all_prompts
 

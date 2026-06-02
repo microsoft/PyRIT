@@ -82,39 +82,9 @@ class Jailbreak(Scenario):
     VERSION: int = 1
 
     @classmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        """
-        Get the strategy enum class for this scenario.
-
-        Returns:
-            type[ScenarioStrategy]: The JailbreakStrategy enum class.
-        """
-        return JailbreakStrategy
-
-    @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        """
-        Get the default strategy used when no strategies are specified.
-
-        Returns:
-            ScenarioStrategy: JailbreakStrategy.PromptSending.
-        """
-        return JailbreakStrategy.SIMPLE
-
-    @classmethod
     def required_datasets(cls) -> list[str]:
         """Return a list of dataset names required by this scenario."""
         return ["airt_harms"]
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """
-        Return the default dataset configuration for this scenario.
-
-        Returns:
-            DatasetConfiguration: Configuration with airt_harms dataset.
-        """
-        return DatasetConfiguration(dataset_names=["airt_harms"], max_dataset_size=4)
 
     @apply_defaults
     def __init__(
@@ -183,6 +153,8 @@ class Jailbreak(Scenario):
         super().__init__(
             version=self.VERSION,
             strategy_class=JailbreakStrategy,
+            default_strategy=JailbreakStrategy.SIMPLE,
+            default_dataset_config=DatasetConfiguration(dataset_names=["airt_harms"], max_dataset_size=4),
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
         )

@@ -4,6 +4,7 @@
 import asyncio
 import json
 import logging
+import os
 import uuid
 import zipfile
 from enum import Enum
@@ -15,7 +16,7 @@ from pyrit.common.path import DB_DATA_PATH
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -93,12 +94,16 @@ class _VLGuardDataset(_RemoteDatasetLoader):
     Paper: Safety Fine-Tuning at (Almost) No Cost: A Baseline for Vision Large Language Models (ICML 2024)
     """
 
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT, Modality.IMAGE)
+    size: str = "large"  # 884 image-instruction pairs across 4 categories
+    tags: frozenset[str] = frozenset({"safety", "multimodal"})
+
     def __init__(
         self,
         *,
         subset: VLGuardSubset = VLGuardSubset.UNSAFES,
         categories: list[VLGuardCategory] | None = None,
-        max_examples: int | None = None,
         token: str | None = None,
     ) -> None:
         """
@@ -108,18 +113,15 @@ class _VLGuardDataset(_RemoteDatasetLoader):
             subset (VLGuardSubset): Which evaluation subset to load. Defaults to UNSAFES.
             categories (list[VLGuardCategory] | None): List of VLGuard categories to filter by.
                 If None, all categories are included.
-            max_examples (int | None): Maximum number of multimodal examples to fetch. Each example
-                produces 2 prompts (text + image). If None, fetches all examples.
             token (str | None): HuggingFace authentication token for accessing the gated dataset.
-                If None, uses the default token from the environment or HuggingFace CLI login.
+                If not provided, reads from the ``HUGGINGFACE_TOKEN`` environment variable.
 
         Raises:
             ValueError: If any of the specified categories are invalid.
         """
         self.subset = subset
         self.categories = categories
-        self.max_examples = max_examples
-        self.token = token
+        self.token = token if token is not None else os.environ.get("HUGGINGFACE_TOKEN")
         self.source = f"https://huggingface.co/datasets/{_HF_REPO_ID}"
 
         if categories is not None:
@@ -230,10 +232,6 @@ class _VLGuardDataset(_RemoteDatasetLoader):
 
             prompts.append(text_prompt)
             prompts.append(image_prompt)
-
-            # len(prompts) is divided by two since each example produces one image and one text prompt.
-            if self.max_examples is not None and len(prompts) >= self.max_examples * 2:
-                break
 
         logger.info(f"Successfully loaded {len(prompts)} prompts from VLGuard dataset ({self.subset.value})")
 

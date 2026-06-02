@@ -181,25 +181,6 @@ class TestVLGuardDataset:
             text_prompts = [p for p in dataset.seeds if p.data_type == "text"]
             assert text_prompts[0].harm_categories == ["privacy"]
 
-    async def test_max_examples(self, mock_vlguard_metadata, tmp_path):
-        """Test that max_examples limits the number of returned examples."""
-        image_dir = tmp_path / "test"
-        image_dir.mkdir()
-        (image_dir / "unsafe_001.jpg").write_bytes(b"fake image")
-        (image_dir / "unsafe_002.jpg").write_bytes(b"fake image")
-
-        loader = _VLGuardDataset(subset=VLGuardSubset.UNSAFES, max_examples=1)
-
-        with patch.object(
-            loader,
-            "_download_dataset_files_async",
-            new=AsyncMock(return_value=(mock_vlguard_metadata, image_dir)),
-        ):
-            dataset = await loader.fetch_dataset_async()
-
-            # max_examples=1 → 1 example × 2 prompts = 2 prompts
-            assert len(dataset.seeds) == 2
-
     async def test_prompt_group_id_links_text_and_image(self, mock_vlguard_metadata, tmp_path):
         """Test that text and image prompts share the same prompt_group_id."""
         image_dir = tmp_path / "test"
@@ -399,3 +380,27 @@ class TestVLGuardDataset:
 
         assert metadata == test_metadata
         assert result_dir == cache_dir / "test"
+
+
+class TestVLGuardTokenResolution:
+    """Tests for HuggingFace token resolution on _VLGuardDataset."""
+
+    def test_explicit_token_kwarg_used(self):
+        with patch.dict("os.environ", {}, clear=True):
+            loader = _VLGuardDataset(token="kwarg_token")
+            assert loader.token == "kwarg_token"
+
+    def test_falls_back_to_huggingface_token_env(self):
+        with patch.dict("os.environ", {"HUGGINGFACE_TOKEN": "env_token"}):
+            loader = _VLGuardDataset()
+            assert loader.token == "env_token"
+
+    def test_explicit_kwarg_overrides_env(self):
+        with patch.dict("os.environ", {"HUGGINGFACE_TOKEN": "env_token"}):
+            loader = _VLGuardDataset(token="kwarg_token")
+            assert loader.token == "kwarg_token"
+
+    def test_token_is_none_when_neither_set(self):
+        with patch.dict("os.environ", {}, clear=True):
+            loader = _VLGuardDataset()
+            assert loader.token is None
