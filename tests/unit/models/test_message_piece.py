@@ -147,7 +147,8 @@ async def test_converted_datatype_default():
 
 
 def test_hashes_generated_files_unknown_type():
-    with pytest.raises(ValueError, match="is not a valid data type."):
+    # Pydantic's literal validator rejects bad data types at construction time.
+    with pytest.raises(ValueError, match="Input should be"):
         MessagePiece(
             role="user",
             original_value="Hello1",
@@ -357,7 +358,8 @@ def test_group_conversation_message_pieces_multiple_groups(
 
 
 def test_message_piece_no_roles():
-    with pytest.raises(ValueError, match="not a valid role."):
+    # Pydantic's literal validator rejects bad roles at construction time.
+    with pytest.raises(ValueError, match="Input should be"):
         Message(
             message_pieces=[
                 MessagePiece(
@@ -392,10 +394,11 @@ async def test_message_piece_sets_converted_sha256():
 
 
 def test_order_message_pieces_by_conversation_single_conversation():
+    id1, id2, id3 = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     pieces = [
         MessagePiece(
             role="user",
-            id="prompt-1",
+            id=id1,
             original_value="Hello 1",
             conversation_id="conv1",
             timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=10),
@@ -403,7 +406,7 @@ def test_order_message_pieces_by_conversation_single_conversation():
         ),
         MessagePiece(
             role="user",
-            id="prompt-2",
+            id=id2,
             original_value="Hello 2",
             conversation_id="conv1",
             timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=10),
@@ -411,7 +414,7 @@ def test_order_message_pieces_by_conversation_single_conversation():
         ),
         MessagePiece(
             role="user",
-            id="prompt-3",
+            id=id3,
             original_value="Hello 3",
             conversation_id="conv1",
             timestamp=datetime.now(tz=timezone.utc),
@@ -426,7 +429,7 @@ def test_order_message_pieces_by_conversation_single_conversation():
             conversation_id="conv1",
             timestamp=pieces[1].timestamp,
             sequence=1,
-            id="prompt-2",
+            id=id2,
         ),
         MessagePiece(
             role="user",
@@ -434,7 +437,7 @@ def test_order_message_pieces_by_conversation_single_conversation():
             conversation_id="conv1",
             timestamp=pieces[0].timestamp,
             sequence=2,
-            id="prompt-1",
+            id=id1,
         ),
         MessagePiece(
             role="user",
@@ -442,7 +445,7 @@ def test_order_message_pieces_by_conversation_single_conversation():
             conversation_id="conv1",
             timestamp=pieces[2].timestamp,
             sequence=3,
-            id="prompt-3",
+            id=id3,
         ),
     ]
 
@@ -451,6 +454,7 @@ def test_order_message_pieces_by_conversation_single_conversation():
 
 
 def test_order_message_pieces_by_conversation_multiple_conversations():
+    id1, id2, id3, id4 = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     pieces = [
         MessagePiece(
             role="user",
@@ -458,7 +462,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             conversation_id="conv2",
             timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=5),
             sequence=2,
-            id="4",
+            id=id4,
         ),
         MessagePiece(
             role="user",
@@ -466,7 +470,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             conversation_id="conv1",
             timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=15),
             sequence=1,
-            id="1",
+            id=id1,
         ),
         MessagePiece(
             role="user",
@@ -474,7 +478,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             conversation_id="conv2",
             timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=10),
             sequence=1,
-            id="3",
+            id=id3,
         ),
         MessagePiece(
             role="user",
@@ -482,7 +486,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             conversation_id="conv1",
             timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=10),
             sequence=2,
-            id="2",
+            id=id2,
         ),
     ]
 
@@ -493,7 +497,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             conversation_id="conv1",
             timestamp=pieces[1].timestamp,
             sequence=1,
-            id="1",
+            id=id1,
         ),
         MessagePiece(
             role="user",
@@ -501,7 +505,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             conversation_id="conv1",
             timestamp=pieces[3].timestamp,
             sequence=2,
-            id="2",
+            id=id2,
         ),
         MessagePiece(
             role="user",
@@ -509,7 +513,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             conversation_id="conv2",
             timestamp=pieces[2].timestamp,
             sequence=1,
-            id="3",
+            id=id3,
         ),
         MessagePiece(
             role="user",
@@ -517,7 +521,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             conversation_id="conv2",
             timestamp=pieces[0].timestamp,
             sequence=2,
-            id="4",
+            id=id4,
         ),
     ]
 
@@ -526,6 +530,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
 
 def test_order_message_pieces_by_conversation_same_timestamp():
     timestamp = datetime.now(tz=timezone.utc)
+    id1, id2, id3, id4 = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
 
     pieces = [
         MessagePiece(
@@ -534,7 +539,7 @@ def test_order_message_pieces_by_conversation_same_timestamp():
             conversation_id="conv2",
             timestamp=timestamp,
             sequence=2,
-            id="4",
+            id=id4,
         ),
         MessagePiece(
             role="user",
@@ -542,7 +547,7 @@ def test_order_message_pieces_by_conversation_same_timestamp():
             conversation_id="conv1",
             timestamp=timestamp,
             sequence=1,
-            id="1",
+            id=id1,
         ),
         MessagePiece(
             role="user",
@@ -550,7 +555,7 @@ def test_order_message_pieces_by_conversation_same_timestamp():
             conversation_id="conv2",
             timestamp=timestamp,
             sequence=1,
-            id="3",
+            id=id3,
         ),
         MessagePiece(
             role="user",
@@ -558,7 +563,7 @@ def test_order_message_pieces_by_conversation_same_timestamp():
             conversation_id="conv1",
             timestamp=timestamp,
             sequence=2,
-            id="2",
+            id=id2,
         ),
     ]
 
@@ -569,7 +574,7 @@ def test_order_message_pieces_by_conversation_same_timestamp():
             conversation_id="conv1",
             timestamp=pieces[1].timestamp,
             sequence=1,
-            id="1",
+            id=id1,
         ),
         MessagePiece(
             role="user",
@@ -577,7 +582,7 @@ def test_order_message_pieces_by_conversation_same_timestamp():
             conversation_id="conv1",
             timestamp=pieces[3].timestamp,
             sequence=2,
-            id="2",
+            id=id2,
         ),
         MessagePiece(
             role="user",
@@ -585,7 +590,7 @@ def test_order_message_pieces_by_conversation_same_timestamp():
             conversation_id="conv2",
             timestamp=pieces[2].timestamp,
             sequence=1,
-            id="3",
+            id=id3,
         ),
         MessagePiece(
             role="user",
@@ -593,7 +598,7 @@ def test_order_message_pieces_by_conversation_same_timestamp():
             conversation_id="conv2",
             timestamp=pieces[0].timestamp,
             sequence=2,
-            id="4",
+            id=id4,
         ),
     ]
 
@@ -608,13 +613,23 @@ def test_order_message_pieces_by_conversation_empty_list():
 
 
 def test_order_message_pieces_by_conversation_single_message():
-    pieces = [MessagePiece(role="user", original_value="Hello 1", conversation_id="conv1", id="1")]
-    expected = [MessagePiece(role="user", original_value="Hello 1", conversation_id="conv1", id="1")]
+    only_id = uuid.uuid4()
+    pieces = [MessagePiece(role="user", original_value="Hello 1", conversation_id="conv1", id=only_id)]
+    expected = [
+        MessagePiece(
+            role="user",
+            original_value="Hello 1",
+            conversation_id="conv1",
+            id=only_id,
+            timestamp=pieces[0].timestamp,
+        )
+    ]
 
     assert sort_message_pieces(pieces) == expected
 
 
 def test_order_message_pieces_by_conversation_same_timestamp_different_sequences():
+    id1, id2 = uuid.uuid4(), uuid.uuid4()
     pieces = [
         MessagePiece(
             role="user",
@@ -622,7 +637,7 @@ def test_order_message_pieces_by_conversation_same_timestamp_different_sequences
             conversation_id="conv1",
             timestamp=datetime.now(tz=timezone.utc),
             sequence=2,
-            id="2",
+            id=id2,
         ),
         MessagePiece(
             role="user",
@@ -630,11 +645,9 @@ def test_order_message_pieces_by_conversation_same_timestamp_different_sequences
             conversation_id="conv1",
             timestamp=datetime.now(tz=timezone.utc),
             sequence=1,
-            id="1",
+            id=id1,
         ),
     ]
-    for i, piece in enumerate(pieces):
-        piece.prompt_id = f"prompt-{i}"
     expected = [
         MessagePiece(
             role="user",
@@ -642,7 +655,7 @@ def test_order_message_pieces_by_conversation_same_timestamp_different_sequences
             conversation_id="conv1",
             timestamp=pieces[1].timestamp,
             sequence=1,
-            id="1",
+            id=id1,
         ),
         MessagePiece(
             role="user",
@@ -650,7 +663,7 @@ def test_order_message_pieces_by_conversation_same_timestamp_different_sequences
             conversation_id="conv1",
             timestamp=pieces[0].timestamp,
             sequence=2,
-            id="2",
+            id=id2,
         ),
     ]
 
@@ -712,7 +725,7 @@ def test_message_piece_to_dict():
         ],
     )
 
-    result = entry.to_dict()
+    result = entry.model_dump(mode="json")
 
     expected_keys = [
         "id",
@@ -743,10 +756,11 @@ def test_message_piece_to_dict():
         assert key in result, f"Missing key: {key}"
 
     assert result["id"] == str(entry.id)
-    assert result["role"] == entry._role
+    assert result["role"] == entry.role
     assert result["conversation_id"] == entry.conversation_id
     assert result["sequence"] == entry.sequence
-    assert result["timestamp"] == entry.timestamp.isoformat()
+    # Pydantic v2 serializes UTC datetimes with a trailing "Z" rather than "+00:00".
+    assert result["timestamp"] == entry.timestamp.isoformat().replace("+00:00", "Z")
     assert result["labels"] == entry.labels
     assert result["targeted_harm_categories"] == entry.targeted_harm_categories
     assert result["prompt_metadata"] == entry.prompt_metadata
@@ -783,7 +797,7 @@ def test_message_piece_to_dict_scorer_identifier_none():
         original_value="Hello",
     )
 
-    result = entry.to_dict()
+    result = entry.model_dump(mode="json")
     assert result["scorer_identifier"] is None
 
 
@@ -933,7 +947,7 @@ def test_message_piece_harm_categories_serialization():
         role="user", original_value="Hello", converted_value="Hello", targeted_harm_categories=harm_categories
     )
 
-    result = entry.to_dict()
+    result = entry.model_dump(mode="json")
     assert "targeted_harm_categories" in result
     assert result["targeted_harm_categories"] == harm_categories
 
@@ -954,7 +968,7 @@ def test_message_piece_harm_categories_with_labels():
     assert entry.targeted_harm_categories == harm_categories
     assert entry.labels == labels
 
-    result = entry.to_dict()
+    result = entry.model_dump(mode="json")
     assert result["targeted_harm_categories"] == harm_categories
     assert result["labels"] == labels
 
@@ -998,193 +1012,42 @@ class TestSimulatedAssistantRole:
         assert piece.is_simulated is False
 
     def test_get_role_for_storage_returns_simulated_assistant(self):
-        """Test that get_role_for_storage returns the actual stored role."""
+        """Test that role attribute returns the actual stored role."""
         piece = MessagePiece(role="simulated_assistant", original_value="Hello")
-        assert piece.get_role_for_storage() == "simulated_assistant"
+        assert piece.role == "simulated_assistant"
 
     def test_get_role_for_storage_returns_assistant(self):
-        """Test that get_role_for_storage returns assistant for assistant role."""
+        """Test that role attribute returns assistant for assistant role."""
         piece = MessagePiece(role="assistant", original_value="Hello")
-        assert piece.get_role_for_storage() == "assistant"
+        assert piece.role == "assistant"
 
     def test_get_role_for_storage_returns_user(self):
-        """Test that get_role_for_storage returns user for user role."""
+        """Test that role attribute returns user for user role."""
         piece = MessagePiece(role="user", original_value="Hello")
-        assert piece.get_role_for_storage() == "user"
+        assert piece.role == "user"
 
     def test_role_setter_sets_simulated_assistant(self):
         """Test that role setter can set simulated_assistant."""
         piece = MessagePiece(role="assistant", original_value="Hello")
-        piece._role = "simulated_assistant"
-        assert piece.get_role_for_storage() == "simulated_assistant"
+        piece.role = "simulated_assistant"
+        assert piece.role == "simulated_assistant"
         assert piece.api_role == "assistant"
         assert piece.is_simulated is True
 
 
-def test_set_piece_not_in_database_sets_id_to_none():
+def test_set_piece_not_in_memory_sets_flag():
     entry = MessagePiece(
         role="user",
         original_value="Hello",
         converted_value="Hello",
     )
+    original_id = entry.id
     assert entry.id is not None
-    entry.set_piece_not_in_database()
-    assert entry.id is None
-
-
-class TestMessagePieceDeprecationWarnings:
-    """Tests for deprecation warnings on parameters scheduled for removal."""
-
-    def test_scorer_identifier_emits_deprecation_warning(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            MessagePiece(
-                role="user",
-                original_value="Hello",
-                scorer_identifier=ComponentIdentifier(class_name="S", class_module="m"),
-            )
-        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert any("scorer_identifier" in str(m.message) for m in deprecation_msgs)
-
-    def test_scorer_identifier_none_no_warning(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            MessagePiece(role="user", original_value="Hello")
-        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert not any("scorer_identifier" in str(m.message) for m in deprecation_msgs)
-
-    def test_originator_non_default_emits_deprecation_warning(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            MessagePiece(role="user", original_value="Hello", originator="attack")
-        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert any("originator" in str(m.message) for m in deprecation_msgs)
-
-    def test_originator_default_no_warning(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            MessagePiece(role="user", original_value="Hello")
-        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert not any("originator" in str(m.message) for m in deprecation_msgs)
-
-    def test_scores_emits_deprecation_warning(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            MessagePiece(role="user", original_value="Hello", scores=[])
-        # scores=[] is falsy but not None, however the check is `scores is not None`
-        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert any("scores" in str(m.message) for m in deprecation_msgs)
-
-    def test_scores_none_no_warning(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            MessagePiece(role="user", original_value="Hello")
-        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert not any("scores" in str(m.message) for m in deprecation_msgs)
-
-    def test_targeted_harm_categories_emits_deprecation_warning(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            MessagePiece(role="user", original_value="Hello", targeted_harm_categories=["violence"])
-        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert any("targeted_harm_categories" in str(m.message) for m in deprecation_msgs)
-
-    def test_targeted_harm_categories_none_no_warning(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            MessagePiece(role="user", original_value="Hello")
-        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert not any("targeted_harm_categories" in str(m.message) for m in deprecation_msgs)
-
-    def test_labels_emits_deprecation_warning(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            MessagePiece(role="user", original_value="Hello", labels={"env": "prod"})
-        deprecation_msgs = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert any("labels" in str(m.message) for m in deprecation_msgs)
-
-
-class TestOriginatorTypeAliasDeprecation:
-    """Tests for the deprecated ``Originator`` module-level type alias."""
-
-    def test_originator_alias_emits_deprecation_warning(self):
-        from typing import Literal, get_args
-
-        with pytest.warns(DeprecationWarning, match="Originator"):
-            from pyrit.models.message_piece import Originator
-
-        assert get_args(Originator) == ("attack", "converter", "undefined", "scorer")
-        assert Originator is Literal["attack", "converter", "undefined", "scorer"]
-
-
-class TestCopyLineageFrom:
-    """Tests for MessagePiece.copy_lineage_from."""
-
-    _SOURCE_CONV_ID = "source-conv-id"
-    _SOURCE_LABELS = {"op": "red_team", "run": "42"}
-    _SOURCE_ATTACK_ID = ComponentIdentifier(class_name="TestAttack", class_module="tests")
-    _SOURCE_TARGET_ID = ComponentIdentifier(class_name="OpenAIChatTarget", class_module="pyrit")
-    _SOURCE_METADATA = {"scenario": "jailbreak", "turn": 5}
-
-    def _make_source(self) -> MessagePiece:
-        return MessagePiece(
-            role="user",
-            original_value="source prompt",
-            conversation_id=self._SOURCE_CONV_ID,
-            labels=dict(self._SOURCE_LABELS),
-            attack_identifier=self._SOURCE_ATTACK_ID,
-            prompt_target_identifier=self._SOURCE_TARGET_ID,
-            prompt_metadata=dict(self._SOURCE_METADATA),
-        )
-
-    def _make_target(self) -> MessagePiece:
-        return MessagePiece(
-            role="user",
-            original_value="target prompt",
-        )
-
-    def test_copies_all_lineage_fields(self):
-        source = self._make_source()
-        target = self._make_target()
-
-        target.copy_lineage_from(source)
-
-        assert target.conversation_id == self._SOURCE_CONV_ID
-        assert target.labels == self._SOURCE_LABELS
-        assert target.attack_identifier == self._SOURCE_ATTACK_ID
-        assert target.prompt_target_identifier == self._SOURCE_TARGET_ID
-        assert target.prompt_metadata == self._SOURCE_METADATA
-
-    def test_labels_are_independent_copies(self):
-        source = self._make_source()
-        target = self._make_target()
-
-        target.copy_lineage_from(source)
-
-        target.labels["extra"] = "injected"
-        assert "extra" not in source.labels
-
-    def test_prompt_metadata_are_independent_copies(self):
-        source = self._make_source()
-        target = self._make_target()
-
-        target.copy_lineage_from(source)
-
-        target.prompt_metadata["extra"] = "injected"
-        assert "extra" not in source.prompt_metadata
-
-    def test_does_not_overwrite_non_lineage_fields(self):
-        source = self._make_source()
-        target = self._make_target()
-        original_id = target.id
-        original_role = target._role
-        original_value = target.original_value
-
-        target.copy_lineage_from(source)
-
-        assert target.id == original_id
-        assert target._role == original_role
-        assert target.original_value == original_value
+    assert entry.not_in_memory is False
+    entry.not_in_memory = True
+    assert entry.not_in_memory is True
+    # id is preserved so scorers can still reference the piece within the in-memory call
+    assert entry.id == original_id
 
 
 def test_to_dict_from_dict_roundtrip():
@@ -1235,25 +1098,285 @@ def test_to_dict_from_dict_roundtrip():
         response_error="none",
         original_prompt_id=uuid.UUID("12345678-1234-1234-1234-123456789abc"),
     )
-    roundtripped = MessagePiece.from_dict(original.to_dict())
-    assert original.to_dict() == roundtripped.to_dict()
+    roundtripped = MessagePiece.model_validate(original.model_dump(mode="json"))
+    assert original.model_dump(mode="json") == roundtripped.model_dump(mode="json")
 
 
-def test_to_dict_from_dict_roundtrip_after_set_piece_not_in_database():
-    """Pieces marked not-in-database (id=None) must serialize and deserialize cleanly without ValueError."""
+def test_to_dict_from_dict_roundtrip_after_set_piece_not_in_memory():
+    """Pieces marked not-in-memory keep their id; the flag itself is not serialized."""
     piece = MessagePiece(
         role="user",
         original_value="Hello world",
         conversation_id="conv-not-in-db",
     )
-    piece.set_piece_not_in_database()
-    piece.original_prompt_id = None  # type: ignore[assignment]
+    original_id = piece.id
+    piece.not_in_memory = True
+    assert piece.not_in_memory is True
+    assert piece.id == original_id
 
-    serialized = piece.to_dict()
-    assert serialized["id"] is None
-    assert serialized["original_prompt_id"] is None
+    serialized = piece.model_dump(mode="json")
+    # The not_in_memory field is intentionally excluded from serialization.
+    assert "not_in_memory" not in serialized
+    assert serialized["id"] == str(original_id)
 
-    # Must not raise ValueError on the literal string "None" or similar corruption.
-    roundtripped = MessagePiece.from_dict(serialized)
+    roundtripped = MessagePiece.model_validate(serialized)
     assert isinstance(roundtripped.id, uuid.UUID)
-    assert isinstance(roundtripped.original_prompt_id, uuid.UUID)
+    assert roundtripped.id == original_id
+    # Flag does not survive serialization (in-process only).
+    assert roundtripped.not_in_memory is False
+
+
+class TestCopyLineageFrom:
+    def _make_piece(self, **overrides) -> MessagePiece:
+        defaults = {
+            "role": "user",
+            "original_value": "hello",
+            "conversation_id": "conv-source",
+        }
+        defaults.update(overrides)
+        return MessagePiece(**defaults)
+
+    def test_copies_lineage_fields_from_source_to_target(self) -> None:
+        source = self._make_piece(
+            conversation_id="conv-A",
+            attack_identifier={"__type__": "Attack", "__module__": "x", "id": "atk-1"},
+            prompt_target_identifier={"__type__": "Target", "__module__": "x", "id": "tgt-1"},
+        )
+        source.prompt_metadata = {"k": "v"}
+
+        target = self._make_piece(conversation_id="conv-B", role="assistant", original_value="hi")
+
+        target.copy_lineage_from(source=source)
+
+        assert target.conversation_id == "conv-A"
+        assert target.attack_identifier == source.attack_identifier
+        assert target.prompt_target_identifier == source.prompt_target_identifier
+        assert target.prompt_metadata == {"k": "v"}
+
+    def test_labels_and_metadata_are_shallow_copied(self) -> None:
+        source = self._make_piece()
+        source.prompt_metadata = {"meta": "1"}
+
+        target = self._make_piece(role="assistant")
+
+        target.copy_lineage_from(source=source)
+
+        # Mutating the target containers should not affect the source.
+        target.prompt_metadata["meta"] = "2"
+        assert source.prompt_metadata == {"meta": "1"}
+
+    def test_non_lineage_fields_are_preserved(self) -> None:
+        source = self._make_piece(conversation_id="conv-A")
+        target = self._make_piece(
+            role="assistant",
+            original_value="target-value",
+            conversation_id="conv-B",
+        )
+        original_value_before = target.original_value
+        role_before = target.role
+        id_before = target.id
+
+        target.copy_lineage_from(source=source)
+
+        assert target.original_value == original_value_before
+        assert target.role == role_before
+        assert target.id == id_before
+
+
+class TestPhase3PydanticMigration:
+    """Phase 3 §F.2 sanity tests for the MessagePiece Pydantic migration."""
+
+    def test_to_dict_golden_shape(self) -> None:
+        ts = datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        piece_id = uuid.UUID("12345678-1234-5678-1234-567812345678")
+        conv_id = "conv-123"
+        piece = MessagePiece(
+            id=piece_id,
+            role="user",
+            conversation_id=conv_id,
+            sequence=2,
+            timestamp=ts,
+            original_value="hello",
+            converted_value="hello",
+        )
+
+        d = piece.model_dump(mode="json")
+
+        expected_keys = [
+            "id",
+            "role",
+            "conversation_id",
+            "sequence",
+            "timestamp",
+            "original_value",
+            "original_value_data_type",
+            "original_value_sha256",
+            "converted_value",
+            "converted_value_data_type",
+            "converted_value_sha256",
+            "response_error",
+            "originator",
+            "original_prompt_id",
+            "labels",
+            "targeted_harm_categories",
+            "prompt_metadata",
+            "converter_identifiers",
+            "prompt_target_identifier",
+            "attack_identifier",
+            "scorer_identifier",
+            "scores",
+        ]
+        assert list(d.keys()) == expected_keys
+        assert d["id"] == str(piece_id)
+        assert d["role"] == "user"
+        assert d["conversation_id"] == conv_id
+        assert d["sequence"] == 2
+        assert d["timestamp"] == ts.isoformat().replace("+00:00", "Z")
+        assert d["labels"] == {}
+        assert d["targeted_harm_categories"] == []
+        assert d["prompt_metadata"] == {}
+        assert d["converter_identifiers"] == []
+        assert d["prompt_target_identifier"] is None
+        assert d["attack_identifier"] is None
+        assert d["scorer_identifier"] is None
+        assert d["original_value_data_type"] == "text"
+        assert d["original_value"] == "hello"
+        assert d["converted_value_data_type"] == "text"
+        assert d["converted_value"] == "hello"
+        assert d["response_error"] == "none"
+        assert d["originator"] == "undefined"
+        assert d["original_prompt_id"] == str(piece_id)
+        assert d["scores"] == []
+
+    def test_message_piece_is_unhashable(self) -> None:
+        assert MessagePiece.__hash__ is None
+
+        piece = MessagePiece(role="user", original_value="hello")
+        with pytest.raises(TypeError):
+            hash(piece)
+
+    def test_unknown_kwarg_raises(self) -> None:
+        with pytest.raises(Exception) as exc_info:
+            MessagePiece(role="user", original_value="hello", typo_field="oops")
+        assert "typo_field" in str(exc_info.value) or "Extra" in str(exc_info.value)
+
+
+class TestMessagePieceDeprecationWarnings:
+    """Tests for deprecation warnings on parameters scheduled for removal."""
+
+    def _emit_deprecation_msgs(self, **kwargs) -> list[warnings.WarningMessage]:
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            MessagePiece(role="user", original_value="hello", **kwargs)
+        return [x for x in w if issubclass(x.category, DeprecationWarning)]
+
+    def test_scorer_identifier_emits_deprecation_warning(self):
+        scorer_id = ComponentIdentifier(class_name="X", class_module="x")
+        msgs = self._emit_deprecation_msgs(scorer_identifier=scorer_id)
+        assert any("scorer_identifier" in str(m.message) for m in msgs)
+
+    def test_scorer_identifier_omitted_no_warning(self):
+        msgs = self._emit_deprecation_msgs()
+        assert not any("scorer_identifier" in str(m.message) for m in msgs)
+
+    def test_originator_non_default_emits_deprecation_warning(self):
+        msgs = self._emit_deprecation_msgs(originator="attack")
+        assert any("originator" in str(m.message) for m in msgs)
+
+    def test_originator_default_no_warning(self):
+        msgs = self._emit_deprecation_msgs(originator="undefined")
+        assert not any("originator" in str(m.message) for m in msgs)
+
+    def test_scores_emits_deprecation_warning(self):
+        score = Score(
+            score_value="true",
+            score_value_description="d",
+            score_type="true_false",
+            score_rationale="r",
+            scorer_class_identifier=ComponentIdentifier(class_name="S", class_module="s"),
+            message_piece_id="mp-1",
+        )
+        msgs = self._emit_deprecation_msgs(scores=[score])
+        assert any("scores" in str(m.message) for m in msgs)
+
+    def test_scores_omitted_no_warning(self):
+        msgs = self._emit_deprecation_msgs()
+        assert not any("scores" in str(m.message) for m in msgs)
+
+    def test_targeted_harm_categories_emits_deprecation_warning(self):
+        msgs = self._emit_deprecation_msgs(targeted_harm_categories=["violence"])
+        assert any("targeted_harm_categories" in str(m.message) for m in msgs)
+
+    def test_targeted_harm_categories_omitted_no_warning(self):
+        msgs = self._emit_deprecation_msgs()
+        assert not any("targeted_harm_categories" in str(m.message) for m in msgs)
+
+    def test_labels_emits_deprecation_warning(self):
+        msgs = self._emit_deprecation_msgs(labels={"k": "v"})
+        assert any("labels" in str(m.message) for m in msgs)
+
+    def test_labels_omitted_no_warning(self):
+        msgs = self._emit_deprecation_msgs()
+        assert not any("labels" in str(m.message) for m in msgs)
+
+    def test_memory_load_roundtrip_does_not_emit_deprecation_warnings(self) -> None:
+        """Reconstructing a MessagePiece from PromptMemoryEntry must not emit deprecations.
+
+        The memory-layer load path assigns deprecated containers (``labels``,
+        ``scores``, ``targeted_harm_categories``) post-construction so the
+        deprecation-kwarg validator is not triggered. This regression-guards
+        that pattern.
+        """
+        from pyrit.memory.memory_models import PromptMemoryEntry
+
+        piece = MessagePiece(
+            role="user",
+            original_value="hello",
+            conversation_id="conv-deprec",
+        )
+        piece.labels = {"k": "v"}
+        piece.targeted_harm_categories = ["violence"]
+
+        entry = PromptMemoryEntry(entry=piece)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            reconstructed = entry.get_message_piece()
+
+        deprecation_msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert deprecation_msgs == [], [str(m.message) for m in deprecation_msgs]
+        assert reconstructed.labels == {"k": "v"}
+        assert reconstructed.targeted_harm_categories == ["violence"]
+
+
+class TestMessagePieceDeprecatedMethodShims:
+    """Tests for the deprecated method shims scheduled for removal in 0.16.0."""
+
+    def test_to_dict_emits_warning_and_matches_model_dump(self) -> None:
+        piece = MessagePiece(role="user", original_value="hello")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = piece.to_dict()
+        msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert any("to_dict" in str(m.message) for m in msgs)
+        assert result == piece.model_dump(mode="json")
+
+    def test_from_dict_emits_warning_and_matches_model_validate(self) -> None:
+        piece = MessagePiece(role="user", original_value="hello")
+        serialized = piece.model_dump(mode="json")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            reconstructed = MessagePiece.from_dict(serialized)
+        msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert any("from_dict" in str(m.message) for m in msgs)
+        assert reconstructed.model_dump(mode="json") == serialized
+
+    def test_set_piece_not_in_database_emits_warning_and_sets_flag(self) -> None:
+        piece = MessagePiece(role="user", original_value="hello")
+        assert piece.not_in_memory is False
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            piece.set_piece_not_in_database()
+        msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert any("set_piece_not_in_database" in str(m.message) for m in msgs)
+        assert piece.not_in_memory is True

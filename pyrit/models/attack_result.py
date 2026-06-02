@@ -240,9 +240,9 @@ class AttackResult(StrategyResult):
             "objective": self.objective,
             "attack_result_id": self.attack_result_id,
             "atomic_attack_identifier": (
-                self.atomic_attack_identifier.to_dict() if self.atomic_attack_identifier else None
+                self.atomic_attack_identifier.model_dump() if self.atomic_attack_identifier else None
             ),
-            "last_response": self.last_response.to_dict() if self.last_response else None,
+            "last_response": self.last_response.model_dump(mode="json") if self.last_response else None,
             "last_score": self.last_score.to_dict() if self.last_score else None,
             "executed_turns": self.executed_turns,
             "execution_time_ms": self.execution_time_ms,
@@ -278,11 +278,11 @@ class AttackResult(StrategyResult):
             objective=data["objective"],
             attack_result_id=data.get("attack_result_id", str(uuid.uuid4())),
             atomic_attack_identifier=(
-                ComponentIdentifier.from_dict(data["atomic_attack_identifier"])
+                ComponentIdentifier.model_validate(data["atomic_attack_identifier"])
                 if data.get("atomic_attack_identifier")
                 else None
             ),
-            last_response=(MessagePiece.from_dict(data["last_response"]) if data.get("last_response") else None),
+            last_response=(MessagePiece.model_validate(data["last_response"]) if data.get("last_response") else None),
             last_score=Score.from_dict(data["last_score"]) if data.get("last_score") else None,
             executed_turns=data.get("executed_turns", 0),
             execution_time_ms=data.get("execution_time_ms", 0),

@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import pytest
+from pydantic import ValidationError
 
 from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 
@@ -103,7 +104,7 @@ def test_identifier_filter_raises_partial_match_with_case_sensitive():
 
 def test_identifier_filter_is_frozen():
     f = IdentifierFilter(identifier_type=IdentifierType.TARGET, property_path="$.name", value="x")
-    with pytest.raises(AttributeError):
+    with pytest.raises(ValidationError):
         f.value = "y"
 
 

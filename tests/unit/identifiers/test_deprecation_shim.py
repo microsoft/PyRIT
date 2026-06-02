@@ -27,6 +27,7 @@ import pyrit.identifiers.class_name_utils as shim_class_name
 import pyrit.identifiers.component_identifier as shim_component
 import pyrit.identifiers.evaluation_identifier as shim_eval
 import pyrit.identifiers.identifier_filters as shim_filters
+import pyrit.models as models_pkg
 import pyrit.models.identifiers as new
 import pyrit.models.identifiers.atomic_attack_identifier as new_atomic
 import pyrit.models.identifiers.class_name_utils as new_class_name
@@ -42,12 +43,21 @@ SUBMODULE_PAIRS = [
     (shim_filters, new_filters, "identifier_filters"),
 ]
 
+# Names that are deprecated at BOTH the pyrit.identifiers shim path AND the new
+# pyrit.models.identifiers canonical path (because the underlying class was itself
+# renamed). The shim's __getattr__ suppresses its standard path-migration warning
+# for these names so a single access produces a single, more informative warning
+# pointing at the actual replacement class. Tested separately in
+# ``test_scorer_identifier_*`` below.
+NAMES_DEPRECATED_AT_NEW_PATH = {"ScorerIdentifier"}
+FORWARD_ONLY_NAMES = [n for n in shim.__all__ if n not in NAMES_DEPRECATED_AT_NEW_PATH]
+
 
 @pytest.fixture(autouse=True)
 def _reset_warning_caches():
     """Reset every shim's per-process `_warned` set so each test starts clean."""
     saved = {}
-    modules = [shim] + [m for m, _, _ in SUBMODULE_PAIRS]
+    modules = [shim, new, models_pkg] + [m for m, _, _ in SUBMODULE_PAIRS]
     for mod in modules:
         saved[mod] = set(mod._warned)
         mod._warned.clear()
@@ -68,7 +78,7 @@ def test_top_level_shim_forwards_to_new_module(name):
     assert shim_obj is new_obj
 
 
-@pytest.mark.parametrize("name", shim.__all__)
+@pytest.mark.parametrize("name", FORWARD_ONLY_NAMES)
 def test_top_level_shim_emits_one_warning_per_name(name):
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", DeprecationWarning)
@@ -82,6 +92,60 @@ def test_top_level_shim_emits_one_warning_per_name(name):
     assert f"pyrit.identifiers.{name}" in message
     assert f"pyrit.models.identifiers.{name}" in message
     assert "0.16.0" in message
+
+
+def test_scorer_identifier_via_shim_emits_single_rename_warning():
+    """`from pyrit.identifiers import ScorerIdentifier` produces ONE warning that points at the
+    actual replacement (ComponentIdentifier), not at the deprecated pyrit.models.identifiers path.
+
+    The shim's standard path-migration warning is suppressed for this name so the partner sees a
+    single actionable signal in one step.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        result = shim.ScorerIdentifier
+        _ = shim.ScorerIdentifier
+        _ = shim.ScorerIdentifier
+
+    dep = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert len(dep) == 1, f"Expected 1 DeprecationWarning, got {len(dep)}: {[str(w.message) for w in dep]}"
+    message = str(dep[0].message)
+    assert "pyrit.models.identifiers.ScorerIdentifier" in message
+    assert "ComponentIdentifier" in message
+    assert "0.16.0" in message
+    assert result is new.ComponentIdentifier
+
+
+def test_scorer_identifier_via_canonical_path_emits_single_warning():
+    """`from pyrit.models.identifiers import ScorerIdentifier` warns once per process."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        result = new.ScorerIdentifier
+        _ = new.ScorerIdentifier
+
+    dep = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert len(dep) == 1, f"Expected 1 DeprecationWarning, got {len(dep)}"
+    message = str(dep[0].message)
+    assert "pyrit.models.identifiers.ScorerIdentifier" in message
+    assert "ComponentIdentifier" in message
+    assert "0.16.0" in message
+    assert result is new.ComponentIdentifier
+
+
+def test_scorer_identifier_via_models_package_emits_single_warning():
+    """`from pyrit.models import ScorerIdentifier` warns once per process."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        result = models_pkg.ScorerIdentifier
+        _ = models_pkg.ScorerIdentifier
+
+    dep = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert len(dep) == 1, f"Expected 1 DeprecationWarning, got {len(dep)}"
+    message = str(dep[0].message)
+    assert "pyrit.models.ScorerIdentifier" in message
+    assert "ComponentIdentifier" in message
+    assert "0.16.0" in message
+    assert result is models_pkg.ComponentIdentifier
 
 
 def test_top_level_shim_attribute_error_for_unknown_name():

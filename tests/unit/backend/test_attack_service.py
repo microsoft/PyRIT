@@ -124,7 +124,6 @@ def make_mock_piece(
     piece.conversation_id = conversation_id
     piece.role = role
     piece.api_role = "assistant" if role in ("assistant", "simulated_assistant") else role
-    piece.get_role_for_storage.return_value = role
     piece.sequence = sequence
     piece.original_value = original_value
     piece.converted_value = converted_value
@@ -1427,7 +1426,6 @@ class TestMessageBuilding:
         mock_piece.response_error = None
         mock_piece.sequence = 0
         mock_piece.role = "user"
-        mock_piece.get_role_for_storage.return_value = "user"
         mock_piece.timestamp = datetime.now(timezone.utc)
         mock_piece.scores = None
 
@@ -2356,7 +2354,7 @@ class TestAttackServiceAdditionalCoverage:
             source_conversation_id="attack-1", cutoff_index=0, remap_assistant_to_simulated=True
         )
 
-        assert dup_piece._role == "simulated_assistant"
+        assert dup_piece.role == "simulated_assistant"
 
 
 class TestAddMessageGuards:

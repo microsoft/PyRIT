@@ -96,7 +96,7 @@ class ConversationScorer(Scorer, ABC):
         conversation_message = Message(
             message_pieces=[
                 MessagePiece(
-                    role=original_piece.get_role_for_storage(),
+                    role=original_piece.role,
                     original_value=conversation_text,
                     converted_value=conversation_text,
                     id=original_piece.id,

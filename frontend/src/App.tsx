@@ -143,6 +143,19 @@ function App() {
   }, [])
 
   const handleOpenAttack = useCallback(async (openAttackResultId: string) => {
+    // Synchronously clear per-attack state before flipping attackResultId so
+    // ChatWindow does not fetch /messages with a conv_id that belonged to the
+    // previously loaded attack while getAttack is in flight. The branched-
+    // conversation case (activeConversationId pointing to a related conv of
+    // the old attack) would otherwise produce a 400 from the backend.
+    // Skip clearing when re-opening the same attack to avoid a redundant reload.
+    if (openAttackResultId !== attackResultId) {
+      setConversationId(null)
+      setActiveConversationId(null)
+      setAttackLabels(null)
+      setAttackTarget(null)
+      setRelatedConversationCount(0)
+    }
     setAttackResultId(openAttackResultId)
     setIsLoadingAttack(true)
     setCurrentView('chat')
@@ -159,7 +172,7 @@ function App() {
     } finally {
       setIsLoadingAttack(false)
     }
-  }, [clearAttackState])
+  }, [attackResultId, clearAttackState])
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode)

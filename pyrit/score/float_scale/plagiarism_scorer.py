@@ -185,7 +185,7 @@ class PlagiarismScorer(FloatScaleScorer):
                 score_metadata=None,
                 score_type="float_scale",
                 score_rationale="Score is deterministic.",
-                message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+                message_piece_id=message_piece.id,
                 scorer_class_identifier=self.get_identifier(),
             )
         ]
