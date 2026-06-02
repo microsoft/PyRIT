@@ -21,7 +21,7 @@ def mock_authenticator():
         mock_token = mock_token.decode("utf-8")
     authenticator = MagicMock(spec=CopilotAuthenticator)
     authenticator.get_token = AsyncMock(return_value=mock_token)
-    authenticator.get_claims = AsyncMock(return_value=token_payload)
+    authenticator.get_claims_async = AsyncMock(return_value=token_payload)
     return authenticator
 
 
@@ -269,7 +269,7 @@ class TestBuildWebsocketUrl:
             if isinstance(mock_token, bytes):
                 mock_token = mock_token.decode("utf-8")
             mock_authenticator.get_token = AsyncMock(return_value=mock_token)
-            mock_authenticator.get_claims = AsyncMock(return_value=token_payload)
+            mock_authenticator.get_claims_async = AsyncMock(return_value=token_payload)
 
             target = mock_copilot_target
             with pytest.raises(ValueError, match="Failed to extract tenant_id \\(tid\\) or object_id \\(oid\\)"):
@@ -277,7 +277,7 @@ class TestBuildWebsocketUrl:
 
     async def test_build_websocket_url_with_invalid_token(self, mock_authenticator, mock_copilot_target):
         mock_authenticator.get_token = AsyncMock(return_value="invalid_token")
-        mock_authenticator.get_claims = AsyncMock(side_effect=ValueError("Failed to decode access token"))
+        mock_authenticator.get_claims_async = AsyncMock(side_effect=ValueError("Failed to decode access token"))
         target = mock_copilot_target
 
         with pytest.raises(ValueError, match="Failed to decode access token"):

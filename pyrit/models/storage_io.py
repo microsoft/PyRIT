@@ -201,7 +201,7 @@ class AzureBlobStorageIO(StorageIO):
         sas_token = self._sas_token
         if not self._sas_token:
             logger.info("SAS token not provided. Creating a delegation SAS token using Entra ID authentication.")
-            sas_token = await AzureStorageAuth.get_sas_token(self._container_url)
+            sas_token = await AzureStorageAuth.get_sas_token_async(self._container_url)
 
         self._client_async = AsyncContainerClient.from_container_url(
             container_url=self._container_url,

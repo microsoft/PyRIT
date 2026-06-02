@@ -8,18 +8,6 @@
 # To regenerate (only after a deliberate, reviewed cleanup):
 #   python build_scripts/check_async_suffix.py --write-baseline
 
-pyrit/auth/azure_auth.py:88:get_token
-pyrit/auth/azure_auth.py:107:close
-pyrit/auth/azure_auth.py:152:async_token_provider
-pyrit/auth/azure_storage_auth.py:23:get_user_delegation_key
-pyrit/auth/azure_storage_auth.py:42:get_sas_token
-pyrit/auth/copilot_authenticator.py:145:get_claims
-pyrit/auth/copilot_authenticator.py:184:_get_cached_token_if_available_and_valid
-pyrit/auth/copilot_authenticator.py:289:_fetch_access_token_with_playwright
-pyrit/auth/copilot_authenticator.py:327:_run_playwright_in_thread
-pyrit/auth/copilot_authenticator.py:350:_run_playwright_browser_automation
-pyrit/auth/copilot_authenticator.py:379:response_handler
-pyrit/auth/manual_copilot_authenticator.py:95:get_claims
 pyrit/backend/middleware/error_handlers.py:23:validation_exception_handler
 pyrit/backend/middleware/error_handlers.py:59:value_error_handler
 pyrit/backend/middleware/error_handlers.py:83:not_found_handler

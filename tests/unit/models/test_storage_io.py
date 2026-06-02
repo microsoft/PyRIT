@@ -170,7 +170,7 @@ async def test_azure_blob_storage_io_create_container_client_uses_explicit_sas_t
     mock_container_client = AsyncMock()
 
     with (
-        patch("pyrit.auth.AzureStorageAuth.get_sas_token", new_callable=AsyncMock) as mock_get_sas_token,
+        patch("pyrit.auth.AzureStorageAuth.get_sas_token_async", new_callable=AsyncMock) as mock_get_sas_token,
         patch(
             "azure.storage.blob.aio.ContainerClient.from_container_url", return_value=mock_container_client
         ) as mock_from_container_url,

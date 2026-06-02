@@ -85,7 +85,7 @@ class AsyncTokenProviderCredential:
         """
         self._token_provider = token_provider
 
-    async def get_token(self, *scopes: str, **kwargs: Any) -> AccessToken:
+    async def get_token(self, *scopes: str, **kwargs: Any) -> AccessToken:  # pyrit-async-suffix-exempt
         """
         Get an access token asynchronously.
 
@@ -104,7 +104,7 @@ class AsyncTokenProviderCredential:
         expires_on = int(time.time()) + 3600
         return AccessToken(str(token), expires_on)
 
-    async def close(self) -> None:
+    async def close(self) -> None:  # pyrit-async-suffix-exempt
         """No-op close for protocol compliance. The callable provider does not hold resources."""
 
     async def __aenter__(self) -> AsyncTokenProviderCredential:
@@ -149,7 +149,7 @@ def ensure_async_token_provider(
         " Automatically wrapping in async function for compatibility with async client."
     )
 
-    async def async_token_provider() -> str:
+    async def async_token_provider_async() -> str:
         """
         Async wrapper for synchronous token provider.
 
@@ -161,7 +161,7 @@ def ensure_async_token_provider(
             return await result  # type: ignore[ty:invalid-return-type]
         return result
 
-    return async_token_provider
+    return async_token_provider_async
 
 
 class AzureAuth(Authenticator):

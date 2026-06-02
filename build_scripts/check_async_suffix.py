@@ -14,7 +14,11 @@ whose name does not end in ``_async`` and is not exempted via either:
    on Protocol classes). The set is intentionally small; one-off exemptions
    should use the per-line ``# pyrit-async-suffix-exempt`` marker instead.
 
-2. **Per-line ``# pyrit-async-suffix-exempt`` marker** on the ``async def`` line.
+2. **Per-line ``# pyrit-async-suffix-exempt`` marker** on any line of the ``async def``
+   header (the marker is scanned across the full signature, which the formatter may
+   split across multiple lines). Common reasons: a deprecation shim that intentionally
+   keeps the old non-``_async`` name for one release cycle; a one-off external-SDK or
+   protocol method name.
 
 3. **Transitional baseline** (``build_scripts/async_suffix_baseline.txt``) — every known
    pre-existing violation at the time this hook was introduced. The baseline must shrink
@@ -70,6 +74,18 @@ def _line_has_noqa(source_lines: list[str], lineno: int) -> bool:
     return _NOQA_MARKER in source_lines[lineno - 1]
 
 
+def _header_has_noqa(source_lines: list[str], node: ast.AsyncFunctionDef) -> bool:
+    """Return True if any line of the def header carries the exempt marker.
+
+    The header spans ``node.lineno`` through the line just before the function body
+    starts (which is where the formatter may place the marker after splitting a
+    long signature across multiple lines).
+    """
+    start = node.lineno
+    end = node.body[0].lineno - 1 if node.body else start
+    return any(_line_has_noqa(source_lines, lineno) for lineno in range(start, max(start, end) + 1))
+
+
 def _scan_file(path: Path) -> list[tuple[str, int, str]]:
     """Return ``(relative_path, line, name)`` violations in ``path``.
 
@@ -89,7 +105,7 @@ def _scan_file(path: Path) -> list[tuple[str, int, str]]:
             continue
         if not _is_violation_name(node.name):
             continue
-        if _line_has_noqa(source_lines, node.lineno):
+        if _header_has_noqa(source_lines, node):
             continue
         violations.append((rel, node.lineno, node.name))
     return violations
