@@ -497,7 +497,7 @@ class TestRemoteLoaderMetadataCoverage:
     async def test_loader_declares_complete_metadata(self, loader_cls):
         """Every concrete remote loader must declare tags, size, and modalities."""
         loader = loader_cls()
-        metadata = await loader._parse_metadata()
+        metadata = await loader._parse_metadata_async()
 
         assert metadata is not None, (
             f"{loader_cls.__name__} has no class-level metadata. Declare `tags`, "

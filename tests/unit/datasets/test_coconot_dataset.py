@@ -251,7 +251,7 @@ class TestCoCoNotRefusalDataset:
                 "subcategory": "wildchats",
             },
         ]
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows_with_empty)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows_with_empty)):
             dataset = await loader.fetch_dataset_async()
 
         assert len(dataset.seeds) == 1

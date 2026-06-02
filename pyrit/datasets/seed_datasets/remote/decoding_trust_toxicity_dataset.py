@@ -89,7 +89,7 @@ class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
         red-teaming and safety research.
     """
 
-    # Class-level metadata picked up by _RemoteDatasetLoader._parse_metadata.
+    # Class-level metadata picked up by _RemoteDatasetLoader._parse_metadata_async.
     # See pyrit/datasets/seed_datasets/seed_metadata.py for the schema.
     # Class-level harm_categories exclude "flirtation" — Perspective API exposes
     # it as a tone/style signal rather than a harm, so it shouldn't surface
