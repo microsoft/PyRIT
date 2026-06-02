@@ -6,6 +6,38 @@ applyTo: '**/*.py'
 
 Follow these coding standards to ensure consistent, readable, and maintainable code across the PyRIT project.
 
+## Async Code
+
+### No Blocking I/O in Async Paths
+- **MANDATORY**: Inside `async def` (and any sync helper reached from one), never call blocking I/O or `time.sleep`. They stall the event loop and serialize all concurrent work.
+- File I/O → `aiofiles` (already a project dep). HTTP → `httpx.AsyncClient` or `pyrit.common.net_utility.make_request_and_raise_if_error_async`. Sleeps → `asyncio.sleep`. Subprocess → `asyncio.create_subprocess_*`. Blocking-only libs (`wave`, `av`, `cv2`, `PIL.Image.open` from disk, `zipfile`, `yaml`, `json` reads from file) → wrap the blocking section in a sync helper and call via `await asyncio.to_thread(_helper, ...)`.
+- I/O that runs **once at construction time** (`__init__`) is sync by design; prefer doing one-shot reads there rather than on every async call.
+
+```python
+# WRONG — blocks the event loop on every send
+async def _send_async(self):
+    with open(self.file_path, "rb") as fp:
+        return fp.read()
+
+# CORRECT — async file read
+async def _send_async(self):
+    async with aiofiles.open(self.file_path, "rb") as fp:
+        return await fp.read()
+
+# WRONG — sync-only library called directly
+async def _read_audio_async(self, path):
+    with wave.open(path, "rb") as wav:
+        return wav.readframes(wav.getnframes())
+
+# CORRECT — wrap blocking lib in to_thread
+def _read_wav_sync(path):
+    with wave.open(path, "rb") as wav:
+        return wav.readframes(wav.getnframes())
+
+async def _read_audio_async(self, path):
+    return await asyncio.to_thread(_read_wav_sync, path)
+```
+
 ## Function and Method Naming
 
 ### Async Functions
@@ -518,6 +550,7 @@ def process_large_dataset(self, *, file_path: Path) -> list[Result]:
 ## Final Checklist
 
 Before committing code, ensure:
+- [ ] No blocking I/O on async paths (no sync `open`, `requests.*`, `time.sleep`, `wave.open`, etc. inside `async def` or sync helpers reached from `async def`)
 - [ ] All async functions have `_async` suffix
 - [ ] All functions have complete type annotations
 - [ ] Functions with >1 parameter use keyword-only arguments

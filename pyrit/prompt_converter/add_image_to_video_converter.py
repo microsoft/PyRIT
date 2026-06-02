@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import contextlib
 import logging
 import os
@@ -110,9 +111,45 @@ class AddImageVideoConverter(PromptConverter):
 
         # Open the video to ensure it exists
         video_bytes = await input_video_data.read_data()
+        input_image_bytes = await input_image_data.read_data()
 
         azure_storage_flag = input_video_data._is_azure_storage_url(self._video_path)
+
+        await asyncio.to_thread(
+            self._add_image_to_video_sync,
+            video_bytes=video_bytes,
+            image_bytes=input_image_bytes,
+            output_path=output_path,
+            azure_storage_flag=azure_storage_flag,
+        )
+
+        logger.info(f"Video saved as {output_path}")
+
+        return output_path
+
+    def _add_image_to_video_sync(
+        self,
+        *,
+        video_bytes: bytes,
+        image_bytes: bytes,
+        output_path: str,
+        azure_storage_flag: bool,
+    ) -> None:
+        """
+        Run the blocking cv2 pipeline and temp-file I/O on a worker thread.
+
+        Designed to be invoked via ``asyncio.to_thread`` so the event loop is not blocked.
+
+        Raises:
+            ValueError: If the input video format is unsupported or the overlay image cannot
+                be decoded.
+        """
+        import cv2
+
         video_path = self._video_path
+        local_temp_path: Optional[Path] = None
+        cap: Optional[cv2.VideoCapture] = None
+        output_video: Optional[cv2.VideoWriter] = None
 
         try:
             if azure_storage_flag:
@@ -139,8 +176,7 @@ class AddImageVideoConverter(PromptConverter):
 
             # Load and resize the overlay image
 
-            input_image_bytes = await input_image_data.read_data()
-            image_np_arr = np.frombuffer(input_image_bytes, np.uint8)
+            image_np_arr = np.frombuffer(image_bytes, np.uint8)
             decoded = cv2.imdecode(image_np_arr, cv2.IMREAD_UNCHANGED)
             if decoded is None:
                 raise ValueError("Failed to decode overlay image")
@@ -176,17 +212,15 @@ class AddImageVideoConverter(PromptConverter):
                 output_video.write(frame)
 
         finally:
-            # Release everything
-            cap.release()
-            output_video.release()
+            # Release everything (guarded — early raises may leave cap/output_video unbound)
+            if cap is not None:
+                cap.release()
+            if output_video is not None:
+                output_video.release()
             with contextlib.suppress(cv2.error):
                 cv2.destroyAllWindows()  # Not available in headless OpenCV builds
-            if azure_storage_flag:
-                os.remove(local_temp_path)  # type: ignore[ty:possibly-unresolved-reference]
-
-        logger.info(f"Video saved as {output_path}")
-
-        return output_path
+            if azure_storage_flag and local_temp_path is not None:
+                os.remove(local_temp_path)
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "image_path") -> ConverterResult:
         """
