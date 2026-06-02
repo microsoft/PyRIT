@@ -12,9 +12,19 @@ from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
 @dataclass(frozen=True)
-class ScorerInfo:
+class _ScorerInfo:
     """
     Lightweight, metadata-only description of a public scorer class.
+
+    WARNING — temporary internal helper. This class is intentionally private (leading
+    underscore) and is not exported from ``pyrit.score``. Do not import it or build on it.
+    It exists only to generate the scorer reference table in the documentation until
+    scorers gain a proper, first-class capability descriptor.
+
+    Longer term we expect scorers to expose their own ``ScorerCapability`` (mirroring the
+    capability model used by prompt targets) rather than having metadata inferred
+    externally via introspection. When that lands, this module should be deleted and
+    callers migrated to the capability API.
 
     Used to build the scorer reference table in the documentation, analogous to
     ``get_converter_modalities`` for converters. It is derived purely from class
@@ -53,7 +63,7 @@ def _uses_chat_target(scorer_class: type[Scorer]) -> bool:
     return "chat_target" in signature.parameters
 
 
-def get_scorer_info() -> list[ScorerInfo]:
+def get_scorer_info() -> list[_ScorerInfo]:
     """
     Retrieve metadata for every public, concrete scorer exported from ``pyrit.score``.
 
@@ -61,13 +71,16 @@ def get_scorer_info() -> list[ScorerInfo]:
     or ``FloatScaleScorer``, and records each scorer's return type and whether it uses a
     generative chat target. Abstract bases and non-scorer exports are skipped.
 
+    This is a temporary helper used only to render the documentation's scorer reference
+    table; see ``_ScorerInfo`` for why it should not be built upon.
+
     Returns:
-        list[ScorerInfo]: Scorers sorted by score type, then LLM-based scorers last within
-            each type, then by name.
+        list[_ScorerInfo]: Scorers sorted by score type, then LLM-based scorers last
+            within each type, then by name.
     """
     import pyrit.score as score_package
 
-    infos: list[ScorerInfo] = []
+    infos: list[_ScorerInfo] = []
     for name in score_package.__all__:
         obj = getattr(score_package, name)
         if not isinstance(obj, type) or not issubclass(obj, Scorer) or inspect.isabstract(obj):
@@ -80,7 +93,7 @@ def get_scorer_info() -> list[ScorerInfo]:
         else:
             continue
 
-        infos.append(ScorerInfo(name=name, score_type=score_type, uses_llm=_uses_chat_target(obj)))
+        infos.append(_ScorerInfo(name=name, score_type=score_type, uses_llm=_uses_chat_target(obj)))
 
     infos.sort(key=lambda info: (info.score_type, info.uses_llm, info.name))
     return infos

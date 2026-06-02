@@ -7,14 +7,14 @@ from pyrit.score import (
     SubStringScorer,
     get_scorer_info,
 )
-from pyrit.score.scorer_info import ScorerInfo
+from pyrit.score.scorer_info import _ScorerInfo
 
 
 def test_get_scorer_info_returns_scorer_info_entries():
     infos = get_scorer_info()
 
     assert infos
-    assert all(isinstance(info, ScorerInfo) for info in infos)
+    assert all(isinstance(info, _ScorerInfo) for info in infos)
     assert all(info.score_type in ("true_false", "float_scale") for info in infos)
 
 

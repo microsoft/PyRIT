@@ -160,6 +160,7 @@ project:
         - file: code/scoring/0_scoring.ipynb
           children:
             - file: code/scoring/1_true_false_scorers.ipynb
+            - file: code/scoring/owasp_llm02_scorers.ipynb
             - file: code/scoring/2_float_scale_scorers.ipynb
             - file: code/scoring/3_combining_scorers.ipynb
             - file: code/scoring/4_scorer_metrics.ipynb
