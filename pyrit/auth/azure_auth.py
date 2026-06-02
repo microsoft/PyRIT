@@ -149,7 +149,7 @@ def ensure_async_token_provider(
         " Automatically wrapping in async function for compatibility with async client."
     )
 
-    async def async_token_provider_async() -> str:
+    async def async_token_provider() -> str:  # pyrit-async-suffix-exempt
         """
         Async wrapper for synchronous token provider.
 
@@ -161,7 +161,7 @@ def ensure_async_token_provider(
             return await result  # type: ignore[ty:invalid-return-type]
         return result
 
-    return async_token_provider_async
+    return async_token_provider
 
 
 class AzureAuth(Authenticator):
