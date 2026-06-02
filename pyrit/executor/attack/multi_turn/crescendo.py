@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union, cast
@@ -568,6 +569,12 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         """
         Parse and validate the JSON response from the adversarial chat.
 
+        camelCase keys are normalized to snake_case before validation. The
+        Crescendo system prompts specify a snake_case JSON schema, but some
+        backends drift to camelCase (``generatedQuestion`` instead of
+        ``generated_question``); accepting both prevents the attack from
+        burning all its retries on a casing mismatch.
+
         Args:
             response_text (str): The response text to parse.
 
@@ -582,24 +589,40 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         try:
             parsed_output = json.loads(response_text)
 
-            # Check for required keys
-            missing_keys = expected_keys - set(parsed_output.keys())
+            normalized_output = {self._camel_to_snake(key): value for key, value in parsed_output.items()}
+
+            missing_keys = expected_keys - set(normalized_output.keys())
             if missing_keys:
                 raise InvalidJsonException(
                     message=f"Missing required keys {missing_keys} in JSON response: {response_text}"
                 )
 
-            # Check for unexpected keys
-            extra_keys = set(parsed_output.keys()) - expected_keys
+            extra_keys = set(normalized_output.keys()) - expected_keys
             if extra_keys:
                 raise InvalidJsonException(
                     message=f"Unexpected keys {extra_keys} found in JSON response: {response_text}"
                 )
 
-            return str(parsed_output["generated_question"])
+            return str(normalized_output["generated_question"])
 
         except json.JSONDecodeError as e:
             raise InvalidJsonException(message=f"Invalid JSON encountered: {response_text}") from e
+
+    @staticmethod
+    def _camel_to_snake(name: str) -> str:
+        """
+        Convert a ``camelCase`` or ``PascalCase`` identifier to ``snake_case``.
+
+        Existing snake_case identifiers are returned unchanged.
+
+        Args:
+            name (str): The identifier to convert.
+
+        Returns:
+            str: The snake_case form of ``name``.
+        """
+        intermediate = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+        return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", intermediate).lower()
 
     async def _send_prompt_to_objective_target_async(
         self,

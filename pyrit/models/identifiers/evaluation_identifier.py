@@ -23,8 +23,9 @@ This module provides:
 from __future__ import annotations
 
 from abc import ABC
-from dataclasses import dataclass, field
 from typing import Any, ClassVar, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier, config_hash
 
@@ -33,8 +34,7 @@ TARGET_EVAL_PARAMS: frozenset[str] = frozenset({"underlying_model_name", "temper
 TARGET_EVAL_PARAM_FALLBACKS: dict[str, str] = {"underlying_model_name": "model_name"}
 
 
-@dataclass(frozen=True)
-class ChildEvalRule:
+class ChildEvalRule(BaseModel):
     """
     Per-child configuration for eval-hash computation.
 
@@ -59,11 +59,13 @@ class ChildEvalRule:
       matches the unwrapped inner target. ``None`` means no unwrapping.
     """
 
+    model_config = ConfigDict(frozen=True)
+
     exclude: bool = False
     included_params: Optional[frozenset[str]] = None
-    included_item_values: Optional[dict[str, Any]] = field(default=None)
-    param_fallbacks: Optional[dict[str, str]] = field(default=None)
-    inner_child_name: Optional[str] = field(default=None)
+    included_item_values: Optional[dict[str, Any]] = Field(default=None)
+    param_fallbacks: Optional[dict[str, str]] = Field(default=None)
+    inner_child_name: Optional[str] = Field(default=None)
 
 
 def _build_eval_dict(

@@ -8,7 +8,7 @@ from typing import Literal, Optional
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,11 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
         "Serbian": "srp",
         "Tagalog": "tgl",
     }
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "medium"  # 987 prompts across multiple languages
+    tags: frozenset[str] = frozenset({"safety", "multilingual"})
 
     def __init__(
         self,
