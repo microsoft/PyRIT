@@ -83,8 +83,13 @@ def _scan_file(path: Path) -> list[tuple[str, int, str]]:
     source = path.read_text(encoding="utf-8")
     try:
         tree = ast.parse(source, filename=str(path))
-    except SyntaxError:
-        return []
+    except SyntaxError as exc:
+        rel = path.relative_to(_REPO_ROOT).as_posix()
+        # Surface the parse failure as a violation so an unparseable file can't
+        # silently slip past the check. Other hooks (e.g. ruff) should flag the
+        # syntax error too, but we don't rely on their ordering.
+        message = f"{exc.msg} (line {exc.lineno})" if exc.lineno is not None else exc.msg
+        return [(rel, exc.lineno or 0, f"<SyntaxError: {message}>")]
     source_lines = source.splitlines()
     rel = path.relative_to(_REPO_ROOT).as_posix()
     violations: list[tuple[str, int, str]] = []
@@ -118,7 +123,10 @@ def main() -> int:
         "(see .github/instructions/style-guide.instructions.md §1):"
     )
     for path, line, name in violations:
-        print(f"  {path}:{line}: async def {name}(...)")
+        if name.startswith("<SyntaxError"):
+            print(f"  {path}:{line}: could not parse file: {name[1:-1]}")
+        else:
+            print(f"  {path}:{line}: async def {name}(...)")
     print("")
     print("Rename each function to end in `_async`, or — if the name is dictated")
     print("by a framework — add `# pyrit-async-suffix-exempt` at the end of the `async def` line.")

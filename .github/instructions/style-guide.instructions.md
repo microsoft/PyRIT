@@ -29,9 +29,6 @@ async def send_prompt(self, prompt: str) -> Message:  # Missing _async suffix
   automatically; see `_FRAMEWORK_EXEMPT_NAMES` in `build_scripts/check_async_suffix.py`.
 - For one-off exemptions (e.g. an external SDK protocol method) add a
   `# pyrit-async-suffix-exempt` trailing comment on the `async def` line.
-- `build_scripts/async_suffix_baseline.txt` holds the transitional allowlist of
-  pre-existing violations. It must shrink monotonically: when you rename a function to
-  add the `_async` suffix, remove its baseline entry in the same commit.
 
 ### Private Methods
 - Private methods MUST start with underscore

@@ -45,7 +45,7 @@ repos:
         name: Enforce _async Suffix on async def
         entry: python ./build_scripts/check_async_suffix.py
         language: python
-        files: ^(pyrit/.*\.py|build_scripts/async_suffix_baseline\.txt)$
+        files: ^pyrit/.*\.py$
         pass_filenames: false
       - id: memory-migrations-check
         name: Check Memory Migrations
