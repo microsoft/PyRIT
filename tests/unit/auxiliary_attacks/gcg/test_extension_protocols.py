@@ -73,7 +73,7 @@ class _StubSamplingStrategy:
         control_tokens: torch.Tensor,
         batch_size: int,
         top_k: int,
-        temperature: int,
+        temperature: float,
         allow_non_ascii: bool,
         non_ascii_tokens: torch.Tensor,
     ) -> torch.Tensor:
@@ -155,7 +155,7 @@ def test_sampling_strategy_stub_returns_expected_shape() -> None:
         control_tokens=control_tokens,
         batch_size=5,
         top_k=8,
-        temperature=1,
+        temperature=1.0,
         allow_non_ascii=True,
         non_ascii_tokens=non_ascii_tokens,
     )

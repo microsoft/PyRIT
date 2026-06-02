@@ -61,8 +61,8 @@ class SamplingStrategy(Protocol):
     ``GCGPromptManager.sample_control``.
 
     References:
-        ``pyrit/auxiliary_attacks/gcg/attack/gcg/gcg_attack.py`` lines 90-122
-        (``GCGPromptManager.sample_control``).
+        ``GCGPromptManager.sample_control`` in
+        ``pyrit/auxiliary_attacks/gcg/attack/gcg/gcg_attack.py``.
     """
 
     def sample_candidates(
@@ -72,7 +72,7 @@ class SamplingStrategy(Protocol):
         control_tokens: torch.Tensor,
         batch_size: int,
         top_k: int,
-        temperature: int,
+        temperature: float,
         allow_non_ascii: bool,
         non_ascii_tokens: torch.Tensor,
     ) -> torch.Tensor:
@@ -87,7 +87,7 @@ class SamplingStrategy(Protocol):
             batch_size (int): Number of candidate suffix rows to return.
             top_k (int): Number of top gradient positions per control slot
                 that the strategy is permitted to draw from.
-            temperature (int): Sampling temperature placeholder kept for API
+            temperature (float): Sampling temperature placeholder kept for API
                 compatibility with the legacy code path. The current default
                 strategy samples uniformly within the top-k and does not use
                 this value.
@@ -134,12 +134,10 @@ class LossFunction(Protocol):
       selects the ``argmin``).
 
     References:
-        ``pyrit/auxiliary_attacks/gcg/attack/base/attack_manager.py`` lines
-        326-336 (``AttackPrompt.target_loss`` and
-        ``AttackPrompt.control_loss``) and
-        ``pyrit/auxiliary_attacks/gcg/attack/gcg/gcg_attack.py`` lines
-        207-215 (the weighted-sum aggregation inside
-        ``GCGMultiPromptAttack.step``).
+        ``AttackPrompt.target_loss`` and ``AttackPrompt.control_loss`` in
+        ``pyrit/auxiliary_attacks/gcg/attack/base/attack_manager.py``, plus
+        the weighted-sum aggregation inside ``GCGMultiPromptAttack.step`` in
+        ``pyrit/auxiliary_attacks/gcg/attack/gcg/gcg_attack.py``.
     """
 
     def compute_loss(
@@ -196,8 +194,8 @@ class CandidateFilter(Protocol):
       suffix wastes a slot).
 
     References:
-        ``pyrit/auxiliary_attacks/gcg/attack/base/attack_manager.py`` lines
-        617-647 (``MultiPromptAttack.get_filtered_cands``).
+        ``MultiPromptAttack.get_filtered_cands`` in
+        ``pyrit/auxiliary_attacks/gcg/attack/base/attack_manager.py``.
     """
 
     def filter_candidates(
@@ -252,10 +250,12 @@ class SuffixInitializer(Protocol):
     chat template PyRIT has been tested against).
 
     References:
-        ``pyrit/auxiliary_attacks/gcg/attack/base/attack_manager.py`` line
-        158 (``AttackPrompt.__init__`` assigns ``self.control = control_init``)
-        and the ``control_init`` parameter threaded through lines 134, 419,
-        541, 875, 1121, and 1333 of the same file.
+        ``AttackPrompt.__init__`` in
+        ``pyrit/auxiliary_attacks/gcg/attack/base/attack_manager.py`` assigns
+        ``self.control = control_init``. The same ``control_init`` parameter
+        is threaded through the ``PromptManager``, ``MultiPromptAttack``,
+        ``ProgressiveMultiPromptAttack``, ``IndividualPromptAttack``, and
+        ``EvaluateAttack`` constructors in the same module.
     """
 
     def make_initial_suffix(self, *, tokenizer: Any) -> str:
