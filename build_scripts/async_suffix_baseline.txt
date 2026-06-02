@@ -8,12 +8,6 @@
 # To regenerate (only after a deliberate, reviewed cleanup):
 #   python build_scripts/check_async_suffix.py --write-baseline
 
-pyrit/common/data_url_converter.py:48:convert_local_image_to_data_url
-pyrit/common/display_response.py:60:display_image_response
-pyrit/common/download_hf_model.py:131:download_specific_files
-pyrit/common/download_hf_model.py:141:download_chunk
-pyrit/common/download_hf_model.py:156:download_file
-pyrit/common/download_hf_model.py:166:download_files
 pyrit/datasets/seed_datasets/local/local_dataset_loader.py:79:_parse_metadata
 pyrit/datasets/seed_datasets/remote/equitymedqa_dataset.py:151:_get_sub_dataset
 pyrit/datasets/seed_datasets/remote/remote_dataset_loader.py:287:_fetch_from_huggingface

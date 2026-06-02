@@ -45,7 +45,7 @@ async def convert_local_image_to_data_url_async(image_path: str) -> str:
     return f"data:{mime_type};base64,{base64_encoded_data}"
 
 
-async def convert_local_image_to_data_url(image_path: str) -> str:
+async def convert_local_image_to_data_url(image_path: str) -> str:  # pyrit-async-suffix-exempt
     """
     Delegate to ``convert_local_image_to_data_url_async`` (deprecated alias).
 

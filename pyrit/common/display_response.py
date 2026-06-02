@@ -57,7 +57,7 @@ async def display_image_response_async(response_piece: MessagePiece) -> None:
         logger.info("---\nContent blocked, cannot show a response.\n---")
 
 
-async def display_image_response(response_piece: MessagePiece) -> None:
+async def display_image_response(response_piece: MessagePiece) -> None:  # pyrit-async-suffix-exempt
     """Delegate to ``display_image_response_async`` (deprecated alias)."""
     print_deprecation_message(
         old_item="pyrit.common.display_response.display_image_response",
