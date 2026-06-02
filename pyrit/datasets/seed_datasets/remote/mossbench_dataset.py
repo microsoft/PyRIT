@@ -124,7 +124,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         "Cho-Jui Hsieh",
     )
 
-    tags: frozenset[str] = frozenset({"default", "safety", "multimodal", "over_refusal"})
+    tags: frozenset[str] = frozenset({"default", "safety", "multimodal", "refusal"})
     size: str = "medium"
     modalities: tuple[str, ...] = ("text", "image")
     harm_categories: tuple[str, ...] = tuple(t.value for t in MossBenchOversensitivityType)

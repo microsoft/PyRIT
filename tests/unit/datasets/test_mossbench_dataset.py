@@ -88,7 +88,7 @@ class TestMossBenchDataset:
 
     def test_dataset_level_metadata(self):
         dataset = _MossBenchDataset()
-        assert "over_refusal" in dataset.tags
+        assert "refusal" in dataset.tags
         assert "multimodal" in dataset.tags
         assert "safety" in dataset.tags
         assert dataset.size == "medium"
