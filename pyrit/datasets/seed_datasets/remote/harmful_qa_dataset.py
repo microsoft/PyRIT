@@ -6,7 +6,7 @@ import logging
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,11 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: str = "declare-lab/HarmfulQA"
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "large"  # 1960 harmful questions by academic topic
+    tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
 
     def __init__(
         self,

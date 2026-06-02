@@ -24,9 +24,8 @@ from pyrit.exceptions.exception_classes import (
     PyritException,
     RateLimitException,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target import (
     OpenAIChatAudioConfig,
@@ -632,7 +631,6 @@ def test_is_response_format_json_no_metadata(target: OpenAIChatTarget):
         converted_value="Hello, how are you?",
         conversation_id="conversation_1",
         sequence=0,
-        prompt_metadata=None,
     )
 
     result = target.is_response_format_json(message_piece)

@@ -19,8 +19,7 @@ from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import DataTypeSerializer, Message, MessagePiece, construct_response_from_request
+from pyrit.models import ComponentIdentifier, DataTypeSerializer, Message, MessagePiece, construct_response_from_request
 from pyrit.prompt_target import PromptTarget, limit_requests_per_minute
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration

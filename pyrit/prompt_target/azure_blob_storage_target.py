@@ -12,8 +12,7 @@ from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
 
 from pyrit.auth import AzureStorageAuth
 from pyrit.common import default_values
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, construct_response_from_request
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration

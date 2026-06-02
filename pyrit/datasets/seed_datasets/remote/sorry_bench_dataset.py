@@ -8,7 +8,7 @@ from typing import Optional
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,11 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
 
     Reference: [@xie2024sorrybench]
     """
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "medium"  # 440 base prompts (style mutations not loaded by default)
+    tags: frozenset[str] = frozenset({"safety", "jailbreak", "synthetic"})
 
     VALID_CATEGORIES = [
         "Personal Insulting Words",

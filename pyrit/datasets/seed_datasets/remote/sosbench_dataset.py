@@ -6,7 +6,7 @@ import logging
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,11 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
 
     Reference: [@jiang2025sosbench]
     """
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "large"  # 3,000 hazard-focused scientific prompts across 6 domains
+    tags: frozenset[str] = frozenset({"safety", "medical", "cybersecurity"})
 
     def __init__(
         self,

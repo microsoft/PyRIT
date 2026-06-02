@@ -6,7 +6,7 @@ import logging
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,11 @@ class _TDC23RedteamingDataset(_RemoteDatasetLoader):
 
     Reference: [@mazeika2023tdc]
     """
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "small"  # 100 narrative-style harmful prompts
+    tags: frozenset[str] = frozenset({"safety", "jailbreak"})
 
     def __init__(
         self,

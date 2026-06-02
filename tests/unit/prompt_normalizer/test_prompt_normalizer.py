@@ -41,7 +41,7 @@ from pyrit.prompt_target import PromptTarget
 def response() -> Message:
     conversation_id = "123"
     image_message_piece = get_image_message_piece()
-    image_message_piece._role = "assistant"
+    image_message_piece.role = "assistant"
     image_message_piece.conversation_id = conversation_id
     return Message(
         message_pieces=[

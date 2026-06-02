@@ -7,7 +7,7 @@ from typing import Literal
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,11 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
     Reference: https://github.com/mlcommons/ailuminate
     Paper: [@vidgen2024ailuminate]
     """
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "large"  # 1,200 hazard-category prompts
+    tags: frozenset[str] = frozenset({"default", "safety"})
 
     HAZARD_CATEGORIES_MAP = {
         "vcr": "Violent Crimes",

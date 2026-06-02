@@ -6,7 +6,7 @@ import logging
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,11 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: str = "PKU-Alignment/BeaverTails"
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "huge"  # 166382 annotated prompt-response entries (default config)
+    tags: frozenset[str] = frozenset({"default", "safety"})
 
     def __init__(
         self,

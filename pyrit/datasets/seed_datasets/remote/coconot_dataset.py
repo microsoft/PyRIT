@@ -151,6 +151,16 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
                 category = row.get("category")
                 if wanted_categories is not None and category not in wanted_categories:
                     continue
+                # The upstream HF dataset contains a small number of rows with an
+                # empty ``prompt`` (observed in original.train under the wildchats
+                # subcategory). SeedObjective enforces value != "" downstream, so
+                # skip them here to keep the loader resilient to upstream drift.
+                if not (row.get("prompt") or "").strip():
+                    logger.warning(
+                        f"Skipping CoCoNot row with empty prompt "
+                        f"(id={row.get('id')!r}, category={category!r}, split={split!r})"
+                    )
+                    continue
                 seeds.append(self._row_to_seed(row=row, split=split, source_url=source_url))
 
         if not seeds:
@@ -275,7 +285,7 @@ class _CoCoNotContrastDataset(_CoCoNotBaseDataset):
     CONFIG: str = "contrast"
     SPLITS: tuple[str, ...] = ("test",)
     size: str = "medium"
-    tags: set[str] = set()
+    tags: set[str] = {"safety", "refusal"}
     DEFAULT_DESCRIPTION: str = (
         "CoCoNot contrast set — 379 benign prompts that look superficially similar to "
         "refusal-target prompts but should be complied with. Used to measure "

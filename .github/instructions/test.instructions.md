@@ -10,6 +10,7 @@ Readable, maintainable tests. Reuse helpers from `conftest.py` and `mocks.py` in
 
 - Do NOT add `@pytest.mark.asyncio` — `asyncio_mode = "auto"` is configured project-wide so all async tests are discovered automatically.
 - Use `AsyncMock` for async methods, `MagicMock` for sync.
+- When running a full test pass, use `make unit-test` rather than invoking `pytest` directly on `tests/unit/`. It's significantly faster because it runs in parallel (`pytest -n 4`).
 
 ## Test Tiers
 

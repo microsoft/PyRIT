@@ -6,8 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import MessagePiece, Score, UnvalidatedScore
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, UnvalidatedScore
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import InsecureCodeScorer
 

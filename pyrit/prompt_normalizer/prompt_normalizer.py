@@ -15,9 +15,9 @@ from pyrit.exceptions import (
     execution_context,
     get_execution_context,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     construct_response_from_request,
 )
