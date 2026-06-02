@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import pathlib
+import zipfile
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -202,3 +203,54 @@ def test_resolve_image_path_caches_results(tmp_path):
     assert missing == ""
     assert empty == ""
     assert cache == {"exists.png": str(existing), "missing.png": ""}
+
+
+def test_resolve_image_path_returns_empty_on_exists_exception(tmp_path):
+    """If Path.exists() raises (e.g. OSError on overlong paths), fall back to ''."""
+    loader = _JailbreakV28KDataset()
+    cache: dict[str, str] = {}
+
+    with patch("pathlib.Path.exists", side_effect=OSError("simulated stat failure")):
+        result = loader._resolve_image_path(rel_path="anything.png", local_directory=tmp_path, call_cache=cache)
+
+    assert result == ""
+    assert cache == {"anything.png": ""}
+
+
+async def test_fetch_dataset_skips_rows_with_empty_image_path(tmp_path):
+    """Rows missing the image_path field count as unpaired and don't create seeds."""
+    _setup_zip_dir(tmp_path, ["a.png", "b.png"])
+    loader = _JailbreakV28KDataset(zip_dir=str(tmp_path))
+    rows = [
+        _row(image_path="a.png", row_id=0),
+        _row(image_path="b.png", row_id=1),
+        _row(image_path="", row_id=2),  # empty image_path -> counted missing, skipped
+    ]
+
+    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows)):
+        dataset = await loader.fetch_dataset_async()
+
+    # 2 successful groups * 3 seeds; the empty-image row is dropped
+    assert len(dataset.seeds) == 6
+
+
+async def test_fetch_dataset_extracts_zip_when_target_missing(tmp_path):
+    """When the unzipped directory doesn't exist, the loader extracts the zip."""
+    image_rel = "llm_transfer_attack/img_001.png"
+
+    # Build a real zip containing the expected extracted layout (JailBreakV_28k/<rel>)
+    zip_path = tmp_path / "JailBreakV_28K.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr(f"JailBreakV_28k/{image_rel}", b"\x89PNG")
+
+    loader = _JailbreakV28KDataset(zip_dir=str(tmp_path))
+    rows = [_row(image_path=image_rel)]
+
+    extracted = tmp_path / "JailBreakV_28k"
+    assert not extracted.exists()  # precondition: extract branch will fire
+
+    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows)):
+        dataset = await loader.fetch_dataset_async()
+
+    assert extracted.exists() and (extracted / image_rel).exists()
+    assert len(dataset.seeds) == 3

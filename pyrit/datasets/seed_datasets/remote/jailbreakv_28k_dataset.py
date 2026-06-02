@@ -51,7 +51,7 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
 
     Reference: [@luo2024jailbreakv]
     Dataset: https://huggingface.co/datasets/JailbreakV-28K/JailBreakV-28k
-    Authors: Weidi Luo, Siyuan Ma, Xiaogeng Liu, Chaowei Xiao, Xiaoyu Guo
+    Authors: Weidi Luo, Siyuan Ma, Xiaogeng Liu, Xiaoyu Guo, Chaowei Xiao
     License: MIT
 
     Warning: Due to the nature of these prompts, consult your legal department
@@ -224,7 +224,7 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
                         "Benchmark for Assessing the Robustness of "
                         "Multimodal Large Language Models against Jailbreak Attacks."
                     ),
-                    authors=["Weidi Luo", "Siyuan Ma", "Xiaogeng Liu", "Chaowei Xiao", "Xiaoyu Guo"],
+                    authors=["Weidi Luo", "Siyuan Ma", "Xiaogeng Liu", "Xiaoyu Guo", "Chaowei Xiao"],
                     groups=["The Ohio State University", "Peking University", "University of Wisconsin-Madison"],
                     source="https://huggingface.co/datasets/JailbreakV-28K/JailBreakV-28k",
                     prompt_group_id=group_id,
@@ -241,7 +241,7 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
                         "Benchmark for Assessing the Robustness of "
                         "Multimodal Large Language Models against Jailbreak Attacks."
                     ),
-                    authors=["Weidi Luo", "Siyuan Ma", "Xiaogeng Liu", "Chaowei Xiao", "Xiaoyu Guo"],
+                    authors=["Weidi Luo", "Siyuan Ma", "Xiaogeng Liu", "Xiaoyu Guo", "Chaowei Xiao"],
                     groups=["The Ohio State University", "Peking University", "University of Wisconsin-Madison"],
                     source="https://huggingface.co/datasets/JailbreakV-28K/JailBreakV-28k",
                     prompt_group_id=group_id,
@@ -259,7 +259,7 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
                         "Benchmark for Assessing the Robustness of "
                         "Multimodal Large Language Models against Jailbreak Attacks."
                     ),
-                    authors=["Weidi Luo", "Siyuan Ma", "Xiaogeng Liu", "Chaowei Xiao", "Xiaoyu Guo"],
+                    authors=["Weidi Luo", "Siyuan Ma", "Xiaogeng Liu", "Xiaoyu Guo", "Chaowei Xiao"],
                     groups=["The Ohio State University", "Peking University", "University of Wisconsin-Madison"],
                     source="https://huggingface.co/datasets/JailbreakV-28K/JailBreakV-28k",
                     prompt_group_id=group_id,
