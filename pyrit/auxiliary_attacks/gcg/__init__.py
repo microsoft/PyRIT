@@ -3,8 +3,8 @@
 
 """Public API for the Greedy Coordinate Gradient (GCG) auxiliary attack.
 
-The primary entry point is :class:`GCG` (alias for :class:`GCGGenerator`), a
-:class:`pyrit.executor.promptgen.core.PromptGeneratorStrategy` that produces
+The primary entry point is ``GCG`` (alias for ``GCGGenerator``), a
+``pyrit.executor.promptgen.core.PromptGeneratorStrategy`` that produces
 adversarial suffixes via the GCG algorithm.
 
 Example:
