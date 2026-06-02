@@ -158,7 +158,7 @@ class TestMessageDuplication:
         original_timestamps = [piece.timestamp for piece in message.message_pieces]
         fake_now = max(original_timestamps) + timedelta(seconds=1)
 
-        with patch("pyrit.models.message.datetime") as mock_datetime:
+        with patch("pyrit.models.messages.message.datetime") as mock_datetime:
             mock_datetime.now.return_value = fake_now
             duplicated = message.duplicate_message()
 

@@ -42,7 +42,7 @@ def test_id_set():
 
 def test_datetime_set():
     fake_now = datetime(2099, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-    with patch("pyrit.models.message_piece.datetime") as mock_datetime:
+    with patch("pyrit.models.messages.message_piece.datetime") as mock_datetime:
         mock_datetime.now.return_value = fake_now
         entry = MessagePiece(
             role="user",
