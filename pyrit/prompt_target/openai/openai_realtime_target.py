@@ -663,25 +663,6 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
             }
         )
 
-    async def insert_user_text_async(self, *, connection: Any, text: str) -> None:
-        """
-        Insert a user message containing the given text into the conversation.
-
-        Lets streaming attacks mix text turns into an otherwise audio-driven session.
-        The caller is responsible for triggering ``response.create`` after insertion.
-
-        Args:
-            connection: Active Realtime API connection.
-            text: User-side text content.
-        """
-        await connection.conversation.item.create(
-            item={
-                "type": "message",
-                "role": "user",
-                "content": [{"type": "input_text", "text": text}],
-            }
-        )
-
     async def delete_conversation_item_async(self, *, connection: Any, item_id: str) -> None:
         """
         Delete a conversation item by id (e.g. the server's raw user audio item).
@@ -751,43 +732,6 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         dispatcher.register_turn(state)
         await connection.response.create()
         return state.completion
-
-    async def _stream_pcm_async(
-        self,
-        *,
-        connection: Any,
-        pcm_bytes: bytes,
-        commit: bool,
-        chunk_ms: int = 100,
-        sample_rate: int = 24000,
-    ) -> None:
-        """
-        Stream raw PCM16 audio to the Realtime API as ``input_audio_buffer.append`` chunks.
-
-        Operates on raw PCM bytes (not WAV) so this helper can back both the
-        WAV-file path and future per-frame streaming consumers (e.g. browser audio
-        forwarded by a GUI backend). Caller decides whether to manually commit;
-        server VAD commits automatically when enabled.
-
-        Args:
-            connection: Active Realtime API connection from ``self.connect()``.
-            pcm_bytes (bytes): Raw PCM16 mono audio. Empty buffers are accepted
-                and result in zero appends.
-            commit (bool): When True, sends ``input_audio_buffer.commit`` after the
-                final chunk. Pass False when server VAD is committing automatically.
-            chunk_ms (int): Milliseconds of audio per chunk. Defaults to 100.
-            sample_rate (int): PCM sample rate in Hz. Defaults to 24000.
-        """
-        bytes_per_sample = 2  # PCM16
-        chunk_size = (chunk_ms * sample_rate * bytes_per_sample) // 1000
-
-        for offset in range(0, len(pcm_bytes), chunk_size):
-            chunk = pcm_bytes[offset : offset + chunk_size]
-            audio_b64 = base64.b64encode(chunk).decode("ascii")
-            await connection.input_audio_buffer.append(audio=audio_b64)
-
-        if commit:
-            await connection.input_audio_buffer.commit()
 
     async def receive_events(self, conversation_id: str) -> RealtimeTargetResult:
         """
