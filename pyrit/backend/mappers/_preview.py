@@ -19,8 +19,7 @@ leaks the absolute on-disk location of memory artifacts
 from pathlib import PureWindowsPath
 from urllib.parse import urlparse
 
-from pyrit.models import ConversationStats
-from pyrit.models.literals import MEDIA_PATH_DATA_TYPES
+from pyrit.models import MEDIA_PATH_DATA_TYPES, ConversationStats
 
 # Friendly label per media-path data type. Kept here next to the formatter
 # so adding a new media type only requires updating one place.

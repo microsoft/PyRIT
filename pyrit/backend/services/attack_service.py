@@ -24,9 +24,9 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import parse_qs, urlparse
 
-from pyrit.backend.mappers._preview import format_last_message_preview
-from pyrit.backend.mappers.attack_mappers import (
+from pyrit.backend.mappers import (
     attack_result_to_summary,
+    format_last_message_preview,
     pyrit_messages_to_dto_async,
     request_piece_to_pyrit_message_piece,
     request_to_pyrit_message,

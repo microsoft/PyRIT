@@ -1,11 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Unit tests for ``pyrit.backend.mappers._preview.format_last_message_preview``."""
+"""Unit tests for ``pyrit.backend.mappers.format_last_message_preview``."""
 
 import pytest
 
-from pyrit.backend.mappers._preview import format_last_message_preview
+from pyrit.backend.mappers import format_last_message_preview
 from pyrit.models import ConversationStats
 
 
