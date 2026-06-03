@@ -376,7 +376,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         logger.debug(f"Generating prompt for turn {context.executed_turns + 1}")
 
         # Prepare prompt for the adversarial chat
-        prompt_text = await self._build_adversarial_prompt(context)
+        prompt_text = await self._build_adversarial_prompt_async(context)
 
         # Send the prompt to the adversarial chat and get the response
         logger.debug(f"Sending prompt to adversarial chat: {prompt_text[:50]}...")
@@ -405,7 +405,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         # Return as a user message for sending to objective target
         return Message.from_prompt(prompt=response.get_value(), role="user")
 
-    async def _build_adversarial_prompt(
+    async def _build_adversarial_prompt_async(
         self,
         context: MultiTurnAttackContext[Any],
     ) -> str:

@@ -1218,7 +1218,8 @@ class TestScenarioParallelExecution:
                         async with lock:
                             in_flight[0] += 1
                             peak[0] = max(peak[0], in_flight[0])
-                        await asyncio.sleep(0.02)
+                        # Yield so other tasks contending for the semaphore can enter.
+                        await asyncio.sleep(0)
                         async with lock:
                             in_flight[0] -= 1
                 _stamp_scenario_linkage(
@@ -1313,7 +1314,9 @@ class TestScenarioParallelExecution:
 
         async def ok_run(idx, name):
             started_calls.append(name)
-            await asyncio.sleep(0.05)
+            # Wait for the bad task to fail before this one completes, so the
+            # failure is observed mid-flight (no wall-clock dependency).
+            await bad_started.wait()
             completed_calls.append(name)
             _stamp_scenario_linkage(
                 attack_results=[sample_attack_results[idx]],
@@ -1367,7 +1370,8 @@ class TestScenarioParallelExecution:
         # observed (no queueing) and every failure should propagate.
         def make_fail_run(name: str):
             async def _run(*args, **kwargs):
-                await asyncio.sleep(0.01)
+                # Yield so all three workers are in-flight before any fails.
+                await asyncio.sleep(0)
                 raise RuntimeError(f"{name} boom")
 
             return AsyncMock(side_effect=_run)

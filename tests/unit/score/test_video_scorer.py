@@ -335,6 +335,28 @@ async def test_video_true_false_scorer_with_audio_scorer(video_converter_sample_
 
 
 @pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
+async def test_video_audio_scorer_cleans_up_extracted_audio(tmp_path, video_converter_sample_video):
+    """_score_video_audio_async unlinks the temp audio file after successful scoring."""
+    image_scorer = MockTrueFalseScorer(return_value=True)
+    audio_scorer = MockAudioTrueFalseScorer(return_value=True)
+
+    # Create a real temp audio file that should be deleted by the cleanup branch.
+    extracted_audio = tmp_path / "extracted_audio.wav"
+    extracted_audio.write_bytes(b"fake audio bytes")
+
+    with patch.object(AudioTranscriptHelper, "extract_audio_from_video", return_value=str(extracted_audio)):
+        scorer = VideoTrueFalseScorer(
+            image_capable_scorer=image_scorer,
+            audio_scorer=audio_scorer,
+            num_sampled_frames=3,
+        )
+
+        await scorer._score_piece_async(video_converter_sample_video)
+
+    assert not extracted_audio.exists()
+
+
+@pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
 async def test_video_scorer_and_aggregation_both_true(video_converter_sample_video):
     """Test AND aggregation when both visual and audio scores are true"""
     image_scorer = MockTrueFalseScorer(return_value=True)

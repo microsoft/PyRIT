@@ -170,7 +170,7 @@ class TestFetchZipFromUrl:
             return_value=self._mock_streaming_response(zip_bytes),
         ):
             loader = ConcreteRemoteLoader()
-            result = await loader._fetch_zip_from_url(
+            result = await loader._fetch_zip_from_url_async(
                 source=self.SOURCE,
                 inner_files=["folder/a.jsonl", "folder/b.jsonl"],
                 cache=True,
@@ -192,8 +192,8 @@ class TestFetchZipFromUrl:
             mock_get,
         ):
             loader = ConcreteRemoteLoader()
-            await loader._fetch_zip_from_url(source=self.SOURCE, inner_files=["x.json"], cache=True)
-            await loader._fetch_zip_from_url(source=self.SOURCE, inner_files=["x.json"], cache=True)
+            await loader._fetch_zip_from_url_async(source=self.SOURCE, inner_files=["x.json"], cache=True)
+            await loader._fetch_zip_from_url_async(source=self.SOURCE, inner_files=["x.json"], cache=True)
 
         assert mock_get.call_count == 1
         # Cache file is keyed by md5(source) under seed-prompt-entries/
@@ -212,7 +212,7 @@ class TestFetchZipFromUrl:
             return_value=self._mock_streaming_response(zip_bytes),
         ):
             loader = ConcreteRemoteLoader()
-            await loader._fetch_zip_from_url(source=self.SOURCE, inner_files=["x.json"], cache=False)
+            await loader._fetch_zip_from_url_async(source=self.SOURCE, inner_files=["x.json"], cache=False)
 
         assert not (tmp_path / "seed-prompt-entries").exists()
 
@@ -229,9 +229,9 @@ class TestFetchZipFromUrl:
         ):
             loader = ConcreteRemoteLoader()
             with pytest.raises(ValueError, match="missing.jsonl"):
-                await loader._fetch_zip_from_url(source=self.SOURCE, inner_files=["missing.jsonl"], cache=False)
+                await loader._fetch_zip_from_url_async(source=self.SOURCE, inner_files=["missing.jsonl"], cache=False)
 
     async def test_unsupported_inner_extension_raises_valueerror(self):
         loader = ConcreteRemoteLoader()
         with pytest.raises(ValueError, match="Invalid file_type"):
-            await loader._fetch_zip_from_url(source=self.SOURCE, inner_files=["bad.parquet"], cache=False)
+            await loader._fetch_zip_from_url_async(source=self.SOURCE, inner_files=["bad.parquet"], cache=False)

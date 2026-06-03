@@ -16,8 +16,8 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from pyrit.common.yaml_loadable import YamlLoadable
-from pyrit.models.message import Message
-from pyrit.models.message_piece import MessagePiece
+from pyrit.models.messages.message import Message
+from pyrit.models.messages.message_piece import MessagePiece
 from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt

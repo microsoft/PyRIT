@@ -28,7 +28,7 @@ async def test_disk_storage_io_read_file():
         mock_file = mock_open.return_value.__aenter__.return_value
         mock_file.read = AsyncMock(return_value=content)
 
-        result = await storage.read_file(path)
+        result = await storage.read_file_async(path)
         assert result == content
         mock_open.assert_called_once_with(Path(path), "rb")
 
@@ -42,7 +42,7 @@ async def test_disk_storage_io_write_file():
         mock_file = mock_open.return_value.__aenter__.return_value
         mock_file.write = AsyncMock()
 
-        await storage.write_file(path, content)
+        await storage.write_file_async(path, content)
         mock_open.assert_called_once_with(Path(path), "wb")
         mock_file.write.assert_called_once_with(content)
 
@@ -52,7 +52,7 @@ async def test_disk_storage_io_path_exists():
     path = "sample.txt"
 
     with patch("pathlib.Path.exists", return_value=True) as mock_exists:
-        result = await storage.path_exists(path)
+        result = await storage.path_exists_async(path)
         assert result is True
         mock_exists.assert_called_once()
 
@@ -62,7 +62,7 @@ async def test_disk_storage_io_is_file():
     path = "sample.txt"
 
     with patch("pathlib.Path.is_file", return_value=True) as mock_isfile:
-        result = await storage.is_file(path)
+        result = await storage.is_file_async(path)
         assert result is True
         mock_isfile.assert_called_once()
 
@@ -72,7 +72,7 @@ async def test_disk_storage_io_create_directory_if_not_exists():
     directory_path = "sample_dir"
 
     with patch("pathlib.Path.mkdir") as mock_mkdir, patch("pathlib.Path.exists", return_value=False) as mock_exists:
-        await storage.create_directory_if_not_exists(directory_path)
+        await storage.create_directory_if_not_exists_async(directory_path)
         mock_exists.assert_called_once()
         mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
 
@@ -88,7 +88,7 @@ async def test_azure_blob_storage_io_read_file(azure_blob_storage_io):
     mock_blob_stream.readall = AsyncMock(return_value=b"Test file content")
     azure_blob_storage_io._client_async.close = AsyncMock()
 
-    result = await azure_blob_storage_io.read_file(
+    result = await azure_blob_storage_io.read_file_async(
         "https://account.blob.core.windows.net/container/dir1/dir2/sample.png"
     )
 
@@ -107,7 +107,7 @@ async def test_azure_blob_storage_io_read_file_with_relative_path(azure_blob_sto
     mock_blob_stream.readall = AsyncMock(return_value=b"Test file content")
     mock_container_client.close = AsyncMock()
 
-    result = await azure_blob_storage_io.read_file("dir1/dir2/sample.png")
+    result = await azure_blob_storage_io.read_file_async("dir1/dir2/sample.png")
 
     assert result == b"Test file content"
     mock_container_client.get_blob_client.assert_called_once_with(blob="dir1/dir2/sample.png")
@@ -133,7 +133,7 @@ async def test_azure_blob_storage_io_write_file():
         data_to_write = b"Test data"
         path = "https://youraccount.blob.core.windows.net/yourcontainer/testfile.txt"
 
-        await azure_blob_storage_io.write_file(path, data_to_write)
+        await azure_blob_storage_io.write_file_async(path, data_to_write)
 
         azure_blob_storage_io._upload_blob_async.assert_awaited_with(
             file_name="testfile.txt", data=data_to_write, content_type=SupportedContentType.PLAIN_TEXT.value
@@ -153,7 +153,7 @@ async def test_azure_blob_storage_io_write_file_with_relative_path():
         azure_blob_storage_io._upload_blob_async = AsyncMock()
 
         data_to_write = b"Test data"
-        await azure_blob_storage_io.write_file("dir1/dir2/testfile.txt", data_to_write)
+        await azure_blob_storage_io.write_file_async("dir1/dir2/testfile.txt", data_to_write)
 
         azure_blob_storage_io._upload_blob_async.assert_awaited_with(
             file_name="dir1/dir2/testfile.txt",
@@ -170,7 +170,7 @@ async def test_azure_blob_storage_io_create_container_client_uses_explicit_sas_t
     mock_container_client = AsyncMock()
 
     with (
-        patch("pyrit.auth.AzureStorageAuth.get_sas_token", new_callable=AsyncMock) as mock_get_sas_token,
+        patch("pyrit.auth.AzureStorageAuth.get_sas_token_async", new_callable=AsyncMock) as mock_get_sas_token,
         patch(
             "azure.storage.blob.aio.ContainerClient.from_container_url", return_value=mock_container_client
         ) as mock_from_container_url,
@@ -191,7 +191,7 @@ async def test_azure_storage_io_path_exists(azure_blob_storage_io):
     mock_blob_client.get_blob_properties = AsyncMock()
     azure_blob_storage_io._client_async.close = AsyncMock()
     file_path = "https://example.blob.core.windows.net/container/dir1/dir2/blob_name.txt"
-    exists = await azure_blob_storage_io.path_exists(file_path)
+    exists = await azure_blob_storage_io.path_exists_async(file_path)
     assert exists is True
 
 
@@ -205,7 +205,7 @@ async def test_azure_storage_io_path_exists_with_relative_path(azure_blob_storag
     mock_blob_client.get_blob_properties = AsyncMock()
     mock_container_client.close = AsyncMock()
 
-    exists = await azure_blob_storage_io.path_exists("dir1/dir2/blob_name.txt")
+    exists = await azure_blob_storage_io.path_exists_async("dir1/dir2/blob_name.txt")
 
     assert exists is True
     mock_container_client.get_blob_client.assert_called_once_with(blob="dir1/dir2/blob_name.txt")
@@ -221,7 +221,7 @@ async def test_azure_storage_io_is_file(azure_blob_storage_io):
     mock_blob_client.get_blob_properties = AsyncMock(return_value=mock_blob_properties)
     azure_blob_storage_io._client_async.close = AsyncMock()
     file_path = "https://example.blob.core.windows.net/container/dir1/dir2/blob_name.txt"
-    is_file = await azure_blob_storage_io.is_file(file_path)
+    is_file = await azure_blob_storage_io.is_file_async(file_path)
     assert is_file is True
 
 
@@ -236,7 +236,7 @@ async def test_azure_storage_io_is_file_with_relative_path(azure_blob_storage_io
     mock_blob_client.get_blob_properties = AsyncMock(return_value=mock_blob_properties)
     mock_container_client.close = AsyncMock()
 
-    is_file = await azure_blob_storage_io.is_file("dir1/dir2/blob_name.txt")
+    is_file = await azure_blob_storage_io.is_file_async("dir1/dir2/blob_name.txt")
 
     assert is_file is True
     mock_container_client.get_blob_client.assert_called_once_with(blob="dir1/dir2/blob_name.txt")
@@ -313,7 +313,7 @@ async def test_read_file_lazy_initializes_client(azure_blob_storage_io):
         new_callable=AsyncMock,
         return_value=mock_container_client,
     ) as mock_create:
-        result = await azure_blob_storage_io.read_file("dir1/file.txt")
+        result = await azure_blob_storage_io.read_file_async("dir1/file.txt")
 
     mock_create.assert_called_once()
     assert result == b"content"
@@ -331,7 +331,7 @@ async def test_write_file_lazy_initializes_client(azure_blob_storage_io):
         return_value=mock_container_client,
     ) as mock_create:
         azure_blob_storage_io._upload_blob_async = AsyncMock()
-        await azure_blob_storage_io.write_file("dir1/file.txt", b"data")
+        await azure_blob_storage_io.write_file_async("dir1/file.txt", b"data")
 
     mock_create.assert_called_once()
 
@@ -351,7 +351,7 @@ async def test_path_exists_lazy_initializes_client(azure_blob_storage_io):
         new_callable=AsyncMock,
         return_value=mock_container_client,
     ) as mock_create:
-        result = await azure_blob_storage_io.path_exists("dir1/file.txt")
+        result = await azure_blob_storage_io.path_exists_async("dir1/file.txt")
 
     mock_create.assert_called_once()
     assert result is True
@@ -373,7 +373,55 @@ async def test_is_file_lazy_initializes_client(azure_blob_storage_io):
         new_callable=AsyncMock,
         return_value=mock_container_client,
     ) as mock_create:
-        result = await azure_blob_storage_io.is_file("dir1/file.txt")
+        result = await azure_blob_storage_io.is_file_async("dir1/file.txt")
 
     mock_create.assert_called_once()
     assert result is True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deprecated shim coverage: ``StorageIO.<name>`` warns and forwards to ``<name>_async``.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def test_read_file_emits_deprecation_warning_and_delegates():
+    storage = DiskStorageIO()
+    with patch.object(storage, "read_file_async", new=AsyncMock(return_value=b"data")) as mock_async:
+        with pytest.warns(DeprecationWarning, match="read_file_async"):
+            result = await storage.read_file("any.txt")
+    assert result == b"data"
+    mock_async.assert_awaited_once_with("any.txt")
+
+
+async def test_write_file_emits_deprecation_warning_and_delegates():
+    storage = DiskStorageIO()
+    with patch.object(storage, "write_file_async", new=AsyncMock()) as mock_async:
+        with pytest.warns(DeprecationWarning, match="write_file_async"):
+            await storage.write_file("any.txt", b"data")
+    mock_async.assert_awaited_once_with("any.txt", b"data")
+
+
+async def test_path_exists_emits_deprecation_warning_and_delegates():
+    storage = DiskStorageIO()
+    with patch.object(storage, "path_exists_async", new=AsyncMock(return_value=True)) as mock_async:
+        with pytest.warns(DeprecationWarning, match="path_exists_async"):
+            result = await storage.path_exists("any.txt")
+    assert result is True
+    mock_async.assert_awaited_once_with("any.txt")
+
+
+async def test_is_file_emits_deprecation_warning_and_delegates():
+    storage = DiskStorageIO()
+    with patch.object(storage, "is_file_async", new=AsyncMock(return_value=False)) as mock_async:
+        with pytest.warns(DeprecationWarning, match="is_file_async"):
+            result = await storage.is_file("any.txt")
+    assert result is False
+    mock_async.assert_awaited_once_with("any.txt")
+
+
+async def test_create_directory_if_not_exists_emits_deprecation_warning_and_delegates():
+    storage = DiskStorageIO()
+    with patch.object(storage, "create_directory_if_not_exists_async", new=AsyncMock()) as mock_async:
+        with pytest.warns(DeprecationWarning, match="create_directory_if_not_exists_async"):
+            await storage.create_directory_if_not_exists("some_dir")
+    mock_async.assert_awaited_once_with("some_dir")

@@ -16,7 +16,7 @@ from pyrit.common.path import DB_DATA_PATH
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +93,11 @@ class _VLGuardDataset(_RemoteDatasetLoader):
     Reference: https://arxiv.org/abs/2402.02207
     Paper: Safety Fine-Tuning at (Almost) No Cost: A Baseline for Vision Large Language Models (ICML 2024)
     """
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT, Modality.IMAGE)
+    size: str = "large"  # 884 image-instruction pairs across 4 categories
+    tags: frozenset[str] = frozenset({"safety", "multimodal"})
 
     def __init__(
         self,

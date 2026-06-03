@@ -38,6 +38,24 @@ def test_add_text_image_converter_invalid_font():
         AddTextImageConverter(text_to_add="Sample text", font_name="helvetica.otf")  # Invalid font extension
 
 
+def test_add_text_image_converter_positional_arg_deprecation():
+    with pytest.warns(
+        DeprecationWarning, match="Passing text_to_add as a positional argument to AddTextImageConverter"
+    ):
+        converter = AddTextImageConverter("Sample text")
+    assert converter._text_to_add == "Sample text"
+
+
+def test_add_text_image_converter_positional_and_keyword_raises():
+    with pytest.raises(TypeError, match="Cannot pass text_to_add as both positional and keyword"):
+        AddTextImageConverter("Sample text", text_to_add="Sample text")
+
+
+def test_add_text_image_converter_too_many_positional_args_raises():
+    with pytest.raises(TypeError, match="takes at most 1 positional argument"):
+        AddTextImageConverter("Sample text", "extra")
+
+
 def test_add_text_image_converter_invalid_text_to_add():
     with pytest.raises(ValueError):
         AddTextImageConverter(text_to_add="", font_name="helvetica.ttf")

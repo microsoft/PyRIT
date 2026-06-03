@@ -7,7 +7,7 @@ from typing import Literal
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,11 @@ class _XSTestDataset(_RemoteDatasetLoader):
 
     Reference: https://github.com/paul-rottger/exaggerated-safety
     """
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "medium"  # 450 safe + unsafe contrast prompts
+    tags: frozenset[str] = frozenset({"default", "safety", "refusal"})
 
     def __init__(
         self,

@@ -260,6 +260,35 @@ class TestAudioTranscriptHelper:
         mock_cls.assert_called_once()
         mock_converter.convert_async.assert_called_once()
 
+    async def test_transcribe_audio_async_unlinks_converted_wav(self, audio_message_piece, tmp_path):
+        """When _ensure_wav_format produces a different temp WAV, that file is cleaned up in finally."""
+        from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
+
+        text_scorer = MockTextTrueFalseScorer()
+        helper = AudioTranscriptHelper(text_capable_scorer=text_scorer)
+
+        # Create a real temporary WAV distinct from audio_message_piece.converted_value
+        converted_wav = tmp_path / "converted.wav"
+        converted_wav.write_bytes(b"fake wav content")
+
+        mock_converter = AsyncMock()
+        mock_result = AsyncMock()
+        mock_result.output_text = "transcribed text"
+        mock_converter.convert_async.return_value = mock_result
+
+        with (
+            patch.object(helper, "_ensure_wav_format", return_value=str(converted_wav)),
+            patch(
+                "pyrit.score.audio_transcript_scorer.AzureSpeechAudioToTextConverter",
+                return_value=mock_converter,
+            ),
+        ):
+            result = await helper._transcribe_audio_async(audio_message_piece.converted_value)
+
+        assert result == "transcribed text"
+        # The converted temp WAV (different from the original audio path) should be deleted.
+        assert not converted_wav.exists()
+
 
 class TestPyAVAudioConversion:
     """Tests for PyAV audio conversion functions"""

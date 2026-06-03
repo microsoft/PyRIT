@@ -62,14 +62,17 @@ from pyrit.models.identifiers import (
     snake_case_to_class_name,
     validate_registry_name,
 )
-from pyrit.models.literals import ChatMessageRole, PromptDataType, PromptResponseError, SeedType
-from pyrit.models.message import (
+from pyrit.models.literals import ChatMessageRole, Modality, PromptDataType, PromptResponseError, SeedType
+from pyrit.models.messages import (
     Message,
+    MessagePiece,
     construct_response_from_request,
+    flatten_to_message_pieces,
+    get_all_values,
     group_conversation_message_pieces_by_sequence,
     group_message_pieces_into_conversations,
+    sort_message_pieces,
 )
-from pyrit.models.message_piece import MessagePiece, sort_message_pieces
 from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
@@ -128,7 +131,9 @@ __all__ = [
     "EmbeddingUsageInformation",
     "ErrorDataTypeSerializer",
     "EvaluationIdentifier",
+    "flatten_to_message_pieces",
     "get_all_harm_definitions",
+    "get_all_values",
     "group_conversation_message_pieces_by_sequence",
     "group_message_pieces_into_conversations",
     "HarmDefinition",
@@ -138,6 +143,7 @@ __all__ = [
     "ImagePathDataTypeSerializer",
     "Message",
     "MessagePiece",
+    "Modality",
     "NextMessageSystemPromptPaths",
     "ObjectiveTargetEvaluationIdentifier",
     "PromptDataType",

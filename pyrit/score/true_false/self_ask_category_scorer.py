@@ -144,7 +144,7 @@ class SelfAskCategoryScorer(TrueFalseScorer):
                          The score_value is True in all cases unless no category fits. In which case,
                          the score value is false and the _false_category is used.
         """
-        unvalidated_score: UnvalidatedScore = await self._score_value_with_llm(
+        unvalidated_score: UnvalidatedScore = await self._score_value_with_llm_async(
             prompt_target=self._prompt_target,
             system_prompt=self._system_prompt,
             message_value=message_piece.converted_value,

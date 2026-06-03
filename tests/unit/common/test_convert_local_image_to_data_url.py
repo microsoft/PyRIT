@@ -58,7 +58,7 @@ async def test_convert_image_to_data_url_success(
     with NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_file:
         tmp_file_name = tmp_file.name
     mock_serializer_instance = MagicMock()
-    mock_serializer_instance.read_data_base64 = AsyncMock(return_value="encoded_base64_string")
+    mock_serializer_instance.read_data_base64_async = AsyncMock(return_value="encoded_base64_string")
     mock_serializer_class.return_value = mock_serializer_instance
 
     assert os.path.exists(tmp_file_name)
@@ -70,6 +70,6 @@ async def test_convert_image_to_data_url_success(
     mock_serializer_class.assert_called_once_with(
         category="prompt-memory-entries", prompt_text=tmp_file_name, extension=".jpg"
     )
-    mock_serializer_instance.read_data_base64.assert_called_once()
+    mock_serializer_instance.read_data_base64_async.assert_called_once()
 
     os.remove(tmp_file_name)

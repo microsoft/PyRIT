@@ -45,9 +45,6 @@ ALLOWED_TOP_LEVEL: frozenset[str] = frozenset(
 # violations not in this list fail the test; entries that no longer match
 # source also fail.
 KNOWN_TOP_LEVEL_VIOLATIONS: dict[str, dict[str, str]] = {
-    "pyrit.models.message": {
-        "pyrit.common.utils": "phase-4",
-    },
     "pyrit.models.harm_definition": {
         "pyrit.common.path": "phase-1",
     },

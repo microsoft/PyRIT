@@ -161,7 +161,7 @@ class PDFConverter(PromptConverter):
         pdf_bytes = self._modify_existing_pdf() if self._existing_pdf_bytes else self._generate_pdf(content)
 
         # Step 3: Serialize PDF
-        pdf_serializer = await self._serialize_pdf(pdf_bytes, content)
+        pdf_serializer = await self._serialize_pdf_async(pdf_bytes, content)
 
         # Return the result
         return ConverterResult(output_text=pdf_serializer.value, output_type="binary_path")
@@ -419,7 +419,7 @@ class PDFConverter(PromptConverter):
 
         return overlay_page, overlay_buffer
 
-    async def _serialize_pdf(self, pdf_bytes: bytes, content: str) -> DataTypeSerializer:
+    async def _serialize_pdf_async(self, pdf_bytes: bytes, content: str) -> DataTypeSerializer:
         """
         Serialize the generated PDF using a data serializer.
 
@@ -439,5 +439,5 @@ class PDFConverter(PromptConverter):
             data_type="binary_path",
             extension=extension,
         )
-        await pdf_serializer.save_data(pdf_bytes)
+        await pdf_serializer.save_data_async(pdf_bytes)
         return pdf_serializer

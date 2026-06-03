@@ -2,7 +2,12 @@
 # Licensed under the MIT license.
 
 
-from pyrit.message_normalizer.message_normalizer import apply_system_message_behavior
+import pytest
+
+from pyrit.message_normalizer.message_normalizer import (
+    apply_system_message_behavior,
+    apply_system_message_behavior_async,
+)
 from pyrit.models import Message, MessagePiece
 
 
@@ -16,6 +21,13 @@ async def test_apply_system_message_behavior_ignore_removes_system_messages():
         _make_message("user", "Hello"),
         _make_message("assistant", "Hi"),
     ]
-    result = await apply_system_message_behavior(messages, "ignore")
+    result = await apply_system_message_behavior_async(messages, "ignore")
     assert len(result) == 2
     assert all(msg.api_role != "system" for msg in result)
+
+
+async def test_apply_system_message_behavior_emits_deprecation_warning_and_delegates():
+    messages = [_make_message("user", "Hello")]
+    with pytest.warns(DeprecationWarning, match="apply_system_message_behavior_async"):
+        result = await apply_system_message_behavior(messages, "keep")
+    assert result == messages
