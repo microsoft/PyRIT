@@ -27,7 +27,8 @@ from pyrit.registry.base import RegistryProtocol
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from typing import Self
+
+    from typing_extensions import Self
 
 T = TypeVar("T", bound=Identifiable)  # The type of items stored
 
@@ -88,7 +89,7 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[ComponentIdentifier], Generic[T
         """
         if cls not in cls._instances:
             cls._instances[cls] = cls()
-        return cls._instances[cls]
+        return cls._instances[cls]  # type: ignore[ty:invalid-return-type]
 
     @classmethod
     def reset_instance(cls) -> None:

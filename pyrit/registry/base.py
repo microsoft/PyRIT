@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING, Any, Optional, Protocol, TypeVar, runtime_chec
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from typing import Self
+
+    from typing_extensions import Self
 
 # Type variable for metadata (invariant for Protocol compatibility)
 MetadataT = TypeVar("MetadataT")

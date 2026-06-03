@@ -8,9 +8,9 @@ import warnings
 import pytest
 
 from pyrit.scenario import ScenarioCompositeStrategy
-from pyrit.scenario.foundry import FoundryStrategy
-from pyrit.scenario.foundry.red_team_agent import FoundryComposite
-from pyrit.scenario.garak import EncodingStrategy
+from pyrit.scenario.scenarios.foundry import FoundryStrategy
+from pyrit.scenario.scenarios.foundry.red_team_agent import FoundryComposite
+from pyrit.scenario.scenarios.garak import EncodingStrategy
 
 
 class TestFoundryComposite:

@@ -23,7 +23,8 @@ from typing import TYPE_CHECKING, Generic, Optional, TypeVar
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
-    from typing import Self
+
+    from typing_extensions import Self
 
 from pyrit.identifiers.class_name_utils import class_name_to_snake_case
 from pyrit.registry.base import ClassRegistryEntry, RegistryProtocol
@@ -149,7 +150,7 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
         """
         if cls not in cls._instances:
             cls._instances[cls] = cls()  # type: ignore[ty:invalid-assignment]
-        return cls._instances[cls]
+        return cls._instances[cls]  # type: ignore[ty:invalid-return-type]
 
     @classmethod
     def reset_instance(cls) -> None:

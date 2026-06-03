@@ -23,9 +23,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, cast, get_orig
 try:
     # Built-in on Python 3.11+. Fall back to the ``exceptiongroup`` backport on 3.10
     # (declared as a conditional dependency in pyproject.toml).
-    from builtins import ExceptionGroup  # type: ignore[attr-defined]
+    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
 except ImportError:  # pragma: no cover - exercised only on 3.10
-    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef]
+    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
 
 from tqdm.auto import tqdm
 

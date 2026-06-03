@@ -13,7 +13,7 @@ from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_converter import Base64Converter
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetConfiguration
-from pyrit.scenario.garak import Encoding, EncodingStrategy
+from pyrit.scenario.scenarios.garak import Encoding, EncodingStrategy
 from pyrit.scenario.scenarios.garak.encoding import EncodingDatasetConfiguration
 from pyrit.score import DecodingScorer, TrueFalseScorer
 
