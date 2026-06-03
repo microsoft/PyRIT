@@ -35,7 +35,7 @@ class ScenarioIdentifier(BaseModel):
     #: Version of the scenario. Accepts the legacy ``scenario_version`` kwarg/wire key.
     version: int = Field(default=1, alias="scenario_version")
     #: PyRIT version string. Defaults to the current installed version.
-    pyrit_version: str = Field(default_factory=lambda: pyrit.__version__)
+    pyrit_version: str = Field(default=pyrit.__version__)
     #: Optional initialization data.
     init_data: dict[str, Any] | None = None
 

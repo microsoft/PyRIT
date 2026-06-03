@@ -2,9 +2,15 @@
 # Licensed under the MIT license.
 
 import uuid
+from datetime import datetime, timezone
 
+import pytest
+
+import pyrit
 from pyrit.models import ComponentIdentifier
+from pyrit.models.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult
+from pyrit.models.retry_event import RetryEvent
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
 
 
@@ -47,8 +53,6 @@ class TestScenarioIdentifier:
         assert si.pyrit_version == "1.0.0"
 
     def test_init_default_pyrit_version(self):
-        import pyrit
-
         si = ScenarioIdentifier(name="X")
         assert si.pyrit_version == pyrit.__version__
 
@@ -201,11 +205,6 @@ def test_scenario_identifier_to_dict_from_dict_roundtrip():
 
 
 def test_scenario_result_to_dict_from_dict_roundtrip():
-    from datetime import datetime, timezone
-
-    from pyrit.models.conversation_reference import ConversationReference, ConversationType
-    from pyrit.models.retry_event import RetryEvent
-
     scenario_id = ScenarioIdentifier(
         name="ContentHarms",
         description="Tests content harm scenarios",
@@ -275,8 +274,6 @@ def test_scenario_result_to_dict_from_dict_roundtrip():
 
 def test_scenario_identifier_from_dict_missing_pyrit_version_uses_current():
     """A payload missing pyrit_version now resolves to the current version via the Pydantic default."""
-    import pyrit
-
     data = {
         "name": "Legacy",
         "description": "loaded from older payload",
@@ -308,8 +305,6 @@ def test_scenario_result_from_dict_preserves_missing_completion_time():
 
 
 def test_scenario_identifier_to_dict_from_dict_emit_deprecation_warnings():
-    import pytest
-
     identifier = ScenarioIdentifier(name="Test", scenario_version=1, pyrit_version="0.14.0")
     with pytest.warns(DeprecationWarning):
         payload = identifier.to_dict()
@@ -318,8 +313,6 @@ def test_scenario_identifier_to_dict_from_dict_emit_deprecation_warnings():
 
 
 def test_scenario_result_to_dict_from_dict_emit_deprecation_warnings():
-    import pytest
-
     scenario_id = ScenarioIdentifier(name="Test", scenario_version=1, pyrit_version="0.14.0")
     result = ScenarioResult(
         scenario_identifier=scenario_id,
