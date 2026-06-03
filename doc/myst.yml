@@ -114,6 +114,7 @@ project:
                 - file: code/executor/attack/role_play_attack.ipynb
                 - file: code/executor/attack/skeleton_key_attack.ipynb
                 - file: code/executor/attack/tap_attack.ipynb
+                - file: code/executor/attack/barge_in_attack.ipynb
                 - file: code/executor/attack/violent_durian_attack.ipynb
             - file: code/executor/workflow/0_workflow.md
               children:
