@@ -8,9 +8,9 @@ SeedPrompt class for representing seed prompts with role and sequence informatio
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Optional, Union
 
 from tinytag import TinyTag
 
@@ -21,7 +21,6 @@ from pyrit.models.seeds.seed import Seed
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
-    from pathlib import Path
 
     from pyrit.models import Message
     from pyrit.models.literals import ChatMessageRole, PromptDataType
@@ -35,17 +34,17 @@ class SeedPrompt(Seed):
 
     # The type of data this prompt represents (e.g., text, image_path, audio_path, video_path)
     # This field shadows the base class property to allow per-prompt data types
-    data_type: PromptDataType | None = None
+    data_type: Optional[PromptDataType] = None
 
     # Role of the prompt in a conversation (e.g., "user", "assistant")
-    role: ChatMessageRole | None = None
+    role: Optional[ChatMessageRole] = None
 
     # Sequence number for ordering prompts in a conversation, prompts with
     # the same sequence number are grouped together if they also share the same prompt_group_id
     sequence: int = 0
 
     # Parameters that can be used in the prompt template
-    parameters: Sequence[str] | None = field(default_factory=list)
+    parameters: Optional[Sequence[str]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """
@@ -65,8 +64,15 @@ class SeedPrompt(Seed):
         if not self.data_type:
             # If data_type is not provided, infer it from the value
             # Note: Does not assign 'error' or 'url' implicitly
-            if os.path.isfile(self.value):
-                _, ext = os.path.splitext(self.value)
+            # Guard against OSError / ValueError so values that aren't valid path
+            # strings (too long, null bytes, etc.) are treated as text, matching
+            # the prior os.path.isfile semantics.
+            try:
+                is_file = Path(self.value).is_file()
+            except (OSError, ValueError):
+                is_file = False
+            if is_file:
+                ext = Path(self.value).suffix
                 ext = ext.lstrip(".").lower()
                 if ext in ["mp4", "avi", "mov", "mkv", "ogv", "flv", "wmv", "webm"]:
                     self.data_type = "video_path"
@@ -120,9 +126,9 @@ class SeedPrompt(Seed):
     @classmethod
     def from_yaml_with_required_parameters(
         cls,
-        template_path: str | Path,
+        template_path: Union[str, Path],
         required_parameters: list[str],
-        error_message: str | None = None,
+        error_message: Optional[str] = None,
     ) -> SeedPrompt:
         """
         Load a Seed from a YAML file and validate that it contains specific parameters.
@@ -153,7 +159,7 @@ class SeedPrompt(Seed):
         messages: list[Message],
         *,
         starting_sequence: int = 0,
-        prompt_group_id: uuid.UUID | None = None,
+        prompt_group_id: Optional[uuid.UUID] = None,
     ) -> list[SeedPrompt]:
         """
         Convert a list of Messages to a list of SeedPrompts.

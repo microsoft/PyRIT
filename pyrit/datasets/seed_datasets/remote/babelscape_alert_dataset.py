@@ -73,7 +73,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
 
         prompts: list[tuple[str, str]] = []
         for category_name in data_categories:
-            data = await self._fetch_from_huggingface(
+            data = await self._fetch_from_huggingface_async(
                 dataset_name=self.source,
                 config=category_name,
                 split="test",

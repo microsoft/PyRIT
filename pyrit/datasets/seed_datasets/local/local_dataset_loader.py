@@ -5,7 +5,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import fields
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 
@@ -76,7 +76,7 @@ class _LocalDatasetLoader(SeedDatasetProvider):
             logger.error(f"Failed to load local dataset from {self.file_path}: {e}")
             raise
 
-    async def _parse_metadata(self) -> SeedDatasetMetadata | None:
+    async def _parse_metadata_async(self) -> Optional[SeedDatasetMetadata]:
         """
         Extract metadata from a local YAML file and coerce raw values into typed schema fields.
 

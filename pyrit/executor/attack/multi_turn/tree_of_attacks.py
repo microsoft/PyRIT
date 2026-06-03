@@ -608,7 +608,7 @@ class _TreeOfAttacksNode:
             self.objective_target_conversation_id = str(uuid.uuid4())
 
         # Duplicate to ensure fresh IDs (avoids conflicts if message was already in memory)
-        message = self._initial_prompt.duplicate_message()
+        message = self._initial_prompt.duplicate()
         self._initial_prompt = None  # Clear for future turns
 
         # Store the prompt text for reference

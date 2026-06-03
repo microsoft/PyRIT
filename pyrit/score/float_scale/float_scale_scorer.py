@@ -130,7 +130,7 @@ class FloatScaleScorer(Scorer):
             harm_category=self.evaluation_file_mapping.harm_category,
         )
 
-    async def _score_value_with_llm(
+    async def _score_value_with_llm_async(
         self,
         *,
         prompt_target: PromptTarget,
@@ -150,7 +150,7 @@ class FloatScaleScorer(Scorer):
     ) -> UnvalidatedScore:
         score: UnvalidatedScore | None = None
         try:
-            score = await super()._score_value_with_llm(
+            score = await super()._score_value_with_llm_async(
                 prompt_target=prompt_target,
                 system_prompt=system_prompt,
                 message_value=message_value,

@@ -48,7 +48,7 @@ def limit_requests_per_minute(func: Callable[..., Any]) -> Callable[..., Any]:
         Callable: The decorated function with a sleep introduced.
     """
 
-    async def set_max_rpm(*args: Any, **kwargs: Any) -> Any:
+    async def set_max_rpm_async(*args: Any, **kwargs: Any) -> Any:
         self = args[0]
         rpm = getattr(self, "_max_requests_per_minute", None)
         if rpm and rpm > 0:
@@ -56,4 +56,4 @@ def limit_requests_per_minute(func: Callable[..., Any]) -> Callable[..., Any]:
 
         return await func(*args, **kwargs)
 
-    return set_max_rpm
+    return set_max_rpm_async

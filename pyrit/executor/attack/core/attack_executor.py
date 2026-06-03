@@ -228,7 +228,7 @@ class AttackExecutor:
         # This can take time if the SeedSimulatedConversation generation is included
         semaphore = self._get_semaphore()
 
-        async def build_params(i: int, sg: SeedAttackGroup) -> AttackParameters:
+        async def build_params_async(i: int, sg: SeedAttackGroup) -> AttackParameters:
             async with semaphore:
                 combined_overrides = dict(broadcast_fields)
                 if field_overrides is not None:
@@ -240,7 +240,7 @@ class AttackExecutor:
                     **combined_overrides,
                 )
 
-        params_list = list(await asyncio.gather(*[build_params(i, sg) for i, sg in enumerate(seed_groups)]))
+        params_list = list(await asyncio.gather(*[build_params_async(i, sg) for i, sg in enumerate(seed_groups)]))
 
         return await self._execute_with_params_list_async(
             attack=attack,
@@ -344,14 +344,14 @@ class AttackExecutor:
         """
         semaphore = self._get_semaphore()
 
-        async def run_one(index: int, params: AttackParameters) -> AttackStrategyResultT:
+        async def run_one_async(index: int, params: AttackParameters) -> AttackStrategyResultT:
             async with semaphore:
                 context = attack._context_type(params=params)
                 if attribution is not None:
                     context._attribution = attribution
                 return await attack.execute_with_context_async(context=context)
 
-        tasks = [run_one(i, p) for i, p in enumerate(params_list)]
+        tasks = [run_one_async(i, p) for i, p in enumerate(params_list)]
         results_or_exceptions = await asyncio.gather(*tasks, return_exceptions=True)
 
         return self._process_execution_results(

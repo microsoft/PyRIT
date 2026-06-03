@@ -537,7 +537,7 @@ def request_to_pyrit_message(
         )
         for p in request.pieces
     ]
-    return PyritMessage(pieces)
+    return PyritMessage(message_pieces=pieces)
 
 
 # ============================================================================

@@ -2,10 +2,11 @@
 # Licensed under the MIT license.
 
 import logging
-import os
 import random
 import tempfile
 import uuid
+from pathlib import Path
+from typing import Optional
 
 from pyrit.memory import CentralMemory
 from pyrit.models import MessagePiece, Score
@@ -42,9 +43,9 @@ class VideoHelper:
         self,
         *,
         image_capable_scorer: Scorer,
-        num_sampled_frames: int | None = None,
-        image_objective_template: str | None = _DEFAULT_IMAGE_OBJECTIVE_TEMPLATE,
-        audio_objective_template: str | None = None,
+        num_sampled_frames: Optional[int] = None,
+        image_objective_template: Optional[str] = _DEFAULT_IMAGE_OBJECTIVE_TEMPLATE,
+        audio_objective_template: Optional[str] = None,
     ) -> None:
         """
         Initialize the base video scorer.
@@ -94,7 +95,7 @@ class VideoHelper:
                 f"Supported types: {scorer._validator._supported_data_types}"
             )
 
-    async def _score_frames_async(self, *, message_piece: MessagePiece, objective: str | None = None) -> list[Score]:
+    async def _score_frames_async(self, *, message_piece: MessagePiece, objective: Optional[str] = None) -> list[Score]:
         """
         Extract frames from video and score them.
 
@@ -111,7 +112,7 @@ class VideoHelper:
         """
         video_path = message_piece.converted_value
 
-        if not os.path.exists(video_path):
+        if not Path(video_path).exists():
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
         # Extract frames from video
@@ -210,7 +211,7 @@ class VideoHelper:
         return frame_paths
 
     async def _score_video_audio_async(
-        self, *, message_piece: MessagePiece, audio_scorer: Scorer | None = None, objective: str | None = None
+        self, *, message_piece: MessagePiece, audio_scorer: Optional[Scorer] = None, objective: Optional[str] = None
     ) -> list[Score]:
         """
         Extract and score audio from the video.
@@ -280,5 +281,5 @@ class VideoHelper:
 
         finally:
             # Clean up temporary audio file on success
-            if should_cleanup and audio_path and os.path.exists(audio_path):
-                os.unlink(audio_path)
+            if should_cleanup and audio_path:
+                Path(audio_path).unlink(missing_ok=True)

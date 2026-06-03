@@ -13,7 +13,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import fields
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, TextIO, cast
+from typing import Any, Literal, Optional, TextIO, cast
 from urllib.parse import urlparse
 
 import requests
@@ -284,14 +284,14 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
 
         return examples
 
-    async def _fetch_from_huggingface(
+    async def _fetch_from_huggingface_async(
         self,
         *,
         dataset_name: str,
-        config: str | None = None,
-        split: str | None = None,
+        config: Optional[str] = None,
+        split: Optional[str] = None,
         cache: bool = True,
-        token: str | None = None,
+        token: Optional[str] = None,
         **kwargs: Any,
     ) -> Any:
         """
@@ -320,7 +320,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             Exception: If the dataset cannot be loaded.
 
         Example:
-            >>> data = await self._fetch_from_huggingface(
+            >>> data = await self._fetch_from_huggingface_async(
             ...     dataset_name="JailbreakBench/JBB-Behaviors",
             ...     config="behaviors",
             ...     split="train",
@@ -356,7 +356,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             logger.error(f"Failed to load HuggingFace dataset {dataset_name}: {e}")
             raise
 
-    async def _parse_metadata(self) -> SeedDatasetMetadata | None:
+    async def _parse_metadata_async(self) -> Optional[SeedDatasetMetadata]:
         """
         Extract metadata from class attributes, wrap in sets, and format into SeedDatasetMetadata.
 
@@ -386,7 +386,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         SeedDatasetMetadata._validate_singular_fields(metadata=result)
         return result
 
-    async def _fetch_zip_from_url(
+    async def _fetch_zip_from_url_async(
         self,
         *,
         source: str,
@@ -423,7 +423,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
 
         def _download_and_parse() -> dict[str, list[dict[str, Any]]]:
             zip_path: Path
-            temp_to_clean: Path | None = None
+            temp_to_clean: Optional[Path] = None
             if cache and cache_path.exists():
                 zip_path = cache_path
             else:

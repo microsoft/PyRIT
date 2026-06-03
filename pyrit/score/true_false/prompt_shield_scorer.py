@@ -70,7 +70,7 @@ class PromptShieldScorer(TrueFalseScorer):
         body = message_piece.original_value
 
         request = Message(
-            [
+            message_pieces=[
                 MessagePiece(
                     role="user",
                     original_value=body,

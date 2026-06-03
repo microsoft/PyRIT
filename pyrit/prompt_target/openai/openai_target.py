@@ -394,7 +394,7 @@ class OpenAITarget(PromptTarget):
             **httpx_kwargs,
         )
 
-    async def _handle_openai_request(
+    async def _handle_openai_request_async(
         self,
         *,
         api_call: Callable[..., Any],
@@ -448,7 +448,7 @@ class OpenAITarget(PromptTarget):
                 return error_message
 
             # Construct and return Message from validated response
-            return await self._construct_message_from_response(response, request_piece)
+            return await self._construct_message_from_response_async(response, request_piece)
 
         except ContentFilterFinishReasonError as e:
             # Content filter error raised by SDK during parse/structured output flows
@@ -520,7 +520,7 @@ class OpenAITarget(PromptTarget):
             raise
 
     @abstractmethod
-    async def _construct_message_from_response(self, response: Any, request: MessagePiece) -> Message:
+    async def _construct_message_from_response_async(self, response: Any, request: MessagePiece) -> Message:
         """
         Construct a Message from the OpenAI SDK response.
 

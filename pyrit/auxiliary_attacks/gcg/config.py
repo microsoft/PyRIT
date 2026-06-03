@@ -71,7 +71,7 @@ class GCGDataConfig:
     Used as a typed bundle for AML transport (a job ships its data config as
     a separate JSON file alongside the strategy ``GCGConfig``). Library
     callers loading goals/targets from a CSV can construct one and pass it to
-    :func:`pyrit.auxiliary_attacks.gcg.data.load_goals_and_targets`.
+    ``pyrit.auxiliary_attacks.gcg.data.load_goals_and_targets``.
 
     Attributes:
         train_data (str): URL or filesystem path to the training-data CSV. Empty
@@ -100,7 +100,7 @@ class GCGDataConfig:
 
     @classmethod
     def from_json(cls, payload: str) -> GCGDataConfig:
-        """Deserialize a config previously produced by :meth:`to_json`."""
+        """Deserialize a config previously produced by ``to_json``."""
         try:
             data = json.loads(payload)
         except json.JSONDecodeError as e:
@@ -131,8 +131,8 @@ class GCGAlgorithmConfig:
             Defaults to 512.
         topk (int): Top-k gradient positions considered for substitution.
             Defaults to 256.
-        temp (int): Sampling temperature placeholder; the current sampling
-            implementation samples uniformly from the top-k. Defaults to 1.
+        temp (float): Sampling temperature placeholder; the current sampling
+            implementation samples uniformly from the top-k. Defaults to 1.0.
         target_weight (float): Weight on the target-string cross-entropy loss.
             Defaults to 1.0.
         control_weight (float): Weight on the control-string cross-entropy loss.
@@ -153,7 +153,7 @@ class GCGAlgorithmConfig:
     test_steps: int = 50
     batch_size: int = 512
     topk: int = 256
-    temp: int = 1
+    temp: float = 1.0
     target_weight: float = 1.0
     control_weight: float = 0.0
     learning_rate: float = 0.01
@@ -240,10 +240,10 @@ class GCGOutputConfig:
 class GCGConfig:
     """Top-level strategy configuration for one GCG attack run.
 
-    Bundles everything :class:`pyrit.auxiliary_attacks.gcg.GCGGenerator`'s
+    Bundles everything ``pyrit.auxiliary_attacks.gcg.GCGGenerator``'s
     constructor needs. Per-execution data (goals, targets) is **not** here —
     those flow through ``GCGGenerator.execute_async``, and for AML transport
-    they ride alongside this object as a separate :class:`GCGDataConfig` JSON.
+    they ride alongside this object as a separate ``GCGDataConfig`` JSON.
 
     Attributes:
         models (list[GCGModelConfig]): Training models the attack optimizes
@@ -287,11 +287,11 @@ class GCGConfig:
 
     @classmethod
     def from_json(cls, payload: str) -> GCGConfig:
-        """Deserialize a config previously produced by :meth:`to_json`.
+        """Deserialize a config previously produced by ``to_json``.
 
         Args:
             payload (str): JSON document matching the shape produced by
-                :meth:`to_json`.
+                ``to_json``.
 
         Returns:
             GCGConfig: A new ``GCGConfig`` reconstructed from ``payload``.
@@ -308,7 +308,7 @@ class GCGConfig:
 
     @classmethod
     def from_json_file(cls, path: str | Path) -> GCGConfig:
-        """Load a config from a JSON file produced by :meth:`to_json_file`.
+        """Load a config from a JSON file produced by ``to_json_file``.
 
         Args:
             path (str | Path): Filesystem path to a JSON config file.

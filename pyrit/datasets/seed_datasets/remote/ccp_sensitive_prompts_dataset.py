@@ -57,7 +57,7 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
         logger.info(f"Loading CCP-sensitive prompts dataset from {self.source}")
 
         # Load from HuggingFace
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.source,
             split="train",
             cache=cache,

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -164,7 +165,7 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
         audio_serializer = data_serializer_factory(
             category="prompt-memory-entries", data_type="audio_path", value=prompt
         )
-        audio_bytes = await audio_serializer.read_data()
+        audio_bytes = await audio_serializer.read_data_async()
 
         try:
             speech_config = await get_speech_config_async(
@@ -173,7 +174,9 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
                 key=self._azure_speech_key,
                 region=self._azure_speech_region,
             )
-            transcript = self._recognize_audio(audio_bytes=audio_bytes, speech_config=speech_config)
+            transcript = await asyncio.to_thread(
+                self._recognize_audio, audio_bytes=audio_bytes, speech_config=speech_config
+            )
         except Exception as e:
             logger.error("Failed to convert audio file to text: %s", str(e))
             raise

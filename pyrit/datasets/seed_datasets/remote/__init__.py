@@ -79,6 +79,12 @@ from pyrit.datasets.seed_datasets.remote.hixstest_dataset import (
     HiXSTestLanguage,
     _HiXSTestDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.jailbreakv_28k_dataset import (
+    _JailbreakV28KDataset,
+)  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.jailbreakv_redteam_2k_dataset import (
+    _JailbreakVRedteam2KDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.jbb_behaviors_dataset import (
     _JBBBehaviorsDataset,
 )  # noqa: F401
@@ -96,6 +102,10 @@ from pyrit.datasets.seed_datasets.remote.mlcommons_ailuminate_dataset import (
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.moral_integrity_corpus_dataset import (
     _MICDataset,
+)  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.mossbench_dataset import (
+    MossBenchOversensitivityType,
+    _MossBenchDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.msts_dataset import (
     _MSTSDataset,
@@ -179,6 +189,7 @@ __all__ = [
     "FigStepCategory",
     "FigStepVariant",
     "HiXSTestLanguage",
+    "MossBenchOversensitivityType",
     "PromptIntelCategory",
     "PromptIntelSeverity",
     "SGXSTestLabel",
@@ -212,12 +223,15 @@ __all__ = [
     "_HarmBenchMultimodalDataset",
     "_HarmfulQADataset",
     "_HiXSTestDataset",
+    "_JailbreakV28KDataset",
+    "_JailbreakVRedteam2KDataset",
     "_JBBBehaviorsDataset",
     "_LibrAIDoNotAnswerDataset",
     "_LLMLatentAdversarialTrainingDataset",
     "_MedSafetyBenchDataset",
     "_MICDataset",
     "_MLCommonsAILuminateDataset",
+    "_MossBenchDataset",
     "_MSTSDataset",
     "_MultilingualVulnerabilityDataset",
     "_ORBench80KDataset",
