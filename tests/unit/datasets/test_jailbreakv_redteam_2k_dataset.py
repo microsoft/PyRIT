@@ -50,7 +50,7 @@ async def test_fetch_dataset_happy_path():
         _row(question="Q2", policy="Violence", row_id=2),
     ]
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows)):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows)):
         dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)
@@ -72,7 +72,7 @@ async def test_fetch_dataset_filters_by_harm_category():
         _row(question="Q2", policy="Violence", row_id=2),
     ]
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows)):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows)):
         dataset = await loader.fetch_dataset_async()
 
     assert len(dataset.seeds) == 1
@@ -83,7 +83,7 @@ async def test_fetch_dataset_empty_after_filter_raises():
     loader = _JailbreakVRedteam2KDataset(harm_categories=[_HarmCategory.CHILD_ABUSE])
     rows = [_row(question="Q1", policy="Hate Speech")]
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows)):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows)):
         with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
             await loader.fetch_dataset_async()
 
@@ -95,7 +95,7 @@ async def test_fetch_dataset_skips_rows_without_question():
         _row(question="", row_id=2),  # skipped
     ]
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows)):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows)):
         dataset = await loader.fetch_dataset_async()
 
     assert len(dataset.seeds) == 1
@@ -105,7 +105,7 @@ async def test_fetch_dataset_skips_rows_without_question():
 async def test_fetch_dataset_logs_and_reraises_on_hf_error():
     loader = _JailbreakVRedteam2KDataset()
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(side_effect=RuntimeError("hf down"))):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(side_effect=RuntimeError("hf down"))):
         with pytest.raises(RuntimeError, match="hf down"):
             await loader.fetch_dataset_async()
 

@@ -69,7 +69,7 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
 
             # Load from HuggingFace
             # Note: JBB-Behaviors has 'harmful' and 'benign' splits
-            data = await self._fetch_from_huggingface(
+            data = await self._fetch_from_huggingface_async(
                 dataset_name=self.source,
                 config=self.split,
                 split="harmful",

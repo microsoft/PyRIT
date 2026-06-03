@@ -181,7 +181,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
 
         for language in self.languages:
             split_name = _LANGUAGE_TO_SPLIT[language]
-            split_data = await self._fetch_from_huggingface(
+            split_data = await self._fetch_from_huggingface_async(
                 dataset_name=_HF_REPO_ID,
                 split=split_name,
                 cache=cache,
@@ -431,7 +431,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
             )
         serializer.value = str(Path(str(results_path) + serializer.data_sub_directory, filename))
         try:
-            if await results_storage_io.path_exists(serializer.value):
+            if await results_storage_io.path_exists_async(serializer.value):
                 return serializer.value
         except Exception as e:
             logger.warning(f"[MSTS] Failed to check if image {image_id} exists in cache: {e}")
@@ -441,7 +441,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
             response = await make_request_and_raise_if_error_async(endpoint_uri=image_url, method="GET")
             image_bytes = response.content
 
-        await serializer.save_data(data=image_bytes, output_filename=filename.rsplit(".", 1)[0])
+        await serializer.save_data_async(data=image_bytes, output_filename=filename.rsplit(".", 1)[0])
 
         return str(serializer.value)
 

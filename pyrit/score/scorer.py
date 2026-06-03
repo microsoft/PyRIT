@@ -645,7 +645,7 @@ class Scorer(Identifiable, abc.ABC):
         return (value - min_value) / (max_value - min_value)
 
     @pyrit_json_retry
-    async def _score_value_with_llm(
+    async def _score_value_with_llm_async(
         self,
         *,
         prompt_target: PromptTarget,
@@ -746,7 +746,7 @@ class Scorer(Identifiable, abc.ABC):
             )
         )
 
-        scorer_llm_request = Message(message_pieces)
+        scorer_llm_request = Message(message_pieces=message_pieces)
         try:
             response = await prompt_target.send_prompt_async(message=scorer_llm_request)
         except Exception as ex:

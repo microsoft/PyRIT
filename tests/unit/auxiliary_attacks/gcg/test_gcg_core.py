@@ -443,29 +443,39 @@ class TestUpdateIdsErrorPaths:
 
     def test_end_tok_returns_len_toks_when_target_is_at_prompt_end(self) -> None:
         """If the target sits at the very end of the rendered prompt,
-        char_to_token(end_pos) returns None — end_tok must clamp to len(toks)."""
-        from transformers import AutoTokenizer
+        char_to_token(end_pos) returns None — end_tok must clamp to len(toks)
+        (line 201 in attack_manager.py)."""
+        # Fully-mocked tokenizer so we can deterministically force char_to_token to
+        # return None at the position just past the target. Mirrors the pattern used
+        # by the two adjacent tests above.
+        prompt_text = "[INST] hello !! [/INST] world"
+        toks = list(range(10))
+        target_end_pos = len(prompt_text)  # one past the final char of "world"
 
-        tokenizer = AutoTokenizer.from_pretrained("gpt2")
-        tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.chat_template = (
-            "{%- for m in messages -%}"
-            "{%- if m['role'] == 'user' -%}"
-            "[INST] {{ m['content'] }} [/INST]"
-            "{%- elif m['role'] == 'assistant' -%}"
-            " {{ m['content'] }}"
-            "{%- endif -%}"
-            "{%- endfor -%}"
-        )
+        def char_to_token(pos: int) -> int | None:
+            # Position at/after end-of-prompt has no token → triggers the
+            # `return len(toks)` fallback in end_tok.
+            if pos >= target_end_pos:
+                return None
+            # Everything else maps to a valid token index that preserves ordering.
+            return min(pos // 3, len(toks) - 1)
+
+        encoding = MagicMock()
+        encoding.input_ids = toks
+        encoding.char_to_token.side_effect = char_to_token
+
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.return_value = prompt_text
+        tokenizer.return_value = encoding
 
         prompt = AttackPrompt(
             goal="hello",
-            target="world",  # this sits at end of rendered prompt with no trailing tokens
+            target="world",  # sits at end of prompt_text; target end has no token
             tokenizer=tokenizer,
-            control_init="! ! !",
+            control_init="!!",
         )
-        # _target_slice.stop should be len(toks), not None or NoneType arithmetic
-        assert isinstance(prompt._target_slice.stop, int)
+        # end_tok(target_end_pos) saw None from char_to_token → clamped to len(toks).
+        assert prompt._target_slice.stop == len(toks)
         assert prompt._target_slice.stop > prompt._target_slice.start
 
 

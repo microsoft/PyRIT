@@ -98,7 +98,7 @@ class TestCoCoNotRefusalDataset:
         loader = _CoCoNotRefusalDataset()
         mock_fetch = AsyncMock(side_effect=[mock_refusal_train_rows, mock_refusal_test_rows])
 
-        with patch.object(loader, "_fetch_from_huggingface", new=mock_fetch):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=mock_fetch):
             dataset = await loader.fetch_dataset_async()
 
         assert isinstance(dataset, SeedDataset)
@@ -116,7 +116,7 @@ class TestCoCoNotRefusalDataset:
         loader = _CoCoNotRefusalDataset(splits=[CoCoNotSplit.TRAIN])
         mock_fetch = AsyncMock(return_value=mock_refusal_train_rows)
 
-        with patch.object(loader, "_fetch_from_huggingface", new=mock_fetch):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=mock_fetch):
             dataset = await loader.fetch_dataset_async()
 
         assert len(dataset.seeds) == 3
@@ -128,7 +128,7 @@ class TestCoCoNotRefusalDataset:
         loader = _CoCoNotRefusalDataset(splits=[CoCoNotSplit.TEST])
         mock_fetch = AsyncMock(return_value=mock_refusal_test_rows)
 
-        with patch.object(loader, "_fetch_from_huggingface", new=mock_fetch):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=mock_fetch):
             dataset = await loader.fetch_dataset_async()
 
         assert len(dataset.seeds) == 2
@@ -142,7 +142,7 @@ class TestCoCoNotRefusalDataset:
         loader = _CoCoNotRefusalDataset()
         mock_fetch = AsyncMock(side_effect=[mock_refusal_train_rows, mock_refusal_test_rows])
 
-        with patch.object(loader, "_fetch_from_huggingface", new=mock_fetch):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=mock_fetch):
             dataset = await loader.fetch_dataset_async()
 
         train_seeds = [s for s in dataset.seeds if s.metadata and s.metadata["split"] == "train"]
@@ -159,7 +159,7 @@ class TestCoCoNotRefusalDataset:
         loader = _CoCoNotRefusalDataset()
         mock_fetch = AsyncMock(side_effect=[mock_refusal_train_rows, mock_refusal_test_rows])
 
-        with patch.object(loader, "_fetch_from_huggingface", new=mock_fetch):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=mock_fetch):
             dataset = await loader.fetch_dataset_async()
 
         first = dataset.seeds[0]
@@ -179,7 +179,7 @@ class TestCoCoNotRefusalDataset:
         loader = _CoCoNotRefusalDataset(categories=[CoCoNotCategory.SAFETY])
         mock_fetch = AsyncMock(side_effect=[mock_refusal_train_rows, mock_refusal_test_rows])
 
-        with patch.object(loader, "_fetch_from_huggingface", new=mock_fetch):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=mock_fetch):
             dataset = await loader.fetch_dataset_async()
 
         assert len(dataset.seeds) == 1
@@ -199,7 +199,7 @@ class TestCoCoNotRefusalDataset:
             }
         ]
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=only_indeterminate)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=only_indeterminate)):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
                 await loader.fetch_dataset_async()
 
@@ -251,7 +251,7 @@ class TestCoCoNotRefusalDataset:
                 "subcategory": "wildchats",
             },
         ]
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows_with_empty)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows_with_empty)):
             dataset = await loader.fetch_dataset_async()
 
         assert len(dataset.seeds) == 1
@@ -273,7 +273,7 @@ class TestCoCoNotContrastDataset:
         loader = _CoCoNotContrastDataset()
         mock_fetch = AsyncMock(return_value=mock_contrast_rows)
 
-        with patch.object(loader, "_fetch_from_huggingface", new=mock_fetch):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=mock_fetch):
             dataset = await loader.fetch_dataset_async()
 
         assert isinstance(dataset, SeedDataset)
@@ -289,7 +289,7 @@ class TestCoCoNotContrastDataset:
         loader = _CoCoNotContrastDataset()
         mock_fetch = AsyncMock(return_value=mock_contrast_rows)
 
-        with patch.object(loader, "_fetch_from_huggingface", new=mock_fetch):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=mock_fetch):
             dataset = await loader.fetch_dataset_async()
 
         first = dataset.seeds[0]
@@ -308,7 +308,7 @@ class TestCoCoNotContrastDataset:
         loader = _CoCoNotContrastDataset(categories=[CoCoNotCategory.HUMANIZING])
         mock_fetch = AsyncMock(return_value=mock_contrast_rows)
 
-        with patch.object(loader, "_fetch_from_huggingface", new=mock_fetch):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=mock_fetch):
             dataset = await loader.fetch_dataset_async()
 
         assert len(dataset.seeds) == 1
@@ -328,7 +328,7 @@ class TestCoCoNotContrastDataset:
             }
         ]
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=only_humanizing)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=only_humanizing)):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
                 await loader.fetch_dataset_async()
 

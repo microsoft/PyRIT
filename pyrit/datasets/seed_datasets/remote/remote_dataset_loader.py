@@ -284,7 +284,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
 
         return examples
 
-    async def _fetch_from_huggingface(
+    async def _fetch_from_huggingface_async(
         self,
         *,
         dataset_name: str,
@@ -320,7 +320,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             Exception: If the dataset cannot be loaded.
 
         Example:
-            >>> data = await self._fetch_from_huggingface(
+            >>> data = await self._fetch_from_huggingface_async(
             ...     dataset_name="JailbreakBench/JBB-Behaviors",
             ...     config="behaviors",
             ...     split="train",
@@ -356,7 +356,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             logger.error(f"Failed to load HuggingFace dataset {dataset_name}: {e}")
             raise
 
-    async def _parse_metadata(self) -> Optional[SeedDatasetMetadata]:
+    async def _parse_metadata_async(self) -> Optional[SeedDatasetMetadata]:
         """
         Extract metadata from class attributes, wrap in sets, and format into SeedDatasetMetadata.
 
@@ -386,7 +386,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         SeedDatasetMetadata._validate_singular_fields(metadata=result)
         return result
 
-    async def _fetch_zip_from_url(
+    async def _fetch_zip_from_url_async(
         self,
         *,
         source: str,

@@ -153,7 +153,7 @@ class AddTextImageConverter(_BaseImageTextConverter):
         img_serializer = data_serializer_factory(category="prompt-memory-entries", value=prompt, data_type="image_path")
 
         # Open the image
-        original_img_bytes = await img_serializer.read_data()
+        original_img_bytes = await img_serializer.read_data_async()
         original_img = Image.open(BytesIO(original_img_bytes))
 
         # Add text to the image
@@ -165,5 +165,5 @@ class AddTextImageConverter(_BaseImageTextConverter):
         updated_img.save(image_bytes, format=image_type)
         image_str = base64.b64encode(image_bytes.getvalue()).decode("utf-8")
         # Save image as generated UUID filename
-        await img_serializer.save_b64_image(data=image_str)
+        await img_serializer.save_b64_image_async(data=image_str)
         return ConverterResult(output_text=str(img_serializer.value), output_type="image_path")

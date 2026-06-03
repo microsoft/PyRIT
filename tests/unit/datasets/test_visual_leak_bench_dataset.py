@@ -334,7 +334,7 @@ async def test_fetch_and_save_image_returns_cached_path():
     mock_memory = MagicMock()
     mock_memory.results_path = "/results"
     mock_storage_io = AsyncMock()
-    mock_storage_io.path_exists = AsyncMock(return_value=True)
+    mock_storage_io.path_exists_async = AsyncMock(return_value=True)
     mock_memory.results_storage_io = mock_storage_io
     mock_serializer._memory = mock_memory
     mock_serializer.data_sub_directory = "/images"

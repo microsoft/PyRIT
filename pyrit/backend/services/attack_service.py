@@ -338,7 +338,7 @@ class AttackService:
 
         # Store prepended conversation messages if provided
         if request.prepended_conversation:
-            await self._store_prepended_messages(
+            await self._store_prepended_messages_async(
                 conversation_id=conversation_id,
                 prepended=request.prepended_conversation,
                 labels=labels,  # deprecated
@@ -936,13 +936,13 @@ class AttackService:
                 data_type=cast("PromptDataType", piece.data_type),
                 extension=ext,
             )
-            await serializer.save_b64_image(data=value)
+            await serializer.save_b64_image_async(data=value)
             file_path = serializer.value
             piece.original_value = file_path
             if piece.converted_value is None:
                 piece.converted_value = file_path
 
-    async def _store_prepended_messages(
+    async def _store_prepended_messages_async(
         self,
         *,
         conversation_id: str,

@@ -7,6 +7,7 @@ import logging
 from typing import Optional
 
 from pyrit.common import net_utility
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -102,7 +103,7 @@ class GandalfTarget(PromptTarget):
 
         return [response_entry]
 
-    async def check_password(self, password: str) -> bool:
+    async def check_password_async(self, password: str) -> bool:
         """
         Check if the password is correct.
 
@@ -126,6 +127,20 @@ class GandalfTarget(PromptTarget):
 
         json_response = resp.json()
         return bool(json_response["success"])
+
+    async def check_password(self, password: str) -> bool:  # pyrit-async-suffix-exempt
+        """
+        Use ``check_password_async`` instead; this is a deprecated alias.
+
+        Returns:
+            bool: Same as ``check_password_async``.
+        """
+        print_deprecation_message(
+            old_item="pyrit.prompt_target.GandalfTarget.check_password",
+            new_item="pyrit.prompt_target.GandalfTarget.check_password_async",
+            removed_in="0.16.0",
+        )
+        return await self.check_password_async(password)
 
     async def _complete_text_async(self, text: str) -> str:
         payload: dict[str, object] = {

@@ -132,7 +132,7 @@ class AzureBlobStorageTarget(PromptTarget):
             logger.info("Using SAS token from environment variable or passed parameter.")
         except ValueError:
             logger.info("SAS token not provided. Creating a delegation SAS token using Entra ID authentication.")
-            sas_token = await AzureStorageAuth.get_sas_token(container_url)
+            sas_token = await AzureStorageAuth.get_sas_token_async(container_url)
         self._client_async = AsyncContainerClient.from_container_url(
             container_url=container_url,
             credential=sas_token,
