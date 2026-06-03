@@ -49,13 +49,13 @@ class _RecordingDispatcher(RealtimeEventDispatcher):
         self.routed_events: list[Any] = []
         self.cancel_calls: int = 0
 
-    async def _route_event(self, *, event: Any, state: RealtimeTurnState | None) -> None:
+    async def _route_event_async(self, *, event: Any, state: RealtimeTurnState | None) -> None:
         self.routed_events.append(event)
         # End the turn on a sentinel event so tests can drain the loop.
         if state is not None and getattr(event, "_finish", False):
             state.completion.set_result(RealtimeTargetResult())
 
-    async def _cancel(self, *, state: RealtimeTurnState) -> None:
+    async def _cancel_async(self, *, state: RealtimeTurnState) -> None:
         self.cancel_calls += 1
         state.interrupted = True
 
@@ -80,18 +80,18 @@ def _sentinel_event(*, finish: bool = False) -> AsyncMock:
 async def test_dispatcher_start_is_idempotent():
     """Calling start twice must not spawn two tasks."""
     dispatcher = _RecordingDispatcher(connection=_ScriptedConnection([]))
-    await dispatcher.start()
+    await dispatcher.start_async()
     first_task = dispatcher._task
-    await dispatcher.start()
+    await dispatcher.start_async()
     assert dispatcher._task is first_task
-    await dispatcher.stop()
+    await dispatcher.stop_async()
 
 
 async def test_dispatcher_stop_releases_task():
     """stop must cancel the task and clear the reference."""
     dispatcher = _RecordingDispatcher(connection=_ScriptedConnection([]))
-    await dispatcher.start()
-    await dispatcher.stop()
+    await dispatcher.start_async()
+    await dispatcher.stop_async()
     assert dispatcher._task is None
 
 
@@ -119,30 +119,30 @@ async def test_dispatcher_register_turn_allows_replacement_after_completion():
 
 
 async def test_dispatcher_loop_routes_events_to_active_turn():
-    """The dispatch loop must forward events from the connection to _route_event."""
+    """The dispatch loop must forward events from the connection to _route_event_async."""
     finish = _sentinel_event(finish=True)
     other = _sentinel_event()
     dispatcher = _RecordingDispatcher(connection=_ScriptedConnection([other, finish]))
     state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
     dispatcher.register_turn(state)
 
-    await dispatcher.start()
+    await dispatcher.start_async()
     await asyncio.wait_for(state.completion, timeout=1.0)
-    await dispatcher.stop()
+    await dispatcher.stop_async()
 
     assert dispatcher.routed_events == [other, finish]
 
 
 async def test_dispatcher_loop_routes_events_with_no_turn_as_state_none():
-    """When no turn is registered, events still reach _route_event so input callbacks can fire; state is None."""
+    """When no turn is registered, events still reach _route_event_async so input callbacks can fire; state is None."""
     finish = _sentinel_event(finish=True)
     other = _sentinel_event()
     dispatcher = _RecordingDispatcher(connection=_ScriptedConnection([other, finish]))
 
     # No register_turn called.
-    await dispatcher.start()
+    await dispatcher.start_async()
     await asyncio.sleep(0.05)
-    await dispatcher.stop()
+    await dispatcher.stop_async()
 
     # Both events were routed but no turn was completed (state was None, sentinel branch skipped).
     assert dispatcher.routed_events == [other, finish]
@@ -152,7 +152,7 @@ async def test_dispatcher_loop_sets_exception_on_router_failure():
     """A router exception must propagate to the active turn's completion future."""
 
     class _ExplodingDispatcher(_RecordingDispatcher):
-        async def _route_event(self, *, event: Any, state: RealtimeTurnState | None) -> None:
+        async def _route_event_async(self, *, event: Any, state: RealtimeTurnState | None) -> None:
             raise ValueError("router boom")
 
     event = _sentinel_event()
@@ -160,10 +160,10 @@ async def test_dispatcher_loop_sets_exception_on_router_failure():
     state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
     dispatcher.register_turn(state)
 
-    await dispatcher.start()
+    await dispatcher.start_async()
     with pytest.raises(ValueError, match="router boom"):
         await asyncio.wait_for(state.completion, timeout=1.0)
-    await dispatcher.stop()
+    await dispatcher.stop_async()
 
 
 async def test_dispatcher_fires_committed_callback_as_background_task():
@@ -180,11 +180,11 @@ async def test_dispatcher_fires_committed_callback_as_background_task():
         await release.wait()
 
     class _CallbackDispatcher(RealtimeEventDispatcher):
-        async def _route_event(self, *, event, state):
+        async def _route_event_async(self, *, event, state):
             # Synthesize a committed callback fire on every event for the test.
             self._fire_committed_callback(event)
 
-        async def _cancel(self, *, state):  # pragma: no cover - not exercised here
+        async def _cancel_async(self, *, state):  # pragma: no cover - not exercised here
             return
 
     fake_event_1 = MagicMock(spec=CommittedEvent)
@@ -194,13 +194,13 @@ async def test_dispatcher_fires_committed_callback_as_background_task():
         on_user_audio_committed=slow_callback,
     )
 
-    await dispatcher.start()
+    await dispatcher.start_async()
     # Both events should reach the slow callback even though the first is "blocked" awaiting release.
     await asyncio.wait_for(blocked.wait(), timeout=1.0)
     # Give the loop a tick to process the second event despite the first callback still running.
     await asyncio.sleep(0.05)
     release.set()
-    await dispatcher.stop()
+    await dispatcher.stop_async()
 
     # Both events fired the callback; the loop did not serialize behind the slow first call.
     assert len(received) == 2
@@ -210,10 +210,10 @@ async def test_dispatcher_records_failure_on_iterator_crash():
     """When the connection iterator raises, the dispatcher's failure property captures the exception."""
 
     class _NoopDispatcher(RealtimeEventDispatcher):
-        async def _route_event(self, *, event, state):  # pragma: no cover - never called
+        async def _route_event_async(self, *, event, state):  # pragma: no cover - never called
             return
 
-        async def _cancel(self, *, state):  # pragma: no cover
+        async def _cancel_async(self, *, state):  # pragma: no cover
             return
 
     class _ExplodingConnection:
@@ -224,11 +224,11 @@ async def test_dispatcher_records_failure_on_iterator_crash():
             raise RuntimeError("iterator died")
 
     dispatcher = _NoopDispatcher(connection=_ExplodingConnection())
-    await dispatcher.start()
+    await dispatcher.start_async()
     for _ in range(50):
         if dispatcher.failure is not None:
             break
         await asyncio.sleep(0.01)
-    await dispatcher.stop()
+    await dispatcher.stop_async()
 
     assert isinstance(dispatcher.failure, RuntimeError) and str(dispatcher.failure) == "iterator died"

@@ -120,9 +120,9 @@ def _patched_dispatcher():
         captured["connection"] = connection
         captured["on_user_audio_committed"] = on_user_audio_committed
         d = MagicMock(name="dispatcher")
-        d.start = AsyncMock()
-        d.stop = AsyncMock()
-        d.drain_callbacks = AsyncMock()
+        d.start_async = AsyncMock()
+        d.stop_async = AsyncMock()
+        d.drain_callbacks_async = AsyncMock()
         d.add_failure_callback = MagicMock()
         captured["dispatcher"] = d
         return d
@@ -156,7 +156,7 @@ async def _run_session_with_events(
         # Let the consumer task start and create the dispatcher / queue.
         await asyncio.sleep(0)
         for event in events:
-            await session._on_committed(event)
+            await session._on_committed_async(event)
         finish.set()
 
     await asyncio.gather(_consume(), _fire())
@@ -449,7 +449,7 @@ async def test_run_async_propagates_dispatcher_failure_via_failure_callback():
                 pytest.fail("no message should be yielded before the failure surfaces")
 
         async def _fire_failure() -> None:
-            # Let run_async progress past dispatcher.start() and the add_failure_callback registration.
+            # Let run_async progress past dispatcher.start_async() and the add_failure_callback registration.
             for _ in range(5):
                 await asyncio.sleep(0)
             assert captured["dispatcher"].add_failure_callback.call_count == 1
@@ -461,6 +461,55 @@ async def test_run_async_propagates_dispatcher_failure_via_failure_callback():
 
         with pytest.raises(RuntimeError, match="dispatch loop died"):
             await asyncio.gather(_consume(), _fire_failure())
+
+
+# ---------------------------------------------------------------------------
+# 7b. Forced final commit is gated on the server's minimum buffer size
+# ---------------------------------------------------------------------------
+
+
+async def test_drain_skips_forced_commit_when_pending_below_minimum():
+    """A tail buffer under the 100ms server minimum must not trigger a forced commit."""
+    target = _build_target()
+    normalizer = _build_normalizer()
+    connection = target._connect_async.return_value
+
+    finish = asyncio.Event()
+    # 96 bytes = 1ms at 24 kHz PCM16 mono, well below the 100ms minimum.
+    session = _OpenAIRealtimeStreamingSession(
+        target=target,
+        audio_chunks=_paced_chunks([b"\x00" * 96], finish),
+        prompt_normalizer=normalizer,
+    )
+    _mock_session_wire(session)
+
+    with _patched_dispatcher():
+        messages = await _run_session_with_events(session, finish=finish, events=[])
+
+    assert messages == []
+    connection.input_audio_buffer.commit.assert_not_awaited()
+
+
+async def test_drain_forces_commit_when_pending_meets_minimum():
+    """At least 100ms of uncommitted audio must trigger the forced final commit."""
+    target = _build_target()
+    normalizer = _build_normalizer()
+    connection = target._connect_async.return_value
+
+    finish = asyncio.Event()
+    # 4800 bytes = exactly 100ms at 24 kHz PCM16 mono.
+    session = _OpenAIRealtimeStreamingSession(
+        target=target,
+        audio_chunks=_paced_chunks([b"\x00" * 4800], finish),
+        prompt_normalizer=normalizer,
+    )
+    _mock_session_wire(session)
+
+    with _patched_dispatcher():
+        messages = await _run_session_with_events(session, finish=finish, events=[])
+
+    assert messages == []
+    connection.input_audio_buffer.commit.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -573,12 +622,12 @@ async def test_buffer_start_session_ms_advances_across_commits():
 
     async def _fire() -> None:
         await asyncio.sleep(0)
-        await session._on_committed(CommittedEvent(item_id="t1", audio_start_ms=500))
+        await session._on_committed_async(CommittedEvent(item_id="t1", audio_start_ms=500))
         gate2.set()
         # Give the producer time to drain chunk2 into _pending_chunks.
         for _ in range(20):
             await asyncio.sleep(0)
-        await session._on_committed(CommittedEvent(item_id="t2", audio_start_ms=800))
+        await session._on_committed_async(CommittedEvent(item_id="t2", audio_start_ms=800))
         finish.set()
 
     with _patched_dispatcher():

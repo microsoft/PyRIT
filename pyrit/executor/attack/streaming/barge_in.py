@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.executor.attack.component.conversation_manager import ConversationManager
@@ -22,14 +22,13 @@ from pyrit.models import (
     Message,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import RealtimeTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from pyrit.prompt_target import PromptTarget
+    from pyrit.prompt_target import PromptTarget, RealtimeTarget
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +41,8 @@ class BargeInAttackContext(AttackContext[AttackParamsT]):
     ``prepended_conversation`` (inherited from ``AttackContext``) is persisted to memory
     on setup, but only the leading system message is propagated to the live realtime
     session as session instructions. User / assistant turns from the prepended history
-    are not (yet) pushed through ``conversation.item.create``, so the model conditions
-    only on the system prompt plus live audio chunks. See follow-up issue for full
-    realtime-session injection.
+    are not pushed through ``conversation.item.create``, so the model conditions only on
+    the system prompt plus live audio chunks.
     """
 
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -62,7 +60,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
     """
 
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements(
-        required=frozenset({CapabilityName.STREAMING_BARGE_IN}),
+        required=frozenset({CapabilityName.STREAMING_AUDIO}),
     )
 
     @apply_defaults
@@ -78,15 +76,16 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         Initialize the streaming barge-in attack.
 
         Args:
-            objective_target: Target to attack. Must be a ``RealtimeTarget`` (the only
-                target that today exposes ``open_streaming_session``).
+            objective_target: Target to attack. Must declare the ``STREAMING_AUDIO``
+                capability (today only ``RealtimeTarget`` does).
             attack_converter_config: Converters applied to each committed user turn.
             prompt_normalizer: Normalizer used to apply converters and persist messages.
                 Defaults to a fresh ``PromptNormalizer``.
             params_type: Attack parameter dataclass type.
 
         Raises:
-            TypeError: If ``objective_target`` is not a ``RealtimeTarget``.
+            ValueError: If ``objective_target`` does not declare the ``STREAMING_AUDIO``
+                capability.
         """
         super().__init__(
             objective_target=objective_target,
@@ -94,12 +93,9 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             params_type=params_type,
             logger=logger,
         )
-        if not isinstance(objective_target, RealtimeTarget):
-            raise TypeError(
-                f"{type(objective_target).__name__} is not a RealtimeTarget. BargeInAttack "
-                f"requires a target that exposes `open_streaming_session`."
-            )
-        self._realtime_target: RealtimeTarget = objective_target
+        # Capability validation (STREAMING_AUDIO) runs in super().__init__ via
+        # TARGET_REQUIREMENTS; the cast records the concrete dependency for the call site.
+        self._realtime_target = cast("RealtimeTarget", objective_target)
         attack_converter_config = attack_converter_config or AttackConverterConfig()
         self._request_converters = attack_converter_config.request_converters
         self._response_converters = attack_converter_config.response_converters
@@ -132,8 +128,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
 
         Prepended messages are recorded in memory but are NOT pushed into the live realtime
         session beyond the system prompt — the model only conditions on the system message
-        and live audio chunks. Pushing prepended user / assistant turns into the websocket
-        session via ``conversation.item.create`` is tracked as a follow-up.
+        and live audio chunks.
         """
         if not context.conversation_id:
             context.conversation_id = str(uuid.uuid4())

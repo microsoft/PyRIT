@@ -66,7 +66,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
             supports_editable_history=True,
             supports_multi_message_pieces=True,
             supports_system_prompt=True,
-            supports_streaming_barge_in=True,
+            supports_streaming_audio=True,
             input_modalities=frozenset(
                 {
                     frozenset(["text"]),
@@ -143,7 +143,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         Open a new server-VAD streaming session bound to this target.
 
         Returns:
-            A fresh :class:`_OpenAIRealtimeStreamingSession`. Drive it by iterating
+            A fresh ``_OpenAIRealtimeStreamingSession``. Drive it by iterating
             ``await session.run_async()``; one assistant ``Message`` is yielded per
             VAD-committed turn, and the matching user message is persisted to memory
             (but not yielded). The session owns its websocket connection + dispatcher
@@ -407,7 +407,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
 
         Dispatches to the atomic send_audio / send_text path based on the
         request's data type. Streaming attacks bypass this entry point and drive
-        the connection through :class:`_OpenAIRealtimeStreamingSession` instead.
+        the connection through ``_OpenAIRealtimeStreamingSession`` instead.
 
         Args:
             normalized_conversation (list[Message]): The full conversation
@@ -891,7 +891,11 @@ class _OpenAIRealtimeDispatcher(RealtimeEventDispatcher):
     ``response.cancel`` plus ``conversation.item.truncate`` when interrupted.
     """
 
-    async def _route_event(self, *, event: Any, state: RealtimeTurnState | None) -> None:
+    #: Error code the server returns when an explicit commit finds an empty buffer
+    #: (server VAD already committed the final phrase). Benign for streaming sessions.
+    _COMMIT_EMPTY_ERROR_CODE: ClassVar[str] = "input_audio_buffer_commit_empty"
+
+    async def _route_event_async(self, *, event: Any, state: RealtimeTurnState | None) -> None:
         """Route an OpenAI Realtime event to the active turn or to an input-side callback."""
         event_type = getattr(event, "type", "")
 
@@ -919,7 +923,6 @@ class _OpenAIRealtimeDispatcher(RealtimeEventDispatcher):
                     audio_start_ms=audio_start_ms,
                 )
             )
-            # Fall through: also include the bookkeeping below (none currently uses committed).
             return
 
         # Remaining events are output-side and mutate per-turn state; drop if no turn.
@@ -967,7 +970,7 @@ class _OpenAIRealtimeDispatcher(RealtimeEventDispatcher):
             return
 
         if event_type == "input_audio_buffer.speech_started" and state.is_responding:
-            await self._cancel(state=state)
+            await self._cancel_async(state=state)
             state.is_responding = False
             state.completion.set_result(
                 RealtimeTargetResult(
@@ -980,11 +983,17 @@ class _OpenAIRealtimeDispatcher(RealtimeEventDispatcher):
 
         if event_type == "error":
             error = getattr(event, "error", None)
+            code = getattr(error, "code", None) if error is not None else None
             message = getattr(error, "message", "unknown") if error is not None else "unknown"
+            if code == self._COMMIT_EMPTY_ERROR_CODE:
+                # A forced final commit raced an already-empty buffer (server VAD committed
+                # everything). Benign and unrelated to the active turn — never fail on it.
+                logger.debug(f"Ignoring benign empty input-buffer commit error: {message}")
+                return
             state.completion.set_exception(RuntimeError(f"Realtime API error: {message}"))
             return
 
-    async def _cancel(self, *, state: RealtimeTurnState) -> None:
+    async def _cancel_async(self, *, state: RealtimeTurnState) -> None:
         """
         Truncate the in-flight response's conversation item to what was actually delivered.
 
@@ -992,7 +1001,7 @@ class _OpenAIRealtimeDispatcher(RealtimeEventDispatcher):
         trim the conversation history to match the audio we received.
 
         Marks ``state.interrupted = True`` even when the truncate call fails.
-        Does not resolve ``state.completion``; the caller (``_route_event``) does that.
+        Does not resolve ``state.completion``; the caller (``_route_event_async``) does that.
 
         Args:
             state (RealtimeTurnState): The turn whose response should be cancelled.

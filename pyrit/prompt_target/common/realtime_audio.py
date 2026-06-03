@@ -121,12 +121,12 @@ class RealtimeEventDispatcher(ABC):
         """
         return self._failure
 
-    async def start(self) -> None:
+    async def start_async(self) -> None:
         """Start the background dispatch task. Idempotent."""
         if self._task is None:
-            self._task = asyncio.create_task(self._dispatch_loop())
+            self._task = asyncio.create_task(self._dispatch_loop_async())
 
-    async def stop(self) -> None:
+    async def stop_async(self) -> None:
         """
         Cancel the background dispatch task and release the reference.
 
@@ -146,11 +146,11 @@ class RealtimeEventDispatcher(ABC):
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
 
-    async def drain_callbacks(self) -> None:
+    async def drain_callbacks_async(self) -> None:
         """
         Wait for in-flight on_user_audio_committed callback tasks to complete.
 
-        Unlike :meth:`stop`, callbacks are not cancelled — they run to completion.
+        Unlike ``stop_async``, callbacks are not cancelled — they run to completion.
         Use during graceful shutdown when the caller needs the final VAD-committed
         turn to finish its convert-and-respond work before tearing down the
         dispatcher.
@@ -164,7 +164,7 @@ class RealtimeEventDispatcher(ABC):
         Register a callback fired if the dispatch loop terminates abnormally.
 
         The callback is invoked exactly once with the exception that killed the
-        dispatch loop. Cancellation via :meth:`stop` does NOT trigger the callback.
+        dispatch loop. Cancellation via ``stop_async`` does NOT trigger the callback.
         Use to bridge dispatcher failures to a session-level consumer that would
         otherwise block forever waiting on a turn future that will never resolve.
 
@@ -172,10 +172,10 @@ class RealtimeEventDispatcher(ABC):
             callback: Sync callable receiving the dispatch-loop exception.
 
         Raises:
-            RuntimeError: If called before :meth:`start`.
+            RuntimeError: If called before ``start_async``.
         """
         if self._task is None:
-            raise RuntimeError("add_failure_callback must be called after start()")
+            raise RuntimeError("add_failure_callback must be called after start_async()")
 
         def _on_done(task: asyncio.Task[None]) -> None:
             if task.cancelled():
@@ -201,7 +201,7 @@ class RealtimeEventDispatcher(ABC):
             raise RuntimeError("Another turn is already active on this dispatcher")
         self._current_turn = state
 
-    async def _dispatch_loop(self) -> None:
+    async def _dispatch_loop_async(self) -> None:
         """
         Consume events from the connection and route each to the active turn.
 
@@ -219,7 +219,7 @@ class RealtimeEventDispatcher(ABC):
                 if turn is not None and turn.completion.done():
                     turn = None
                 try:
-                    await self._route_event(event=event, state=turn)
+                    await self._route_event_async(event=event, state=turn)
                 except Exception as e:
                     logger.exception(f"Realtime event router raised: {e}")
                     if turn is not None and not turn.completion.done():
@@ -246,7 +246,7 @@ class RealtimeEventDispatcher(ABC):
         task.add_done_callback(self._callback_tasks.discard)
 
     @abstractmethod
-    async def _route_event(self, *, event: Any, state: RealtimeTurnState | None) -> None:
+    async def _route_event_async(self, *, event: Any, state: RealtimeTurnState | None) -> None:
         """
         Route a single provider-specific event.
 
@@ -270,7 +270,7 @@ class RealtimeEventDispatcher(ABC):
         """
 
     @abstractmethod
-    async def _cancel(self, *, state: RealtimeTurnState) -> None:
+    async def _cancel_async(self, *, state: RealtimeTurnState) -> None:
         """
         Send provider-specific cancel and truncate events for the in-flight response.
 

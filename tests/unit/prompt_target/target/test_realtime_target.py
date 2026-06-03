@@ -569,13 +569,13 @@ def _make_dispatcher(connection):
 
 
 async def test_cancel_does_not_send_response_cancel():
-    """_cancel must NOT send response.cancel (server auto-cancels on speech detection)."""
+    """_cancel_async must NOT send response.cancel (server auto-cancels on speech detection)."""
     connection = AsyncMock()
     dispatcher = _make_dispatcher(connection)
     state = _turn_state(response_id="resp_42")
     state.delivered_audio.extend(b"\x00" * 4800)
 
-    await dispatcher._cancel(state=state)
+    await dispatcher._cancel_async(state=state)
 
     connection.response.cancel.assert_not_awaited()
 
@@ -588,7 +588,7 @@ async def test_cancel_truncates_to_delivered_audio_ms():
     # 4800 delivered bytes / 48 bytes-per-ms = 100ms
     state.delivered_audio.extend(b"\x00" * 4800)
 
-    await dispatcher._cancel(state=state)
+    await dispatcher._cancel_async(state=state)
 
     connection.conversation.item.truncate.assert_awaited_once_with(
         item_id="item_99",
@@ -599,13 +599,13 @@ async def test_cancel_truncates_to_delivered_audio_ms():
 
 
 async def test_cancel_only_truncates_no_response_cancel(caplog):
-    """_cancel must only truncate, not send response.cancel (server handles cancellation)."""
+    """_cancel_async must only truncate, not send response.cancel (server handles cancellation)."""
     connection = AsyncMock()
     dispatcher = _make_dispatcher(connection)
     state = _turn_state(item_id="item_1")
     state.delivered_audio.extend(b"\x00" * 4800)
 
-    await dispatcher._cancel(state=state)
+    await dispatcher._cancel_async(state=state)
 
     assert state.interrupted is True
     connection.conversation.item.truncate.assert_awaited_once()
@@ -619,7 +619,7 @@ async def test_cancel_marks_interrupted_when_truncate_raises(caplog):
     dispatcher = _make_dispatcher(connection)
     state = _turn_state()
 
-    await dispatcher._cancel(state=state)
+    await dispatcher._cancel_async(state=state)
 
     assert state.interrupted is True
     assert any(
@@ -648,15 +648,21 @@ async def test_route_event_happy_path_resolves_completion_with_assembled_result(
     dispatcher = _make_dispatcher(connection)
     state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
 
-    await dispatcher._route_event(event=_scripted_event("response.created", **{"response.id": "r1"}), state=state)
-    await dispatcher._route_event(event=_scripted_event("response.output_item.added", **{"item.id": "i1"}), state=state)
-    await dispatcher._route_event(
+    await dispatcher._route_event_async(event=_scripted_event("response.created", **{"response.id": "r1"}), state=state)
+    await dispatcher._route_event_async(
+        event=_scripted_event("response.output_item.added", **{"item.id": "i1"}), state=state
+    )
+    await dispatcher._route_event_async(
         event=_scripted_event("response.audio.delta", delta=base64.b64encode(b"\xaa" * 4800).decode("ascii")),
         state=state,
     )
-    await dispatcher._route_event(event=_scripted_event("response.audio_transcript.delta", delta="hello "), state=state)
-    await dispatcher._route_event(event=_scripted_event("response.audio_transcript.delta", delta="world"), state=state)
-    await dispatcher._route_event(event=_scripted_event("response.done", **{"response.id": "r1"}), state=state)
+    await dispatcher._route_event_async(
+        event=_scripted_event("response.audio_transcript.delta", delta="hello "), state=state
+    )
+    await dispatcher._route_event_async(
+        event=_scripted_event("response.audio_transcript.delta", delta="world"), state=state
+    )
+    await dispatcher._route_event_async(event=_scripted_event("response.done", **{"response.id": "r1"}), state=state)
 
     assert state.completion.done()
     result = state.completion.result()
@@ -671,13 +677,15 @@ async def test_route_event_speech_started_while_responding_cancels_and_resolves_
     dispatcher = _make_dispatcher(connection)
     state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
 
-    await dispatcher._route_event(event=_scripted_event("response.created", **{"response.id": "r1"}), state=state)
-    await dispatcher._route_event(event=_scripted_event("response.output_item.added", **{"item.id": "i1"}), state=state)
-    await dispatcher._route_event(
+    await dispatcher._route_event_async(event=_scripted_event("response.created", **{"response.id": "r1"}), state=state)
+    await dispatcher._route_event_async(
+        event=_scripted_event("response.output_item.added", **{"item.id": "i1"}), state=state
+    )
+    await dispatcher._route_event_async(
         event=_scripted_event("response.audio.delta", delta=base64.b64encode(b"\xbb" * 2400).decode("ascii")),
         state=state,
     )
-    await dispatcher._route_event(event=_scripted_event("input_audio_buffer.speech_started"), state=state)
+    await dispatcher._route_event_async(event=_scripted_event("input_audio_buffer.speech_started"), state=state)
 
     connection.response.cancel.assert_not_awaited()
     connection.conversation.item.truncate.assert_awaited_once_with(
@@ -701,7 +709,7 @@ async def test_route_event_stale_response_done_after_cancel_is_dropped():
     state.completion.set_result(RealtimeTargetResult())
 
     # Late response.done for r1 arrives; router must not raise InvalidStateError.
-    await dispatcher._route_event(event=_scripted_event("response.done", **{"response.id": "r1"}), state=state)
+    await dispatcher._route_event_async(event=_scripted_event("response.done", **{"response.id": "r1"}), state=state)
 
 
 async def test_route_event_error_resolves_with_exception():
@@ -710,10 +718,29 @@ async def test_route_event_error_resolves_with_exception():
     dispatcher = _make_dispatcher(connection)
     state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
 
-    await dispatcher._route_event(event=_scripted_event("error", **{"error.message": "rate limited"}), state=state)
+    await dispatcher._route_event_async(
+        event=_scripted_event("error", **{"error.message": "rate limited"}), state=state
+    )
 
     with pytest.raises(RuntimeError, match="rate limited"):
         state.completion.result()
+
+
+async def test_route_event_ignores_benign_empty_commit_error():
+    """An input_audio_buffer_commit_empty error is benign and must not fail the active turn."""
+    connection = AsyncMock()
+    dispatcher = _make_dispatcher(connection)
+    state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+
+    await dispatcher._route_event_async(
+        event=_scripted_event(
+            "error",
+            **{"error.code": "input_audio_buffer_commit_empty", "error.message": "buffer too small"},
+        ),
+        state=state,
+    )
+
+    assert not state.completion.done()
 
 
 async def test_route_event_speech_started_without_responding_is_noop():
@@ -722,7 +749,7 @@ async def test_route_event_speech_started_without_responding_is_noop():
     dispatcher = _make_dispatcher(connection)
     state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
 
-    await dispatcher._route_event(event=_scripted_event("input_audio_buffer.speech_started"), state=state)
+    await dispatcher._route_event_async(event=_scripted_event("input_audio_buffer.speech_started"), state=state)
 
     connection.response.cancel.assert_not_awaited()
     connection.conversation.item.truncate.assert_not_awaited()
@@ -740,7 +767,7 @@ async def test_route_event_committed_event_fires_user_audio_callback():
 
     dispatcher = _OpenAIRealtimeDispatcher(connection=connection, on_user_audio_committed=on_committed)
 
-    await dispatcher._route_event(
+    await dispatcher._route_event_async(
         event=_scripted_event("input_audio_buffer.committed", item_id="raw_item_42", audio_start_ms=1234),
         state=None,
     )
@@ -761,7 +788,7 @@ async def test_route_event_committed_event_without_callback_is_noop():
     dispatcher = _OpenAIRealtimeDispatcher(connection=connection)  # no callback
 
     # Must not raise.
-    await dispatcher._route_event(
+    await dispatcher._route_event_async(
         event=_scripted_event("input_audio_buffer.committed", item_id="raw_item_99"),
         state=None,
     )
@@ -782,11 +809,11 @@ async def test_route_event_speech_started_audio_start_propagates_to_commit():
     connection = AsyncMock()
     dispatcher = _OpenAIRealtimeDispatcher(connection=connection, on_user_audio_committed=on_committed)
 
-    await dispatcher._route_event(
+    await dispatcher._route_event_async(
         event=_scripted_event("input_audio_buffer.speech_started", audio_start_ms=8536),
         state=None,
     )
-    await dispatcher._route_event(
+    await dispatcher._route_event_async(
         event=_scripted_event("input_audio_buffer.committed", item_id="raw_99", audio_start_ms=None),
         state=None,
     )
@@ -811,16 +838,16 @@ async def test_route_event_pending_speech_start_resets_after_commit():
     connection = AsyncMock()
     dispatcher = _OpenAIRealtimeDispatcher(connection=connection, on_user_audio_committed=on_committed)
 
-    await dispatcher._route_event(
+    await dispatcher._route_event_async(
         event=_scripted_event("input_audio_buffer.speech_started", audio_start_ms=500),
         state=None,
     )
-    await dispatcher._route_event(
+    await dispatcher._route_event_async(
         event=_scripted_event("input_audio_buffer.committed", item_id="i1", audio_start_ms=None),
         state=None,
     )
     # Second commit without a prior speech_started: must NOT reuse the 500 captured above.
-    await dispatcher._route_event(
+    await dispatcher._route_event_async(
         event=_scripted_event("input_audio_buffer.committed", item_id="i2", audio_start_ms=None),
         state=None,
     )

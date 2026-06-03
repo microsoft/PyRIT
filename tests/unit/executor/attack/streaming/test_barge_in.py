@@ -55,16 +55,16 @@ def _mock_connection() -> AsyncMock:
 
 @patch.dict("os.environ", _CLEAN_ENV)
 def test_constructor_rejects_target_without_streaming_capability(sqlite_instance):
-    """A target whose capabilities lack STREAMING_BARGE_IN must be rejected at construction."""
+    """A target whose capabilities lack STREAMING_AUDIO must be rejected at construction."""
     from pyrit.prompt_target import OpenAIChatTarget
 
     no_streaming = OpenAIChatTarget(api_key="k", endpoint="https://x", model_name="m")
-    with pytest.raises(Exception, match="streaming_barge_in"):
+    with pytest.raises(Exception, match="streaming_audio"):
         BargeInAttack(objective_target=no_streaming)
 
 
 def test_constructor_succeeds_with_vad_target(vad_target):
-    """A RealtimeTarget declares STREAMING_BARGE_IN — construction succeeds."""
+    """A RealtimeTarget declares STREAMING_AUDIO — construction succeeds."""
     attack = BargeInAttack(objective_target=vad_target)
     assert attack.get_objective_target() is vad_target
 

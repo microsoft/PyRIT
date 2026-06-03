@@ -38,6 +38,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Minimum amount of buffered audio (ms) the Realtime server accepts on an explicit
+#: ``input_audio_buffer.commit``. Forcing a commit below this raises "buffer too small".
+_MIN_COMMIT_MS = 100
+
 
 def _trim_snapshot_to_speech(
     *,
@@ -100,8 +104,8 @@ class _OpenAIRealtimeStreamingSession:
     """
     Per-conversation lifecycle owner for one OpenAI Realtime streaming exchange.
 
-    Internal to :mod:`pyrit.prompt_target.openai`. Constructed and consumed only by
-    :meth:`RealtimeTarget.open_streaming_session`; downstream code should depend on
+    Internal to ``pyrit.prompt_target.openai``. Constructed and consumed only by
+    ``RealtimeTarget.open_streaming_session``; downstream code should depend on
     the ``AsyncIterator[Message]`` contract, never on this class directly.
     """
 
@@ -154,7 +158,7 @@ class _OpenAIRealtimeStreamingSession:
         # commits firing back-to-back cannot interleave.
         self._turn_lock = asyncio.Lock()
 
-        # Set in ``_on_committed`` entry. Producer awaits this after issuing a
+        # Set in ``_on_committed_async`` entry. Producer awaits this after issuing a
         # forced final commit so the resulting callback can be observed before
         # we signal end-of-stream and tear the dispatcher down.
         self._commit_observed = asyncio.Event()
@@ -185,9 +189,9 @@ class _OpenAIRealtimeStreamingSession:
             self._queue = asyncio.Queue()
             self._dispatcher = _OpenAIRealtimeDispatcher(
                 connection=self._connection,
-                on_user_audio_committed=self._on_committed,
+                on_user_audio_committed=self._on_committed_async,
             )
-            await self._dispatcher.start()
+            await self._dispatcher.start_async()
             self._dispatcher.add_failure_callback(self._on_dispatcher_failure)
 
             producer = asyncio.create_task(self._drain_chunks_async())
@@ -205,9 +209,9 @@ class _OpenAIRealtimeStreamingSession:
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await producer
                 try:
-                    await self._dispatcher.stop()
+                    await self._dispatcher.stop_async()
                 except Exception as e:  # noqa: BLE001 - cleanup, surface via log
-                    logger.warning(f"dispatcher.stop() raised during session teardown: {e}")
+                    logger.warning(f"dispatcher.stop_async() raised during session teardown: {e}")
         finally:
             try:
                 await self._connection.close()
@@ -234,19 +238,31 @@ class _OpenAIRealtimeStreamingSession:
                     self._pending_chunks.extend(chunk)
                 await self._push_audio_chunk_async(chunk)
 
-            # Snapshot commit-event count before forcing a final commit so we can
-            # detect whether the server accepted it (it produces a new committed
-            # event) without racing with any concurrent natural commit.
+            # Force a final commit only when enough uncommitted audio remains locally.
+            # When server VAD already committed the final phrase (e.g. the source ended
+            # with trailing silence), the buffer is empty and committing would be rejected
+            # — synchronously as a BadRequestError, or asynchronously as an
+            # ``input_audio_buffer_commit_empty`` error event that the dispatcher now treats
+            # as benign. Skipping sub-minimum buffers avoids both, plus the 5s observe wait.
+            bytes_per_ms = self._target.SAMPLE_RATE_HZ * 2 // 1000  # PCM16 mono
+            async with self._pending_chunks_lock:
+                pending_ms = len(self._pending_chunks) // bytes_per_ms if bytes_per_ms else 0
+
             self._commit_observed.clear()
             force_commit_accepted = False
-            try:
-                await connection.input_audio_buffer.commit()
-                force_commit_accepted = True
-            except _OpenAIBadRequestError as e:
-                # Empty buffer is a benign "nothing pending to commit" — happens whenever
-                # server VAD already auto-committed the final phrase. Anything else from
-                # this exception class still indicates a real API problem; log and continue.
-                logger.debug(f"Forced final commit rejected (likely empty buffer): {e}")
+            if pending_ms >= _MIN_COMMIT_MS:
+                try:
+                    await connection.input_audio_buffer.commit()
+                    force_commit_accepted = True
+                except _OpenAIBadRequestError as e:
+                    # Server VAD may have committed between the size check and this call;
+                    # the empty-buffer rejection is benign. Other BadRequestErrors still
+                    # indicate a real API problem, so log and continue.
+                    logger.debug(f"Forced final commit rejected (likely empty buffer): {e}")
+            else:
+                logger.debug(
+                    f"Skipping forced final commit; {pending_ms}ms pending is below the {_MIN_COMMIT_MS}ms minimum."
+                )
 
             if force_commit_accepted:
                 try:
@@ -259,7 +275,7 @@ class _OpenAIRealtimeStreamingSession:
 
             # Let any commit-triggered callbacks (the one we just forced plus any
             # natural ones still mid-work) run to completion before signalling done.
-            await self._dispatcher.drain_callbacks()
+            await self._dispatcher.drain_callbacks_async()
             await self._queue.put(_SentinelDone())
         except asyncio.CancelledError:
             raise
@@ -275,7 +291,7 @@ class _OpenAIRealtimeStreamingSession:
         except Exception as e:  # noqa: BLE001 - defensive; never let the bridge raise
             logger.warning(f"Failed to bridge dispatcher failure into session queue: {e}")
 
-    async def _on_committed(self, event: CommittedEvent) -> None:
+    async def _on_committed_async(self, event: CommittedEvent) -> None:
         """
         Dispatcher-side callback: snapshot raw audio + trim now, then run the turn under the lock.
 
@@ -300,7 +316,11 @@ class _OpenAIRealtimeStreamingSession:
 
             buffer_relative_audio_start_ms: int | None = None
             if event.audio_start_ms is not None:
-                buffer_relative_audio_start_ms = event.audio_start_ms - self._buffer_start_session_ms
+                # The server's session clock and the locally-summed buffer offset can drift
+                # slightly out of alignment, so this subtraction may go marginally negative.
+                # Clamp to 0 ("trim nothing") rather than letting it reach the helper, which
+                # treats a negative offset as a caller bug and raises.
+                buffer_relative_audio_start_ms = max(0, event.audio_start_ms - self._buffer_start_session_ms)
 
             prefix_padding_ms = self._effective_vad.prefix_padding_ms if self._effective_vad is not None else 0
 

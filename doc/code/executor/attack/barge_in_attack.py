@@ -102,7 +102,7 @@ async def single_turn_source():
         await asyncio.sleep(CHUNK_MS / 1000)
 
 
-target = RealtimeTarget(server_vad=True)
+target = RealtimeTarget()
 attack = BargeInAttack(
     objective_target=target,
     attack_converter_config=AttackConverterConfig(request_converters=converters),
@@ -115,7 +115,7 @@ context = BargeInAttackContext(
 
 result = await attack.execute_with_context_async(context=context)  # type: ignore
 print(f"executed_turns: {result.executed_turns}")
-await ConsoleAttackResultPrinter(width=200).print_conversation_async(result=result)  # type: ignore
+await ConsoleAttackResultPrinter(width=200).write_async(result=result)  # type: ignore
 await target.cleanup_target()  # type: ignore
 
 # %% [markdown]
@@ -151,7 +151,7 @@ async def barge_in_source():
         await asyncio.sleep(CHUNK_MS / 1000)
 
 
-target2 = RealtimeTarget(server_vad=True)
+target2 = RealtimeTarget()
 attack2 = BargeInAttack(
     objective_target=target2,
     attack_converter_config=AttackConverterConfig(request_converters=converters),
@@ -179,7 +179,7 @@ for message in turns:
         value_preview = (val[:80] + "...") if len(val) > 80 else val
         print(f"  {piece._role} {piece.converted_value_data_type}{marker}: {value_preview}")
 
-await ConsoleAttackResultPrinter(width=200).print_conversation_async(result=barge_in_result)  # type: ignore
+await ConsoleAttackResultPrinter(width=200).write_async(result=barge_in_result)  # type: ignore
 await target2.cleanup_target()  # type: ignore
 
 # %% [markdown]
