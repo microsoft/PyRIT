@@ -268,10 +268,15 @@ def test_scenario_result_to_dict_from_dict_roundtrip():
     )
     roundtripped = ScenarioResult.from_dict(original.to_dict())
     assert original.to_dict() == roundtripped.to_dict()
+    # The nested identifier must preserve the legacy ``scenario_version`` wire key.
+    assert "scenario_version" in original.to_dict()["scenario_identifier"]
+    assert "version" not in original.to_dict()["scenario_identifier"]
 
 
-def test_scenario_identifier_from_dict_missing_pyrit_version_yields_unknown():
-    """from_dict should preserve 'unknown' rather than fabricating the current version when missing."""
+def test_scenario_identifier_from_dict_missing_pyrit_version_uses_current():
+    """A payload missing pyrit_version now resolves to the current version via the Pydantic default."""
+    import pyrit
+
     data = {
         "name": "Legacy",
         "description": "loaded from older payload",
@@ -280,7 +285,7 @@ def test_scenario_identifier_from_dict_missing_pyrit_version_yields_unknown():
         # pyrit_version intentionally absent
     }
     identifier = ScenarioIdentifier.from_dict(data)
-    assert identifier.pyrit_version == "unknown"
+    assert identifier.pyrit_version == pyrit.__version__
 
 
 def test_scenario_result_from_dict_preserves_missing_completion_time():
@@ -300,3 +305,45 @@ def test_scenario_result_from_dict_preserves_missing_completion_time():
     roundtripped = ScenarioResult.from_dict(original.to_dict())
     assert roundtripped.completion_time is None
     assert roundtripped.scenario_run_state == "IN_PROGRESS"
+
+
+def test_scenario_identifier_to_dict_from_dict_emit_deprecation_warnings():
+    import pytest
+
+    identifier = ScenarioIdentifier(name="Test", scenario_version=1, pyrit_version="0.14.0")
+    with pytest.warns(DeprecationWarning):
+        payload = identifier.to_dict()
+    with pytest.warns(DeprecationWarning):
+        ScenarioIdentifier.from_dict(payload)
+
+
+def test_scenario_result_to_dict_from_dict_emit_deprecation_warnings():
+    import pytest
+
+    scenario_id = ScenarioIdentifier(name="Test", scenario_version=1, pyrit_version="0.14.0")
+    result = ScenarioResult(
+        scenario_identifier=scenario_id,
+        objective_target_identifier=ComponentIdentifier.from_dict({}),
+        objective_scorer_identifier=None,
+        attack_results={},
+    )
+    with pytest.warns(DeprecationWarning):
+        payload = result.to_dict()
+    with pytest.warns(DeprecationWarning):
+        ScenarioResult.from_dict(payload)
+
+
+def test_scenario_result_display_group_map_is_public_field():
+    scenario_id = ScenarioIdentifier(name="Test", scenario_version=1, pyrit_version="0.14.0")
+    result = ScenarioResult(
+        scenario_identifier=scenario_id,
+        objective_target_identifier=ComponentIdentifier.from_dict({}),
+        objective_scorer_identifier=None,
+        attack_results={"crescendo": []},
+        display_group_map={"crescendo": "Crescendo Attack"},
+    )
+    assert "display_group_map" in ScenarioResult.model_fields
+    assert result.display_group_map == {"crescendo": "Crescendo Attack"}
+    # Mutable and writable (used by benchmark merge logic).
+    result.display_group_map["foundry"] = "Foundry"
+    assert result.display_group_map["foundry"] == "Foundry"

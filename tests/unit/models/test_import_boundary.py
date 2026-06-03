@@ -59,10 +59,6 @@ KNOWN_LAZY_VIOLATIONS: dict[str, dict[str, str]] = {
     "pyrit.models.data_type_serializer": {
         "pyrit.memory": "phase-9",
     },
-    "pyrit.models.scenario_result": {
-        "pyrit.score.scorer_evaluation.scorer_metrics": "phase-7",
-        "pyrit.score.scorer_evaluation.scorer_metrics_io": "phase-7",
-    },
     "pyrit.models.storage_io": {
         "pyrit.auth": "phase-9",
     },

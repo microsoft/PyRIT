@@ -1072,7 +1072,7 @@ class ScenarioResultEntry(Base):
         self.attack_results_json = json.dumps(serialized_attack_results)
 
         # Serialize display_group_map if present
-        self.display_group_map_json = json.dumps(entry._display_group_map) if entry._display_group_map else None
+        self.display_group_map_json = json.dumps(entry.display_group_map) if entry.display_group_map else None
 
         self.error_message = entry.error_message
         self.error_type = entry.error_type
@@ -1126,14 +1126,14 @@ class ScenarioResultEntry(Base):
             attack_results=attack_results,
             objective_scorer_identifier=scorer_identifier,
             scenario_run_state=self.scenario_run_state,
-            labels=self.labels,
+            labels=self.labels or {},
             creation_time=self.timestamp,
             number_tries=self.number_tries,
             completion_time=self.completion_time,
-            display_group_map=display_group_map,
+            display_group_map=display_group_map or {},
             error_message=self.error_message,
             error_type=self.error_type,
-            metadata=dict(self.scenario_metadata) if self.scenario_metadata else None,
+            metadata=dict(self.scenario_metadata) if self.scenario_metadata else {},
         )
 
     def get_conversation_ids_by_attack_name(self) -> dict[str, list[str]]:
