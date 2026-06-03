@@ -176,7 +176,6 @@ class TAPAttackContext(MultiTurnAttackContext[Any]):
     best_adversarial_conversation_id: Optional[str] = None
 
 
-@dataclass
 class TAPAttackResult(AttackResult):
     """
     Result of the Tree of Attacks with Pruning (TAP) attack strategy execution.
@@ -699,7 +698,8 @@ class _TreeOfAttacksNode:
         # Extract auxiliary scores
         auxiliary_scores = scoring_results["auxiliary_scores"]
         for score in auxiliary_scores:
-            scorer_name = score.scorer_class_identifier.class_name
+            scorer_identifier = score.scorer_class_identifier
+            scorer_name = scorer_identifier.class_name if scorer_identifier else "unknown"
             self.auxiliary_scores[scorer_name] = score
             logger.debug(f"Node {self.node_id}: {scorer_name} score: {score.get_value()}")
 
@@ -904,7 +904,7 @@ class _TreeOfAttacksNode:
             # Generate feedback prompt and get a new response
             feedback_prompt = self._generate_off_topic_feedback_prompt(
                 original_prompt=prompt,
-                off_topic_rationale=on_topic_score.score_rationale,
+                off_topic_rationale=on_topic_score.score_rationale or "",
                 objective=objective,
             )
 

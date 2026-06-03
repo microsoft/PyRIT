@@ -1138,7 +1138,7 @@ class TestRunAsyncCacheInjection:
         # Base run_async produced only the non-skipped attack's result
         base_scenario_result = MagicMock()
         base_scenario_result.attack_results = {"technique_c__adv_target_harmbench": [result_z]}
-        base_scenario_result._display_group_map = {}
+        base_scenario_result.display_group_map = {}
 
         with patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)):
             result = await bench.run_async()
@@ -1164,12 +1164,12 @@ class TestRunAsyncCacheInjection:
 
         base_scenario_result = MagicMock()
         base_scenario_result.attack_results = {}
-        base_scenario_result._display_group_map = {}
+        base_scenario_result.display_group_map = {}
 
         with patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)):
             result = await bench.run_async()
 
-        assert result._display_group_map["technique_a__adv_target_harmbench"] == "adv_target"
+        assert result.display_group_map["technique_a__adv_target_harmbench"] == "adv_target"
 
     async def test_no_injection_when_no_cached_attacks(self):
         """When all attacks were executed freshly, attack_results is returned unchanged."""
@@ -1181,7 +1181,7 @@ class TestRunAsyncCacheInjection:
         result_z = MagicMock(spec=AttackResult)
         base_scenario_result = MagicMock()
         base_scenario_result.attack_results = {"technique_c__adv_target_harmbench": [result_z]}
-        base_scenario_result._display_group_map = {}
+        base_scenario_result.display_group_map = {}
 
         with patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)):
             result = await bench.run_async()

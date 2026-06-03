@@ -497,6 +497,37 @@ describe("ChatInputArea", () => {
     expect(screen.getByRole("button", { name: /send message/i })).toBeEnabled();
   });
 
+  it("should render attachment chip without size label when size is undefined", async () => {
+    // Regression guard for the media-chip bug: when an attachment forwarded
+    // via "Copy to input box in a new conversation" has no known size (e.g.
+    // its url is a /api/media?path=... reference), the chip must not print a
+    // bogus "(... B)" derived from the URL string length.
+    const ref = React.createRef<ChatInputAreaHandle>();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea ref={ref} {...defaultProps} />
+      </TestWrapper>
+    );
+
+    React.act(() => {
+      ref.current?.addAttachment({
+        type: "image",
+        name: "forwarded.png",
+        url: "/api/media?path=%2Fdbdata%2Fprompt-memory-entries%2Fimages%2Fimg.png",
+        mimeType: "image/png",
+        // no size
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/forwarded\.png/)).toBeInTheDocument();
+    });
+
+    // No "(NNN B)" / "(N.N KB)" / "(N.N MB)" label should be rendered.
+    expect(screen.queryByText(/\(\s*\d+(?:\.\d+)?\s*[KM]?B\s*\)/)).toBeNull();
+  });
+
   it("should show single-turn banner when singleTurnLimitReached is true", () => {
     render(
       <TestWrapper>

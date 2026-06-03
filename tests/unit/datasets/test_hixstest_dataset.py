@@ -61,6 +61,11 @@ class TestHiXSTestDataset:
             loader = _HiXSTestDataset(token="explicit-token")
             assert loader.token == "explicit-token"
 
+    def test_split_kwarg_emits_deprecation_warning(self):
+        """Passing the deprecated ``split`` kwarg emits a DeprecationWarning."""
+        with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
+            _HiXSTestDataset(split="train")
+
     async def test_fetch_dataset_hindi_default(self, mock_hixstest_data):
         """By default, the Hindi prompt is the SeedPrompt value and both texts are in metadata."""
         loader = _HiXSTestDataset()
@@ -106,7 +111,7 @@ class TestHiXSTestDataset:
             assert first_prompt.metadata["category"] == "मारना"
 
     async def test_fetch_dataset_passes_token_and_split(self, mock_hixstest_data):
-        """The loader forwards the configured token and split to _fetch_from_huggingface_async."""
+        """The loader forwards the configured token and the hardcoded 'train' split to _fetch_from_huggingface_async."""
         loader = _HiXSTestDataset(token="my-token")
 
         mock_fetch = AsyncMock(return_value=mock_hixstest_data)

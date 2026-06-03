@@ -8,47 +8,55 @@ SeedPrompt class for representing seed prompts with role and sequence informatio
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Literal
 
+from pydantic import Field, model_validator
 from tinytag import TinyTag
 
 from pyrit.common.path import PATHS_DICT
-from pyrit.models import DataTypeSerializer
+from pyrit.models.data_type_serializer import DataTypeSerializer
+from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    ChatMessageRole,
+    PromptDataType,
+)
 from pyrit.models.seeds.seed import Seed
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Sequence
 
     from pyrit.models import Message
-    from pyrit.models.literals import ChatMessageRole, PromptDataType
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
 class SeedPrompt(Seed):
     """Represents a seed prompt with various attributes and metadata."""
 
+    # Discriminator field for the polymorphic Seed union (see seed_group.SeedUnion).
+    seed_type: Literal["prompt"] = "prompt"
+
     # The type of data this prompt represents (e.g., text, image_path, audio_path, video_path)
-    # This field shadows the base class property to allow per-prompt data types
-    data_type: Optional[PromptDataType] = None
+    # This field overrides the base default to allow per-prompt data types inferred from the value
+    data_type: PromptDataType | None = None
 
     # Role of the prompt in a conversation (e.g., "user", "assistant")
-    role: Optional[ChatMessageRole] = None
+    role: ChatMessageRole | None = None
 
     # Sequence number for ordering prompts in a conversation, prompts with
     # the same sequence number are grouped together if they also share the same prompt_group_id
     sequence: int = 0
 
     # Parameters that can be used in the prompt template
-    parameters: Optional[Sequence[str]] = field(default_factory=list)
+    parameters: list[str] | None = Field(default_factory=list)
 
-    def __post_init__(self) -> None:
+    @model_validator(mode="after")
+    def _render_and_infer_data_type(self) -> SeedPrompt:
         """
         Render template placeholders and infer data_type after initialization.
+
+        Returns:
+            SeedPrompt: The validated prompt with rendered value and inferred data_type.
 
         Raises:
             ValueError: If file-based data type cannot be inferred from extension.
@@ -84,6 +92,8 @@ class SeedPrompt(Seed):
                     raise ValueError(f"Unable to infer data_type from file extension: {ext}")
             else:
                 self.data_type = "text"
+
+        return self
 
     def set_encoding_metadata(self) -> None:
         """
@@ -126,12 +136,15 @@ class SeedPrompt(Seed):
     @classmethod
     def from_yaml_with_required_parameters(
         cls,
-        template_path: Union[str, Path],
+        template_path: str | Path,
         required_parameters: list[str],
-        error_message: Optional[str] = None,
+        error_message: str | None = None,
     ) -> SeedPrompt:
         """
-        Load a Seed from a YAML file and validate that it contains specific parameters.
+        Load a SeedPrompt from a YAML file and validate that it declares each required parameter.
+
+        Thin shim that delegates to
+        ``pyrit.models.seeds.yaml_seed_loader.load_seed_prompt_from_yaml_with_required_parameters``.
 
         Args:
             template_path: Path to the YAML file containing the template.
@@ -139,27 +152,25 @@ class SeedPrompt(Seed):
             error_message: Custom error message if validation fails. If None, a default message is used.
 
         Returns:
-            SeedPrompt: The loaded and validated SeedPrompt of the specific subclass type.
+            SeedPrompt: The loaded and validated SeedPrompt.
 
         Raises:
             ValueError: If the template doesn't contain all required parameters.
-
         """
-        sp = cls.from_yaml_file(template_path)
+        # Deferred import: yaml_seed_loader imports SeedPrompt at module load, so importing
+        # it at the top of this module would create a circular import.
+        from pyrit.models.seeds.yaml_seed_loader import load_seed_prompt_from_yaml_with_required_parameters
 
-        if sp.parameters is None or not all(param in sp.parameters for param in required_parameters):
-            if error_message is None:
-                error_message = f"Template must have these parameters: {', '.join(required_parameters)}"
-            raise ValueError(f"{error_message}: '{sp}'")
-
-        return sp
+        return load_seed_prompt_from_yaml_with_required_parameters(
+            template_path, required_parameters, error_message=error_message
+        )
 
     @staticmethod
     def from_messages(
         messages: list[Message],
         *,
         starting_sequence: int = 0,
-        prompt_group_id: Optional[uuid.UUID] = None,
+        prompt_group_id: uuid.UUID | None = None,
     ) -> list[SeedPrompt]:
         """
         Convert a list of Messages to a list of SeedPrompts.
