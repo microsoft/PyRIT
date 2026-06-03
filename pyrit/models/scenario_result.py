@@ -6,7 +6,8 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Literal
+from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -75,7 +76,19 @@ class ScenarioIdentifier(BaseModel):
         return cls.model_validate(data)
 
 
-ScenarioRunState = Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED", "CANCELLED"]
+class ScenarioRunState(str, Enum):
+    """
+    Lifecycle state of a scenario run.
+
+    Inherits from ``str`` so values serialize naturally in Pydantic models and
+    REST responses, and compare equal to their string form.
+    """
+
+    CREATED = "CREATED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
 
 
 class ScenarioResult(BaseModel):
@@ -100,7 +113,7 @@ class ScenarioResult(BaseModel):
     #: Results grouped by atomic attack name.
     attack_results: dict[str, list[AttackResult]]
     #: Current scenario run state.
-    scenario_run_state: ScenarioRunState = "CREATED"
+    scenario_run_state: ScenarioRunState = ScenarioRunState.CREATED
     #: Optional labels.
     labels: dict[str, str] = Field(default_factory=dict)
     #: When the scenario result was created.
@@ -216,34 +229,6 @@ class ScenarioResult(BaseModel):
         successful_results = sum(1 for result in all_results if result.outcome == AttackOutcome.SUCCESS)
         return int((successful_results / total_results) * 100)
 
-    @staticmethod
-    def normalize_scenario_name(scenario_name: str) -> str:
-        """
-        Normalize a scenario name to match the stored class name format.
-
-        Converts CLI-style snake_case names (e.g., "foundry" or "content_harms") to
-        PascalCase class names (e.g., "Foundry" or "ContentHarms") for database queries.
-        If the input is already in PascalCase or doesn't match the snake_case pattern,
-        it is returned unchanged.
-
-        This is the inverse of ScenarioRegistry._class_name_to_scenario_name().
-
-        Args:
-            scenario_name (str): The scenario name to normalize.
-
-        Returns:
-            str: The normalized scenario name suitable for database queries.
-
-        """
-        # Check if it looks like snake_case (contains underscore and is lowercase)
-        if "_" in scenario_name and scenario_name == scenario_name.lower():
-            # Convert snake_case to PascalCase
-            # e.g., "content_harms" -> "ContentHarms"
-            parts = scenario_name.split("_")
-            return "".join(part.capitalize() for part in parts)
-        # Already PascalCase or other format, return as-is
-        return scenario_name
-
     def to_dict(self) -> dict[str, Any]:
         """
         Serialize this scenario result to a JSON-compatible dictionary.
@@ -279,3 +264,31 @@ class ScenarioResult(BaseModel):
             removed_in="0.16.0",
         )
         return cls.model_validate(data)
+
+    @staticmethod
+    def normalize_scenario_name(scenario_name: str) -> str:
+        """
+        Normalize a scenario name to match the stored class name format.
+
+        Converts CLI-style snake_case names (e.g., "foundry" or "content_harms") to
+        PascalCase class names (e.g., "Foundry" or "ContentHarms") for database queries.
+        If the input is already in PascalCase or doesn't match the snake_case pattern,
+        it is returned unchanged.
+
+        This is the inverse of ScenarioRegistry._class_name_to_scenario_name().
+
+        Args:
+            scenario_name (str): The scenario name to normalize.
+
+        Returns:
+            str: The normalized scenario name suitable for database queries.
+
+        """
+        # Check if it looks like snake_case (contains underscore and is lowercase)
+        if "_" in scenario_name and scenario_name == scenario_name.lower():
+            # Convert snake_case to PascalCase
+            # e.g., "content_harms" -> "ContentHarms"
+            parts = scenario_name.split("_")
+            return "".join(part.capitalize() for part in parts)
+        # Already PascalCase or other format, return as-is
+        return scenario_name

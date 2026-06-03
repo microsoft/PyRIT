@@ -401,14 +401,17 @@ class ScoreEntry(Base):
         self.score_rationale = entry.score_rationale
         self.score_metadata = entry.score_metadata or {}
         normalized_scorer = entry.scorer_class_identifier
-        # Ensure eval_hash is set before truncation so it survives the DB round-trip
-        if normalized_scorer.eval_hash is None:
-            normalized_scorer = normalized_scorer.with_eval_hash(
-                ScorerEvaluationIdentifier(normalized_scorer).eval_hash
+        if normalized_scorer is None:
+            self.scorer_class_identifier = {}
+        else:
+            # Ensure eval_hash is set before truncation so it survives the DB round-trip
+            if normalized_scorer.eval_hash is None:
+                normalized_scorer = normalized_scorer.with_eval_hash(
+                    ScorerEvaluationIdentifier(normalized_scorer).eval_hash
+                )
+            self.scorer_class_identifier = normalized_scorer.model_dump(
+                context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH},
             )
-        self.scorer_class_identifier = normalized_scorer.model_dump(
-            context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH},
-        )
         self.prompt_request_response_id = entry.message_piece_id if entry.message_piece_id else None
         self.timestamp = entry.timestamp
         # Store in both columns for backward compatibility
@@ -439,7 +442,7 @@ class ScoreEntry(Base):
             score_category=self.score_category,
             score_rationale=self.score_rationale,
             score_metadata=self.score_metadata,
-            scorer_class_identifier=scorer_identifier,  # type: ignore[ty:invalid-argument-type]
+            scorer_class_identifier=scorer_identifier,
             message_piece_id=self.prompt_request_response_id,
             timestamp=_ensure_utc(self.timestamp),
             objective=self.objective,
@@ -975,8 +978,8 @@ class ScenarioResultEntry(Base):
         scenario_init_data (dict): Optional initialization parameters used to configure the scenario.
         objective_target_identifier (dict): Identifier for the target being evaluated in the scenario.
         objective_scorer_identifier (dict): Optional identifier for the scorer used to evaluate results.
-        scenario_run_state (Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED"]): Current execution state
-            of the scenario.
+        scenario_run_state (str): Current execution state of the scenario
+            (one of CREATED, IN_PROGRESS, COMPLETED, FAILED, CANCELLED).
         attack_results_json (str): JSON-serialized dictionary mapping attack names to conversation IDs.
             Format: {"attack_name": ["conversation_id1", "conversation_id2", ...]}.
             The full AttackResult objects are stored in AttackResultEntries and can be queried by conversation_id.
@@ -1003,9 +1006,7 @@ class ScenarioResultEntry(Base):
     scenario_init_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     objective_target_identifier: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
     objective_scorer_identifier: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
-    scenario_run_state: Mapped[Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED", "CANCELLED"]] = mapped_column(
-        String, nullable=False, default="CREATED"
-    )
+    scenario_run_state: Mapped[str] = mapped_column(String, nullable=False, default="CREATED")
     attack_results_json: Mapped[str] = mapped_column(Unicode, nullable=False)
     display_group_map_json: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     labels: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
