@@ -49,16 +49,16 @@ from pyrit.backend.models.attacks import (
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.target_service import get_target_service
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationStats,
     ConversationType,
     MessagePiece,
     PromptDataType,
+    build_atomic_attack_identifier,
     data_serializer_factory,
 )
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
@@ -338,7 +338,7 @@ class AttackService:
 
         # Store prepended conversation messages if provided
         if request.prepended_conversation:
-            await self._store_prepended_messages(
+            await self._store_prepended_messages_async(
                 conversation_id=conversation_id,
                 prepended=request.prepended_conversation,
                 labels=labels,  # deprecated
@@ -756,7 +756,7 @@ class AttackService:
                     children=new_children,
                 )
                 if ar.atomic_attack_identifier:
-                    atomic = ComponentIdentifier.from_dict(ar.atomic_attack_identifier.to_dict())
+                    atomic = ComponentIdentifier.model_validate(ar.atomic_attack_identifier.model_dump())
                     atomic_children = dict(atomic.children)
                     # Navigate into attack_technique child to update the nested attack child.
                     technique = atomic_children.get("attack_technique")
@@ -778,7 +778,7 @@ class AttackService:
                         params=dict(atomic.params),
                         children=atomic_children,
                     )
-                    update_fields["atomic_attack_identifier"] = new_atomic.to_dict()
+                    update_fields["atomic_attack_identifier"] = new_atomic.model_dump()
 
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,
@@ -852,9 +852,12 @@ class AttackService:
         # Apply optional overrides to the fresh pieces before persisting
         for piece in all_pieces:
             if labels_override is not None:
-                piece.labels = dict(labels_override)  # deprecated
+                # TODO: ``labels`` is slated to move from MessagePiece onto
+                # AttackResult. Revisit this once that lands so we set labels
+                # on the attack result instead of mutating each piece.
+                piece.labels = dict(labels_override)
             if remap_assistant_to_simulated and piece.api_role == "assistant":
-                piece._role = "simulated_assistant"
+                piece.role = "simulated_assistant"
 
         if all_pieces:
             self._memory.add_message_pieces_to_memory(message_pieces=list(all_pieces))
@@ -933,13 +936,13 @@ class AttackService:
                 data_type=cast("PromptDataType", piece.data_type),
                 extension=ext,
             )
-            await serializer.save_b64_image(data=value)
+            await serializer.save_b64_image_async(data=value)
             file_path = serializer.value
             piece.original_value = file_path
             if piece.converted_value is None:
                 piece.converted_value = file_path
 
-    async def _store_prepended_messages(
+    async def _store_prepended_messages_async(
         self,
         *,
         conversation_id: str,

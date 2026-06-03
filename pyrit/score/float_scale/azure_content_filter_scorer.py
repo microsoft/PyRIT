@@ -19,8 +19,8 @@ from azure.core.credentials import AzureKeyCredential
 
 from pyrit.auth import AsyncTokenProviderCredential, ensure_async_token_provider, get_azure_async_token_provider
 from pyrit.common import default_values
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     DataTypeSerializer,
     Message,
     MessagePiece,
@@ -288,7 +288,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
                 filter_results.append(text_result)
 
         elif message_piece.converted_value_data_type == "image_path":
-            base64_encoded_data = await self._get_base64_image_data(message_piece)
+            base64_encoded_data = await self._get_base64_image_data_async(message_piece)
             # Decode base64 string to raw bytes for Azure API
             image_data = ImageData(content=base64.b64decode(base64_encoded_data))
             image_request_options = AnalyzeImageOptions(
@@ -317,7 +317,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
                     score_metadata=metadata,
                     score_rationale="",
                     scorer_class_identifier=self.get_identifier(),
-                    message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+                    message_piece_id=message_piece.id,
                     objective=objective,
                 )
                 all_scores.append(score_obj)
@@ -337,7 +337,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
                 score_metadata=result.metadata,
                 score_rationale=result.rationale,
                 scorer_class_identifier=self.get_identifier(),
-                message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+                message_piece_id=message_piece.id,
                 objective=objective,
             )
             for result in aggregated_results
@@ -403,7 +403,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
             for category in self._harm_categories
         ]
 
-    async def _get_base64_image_data(self, message_piece: MessagePiece) -> str:
+    async def _get_base64_image_data_async(self, message_piece: MessagePiece) -> str:
         """
         Get base64-encoded image data from a message piece.
 
@@ -418,4 +418,4 @@ class AzureContentFilterScorer(FloatScaleScorer):
         image_serializer = data_serializer_factory(
             category="prompt-memory-entries", value=image_path, data_type="image_path", extension=ext
         )
-        return await image_serializer.read_data_base64()
+        return await image_serializer.read_data_base64_async()

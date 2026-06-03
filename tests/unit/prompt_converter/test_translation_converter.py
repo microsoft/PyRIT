@@ -7,8 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from unit.mocks import MockPromptTarget
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.prompt_converter import TranslationConverter
 
 

@@ -14,10 +14,9 @@ if TYPE_CHECKING:
 import pytest
 from openai.types.chat import ChatCompletion
 
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.message_normalizer import GenericSystemSquashNormalizer
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.prompt_target import AzureMLChatTarget, OpenAIChatTarget
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityHandlingPolicy,
@@ -113,7 +112,10 @@ async def test_openai_chat_target_sends_normalized_to_construct_request():
     with (
         patch.object(target.configuration, "normalize_async", new_callable=AsyncMock, return_value=[adapted_msg]),
         patch.object(
-            target, "_construct_request_body", new_callable=AsyncMock, return_value={"model": "gpt-4o", "messages": []}
+            target,
+            "_construct_request_body_async",
+            new_callable=AsyncMock,
+            return_value={"model": "gpt-4o", "messages": []},
         ) as mock_construct,
     ):
         await target.send_prompt_async(message=user_msg)

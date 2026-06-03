@@ -21,11 +21,9 @@ from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
-from pyrit.identifiers import build_atomic_attack_identifier
-from pyrit.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import MAX_IDENTIFIER_VALUE_LENGTH
-from pyrit.models import AttackResult, SeedAttackGroup
+from pyrit.models import AtomicAttackEvaluationIdentifier, AttackResult, SeedAttackGroup, build_atomic_attack_identifier
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
 if TYPE_CHECKING:
@@ -430,24 +428,24 @@ class AtomicAttack:
 
         for result, idx in zip(results.completed_results, results.input_indices, strict=True):
             if idx < len(self._seed_groups):
-                result.atomic_attack_identifier = build_atomic_attack_identifier(
+                identifier = build_atomic_attack_identifier(
                     technique_identifier=self._attack_technique.get_identifier(),
                     seed_group=self._seed_groups[idx],
                 )
 
                 # Persist the enriched identifier back to the database.
                 # Set eval_hash before truncation so it survives the DB round-trip.
-                if result.atomic_attack_identifier.eval_hash is None:
-                    result.atomic_attack_identifier = result.atomic_attack_identifier.with_eval_hash(
-                        AtomicAttackEvaluationIdentifier(result.atomic_attack_identifier).eval_hash
-                    )
+                if identifier.eval_hash is None:
+                    identifier = identifier.with_eval_hash(AtomicAttackEvaluationIdentifier(identifier).eval_hash)
+
+                result.atomic_attack_identifier = identifier
 
                 if result.attack_result_id:
                     memory.update_attack_result_by_id(
                         attack_result_id=result.attack_result_id,
                         update_fields={
-                            "atomic_attack_identifier": result.atomic_attack_identifier.to_dict(
-                                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+                            "atomic_attack_identifier": identifier.model_dump(
+                                context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH},
                             ),
                         },
                     )

@@ -36,6 +36,7 @@ project:
         - "http://api.openai.com"
         - "http://api.openai.com/**"
         - "https://cognitiveservices.azure.com/**"
+        - "https://www.youtube.com/watch?v=jq9DcEL3cHE"
   toc:
     - file: index.md
     - file: getting_started/README.md
@@ -167,6 +168,7 @@ project:
             - file: code/scoring/7_scorer_metrics.ipynb
             - file: code/scoring/credential_leak_scorer.ipynb
             - file: code/scoring/insecure_code_scorer.ipynb
+            - file: code/scoring/owasp_llm02_scorers.ipynb
             - file: code/scoring/persuasion_full_conversation_scorer.ipynb
             - file: code/scoring/prompt_shield_scorer.ipynb
             - file: code/scoring/generic_scorers.ipynb
@@ -205,6 +207,7 @@ project:
       children:
         - file: api/pyrit_analytics.md
         - file: api/pyrit_auth.md
+        - file: api/pyrit_auxiliary_attacks.md
         - file: api/pyrit_cli_api_client.md
         - file: api/pyrit_cli_pyrit_scan.md
         - file: api/pyrit_cli_pyrit_shell.md

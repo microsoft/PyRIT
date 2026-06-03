@@ -69,6 +69,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         results_sas_token: Optional[str] = None,
         verbose: bool = False,
         skip_schema_migration: bool = False,
+        silent: bool = False,
     ) -> None:
         """
         Initialize an Azure SQL Memory backend.
@@ -82,6 +83,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                 If not provided, falls back to the 'AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN' environment variable.
             verbose (bool): Whether to enable verbose logging for the database engine. Defaults to False.
             skip_schema_migration (bool): Whether to skip schema migration. Defaults to False.
+            silent (bool): If True, suppresses schema migration console output. Defaults to False.
         """
         self._connection_string = default_values.get_required_value(
             env_var_name=self.AZURE_SQL_DB_CONNECTION_STRING, passed_value=connection_string
@@ -109,7 +111,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         self.SessionFactory = sessionmaker(bind=self.engine)
         if not skip_schema_migration:
-            self._run_schema_migration()
+            self._run_schema_migration(silent=silent)
 
         super().__init__()
 
@@ -698,10 +700,23 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         Insert a list of message pieces into the memory storage.
 
+        Pieces flagged via ``MessagePiece.not_in_memory = True`` are
+        silently filtered out so callers don't need to track persistence policy
+        themselves.
+
         Args:
             message_pieces (Sequence[MessagePiece]): A sequence of MessagePiece instances to be added.
         """
-        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in message_pieces])
+        # ``not_in_memory`` pieces are ephemeral — typically synthesized inside a
+        # scorer to score arbitrary content that never came through a real
+        # PromptTarget. They have no conversation, target, or attack lineage, so
+        # persisting them would pollute the memory store with rows that don't
+        # tie to any real exchange. Filtering here lets every caller share one
+        # policy instead of guarding each call site.
+        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_memory]
+        if not pieces_to_insert:
+            return
+        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in pieces_to_insert])
 
     def dispose_engine(self) -> None:
         """

@@ -7,8 +7,7 @@ from io import BytesIO
 
 from PIL import Image
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType, data_serializer_factory
+from pyrit.models import ComponentIdentifier, PromptDataType, data_serializer_factory
 from pyrit.models.data_type_serializer import DataTypeSerializer
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
@@ -154,8 +153,8 @@ class ImageOverlayConverter(PromptConverter):
             category="prompt-memory-entries", value=prompt, data_type="image_path"
         )
 
-        base_bytes = await base_serializer.read_data()
-        overlay_bytes = await overlay_serializer.read_data()
+        base_bytes = await base_serializer.read_data_async()
+        overlay_bytes = await overlay_serializer.read_data_async()
 
         base_img = Image.open(BytesIO(base_bytes))
         overlay_img = Image.open(BytesIO(overlay_bytes))
@@ -169,5 +168,5 @@ class ImageOverlayConverter(PromptConverter):
         output_serializer = data_serializer_factory(
             category="prompt-memory-entries", data_type="image_path", extension=self._file_extension
         )
-        await output_serializer.save_b64_image(data=image_str)
+        await output_serializer.save_b64_image_async(data=image_str)
         return ConverterResult(output_text=str(output_serializer.value), output_type="image_path")

@@ -29,7 +29,7 @@ router = APIRouter(prefix="/converters", tags=["converters"])
     "",
     response_model=ConverterInstanceListResponse,
 )
-async def list_converters() -> ConverterInstanceListResponse:
+async def list_converters() -> ConverterInstanceListResponse:  # pyrit-async-suffix-exempt
     """
     List converter instances.
 
@@ -46,7 +46,7 @@ async def list_converters() -> ConverterInstanceListResponse:
     "/catalog",
     response_model=ConverterCatalogResponse,
 )
-async def list_converter_catalog() -> ConverterCatalogResponse:
+async def list_converter_catalog() -> ConverterCatalogResponse:  # pyrit-async-suffix-exempt
     """
     List all available converter types from the backend converter registry.
 
@@ -65,7 +65,7 @@ async def list_converter_catalog() -> ConverterCatalogResponse:
         400: {"model": ProblemDetail, "description": "Invalid converter type or parameters"},
     },
 )
-async def create_converter(request: CreateConverterRequest) -> CreateConverterResponse:
+async def create_converter(request: CreateConverterRequest) -> CreateConverterResponse:  # pyrit-async-suffix-exempt
     """
     Create a new converter instance.
 
@@ -98,7 +98,7 @@ async def create_converter(request: CreateConverterRequest) -> CreateConverterRe
         404: {"model": ProblemDetail, "description": "Converter not found"},
     },
 )
-async def get_converter(converter_id: str) -> ConverterInstance:
+async def get_converter(converter_id: str) -> ConverterInstance:  # pyrit-async-suffix-exempt
     """
     Get a converter instance by ID.
 
@@ -124,7 +124,7 @@ async def get_converter(converter_id: str) -> ConverterInstance:
         400: {"model": ProblemDetail, "description": "Invalid converter configuration"},
     },
 )
-async def preview_conversion(request: ConverterPreviewRequest) -> ConverterPreviewResponse:
+async def preview_conversion(request: ConverterPreviewRequest) -> ConverterPreviewResponse:  # pyrit-async-suffix-exempt
     """
     Preview conversion through a converter pipeline.
 

@@ -175,36 +175,6 @@ class Psychosocial(Scenario):
         ),
     }
 
-    @classmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        """
-        Get the strategy enum class for this scenario.
-
-        Returns:
-            Type[ScenarioStrategy]: The PsychosocialHarmsStrategy enum class.
-        """
-        return PsychosocialStrategy
-
-    @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        """
-        Get the default strategy used when no strategies are specified.
-
-        Returns:
-            ScenarioStrategy: PsychosocialStrategy.ALL
-        """
-        return PsychosocialStrategy.ALL
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """
-        Return the default dataset configuration for this scenario.
-
-        Returns:
-            DatasetConfiguration: Configuration with psychosocial harm datasets.
-        """
-        return DatasetConfiguration(dataset_names=["airt_imminent_crisis"], max_dataset_size=4)
-
     @apply_defaults
     def __init__(
         self,
@@ -266,6 +236,8 @@ class Psychosocial(Scenario):
         super().__init__(
             version=self.VERSION,
             strategy_class=PsychosocialStrategy,
+            default_strategy=PsychosocialStrategy.ALL,
+            default_dataset_config=DatasetConfiguration(dataset_names=["airt_imminent_crisis"], max_dataset_size=4),
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
         )

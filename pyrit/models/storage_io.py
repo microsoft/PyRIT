@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 
 import aiofiles
 
+from pyrit.common.deprecation import print_deprecation_message
+
 if TYPE_CHECKING:
     from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
 
@@ -34,34 +36,114 @@ class StorageIO(ABC):
     """
 
     @abstractmethod
-    async def read_file(self, path: Union[Path, str]) -> bytes:
+    async def read_file_async(self, path: Union[Path, str]) -> bytes:
         """
         Asynchronously reads the file (or blob) from the given path.
         """
 
     @abstractmethod
-    async def write_file(self, path: Union[Path, str], data: bytes) -> None:
+    async def write_file_async(self, path: Union[Path, str], data: bytes) -> None:
         """
         Asynchronously writes data to the given path.
         """
 
     @abstractmethod
-    async def path_exists(self, path: Union[Path, str]) -> bool:
+    async def path_exists_async(self, path: Union[Path, str]) -> bool:
         """
         Asynchronously checks if a file or blob exists at the given path.
         """
 
     @abstractmethod
-    async def is_file(self, path: Union[Path, str]) -> bool:
+    async def is_file_async(self, path: Union[Path, str]) -> bool:
         """
         Asynchronously checks if the path refers to a file (not a directory or container).
         """
 
     @abstractmethod
-    async def create_directory_if_not_exists(self, path: Union[Path, str]) -> None:
+    async def create_directory_if_not_exists_async(self, path: Union[Path, str]) -> None:
         """
         Asynchronously creates a directory or equivalent in the storage system if it doesn't exist.
         """
+
+    async def read_file(self, path: Union[Path, str]) -> bytes:  # pyrit-async-suffix-exempt
+        """
+        Read a file from storage (deprecated alias of ``read_file_async``).
+
+        Args:
+            path (Union[Path, str]): The path to the file.
+
+        Returns:
+            bytes: The content of the file.
+        """
+        print_deprecation_message(
+            old_item="pyrit.models.storage_io.StorageIO.read_file",
+            new_item="pyrit.models.storage_io.StorageIO.read_file_async",
+            removed_in="0.16.0",
+        )
+        return await self.read_file_async(path)
+
+    async def write_file(self, path: Union[Path, str], data: bytes) -> None:  # pyrit-async-suffix-exempt
+        """
+        Write data to storage (deprecated alias of ``write_file_async``).
+
+        Args:
+            path (Union[Path, str]): The path to the file.
+            data (bytes): The content to write to the file.
+        """
+        print_deprecation_message(
+            old_item="pyrit.models.storage_io.StorageIO.write_file",
+            new_item="pyrit.models.storage_io.StorageIO.write_file_async",
+            removed_in="0.16.0",
+        )
+        await self.write_file_async(path, data)
+
+    async def path_exists(self, path: Union[Path, str]) -> bool:  # pyrit-async-suffix-exempt
+        """
+        Check whether a path exists (deprecated alias of ``path_exists_async``).
+
+        Args:
+            path (Union[Path, str]): The path to check.
+
+        Returns:
+            bool: True if the path exists, False otherwise.
+        """
+        print_deprecation_message(
+            old_item="pyrit.models.storage_io.StorageIO.path_exists",
+            new_item="pyrit.models.storage_io.StorageIO.path_exists_async",
+            removed_in="0.16.0",
+        )
+        return await self.path_exists_async(path)
+
+    async def is_file(self, path: Union[Path, str]) -> bool:  # pyrit-async-suffix-exempt
+        """
+        Check whether the given path is a file (deprecated alias of ``is_file_async``).
+
+        Args:
+            path (Union[Path, str]): The path to check.
+
+        Returns:
+            bool: True if the path is a file, False otherwise.
+        """
+        print_deprecation_message(
+            old_item="pyrit.models.storage_io.StorageIO.is_file",
+            new_item="pyrit.models.storage_io.StorageIO.is_file_async",
+            removed_in="0.16.0",
+        )
+        return await self.is_file_async(path)
+
+    async def create_directory_if_not_exists(self, path: Union[Path, str]) -> None:  # pyrit-async-suffix-exempt
+        """
+        Create a directory if it does not exist (deprecated alias of ``create_directory_if_not_exists_async``).
+
+        Args:
+            path (Union[Path, str]): The directory path to create.
+        """
+        print_deprecation_message(
+            old_item="pyrit.models.storage_io.StorageIO.create_directory_if_not_exists",
+            new_item="pyrit.models.storage_io.StorageIO.create_directory_if_not_exists_async",
+            removed_in="0.16.0",
+        )
+        await self.create_directory_if_not_exists_async(path)
 
 
 class DiskStorageIO(StorageIO):
@@ -69,7 +151,7 @@ class DiskStorageIO(StorageIO):
     Implementation of StorageIO for local disk storage.
     """
 
-    async def read_file(self, path: Union[Path, str]) -> bytes:
+    async def read_file_async(self, path: Union[Path, str]) -> bytes:
         """
         Asynchronously reads a file from the local disk.
 
@@ -84,7 +166,7 @@ class DiskStorageIO(StorageIO):
         async with aiofiles.open(path, "rb") as file:
             return await file.read()
 
-    async def write_file(self, path: Union[Path, str], data: bytes) -> None:
+    async def write_file_async(self, path: Union[Path, str], data: bytes) -> None:
         """
         Asynchronously writes data to a file on the local disk.
 
@@ -97,7 +179,7 @@ class DiskStorageIO(StorageIO):
         async with aiofiles.open(path, "wb") as file:
             await file.write(data)
 
-    async def path_exists(self, path: Union[Path, str]) -> bool:
+    async def path_exists_async(self, path: Union[Path, str]) -> bool:
         """
         Check whether a path exists on the local disk.
 
@@ -111,7 +193,7 @@ class DiskStorageIO(StorageIO):
         path = self._convert_to_path(path)
         return path.exists()
 
-    async def is_file(self, path: Union[Path, str]) -> bool:
+    async def is_file_async(self, path: Union[Path, str]) -> bool:
         """
         Check whether the given path is a file (not a directory).
 
@@ -125,7 +207,7 @@ class DiskStorageIO(StorageIO):
         path = self._convert_to_path(path)
         return path.is_file()
 
-    async def create_directory_if_not_exists(self, path: Union[Path, str]) -> None:
+    async def create_directory_if_not_exists_async(self, path: Union[Path, str]) -> None:
         """
         Asynchronously creates a directory if it doesn't exist on the local disk.
 
@@ -201,7 +283,7 @@ class AzureBlobStorageIO(StorageIO):
         sas_token = self._sas_token
         if not self._sas_token:
             logger.info("SAS token not provided. Creating a delegation SAS token using Entra ID authentication.")
-            sas_token = await AzureStorageAuth.get_sas_token(self._container_url)
+            sas_token = await AzureStorageAuth.get_sas_token_async(self._container_url)
 
         self._client_async = AsyncContainerClient.from_container_url(
             container_url=self._container_url,
@@ -295,7 +377,7 @@ class AzureBlobStorageIO(StorageIO):
         except ValueError:
             return path_str
 
-    async def read_file(self, path: Union[Path, str]) -> bytes:
+    async def read_file_async(self, path: Union[Path, str]) -> bytes:
         """
         Asynchronously reads the content of a file (blob) from Azure Blob Storage.
 
@@ -312,11 +394,11 @@ class AzureBlobStorageIO(StorageIO):
             bytes: The content of the file (blob) as bytes.
 
         Example:
-            ``file_content = await read_file("https://account.blob.core.windows.net/container/dir2/1726627689003831.png")``
+            ``file_content = await read_file_async("https://account.blob.core.windows.net/container/dir2/1726627689003831.png")``
 
             Or using a relative path:
 
-            ``file_content = await read_file("dir1/dir2/1726627689003831.png")``
+            ``file_content = await read_file_async("dir1/dir2/1726627689003831.png")``
 
         """
         if not self._client_async:
@@ -338,7 +420,7 @@ class AzureBlobStorageIO(StorageIO):
             await self._client_async.close()
             self._client_async = None
 
-    async def write_file(self, path: Union[Path, str], data: bytes) -> None:
+    async def write_file_async(self, path: Union[Path, str], data: bytes) -> None:
         """
         Write data to Azure Blob Storage at the specified path.
 
@@ -361,7 +443,7 @@ class AzureBlobStorageIO(StorageIO):
             await self._client_async.close()
             self._client_async = None
 
-    async def path_exists(self, path: Union[Path, str]) -> bool:
+    async def path_exists_async(self, path: Union[Path, str]) -> bool:
         """
         Check whether a given path exists in the Azure Blob Storage container.
 
@@ -386,7 +468,7 @@ class AzureBlobStorageIO(StorageIO):
             await self._client_async.close()
             self._client_async = None
 
-    async def is_file(self, path: Union[Path, str]) -> bool:
+    async def is_file_async(self, path: Union[Path, str]) -> bool:
         """
         Check whether the path refers to a file (blob) in Azure Blob Storage.
 
@@ -411,7 +493,7 @@ class AzureBlobStorageIO(StorageIO):
             await self._client_async.close()
             self._client_async = None
 
-    async def create_directory_if_not_exists(self, directory_path: Union[Path, str]) -> None:  # type: ignore[ty:invalid-method-override]
+    async def create_directory_if_not_exists_async(self, directory_path: Union[Path, str]) -> None:  # type: ignore[ty:invalid-method-override]
         """
         Log a no-op directory creation for Azure Blob Storage.
 

@@ -26,9 +26,7 @@ from pyrit.backend.services.attack_service import (
     AttackService,
     get_attack_service,
 )
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
-from pyrit.models import AttackOutcome, AttackResult
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, build_atomic_attack_identifier
 from pyrit.models.conversation_stats import ConversationStats
 
 
@@ -126,7 +124,6 @@ def make_mock_piece(
     piece.conversation_id = conversation_id
     piece.role = role
     piece.api_role = "assistant" if role in ("assistant", "simulated_assistant") else role
-    piece.get_role_for_storage.return_value = role
     piece.sequence = sequence
     piece.original_value = original_value
     piece.converted_value = converted_value
@@ -1429,7 +1426,6 @@ class TestMessageBuilding:
         mock_piece.response_error = None
         mock_piece.sequence = 0
         mock_piece.role = "user"
-        mock_piece.get_role_for_storage.return_value = "user"
         mock_piece.timestamp = datetime.now(timezone.utc)
         mock_piece.scores = None
 
@@ -1512,7 +1508,7 @@ class TestPersistBase64Pieces:
         )
 
         mock_serializer = MagicMock()
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
         mock_serializer.value = "/saved/image.png"
 
         with patch(
@@ -1526,7 +1522,7 @@ class TestPersistBase64Pieces:
             data_type="image_path",
             extension=".png",
         )
-        mock_serializer.save_b64_image.assert_awaited_once_with(data="aW1hZ2VkYXRh")
+        mock_serializer.save_b64_image_async.assert_awaited_once_with(data="aW1hZ2VkYXRh")
         assert request.pieces[0].original_value == "/saved/image.png"
 
     async def test_mixed_pieces_only_persists_non_text(self, attack_service) -> None:
@@ -1546,7 +1542,7 @@ class TestPersistBase64Pieces:
         )
 
         mock_serializer = MagicMock()
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
         mock_serializer.value = "/saved/photo.jpg"
 
         with patch(
@@ -1573,7 +1569,7 @@ class TestPersistBase64Pieces:
         )
 
         mock_serializer = MagicMock()
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
         mock_serializer.value = "/saved/file.bin"
 
         with patch(
@@ -1604,7 +1600,7 @@ class TestPersistBase64Pieces:
         )
 
         mock_serializer = MagicMock()
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
         mock_serializer.value = "/saved/image.png"
 
         with patch(
@@ -1614,7 +1610,7 @@ class TestPersistBase64Pieces:
             await AttackService._persist_base64_pieces_async(request)
 
         # Should receive only the base64 payload, not the data URI prefix
-        mock_serializer.save_b64_image.assert_awaited_once_with(data="aW1hZ2VkYXRh")
+        mock_serializer.save_b64_image_async.assert_awaited_once_with(data="aW1hZ2VkYXRh")
         assert request.pieces[0].original_value == "/saved/image.png"
 
     async def test_http_url_is_kept_as_is(self, attack_service) -> None:
@@ -1677,7 +1673,7 @@ class TestPersistBase64Pieces:
             await AttackService._persist_base64_pieces_async(request)
 
             mock_factory.assert_called_once()
-            mock_serializer.save_b64_image.assert_called_once_with(data=long_b64)
+            mock_serializer.save_b64_image_async.assert_called_once_with(data=long_b64)
             assert request.pieces[0].original_value == "/tmp/saved_audio.wav"
 
 
@@ -2358,7 +2354,7 @@ class TestAttackServiceAdditionalCoverage:
             source_conversation_id="attack-1", cutoff_index=0, remap_assistant_to_simulated=True
         )
 
-        assert dup_piece._role == "simulated_assistant"
+        assert dup_piece.role == "simulated_assistant"
 
 
 class TestAddMessageGuards:

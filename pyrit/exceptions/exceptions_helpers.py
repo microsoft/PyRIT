@@ -51,7 +51,7 @@ def log_exception(retry_state: RetryCallState) -> None:
     try:
         exec_context = get_execution_context()
         if exec_context:
-            # e.g. "objective scorer. TrueFalseScorer::_score_value_with_llm"
+            # e.g. "objective scorer. TrueFalseScorer::_score_value_with_llm_async"
             role_display = exec_context.component_role.value.replace("_", " ")
             if exec_context.component_name:
                 for_clause = f"{role_display}. {exec_context.component_name}::{fn_name}"

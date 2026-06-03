@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from pyrit.common.path import DEFAULT_CONFIG_PATH
 from pyrit.common.yaml_loadable import YamlLoadable
-from pyrit.identifiers.class_name_utils import class_name_to_snake_case
+from pyrit.models import class_name_to_snake_case
 from pyrit.setup.initialization import (
     AZURE_SQL,
     IN_MEMORY,

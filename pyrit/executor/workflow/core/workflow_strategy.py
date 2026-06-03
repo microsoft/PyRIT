@@ -47,18 +47,18 @@ class _DefaultWorkflowEventHandler(StrategyEventHandler[WorkflowContextT, Workfl
         """
         self._logger = logger
         self._events = {
-            StrategyEvent.ON_PRE_VALIDATE: self._on_pre_validate,
-            StrategyEvent.ON_POST_VALIDATE: self._on_post_validate,
-            StrategyEvent.ON_PRE_SETUP: self._on_pre_setup,
-            StrategyEvent.ON_POST_SETUP: self._on_post_setup,
-            StrategyEvent.ON_PRE_EXECUTE: self._on_pre_execute,
-            StrategyEvent.ON_POST_EXECUTE: self._on_post_execute,
-            StrategyEvent.ON_PRE_TEARDOWN: self._on_pre_teardown,
-            StrategyEvent.ON_POST_TEARDOWN: self._on_post_teardown,
-            StrategyEvent.ON_ERROR: self._on_error,
+            StrategyEvent.ON_PRE_VALIDATE: self._on_pre_validate_async,
+            StrategyEvent.ON_POST_VALIDATE: self._on_post_validate_async,
+            StrategyEvent.ON_PRE_SETUP: self._on_pre_setup_async,
+            StrategyEvent.ON_POST_SETUP: self._on_post_setup_async,
+            StrategyEvent.ON_PRE_EXECUTE: self._on_pre_execute_async,
+            StrategyEvent.ON_POST_EXECUTE: self._on_post_execute_async,
+            StrategyEvent.ON_PRE_TEARDOWN: self._on_pre_teardown_async,
+            StrategyEvent.ON_POST_TEARDOWN: self._on_post_teardown_async,
+            StrategyEvent.ON_ERROR: self._on_error_async,
         }
 
-    async def on_event(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
+    async def on_event_async(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
         """
         Handle an event during the workflow strategy execution.
 
@@ -69,31 +69,31 @@ class _DefaultWorkflowEventHandler(StrategyEventHandler[WorkflowContextT, Workfl
             handler = self._events[event_data.event]
             await handler(event_data)
 
-    async def _on_pre_validate(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
+    async def _on_pre_validate_async(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
         self._logger.debug(f"Starting validation for workflow {event_data.strategy_name}")
 
-    async def _on_post_validate(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
+    async def _on_post_validate_async(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
         self._logger.debug(f"Validation completed for workflow {event_data.strategy_name}")
 
-    async def _on_pre_setup(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
+    async def _on_pre_setup_async(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
         self._logger.debug(f"Starting setup for workflow {event_data.strategy_name}")
 
-    async def _on_post_setup(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
+    async def _on_post_setup_async(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
         self._logger.debug(f"Setup completed for workflow {event_data.strategy_name}")
 
-    async def _on_pre_execute(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
+    async def _on_pre_execute_async(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
         self._logger.info(f"Starting execution of workflow {event_data.strategy_name}")
 
-    async def _on_post_execute(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
+    async def _on_post_execute_async(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
         self._logger.info(f"Workflow {event_data.strategy_name} completed.")
 
-    async def _on_pre_teardown(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
+    async def _on_pre_teardown_async(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
         self._logger.debug(f"Starting teardown for workflow {event_data.strategy_name}")
 
-    async def _on_post_teardown(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
+    async def _on_post_teardown_async(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
         self._logger.debug(f"Teardown completed for workflow {event_data.strategy_name}")
 
-    async def _on_error(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
+    async def _on_error_async(self, event_data: StrategyEventData[WorkflowContextT, WorkflowResultT]) -> None:
         self._logger.error(
             f"Error in workflow {event_data.strategy_name}: {event_data.error}", exc_info=event_data.error
         )

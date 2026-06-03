@@ -11,6 +11,7 @@ from real remote sources, and stores them in in-memory CentralMemory.
 import logging
 
 from pyrit.memory import CentralMemory
+from pyrit.setup.initializers.components.scenario_techniques import ScenarioTechniqueInitializer
 from pyrit.setup.initializers.scenarios.load_default_datasets import LoadDefaultDatasets
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ class TestLoadDefaultDatasetsIntegration:
         real datasets and stores them in CentralMemory.
         """
         initializer = LoadDefaultDatasets()
+        await ScenarioTechniqueInitializer().initialize_async()
         await initializer.initialize_async()
 
         memory = CentralMemory.get_memory_instance()

@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, ClassVar
+from functools import cache
+from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import DATASETS_PATH, SCORER_SEED_PROMPT_PATH
@@ -63,6 +64,7 @@ LEAKAGE_FACTORIES: list[AttackTechniqueFactory] = [
 ]
 
 
+@cache
 def _build_leakage_strategy() -> type[ScenarioStrategy]:
     """
     Build the Leakage strategy class dynamically from core + leakage-specific factories.
@@ -97,7 +99,6 @@ class Leakage(Scenario):
     """
 
     VERSION: int = 2
-    _cached_strategy_class: ClassVar[type[ScenarioStrategy] | None] = None
 
     @classmethod
     def _get_additional_scoring_questions(cls) -> list[Path]:
@@ -110,32 +111,9 @@ class Leakage(Scenario):
         return [SCORER_SEED_PROMPT_PATH / "true_false_question" / "leakage.yaml"]
 
     @classmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        """Return the dynamically generated strategy class, building it on first access."""
-        if cls._cached_strategy_class is None:
-            cls._cached_strategy_class = _build_leakage_strategy()
-        return cls._cached_strategy_class
-
-    @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        """
-        Return the default strategy member (DEFAULT).
-
-        Returns:
-            ScenarioStrategy: The DEFAULT strategy value.
-        """
-        strategy_class = cls.get_strategy_class()
-        return strategy_class("default")
-
-    @classmethod
     def required_datasets(cls) -> list[str]:
         """Return a list of dataset names required by this scenario."""
         return ["airt_leakage"]
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """Return the default dataset configuration for this scenario."""
-        return DatasetConfiguration(dataset_names=["airt_leakage"], max_dataset_size=4)
 
     @apply_defaults
     def __init__(
@@ -155,9 +133,13 @@ class Leakage(Scenario):
         if not objective_scorer:
             objective_scorer = self._get_default_objective_scorer()
 
+        strategy_class = _build_leakage_strategy()
+
         super().__init__(
             version=self.VERSION,
-            strategy_class=self.get_strategy_class(),
+            strategy_class=strategy_class,
+            default_strategy=strategy_class("default"),
+            default_dataset_config=DatasetConfiguration(dataset_names=["airt_leakage"], max_dataset_size=4),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
