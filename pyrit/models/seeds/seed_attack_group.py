@@ -9,7 +9,7 @@ Extends SeedGroup to enforce exactly one objective is present.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING
 
 from pyrit.models.seeds.seed_group import SeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
@@ -17,7 +17,6 @@ from pyrit.models.seeds.seed_objective import SeedObjective
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pyrit.models.seeds.seed import Seed
     from pyrit.models.seeds.seed_attack_technique_group import SeedAttackTechniqueGroup
 
 
@@ -32,25 +31,7 @@ class SeedAttackGroup(SeedGroup):
     next_message, etc.) is inherited from SeedGroup.
     """
 
-    def __init__(
-        self,
-        *,
-        seeds: Sequence[Union[Seed, dict[str, Any]]],
-    ) -> None:
-        """
-        Initialize a SeedAttackGroup.
-
-        Args:
-            seeds: Sequence of seeds. Must include exactly one SeedObjective.
-
-        Raises:
-            ValueError: If seeds is empty.
-            ValueError: If exactly one objective is not provided.
-
-        """
-        super().__init__(seeds=seeds)
-
-    def validate(self) -> None:
+    def _check_invariants(self) -> None:
         """
         Validate the seed attack group state.
 
@@ -60,7 +41,7 @@ class SeedAttackGroup(SeedGroup):
             ValueError: If validation fails.
 
         """
-        super().validate()
+        super()._check_invariants()
         self._enforce_exactly_one_objective()
 
     def _enforce_exactly_one_objective(self) -> None:

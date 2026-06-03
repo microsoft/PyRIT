@@ -62,7 +62,7 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading Red Team Social Bias dataset from {self.source}")
 
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.source,
             config="default",
             split="train",

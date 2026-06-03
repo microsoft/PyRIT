@@ -90,7 +90,7 @@ class FuzzerConverter(PromptConverter):
         formatted_prompt = f"===={self.template_label} BEGINS====\n{prompt}\n===={self.template_label} ENDS===="
         prompt_metadata: dict[str, str | int] = {"response_format": "json"}
         request = Message(
-            [
+            message_pieces=[
                 MessagePiece(
                     role="user",
                     original_value=formatted_prompt,

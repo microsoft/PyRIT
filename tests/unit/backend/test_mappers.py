@@ -154,17 +154,42 @@ class TestAttackResultToSummary:
         assert summary.message_count == 0
         assert summary.last_message_preview is None
 
-    def test_last_message_preview_truncated(self) -> None:
-        """Test that long messages are truncated in stats."""
+    def test_last_message_preview_truncates_long_raw_text(self) -> None:
+        """The mapper applies the preview formatter, which truncates long raw text."""
         ar = _make_attack_result()
         long_text = "x" * 200
-        stats = ConversationStats(message_count=1, last_message_preview=long_text[:100] + "...")
+        stats = ConversationStats(message_count=1, last_message_preview=long_text, last_message_data_type="text")
 
         summary = attack_result_to_summary(ar, stats=stats)
 
         assert summary.last_message_preview is not None
         assert len(summary.last_message_preview) == 103  # 100 + "..."
         assert summary.last_message_preview.endswith("...")
+
+    @pytest.mark.parametrize(
+        ("data_type", "expected"),
+        [
+            ("image_path", "[Image: 1780010098266691.png]"),
+            ("audio_path", "[Audio: 1780010098266691.png]"),
+            ("video_path", "[Video: 1780010098266691.png]"),
+            ("binary_path", "[File: 1780010098266691.png]"),
+        ],
+    )
+    def test_media_last_message_preview_hides_absolute_path(self, data_type: str, expected: str) -> None:
+        """The mapper renders media-type previews as friendly labels rather
+        than leaking the raw on-disk path it receives from memory."""
+        ar = _make_attack_result()
+        path = r"C:\Users\someone\git\PyRIT\dbdata\prompt-memory-entries\media\1780010098266691.png"
+        stats = ConversationStats(
+            message_count=1,
+            last_message_preview=path,
+            last_message_data_type=data_type,
+        )
+
+        summary = attack_result_to_summary(ar, stats=stats)
+
+        assert summary.last_message_preview == expected
+        assert "C:\\" not in (summary.last_message_preview or "")
 
     def test_labels_are_mapped(self) -> None:
         """Test that labels are derived from stats."""

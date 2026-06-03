@@ -24,6 +24,7 @@ from azure.identity.aio import DefaultAzureCredential
 from azure.storage.blob import ContainerSasPermissions, generate_container_sas
 from azure.storage.blob.aio import BlobServiceClient
 
+from pyrit.backend.mappers._preview import format_last_message_preview
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
     AttackSummary,
@@ -35,7 +36,7 @@ from pyrit.backend.models.attacks import (
     TargetInfo,
 )
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models import AttackResult, ChatMessageRole, PromptDataType
+from pyrit.models import MEDIA_PATH_DATA_TYPES, AttackResult, ChatMessageRole, PromptDataType
 from pyrit.models import Message as PyritMessage
 from pyrit.models import MessagePiece as PyritMessagePiece
 from pyrit.models import Score as PyritScore
@@ -49,9 +50,6 @@ if TYPE_CHECKING:
 # ============================================================================
 # Domain → DTO  (for API responses)
 # ============================================================================
-
-# Media data types whose values are file paths (local or Azure Blob URLs)
-_MEDIA_PATH_TYPES = frozenset({"image_path", "audio_path", "video_path", "binary_path"})
 
 # ---------------------------------------------------------------------------
 # Azure Blob SAS token cache
@@ -172,7 +170,7 @@ def _resolve_media_url(*, value: Optional[str], data_type: str) -> Optional[str]
         The value unchanged for non-media types, a ``/api/media?path=...``
         URL for local file paths, or the original value for blob URLs / data URIs.
     """
-    if not value or data_type not in _MEDIA_PATH_TYPES:
+    if not value or data_type not in MEDIA_PATH_DATA_TYPES:
         return value
     # Already a URL or data URI — pass through
     if value.startswith(("http://", "https://", "data:")):
@@ -227,7 +225,10 @@ def attack_result_to_summary(
         AttackSummary DTO ready for the API response.
     """
     message_count = stats.message_count
-    last_preview = stats.last_message_preview
+    last_preview = format_last_message_preview(
+        value=stats.last_message_preview,
+        data_type=stats.last_message_data_type,
+    )
 
     # Merge attack-result labels with conversation-level labels.
     # Conversation labels take precedence on key collision.
@@ -297,7 +298,9 @@ def pyrit_scores_to_dto(scores: list[PyritScore]) -> list[Score]:
     return [
         Score(
             score_id=str(score.id),
-            scorer_type=score.scorer_class_identifier.class_name,
+            scorer_type=(
+                score.scorer_class_identifier.class_name or "Unknown" if score.scorer_class_identifier else "Unknown"
+            ),
             score_type=score.score_type,
             score_value=score.score_value,
             score_category=score.score_category,
@@ -537,7 +540,7 @@ def request_to_pyrit_message(
         )
         for p in request.pieces
     ]
-    return PyritMessage(pieces)
+    return PyritMessage(message_pieces=pieces)
 
 
 # ============================================================================

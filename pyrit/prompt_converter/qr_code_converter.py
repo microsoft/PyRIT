@@ -95,7 +95,7 @@ class QRCodeConverter(PromptConverter):
         if prompt.strip() == "":
             raise ValueError("Please provide valid text value")
         # Generate random unique filename
-        img_serializer_file = str(await self._img_serializer.get_data_filename())
+        img_serializer_file = str(await self._img_serializer.get_data_filename_async())
 
         # Create QRCode object
         qr = segno.make_qr(prompt)

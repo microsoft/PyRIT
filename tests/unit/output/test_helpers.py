@@ -117,7 +117,7 @@ async def test_output_scenario_async_forwards_sort_groups_by_success_rate(mock_c
 
 async def test_output_scenario_async_unsupported_format():
     with pytest.raises(ValueError, match="Unsupported format"):
-        await output_scenario_async(MagicMock(), format="markdown")
+        await output_scenario_async(AsyncMock(), format="markdown")
 
 
 # --- output_scorer_async tests ---
@@ -150,7 +150,7 @@ async def test_output_scorer_async_with_harm_category(mock_cls):
 
 async def test_output_scorer_async_unsupported_format():
     with pytest.raises(ValueError, match="Unsupported format"):
-        await output_scorer_async(scorer_identifier=MagicMock(), format="markdown")
+        await output_scorer_async(scorer_identifier=AsyncMock(), format="markdown")
 
 
 # --- output_conversation_async tests ---
@@ -185,7 +185,7 @@ async def test_output_conversation_async_with_scores(mock_cls):
 
 async def test_output_conversation_async_unsupported_format():
     with pytest.raises(ValueError, match="Unsupported format"):
-        await output_conversation_async([MagicMock()], format="markdown")
+        await output_conversation_async([AsyncMock()], format="markdown")
 
 
 # --- output_score_async tests ---
@@ -208,4 +208,4 @@ async def test_output_score_async_pretty_default(mock_cls):
 
 async def test_output_score_async_unsupported_format():
     with pytest.raises(ValueError, match="Unsupported format"):
-        await output_score_async([MagicMock()], format="markdown")
+        await output_score_async([AsyncMock()], format="markdown")

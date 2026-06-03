@@ -35,7 +35,7 @@ class TestORBench80KDataset:
         """Test fetching OR-Bench 80K dataset."""
         loader = _ORBench80KDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_or_bench_data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_or_bench_data)):
             dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
@@ -60,7 +60,7 @@ class TestORBenchHardDataset:
         loader = _ORBenchHardDataset()
 
         with patch.object(
-            loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_or_bench_data)
+            loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_or_bench_data)
         ) as mock_fetch:
             dataset = await loader.fetch_dataset_async()
 
@@ -82,7 +82,7 @@ class TestORBenchToxicDataset:
         loader = _ORBenchToxicDataset()
 
         with patch.object(
-            loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_or_bench_data)
+            loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_or_bench_data)
         ) as mock_fetch:
             dataset = await loader.fetch_dataset_async()
 

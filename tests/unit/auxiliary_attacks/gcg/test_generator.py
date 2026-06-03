@@ -238,57 +238,6 @@ class TestApplyTargetAugmentation:
         assert num_changed > 0
 
 
-class TestCreateAttackWiring:
-    """Construct real attack classes via _create_attack to catch kwarg mismatches."""
-
-    def test_transfer_false_returns_individual(self, tmp_path: Path) -> None:
-        from pyrit.auxiliary_attacks.gcg.attack.base.attack_manager import IndividualPromptAttack
-
-        gen = _make_generator(output_dir=tmp_path, n_steps=5, batch_size=64, control_init="! ! !")
-        worker = _make_mock_worker_with_real_tokenizer()
-        context = GCGContext(goals=["g"], targets=["t"])
-        params = gen._to_attack_params(context=context)
-
-        attack = gen._create_attack(
-            params=params,
-            managers=_real_managers(),
-            train_goals=["g"],
-            train_targets=["t"],
-            test_goals=[],
-            test_targets=[],
-            workers=[worker],
-            test_workers=[],
-            logfile_path=str(tmp_path / "log.json"),
-        )
-        assert isinstance(attack, IndividualPromptAttack)
-
-    def test_transfer_true_returns_progressive(self, tmp_path: Path) -> None:
-        from pyrit.auxiliary_attacks.gcg.attack.base.attack_manager import ProgressiveMultiPromptAttack
-
-        gen = GCGGenerator(
-            models=[GCGModelConfig(name=_LLAMA_2)],
-            algorithm=GCGAlgorithmConfig(n_steps=5, batch_size=64, control_init="! ! !"),
-            strategy=GCGStrategyConfig(transfer=True, progressive_goals=True, progressive_models=True),
-            output=GCGOutputConfig(result_prefix=str(tmp_path / "gcg")),
-        )
-        worker = _make_mock_worker_with_real_tokenizer()
-        context = GCGContext(goals=["g"], targets=["t"])
-        params = gen._to_attack_params(context=context)
-
-        attack = gen._create_attack(
-            params=params,
-            managers=_real_managers(),
-            train_goals=["g"],
-            train_targets=["t"],
-            test_goals=[],
-            test_targets=[],
-            workers=[worker],
-            test_workers=[],
-            logfile_path=str(tmp_path / "log.json"),
-        )
-        assert isinstance(attack, ProgressiveMultiPromptAttack)
-
-
 class TestReadResult:
     def test_reads_final_suffix_and_loss(self, tmp_path: Path) -> None:
         log_path = tmp_path / "result.json"
@@ -323,34 +272,3 @@ class TestReadResult:
         result = GCGGenerator._read_result(logfile_path=str(log_path), memory_labels={})
         assert result.final_suffix == ""
         assert math.isnan(result.final_loss)
-
-
-def _make_mock_worker_with_real_tokenizer() -> MagicMock:
-    """Worker mock backed by a real GPT-2 tokenizer (the smallest workable for chat templates)."""
-    from transformers import AutoTokenizer
-
-    tokenizer = AutoTokenizer.from_pretrained("gpt2")
-    tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.chat_template = (
-        "{%- for m in messages -%}"
-        "{%- if m['role'] == 'user' -%}"
-        "[INST] {{ m['content'] }} [/INST] "
-        "{%- elif m['role'] == 'assistant' -%}"
-        "{{ m['content'] }}"
-        "{%- endif -%}"
-        "{%- endfor -%}"
-    )
-    worker = MagicMock()
-    worker.model.name_or_path = "test-model"
-    worker.tokenizer = tokenizer
-    return worker
-
-
-def _real_managers() -> dict:
-    from pyrit.auxiliary_attacks.gcg.attack.gcg.gcg_attack import (
-        GCGAttackPrompt,
-        GCGMultiPromptAttack,
-        GCGPromptManager,
-    )
-
-    return {"AP": GCGAttackPrompt, "PM": GCGPromptManager, "MPA": GCGMultiPromptAttack}

@@ -24,8 +24,9 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import parse_qs, urlparse
 
-from pyrit.backend.mappers.attack_mappers import (
+from pyrit.backend.mappers import (
     attack_result_to_summary,
+    format_last_message_preview,
     pyrit_messages_to_dto_async,
     request_piece_to_pyrit_message_piece,
     request_to_pyrit_message,
@@ -177,11 +178,13 @@ class AttackService:
 
             total_count = (main_stats.message_count if main_stats else 0) + sum(s.message_count for s in pruned_stats)
             preview = main_stats.last_message_preview if main_stats else None
+            preview_data_type = main_stats.last_message_data_type if main_stats else None
             conv_labels = (main_stats.labels if main_stats else None) or {}
 
             merged = ConversationStats(
                 message_count=total_count,
                 last_message_preview=preview,
+                last_message_data_type=preview_data_type,
                 labels=conv_labels,
             )
 
@@ -338,7 +341,7 @@ class AttackService:
 
         # Store prepended conversation messages if provided
         if request.prepended_conversation:
-            await self._store_prepended_messages(
+            await self._store_prepended_messages_async(
                 conversation_id=conversation_id,
                 prepended=request.prepended_conversation,
                 labels=labels,  # deprecated
@@ -419,7 +422,10 @@ class AttackService:
                 ConversationSummary(
                     conversation_id=conv_id,
                     message_count=stats.message_count if stats else 0,
-                    last_message_preview=stats.last_message_preview if stats else None,
+                    last_message_preview=format_last_message_preview(
+                        value=stats.last_message_preview if stats else None,
+                        data_type=stats.last_message_data_type if stats else None,
+                    ),
                     created_at=created_at,
                 )
             )
@@ -936,13 +942,13 @@ class AttackService:
                 data_type=cast("PromptDataType", piece.data_type),
                 extension=ext,
             )
-            await serializer.save_b64_image(data=value)
+            await serializer.save_b64_image_async(data=value)
             file_path = serializer.value
             piece.original_value = file_path
             if piece.converted_value is None:
                 piece.converted_value = file_path
 
-    async def _store_prepended_messages(
+    async def _store_prepended_messages_async(
         self,
         *,
         conversation_id: str,

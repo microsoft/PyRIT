@@ -156,7 +156,7 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
             logger.info(f"Loading JailBreakV-28K dataset from {self.source}")
 
             # Load dataset from HuggingFace using the helper method
-            data = await self._fetch_from_huggingface(
+            data = await self._fetch_from_huggingface_async(
                 dataset_name=self.source,
                 config="JailBreakV_28K",
                 split=self.split,

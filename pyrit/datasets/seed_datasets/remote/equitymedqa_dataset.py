@@ -132,7 +132,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
         prompts: list[str] = []
 
         for subset in self.targets:
-            prompts.extend(await self._get_sub_dataset(subset, cache=cache))
+            prompts.extend(await self._get_sub_dataset_async(subset, cache=cache))
 
         # Remove duplicates across all subsets
         unique_prompts = list(set(prompts))
@@ -153,7 +153,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
 
         return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)
 
-    async def _get_sub_dataset(self, subset_name: str, *, cache: bool = True) -> list[str]:
+    async def _get_sub_dataset_async(self, subset_name: str, *, cache: bool = True) -> list[str]:
         """
         Fetch a specific subset of the EquityMedQA dataset.
 
@@ -164,7 +164,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
         Returns:
             List of unique prompts from the specified subset.
         """
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.source,
             config=subset_name,
             split="train",

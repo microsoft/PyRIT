@@ -449,7 +449,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
             list[Score]: The message_piece scored. The category is configured from the likert_scale.
                 The score_value is a value from [0,1] that is scaled from the likert scale.
         """
-        unvalidated_score: UnvalidatedScore = await self._score_value_with_llm(
+        unvalidated_score: UnvalidatedScore = await self._score_value_with_llm_async(
             prompt_target=self._prompt_target,
             system_prompt=self._system_prompt,
             message_value=message_piece.converted_value,

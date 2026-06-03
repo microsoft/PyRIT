@@ -1347,7 +1347,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         stop_event = asyncio.Event()
         outcomes: list[tuple[AtomicAttack, Any] | BaseException] = []
 
-        async def worker() -> None:
+        async def worker_async() -> None:
             while not stop_event.is_set():
                 try:
                     atomic_attack = queue.get_nowait()
@@ -1373,7 +1373,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         # the budget.
         worker_count = min(max_concurrency, len(remaining_attacks))
         try:
-            await asyncio.gather(*(worker() for _ in range(worker_count)))
+            await asyncio.gather(*(worker_async() for _ in range(worker_count)))
         finally:
             pbar.close()
 

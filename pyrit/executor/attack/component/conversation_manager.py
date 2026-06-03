@@ -481,7 +481,7 @@ class ConversationManager:
         turn_count = 0
 
         for i, message in enumerate(valid_messages):
-            message_copy = message.duplicate_message()
+            message_copy = message.duplicate()
 
             message_copy.set_simulated_role()
 
@@ -604,7 +604,7 @@ class ConversationManager:
                 continue
 
             temp_message = Message(message_pieces=[piece])
-            await self._prompt_normalizer.convert_values(
+            await self._prompt_normalizer.convert_values_async(
                 message=temp_message,
                 converter_configurations=request_converters,
             )

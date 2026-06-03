@@ -161,7 +161,7 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
         try:
             logger.info(f"Loading Sorry-Bench dataset from {self.source}")
 
-            data = await self._fetch_from_huggingface(
+            data = await self._fetch_from_huggingface_async(
                 dataset_name=self.source,
                 split="train",
                 cache=cache,

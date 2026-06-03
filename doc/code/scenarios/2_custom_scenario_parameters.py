@@ -47,7 +47,13 @@
 # would wire up memory and scorers):
 
 # %%
+
 from pyrit.scenario.scenarios.airt.scam import Scam
+from pyrit.setup import initialize_pyrit_async
+from pyrit.setup.initializers.components import ScenarioTechniqueInitializer
+
+await initialize_pyrit_async(memory_db_type="InMemory")  # type: ignore [top-level-await]
+await ScenarioTechniqueInitializer().initialize_async()  # type: ignore [top-level-await]
 
 for param in Scam.supported_parameters():
     print(param)

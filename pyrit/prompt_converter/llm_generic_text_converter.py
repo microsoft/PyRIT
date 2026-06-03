@@ -168,7 +168,7 @@ class LLMGenericTextConverter(PromptConverter):
             )
 
         request = Message(
-            [
+            message_pieces=[
                 MessagePiece(
                     role="user",
                     original_value=prompt,

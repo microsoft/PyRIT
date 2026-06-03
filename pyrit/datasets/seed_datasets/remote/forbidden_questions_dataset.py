@@ -64,7 +64,7 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
         logger.info(f"Loading Forbidden Questions dataset from {self.source}")
 
         # Load from HuggingFace
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.source,
             config=self.split,
             split="train",

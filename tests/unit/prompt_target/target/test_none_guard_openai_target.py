@@ -26,7 +26,7 @@ async def test_handle_openai_request_raises_when_no_message_pieces(patch_central
     api_call = AsyncMock(return_value=MagicMock())
 
     with pytest.raises(ValueError, match="No message pieces in request"):
-        await target._handle_openai_request(api_call=api_call, request=empty_request)
+        await target._handle_openai_request_async(api_call=api_call, request=empty_request)
 
 
 async def test_handle_openai_request_content_filter_error_raises_when_no_message_pieces(patch_central_database):
@@ -40,7 +40,7 @@ async def test_handle_openai_request_content_filter_error_raises_when_no_message
     )
 
     with pytest.raises(ValueError, match="No message pieces in request"):
-        await target._handle_openai_request(api_call=api_call, request=empty_request)
+        await target._handle_openai_request_async(api_call=api_call, request=empty_request)
 
 
 async def test_handle_openai_request_bad_request_error_raises_when_no_message_pieces(patch_central_database):
@@ -63,4 +63,4 @@ async def test_handle_openai_request_bad_request_error_raises_when_no_message_pi
     )
 
     with pytest.raises(ValueError, match="No message pieces in request"):
-        await target._handle_openai_request(api_call=api_call, request=empty_request)
+        await target._handle_openai_request_async(api_call=api_call, request=empty_request)

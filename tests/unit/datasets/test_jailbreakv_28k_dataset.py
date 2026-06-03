@@ -83,7 +83,7 @@ async def test_fetch_dataset_happy_path(tmp_path):
     loader = _JailbreakV28KDataset(zip_dir=str(tmp_path))
     rows = [_row(image_path=image_rel)]
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows)):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows)):
         dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)
@@ -117,7 +117,7 @@ async def test_fetch_dataset_filters_by_harm_category(tmp_path):
         _row(policy="Violence", image_path=image_rel, row_id=2),
     ]
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows)):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows)):
         dataset = await loader.fetch_dataset_async()
 
     # Only Hate Speech row passes
@@ -133,7 +133,7 @@ async def test_fetch_dataset_empty_after_filter_raises(tmp_path):
     )
     rows = [_row(policy="Hate Speech")]
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows)):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows)):
         with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
             await loader.fetch_dataset_async()
 
@@ -149,7 +149,7 @@ async def test_fetch_dataset_too_many_missing_images_raises(tmp_path):
         _row(image_path="missing3.png", row_id=3),
     ]
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows)):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows)):
         with pytest.raises(ValueError, match="missing images"):
             await loader.fetch_dataset_async()
 
@@ -164,7 +164,7 @@ async def test_fetch_dataset_some_missing_images_warns_but_succeeds(tmp_path):
         _row(image_path="missing.png", row_id=2),
     ]
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows)):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows)):
         dataset = await loader.fetch_dataset_async()
 
     # 2 successful groups × 3 seeds
@@ -175,7 +175,7 @@ async def test_fetch_dataset_logs_and_reraises_on_hf_error(tmp_path):
     _setup_zip_dir(tmp_path, [])
     loader = _JailbreakV28KDataset(zip_dir=str(tmp_path))
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(side_effect=RuntimeError("hf down"))):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(side_effect=RuntimeError("hf down"))):
         with pytest.raises(RuntimeError, match="hf down"):
             await loader.fetch_dataset_async()
 
@@ -227,7 +227,7 @@ async def test_fetch_dataset_skips_rows_with_empty_image_path(tmp_path):
         _row(image_path="", row_id=2),  # empty image_path -> counted missing, skipped
     ]
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows)):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows)):
         dataset = await loader.fetch_dataset_async()
 
     # 2 successful groups * 3 seeds; the empty-image row is dropped
@@ -249,7 +249,7 @@ async def test_fetch_dataset_extracts_zip_when_target_missing(tmp_path):
     extracted = tmp_path / "JailBreakV_28k"
     assert not extracted.exists()  # precondition: extract branch will fire
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows)):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows)):
         dataset = await loader.fetch_dataset_async()
 
     assert extracted.exists() and (extracted / image_rel).exists()
