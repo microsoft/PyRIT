@@ -21,7 +21,6 @@ from pyrit.models import (
     construct_response_from_request,
     data_serializer_factory,
 )
-from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.realtime_audio import (
     RealtimeTargetResult,
     ServerVadConfig,
@@ -47,7 +46,7 @@ logger = logging.getLogger(__name__)
 RealTimeVoice = Literal["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"]
 
 
-class RealtimeTarget(OpenAITarget, PromptTarget):
+class RealtimeTarget(OpenAITarget):
     """
     A prompt target for Azure OpenAI Realtime API.
 
@@ -568,7 +567,7 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         """
         data = data_serializer_factory(category="prompt-memory-entries", data_type="audio_path")
 
-        await data.save_formatted_audio(
+        await data.save_formatted_audio_async(
             data=audio_bytes,
             output_filename=output_filename,
             num_channels=num_channels,
