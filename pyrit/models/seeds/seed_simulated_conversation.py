@@ -19,7 +19,7 @@ import importlib.metadata
 import json
 import logging
 from pathlib import Path
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal
 
 from pydantic import field_validator, model_validator
 
@@ -87,8 +87,8 @@ class SeedSimulatedConversation(Seed):
     sequence: int = 0
     adversarial_chat_system_prompt_path: Path
     simulated_target_system_prompt_path: Path = SimulatedTargetSystemPromptPaths.COMPLIANT.value
-    next_message_system_prompt_path: Optional[Path] = None
-    pyrit_version: Optional[str] = None
+    next_message_system_prompt_path: Path | None = None
+    pyrit_version: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -182,8 +182,8 @@ class SeedSimulatedConversation(Seed):
         *,
         objective: str,
         num_turns: int,
-        simulated_target_system_prompt_path: Optional[Union[str, Path]] = None,
-    ) -> Optional[str]:
+        simulated_target_system_prompt_path: str | Path | None = None,
+    ) -> str | None:
         """
         Load and render the simulated target system prompt.
 

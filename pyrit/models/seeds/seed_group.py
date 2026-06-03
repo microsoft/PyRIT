@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections import defaultdict
-from typing import TYPE_CHECKING, Annotated, Any, Optional, Union
+from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -34,9 +34,14 @@ logger = logging.getLogger(__name__)
 # during validation. Exported so SeedDataset (and any future container) can reuse the same
 # tagged union for its own ``seeds`` field.
 SeedUnion = Annotated[
-    Union[SeedPrompt, SeedObjective, SeedSimulatedConversation],
+    SeedPrompt | SeedObjective | SeedSimulatedConversation,
     Field(discriminator="seed_type"),
 ]
+
+# Fields that only exist on prompt-type seeds. They are stripped from non-prompt seed dicts so
+# dataset/group-level defaults (e.g. ``data_type: image_path``) don't bleed in and trip
+# ``extra="forbid"`` on the leaf class. Shared with SeedDataset, which imports it from here.
+PROMPT_ONLY_SEED_KEYS = ("data_type", "role", "sequence", "parameters")
 
 
 class SeedGroup(BaseModel):
@@ -99,7 +104,7 @@ class SeedGroup(BaseModel):
                 # Non-prompt seeds narrow data_type to Literal["text"] and don't have
                 # role/sequence/parameters fields. Drop them so dataset/group-level
                 # defaults don't bleed in and trip extra="forbid".
-                for prompt_only in ("data_type", "role", "sequence", "parameters"):
+                for prompt_only in PROMPT_ONLY_SEED_KEYS:
                     seed.pop(prompt_only, None)
             normalized.append(seed)
 
@@ -257,12 +262,12 @@ class SeedGroup(BaseModel):
     # Seed Accessors
     # =========================================================================
 
-    def _get_objective(self) -> Optional[SeedObjective]:
+    def _get_objective(self) -> SeedObjective | None:
         """
         Get the objective seed if present.
 
         Returns:
-            Optional[SeedObjective]: Objective seed when available; otherwise None.
+            SeedObjective | None: Objective seed when available; otherwise None.
 
         """
         for seed in self.seeds:
@@ -270,12 +275,12 @@ class SeedGroup(BaseModel):
                 return seed
         return None
 
-    def _get_simulated_conversation(self) -> Optional[SeedSimulatedConversation]:
+    def _get_simulated_conversation(self) -> SeedSimulatedConversation | None:
         """
         Get the simulated conversation seed if present.
 
         Returns:
-            Optional[SeedSimulatedConversation]: Simulated conversation seed when available; otherwise None.
+            SeedSimulatedConversation | None: Simulated conversation seed when available; otherwise None.
 
         """
         for seed in self.seeds:
@@ -289,7 +294,7 @@ class SeedGroup(BaseModel):
         return [seed for seed in self.seeds if isinstance(seed, SeedPrompt)]
 
     @property
-    def objective(self) -> Optional[SeedObjective]:
+    def objective(self) -> SeedObjective | None:
         """Get the objective for this group."""
         return self._get_objective()
 
@@ -313,7 +318,7 @@ class SeedGroup(BaseModel):
     # =========================================================================
 
     @property
-    def simulated_conversation_config(self) -> Optional[SeedSimulatedConversation]:
+    def simulated_conversation_config(self) -> SeedSimulatedConversation | None:
         """Get the simulated conversation configuration if set."""
         return self._get_simulated_conversation()
 
@@ -327,7 +332,7 @@ class SeedGroup(BaseModel):
     # =========================================================================
 
     @property
-    def prepended_conversation(self) -> Optional[list[Message]]:
+    def prepended_conversation(self) -> list[Message] | None:
         """
         Returns Messages that should be prepended as conversation history.
 
@@ -357,7 +362,7 @@ class SeedGroup(BaseModel):
         return self._prompts_to_messages(list(self.prompts))
 
     @property
-    def next_message(self) -> Optional[Message]:
+    def next_message(self) -> Message | None:
         """
         Returns a Message containing only the last turn's prompts if it's a user message.
 
@@ -397,7 +402,7 @@ class SeedGroup(BaseModel):
 
         return self._prompts_to_messages(list(self.prompts))
 
-    def _get_last_sequence_role(self) -> Optional[str]:
+    def _get_last_sequence_role(self) -> str | None:
         """
         Get the role of the last sequence.
 

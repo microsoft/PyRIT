@@ -11,8 +11,6 @@ Extends SeedGroup to enforce that all seeds have is_general_technique=True.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pyrit.models.seeds.seed_group import SeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
 
@@ -30,7 +28,7 @@ class SeedAttackTechniqueGroup(SeedGroup):
 
     # Where to insert technique seeds when merging into a SeedAttackGroup via ``with_technique()``.
     # ``None`` (default) appends at the end; an integer inserts before that position.
-    insertion_index: Optional[int] = None
+    insertion_index: int | None = None
 
     def _check_invariants(self) -> None:
         """

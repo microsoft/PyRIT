@@ -12,14 +12,18 @@ import random
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.models.literals import SeedType  # noqa: TC001  (runtime-required by Pydantic field annotations)
-from pyrit.models.seeds.seed import Seed
+from pyrit.models.seeds.seed import (  # noqa: TC001  (AwareDatetimeUTC is runtime-required by Pydantic)
+    AwareDatetimeUTC,
+    Seed,
+)
 from pyrit.models.seeds.seed_attack_group import SeedAttackGroup
 from pyrit.models.seeds.seed_group import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    PROMPT_ONLY_SEED_KEYS,
     SeedGroup,
     SeedUnion,
 )
@@ -81,18 +85,18 @@ class SeedDataset(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
-    data_type: Optional[str] = "text"
-    name: Optional[str] = None
-    dataset_name: Optional[str] = None
-    harm_categories: Optional[list[str]] = None
-    description: Optional[str] = None
-    authors: Optional[list[str]] = Field(default_factory=list)
-    groups: Optional[list[str]] = Field(default_factory=list)
-    source: Optional[str] = None
-    date_added: Optional[datetime] = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
-    added_by: Optional[str] = None
+    data_type: str | None = "text"
+    name: str | None = None
+    dataset_name: str | None = None
+    harm_categories: list[str] | None = None
+    description: str | None = None
+    authors: list[str] | None = Field(default_factory=list)
+    groups: list[str] | None = Field(default_factory=list)
+    source: str | None = None
+    date_added: AwareDatetimeUTC | None = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    added_by: str | None = None
     # The default seed type for items that don't specify their own ("prompt", "objective", ...).
-    seed_type: Optional[SeedType] = None
+    seed_type: SeedType | None = None
 
     # The actual prompts
     seeds: list[SeedUnion]
@@ -166,7 +170,7 @@ class SeedDataset(BaseModel):
                 # Non-prompt seeds narrow data_type to Literal["text"] and don't have
                 # role/sequence/parameters fields. Drop those so dataset-level defaults
                 # don't bleed in and trip extra="forbid" on the leaf class.
-                for prompt_only in ("data_type", "role", "sequence", "parameters"):
+                for prompt_only in PROMPT_ONLY_SEED_KEYS:
                     p.pop(prompt_only, None)
 
             normalized.append(p)
@@ -175,12 +179,12 @@ class SeedDataset(BaseModel):
         return data
 
     @classmethod
-    def from_yaml_file(cls, file: Union[str, Path]) -> SeedDataset:
+    def from_yaml_file(cls, file: str | Path) -> SeedDataset:
         """
         Create a SeedDataset from a YAML file, marking nested seeds as trusted templates.
 
         Thin shim that delegates to
-        :func:`pyrit.models.seeds.yaml_seed_loader.load_seed_dataset_from_yaml`; file I/O and
+        ``pyrit.models.seeds.yaml_seed_loader.load_seed_dataset_from_yaml``; file I/O and
         the ``is_jinja_template`` trust marker live in the loader module.
 
         Args:
@@ -193,6 +197,8 @@ class SeedDataset(BaseModel):
             FileNotFoundError: If the path does not resolve to an existing file.
             ValueError: If the YAML file is invalid or empty.
         """
+        # Deferred import: yaml_seed_loader imports SeedDataset at module load, so importing
+        # it at the top of this module would create a circular import.
         from pyrit.models.seeds.yaml_seed_loader import load_seed_dataset_from_yaml
 
         return load_seed_dataset_from_yaml(file)
@@ -200,17 +206,17 @@ class SeedDataset(BaseModel):
     def get_values(
         self,
         *,
-        first: Optional[PositiveInt] = None,
-        last: Optional[PositiveInt] = None,
-        harm_categories: Optional[Sequence[str]] = None,
+        first: PositiveInt | None = None,
+        last: PositiveInt | None = None,
+        harm_categories: Sequence[str] | None = None,
     ) -> Sequence[str]:
         """
         Extract and return prompt values from the dataset.
 
         Args:
-            first (Optional[int]): If provided, values from the first N prompts are included.
-            last (Optional[int]): If provided, values from the last N prompts are included.
-            harm_categories (Optional[Sequence[str]]): If provided, only prompts containing at least one of
+            first (int | None): If provided, values from the first N prompts are included.
+            last (int | None): If provided, values from the last N prompts are included.
+            harm_categories (Sequence[str] | None): If provided, only prompts containing at least one of
                 these harm categories are included.
 
         Returns:
@@ -238,15 +244,13 @@ class SeedDataset(BaseModel):
 
         return first_part + last_part
 
-    def get_random_values(
-        self, *, number: PositiveInt, harm_categories: Optional[Sequence[str]] = None
-    ) -> Sequence[str]:
+    def get_random_values(self, *, number: PositiveInt, harm_categories: Sequence[str] | None = None) -> Sequence[str]:
         """
         Extract and return random prompt values from the dataset.
 
         Args:
             number (int): The number of random prompt values to return.
-            harm_categories (Optional[Sequence[str]]): If provided, only prompts containing at least one of
+            harm_categories (Sequence[str] | None): If provided, only prompts containing at least one of
                 these harm categories are included.
 
         Returns:
@@ -261,7 +265,7 @@ class SeedDataset(BaseModel):
         """
         Build a SeedDataset, assigning per-seed ``prompt_group_id`` by alias.
 
-        Default merging now lives in :meth:`_build_seeds` so direct construction and
+        Default merging now lives in ``_build_seeds`` so direct construction and
         ``from_dict`` produce equivalent results. This method handles the YAML-only
         concerns: rejecting pre-set ``prompt_group_id`` on input seeds and resolving
         ``prompt_group_alias`` into a shared ``prompt_group_id``.

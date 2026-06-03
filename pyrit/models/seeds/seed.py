@@ -13,11 +13,11 @@ import logging
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Annotated, Any, TypeVar
 
 from jinja2 import StrictUndefined, Undefined
 from jinja2.sandbox import SandboxedEnvironment
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field
 
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 
@@ -29,6 +29,31 @@ logger = logging.getLogger(__name__)
 
 # TypeVar for generic return type in class methods
 T = TypeVar("T", bound="Seed")
+
+
+def _ensure_aware_utc(value: Any) -> Any:
+    """
+    Coerce naive datetimes (and bare date strings) to UTC so AwareDatetime accepts them.
+
+    Args:
+        value: The raw value provided for a datetime field (string, datetime, or anything else).
+
+    Returns:
+        Any: A timezone-aware datetime when the input was naive or a parseable date string;
+            otherwise the value unchanged for Pydantic to validate.
+    """
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+# Timezone-aware datetime that interprets naive inputs as UTC instead of rejecting them.
+AwareDatetimeUTC = Annotated[AwareDatetime, BeforeValidator(_ensure_aware_utc)]
 
 
 class PartialUndefined(Undefined):
@@ -85,46 +110,46 @@ class Seed(BaseModel):
     value: str
 
     # SHA256 hash of the value, used for deduplication
-    value_sha256: Optional[str] = None
+    value_sha256: str | None = None
 
     # Unique identifier for the prompt
-    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4)
+    id: uuid.UUID | None = Field(default_factory=uuid.uuid4)
 
     # Name of the prompt
-    name: Optional[str] = None
+    name: str | None = None
 
     # Name of the dataset this prompt belongs to
-    dataset_name: Optional[str] = None
+    dataset_name: str | None = None
 
     # Categories of harm associated with this prompt
-    harm_categories: Optional[list[str]] = Field(default_factory=list)
+    harm_categories: list[str] | None = Field(default_factory=list)
 
     # Description of the prompt
-    description: Optional[str] = None
+    description: str | None = None
 
     # Authors of the prompt
-    authors: Optional[list[str]] = Field(default_factory=list)
+    authors: list[str] | None = Field(default_factory=list)
 
     # Groups affiliated with the prompt
-    groups: Optional[list[str]] = Field(default_factory=list)
+    groups: list[str] | None = Field(default_factory=list)
 
     # Source of the prompt
-    source: Optional[str] = None
+    source: str | None = None
 
     # Date when the prompt was added to the dataset
-    date_added: Optional[datetime] = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    date_added: AwareDatetimeUTC | None = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
 
     # User who added the prompt to the dataset
-    added_by: Optional[str] = None
+    added_by: str | None = None
 
     # Arbitrary metadata that can be attached to the prompt
-    metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
+    metadata: dict[str, Any] | None = Field(default_factory=dict)
 
     # Unique identifier for the prompt group
-    prompt_group_id: Optional[uuid.UUID] = None
+    prompt_group_id: uuid.UUID | None = None
 
     # Alias for the prompt group
-    prompt_group_alias: Optional[str] = None
+    prompt_group_alias: str | None = None
 
     # Whether this seed represents a general attack technique (not tied to a specific objective)
     is_general_technique: bool = False
@@ -238,11 +263,11 @@ class Seed(BaseModel):
         return f"{{% raw %}}{value}{{% endraw %}}"
 
     @classmethod
-    def from_yaml_file(cls: type[T], file: Union[str, Path]) -> T:
+    def from_yaml_file(cls: type[T], file: str | Path) -> T:
         """
         Create a new Seed from a YAML file, marking it as a trusted Jinja2 template.
 
-        Thin shim that delegates to :func:`pyrit.models.seeds.yaml_seed_loader.load_seed_from_yaml`;
+        Thin shim that delegates to ``load_seed_from_yaml`` in the ``yaml_seed_loader`` module;
         file I/O and the ``is_jinja_template`` trust marker live in the loader module.
 
         Args:
@@ -255,6 +280,7 @@ class Seed(BaseModel):
             FileNotFoundError: If the path does not resolve to an existing file.
             ValueError: If the YAML file is invalid or empty.
         """
+        # Deferred import: yaml_seed_loader imports Seed, so importing it at module top would cycle.
         from pyrit.models.seeds.yaml_seed_loader import load_seed_from_yaml
 
         return load_seed_from_yaml(file, cls=cls)

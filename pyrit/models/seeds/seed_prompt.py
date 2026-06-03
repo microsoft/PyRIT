@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional, Union
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field, model_validator
 from tinytag import TinyTag
@@ -38,17 +38,17 @@ class SeedPrompt(Seed):
 
     # The type of data this prompt represents (e.g., text, image_path, audio_path, video_path)
     # This field overrides the base default to allow per-prompt data types inferred from the value
-    data_type: Optional[PromptDataType] = None
+    data_type: PromptDataType | None = None
 
     # Role of the prompt in a conversation (e.g., "user", "assistant")
-    role: Optional[ChatMessageRole] = None
+    role: ChatMessageRole | None = None
 
     # Sequence number for ordering prompts in a conversation, prompts with
     # the same sequence number are grouped together if they also share the same prompt_group_id
     sequence: int = 0
 
     # Parameters that can be used in the prompt template
-    parameters: Optional[list[str]] = Field(default_factory=list)
+    parameters: list[str] | None = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _render_and_infer_data_type(self) -> SeedPrompt:
@@ -136,15 +136,15 @@ class SeedPrompt(Seed):
     @classmethod
     def from_yaml_with_required_parameters(
         cls,
-        template_path: Union[str, Path],
+        template_path: str | Path,
         required_parameters: list[str],
-        error_message: Optional[str] = None,
+        error_message: str | None = None,
     ) -> SeedPrompt:
         """
         Load a SeedPrompt from a YAML file and validate that it declares each required parameter.
 
         Thin shim that delegates to
-        :func:`pyrit.models.seeds.yaml_seed_loader.load_seed_prompt_from_yaml_with_required_parameters`.
+        ``pyrit.models.seeds.yaml_seed_loader.load_seed_prompt_from_yaml_with_required_parameters``.
 
         Args:
             template_path: Path to the YAML file containing the template.
@@ -157,6 +157,8 @@ class SeedPrompt(Seed):
         Raises:
             ValueError: If the template doesn't contain all required parameters.
         """
+        # Deferred import: yaml_seed_loader imports SeedPrompt at module load, so importing
+        # it at the top of this module would create a circular import.
         from pyrit.models.seeds.yaml_seed_loader import load_seed_prompt_from_yaml_with_required_parameters
 
         return load_seed_prompt_from_yaml_with_required_parameters(
@@ -168,7 +170,7 @@ class SeedPrompt(Seed):
         messages: list[Message],
         *,
         starting_sequence: int = 0,
-        prompt_group_id: Optional[uuid.UUID] = None,
+        prompt_group_id: uuid.UUID | None = None,
     ) -> list[SeedPrompt]:
         """
         Convert a list of Messages to a list of SeedPrompts.
