@@ -145,9 +145,9 @@ class AddImageVideoConverter(PromptConverter):
         import cv2
 
         video_path = self._video_path
-        local_temp_path: Optional[Path] = None
-        cap: Optional[cv2.VideoCapture] = None
-        output_video: Optional[cv2.VideoWriter] = None
+        local_temp_path: Path | None = None
+        cap: cv2.VideoCapture | None = None
+        output_video: cv2.VideoWriter | None = None
 
         try:
             if azure_storage_flag:

@@ -137,7 +137,7 @@ class AnecdoctorGenerator(
             self._system_prompt_template = self._load_prompt_from_yaml(yaml_filename=self._ANECDOCTOR_USE_KG_YAML)
             # Also preload the KG extraction prompt so `_extract_knowledge_graph_async` doesn't
             # repeat the file read + YAML parse on each invocation.
-            self._kg_prompt_template: Optional[str] = self._load_prompt_from_yaml(
+            self._kg_prompt_template: str | None = self._load_prompt_from_yaml(
                 yaml_filename=self._ANECDOCTOR_BUILD_KG_YAML
             )
         else:

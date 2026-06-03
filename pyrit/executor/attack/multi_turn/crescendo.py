@@ -832,7 +832,9 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
         # Check for refusal using the scorer (handles blocked/error responses internally)
         refusal_score = await self._check_refusal_async(context, prompt_sent)
-        self._logger.debug(f"Refusal check: {refusal_score.get_value()} - {refusal_score.score_rationale[:100]}...")
+        self._logger.debug(
+            f"Refusal check: {refusal_score.get_value()} - {(refusal_score.score_rationale or '')[:100]}..."
+        )
         is_refusal = bool(refusal_score.get_value())
 
         if not is_refusal:

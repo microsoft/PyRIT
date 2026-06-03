@@ -477,7 +477,7 @@ class RealtimeTarget(OpenAITarget):
         num_channels: int = 1,
         sample_width: int = 2,
         sample_rate: int = 16000,
-        output_filename: Optional[str] = None,
+        output_filename: str | None = None,
     ) -> str:
         """
         Use ``save_audio_async`` instead; this is a deprecated alias.

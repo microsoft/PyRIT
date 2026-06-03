@@ -364,10 +364,10 @@ class PromptNormalizer:
         self,
         conversation_id: str,
         should_convert: bool = True,
-        converter_configurations: Optional[list[PromptConverterConfiguration]] = None,
-        attack_identifier: Optional[ComponentIdentifier] = None,
-        prepended_conversation: Optional[list[Message]] = None,
-    ) -> Optional[list[Message]]:
+        converter_configurations: list[PromptConverterConfiguration] | None = None,
+        attack_identifier: ComponentIdentifier | None = None,
+        prepended_conversation: list[Message] | None = None,
+    ) -> list[Message] | None:
         """
         Use ``add_prepended_conversation_to_memory_async`` instead; this is a deprecated alias.
 
