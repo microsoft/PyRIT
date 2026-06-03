@@ -33,14 +33,20 @@ class PyRITApiClient:
             scenarios = await client.list_scenarios_async()
     """
 
-    def __init__(self, *, base_url: str) -> None:
+    def __init__(self, *, base_url: str, request_timeout: float | None = None) -> None:
         """
         Initialize the API client.
 
         Args:
             base_url (str): Base URL of the PyRIT backend (e.g., ``"http://localhost:8000"``).
+            request_timeout (float | None): Read timeout in seconds applied to every
+                non-polling request (catalog, results, cancel, start, etc.). Polling
+                the live scenario-run endpoint always uses ``read=None`` regardless
+                of this value, because the server may legitimately take many seconds
+                to respond while a scenario is executing. Defaults to ``60.0``.
         """
         self._base_url = base_url.rstrip("/")
+        self._request_timeout = request_timeout if request_timeout is not None else 60.0
         self._client: Any = None  # httpx.AsyncClient (typed Any to avoid top-level import)
 
     async def __aenter__(self) -> PyRITApiClient:
@@ -52,7 +58,7 @@ class PyRITApiClient:
         """
         import httpx
 
-        self._client = httpx.AsyncClient(base_url=self._base_url, timeout=60.0)
+        self._client = httpx.AsyncClient(base_url=self._base_url, timeout=self._request_timeout)
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
@@ -149,7 +155,7 @@ class PyRITApiClient:
         if resp.status_code == 403:
             detail = resp.json().get("detail", "Custom initializer operations are disabled on the server.")
             raise ServerNotAvailableError(detail)
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()
 
     # ------------------------------------------------------------------
@@ -181,17 +187,41 @@ class PyRITApiClient:
         """
         client = self._get_client()
         resp = await client.post("/api/scenarios/runs", json=request)
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()
 
     async def get_scenario_run_async(self, *, scenario_result_id: str) -> dict[str, Any]:
         """
         Get the current status of a scenario run.
 
+        This is the endpoint the CLI polls while waiting for a run to finish.
+        It uses ``read=None`` (wait indefinitely for a response) so a server
+        busy executing a long-running scenario doesn't trip the client's
+        default read timeout. The other endpoints keep the configured timeout.
+
         Returns:
             dict: ``ScenarioRunSummary`` payload.
+
+        Raises:
+            ServerNotAvailableError: If the server cannot be reached.
         """
-        return await self._get_json_async(path=f"/api/scenarios/runs/{scenario_result_id}")
+        import httpx
+
+        client = self._get_client()
+        try:
+            resp = await client.get(
+                f"/api/scenarios/runs/{scenario_result_id}",
+                params=None,
+                timeout=httpx.Timeout(connect=10.0, read=None, write=30.0, pool=10.0),
+            )
+        except httpx.ConnectError as exc:
+            raise ServerNotAvailableError(
+                f"Cannot connect to PyRIT server at {self._base_url}.\n"
+                "Hint: Use '--start-server' to launch a local backend, "
+                "or pass '--server-url <url>'."
+            ) from exc
+        self._raise_for_status(resp)
+        return resp.json()
 
     async def get_scenario_run_results_async(self, *, scenario_result_id: str) -> dict[str, Any]:
         """
@@ -211,7 +241,7 @@ class PyRITApiClient:
         """
         client = self._get_client()
         resp = await client.post(f"/api/scenarios/runs/{scenario_result_id}/cancel")
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()
 
     async def list_scenario_runs_async(self, *, limit: int = 100) -> dict[str, Any]:
@@ -275,5 +305,45 @@ class PyRITApiClient:
                 "Hint: Use '--start-server' to launch a local backend, "
                 "or pass '--server-url <url>'."
             ) from exc
-        resp.raise_for_status()
+        self._raise_for_status(resp)
         return resp.json()
+
+    @staticmethod
+    def _raise_for_status(resp: Any) -> None:
+        """
+        Raise an HTTP error with the response body appended to the message.
+
+        Behaves like ``httpx.Response.raise_for_status`` but includes the
+        ``detail`` field from the response body (falling back to raw text) so
+        CLI users can see the actual server-side reason instead of just the
+        HTTP status line. The exception type is preserved so existing callers
+        / tests continue to work.
+
+        Raises:
+            httpx.HTTPStatusError: When the response carries a 4xx or 5xx status.
+        """
+        import httpx
+
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail: str | None = None
+            try:
+                payload = resp.json()
+            except Exception:
+                payload = None
+            if isinstance(payload, dict):
+                detail_value = payload.get("detail")
+                if isinstance(detail_value, str) and detail_value.strip():
+                    detail = detail_value
+                elif detail_value is not None:
+                    detail = str(detail_value)
+            if detail is None:
+                text = getattr(resp, "text", "") or ""
+                text = text.strip()
+                if text:
+                    detail = text
+            if detail is None:
+                raise
+            message = f"{exc}: {detail}"
+            raise httpx.HTTPStatusError(message, request=exc.request, response=exc.response) from exc

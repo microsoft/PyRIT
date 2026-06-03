@@ -15,7 +15,7 @@ from pydantic import Field, model_validator
 from tinytag import TinyTag
 
 from pyrit.common.path import PATHS_DICT
-from pyrit.models import DataTypeSerializer
+from pyrit.models.data_type_serializer import DataTypeSerializer
 from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ChatMessageRole,
     PromptDataType,
