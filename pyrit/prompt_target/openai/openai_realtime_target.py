@@ -143,13 +143,6 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
         """
         Open a new server-VAD streaming session bound to this target.
 
-        Returns:
-            A fresh ``_OpenAIRealtimeStreamingSession``. Drive it by iterating
-            ``await session.run_async()``; one assistant ``Message`` is yielded per
-            VAD-committed turn, and the matching user message is persisted to memory
-            (but not yielded). The session owns its websocket connection + dispatcher
-            for the duration of ``run_async``.
-
         Args:
             audio_chunks: Async iterator yielding PCM16 mono bytes at the target's
                 ``SAMPLE_RATE_HZ`` rate.
@@ -171,6 +164,13 @@ class RealtimeTarget(OpenAITarget, PromptTarget):
                 ``prepended_conversation`` to memory itself. Pass ``False`` when the
                 caller already persisted the prepended conversation (e.g. via
                 ``ConversationManager.initialize_context_async``) to avoid double-writes.
+
+        Returns:
+            A fresh ``_OpenAIRealtimeStreamingSession``. Drive it by iterating
+            ``await session.run_async()``; one assistant ``Message`` is yielded per
+            VAD-committed turn, and the matching user message is persisted to memory
+            (but not yielded). The session owns its websocket connection + dispatcher
+            for the duration of ``run_async``.
         """
         # Local import: the session module imports ``_OpenAIRealtimeDispatcher`` from
         # this module, so a module-level import here would be circular.
