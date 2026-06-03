@@ -34,7 +34,7 @@ from pyrit.scenario.scenarios.foundry import FoundryStrategy, RedTeamAgent
 from pyrit.setup import initialize_from_config_async
 from pyrit.setup.initializers.components import ScenarioTechniqueInitializer
 
-await ScenarioTechniqueInitializer().initialize_async() # type: ignore [top-level-await]
+await ScenarioTechniqueInitializer().initialize_async()  # type: ignore [top-level-await]
 await initialize_from_config_async(config_path=Path("../../scanner/pyrit_conf.yaml"))  # type: ignore
 
 objective_target = TargetRegistry.get_registry_singleton().get_instance_by_name("openai_chat")
@@ -120,7 +120,7 @@ await baseline_scenario.initialize_async(  # type: ignore
     dataset_config=dataset_config,
 )
 baseline_result = await baseline_scenario.run_async()  # type: ignore
-await output_scenario_async(baseline_result) # type: ignore [top-level-await]
+await output_scenario_async(baseline_result)  # type: ignore [top-level-await]
 
 # %% [markdown]
 # ### Sorting the Per-Group Breakdown by Success Rate

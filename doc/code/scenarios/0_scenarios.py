@@ -105,7 +105,7 @@ from pyrit.setup import initialize_pyrit_async
 from pyrit.setup.initializers.components import ScenarioTechniqueInitializer
 
 await initialize_pyrit_async(memory_db_type="InMemory")  # type: ignore [top-level-await]
-await ScenarioTechniqueInitializer().initialize_async() # type: ignore [top-level-await]
+await ScenarioTechniqueInitializer().initialize_async()  # type: ignore [top-level-await]
 
 
 class MyStrategy(ScenarioStrategy):
