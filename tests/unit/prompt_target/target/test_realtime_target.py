@@ -17,7 +17,7 @@ from pyrit.prompt_target.common.realtime_audio import (
     RealtimeTargetResult,
     RealtimeTurnState,
 )
-from pyrit.prompt_target.openai.openai_realtime_target import (
+from pyrit.prompt_target.openai._openai_realtime_dispatcher import (
     _OpenAIRealtimeDispatcher,
 )
 

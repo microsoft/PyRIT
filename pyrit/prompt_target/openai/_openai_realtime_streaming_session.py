@@ -20,7 +20,7 @@ from pyrit.prompt_target.common.realtime_audio import (
     RealtimeTurnState,
     ServerVadConfig,
 )
-from pyrit.prompt_target.openai.openai_realtime_target import _OpenAIRealtimeDispatcher
+from pyrit.prompt_target.openai._openai_realtime_dispatcher import _OpenAIRealtimeDispatcher
 
 try:
     from openai import BadRequestError as _OpenAIBadRequestError  # noqa: TC002
@@ -33,6 +33,9 @@ if TYPE_CHECKING:
     from pyrit.models import ComponentIdentifier
     from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
     from pyrit.prompt_target.common.realtime_audio import CommittedEvent
+
+    # Keep this type-only: openai_realtime_target imports this module at runtime, so a
+    # runtime import here would reintroduce a circular dependency.
     from pyrit.prompt_target.openai.openai_realtime_target import RealtimeTarget
 
 
@@ -41,6 +44,10 @@ logger = logging.getLogger(__name__)
 #: Minimum amount of buffered audio (ms) the Realtime server accepts on an explicit
 #: ``input_audio_buffer.commit``. Forcing a commit below this raises "buffer too small".
 _MIN_COMMIT_MS = 100
+
+#: Raised by the ``_require_*`` accessors when a wire helper runs before ``run_async``
+#: has established the connection, dispatcher, and queue.
+_SESSION_NOT_ACTIVE_MSG = "Streaming session is not active; its wire helpers must run within run_async()."
 
 
 def _trim_snapshot_to_speech(
@@ -168,6 +175,21 @@ class _OpenAIRealtimeStreamingSession:
         self._dispatcher: _OpenAIRealtimeDispatcher | None = None
         self._queue: asyncio.Queue[Message | _SentinelDone | _SentinelError] | None = None
 
+    def _require_connection(self) -> Any:
+        if self._connection is None:
+            raise RuntimeError(_SESSION_NOT_ACTIVE_MSG)
+        return self._connection
+
+    def _require_dispatcher(self) -> _OpenAIRealtimeDispatcher:
+        if self._dispatcher is None:
+            raise RuntimeError(_SESSION_NOT_ACTIVE_MSG)
+        return self._dispatcher
+
+    def _require_queue(self) -> asyncio.Queue[Message | _SentinelDone | _SentinelError]:
+        if self._queue is None:
+            raise RuntimeError(_SESSION_NOT_ACTIVE_MSG)
+        return self._queue
+
     async def run_async(self) -> AsyncIterator[Message]:
         """
         Drive the streaming conversation; yield one ``Message`` per VAD-committed user turn.
@@ -225,11 +247,9 @@ class _OpenAIRealtimeStreamingSession:
         Raises:
             asyncio.CancelledError: Propagated when the consuming task is cancelled.
         """
-        assert self._connection is not None
-        assert self._dispatcher is not None
-        assert self._queue is not None
-
-        connection = self._connection
+        connection = self._require_connection()
+        dispatcher = self._require_dispatcher()
+        queue = self._require_queue()
         try:
             async for chunk in self._audio_chunks:
                 if not chunk:
@@ -275,12 +295,12 @@ class _OpenAIRealtimeStreamingSession:
 
             # Let any commit-triggered callbacks (the one we just forced plus any
             # natural ones still mid-work) run to completion before signalling done.
-            await self._dispatcher.drain_callbacks_async()
-            await self._queue.put(_SentinelDone())
+            await dispatcher.drain_callbacks_async()
+            await queue.put(_SentinelDone())
         except asyncio.CancelledError:
             raise
         except BaseException as e:  # noqa: BLE001 - bridged to consumer via sentinel
-            await self._queue.put(_SentinelError(e))
+            await queue.put(_SentinelError(e))
 
     def _on_dispatcher_failure(self, exc: BaseException) -> None:
         """Dispatch-loop crash bridge: unblock the consumer with a failure sentinel."""
@@ -304,7 +324,7 @@ class _OpenAIRealtimeStreamingSession:
         Raises:
             asyncio.CancelledError: Propagated when the dispatcher task is cancelled.
         """
-        assert self._queue is not None
+        queue = self._require_queue()
         sample_rate = self._target.SAMPLE_RATE_HZ
 
         async with self._pending_chunks_lock:
@@ -338,11 +358,11 @@ class _OpenAIRealtimeStreamingSession:
         try:
             async with self._turn_lock:
                 message = await self._handle_committed_turn_async(event=event, raw_pcm=trimmed_pcm)
-            await self._queue.put(message)
+            await queue.put(message)
         except asyncio.CancelledError:
             raise
         except BaseException as e:  # noqa: BLE001 - bridged to consumer via sentinel
-            await self._queue.put(_SentinelError(e))
+            await queue.put(_SentinelError(e))
 
     async def _handle_committed_turn_async(self, *, event: CommittedEvent, raw_pcm: bytes) -> Message:
         """
@@ -351,8 +371,8 @@ class _OpenAIRealtimeStreamingSession:
         Returns:
             The assistant ``Message`` for this turn (the matching user ``Message`` is persisted only).
         """
-        assert self._connection is not None
-        assert self._dispatcher is not None
+        self._require_connection()
+        self._require_dispatcher()
 
         target = self._target
         sample_rate = target.SAMPLE_RATE_HZ
@@ -446,7 +466,7 @@ class _OpenAIRealtimeStreamingSession:
         Raises:
             ValueError: If server VAD is disabled for this session.
         """
-        assert self._connection is not None
+        connection = self._require_connection()
         if self._effective_vad is None:
             raise ValueError(
                 "_send_streaming_session_config_async requires server VAD; "
@@ -459,7 +479,7 @@ class _OpenAIRealtimeStreamingSession:
         turn_detection = config.get("audio", {}).get("input", {}).get("turn_detection")
         if turn_detection is not None:
             turn_detection["create_response"] = False
-        await self._connection.session.update(session=config)
+        await connection.session.update(session=config)
 
     async def _push_audio_chunk_async(self, pcm_bytes: bytes) -> None:
         """
@@ -470,15 +490,15 @@ class _OpenAIRealtimeStreamingSession:
         """
         if not pcm_bytes:
             return
-        assert self._connection is not None
+        connection = self._require_connection()
         audio_b64 = base64.b64encode(pcm_bytes).decode("ascii")
-        await self._connection.input_audio_buffer.append(audio=audio_b64)
+        await connection.input_audio_buffer.append(audio=audio_b64)
 
     async def _insert_user_audio_async(self, pcm_bytes: bytes) -> None:
         """Insert a user message containing PCM16 mono @ 24 kHz audio into the conversation."""
-        assert self._connection is not None
+        connection = self._require_connection()
         audio_b64 = base64.b64encode(pcm_bytes).decode("ascii")
-        await self._connection.conversation.item.create(
+        await connection.conversation.item.create(
             item={
                 "type": "message",
                 "role": "user",
@@ -488,8 +508,8 @@ class _OpenAIRealtimeStreamingSession:
 
     async def _delete_conversation_item_async(self, item_id: str) -> None:
         """Delete a conversation item by id (e.g. the server's raw user audio item)."""
-        assert self._connection is not None
-        await self._connection.conversation.item.delete(item_id=item_id)
+        connection = self._require_connection()
+        await connection.conversation.item.delete(item_id=item_id)
 
     async def _swap_user_audio_async(self, *, committed_event: CommittedEvent, converted_pcm: bytes) -> None:
         """
@@ -520,9 +540,9 @@ class _OpenAIRealtimeStreamingSession:
         Raises:
             RuntimeError: If another turn is already pending on the dispatcher.
         """
-        assert self._connection is not None
-        assert self._dispatcher is not None
+        connection = self._require_connection()
+        dispatcher = self._require_dispatcher()
         state = RealtimeTurnState(completion=asyncio.get_running_loop().create_future())
-        self._dispatcher.register_turn(state)
-        await self._connection.response.create()
+        dispatcher.register_turn(state)
+        await connection.response.create()
         return state.completion

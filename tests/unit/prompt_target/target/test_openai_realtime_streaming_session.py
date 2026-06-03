@@ -779,7 +779,7 @@ def test_open_streaming_session_forwards_kwargs_to_session_constructor(sqlite_in
         return MagicMock(name="session")
 
     with patch(
-        "pyrit.prompt_target.openai._openai_realtime_streaming_session._OpenAIRealtimeStreamingSession",
+        "pyrit.prompt_target.openai.openai_realtime_target._OpenAIRealtimeStreamingSession",
         side_effect=_fake_session_ctor,
     ):
         target.open_streaming_session(
