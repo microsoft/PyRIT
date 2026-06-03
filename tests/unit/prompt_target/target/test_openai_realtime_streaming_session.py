@@ -12,7 +12,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.prompt_target.common.realtime_audio import (
     STREAMING_INTERRUPTED_KEY,
     CommittedEvent,
@@ -57,7 +57,7 @@ def _build_target() -> MagicMock:
     connection.input_audio_buffer.commit = AsyncMock(side_effect=_StubBadRequest("input_audio_buffer_commit_empty"))
 
     target._connect_async = AsyncMock(return_value=connection)
-    target.save_audio = AsyncMock(side_effect=lambda pcm, **kw: f"/tmp/audio-{uuid.uuid4().hex[:8]}.wav")
+    target.save_audio_async = AsyncMock(side_effect=lambda pcm, **kw: f"/tmp/audio-{uuid.uuid4().hex[:8]}.wav")
     target.get_identifier = MagicMock(
         return_value={"__type__": "RealtimeTarget", "__module__": "test", "id": "test-id"}
     )
@@ -546,7 +546,7 @@ async def test_on_committed_trims_pre_speech_silence_before_persisting_user_audi
 
     # start_ms = max(0, 500 - 100) = 400 → start_byte = 400 * 48 = 19200
     # trimmed length = 28800 - 19200 = 9600 bytes (200ms)
-    raw_save_call = target.save_audio.await_args_list[0]
+    raw_save_call = target.save_audio_async.await_args_list[0]
     saved_user_pcm = raw_save_call.args[0] if raw_save_call.args else raw_save_call.kwargs.get("pcm")
     assert len(saved_user_pcm) == 9600
 
@@ -576,7 +576,7 @@ async def test_on_committed_skips_trim_when_audio_start_ms_missing():
             events=[CommittedEvent(item_id="item-1", audio_start_ms=None)],
         )
 
-    raw_save_call = target.save_audio.await_args_list[0]
+    raw_save_call = target.save_audio_async.await_args_list[0]
     saved_user_pcm = raw_save_call.args[0] if raw_save_call.args else raw_save_call.kwargs.get("pcm")
     assert len(saved_user_pcm) == buffer_ms * bytes_per_ms
 
@@ -636,7 +636,7 @@ async def test_buffer_start_session_ms_advances_across_commits():
     # save_audio call ordering per turn: raw_user, assistant. We requested no request converters
     # so converted_user_path == raw_user_path and only one user save_audio fires per turn.
     # Across two turns: [user_t1, assistant_t1, user_t2, assistant_t2].
-    calls = target.save_audio.await_args_list
+    calls = target.save_audio_async.await_args_list
     assert len(calls) == 4
     assert len(calls[0].args[0]) == 9600
     assert len(calls[2].args[0]) == 14400
@@ -659,7 +659,7 @@ async def test_attack_identifier_stamped_on_persisted_pieces_when_set():
 
     normalizer.hash_and_persist_message_async = AsyncMock(side_effect=_capture)
 
-    attack_id = {"__type__": "BargeInAttack", "__module__": "test", "id": "attack-42"}
+    attack_id = ComponentIdentifier(class_name="BargeInAttack", class_module="test")
 
     finish = asyncio.Event()
     session = _OpenAIRealtimeStreamingSession(

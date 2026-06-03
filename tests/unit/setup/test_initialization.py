@@ -9,6 +9,7 @@ from unittest import mock
 import pytest
 
 from pyrit.common.apply_defaults import reset_default_values
+from pyrit.common.singleton import Singleton
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initialization import (
     _load_environment_files,
@@ -158,6 +159,41 @@ class ScriptInit(PyRITInitializer):
         """Test that invalid memory type raises ValueError."""
         with pytest.raises(ValueError, match="is not a supported type"):
             await initialize_pyrit_async(memory_db_type="InvalidType")  # type: ignore[arg-type]
+
+
+@pytest.fixture
+def reset_memory_singletons():
+    """Force memory __init__ (and schema migration) to run by clearing cached singletons."""
+    saved_instances = Singleton._instances.copy()
+    Singleton._instances.clear()
+    try:
+        yield
+    finally:
+        Singleton._instances.clear()
+        Singleton._instances.update(saved_instances)
+
+
+@pytest.mark.usefixtures("reset_memory_singletons")
+class TestInitializePyritSilent:
+    """Tests that the silent flag suppresses all console output during initialization."""
+
+    def setup_method(self) -> None:
+        """Clear default values before each test."""
+        reset_default_values()
+
+    async def test_initialize_silent_produces_no_output(self, capsys):
+        """initialize_pyrit_async with silent=True must not print anything to stdout."""
+        await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=True)
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+
+    async def test_initialize_not_silent_prints_migration_message(self, capsys):
+        """Without silent, the Alembic schema-check message is printed and tagged as Alembic output."""
+        await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=False)
+
+        captured = capsys.readouterr()
+        assert "[pyrit:alembic] No new upgrade operations detected." in captured.out
 
 
 class TestLoadEnvironmentFiles:

@@ -1,38 +1,48 @@
-<code>train.py</code> contains the class for generating suffix.
+## GCG Experiments
 
-<code>run.py</code> contains a demo for generating a suffix. The results will be saved in the <code>experiments/results</code> directory as JSON logs that contain information such as target (prompt), suffix, and loss.
+This directory contains the public entry point for running the [Greedy Coordinate
+Gradient (GCG) attack](https://arxiv.org/abs/2307.15043).
 
-## Model Supports
+### Public API
 
-Currently we support 5 models:
-- microsoft/Phi-3-mini-4k-instruct: https://huggingface.co/microsoft/Phi-3-mini-4k-instruct
+The primary entry point is `GCG.execute_async` (`GCG` is an alias for
+`GCGGenerator`):
 
-- lmsys/vicuna-13b-v1.5: https://huggingface.co/lmsys/vicuna-13b-v1.5
+```python
+import asyncio
 
-- mistralai/Mistral-7B-Instruct-v0.1: https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1
+from pyrit.auxiliary_attacks.gcg import GCG, GCGModelConfig
 
-- meta-llama/Llama-2-7b-chat-hf: https://huggingface.co/meta-llama/Llama-2-7b-chat-hf
+generator = GCG(
+    models=[GCGModelConfig(name="meta-llama/Llama-2-7b-chat-hf")],
+)
+result = asyncio.run(generator.execute_async(goals=[...], targets=[...]))
+```
 
-- meta-llama/Meta-Llama-3-8B-Instruct: https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct
+`GCGConfig` is composed of nested sub-configs (`GCGModelConfig`, `GCGDataConfig`,
+`GCGAlgorithmConfig`, `GCGStrategyConfig`, `GCGOutputConfig`); all are re-exported
+from `pyrit.auxiliary_attacks.gcg`. See `pyrit/auxiliary_attacks/gcg/config.py`
+for the full surface and defaults.
 
+### Running on Azure ML
 
+`run.py` is a thin CLI wrapper around `GCG.execute_async`. It takes a single
+`--config` flag pointing at a JSON file produced by `GCGConfig.to_json_file`:
 
-## Suffix Optimization Setups
-There are 2 setups of suffix optimization:
+```python
+config.to_json_file("inputs/config.json")
+```
 
- - "single": Optimizes suffix for one prompt using one model.
+```
+python -m pyrit.auxiliary_attacks.gcg.experiments.run --config inputs/config.json
+```
 
- - "multiple": Optimize suffix across multiple prompts using one or more models. When using multiple models, specify the <code>num_train_models</code> in the <code>run_trainer</code> function.
+The notebook at `doc/code/auxiliary_attacks/1_gcg_azure_ml.py` builds a config
+locally, ships it to Azure ML as a job input, and the AML job invokes `run.py`
+with the path to the deserialized JSON.
 
-## Function Calls in <code>run.py</code>
+### Reference
 
-The <code>run.py</code> script includes three different function call examples:
-
-- Optimizing 1 prompt with 1 model (vicuna).
-- Optimizing 2 prompts with 1 model (mistral).
-- Optimizing 25 prompts with 4 models (vicuna, mistral, llama2 and llama3).
-
-## Reference
-"[Universal and Transferable Adversarial Attacks on Aligned Language Models](https://arxiv.org/abs/2307.15043)" by Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J. Zico Kolter, and Matt Fredrikson.
-
-The paper's official Github: https://github.com/llm-attacks/llm-attacks
+"[Universal and Transferable Adversarial Attacks on Aligned Language Models](https://arxiv.org/abs/2307.15043)"
+by Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J. Zico Kolter, and Matt
+Fredrikson. The paper's official Github: https://github.com/llm-attacks/llm-attacks.

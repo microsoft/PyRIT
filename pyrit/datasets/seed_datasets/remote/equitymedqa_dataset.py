@@ -8,7 +8,7 @@ from typing import Literal
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,11 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
 
     Reference: [@pfohl2024equitymedqa]
     """
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "huge"  # 5565 prompts across 11 medical-bias subsets
+    tags: frozenset[str] = frozenset({"safety", "bias", "medical"})
 
     DATA_SUBSETS: list[str] = [
         "cc_llm",
@@ -127,7 +132,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
         prompts: list[str] = []
 
         for subset in self.targets:
-            prompts.extend(await self._get_sub_dataset(subset, cache=cache))
+            prompts.extend(await self._get_sub_dataset_async(subset, cache=cache))
 
         # Remove duplicates across all subsets
         unique_prompts = list(set(prompts))
@@ -148,7 +153,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
 
         return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)
 
-    async def _get_sub_dataset(self, subset_name: str, *, cache: bool = True) -> list[str]:
+    async def _get_sub_dataset_async(self, subset_name: str, *, cache: bool = True) -> list[str]:
         """
         Fetch a specific subset of the EquityMedQA dataset.
 
@@ -159,7 +164,7 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
         Returns:
             List of unique prompts from the specified subset.
         """
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.source,
             config=subset_name,
             split="train",

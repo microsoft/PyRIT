@@ -26,7 +26,6 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     MultiTurnAttackContext,
     MultiTurnAttackStrategy,
 )
-from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -36,6 +35,7 @@ from pyrit.models import (
     Message,
     Score,
     SeedPrompt,
+    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName
@@ -376,7 +376,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         logger.debug(f"Generating prompt for turn {context.executed_turns + 1}")
 
         # Prepare prompt for the adversarial chat
-        prompt_text = await self._build_adversarial_prompt(context)
+        prompt_text = await self._build_adversarial_prompt_async(context)
 
         # Send the prompt to the adversarial chat and get the response
         logger.debug(f"Sending prompt to adversarial chat: {prompt_text[:50]}...")
@@ -405,7 +405,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         # Return as a user message for sending to objective target
         return Message.from_prompt(prompt=response.get_value(), role="user")
 
-    async def _build_adversarial_prompt(
+    async def _build_adversarial_prompt_async(
         self,
         context: MultiTurnAttackContext[Any],
     ) -> str:

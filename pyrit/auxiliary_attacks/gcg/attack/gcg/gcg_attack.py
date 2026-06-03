@@ -92,7 +92,7 @@ class GCGPromptManager(PromptManager):
         grad: torch.Tensor,
         batch_size: int,
         topk: int = 256,
-        temp: int = 1,
+        temp: float = 1.0,
         allow_non_ascii: bool = True,
     ) -> torch.Tensor:
         """
@@ -102,7 +102,7 @@ class GCGPromptManager(PromptManager):
             grad (torch.Tensor): Gradient tensor for control tokens.
             batch_size (int): Number of candidate controls to generate.
             topk (int): Number of top gradient positions to sample from. Defaults to 256.
-            temp (int): Temperature for sampling. Currently unused but kept for API compatibility. Defaults to 1.
+            temp (float): Temperature for sampling. Currently unused but kept for API compatibility. Defaults to 1.0.
             allow_non_ascii (bool): Whether to allow non-ASCII tokens. Defaults to True.
 
         Returns:
@@ -130,7 +130,7 @@ class GCGMultiPromptAttack(MultiPromptAttack):
         *,
         batch_size: int = 1024,
         topk: int = 256,
-        temp: int = 1,
+        temp: float = 1.0,
         allow_non_ascii: bool = True,
         target_weight: float = 1,
         control_weight: float = 0.1,
@@ -146,7 +146,7 @@ class GCGMultiPromptAttack(MultiPromptAttack):
         Args:
             batch_size (int): Number of candidate controls per batch. Defaults to 1024.
             topk (int): Number of top gradient positions to sample from. Defaults to 256.
-            temp (int): Temperature for sampling. Currently unused but kept for API compatibility. Defaults to 1.
+            temp (float): Temperature for sampling. Currently unused but kept for API compatibility. Defaults to 1.0.
             allow_non_ascii (bool): Whether to allow non-ASCII tokens. Defaults to True.
             target_weight (float): Weight for target loss. Defaults to 1.
             control_weight (float): Weight for control loss. Defaults to 0.1.

@@ -3,9 +3,9 @@
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 
+import aiofiles
 import httpx
 from huggingface_hub import HfApi
 
@@ -46,7 +46,7 @@ async def download_specific_files_async(
     Download specific files from a Hugging Face model repository.
     If file_patterns is None, downloads all files.
     """
-    os.makedirs(cache_dir, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
     available_files = get_available_files(model_id, token)
     # If no file patterns are provided, download all available files
@@ -107,9 +107,9 @@ async def download_file_async(url: str, token: str, download_dir: Path, num_spli
         chunks = await asyncio.gather(*tasks)
 
         # Write chunks to the file in order
-        with open(file_path, "wb") as f:
+        async with aiofiles.open(file_path, "wb") as f:
             for chunk in chunks:
-                f.write(chunk)
+                await f.write(chunk)
         logger.info(f"Downloaded {file_name} to {file_path}")
 
 
@@ -128,7 +128,9 @@ async def download_files_async(
     await asyncio.gather(*(download_with_limit_async(url) for url in urls))
 
 
-async def download_specific_files(model_id: str, file_patterns: list[str] | None, token: str, cache_dir: Path) -> None:
+async def download_specific_files(
+    model_id: str, file_patterns: list[str] | None, token: str, cache_dir: Path
+) -> None:  # pyrit-async-suffix-exempt
     """Delegate to ``download_specific_files_async`` (deprecated alias)."""
     print_deprecation_message(
         old_item="pyrit.common.download_hf_model.download_specific_files",
@@ -138,7 +140,9 @@ async def download_specific_files(model_id: str, file_patterns: list[str] | None
     await download_specific_files_async(model_id, file_patterns, token, cache_dir)
 
 
-async def download_chunk(url: str, headers: dict[str, str], start: int, end: int, client: httpx.AsyncClient) -> bytes:
+async def download_chunk(
+    url: str, headers: dict[str, str], start: int, end: int, client: httpx.AsyncClient
+) -> bytes:  # pyrit-async-suffix-exempt
     """
     Delegate to ``download_chunk_async`` (deprecated alias).
 
@@ -153,7 +157,7 @@ async def download_chunk(url: str, headers: dict[str, str], start: int, end: int
     return await download_chunk_async(url, headers, start, end, client)
 
 
-async def download_file(url: str, token: str, download_dir: Path, num_splits: int) -> None:
+async def download_file(url: str, token: str, download_dir: Path, num_splits: int) -> None:  # pyrit-async-suffix-exempt
     """Delegate to ``download_file_async`` (deprecated alias)."""
     print_deprecation_message(
         old_item="pyrit.common.download_hf_model.download_file",
@@ -163,7 +167,7 @@ async def download_file(url: str, token: str, download_dir: Path, num_splits: in
     await download_file_async(url, token, download_dir, num_splits)
 
 
-async def download_files(
+async def download_files(  # pyrit-async-suffix-exempt
     urls: list[str], token: str, download_dir: Path, num_splits: int = 3, parallel_downloads: int = 4
 ) -> None:
     """Delegate to ``download_files_async`` (deprecated alias)."""

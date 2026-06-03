@@ -26,9 +26,9 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TAPAttackScoringConfig,
     _TreeOfAttacksNode,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
     Message,
@@ -236,8 +236,8 @@ class AttackBuilder:
         )
         target.capabilities.supports_multi_turn = supports_multi_turn
         target.capabilities.output_modalities = frozenset({frozenset(["text"])})
-        target.configuration.includes.side_effect = (
-            lambda capability: capability == CapabilityName.MULTI_TURN and supports_multi_turn
+        target.configuration.includes.side_effect = lambda capability: (
+            capability == CapabilityName.MULTI_TURN and supports_multi_turn
         )
         target.configuration.capabilities.output_modalities = frozenset({frozenset(["text"])})
         return cast("PromptTarget", target)
@@ -293,7 +293,6 @@ class TestHelpers:
     def create_score(value: float = 0.9) -> Score:
         """Create a mock Score object."""
         return Score(
-            id=None,
             score_type="float_scale",
             score_value=str(value),
             score_category=["test"],
@@ -332,7 +331,6 @@ class TestHelpers:
 
         # Create the float scale score that the mock scorer will return
         float_score = Score(
-            id=None,
             score_type="float_scale",
             score_value=str(original_float_value),
             score_category=["objective"],

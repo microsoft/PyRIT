@@ -121,7 +121,7 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         Fetch the CoCoNot subset and return it as a SeedDataset.
 
         Iterates ``self._resolved_splits()`` and calls the inherited
-        ``_fetch_from_huggingface`` once per split, then filters by
+        ``_fetch_from_huggingface_async`` once per split, then filters by
         ``self._categories`` if set.
 
         Args:
@@ -141,7 +141,7 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
 
         for split in self._resolved_splits():
             logger.info(f"Loading CoCoNot rows (config={self.CONFIG}, split={split})")
-            rows = await self._fetch_from_huggingface(
+            rows = await self._fetch_from_huggingface_async(
                 dataset_name=self.HF_DATASET_NAME,
                 config=self.CONFIG,
                 split=split,
@@ -150,6 +150,16 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
             for row in rows:
                 category = row.get("category")
                 if wanted_categories is not None and category not in wanted_categories:
+                    continue
+                # The upstream HF dataset contains a small number of rows with an
+                # empty ``prompt`` (observed in original.train under the wildchats
+                # subcategory). SeedObjective enforces value != "" downstream, so
+                # skip them here to keep the loader resilient to upstream drift.
+                if not (row.get("prompt") or "").strip():
+                    logger.warning(
+                        f"Skipping CoCoNot row with empty prompt "
+                        f"(id={row.get('id')!r}, category={category!r}, split={split!r})"
+                    )
                     continue
                 seeds.append(self._row_to_seed(row=row, split=split, source_url=source_url))
 
@@ -275,7 +285,7 @@ class _CoCoNotContrastDataset(_CoCoNotBaseDataset):
     CONFIG: str = "contrast"
     SPLITS: tuple[str, ...] = ("test",)
     size: str = "medium"
-    tags: set[str] = set()
+    tags: set[str] = {"safety", "refusal"}
     DEFAULT_DESCRIPTION: str = (
         "CoCoNot contrast set — 379 benign prompts that look superficially similar to "
         "refusal-target prompts but should be complied with. Used to measure "

@@ -9,7 +9,7 @@ from pyrit.message_normalizer.chat_message_normalizer import ChatMessageNormaliz
 from pyrit.message_normalizer.message_normalizer import (
     MessageStringNormalizer,
     SystemMessageBehavior,
-    apply_system_message_behavior,
+    apply_system_message_behavior_async,
 )
 from pyrit.models import Message
 
@@ -210,7 +210,7 @@ class TokenizerTemplateNormalizer(MessageStringNormalizer):
         base_behavior: SystemMessageBehavior = (
             "keep" if self.system_message_behavior == "developer" else self.system_message_behavior
         )
-        processed_messages = await apply_system_message_behavior(messages, base_behavior)
+        processed_messages = await apply_system_message_behavior_async(messages, base_behavior)
 
         # Use ChatMessageNormalizer with developer role if needed
         chat_normalizer = ChatMessageNormalizer(use_developer_role=use_developer)

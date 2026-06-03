@@ -28,7 +28,7 @@ def text_message_piece(patch_central_database) -> MessagePiece:
         original_value_data_type="text",
         prompt_metadata={"correct_answer_index": "0", "correct_answer": "Paris"},
     )
-    piece.id = None
+    piece.not_in_memory = True
     return piece
 
 
@@ -49,7 +49,6 @@ async def test_score_async_unsupported_image_type_returns_false(
 
 async def test_score_async_missing_metadata_returns_false(patch_central_database):
     request = MessagePiece(
-        id="test_id",
         role="user",
         original_value="test content",
         converted_value="test response",
@@ -95,7 +94,6 @@ async def test_question_answer_scorer_adds_to_memory():
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         scorer = QuestionAnswerScorer(category=["new_category"])
         message = MessagePiece(
-            id="test_id",
             role="user",
             original_value="test content",
             converted_value="0: Paris",
@@ -113,7 +111,6 @@ async def test_question_answer_scorer_no_category():
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         scorer = QuestionAnswerScorer()
         message = MessagePiece(
-            id="test_id",
             role="user",
             original_value="test content",
             converted_value="0: Paris",

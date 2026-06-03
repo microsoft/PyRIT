@@ -21,11 +21,9 @@ from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
-from pyrit.identifiers import build_atomic_attack_identifier
-from pyrit.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import MAX_IDENTIFIER_VALUE_LENGTH
-from pyrit.models import AttackResult, SeedAttackGroup
+from pyrit.models import AtomicAttackEvaluationIdentifier, AttackResult, SeedAttackGroup, build_atomic_attack_identifier
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
 if TYPE_CHECKING:
@@ -301,15 +299,18 @@ class AtomicAttack:
     async def run_async(
         self,
         *,
-        max_concurrency: int = 1,
+        executor: AttackExecutor | None = None,
         return_partial_on_failure: bool = True,
+        max_concurrency: int | None = None,
         **attack_params: Any,
     ) -> AttackExecutorResult[AttackResult]:
         """
         Execute the atomic attack against all seed groups.
 
-        This method uses AttackExecutor to run the configured attack against
-        all seed groups.
+        This method uses ``AttackExecutor`` to run the configured attack against
+        all seed groups. Concurrency is owned by the executor: pass a shared
+        ``AttackExecutor`` instance to share a single budget across multiple
+        atomic attacks (this is how ``Scenario`` parallelizes them).
 
         When return_partial_on_failure=True (default), this method will return
         an AttackExecutorResult containing both completed results and incomplete
@@ -320,11 +321,18 @@ class AtomicAttack:
         was achieved. "incomplete" means execution didn't finish (threw an exception).
 
         Args:
-            max_concurrency (int): Maximum number of concurrent attack executions.
-                Defaults to 1 for sequential execution.
+            executor (AttackExecutor | None): Optional ``AttackExecutor`` to run the
+                attack with. When provided, its concurrency budget is used and is
+                shared with anything else holding a reference to it. When ``None``,
+                a fresh ``AttackExecutor(max_concurrency=max_concurrency)`` is created
+                for this call.
             return_partial_on_failure (bool): If True, returns partial results even when
                 some objectives don't complete execution. If False, raises an exception on
                 any execution failure. Defaults to True.
+            max_concurrency (int | None): **Deprecated.** Will be removed in 0.16.0. Pass
+                ``executor=AttackExecutor(max_concurrency=...)`` instead. Passing any
+                value here emits a ``DeprecationWarning``. When ``executor`` is also
+                provided, this value is silently ignored.
             **attack_params: Additional parameters to pass to the attack strategy.
 
         Returns:
@@ -334,11 +342,19 @@ class AtomicAttack:
         Raises:
             ValueError: If the attack execution fails completely and return_partial_on_failure=False.
         """
-        executor = AttackExecutor(max_concurrency=max_concurrency)
+        if max_concurrency is not None:
+            print_deprecation_message(
+                old_item="AtomicAttack.run_async(max_concurrency=...)",
+                new_item="AtomicAttack.run_async(executor=AttackExecutor(max_concurrency=...))",
+                removed_in="0.16.0",
+            )
+
+        if executor is None:
+            executor = AttackExecutor(max_concurrency=max_concurrency if max_concurrency is not None else 1)
 
         logger.info(
             f"Starting atomic attack execution with {len(self._seed_groups)} seed groups "
-            f"and max_concurrency={max_concurrency}"
+            f"(executor max_concurrency={getattr(executor, '_max_concurrency', 'unknown')})"
         )
 
         try:
@@ -412,24 +428,24 @@ class AtomicAttack:
 
         for result, idx in zip(results.completed_results, results.input_indices, strict=True):
             if idx < len(self._seed_groups):
-                result.atomic_attack_identifier = build_atomic_attack_identifier(
+                identifier = build_atomic_attack_identifier(
                     technique_identifier=self._attack_technique.get_identifier(),
                     seed_group=self._seed_groups[idx],
                 )
 
                 # Persist the enriched identifier back to the database.
                 # Set eval_hash before truncation so it survives the DB round-trip.
-                if result.atomic_attack_identifier.eval_hash is None:
-                    result.atomic_attack_identifier = result.atomic_attack_identifier.with_eval_hash(
-                        AtomicAttackEvaluationIdentifier(result.atomic_attack_identifier).eval_hash
-                    )
+                if identifier.eval_hash is None:
+                    identifier = identifier.with_eval_hash(AtomicAttackEvaluationIdentifier(identifier).eval_hash)
+
+                result.atomic_attack_identifier = identifier
 
                 if result.attack_result_id:
                     memory.update_attack_result_by_id(
                         attack_result_id=result.attack_result_id,
                         update_fields={
-                            "atomic_attack_identifier": result.atomic_attack_identifier.to_dict(
-                                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+                            "atomic_attack_identifier": identifier.model_dump(
+                                context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH},
                             ),
                         },
                     )

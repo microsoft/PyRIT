@@ -25,12 +25,12 @@ from pyrit.prompt_target.openai.openai_realtime_target import _OpenAIRealtimeDis
 try:
     from openai import BadRequestError as _OpenAIBadRequestError  # noqa: TC002
 except ImportError:  # pragma: no cover - openai is a hard dependency for this module
-    _OpenAIBadRequestError = Exception  # type: ignore[misc, assignment]
+    _OpenAIBadRequestError = Exception  # type: ignore[misc, assignment, ty:invalid-assignment]
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from pyrit.identifiers import ComponentIdentifier
+    from pyrit.models import ComponentIdentifier
     from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
     from pyrit.prompt_target.common.realtime_audio import CommittedEvent
     from pyrit.prompt_target.openai.openai_realtime_target import RealtimeTarget
@@ -372,14 +372,14 @@ class _OpenAIRealtimeStreamingSession:
         future = await self._request_response_async()
         result = await future
 
-        raw_user_path = await target.save_audio(raw_pcm, num_channels=1, sample_width=2, sample_rate=sample_rate)
+        raw_user_path = await target.save_audio_async(raw_pcm, num_channels=1, sample_width=2, sample_rate=sample_rate)
         if converted_pcm is raw_pcm:
             converted_user_path = raw_user_path
         else:
-            converted_user_path = await target.save_audio(
+            converted_user_path = await target.save_audio_async(
                 converted_pcm, num_channels=1, sample_width=2, sample_rate=sample_rate
             )
-        assistant_audio_path = await target.save_audio(
+        assistant_audio_path = await target.save_audio_async(
             result.audio_bytes, num_channels=1, sample_width=2, sample_rate=sample_rate
         )
 

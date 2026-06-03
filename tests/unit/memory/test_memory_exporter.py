@@ -58,7 +58,7 @@ def test_export_to_json_creates_file(tmp_path, export_type):
     # Perform more detailed checks on content if necessary
     assert len(content) == 3  # Simple check for the number of items
     # Convert each MessagePiece instance to a dictionary
-    expected_content = [message_piece.to_dict() for message_piece in sample_conversation_entries]
+    expected_content = [message_piece.model_dump(mode="json") for message_piece in sample_conversation_entries]
 
     for expected, actual in zip(expected_content, content, strict=False):
         assert expected["role"] == actual["role"]

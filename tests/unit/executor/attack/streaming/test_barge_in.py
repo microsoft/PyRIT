@@ -151,7 +151,7 @@ async def test_setup_async_persists_prepended_conversation_to_memory(vad_target)
     # All three prepended messages should have been written to memory under the
     # attack's conversation_id; assistant role becomes simulated_assistant on storage.
     assert len(add_calls) == 3
-    storage_roles = [m.message_pieces[0].get_role_for_storage() for m in add_calls]
+    storage_roles = [m.message_pieces[0].role for m in add_calls]
     assert storage_roles == ["system", "user", "simulated_assistant"]
     # All three messages share the context's conversation_id post-setup.
     for m in add_calls:

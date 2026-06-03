@@ -19,9 +19,9 @@ from pyrit.exceptions import (
     execution_context,
     get_execution_context,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     MessagePiece,
     construct_response_from_request,
@@ -122,9 +122,9 @@ class PromptNormalizer:
                 piece.attack_identifier = attack_identifier
 
         # Apply request converters
-        await self.convert_values(converter_configurations=request_converter_configurations, message=request)
+        await self.convert_values_async(converter_configurations=request_converter_configurations, message=request)
 
-        await self._calc_hash(request=request)
+        await self._calc_hash_async(request=request)
 
         responses = None
 
@@ -155,7 +155,7 @@ class PromptNormalizer:
                 error="processing",
             )
 
-            await self._calc_hash(request=error_response)
+            await self._calc_hash_async(request=error_response)
             self.memory.add_message_to_memory(request=error_response)
             cid = request.message_pieces[0].conversation_id if request and request.message_pieces else None
             raise Exception(f"Error sending prompt with conversation ID: {cid}") from ex
@@ -172,7 +172,7 @@ class PromptNormalizer:
                 response_type="text",
                 error="empty",
             )
-            await self._calc_hash(request=empty_response)
+            await self._calc_hash_async(request=empty_response)
             self.memory.add_message_to_memory(request=empty_response)
             return empty_response
 
@@ -182,8 +182,10 @@ class PromptNormalizer:
         for i, resp in enumerate(responses):
             is_last = i == len(responses) - 1
             if is_last:
-                await self.convert_values(converter_configurations=response_converter_configurations, message=resp)
-            await self._calc_hash(request=resp)
+                await self.convert_values_async(
+                    converter_configurations=response_converter_configurations, message=resp
+                )
+            await self._calc_hash_async(request=resp)
             self.memory.add_message_to_memory(request=resp)
 
         # Return the last response for backward compatibility
@@ -239,7 +241,7 @@ class PromptNormalizer:
             attack_identifier=attack_identifier,
         )
 
-    async def convert_values(
+    async def convert_values_async(
         self,
         converter_configurations: list[PromptConverterConfiguration],
         message: Message,
@@ -373,7 +375,7 @@ class PromptNormalizer:
         finally:
             Path(input_path).unlink(missing_ok=True)
 
-    async def _calc_hash(self, request: Message) -> None:
+    async def _calc_hash_async(self, request: Message) -> None:
         """Add a request to the memory."""
         tasks = [asyncio.create_task(piece.set_sha256_values_async()) for piece in request.message_pieces]
         await asyncio.gather(*tasks)
@@ -388,10 +390,10 @@ class PromptNormalizer:
         Args:
             message (Message): The message to hash and persist.
         """
-        await self._calc_hash(request=message)
+        await self._calc_hash_async(request=message)
         self.memory.add_message_to_memory(request=message)
 
-    async def add_prepended_conversation_to_memory(
+    async def add_prepended_conversation_to_memory_async(
         self,
         conversation_id: str,
         should_convert: bool = True,
@@ -421,7 +423,7 @@ class PromptNormalizer:
 
         for request in prepended_conversation:
             if should_convert and converter_configurations:
-                await self.convert_values(message=request, converter_configurations=converter_configurations)
+                await self.convert_values_async(message=request, converter_configurations=converter_configurations)
             for piece in request.message_pieces:
                 piece.conversation_id = conversation_id
                 if attack_identifier:
@@ -434,6 +436,46 @@ class PromptNormalizer:
             self.memory.add_message_to_memory(request=request)
 
         return prepended_conversation
+
+    async def convert_values(  # pyrit-async-suffix-exempt
+        self,
+        converter_configurations: list[PromptConverterConfiguration],
+        message: Message,
+    ) -> None:
+        """Use ``convert_values_async`` instead; this is a deprecated alias."""
+        print_deprecation_message(
+            old_item="pyrit.prompt_normalizer.PromptNormalizer.convert_values",
+            new_item="pyrit.prompt_normalizer.PromptNormalizer.convert_values_async",
+            removed_in="0.16.0",
+        )
+        await self.convert_values_async(converter_configurations=converter_configurations, message=message)
+
+    async def add_prepended_conversation_to_memory(  # pyrit-async-suffix-exempt
+        self,
+        conversation_id: str,
+        should_convert: bool = True,
+        converter_configurations: Optional[list[PromptConverterConfiguration]] = None,
+        attack_identifier: Optional[ComponentIdentifier] = None,
+        prepended_conversation: Optional[list[Message]] = None,
+    ) -> Optional[list[Message]]:
+        """
+        Use ``add_prepended_conversation_to_memory_async`` instead; this is a deprecated alias.
+
+        Returns:
+            Optional[list[Message]]: Same as ``add_prepended_conversation_to_memory_async``.
+        """
+        print_deprecation_message(
+            old_item="pyrit.prompt_normalizer.PromptNormalizer.add_prepended_conversation_to_memory",
+            new_item="pyrit.prompt_normalizer.PromptNormalizer.add_prepended_conversation_to_memory_async",
+            removed_in="0.16.0",
+        )
+        return await self.add_prepended_conversation_to_memory_async(
+            conversation_id=conversation_id,
+            should_convert=should_convert,
+            converter_configurations=converter_configurations,
+            attack_identifier=attack_identifier,
+            prepended_conversation=prepended_conversation,
+        )
 
 
 def _write_pcm_to_temp_wav(

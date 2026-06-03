@@ -43,13 +43,13 @@ async def test_connect_success(target):
         connection = await target._connect_async(conversation_id="test_conv")
         assert connection == mock_connection
         mock_client.realtime.connect.assert_called_once_with(model="test")
-    await target.cleanup_target()
+    await target.cleanup_target_async()
 
 
 async def test_send_prompt_async(target):
     # Mock the necessary methods
     target._connect_async = AsyncMock(return_value=AsyncMock())
-    target.send_config = AsyncMock()
+    target.send_config_async = AsyncMock()
     result = RealtimeTargetResult(audio_bytes=b"file", transcripts=["hello"])
     target.send_text_async = AsyncMock(return_value=("output.wav", result))
 
@@ -78,13 +78,13 @@ async def test_send_prompt_async(target):
     assert response[0].get_value(1) == "output.wav"
 
     # Clean up the WebSocket connections
-    await target.cleanup_target()
+    await target.cleanup_target_async()
 
 
 async def test_send_prompt_async_propagates_interrupted_to_metadata(target):
     """When a turn result carries interrupted=True, both response pieces' metadata must reflect it."""
     target._connect_async = AsyncMock(return_value=AsyncMock())
-    target.send_config = AsyncMock()
+    target.send_config_async = AsyncMock()
     interrupted_result = RealtimeTargetResult(audio_bytes=b"partial", transcripts=["hi"], interrupted=True)
     target.send_text_async = AsyncMock(return_value=("partial.wav", interrupted_result))
 
@@ -104,13 +104,13 @@ async def test_send_prompt_async_propagates_interrupted_to_metadata(target):
     assert text_piece.prompt_metadata.get("interrupted") is True
     assert audio_piece.prompt_metadata.get("interrupted") is True
 
-    await target.cleanup_target()
+    await target.cleanup_target_async()
 
 
 async def test_send_prompt_async_omits_interrupted_metadata_when_not_set(target):
     """A non-interrupted result must not write an interrupted key to MessagePiece metadata."""
     target._connect_async = AsyncMock(return_value=AsyncMock())
-    target.send_config = AsyncMock()
+    target.send_config_async = AsyncMock()
     normal_result = RealtimeTargetResult(audio_bytes=b"full", transcripts=["hi"])
     target.send_text_async = AsyncMock(return_value=("full.wav", normal_result))
 
@@ -130,7 +130,7 @@ async def test_send_prompt_async_omits_interrupted_metadata_when_not_set(target)
     assert "interrupted" not in text_piece.prompt_metadata
     assert "interrupted" not in audio_piece.prompt_metadata
 
-    await target.cleanup_target()
+    await target.cleanup_target_async()
 
 
 async def test_get_system_prompt_from_conversation_with_system_message(target):
@@ -187,7 +187,7 @@ async def test_get_system_prompt_empty_conversation(target):
 async def test_multiple_websockets_created_for_multiple_conversations(target):
     # Mock the necessary methods
     target._connect_async = AsyncMock(return_value=AsyncMock())
-    target.send_config = AsyncMock()
+    target.send_config_async = AsyncMock()
     result = RealtimeTargetResult(audio_bytes=b"event1", transcripts=["event2"])
     target.send_text_async = AsyncMock(return_value=("output_audio_path", result))
 
@@ -221,7 +221,7 @@ async def test_multiple_websockets_created_for_multiple_conversations(target):
     assert "conversation_2" in target._existing_conversation
 
     # Clean up the WebSocket connections
-    await target.cleanup_target()
+    await target.cleanup_target_async()
     assert target._existing_conversation == {}
 
 
@@ -268,7 +268,7 @@ async def test_receive_events_empty_output(target: RealtimeTarget):
     mock_connection.__aiter__.return_value = [mock_event]
 
     with pytest.raises(ServerErrorException, match=r"\[server_error\] The server had an error processing your request"):
-        await target.receive_events(conversation_id)
+        await target.receive_events_async(conversation_id)
 
 
 async def test_receive_events_response_done_no_transcript_validation(target):
@@ -291,7 +291,7 @@ async def test_receive_events_response_done_no_transcript_validation(target):
     mock_connection.__aiter__.return_value = [mock_lifecycle_event, mock_event]
 
     # Should complete successfully — response.done is not stale because it was preceded by another event
-    result = await target.receive_events(conversation_id)
+    result = await target.receive_events_async(conversation_id)
     assert result is not None
     assert len(result.transcripts) == 0
     assert result.audio_bytes == b""
@@ -315,7 +315,7 @@ async def test_receive_events_audio_buffer_only(target):
     # Mock connection to yield both events
     mock_connection.__aiter__.return_value = [mock_audio_event, mock_done_event]
 
-    result = await target.receive_events(conversation_id)
+    result = await target.receive_events_async(conversation_id)
 
     # Should have audio buffer but no transcript
     assert len(result.transcripts) == 0
@@ -339,7 +339,7 @@ async def test_receive_events_error_event(target):
 
     # Error events now raise RuntimeError with details
     with pytest.raises(RuntimeError, match=r"Server error: \[invalid_request_error\] Invalid request"):
-        await target.receive_events(conversation_id)
+        await target.receive_events_async(conversation_id)
 
 
 async def test_receive_events_connection_closed(target):
@@ -351,7 +351,7 @@ async def test_receive_events_connection_closed(target):
     # Mock connection that returns empty list (simulates closed connection)
     mock_connection.__aiter__.return_value = []
 
-    result = await target.receive_events(conversation_id)
+    result = await target.receive_events_async(conversation_id)
     assert len(result.transcripts) == 0
     assert result.audio_bytes == b""
 
@@ -394,7 +394,7 @@ async def test_receive_events_with_audio_and_transcript(target):
         mock_done_event,
     ]
 
-    result = await target.receive_events(conversation_id)
+    result = await target.receive_events_async(conversation_id)
 
     # Result should have both audio buffer and transcript from deltas
     assert len(result.transcripts) == 2
@@ -410,7 +410,7 @@ async def test_multi_turn_reuses_connection(target):
     """
     mock_connection = AsyncMock()
     target._connect_async = AsyncMock(return_value=mock_connection)
-    target.send_config = AsyncMock()
+    target.send_config_async = AsyncMock()
     result = RealtimeTargetResult(audio_bytes=b"audio", transcripts=["response"])
     target.send_text_async = AsyncMock(return_value=("output.wav", result))
 
@@ -440,7 +440,7 @@ async def test_multi_turn_reuses_connection(target):
 
     # Connection should only be created once for the conversation
     target._connect_async.assert_called_once_with(conversation_id=conversation_id)
-    target.send_config.assert_called_once()
+    target.send_config_async.assert_called_once()
 
     # Both turns should use the same connection
     assert target._existing_conversation[conversation_id] == mock_connection
@@ -448,7 +448,7 @@ async def test_multi_turn_reuses_connection(target):
     # send_text_async should have been called twice (once per turn)
     assert target.send_text_async.call_count == 2
 
-    await target.cleanup_target()
+    await target.cleanup_target_async()
 
 
 async def test_receive_events_skips_stale_response_done(target):
@@ -488,7 +488,7 @@ async def test_receive_events_skips_stale_response_done(target):
         real_done_event,
     ]
 
-    result = await target.receive_events(conversation_id)
+    result = await target.receive_events_async(conversation_id)
 
     # Should have processed through to the real response.done with actual audio
     assert result.audio_bytes == b"dummyaudio"
@@ -903,7 +903,7 @@ async def test_send_prompt_audio_path_calls_send_audio_async(target, tmp_path):
     message = Message(message_pieces=[piece])
 
     target._connect_async = AsyncMock(return_value=AsyncMock())
-    target.send_config = AsyncMock()
+    target.send_config_async = AsyncMock()
     target.send_audio_async = AsyncMock(
         return_value=("/tmp/out.wav", RealtimeTargetResult(audio_bytes=b"", transcripts=["hi"])),
     )
