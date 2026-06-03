@@ -15,7 +15,7 @@ from pyrit.models import SeedAttackGroup, SeedObjective
 from pyrit.prompt_converter import Base64Converter
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import AtomicAttack, DatasetConfiguration, ScenarioCompositeStrategy
-from pyrit.scenario.scenarios.foundry import FoundryComposite, FoundryStrategy, RedTeamAgent
+from pyrit.scenario.foundry import FoundryComposite, FoundryStrategy, RedTeamAgent  # type: ignore[ty:unresolved-import]
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
 
 
