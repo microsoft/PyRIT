@@ -7,6 +7,7 @@ import abc
 import base64
 import hashlib
 import os
+import tempfile
 import time
 import wave
 from mimetypes import guess_type
@@ -194,19 +195,24 @@ class DataTypeSerializer(abc.ABC):
 
         # save audio file locally first if in AzureStorageBlob so we can use wave.open to set audio parameters
         if self._is_azure_storage_url(str(file_path)):
-            local_temp_path = Path(DB_DATA_PATH, "temp_audio.wav")
-            with wave.open(str(local_temp_path), "wb") as wav_file:
-                wav_file.setnchannels(num_channels)
-                wav_file.setsampwidth(sample_width)
-                wav_file.setframerate(sample_rate)
-                wav_file.writeframes(data)
+            with tempfile.NamedTemporaryFile(
+                suffix=".wav", dir=DB_DATA_PATH, delete=False
+            ) as tmp:
+                local_temp_path = Path(tmp.name)
 
-            async with aiofiles.open(local_temp_path, "rb") as f:
-                audio_data = await f.read()
+            try:
+                with wave.open(str(local_temp_path), "wb") as wav_file:
+                    wav_file.setnchannels(num_channels)
+                    wav_file.setsampwidth(sample_width)
+                    wav_file.setframerate(sample_rate)
+                    wav_file.writeframes(data)
+                async with aiofiles.open(local_temp_path, "rb") as f:
+                    audio_data = await f.read()
                 if self._memory.results_storage_io is None:
                     raise RuntimeError("self._memory.results_storage_io is not initialized")
                 await self._memory.results_storage_io.write_file(file_path, audio_data)
-            os.remove(local_temp_path)
+            finally:
+                local_temp_path.unlink(missing_ok=True)
 
         # If local, we can just save straight to disk and do not need to delete temp file after
         else:

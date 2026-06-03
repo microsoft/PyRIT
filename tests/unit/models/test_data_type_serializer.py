@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 from PIL import Image
+import glob
+from pyrit.common.path import DB_DATA_PATH
 
 from pyrit.models import (
     AllowedCategories,
@@ -426,3 +428,29 @@ async def test_get_data_filename_uses_db_data_path_when_results_path_falsy():
     result_str = str(result).replace("\\", "/")
     assert "/fallback/db_data" in result_str
     assert result_str.endswith(".png")
+
+
+@pytest.mark.asyncio
+async def test_save_formatted_audio_cleans_up_temp_file_on_azure_upload_failure(patch_central_database):
+    """Regression test: temp file must be deleted even when Azure upload fails."""
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="audio_path")
+
+    mock_memory = MagicMock()
+    mock_storage_io = AsyncMock()
+    mock_storage_io.write_file.side_effect = RuntimeError("Azure upload failed")
+    mock_memory.results_storage_io = mock_storage_io
+
+    azure_url = "https://account.blob.core.windows.net/container/audio/test.wav"
+
+    # Record existing wav files BEFORE test runs
+    existing_wav_files = set(glob.glob(str(DB_DATA_PATH / "*.wav")))
+
+    with patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory):
+        with patch.object(serializer, "get_data_filename", new_callable=AsyncMock, return_value=azure_url):
+            with pytest.raises(RuntimeError, match="Azure upload failed"):
+                await serializer.save_formatted_audio(data=b"\x00\x01\x02")
+
+    # Check no NEW wav files leaked after test
+    leaked_files = set(glob.glob(str(DB_DATA_PATH / "*.wav"))) - existing_wav_files
+    assert len(leaked_files) == 0, f"Temp files leaked: {leaked_files}"
+
