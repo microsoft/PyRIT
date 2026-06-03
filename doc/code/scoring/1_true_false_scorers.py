@@ -126,8 +126,9 @@ print(f"[injection] {scored.get_value()} - {scored.score_rationale}")
 # ### SelfAskRefusalScorer
 #
 # Purpose-built to detect refusals. It returns True for a refusal and short-circuits to
-# True (no LLM call) when the target itself blocked the response (`response_error="blocked"`),
-# which is common with content filters.
+# True (no LLM call) when the target fully blocked the response (`response_error="blocked"`),
+# which is common with content filters. A partially blocked response still carries content, so
+# it is scored normally by the LLM rather than short-circuited.
 # %%
 from pyrit.models import MessagePiece
 from pyrit.score import SelfAskRefusalScorer
