@@ -119,7 +119,7 @@ class GCGResult(PromptGeneratorStrategyResult):
     step_count: int = 0
     loss_history: list[float] = Field(default_factory=list)
     control_history: list[str] = Field(default_factory=list)
-    log_path: Optional[str] = None
+    log_path: str | None = None
     memory_labels: dict[str, str] = Field(default_factory=dict)
 
 

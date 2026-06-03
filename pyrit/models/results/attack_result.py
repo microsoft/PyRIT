@@ -6,7 +6,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Optional, TypeVar
+from typing import Any, TypeVar
 
 from pydantic import AwareDatetime, Field, model_validator
 
@@ -60,14 +60,14 @@ class AttackResult(StrategyResult):
     # Composite identifier combining the attack strategy identity with
     # seed identifiers from the dataset.
     # Contains the attack strategy as children["attack"] plus optional seeds.
-    atomic_attack_identifier: Optional[ComponentIdentifier] = None
+    atomic_attack_identifier: ComponentIdentifier | None = None
 
     # Evidence
     # Model response generated in the final turn of the attack
-    last_response: Optional[MessagePiece] = None
+    last_response: MessagePiece | None = None
 
     # Score assigned to the final response by a scorer component
-    last_score: Optional[Score] = None
+    last_score: Score | None = None
 
     # Metrics
     # Total number of turns that were executed
@@ -81,7 +81,7 @@ class AttackResult(StrategyResult):
     outcome: AttackOutcome = AttackOutcome.UNDETERMINED
 
     # Optional reason for the outcome, providing additional context
-    outcome_reason: Optional[str] = None
+    outcome_reason: str | None = None
 
     # Wall-clock time the result was created or persisted.
     timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
@@ -96,9 +96,9 @@ class AttackResult(StrategyResult):
     labels: dict[str, str] = Field(default_factory=dict)
 
     # Error information (populated when attack fails with exception)
-    error_message: Optional[str] = None
-    error_type: Optional[str] = None
-    error_traceback: Optional[str] = None
+    error_message: str | None = None
+    error_type: str | None = None
+    error_traceback: str | None = None
 
     # Retry tracking
     retry_events: list[RetryEvent] = Field(default_factory=list)
@@ -109,8 +109,8 @@ class AttackResult(StrategyResult):
     # AttackContext. User code should not set these directly; ad-hoc
     # AttackResults created outside an orchestrator leave both fields as None
     # and the corresponding DB columns remain NULL.
-    attribution_parent_id: Optional[str] = None
-    attribution_data: Optional[dict[str, Any]] = None
+    attribution_parent_id: str | None = None
+    attribution_data: dict[str, Any] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -142,7 +142,7 @@ class AttackResult(StrategyResult):
         return data
 
     @property
-    def attack_identifier(self) -> Optional[ComponentIdentifier]:
+    def attack_identifier(self) -> ComponentIdentifier | None:
         """
         Deprecated: use ``get_attack_strategy_identifier()`` or ``atomic_attack_identifier`` instead.
 
@@ -150,7 +150,7 @@ class AttackResult(StrategyResult):
         ``atomic_attack_identifier``, emitting a deprecation warning.
 
         Returns:
-            Optional[ComponentIdentifier]: The attack strategy identifier, or ``None``.
+            ComponentIdentifier | None: The attack strategy identifier, or ``None``.
 
         """
         print_deprecation_message(
@@ -160,7 +160,7 @@ class AttackResult(StrategyResult):
         )
         return self.get_attack_strategy_identifier()
 
-    def get_attack_strategy_identifier(self) -> Optional[ComponentIdentifier]:
+    def get_attack_strategy_identifier(self) -> ComponentIdentifier | None:
         """
         Return the attack strategy identifier from the composite atomic identifier.
 
@@ -172,7 +172,7 @@ class AttackResult(StrategyResult):
         structure was introduced.
 
         Returns:
-            Optional[ComponentIdentifier]: The attack strategy identifier, or ``None`` if
+            ComponentIdentifier | None: The attack strategy identifier, or ``None`` if
                 ``atomic_attack_identifier`` is not set or the expected children are missing.
 
         """
