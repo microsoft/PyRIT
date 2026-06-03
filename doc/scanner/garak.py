@@ -23,7 +23,7 @@ from pathlib import Path
 
 from pyrit.output import output_scenario_async
 from pyrit.registry import TargetRegistry
-from pyrit.scenario.scenarios.garak import Encoding, EncodingStrategy
+from pyrit.scenario.garak import Encoding, EncodingStrategy
 from pyrit.scenario.scenarios.garak.encoding import EncodingDatasetConfiguration
 from pyrit.setup import initialize_from_config_async
 

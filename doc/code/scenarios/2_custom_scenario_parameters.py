@@ -47,7 +47,7 @@
 # would wire up memory and scorers):
 
 # %%
-from pyrit.scenario.scenarios.airt.scam import Scam
+from pyrit.scenario.airt.scam import Scam
 
 for param in Scam.supported_parameters():
     print(param)

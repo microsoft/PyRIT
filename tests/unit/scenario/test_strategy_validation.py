@@ -8,8 +8,7 @@ import warnings
 import pytest
 
 from pyrit.scenario import ScenarioCompositeStrategy
-from pyrit.scenario.foundry import FoundryStrategy  # type: ignore[ty:unresolved-import]
-from pyrit.scenario.foundry.red_team_agent import FoundryComposite  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.foundry import FoundryComposite, FoundryStrategy  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.garak import EncodingStrategy  # type: ignore[ty:unresolved-import]
 
 
