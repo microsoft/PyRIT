@@ -93,7 +93,7 @@ class PyRITApiClient:
         Returns:
             dict: ``ListRegisteredScenariosResponse`` payload.
         """
-        return await self._get_json(path="/api/scenarios/catalog", params={"limit": limit})
+        return await self._get_json_async(path="/api/scenarios/catalog", params={"limit": limit})
 
     async def get_scenario_async(self, *, scenario_name: str) -> dict[str, Any] | None:
         """
@@ -108,7 +108,7 @@ class PyRITApiClient:
         import httpx
 
         try:
-            return await self._get_json(path=f"/api/scenarios/catalog/{scenario_name}")
+            return await self._get_json_async(path=f"/api/scenarios/catalog/{scenario_name}")
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
                 return None
@@ -125,7 +125,7 @@ class PyRITApiClient:
         Returns:
             dict: ``ListRegisteredInitializersResponse`` payload.
         """
-        return await self._get_json(path="/api/initializers", params={"limit": limit})
+        return await self._get_json_async(path="/api/initializers", params={"limit": limit})
 
     async def register_initializer_async(self, *, name: str, script_content: str) -> dict[str, Any]:
         """
@@ -163,7 +163,7 @@ class PyRITApiClient:
         Returns:
             dict: ``TargetListResponse`` payload.
         """
-        return await self._get_json(path="/api/targets", params={"limit": limit})
+        return await self._get_json_async(path="/api/targets", params={"limit": limit})
 
     # ------------------------------------------------------------------
     # Scenario runs
@@ -191,7 +191,7 @@ class PyRITApiClient:
         Returns:
             dict: ``ScenarioRunSummary`` payload.
         """
-        return await self._get_json(path=f"/api/scenarios/runs/{scenario_result_id}")
+        return await self._get_json_async(path=f"/api/scenarios/runs/{scenario_result_id}")
 
     async def get_scenario_run_results_async(self, *, scenario_result_id: str) -> dict[str, Any]:
         """
@@ -200,7 +200,7 @@ class PyRITApiClient:
         Returns:
             dict: ``ScenarioResult.to_dict()`` payload.
         """
-        return await self._get_json(path=f"/api/scenarios/runs/{scenario_result_id}/results")
+        return await self._get_json_async(path=f"/api/scenarios/runs/{scenario_result_id}/results")
 
     async def cancel_scenario_run_async(self, *, scenario_result_id: str) -> dict[str, Any]:
         """
@@ -221,7 +221,7 @@ class PyRITApiClient:
         Returns:
             dict: ``ScenarioRunListResponse`` payload.
         """
-        return await self._get_json(path="/api/scenarios/runs", params={"limit": limit})
+        return await self._get_json_async(path="/api/scenarios/runs", params={"limit": limit})
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -254,7 +254,7 @@ class PyRITApiClient:
             )
         return self._client
 
-    async def _get_json(self, *, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def _get_json_async(self, *, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         GET a JSON endpoint and return the parsed response.
 

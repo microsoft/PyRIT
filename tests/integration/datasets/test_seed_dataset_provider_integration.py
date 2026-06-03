@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Smoke-test providers covering the three distinct fetch paths:
 #   - local YAML (no network)
 #   - remote URL-based (_fetch_from_url via GitHub)
-#   - remote HuggingFace (_fetch_from_huggingface)
+#   - remote HuggingFace (_fetch_from_huggingface_async)
 _all_providers = SeedDatasetProvider.get_all_providers()
 _SMOKE_PROVIDERS: list[tuple[str, type]] = [
     ("LocalDataset_access_shell_commands", _all_providers["LocalDataset_access_shell_commands"]),
@@ -408,7 +408,7 @@ class TestEndToEndLocalDatasetWorkflow:
 
             # --- Step 3: User inspects metadata ---
             provider = matching_cls()
-            metadata = await provider._parse_metadata()
+            metadata = await provider._parse_metadata_async()
             assert metadata is not None
             assert metadata.harm_categories == {"cybercrime"}
 
@@ -605,13 +605,13 @@ class TestHarmbenchMetadataInScenario:
         from pyrit.datasets.seed_datasets.remote.harmbench_dataset import _HarmBenchDataset
 
         loader = _HarmBenchDataset()
-        metadata = await loader._parse_metadata()
+        metadata = await loader._parse_metadata_async()
 
         assert metadata is not None
         assert isinstance(metadata.tags, set)
         assert "default" in metadata.tags
         assert "safety" in metadata.tags
-        assert metadata.size == {"large"}
+        assert metadata.size == {"medium"}
         assert metadata.modalities == {"text"}
         assert isinstance(metadata.harm_categories, set)
         assert "cybercrime" in metadata.harm_categories

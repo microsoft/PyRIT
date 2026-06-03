@@ -250,8 +250,8 @@ async def initialize_pyrit_async(
         env_files (Optional[Sequence[pathlib.Path]]): Optional sequence of environment file paths to load
             in order. If not provided, will load default .env and .env.local files from PyRIT home if they exist.
             All paths must be valid pathlib.Path objects.
-        silent (bool): If True, suppresses print statements about environment file loading.
-            Defaults to False.
+        silent (bool): If True, suppresses print statements about environment file loading and
+            schema migration. Defaults to False.
         **memory_instance_kwargs (Optional[Any]): Additional keyword arguments to pass to the memory instance.
 
     Raises:
@@ -270,13 +270,13 @@ async def initialize_pyrit_async(
 
     if memory_db_type == IN_MEMORY:
         logger.info("Using in-memory SQLite database.")
-        memory = SQLiteMemory(db_path=":memory:", **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
+        memory = SQLiteMemory(db_path=":memory:", silent=silent, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
     elif memory_db_type == SQLITE:
         logger.info("Using persistent SQLite database.")
-        memory = SQLiteMemory(**memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
+        memory = SQLiteMemory(silent=silent, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
     elif memory_db_type == AZURE_SQL:
         logger.info("Using AzureSQL database.")
-        memory = AzureSQLMemory(**memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
+        memory = AzureSQLMemory(silent=silent, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
     else:
         raise ValueError(
             f"Memory database type '{memory_db_type}' is not a supported type {get_args(MemoryDatabaseType)}"

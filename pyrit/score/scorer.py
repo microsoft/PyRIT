@@ -645,7 +645,7 @@ class Scorer(Identifiable, abc.ABC):
         return (value - min_value) / (max_value - min_value)
 
     @pyrit_json_retry
-    async def _score_value_with_llm(
+    async def _score_value_with_llm_async(
         self,
         *,
         prompt_target: PromptTarget,

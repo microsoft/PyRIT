@@ -17,11 +17,11 @@ def _make_mock_serializer(*, exists: bool = False) -> MagicMock:
     mock_memory = MagicMock()
     mock_memory.results_path = "/results"
     mock_storage_io = AsyncMock()
-    mock_storage_io.path_exists = AsyncMock(return_value=exists)
+    mock_storage_io.path_exists_async = AsyncMock(return_value=exists)
     mock_memory.results_storage_io = mock_storage_io
     mock_serializer._memory = mock_memory
     mock_serializer.data_sub_directory = "/seed-prompt-entries/images"
-    mock_serializer.save_data = AsyncMock()
+    mock_serializer.save_data_async = AsyncMock()
     return mock_serializer
 
 
@@ -48,7 +48,7 @@ async def test_returns_cached_path_when_file_exists_and_skips_network():
     assert result == expected_path
     assert mock_serializer.value == expected_path
     mock_request.assert_not_called()
-    mock_serializer.save_data.assert_not_called()
+    mock_serializer.save_data_async.assert_not_called()
 
 
 async def test_downloads_when_cache_miss_and_writes_bytes():
@@ -77,8 +77,8 @@ async def test_downloads_when_cache_miss_and_writes_bytes():
     assert mock_request.call_args.kwargs["endpoint_uri"] == "https://example.com/image.png"
     assert mock_request.call_args.kwargs["method"] == "GET"
 
-    mock_serializer.save_data.assert_called_once()
-    save_kwargs = mock_serializer.save_data.call_args.kwargs
+    mock_serializer.save_data_async.assert_called_once()
+    save_kwargs = mock_serializer.save_data_async.call_args.kwargs
     assert save_kwargs["data"] == b"fake-image-bytes"
     assert save_kwargs["output_filename"] == "test_image"
 
@@ -103,9 +103,9 @@ async def test_image_bytes_path_skips_network_call():
         )
 
     mock_request.assert_not_called()
-    mock_serializer.save_data.assert_called_once()
-    assert mock_serializer.save_data.call_args.kwargs["data"] == b"raw-pil-bytes"
-    assert mock_serializer.save_data.call_args.kwargs["output_filename"] == "bytes_image"
+    mock_serializer.save_data_async.assert_called_once()
+    assert mock_serializer.save_data_async.call_args.kwargs["data"] == b"raw-pil-bytes"
+    assert mock_serializer.save_data_async.call_args.kwargs["output_filename"] == "bytes_image"
 
 
 async def test_raises_value_error_when_neither_url_nor_bytes_provided():
@@ -150,7 +150,7 @@ async def test_propagates_http_failures():
                 image_url="https://example.com/img.png",
             )
 
-    mock_serializer.save_data.assert_not_called()
+    mock_serializer.save_data_async.assert_not_called()
 
 
 async def test_passes_custom_headers_timeout_and_redirects_to_http_client():
@@ -186,7 +186,9 @@ async def test_passes_custom_headers_timeout_and_redirects_to_http_client():
 
 async def test_path_exists_failure_is_logged_and_treated_as_cache_miss():
     mock_serializer = _make_mock_serializer(exists=False)
-    mock_serializer._memory.results_storage_io.path_exists = AsyncMock(side_effect=Exception("storage IO unavailable"))
+    mock_serializer._memory.results_storage_io.path_exists_async = AsyncMock(
+        side_effect=Exception("storage IO unavailable")
+    )
 
     mock_response = MagicMock()
     mock_response.content = b"bytes"
@@ -208,4 +210,4 @@ async def test_path_exists_failure_is_logged_and_treated_as_cache_miss():
 
     # Treated as cache miss: fetch happens and save runs.
     mock_request.assert_called_once()
-    mock_serializer.save_data.assert_called_once()
+    mock_serializer.save_data_async.assert_called_once()

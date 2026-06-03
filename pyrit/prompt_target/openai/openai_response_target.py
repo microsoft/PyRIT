@@ -218,7 +218,7 @@ class OpenAIResponseTarget(OpenAITarget):
             "api.openai.com": "https://api.openai.com/v1",
         }
 
-    async def _construct_input_item_from_piece(self, piece: MessagePiece) -> dict[str, Any]:
+    async def _construct_input_item_from_piece_async(self, piece: MessagePiece) -> dict[str, Any]:
         """
         Convert a single inline piece into a Responses API content item.
 
@@ -293,7 +293,7 @@ class OpenAIResponseTarget(OpenAITarget):
 
                 # Inline content (text/images) - accumulate in content list
                 if dtype in {"text", "image_path"}:
-                    content.append(await self._construct_input_item_from_piece(piece))
+                    content.append(await self._construct_input_item_from_piece_async(piece))
                     continue
 
                 # Top-level artifacts - emit as standalone items
@@ -358,7 +358,7 @@ class OpenAIResponseTarget(OpenAITarget):
 
         return input_items
 
-    async def _construct_request_body(
+    async def _construct_request_body_async(
         self, *, conversation: MutableSequence[Message], json_config: _JsonResponseConfig
     ) -> dict[str, Any]:
         """
@@ -529,7 +529,7 @@ class OpenAIResponseTarget(OpenAITarget):
 
         return None
 
-    async def _construct_message_from_response(self, response: Any, request: MessagePiece) -> Message:
+    async def _construct_message_from_response_async(self, response: Any, request: MessagePiece) -> Message:
         """
         Construct a Message from a Response API response.
 
@@ -589,10 +589,10 @@ class OpenAIResponseTarget(OpenAITarget):
         while True:
             logger.info(f"Sending conversation with {len(working_conversation)} messages to the prompt target")
 
-            body = await self._construct_request_body(conversation=working_conversation, json_config=json_config)
+            body = await self._construct_request_body_async(conversation=working_conversation, json_config=json_config)
 
             # Use unified error handling - automatically detects Response and validates
-            result = await self._handle_openai_request(
+            result = await self._handle_openai_request_async(
                 api_call=lambda body=body: self._client.responses.create(**body),
                 request=message,
             )
@@ -609,7 +609,7 @@ class OpenAIResponseTarget(OpenAITarget):
                 break
 
             # Execute the tool/function
-            tool_output = await self._execute_call_section(tool_call_section)
+            tool_output = await self._execute_call_section_async(tool_call_section)
 
             # Create a new message with the tool output
             tool_piece = self._make_tool_piece(tool_output, tool_call_section["call_id"], reference_piece=message_piece)
@@ -749,7 +749,7 @@ class OpenAIResponseTarget(OpenAITarget):
                     return cast("dict[str, Any]", section)
         return None
 
-    async def _execute_call_section(self, tool_call_section: dict[str, Any]) -> dict[str, Any]:
+    async def _execute_call_section_async(self, tool_call_section: dict[str, Any]) -> dict[str, Any]:
         """
         Execute a function_call from the custom_functions registry.
 

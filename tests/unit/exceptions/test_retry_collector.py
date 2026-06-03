@@ -95,12 +95,12 @@ class TestRetryCollector:
         async def task_a() -> None:
             c = RetryCollector()
             set_retry_collector(c)
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0)
             results["a_has_collector"] = get_retry_collector() is c
             clear_retry_collector()
 
         async def task_b() -> None:
-            await asyncio.sleep(0.005)
+            await asyncio.sleep(0)
             results["b_sees_none"] = get_retry_collector() is None
 
         async def run() -> None:
