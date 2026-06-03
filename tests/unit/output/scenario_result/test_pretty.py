@@ -35,7 +35,7 @@ def _scenario_result(
         objective_target_identifier=_target_identifier(**(target_params or {})),
         attack_results=attack_results or {"strategy_a": [_attack_result()]},
         objective_scorer_identifier=objective_scorer_identifier,
-        display_group_map=display_group_map,
+        display_group_map=display_group_map or {},
     )
 
 
