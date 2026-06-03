@@ -998,6 +998,29 @@ class TestPromptGeneration:
         with pytest.raises(InvalidJsonException, match="Unexpected keys"):
             attack._parse_adversarial_response(response_with_extra)
 
+    def test_parse_adversarial_response_accepts_rationale_behind_question_alias(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+    ) -> None:
+        """``rationale_behind_question`` is accepted as an alias for ``rationale_behind_jailbreak``.
+
+        Some models return this key on early turns where no jailbreak attempt has been made yet.
+        """
+        attack = CrescendoTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+        )
+        response = (
+            '{"generated_question": "What is chemistry?", '
+            '"last_response_summary": "", '
+            '"rationale_behind_question": "Starting with a benign question"}'
+        )
+
+        result = attack._parse_adversarial_response(response)
+
+        assert result == "What is chemistry?"
+
     async def test_custom_message_is_sent_to_target(
         self,
         mock_objective_target: MagicMock,

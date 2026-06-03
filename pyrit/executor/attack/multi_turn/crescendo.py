@@ -572,7 +572,10 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Crescendo system prompts specify a snake_case JSON schema, but some
         backends drift to camelCase (``generatedQuestion`` instead of
         ``generated_question``); accepting both prevents the attack from
-        burning all its retries on a casing mismatch.
+        burning all its retries on a casing mismatch. Additionally,
+        ``rationale_behind_question`` is accepted as an alias for
+        ``rationale_behind_jailbreak`` — some models use the former on
+        early turns where no jailbreak attempt has been made yet.
 
         Args:
             response_text (str): The response text to parse.
@@ -584,11 +587,16 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             InvalidJsonException: If the response is not valid JSON or missing required keys.
         """
         expected_keys = {"generated_question", "rationale_behind_jailbreak", "last_response_summary"}
+        _KEY_ALIASES = {"rationale_behind_question": "rationale_behind_jailbreak"}
 
         try:
             parsed_output = json.loads(response_text)
 
             normalized_output = {self._camel_to_snake(key): value for key, value in parsed_output.items()}
+
+            for alias, canonical in _KEY_ALIASES.items():
+                if alias in normalized_output and canonical not in normalized_output:
+                    normalized_output[canonical] = normalized_output.pop(alias)
 
             missing_keys = expected_keys - set(normalized_output.keys())
             if missing_keys:
