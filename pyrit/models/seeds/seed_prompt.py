@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
 from tinytag import TinyTag
 
@@ -34,17 +34,17 @@ class SeedPrompt(Seed):
 
     # The type of data this prompt represents (e.g., text, image_path, audio_path, video_path)
     # This field shadows the base class property to allow per-prompt data types
-    data_type: Optional[PromptDataType] = None
+    data_type: PromptDataType | None = None
 
     # Role of the prompt in a conversation (e.g., "user", "assistant")
-    role: Optional[ChatMessageRole] = None
+    role: ChatMessageRole | None = None
 
     # Sequence number for ordering prompts in a conversation, prompts with
     # the same sequence number are grouped together if they also share the same prompt_group_id
     sequence: int = 0
 
     # Parameters that can be used in the prompt template
-    parameters: Optional[Sequence[str]] = field(default_factory=list)
+    parameters: Sequence[str] | None = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """
@@ -126,9 +126,9 @@ class SeedPrompt(Seed):
     @classmethod
     def from_yaml_with_required_parameters(
         cls,
-        template_path: Union[str, Path],
+        template_path: str | Path,
         required_parameters: list[str],
-        error_message: Optional[str] = None,
+        error_message: str | None = None,
     ) -> SeedPrompt:
         """
         Load a Seed from a YAML file and validate that it contains specific parameters.
@@ -159,7 +159,7 @@ class SeedPrompt(Seed):
         messages: list[Message],
         *,
         starting_sequence: int = 0,
-        prompt_group_id: Optional[uuid.UUID] = None,
+        prompt_group_id: uuid.UUID | None = None,
     ) -> list[SeedPrompt]:
         """
         Convert a list of Messages to a list of SeedPrompts.

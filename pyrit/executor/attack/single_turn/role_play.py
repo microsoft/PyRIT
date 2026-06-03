@@ -4,7 +4,7 @@
 import enum
 import logging
 import pathlib
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -68,9 +68,9 @@ class RolePlayAttack(PromptSendingAttack):
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
         role_play_definition_path: pathlib.Path,
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         max_attempts_on_failure: int = 0,
     ) -> None:
         """
@@ -157,7 +157,7 @@ class RolePlayAttack(PromptSendingAttack):
         result = await converter.convert_async(prompt=objective, input_type="text")
         return result.output_text
 
-    async def _get_conversation_start_async(self) -> Optional[list[Message]]:
+    async def _get_conversation_start_async(self) -> list[Message] | None:
         """
         Get the role-play conversation start messages.
 

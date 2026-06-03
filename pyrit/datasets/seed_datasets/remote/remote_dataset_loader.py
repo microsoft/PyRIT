@@ -13,7 +13,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import fields
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, Optional, TextIO, cast
+from typing import Any, Literal, TextIO, cast
 from urllib.parse import urlparse
 
 import requests
@@ -288,10 +288,10 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         self,
         *,
         dataset_name: str,
-        config: Optional[str] = None,
-        split: Optional[str] = None,
+        config: str | None = None,
+        split: str | None = None,
         cache: bool = True,
-        token: Optional[str] = None,
+        token: str | None = None,
         **kwargs: Any,
     ) -> Any:
         """
@@ -356,7 +356,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             logger.error(f"Failed to load HuggingFace dataset {dataset_name}: {e}")
             raise
 
-    async def _parse_metadata_async(self) -> Optional[SeedDatasetMetadata]:
+    async def _parse_metadata_async(self) -> SeedDatasetMetadata | None:
         """
         Extract metadata from class attributes, wrap in sets, and format into SeedDatasetMetadata.
 
@@ -423,7 +423,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
 
         def _download_and_parse() -> dict[str, list[dict[str, Any]]]:
             zip_path: Path
-            temp_to_clean: Optional[Path] = None
+            temp_to_clean: Path | None = None
             if cache and cache_path.exists():
                 zip_path = cache_path
             else:

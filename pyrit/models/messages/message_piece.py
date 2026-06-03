@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from pydantic import (
@@ -102,20 +102,20 @@ class MessagePiece(BaseModel):
     timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
     original_value: str
     original_value_data_type: PromptDataType = "text"
-    original_value_sha256: Optional[str] = None
+    original_value_sha256: str | None = None
     converted_value: str = ""
     converted_value_data_type: PromptDataType = "text"
-    converted_value_sha256: Optional[str] = None
+    converted_value_sha256: str | None = None
     response_error: PromptResponseError = "none"
     originator: Literal["attack", "converter", "undefined", "scorer"] = "undefined"
-    original_prompt_id: Optional[uuid.UUID] = None
+    original_prompt_id: uuid.UUID | None = None
     labels: dict[str, Any] = Field(default_factory=dict)
     targeted_harm_categories: list[str] = Field(default_factory=list)
     prompt_metadata: dict[str, Any] = Field(default_factory=dict)
     converter_identifiers: list[ComponentIdentifierField] = Field(default_factory=list)
-    prompt_target_identifier: Optional[ComponentIdentifierField] = None
-    attack_identifier: Optional[ComponentIdentifierField] = None
-    scorer_identifier: Optional[ComponentIdentifierField] = None
+    prompt_target_identifier: ComponentIdentifierField | None = None
+    attack_identifier: ComponentIdentifierField | None = None
+    scorer_identifier: ComponentIdentifierField | None = None
     scores: list[Score] = Field(default_factory=list)
 
     # When True, the memory layer skips persisting this piece. Used for ephemeral

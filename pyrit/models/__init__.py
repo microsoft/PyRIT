@@ -62,7 +62,14 @@ from pyrit.models.identifiers import (
     snake_case_to_class_name,
     validate_registry_name,
 )
-from pyrit.models.literals import ChatMessageRole, Modality, PromptDataType, PromptResponseError, SeedType
+from pyrit.models.literals import (
+    MEDIA_PATH_DATA_TYPES,
+    ChatMessageRole,
+    Modality,
+    PromptDataType,
+    PromptResponseError,
+    SeedType,
+)
 from pyrit.models.messages import (
     Message,
     MessagePiece,
@@ -141,6 +148,7 @@ __all__ = [
     "IdentifierFilter",
     "IdentifierType",
     "ImagePathDataTypeSerializer",
+    "MEDIA_PATH_DATA_TYPES",
     "Message",
     "MessagePiece",
     "Modality",

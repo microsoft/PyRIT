@@ -615,18 +615,23 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         placeholders = ", ".join(f":cid{i}" for i in range(len(conversation_ids)))
         params = {f"cid{i}": cid for i, cid in enumerate(conversation_ids)}
 
-        max_len = ConversationStats.PREVIEW_MAX_LEN
         sql = text(
             f"""
             SELECT
                 pme.conversation_id,
                 COUNT(DISTINCT pme.sequence) AS msg_count,
                 (
-                    SELECT TOP 1 LEFT(p2.converted_value, {max_len + 3})
+                    SELECT TOP 1 LEFT(p2.converted_value, {ConversationStats.PREVIEW_FETCH_MAX_LEN})
                     FROM "PromptMemoryEntries" p2
                     WHERE p2.conversation_id = pme.conversation_id
                     ORDER BY p2.sequence DESC, p2.id DESC
                 ) AS last_preview,
+                (
+                    SELECT TOP 1 p2b.converted_value_data_type
+                    FROM "PromptMemoryEntries" p2b
+                    WHERE p2b.conversation_id = pme.conversation_id
+                    ORDER BY p2b.sequence DESC, p2b.id DESC
+                ) AS last_data_type,
                 (
                     SELECT TOP 1 p3.labels
                     FROM "PromptMemoryEntries" p3
@@ -648,11 +653,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         result: dict[str, ConversationStats] = {}
         for row in rows:
-            conv_id, msg_count, last_preview, raw_labels, raw_created_at = row
-
-            preview = None
-            if last_preview:
-                preview = last_preview[:max_len] + "..." if len(last_preview) > max_len else last_preview
+            conv_id, msg_count, last_preview, last_data_type, raw_labels, raw_created_at = row
 
             labels: dict[str, str] = {}
             if raw_labels and raw_labels not in ("null", "{}"):
@@ -668,7 +669,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
             result[conv_id] = ConversationStats(
                 message_count=msg_count,
-                last_message_preview=preview,
+                last_message_preview=last_preview,
+                last_message_data_type=last_data_type,
                 labels=labels,
                 created_at=created_at,
             )
