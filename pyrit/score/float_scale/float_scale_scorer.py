@@ -5,8 +5,7 @@ from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, PromptDataType, Score, UnvalidatedScore
+from pyrit.models import ComponentIdentifier, Message, PromptDataType, Score, UnvalidatedScore
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -131,7 +130,7 @@ class FloatScaleScorer(Scorer):
             harm_category=self.evaluation_file_mapping.harm_category,
         )
 
-    async def _score_value_with_llm(
+    async def _score_value_with_llm_async(
         self,
         *,
         prompt_target: PromptTarget,
@@ -151,7 +150,7 @@ class FloatScaleScorer(Scorer):
     ) -> UnvalidatedScore:
         score: UnvalidatedScore | None = None
         try:
-            score = await super()._score_value_with_llm(
+            score = await super()._score_value_with_llm_async(
                 prompt_target=prompt_target,
                 system_prompt=system_prompt,
                 message_value=message_value,

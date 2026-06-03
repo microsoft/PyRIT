@@ -8,8 +8,8 @@ SeedPrompt class for representing seed prompts with role and sequence informatio
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Union
 
 from tinytag import TinyTag
@@ -21,7 +21,6 @@ from pyrit.models.seeds.seed import Seed
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
-    from pathlib import Path
 
     from pyrit.models import Message
     from pyrit.models.literals import ChatMessageRole, PromptDataType
@@ -65,8 +64,15 @@ class SeedPrompt(Seed):
         if not self.data_type:
             # If data_type is not provided, infer it from the value
             # Note: Does not assign 'error' or 'url' implicitly
-            if os.path.isfile(self.value):
-                _, ext = os.path.splitext(self.value)
+            # Guard against OSError / ValueError so values that aren't valid path
+            # strings (too long, null bytes, etc.) are treated as text, matching
+            # the prior os.path.isfile semantics.
+            try:
+                is_file = Path(self.value).is_file()
+            except (OSError, ValueError):
+                is_file = False
+            if is_file:
+                ext = Path(self.value).suffix
                 ext = ext.lstrip(".").lower()
                 if ext in ["mp4", "avi", "mov", "mkv", "ogv", "flv", "wmv", "webm"]:
                     self.data_type = "video_path"

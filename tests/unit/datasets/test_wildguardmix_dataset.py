@@ -106,7 +106,7 @@ class TestWildGuardMixDataset:
     async def test_fetch_default_concatenates_both_splits(self):
         loader = _WildGuardMixDataset()
         mock = AsyncMock(side_effect=[_train_rows(), _test_rows()])
-        with patch.object(loader, "_fetch_from_huggingface", new=mock):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=mock):
             dataset = await loader.fetch_dataset_async()
 
         assert isinstance(dataset, SeedDataset)
@@ -131,7 +131,7 @@ class TestWildGuardMixDataset:
     async def test_splits_train_only(self):
         loader = _WildGuardMixDataset(splits=[WildGuardMixSplit.TRAIN])
         mock = AsyncMock(return_value=_train_rows())
-        with patch.object(loader, "_fetch_from_huggingface", new=mock):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=mock):
             dataset = await loader.fetch_dataset_async()
 
         assert mock.call_count == 1
@@ -145,7 +145,7 @@ class TestWildGuardMixDataset:
     async def test_splits_test_only(self):
         loader = _WildGuardMixDataset(splits=[WildGuardMixSplit.TEST])
         mock = AsyncMock(return_value=_test_rows())
-        with patch.object(loader, "_fetch_from_huggingface", new=mock):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=mock):
             dataset = await loader.fetch_dataset_async()
 
         assert mock.call_count == 1
@@ -162,7 +162,7 @@ class TestWildGuardMixDataset:
             prompt_harm_labels=[WildGuardMixPromptHarmLabel.UNHARMFUL],
             adversarial=[WildGuardMixAdversarial.ADVERSARIAL, WildGuardMixAdversarial.VANILLA],
         )
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=_test_rows())):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=_test_rows())):
             dataset = await loader.fetch_dataset_async()
 
         assert len(dataset.seeds) == 1
@@ -173,7 +173,7 @@ class TestWildGuardMixDataset:
             splits=[WildGuardMixSplit.TEST],
             adversarial=[WildGuardMixAdversarial.VANILLA],
         )
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=_test_rows())):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=_test_rows())):
             dataset = await loader.fetch_dataset_async()
 
         # Test row[0] is harmful + vanilla => 1 seed; row[1] (adversarial) excluded
@@ -182,7 +182,7 @@ class TestWildGuardMixDataset:
 
     async def test_prompt_only_false_keeps_train_response_rows(self):
         loader = _WildGuardMixDataset(splits=[WildGuardMixSplit.TRAIN], prompt_only=False)
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=_train_rows())):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=_train_rows())):
             dataset = await loader.fetch_dataset_async()
 
         # Default adversarial filter keeps rows 0 and 2 (both adv+harmful); row 3 (vanilla)
@@ -193,7 +193,7 @@ class TestWildGuardMixDataset:
 
     async def test_seed_fields_propagate(self):
         loader = _WildGuardMixDataset(splits=[WildGuardMixSplit.TEST])
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=_test_rows())):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=_test_rows())):
             dataset = await loader.fetch_dataset_async()
 
         # Default adversarial filter keeps only test row[1] ("Test-only adversarial harmful.")
@@ -221,7 +221,7 @@ class TestWildGuardMixDataset:
             adversarial=[WildGuardMixAdversarial.VANILLA],
         )
         rows_with_no_match = [_test_rows()[1]]  # adversarial harmful — not vanilla
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows_with_no_match)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows_with_no_match)):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
                 await loader.fetch_dataset_async()
 
@@ -271,6 +271,6 @@ class TestWildGuardMixDataset:
     async def test_token_forwarded_to_hf_fetch(self):
         loader = _WildGuardMixDataset(splits=[WildGuardMixSplit.TEST], token="fwd-token")
         mock = AsyncMock(return_value=_test_rows())
-        with patch.object(loader, "_fetch_from_huggingface", new=mock):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=mock):
             await loader.fetch_dataset_async()
         assert mock.call_args.kwargs["token"] == "fwd-token"

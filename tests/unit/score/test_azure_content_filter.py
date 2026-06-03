@@ -78,7 +78,7 @@ async def test_score_piece_async_image(patch_central_database, image_message_pie
     # Patch _get_base64_image_data to avoid actual file IO
     # Return a valid base64 string (represents a tiny 1x1 PNG image)
     valid_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-    with patch.object(scorer, "_get_base64_image_data", AsyncMock(return_value=valid_base64)):
+    with patch.object(scorer, "_get_base64_image_data_async", AsyncMock(return_value=valid_base64)):
         scores = await scorer._score_piece_async(image_message_piece)
     assert len(scores) == 1
     score = scores[0]
@@ -90,6 +90,30 @@ async def test_score_piece_async_image(patch_central_database, image_message_pie
     assert "AzureContentFilterScorer" in str(score.scorer_class_identifier)
     assert "AzureContentFilterScorer" in str(score.scorer_class_identifier)
     os.remove(image_message_piece.converted_value)
+
+
+async def test_get_base64_image_data_async_returns_serializer_base64(patch_central_database):
+    scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
+
+    piece = MessagePiece(
+        role="user",
+        original_value="image.png",
+        converted_value="image.png",
+        converted_value_data_type="image_path",
+    )
+
+    mock_serializer = MagicMock()
+    mock_serializer.read_data_base64_async = AsyncMock(return_value="ZmFrZS1iYXNlNjQ=")
+
+    with patch(
+        "pyrit.score.float_scale.azure_content_filter_scorer.data_serializer_factory",
+        return_value=mock_serializer,
+    ) as mock_factory:
+        result = await scorer._get_base64_image_data_async(piece)
+
+    assert result == "ZmFrZS1iYXNlNjQ="
+    mock_factory.assert_called_once()
+    mock_serializer.read_data_base64_async.assert_awaited_once()
 
 
 def test_default_category():

@@ -36,7 +36,7 @@ async def convert_local_image_to_data_url_async(image_path: str) -> str:
     image_serializer = data_serializer_factory(
         category="prompt-memory-entries", value=image_path, data_type="image_path", extension=ext
     )
-    base64_encoded_data = await image_serializer.read_data_base64()
+    base64_encoded_data = await image_serializer.read_data_base64_async()
     # Azure OpenAI documentation doesn't specify the local image upload format for API.
     # GPT-4o image upload format is determined using "view code" functionality in Azure OpenAI deployments
     # The image upload format is same as GPT-4 Turbo.
@@ -45,7 +45,7 @@ async def convert_local_image_to_data_url_async(image_path: str) -> str:
     return f"data:{mime_type};base64,{base64_encoded_data}"
 
 
-async def convert_local_image_to_data_url(image_path: str) -> str:
+async def convert_local_image_to_data_url(image_path: str) -> str:  # pyrit-async-suffix-exempt
     """
     Delegate to ``convert_local_image_to_data_url_async`` (deprecated alias).
 

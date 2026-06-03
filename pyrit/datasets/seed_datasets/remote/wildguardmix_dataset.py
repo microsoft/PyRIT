@@ -173,7 +173,7 @@ class _WildGuardMixDataset(_RemoteDatasetLoader):
 
         seed_prompts: list[SeedPrompt] = []
         for split in self.splits:
-            rows = await self._fetch_from_huggingface(
+            rows = await self._fetch_from_huggingface_async(
                 dataset_name=_HF_REPO_ID,
                 config=split.value,
                 split=_CONFIG_TO_HF_SPLIT[split.value],

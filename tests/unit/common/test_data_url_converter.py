@@ -40,7 +40,7 @@ async def test_convert_returns_data_url():
         tmp = f.name
     try:
         mock_serializer = AsyncMock()
-        mock_serializer.read_data_base64 = AsyncMock(return_value="AAAA")
+        mock_serializer.read_data_base64_async = AsyncMock(return_value="AAAA")
 
         with patch("pyrit.common.data_url_converter.data_serializer_factory", return_value=mock_serializer):
             result = await convert_local_image_to_data_url_async(tmp)
@@ -56,7 +56,7 @@ async def test_deprecated_alias_emits_warning_and_delegates():
         tmp = f.name
     try:
         mock_serializer = AsyncMock()
-        mock_serializer.read_data_base64 = AsyncMock(return_value="AAAA")
+        mock_serializer.read_data_base64_async = AsyncMock(return_value="AAAA")
 
         with patch("pyrit.common.data_url_converter.data_serializer_factory", return_value=mock_serializer):
             with pytest.warns(DeprecationWarning, match="convert_local_image_to_data_url"):

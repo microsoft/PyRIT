@@ -68,7 +68,7 @@ def _parse_labels(label_params: Optional[list[str]]) -> Optional[dict[str, str |
     "",
     response_model=AttackListResponse,
 )
-async def list_attacks(
+async def list_attacks(  # pyrit-async-suffix-exempt
     attack_types: Optional[list[str]] = Query(
         None,
         description="Filter by attack type names. May be specified multiple times to OR-match "
@@ -147,7 +147,7 @@ async def list_attacks(
     "/attack-options",
     response_model=AttackOptionsResponse,
 )
-async def get_attack_options() -> AttackOptionsResponse:
+async def get_attack_options() -> AttackOptionsResponse:  # pyrit-async-suffix-exempt
     """
     Get unique attack type names used across all attacks.
 
@@ -166,7 +166,7 @@ async def get_attack_options() -> AttackOptionsResponse:
     "/converter-options",
     response_model=ConverterOptionsResponse,
 )
-async def get_converter_options() -> ConverterOptionsResponse:
+async def get_converter_options() -> ConverterOptionsResponse:  # pyrit-async-suffix-exempt
     """
     Get unique converter type names used across all attacks.
 
@@ -191,7 +191,7 @@ async def get_converter_options() -> ConverterOptionsResponse:
         422: {"model": ProblemDetail, "description": "Validation error"},
     },
 )
-async def create_attack(request: CreateAttackRequest) -> CreateAttackResponse:
+async def create_attack(request: CreateAttackRequest) -> CreateAttackResponse:  # pyrit-async-suffix-exempt
     """
     Create a new attack.
 
@@ -219,7 +219,7 @@ async def create_attack(request: CreateAttackRequest) -> CreateAttackResponse:
         404: {"model": ProblemDetail, "description": "Attack not found"},
     },
 )
-async def get_attack(attack_result_id: str) -> AttackSummary:
+async def get_attack(attack_result_id: str) -> AttackSummary:  # pyrit-async-suffix-exempt
     """
     Get attack details.
 
@@ -247,7 +247,7 @@ async def get_attack(attack_result_id: str) -> AttackSummary:
         404: {"model": ProblemDetail, "description": "Attack not found"},
     },
 )
-async def update_attack(
+async def update_attack(  # pyrit-async-suffix-exempt
     attack_result_id: str,
     request: UpdateAttackRequest,
 ) -> AttackSummary:
@@ -279,7 +279,7 @@ async def update_attack(
         404: {"model": ProblemDetail, "description": "Attack or conversation not found"},
     },
 )
-async def get_conversation_messages(
+async def get_conversation_messages(  # pyrit-async-suffix-exempt
     attack_result_id: str,
     conversation_id: str = Query(..., description="The conversation_id whose messages to return"),
 ) -> ConversationMessagesResponse:
@@ -320,7 +320,7 @@ async def get_conversation_messages(
         404: {"model": ProblemDetail, "description": "Attack not found"},
     },
 )
-async def get_conversations(attack_result_id: str) -> AttackConversationsResponse:
+async def get_conversations(attack_result_id: str) -> AttackConversationsResponse:  # pyrit-async-suffix-exempt
     """
     Get all conversations belonging to an attack.
 
@@ -351,7 +351,7 @@ async def get_conversations(attack_result_id: str) -> AttackConversationsRespons
         400: {"model": ProblemDetail, "description": "Invalid request"},
     },
 )
-async def create_related_conversation(
+async def create_related_conversation(  # pyrit-async-suffix-exempt
     attack_result_id: str,
     request: CreateConversationRequest,
 ) -> CreateConversationResponse:
@@ -394,7 +394,7 @@ async def create_related_conversation(
         400: {"model": ProblemDetail, "description": "Invalid conversation"},
     },
 )
-async def update_main_conversation(
+async def update_main_conversation(  # pyrit-async-suffix-exempt
     attack_result_id: str,
     request: UpdateMainConversationRequest,
 ) -> UpdateMainConversationResponse:
@@ -437,7 +437,7 @@ async def update_main_conversation(
         400: {"model": ProblemDetail, "description": "Message send failed"},
     },
 )
-async def add_message(
+async def add_message(  # pyrit-async-suffix-exempt
     attack_result_id: str,
     request: AddMessageRequest,
 ) -> AddMessageResponse:

@@ -88,7 +88,7 @@ class TestTrustAIRLabInTheWildJailbreakDataset:
     async def test_fetch_default_includes_all_platforms(self):
         loader = _TrustAIRLabInTheWildJailbreakDataset()
         mock = AsyncMock(return_value=_mock_rows())
-        with patch.object(loader, "_fetch_from_huggingface", new=mock):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=mock):
             dataset = await loader.fetch_dataset_async()
 
         assert isinstance(dataset, SeedDataset)
@@ -101,7 +101,7 @@ class TestTrustAIRLabInTheWildJailbreakDataset:
 
     async def test_filter_by_platform_discord_only(self):
         loader = _TrustAIRLabInTheWildJailbreakDataset(platforms=[TrustAIRLabPlatform.DISCORD])
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=_mock_rows())):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=_mock_rows())):
             dataset = await loader.fetch_dataset_async()
 
         assert len(dataset.seeds) == 3  # rows 0, 1, 4 (Discord)
@@ -111,7 +111,7 @@ class TestTrustAIRLabInTheWildJailbreakDataset:
         loader = _TrustAIRLabInTheWildJailbreakDataset(
             platforms=[TrustAIRLabPlatform.REDDIT, TrustAIRLabPlatform.WEBSITE]
         )
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=_mock_rows())):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=_mock_rows())):
             dataset = await loader.fetch_dataset_async()
 
         assert len(dataset.seeds) == 2  # rows 2 (reddit) and 3 (website)
@@ -120,7 +120,7 @@ class TestTrustAIRLabInTheWildJailbreakDataset:
 
     async def test_deduplicate_drops_duplicate_prompts(self):
         loader = _TrustAIRLabInTheWildJailbreakDataset(deduplicate=True)
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=_mock_rows())):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=_mock_rows())):
             dataset = await loader.fetch_dataset_async()
 
         # Row 4 is an exact duplicate of row 0 => dedup drops it => 4 seeds
@@ -130,7 +130,7 @@ class TestTrustAIRLabInTheWildJailbreakDataset:
 
     async def test_source_community_falls_back_to_source(self):
         loader = _TrustAIRLabInTheWildJailbreakDataset(platforms=[TrustAIRLabPlatform.DISCORD])
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=_mock_rows())):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=_mock_rows())):
             dataset = await loader.fetch_dataset_async()
 
         # Row 1 has community=None => falls back to row["source"] = "LLM Promptwriting"
@@ -143,7 +143,7 @@ class TestTrustAIRLabInTheWildJailbreakDataset:
 
     async def test_seed_fields_propagate(self):
         loader = _TrustAIRLabInTheWildJailbreakDataset(platforms=[TrustAIRLabPlatform.DISCORD])
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=_mock_rows())):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=_mock_rows())):
             dataset = await loader.fetch_dataset_async()
 
         seed = dataset.seeds[0]
@@ -158,7 +158,7 @@ class TestTrustAIRLabInTheWildJailbreakDataset:
         # Mock rows where all are discord; filter to reddit only => empty
         loader = _TrustAIRLabInTheWildJailbreakDataset(platforms=[TrustAIRLabPlatform.REDDIT])
         rows_with_no_reddit = [r for r in _mock_rows() if r["platform"] != "reddit"]
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=rows_with_no_reddit)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows_with_no_reddit)):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
                 await loader.fetch_dataset_async()
 

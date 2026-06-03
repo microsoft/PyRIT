@@ -105,7 +105,7 @@ class _TrustAIRLabInTheWildJailbreakDataset(_RemoteDatasetLoader):
             f"(platforms={[p.value for p in self.platforms]}, deduplicate={self.deduplicate})"
         )
 
-        rows = await self._fetch_from_huggingface(
+        rows = await self._fetch_from_huggingface_async(
             dataset_name=_HF_REPO_ID,
             config=_CONFIG,
             split="train",
