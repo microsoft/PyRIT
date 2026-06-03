@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 8. Scorer Metrics
+# # Scorer Metrics
 #
 # This demo will walk you through how to measure and gauge performance of PyRIT scoring configurations, both harm scorers and objective scorers.
 #

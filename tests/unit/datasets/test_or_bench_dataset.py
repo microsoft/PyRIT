@@ -94,3 +94,10 @@ class TestORBenchToxicDataset:
         """Test dataset_name property."""
         loader = _ORBenchToxicDataset()
         assert loader.dataset_name == "or_bench_toxic"
+
+
+def test_split_kwarg_emits_deprecation_warning():
+    """All OR-Bench loaders inherit the deprecated ``split`` kwarg from the base class."""
+    for cls in (_ORBench80KDataset, _ORBenchHardDataset, _ORBenchToxicDataset):
+        with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
+            cls(split="train")
