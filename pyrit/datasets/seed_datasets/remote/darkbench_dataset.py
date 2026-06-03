@@ -99,6 +99,7 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
                     "Jinsuk Park",
                     "Mateusz Maria Jurewicz",
                 ],
+                groups=["Apart Research", "METR"],
             )
             for item in data
         ]

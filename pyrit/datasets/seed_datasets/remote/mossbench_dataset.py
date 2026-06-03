@@ -123,6 +123,11 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         "Minhao Cheng",
         "Cho-Jui Hsieh",
     )
+    GROUPS: tuple[str, ...] = (
+        "University of California, Los Angeles",
+        "University of Maryland",
+        "Pennsylvania State University",
+    )
 
     tags: frozenset[str] = frozenset({"default", "safety", "multimodal", "refusal"})
     size: str = "medium"
@@ -321,6 +326,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
             harm_categories=[oversensitivity_type.value],
             description=self.DESCRIPTION,
             authors=list(self.AUTHORS),
+            groups=list(self.GROUPS),
             source=self.PAPER_URL,
             prompt_group_id=group_id,
             sequence=0,
@@ -335,6 +341,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
             harm_categories=[oversensitivity_type.value],
             description=self.DESCRIPTION,
             authors=list(self.AUTHORS),
+            groups=list(self.GROUPS),
             source=self.PAPER_URL,
             prompt_group_id=group_id,
             sequence=0,

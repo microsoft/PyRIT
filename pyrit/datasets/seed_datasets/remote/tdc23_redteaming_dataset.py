@@ -10,6 +10,26 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = [
+    "Mantas Mazeika",
+    "Andy Zou",
+    "Norman Mu",
+    "Long Phan",
+    "Zifan Wang",
+    "Chunru Yu",
+    "Adam Khoja",
+    "Fengqing Jiang",
+    "Aidan O'Gara",
+    "Ellie Sakhaee",
+    "Zhen Xiang",
+    "Arezoo Rajabi",
+    "Dan Hendrycks",
+    "Radha Poovendran",
+    "Bo Li",
+    "David Forsyth",
+]
+_GROUPS = ["Center for AI Safety"]
+
 
 class _TDC23RedteamingDataset(_RemoteDatasetLoader):
     """
@@ -76,6 +96,8 @@ class _TDC23RedteamingDataset(_RemoteDatasetLoader):
                     "in the style of writing narratives."
                 ),
                 source=f"https://huggingface.co/datasets/{self.source}",
+                authors=_AUTHORS,
+                groups=_GROUPS,
             )
             for item in data
         ]

@@ -234,6 +234,7 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
         )
 
         authors = ["Kuan-Hsin Lin", "ATR Community"]
+        groups = ["ATR Project"]
         source_url = "https://github.com/Agent-Threat-Rule/agent-threat-rules"
 
         seeds: list[SeedPrompt] = []
@@ -289,6 +290,7 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
                     harm_categories=[category_value],
                     description=description,
                     authors=authors,
+                    groups=groups,
                     source=source_url,
                     metadata=metadata,
                 )

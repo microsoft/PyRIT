@@ -95,6 +95,13 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
                 ),
                 source="https://github.com/centerforaisafety/HarmBench",
                 authors=["Mantas Mazeika", "Long Phan", "Xuwang Yin", "Andy Zou", "Zifan Wang", "Norman Mu"],
+                groups=[
+                    "University of Illinois Urbana-Champaign",
+                    "Center for AI Safety",
+                    "Carnegie Mellon University",
+                    "University of California, Berkeley",
+                    "Microsoft",
+                ],
             )
             seeds.append(seed_prompt)
 

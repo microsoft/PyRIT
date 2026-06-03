@@ -72,6 +72,7 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
         )
 
         authors = ["Xinyue Shen", "Zeyuan Chen", "Michael Backes", "Yun Shen", "Yang Zhang"]
+        groups = ["CISPA Helmholtz Center for Information Security", "NetApp"]
         description = """This is the Forbidden Question Set dataset proposed in the ACM CCS 2024 paper
 "Do Anything Now": Characterizing and Evaluating In-The-Wild Jailbreak Prompts on Large Language Models.
 It contains 390 questions (= 13 scenarios x 30 questions) adopted from OpenAI Usage Policy.
@@ -85,6 +86,7 @@ Financial Advice, Health Consultation, and Government Decision."""
                 data_type="text",
                 dataset_name=self.dataset_name,
                 authors=authors,
+                groups=groups,
                 harm_categories=item["content_policy_name"],
                 source="https://huggingface.co/datasets/TrustAIRLab/forbidden_question_set",
                 description=description,

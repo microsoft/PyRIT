@@ -128,6 +128,12 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
                     "Michael Ann DeVito",
                     "Jed R. Brubaker",
                 ],
+                groups=[
+                    "Sony AI",
+                    "University of Colorado Boulder",
+                    "University of Toronto",
+                    "Northeastern University",
+                ],
             )
             seed_prompts.append(prompt)
 

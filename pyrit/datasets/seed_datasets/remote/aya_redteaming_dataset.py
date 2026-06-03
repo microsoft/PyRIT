@@ -12,6 +12,17 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = [
+    "Aakanksha",
+    "Arash Ahmadian",
+    "Beyza Ermis",
+    "Seraphina Goldfarb-Tarrant",
+    "Julia Kreutzer",
+    "Marzieh Fadaee",
+    "Sara Hooker",
+]
+_GROUPS = ["Cohere For AI", "Cohere"]
+
 
 class _AyaRedteamingDataset(_RemoteDatasetLoader):
     """
@@ -129,6 +140,8 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
                     dataset_name=self.dataset_name,
                     harm_categories=categories,
                     source="https://huggingface.co/datasets/CohereForAI/aya_redteaming",
+                    authors=_AUTHORS,
+                    groups=_GROUPS,
                 )
             )
 
