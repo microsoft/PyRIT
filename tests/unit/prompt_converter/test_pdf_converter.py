@@ -57,7 +57,7 @@ async def test_convert_async_no_template(pdf_converter_no_template):
     with (
         patch.object(pdf_converter_no_template, "_prepare_content", return_value=prompt) as mock_prepare,
         patch.object(pdf_converter_no_template, "_generate_pdf", return_value=mock_pdf_bytes) as mock_generate,
-        patch.object(pdf_converter_no_template, "_serialize_pdf") as mock_serialize,
+        patch.object(pdf_converter_no_template, "_serialize_pdf_async") as mock_serialize,
     ):
         serializer_mock = MagicMock()
         serializer_mock.value = "mock_url"
@@ -87,7 +87,7 @@ async def test_convert_async_with_template(pdf_converter_with_template):
             pdf_converter_with_template, "_prepare_content", return_value=expected_rendered_content
         ) as mock_prepare,
         patch.object(pdf_converter_with_template, "_generate_pdf", return_value=mock_pdf_bytes) as mock_generate,
-        patch.object(pdf_converter_with_template, "_serialize_pdf") as mock_serialize,
+        patch.object(pdf_converter_with_template, "_serialize_pdf_async") as mock_serialize,
     ):
         serializer_mock = MagicMock()
         serializer_mock.value = "mock_url"
@@ -131,7 +131,7 @@ async def test_convert_async_custom_font_and_size():
         result = await converter.convert_async(prompt=prompt)
         assert isinstance(result, ConverterResult)
         assert result.output_text == "mock_url"
-        serializer_mock.save_data.assert_called_once()
+        serializer_mock.save_data_async.assert_called_once()
 
 
 def test_input_supported(pdf_converter_no_template):

@@ -797,7 +797,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         if context.next_message:
             self._logger.debug("Using custom message, bypassing adversarial chat")
             # Duplicate to ensure fresh IDs (avoids conflicts if message was already in memory)
-            message = context.next_message.duplicate_message()
+            message = context.next_message.duplicate()
             context.next_message = None  # Clear for future turns
             return message
 

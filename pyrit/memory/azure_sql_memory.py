@@ -69,6 +69,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         results_sas_token: Optional[str] = None,
         verbose: bool = False,
         skip_schema_migration: bool = False,
+        silent: bool = False,
     ) -> None:
         """
         Initialize an Azure SQL Memory backend.
@@ -82,6 +83,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                 If not provided, falls back to the 'AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN' environment variable.
             verbose (bool): Whether to enable verbose logging for the database engine. Defaults to False.
             skip_schema_migration (bool): Whether to skip schema migration. Defaults to False.
+            silent (bool): If True, suppresses schema migration console output. Defaults to False.
         """
         self._connection_string = default_values.get_required_value(
             env_var_name=self.AZURE_SQL_DB_CONNECTION_STRING, passed_value=connection_string
@@ -109,7 +111,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         self.SessionFactory = sessionmaker(bind=self.engine)
         if not skip_schema_migration:
-            self._run_schema_migration()
+            self._run_schema_migration(silent=silent)
 
         super().__init__()
 
@@ -613,18 +615,23 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         placeholders = ", ".join(f":cid{i}" for i in range(len(conversation_ids)))
         params = {f"cid{i}": cid for i, cid in enumerate(conversation_ids)}
 
-        max_len = ConversationStats.PREVIEW_MAX_LEN
         sql = text(
             f"""
             SELECT
                 pme.conversation_id,
                 COUNT(DISTINCT pme.sequence) AS msg_count,
                 (
-                    SELECT TOP 1 LEFT(p2.converted_value, {max_len + 3})
+                    SELECT TOP 1 LEFT(p2.converted_value, {ConversationStats.PREVIEW_FETCH_MAX_LEN})
                     FROM "PromptMemoryEntries" p2
                     WHERE p2.conversation_id = pme.conversation_id
                     ORDER BY p2.sequence DESC, p2.id DESC
                 ) AS last_preview,
+                (
+                    SELECT TOP 1 p2b.converted_value_data_type
+                    FROM "PromptMemoryEntries" p2b
+                    WHERE p2b.conversation_id = pme.conversation_id
+                    ORDER BY p2b.sequence DESC, p2b.id DESC
+                ) AS last_data_type,
                 (
                     SELECT TOP 1 p3.labels
                     FROM "PromptMemoryEntries" p3
@@ -646,11 +653,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         result: dict[str, ConversationStats] = {}
         for row in rows:
-            conv_id, msg_count, last_preview, raw_labels, raw_created_at = row
-
-            preview = None
-            if last_preview:
-                preview = last_preview[:max_len] + "..." if len(last_preview) > max_len else last_preview
+            conv_id, msg_count, last_preview, last_data_type, raw_labels, raw_created_at = row
 
             labels: dict[str, str] = {}
             if raw_labels and raw_labels not in ("null", "{}"):
@@ -666,7 +669,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
             result[conv_id] = ConversationStats(
                 message_count=msg_count,
-                last_message_preview=preview,
+                last_message_preview=last_preview,
+                last_message_data_type=last_data_type,
                 labels=labels,
                 created_at=created_at,
             )

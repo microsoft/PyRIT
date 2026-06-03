@@ -228,7 +228,7 @@ class Seed(YamlLoadable):
             category="seed-prompt-entries", data_type=self.data_type, value=self.value
         )
 
-        self.value_sha256 = await original_serializer.get_sha256()
+        self.value_sha256 = await original_serializer.get_sha256_async()
 
     @staticmethod
     def escape_for_jinja(value: str) -> str:

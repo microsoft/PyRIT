@@ -190,8 +190,8 @@ async def test_image_compression_converter_format_preservation_and_conversion(
 
     with patch("pyrit.prompt_converter.image_compression_converter.data_serializer_factory") as mock_factory:
         mock_serializer = AsyncMock()
-        mock_serializer.read_data.return_value = image_bytes
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.read_data_async.return_value = image_bytes
+        mock_serializer.save_b64_image_async = AsyncMock()
         # Set the value to match input format initially
         mock_serializer.value = f"test_image.{input_format.lower()}"
         # Mock the file_extension property to be settable
@@ -201,8 +201,8 @@ async def test_image_compression_converter_format_preservation_and_conversion(
         await converter.convert_async(prompt=f"test_image.{input_format.lower()}", input_type="image_path")
 
         # Verify the save method was called
-        mock_serializer.save_b64_image.assert_called_once()
-        mock_serializer.read_data.assert_called_once()
+        mock_serializer.save_b64_image_async.assert_called_once()
+        mock_serializer.read_data_async.assert_called_once()
 
         # Check that file extension was updated correctly
         expected_extension = expected_output_format.lower()
@@ -250,14 +250,14 @@ async def test_image_compression_converter_skip(sqlite_instance, sample_image_by
 
     with patch("pyrit.prompt_converter.image_compression_converter.data_serializer_factory") as mock_factory:
         mock_serializer = AsyncMock()
-        mock_serializer.read_data.return_value = small_image_bytes
+        mock_serializer.read_data_async.return_value = small_image_bytes
         mock_factory.return_value = mock_serializer
 
         result = await converter.convert_async(prompt="small_image.png", input_type="image_path")
         assert result.output_text == "small_image.png"
 
         # Verify that compression was skipped - save_b64_image should not be called
-        mock_serializer.save_b64_image.assert_not_called()
+        mock_serializer.save_b64_image_async.assert_not_called()
 
     # 2: Fallback to original when compression increases file size
     converter_fallback = ImageCompressionConverter(fallback_to_original=True, quality=100)
@@ -265,7 +265,7 @@ async def test_image_compression_converter_skip(sqlite_instance, sample_image_by
 
     with patch("pyrit.prompt_converter.image_compression_converter.data_serializer_factory") as mock_factory:
         mock_serializer = AsyncMock()
-        mock_serializer.read_data.return_value = large_image_bytes
+        mock_serializer.read_data_async.return_value = large_image_bytes
         mock_factory.return_value = mock_serializer
 
         # Mock _compress_image to return larger size
@@ -276,7 +276,7 @@ async def test_image_compression_converter_skip(sqlite_instance, sample_image_by
             result = await converter_fallback.convert_async(prompt="test.png", input_type="image_path")
             assert result.output_text == "test.png"
 
-            mock_serializer.save_b64_image.assert_not_called()
+            mock_serializer.save_b64_image_async.assert_not_called()
             mock_compress.assert_called_once()  # compression was attempted but resulted in larger size
 
 
@@ -305,10 +305,10 @@ async def test_image_compression_converter_url_format_conversion(sqlite_instance
         mock_serializer = AsyncMock()
         mock_serializer.file_extension = "jpeg"
         mock_serializer.value = "converted_image.webp"
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
-        with patch.object(converter, "_read_image_from_url") as mock_read_url:
+        with patch.object(converter, "_read_image_from_url_async") as mock_read_url:
             mock_read_url.return_value = large_image_bytes
 
             result = await converter.convert_async(prompt=test_url, input_type="url")
@@ -317,7 +317,7 @@ async def test_image_compression_converter_url_format_conversion(sqlite_instance
             assert result.output_type == "image_path"
             # Verify file extension was updated to match WEBP output format
             assert mock_serializer.file_extension == "webp"
-            mock_serializer.save_b64_image.assert_called_once()
+            mock_serializer.save_b64_image_async.assert_called_once()
 
 
 async def test_image_compression_converter_url_input_fallback_scenarios(sqlite_instance, sample_image_bytes):
@@ -330,10 +330,10 @@ async def test_image_compression_converter_url_input_fallback_scenarios(sqlite_i
         mock_serializer = AsyncMock()
         mock_serializer.file_extension = "png"
         mock_serializer.value = "fallback_image.png"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
-        with patch.object(converter, "_read_image_from_url") as mock_read_url:
+        with patch.object(converter, "_read_image_from_url_async") as mock_read_url:
             mock_read_url.return_value = small_image_bytes
 
             result = await converter.convert_async(prompt=test_url, input_type="url")
@@ -341,8 +341,8 @@ async def test_image_compression_converter_url_input_fallback_scenarios(sqlite_i
             assert result.output_text == "fallback_image.png"
             assert result.output_type == "image_path"
             mock_read_url.assert_called_once_with(test_url)
-            mock_serializer.save_data.assert_called_once_with(small_image_bytes)
-            mock_serializer.save_b64_image.assert_not_called()
+            mock_serializer.save_data_async.assert_called_once_with(small_image_bytes)
+            mock_serializer.save_b64_image_async.assert_not_called()
 
 
 async def test_image_compression_converter_invalid_url():
@@ -360,7 +360,7 @@ async def test_image_compression_converter_corrupted_image_bytes():
     corrupted_bytes = b"notanimagefile"
     with patch("pyrit.prompt_converter.image_compression_converter.data_serializer_factory") as mock_factory:
         mock_serializer = AsyncMock()
-        mock_serializer.read_data.return_value = corrupted_bytes
+        mock_serializer.read_data_async.return_value = corrupted_bytes
         mock_factory.return_value = mock_serializer
         with pytest.raises(Exception):  # noqa: B017
             await converter.convert_async(prompt="corrupted.png", input_type="image_path")
@@ -376,6 +376,6 @@ async def test_image_compression_converter_output_format_fallback(sample_image_b
     with patch("pyrit.prompt_converter.image_compression_converter.data_serializer_factory") as mock_factory:
         mock_serializer = AsyncMock()
         mock_factory.return_value = mock_serializer
-        mock_serializer.read_data.return_value = img_bytes
+        mock_serializer.read_data_async.return_value = img_bytes
         await converter.convert_async(prompt="test.tiff", input_type="image_path")
         assert mock_serializer.file_extension == "jpeg"

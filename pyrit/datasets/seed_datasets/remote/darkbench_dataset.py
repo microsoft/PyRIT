@@ -67,7 +67,7 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
             Exception: If the dataset cannot be loaded.
         """
         # Fetch from HuggingFace
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.hf_dataset_name,
             config=self.config,
             split=self.split,

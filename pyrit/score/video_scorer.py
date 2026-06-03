@@ -2,10 +2,10 @@
 # Licensed under the MIT license.
 
 import logging
-import os
 import random
 import tempfile
 import uuid
+from pathlib import Path
 from typing import Optional
 
 from pyrit.memory import CentralMemory
@@ -112,7 +112,7 @@ class VideoHelper:
         """
         video_path = message_piece.converted_value
 
-        if not os.path.exists(video_path):
+        if not Path(video_path).exists():
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
         # Extract frames from video
@@ -281,5 +281,5 @@ class VideoHelper:
 
         finally:
             # Clean up temporary audio file on success
-            if should_cleanup and audio_path and os.path.exists(audio_path):
-                os.unlink(audio_path)
+            if should_cleanup and audio_path:
+                Path(audio_path).unlink(missing_ok=True)

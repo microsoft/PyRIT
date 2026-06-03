@@ -261,7 +261,7 @@ class OpenAIImageTarget(OpenAITarget):
             image_generation_args["background"] = self.background
 
         # Use unified error handler for consistent error handling
-        return await self._handle_openai_request(
+        return await self._handle_openai_request_async(
             api_call=lambda: self._client.images.generate(**image_generation_args),
             request=message,
         )
@@ -290,8 +290,8 @@ class OpenAIImageTarget(OpenAITarget):
                 category="prompt-memory-entries", value=image_path, data_type="image_path"
             )
 
-            image_name = str(await img_serializer.get_data_filename())
-            image_bytes = await img_serializer.read_data()
+            image_name = str(await img_serializer.get_data_filename_async())
+            image_bytes = await img_serializer.read_data_async()
             image_type = img_serializer.get_mime_type(image_path)
 
             image_files.append((image_name, image_bytes, image_type))
@@ -299,7 +299,8 @@ class OpenAIImageTarget(OpenAITarget):
         # Construct request parameters for image editing
         image_edit_args: dict[str, Any] = {
             "model": self._model_name,
-            # Single image can be sent (and MUST BE in MAI models) as a tuple, multiple images must be a list
+            # Single image sent as a tuple (mandatory for targets that support only one image input such as MAI,
+            # also supported by other targets such as OpenAI). Multiple images always sent as a list.
             "image": image_files[0] if len(image_files) == 1 else image_files,
             "prompt": text_prompt,
             "size": self.image_size,
@@ -314,12 +315,12 @@ class OpenAIImageTarget(OpenAITarget):
         if self.background:
             image_edit_args["background"] = self.background
 
-        return await self._handle_openai_request(
+        return await self._handle_openai_request_async(
             api_call=lambda: self._client.images.edit(**image_edit_args),
             request=message,
         )
 
-    async def _construct_message_from_response(self, response: Any, request: Any) -> Message:
+    async def _construct_message_from_response_async(self, response: Any, request: Any) -> Message:
         """
         Construct a Message from an ImagesResponse.
 
@@ -334,7 +335,7 @@ class OpenAIImageTarget(OpenAITarget):
             EmptyResponseException: If the image generation returned an empty response.
         """
         image_data = response.data[0]
-        image_bytes = await self._get_image_bytes(image_data)
+        image_bytes = await self._get_image_bytes_async(image_data)
 
         extension = self.output_format or "png"
         data = data_serializer_factory(
@@ -342,13 +343,13 @@ class OpenAIImageTarget(OpenAITarget):
             data_type="image_path",
             extension=extension,
         )
-        await data.save_data(data=image_bytes)
+        await data.save_data_async(data=image_bytes)
 
         return construct_response_from_request(
             request=request, response_text_pieces=[data.value], response_type="image_path"
         )
 
-    async def _get_image_bytes(self, image_data: Any) -> bytes:
+    async def _get_image_bytes_async(self, image_data: Any) -> bytes:
         """
         Extract image bytes from the API response.
 

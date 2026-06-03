@@ -87,10 +87,10 @@ def success_score():
     return Score(
         score_type="true_false",
         score_value="true",
-        score_category="test",
+        score_category=["test"],
         score_value_description="Test success score",
         score_rationale="Test rationale for success",
-        score_metadata="{}",
+        score_metadata={},
         message_piece_id=str(uuid.uuid4()),
         scorer_class_identifier=get_mock_scorer_identifier(),
     )
@@ -846,10 +846,10 @@ class TestDetermineAttackOutcome:
         true_score = Score(
             score_type="true_false",
             score_value="true",
-            score_category="test",
+            score_category=["test"],
             score_value_description="Success",
             score_rationale="Objective achieved",
-            score_metadata="{}",
+            score_metadata={},
             message_piece_id=str(uuid.uuid4()),
             scorer_class_identifier=get_mock_scorer_identifier(),
         )
@@ -871,10 +871,10 @@ class TestDetermineAttackOutcome:
         false_score = Score(
             score_type="true_false",
             score_value="false",
-            score_category="test",
+            score_category=["test"],
             score_value_description="Failure",
             score_rationale="Objective not achieved",
-            score_metadata="{}",
+            score_metadata={},
             message_piece_id=str(uuid.uuid4()),
             scorer_class_identifier=get_mock_scorer_identifier(),
         )
@@ -896,10 +896,10 @@ class TestDetermineAttackOutcome:
         false_score = Score(
             score_type="true_false",
             score_value="False",
-            score_category="test",
+            score_category=["test"],
             score_value_description="Failure",
             score_rationale="Objective not achieved",
-            score_metadata="{}",
+            score_metadata={},
             message_piece_id=str(uuid.uuid4()),
             scorer_class_identifier=get_mock_scorer_identifier(),
         )

@@ -112,7 +112,10 @@ async def test_openai_chat_target_sends_normalized_to_construct_request():
     with (
         patch.object(target.configuration, "normalize_async", new_callable=AsyncMock, return_value=[adapted_msg]),
         patch.object(
-            target, "_construct_request_body", new_callable=AsyncMock, return_value={"model": "gpt-4o", "messages": []}
+            target,
+            "_construct_request_body_async",
+            new_callable=AsyncMock,
+            return_value={"model": "gpt-4o", "messages": []},
         ) as mock_construct,
     ):
         await target.send_prompt_async(message=user_msg)
