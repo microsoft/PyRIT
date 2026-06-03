@@ -65,10 +65,10 @@ off_topic_deflection = MessagePiece(
     ),
 ).to_message()
 
-blocked.set_response_not_in_database()
-refusal.set_response_not_in_database()
-no_refusal.set_response_not_in_database()
-off_topic_deflection.set_response_not_in_database()
+blocked.set_response_not_in_memory()
+refusal.set_response_not_in_memory()
+no_refusal.set_response_not_in_memory()
+off_topic_deflection.set_response_not_in_memory()
 
 azure_openai_chat_target = OpenAIChatTarget()
 

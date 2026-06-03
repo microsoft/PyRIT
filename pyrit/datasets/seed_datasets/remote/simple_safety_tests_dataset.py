@@ -7,7 +7,7 @@ import warnings
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,11 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: str = "Bertievidgen/SimpleSafetyTests"
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "small"  # 100 critical safety test prompts
+    tags: frozenset[str] = frozenset({"safety"})
 
     def __init__(
         self,
@@ -68,7 +73,7 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading SimpleSafetyTests dataset from {self.HF_DATASET_NAME}")
 
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
             split="test",
             cache=cache,

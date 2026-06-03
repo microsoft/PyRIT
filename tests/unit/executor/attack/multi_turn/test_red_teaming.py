@@ -19,10 +19,10 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     RTASystemPromptPaths,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
     Message,
@@ -303,8 +303,8 @@ class TestRedTeamingAttackInitialization:
         """Adversarial chat must natively support MULTI_TURN and SYSTEM_PROMPT."""
         from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
-        mock_adversarial_chat.configuration.includes.side_effect = lambda *, capability: capability != CapabilityName(
-            missing_capability
+        mock_adversarial_chat.configuration.includes.side_effect = lambda *, capability: (
+            capability != CapabilityName(missing_capability)
         )
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
         scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
@@ -851,7 +851,9 @@ class TestPromptGeneration:
         mock_prompt_normalizer.send_prompt_async.return_value = sample_response
 
         # Mock build_adversarial_prompt
-        with patch.object(attack, "_build_adversarial_prompt", new_callable=AsyncMock, return_value="Built prompt"):
+        with patch.object(
+            attack, "_build_adversarial_prompt_async", new_callable=AsyncMock, return_value="Built prompt"
+        ):
             result = await attack._generate_next_prompt_async(context=basic_context)
 
         assert result.get_value() == sample_response.get_value()
@@ -880,7 +882,9 @@ class TestPromptGeneration:
         mock_prompt_normalizer.send_prompt_async.return_value = None
 
         # Mock build_adversarial_prompt
-        with patch.object(attack, "_build_adversarial_prompt", new_callable=AsyncMock, return_value="Built prompt"):
+        with patch.object(
+            attack, "_build_adversarial_prompt_async", new_callable=AsyncMock, return_value="Built prompt"
+        ):
             with pytest.raises(ValueError, match="Received no response from adversarial chat"):
                 await attack._generate_next_prompt_async(context=basic_context)
 
@@ -908,7 +912,7 @@ class TestAdversarialPromptBuilding:
         )
 
         basic_context.last_response = None
-        result = await attack._build_adversarial_prompt(basic_context)
+        result = await attack._build_adversarial_prompt_async(basic_context)
 
         assert result == seed
 

@@ -11,8 +11,7 @@ deferred inside each ``*MemoryPrinter`` constructor, so importing this module (o
 
 import os
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import AttackResult, Message, Score
+from pyrit.models import AttackResult, ComponentIdentifier, Message, Score
 from pyrit.models.scenario_result import ScenarioResult
 from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
@@ -90,6 +89,7 @@ async def output_scenario_async(
     *,
     format: OutputFormat = "pretty",  # noqa: A002
     sink: Sink | None = None,
+    sort_groups_by_success_rate: bool = False,
 ) -> None:
     """
     Print a scenario result in the specified format to the specified destination.
@@ -98,6 +98,9 @@ async def output_scenario_async(
         result (ScenarioResult): The scenario result to print.
         format (OutputFormat): Output format — "pretty" or "markdown". Defaults to "pretty".
         sink (Sink | None): Output sink. Defaults to StdoutSink.
+        sort_groups_by_success_rate (bool): When True, the Per-Group Breakdown is sorted so
+            that the group with the highest success rate appears first. Defaults to False,
+            which preserves the original insertion order.
 
     Raises:
         ValueError: If ``format`` is not a supported value.
@@ -105,7 +108,10 @@ async def output_scenario_async(
     if format != "pretty":
         raise ValueError(f"Unsupported format for scenario results: {format!r}. Only 'pretty' is available.")
 
-    printer = PrettyScenarioResultMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
+    printer = PrettyScenarioResultMemoryPrinter(
+        sink=sink or get_default_sink(StdoutSink),
+        sort_groups_by_success_rate=sort_groups_by_success_rate,
+    )
     await printer.write_async(result)
 
 

@@ -7,8 +7,7 @@ from typing import Any, Optional
 from pyrit.exceptions.exception_classes import (
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, construct_response_from_request
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
@@ -131,7 +130,7 @@ class OpenAICompletionTarget(OpenAITarget):
         message = normalized_conversation[-1]
         message_piece = message.message_pieces[0]
 
-        logger.info(f"Sending the following prompt to the prompt target: {message_piece}")
+        logger.info(f"Sending the following prompt to the prompt target: {message_piece.converted_value}")
 
         # Build request parameters
         body_parameters = {
@@ -149,13 +148,13 @@ class OpenAICompletionTarget(OpenAITarget):
         request_params = {k: v for k, v in body_parameters.items() if v is not None}
 
         # Use unified error handler - automatically detects Completion and validates
-        response = await self._handle_openai_request(
+        response = await self._handle_openai_request_async(
             api_call=lambda: self._client.completions.create(**request_params),
             request=message,
         )
         return [response]
 
-    async def _construct_message_from_response(self, response: Any, request: Any) -> Message:
+    async def _construct_message_from_response_async(self, response: Any, request: Any) -> Message:
         """
         Construct a Message from a Completion response.
 

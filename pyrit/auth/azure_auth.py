@@ -85,7 +85,7 @@ class AsyncTokenProviderCredential:
         """
         self._token_provider = token_provider
 
-    async def get_token(self, *scopes: str, **kwargs: Any) -> AccessToken:
+    async def get_token(self, *scopes: str, **kwargs: Any) -> AccessToken:  # pyrit-async-suffix-exempt
         """
         Get an access token asynchronously.
 
@@ -104,7 +104,7 @@ class AsyncTokenProviderCredential:
         expires_on = int(time.time()) + 3600
         return AccessToken(str(token), expires_on)
 
-    async def close(self) -> None:
+    async def close(self) -> None:  # pyrit-async-suffix-exempt
         """No-op close for protocol compliance. The callable provider does not hold resources."""
 
     async def __aenter__(self) -> AsyncTokenProviderCredential:
@@ -149,7 +149,7 @@ def ensure_async_token_provider(
         " Automatically wrapping in async function for compatibility with async client."
     )
 
-    async def async_token_provider() -> str:
+    async def async_token_provider() -> str:  # pyrit-async-suffix-exempt
         """
         Async wrapper for synchronous token provider.
 
@@ -443,10 +443,10 @@ async def get_speech_config_async(
     """
     Get the speech config, resolving a callable token provider if one is provided.
 
-    This is the async counterpart to :func:`get_speech_config`. When a callable
+    This is the async counterpart to ``get_speech_config``. When a callable
     ``token_provider`` is supplied, it is invoked (and awaited if async) to obtain
     a token, which is then used with the ``aad#{resource_id}#{token}`` auth format.
-    Otherwise, it delegates to the synchronous :func:`get_speech_config`.
+    Otherwise, it delegates to the synchronous ``get_speech_config``.
 
     Args:
         token_provider (Callable | None): An optional sync or async callable that returns a token string.

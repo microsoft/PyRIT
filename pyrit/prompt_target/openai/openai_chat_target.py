@@ -13,9 +13,9 @@ from pyrit.exceptions import (
     PyritException,
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     ChatMessage,
+    ComponentIdentifier,
     DataTypeSerializer,
     Message,
     MessagePiece,
@@ -23,7 +23,6 @@ from pyrit.models import (
     data_serializer_factory,
 )
 from pyrit.models.json_response_config import _JsonResponseConfig
-from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
@@ -33,7 +32,7 @@ from pyrit.prompt_target.openai.openai_target import OpenAITarget
 logger = logging.getLogger(__name__)
 
 
-class OpenAIChatTarget(OpenAITarget, PromptTarget):
+class OpenAIChatTarget(OpenAITarget):
     """
     Facilitates multimodal (image and text) input and text output generation.
 
@@ -234,10 +233,10 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
 
         logger.info(f"Sending the following prompt to the prompt target: {message}")
 
-        body = await self._construct_request_body(conversation=normalized_conversation, json_config=json_config)
+        body = await self._construct_request_body_async(conversation=normalized_conversation, json_config=json_config)
 
         # Use unified error handling - automatically detects ChatCompletion and validates
-        response = await self._handle_openai_request(
+        response = await self._handle_openai_request_async(
             api_call=lambda: self._client.chat.completions.create(**body),
             request=message,
         )
@@ -378,7 +377,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             and self._audio_response_config.prefer_transcript_for_history
         )
 
-    async def _construct_message_from_response(self, response: Any, request: MessagePiece) -> Message:
+    async def _construct_message_from_response_async(self, response: Any, request: MessagePiece) -> Message:
         """
         Construct a Message from a ChatCompletion response.
 
@@ -493,7 +492,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
 
         if audio_format == "pcm16":
             # Raw PCM needs WAV headers - OpenAI uses 24kHz mono PCM16
-            await audio_serializer.save_formatted_audio(
+            await audio_serializer.save_formatted_audio_async(
                 data=audio_bytes,
                 num_channels=1,
                 sample_width=2,
@@ -501,7 +500,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             )
         else:
             # wav, mp3, flac, opus are already properly formatted
-            await audio_serializer.save_data(audio_bytes)
+            await audio_serializer.save_data_async(audio_bytes)
 
         return audio_serializer.value
 
@@ -633,7 +632,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
                         data_type="audio_path",
                         extension=ext,
                     )
-                    base64_data = await audio_serializer.read_data_base64()
+                    base64_data = await audio_serializer.read_data_base64_async()
                     audio_format = ext.lower().lstrip(".")
                     input_audio_entry = {"data": base64_data, "format": audio_format}
                     entry = {"type": "input_audio", "input_audio": input_audio_entry}
@@ -650,7 +649,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             chat_messages.append(chat_message.model_dump(exclude_none=True))
         return chat_messages
 
-    async def _construct_request_body(
+    async def _construct_request_body_async(
         self, *, conversation: MutableSequence[Message], json_config: _JsonResponseConfig
     ) -> dict[str, Any]:
         messages = await self._build_chat_messages_async(conversation)
@@ -681,12 +680,12 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
         if not json_config.enabled:
             return None
 
-        if json_config.schema:
+        if json_config.json_schema:
             return {
                 "type": "json_schema",
                 "json_schema": {
                     "name": json_config.schema_name,
-                    "schema": json_config.schema,
+                    "schema": json_config.json_schema,
                     "strict": json_config.strict,
                 },
             }

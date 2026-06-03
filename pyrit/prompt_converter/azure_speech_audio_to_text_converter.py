@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import logging
 import time
-import warnings
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 
 from pyrit.auth.azure_auth import get_speech_config, get_speech_config_async
 from pyrit.common import default_values
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType, data_serializer_factory
+from pyrit.common.deprecation import print_deprecation_message
+from pyrit.models import ComponentIdentifier, PromptDataType, data_serializer_factory
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)
@@ -66,8 +66,16 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
                 If omitted, Entra ID auth via ``DefaultAzureCredential`` is used automatically.
             azure_speech_resource_id (str, Optional): The resource ID for accessing the service when using
                 Entra ID auth. Required when using a callable token provider or when no API key is available.
-            use_entra_auth (bool, Optional): **Deprecated.** Will be removed in v0.15.0.
-                Authentication is now auto-detected from the provided credentials.
+            use_entra_auth (bool, Optional): **Deprecated.** Will be removed in 0.15.0.
+                Authentication is now selected automatically based on what you pass to
+                ``azure_speech_key`` (and ``AZURE_SPEECH_KEY`` env var):
+
+                - Pass a **string** API key (or set ``AZURE_SPEECH_KEY``) to use API-key auth.
+                - Pass a **callable token provider** (sync or async returning a token string)
+                  to use Entra ID with a custom token; ``azure_speech_resource_id`` must also
+                  be set.
+                - Omit ``azure_speech_key`` entirely to use Entra ID via
+                  ``DefaultAzureCredential``; ``azure_speech_resource_id`` must be set.
             recognition_language (str): Recognition voice language. Defaults to "en-US".
                 For more on supported languages, see the following link:
                 https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support
@@ -76,12 +84,13 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
             ValueError: If the required environment variables or parameters are not set.
         """
         if use_entra_auth is not None:
-            warnings.warn(
-                "'use_entra_auth' is deprecated and will be removed in v0.15.0. "
-                "Authentication is now auto-detected: pass a key string for key auth, "
-                "a callable token provider for token auth, or omit for automatic Entra ID auth.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="AzureSpeechAudioToTextConverter(use_entra_auth=...)",
+                new_item=(
+                    "AzureSpeechAudioToTextConverter("
+                    "azure_speech_key=<api-key-string-or-callable-token-provider-or-omit>)"
+                ),
+                removed_in="0.15.0",
             )
 
         self._azure_speech_region: str = default_values.get_required_value(
@@ -156,7 +165,7 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
         audio_serializer = data_serializer_factory(
             category="prompt-memory-entries", data_type="audio_path", value=prompt
         )
-        audio_bytes = await audio_serializer.read_data()
+        audio_bytes = await audio_serializer.read_data_async()
 
         try:
             speech_config = await get_speech_config_async(
@@ -165,7 +174,9 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
                 key=self._azure_speech_key,
                 region=self._azure_speech_region,
             )
-            transcript = self._recognize_audio(audio_bytes=audio_bytes, speech_config=speech_config)
+            transcript = await asyncio.to_thread(
+                self._recognize_audio, audio_bytes=audio_bytes, speech_config=speech_config
+            )
         except Exception as e:
             logger.error("Failed to convert audio file to text: %s", str(e))
             raise
@@ -176,7 +187,7 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
         Recognize audio file and return transcribed text.
 
         .. deprecated::
-            Use :meth:`convert_async` instead, which resolves token providers correctly.
+            Use ``convert_async`` instead, which resolves token providers correctly.
             This method does not support callable token providers.
 
         Args:
@@ -189,11 +200,10 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
             ModuleNotFoundError: If the azure.cognitiveservices.speech module is not installed.
         """
         if self._token_provider:
-            warnings.warn(
-                "recognize_audio() does not support callable token providers. "
-                "Use convert_async() instead, which correctly resolves token providers.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="AzureSpeechAudioToTextConverter.recognize_audio",
+                new_item="AzureSpeechAudioToTextConverter.convert_async",
+                removed_in="0.15.0",
             )
         speech_config = get_speech_config(
             resource_id=self._azure_speech_resource_id,

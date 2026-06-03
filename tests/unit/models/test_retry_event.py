@@ -3,11 +3,13 @@
 
 from datetime import datetime, timezone
 
+import pytest
+
 from pyrit.models.retry_event import RetryEvent
 
 
 class TestRetryEvent:
-    """Tests for the RetryEvent dataclass."""
+    """Tests for the RetryEvent model."""
 
     def test_defaults(self) -> None:
         """RetryEvent constructed with minimal args gets correct defaults."""
@@ -48,7 +50,7 @@ class TestRetryEvent:
         assert evt.timestamp == ts
 
     def test_to_dict(self) -> None:
-        """to_dict returns a JSON-serializable dictionary."""
+        """model_dump(mode="json") returns a JSON-serializable dictionary."""
         evt = RetryEvent(
             attempt_number=2,
             function_name="fn",
@@ -59,7 +61,7 @@ class TestRetryEvent:
             endpoint="https://example.com",
             elapsed_seconds=1.5,
         )
-        d = evt.to_dict()
+        d = evt.model_dump(mode="json")
         assert d["attempt_number"] == 2
         assert d["function_name"] == "fn"
         assert d["exception_type"] == "ValueError"
@@ -71,7 +73,7 @@ class TestRetryEvent:
         assert "timestamp" in d
 
     def test_from_dict_roundtrip(self) -> None:
-        """from_dict correctly reconstructs a RetryEvent from to_dict output."""
+        """model_validate correctly reconstructs a RetryEvent from model_dump output."""
         original = RetryEvent(
             attempt_number=1,
             function_name="call_target",
@@ -82,8 +84,8 @@ class TestRetryEvent:
             endpoint="https://azure.openai.com",
             elapsed_seconds=10.0,
         )
-        d = original.to_dict()
-        restored = RetryEvent.from_dict(d)
+        d = original.model_dump(mode="json")
+        restored = RetryEvent.model_validate(d)
 
         assert restored.attempt_number == original.attempt_number
         assert restored.function_name == original.function_name
@@ -95,13 +97,13 @@ class TestRetryEvent:
         assert restored.elapsed_seconds == original.elapsed_seconds
 
     def test_from_dict_missing_optional_fields(self) -> None:
-        """from_dict handles missing optional fields gracefully."""
+        """model_validate handles missing optional fields gracefully."""
         d = {
             "attempt_number": 1,
             "function_name": "fn",
             "timestamp": "2026-05-07T12:00:00+00:00",
         }
-        evt = RetryEvent.from_dict(d)
+        evt = RetryEvent.model_validate(d)
         assert evt.attempt_number == 1
         assert evt.function_name == "fn"
         assert evt.exception_type == ""
@@ -110,14 +112,25 @@ class TestRetryEvent:
         assert evt.elapsed_seconds == 0.0
 
     def test_from_dict_timestamp_parsing(self) -> None:
-        """from_dict correctly parses ISO format timestamp."""
+        """model_validate correctly parses ISO format timestamp."""
         d = {
             "attempt_number": 1,
             "function_name": "fn",
             "timestamp": "2026-05-07T12:30:00+00:00",
         }
-        evt = RetryEvent.from_dict(d)
+        evt = RetryEvent.model_validate(d)
         assert evt.timestamp.year == 2026
         assert evt.timestamp.month == 5
         assert evt.timestamp.hour == 12
         assert evt.timestamp.minute == 30
+
+    def test_to_dict_from_dict_deprecated_wrappers_still_work(self) -> None:
+        """Deprecated to_dict / from_dict wrappers still round-trip correctly."""
+        original = RetryEvent(attempt_number=4, function_name="fn", exception_type="Boom")
+        with pytest.warns(DeprecationWarning):
+            payload = original.to_dict()
+        with pytest.warns(DeprecationWarning):
+            restored = RetryEvent.from_dict(payload)
+        assert restored.attempt_number == 4
+        assert restored.function_name == "fn"
+        assert restored.exception_type == "Boom"

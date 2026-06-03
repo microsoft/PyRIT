@@ -7,7 +7,7 @@ import warnings
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,11 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
     GitHub: https://github.com/verazuo/jailbreak_llms/
     Website: https://jailbreak-llms.xinyueshen.me/
     """
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "medium"  # 390 questions (13 scenarios x 30 questions)
+    tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
 
     def __init__(
         self,
@@ -71,7 +76,7 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
         logger.info(f"Loading Forbidden Questions dataset from {self.source}")
 
         # Load from HuggingFace
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.source,
             config="default",
             split="train",

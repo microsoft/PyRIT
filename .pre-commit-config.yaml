@@ -30,11 +30,22 @@ repos:
         files: ^(doc/.*\.(py|ipynb|md)|doc/myst\.yml)$
         pass_filenames: false
         additional_dependencies: ['pyyaml']
+      - id: check-no-rest-roles
+        name: Reject Sphinx reST cross-reference roles
+        entry: python ./build_scripts/check_no_rest_roles.py
+        language: python
+        files: ^pyrit/.*\.py$
       - id: enforce_alembic_revision_immutability
         name: Enforce Alembic Revision Immutability
         entry: python ./build_scripts/enforce_alembic_revision_immutability.py
         language: python
         files: ^pyrit/memory/alembic/versions/.*\.py$
+        pass_filenames: false
+      - id: check-async-suffix
+        name: Enforce _async Suffix on async def
+        entry: python ./build_scripts/check_async_suffix.py
+        language: python
+        files: ^pyrit/.*\.py$
         pass_filenames: false
       - id: memory-migrations-check
         name: Check Memory Migrations
@@ -44,7 +55,7 @@ repos:
         files: ^pyrit/memory/(memory_models\.py|alembic/.*|migration\.py)$
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
         exclude: NOTICE.txt
@@ -56,7 +67,7 @@ repos:
       - id: detect-private-key
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.4
+    rev: v0.15.15
     hooks:
       - id: ruff-format
       - id: ruff-check

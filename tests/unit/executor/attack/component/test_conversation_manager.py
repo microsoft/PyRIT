@@ -34,8 +34,7 @@ from pyrit.executor.attack.component.conversation_manager import (
 )
 from pyrit.executor.attack.core import AttackContext
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
@@ -78,7 +77,7 @@ def attack_identifier() -> ComponentIdentifier:
 def mock_prompt_normalizer() -> MagicMock:
     """Create a mock prompt normalizer for testing."""
     normalizer = MagicMock(spec=PromptNormalizer)
-    normalizer.convert_values = AsyncMock()
+    normalizer.convert_values_async = AsyncMock()
     return normalizer
 
 
@@ -189,7 +188,7 @@ class TestMarkMessagesAsSimulated:
         result = mark_messages_as_simulated([message])
 
         assert len(result) == 1
-        assert result[0].message_pieces[0].get_role_for_storage() == "simulated_assistant"
+        assert result[0].message_pieces[0].role == "simulated_assistant"
         assert result[0].message_pieces[0].api_role == "assistant"
         assert result[0].message_pieces[0].is_simulated is True
 
@@ -201,7 +200,7 @@ class TestMarkMessagesAsSimulated:
         result = mark_messages_as_simulated([message])
 
         assert len(result) == 1
-        assert result[0].message_pieces[0].get_role_for_storage() == "user"
+        assert result[0].message_pieces[0].role == "user"
         assert result[0].message_pieces[0].is_simulated is False
 
     def test_leaves_system_unchanged(self) -> None:
@@ -212,7 +211,7 @@ class TestMarkMessagesAsSimulated:
         result = mark_messages_as_simulated([message])
 
         assert len(result) == 1
-        assert result[0].message_pieces[0].get_role_for_storage() == "system"
+        assert result[0].message_pieces[0].role == "system"
         assert result[0].message_pieces[0].is_simulated is False
 
     def test_mixed_conversation(self) -> None:
@@ -229,10 +228,10 @@ class TestMarkMessagesAsSimulated:
 
         assert len(result) == 2
         # User should be unchanged
-        assert result[0].message_pieces[0].get_role_for_storage() == "user"
+        assert result[0].message_pieces[0].role == "user"
         assert result[0].is_simulated is False
         # Assistant should be converted
-        assert result[1].message_pieces[0].get_role_for_storage() == "simulated_assistant"
+        assert result[1].message_pieces[0].role == "simulated_assistant"
         assert result[1].is_simulated is True
         assert result[1].api_role == "assistant"
 
@@ -797,7 +796,7 @@ class TestInitializeContext:
         stored = manager.get_conversation(conversation_id)
         assert len(stored) == 1
         # Should be stored as simulated_assistant but api_role is still assistant
-        assert stored[0].get_piece().get_role_for_storage() == "simulated_assistant"
+        assert stored[0].get_piece().role == "simulated_assistant"
         assert stored[0].get_piece().api_role == "assistant"
 
     async def test_normalizes_for_non_chat_target_by_default(
@@ -1196,7 +1195,7 @@ class TestPrependedConversationConfigSettings:
     ) -> None:
         """Test that converters are applied to all roles by default."""
         mock_normalizer = MagicMock(spec=PromptNormalizer)
-        mock_normalizer.convert_values = AsyncMock()
+        mock_normalizer.convert_values_async = AsyncMock()
         manager = ConversationManager(attack_identifier=attack_identifier, prompt_normalizer=mock_normalizer)
         conversation_id = str(uuid.uuid4())
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
@@ -1211,8 +1210,8 @@ class TestPrependedConversationConfigSettings:
             request_converters=converter_config,
         )
 
-        # convert_values should be called for each message (both user and assistant)
-        assert mock_normalizer.convert_values.call_count == 2
+        # convert_values_async should be called for each message (both user and assistant)
+        assert mock_normalizer.convert_values_async.call_count == 2
 
     async def test_apply_converters_to_roles_user_only(
         self,
@@ -1222,7 +1221,7 @@ class TestPrependedConversationConfigSettings:
     ) -> None:
         """Test that converters are applied only to user role when configured."""
         mock_normalizer = MagicMock(spec=PromptNormalizer)
-        mock_normalizer.convert_values = AsyncMock()
+        mock_normalizer.convert_values_async = AsyncMock()
         manager = ConversationManager(attack_identifier=attack_identifier, prompt_normalizer=mock_normalizer)
         conversation_id = str(uuid.uuid4())
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
@@ -1239,8 +1238,8 @@ class TestPrependedConversationConfigSettings:
             prepended_conversation_config=config,
         )
 
-        # convert_values should be called only for user message
-        assert mock_normalizer.convert_values.call_count == 1
+        # convert_values_async should be called only for user message
+        assert mock_normalizer.convert_values_async.call_count == 1
 
     async def test_apply_converters_to_roles_assistant_only(
         self,
@@ -1250,7 +1249,7 @@ class TestPrependedConversationConfigSettings:
     ) -> None:
         """Test that converters are applied only to assistant role when configured."""
         mock_normalizer = MagicMock(spec=PromptNormalizer)
-        mock_normalizer.convert_values = AsyncMock()
+        mock_normalizer.convert_values_async = AsyncMock()
         manager = ConversationManager(attack_identifier=attack_identifier, prompt_normalizer=mock_normalizer)
         conversation_id = str(uuid.uuid4())
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
@@ -1267,8 +1266,8 @@ class TestPrependedConversationConfigSettings:
             prepended_conversation_config=config,
         )
 
-        # convert_values should be called only for assistant message
-        assert mock_normalizer.convert_values.call_count == 1
+        # convert_values_async should be called only for assistant message
+        assert mock_normalizer.convert_values_async.call_count == 1
 
     async def test_apply_converters_to_roles_empty_list_skips_all(
         self,
@@ -1278,7 +1277,7 @@ class TestPrependedConversationConfigSettings:
     ) -> None:
         """Test that empty roles list means no converters applied to any role."""
         mock_normalizer = MagicMock(spec=PromptNormalizer)
-        mock_normalizer.convert_values = AsyncMock()
+        mock_normalizer.convert_values_async = AsyncMock()
         manager = ConversationManager(attack_identifier=attack_identifier, prompt_normalizer=mock_normalizer)
         conversation_id = str(uuid.uuid4())
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
@@ -1295,8 +1294,8 @@ class TestPrependedConversationConfigSettings:
             prepended_conversation_config=config,
         )
 
-        # convert_values should not be called since no roles are configured
-        mock_normalizer.convert_values.assert_not_called()
+        # convert_values_async should not be called since no roles are configured
+        mock_normalizer.convert_values_async.assert_not_called()
 
     # -------------------------------------------------------------------------
     # message_normalizer Tests
@@ -1651,8 +1650,8 @@ class TestAddPrependedConversationToMemory:
             request_converters=converter_config,
         )
 
-        # Verify convert_values was called
-        mock_prompt_normalizer.convert_values.assert_called()
+        # Verify convert_values_async was called
+        mock_prompt_normalizer.convert_values_async.assert_called()
 
     async def test_handles_none_messages_gracefully(
         self,

@@ -18,6 +18,7 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql.expression import TextClause
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.common.singleton import Singleton
 from pyrit.memory.memory_interface import MemoryInterface
@@ -39,7 +40,7 @@ class _ExportableConversationPiece:
     def __init__(self, data: dict[str, Any]) -> None:
         self._data = data
 
-    def to_dict(self) -> dict[str, Any]:
+    def model_dump(self, *, mode: str = "python") -> dict[str, Any]:
         return self._data
 
 
@@ -61,6 +62,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         db_path: Optional[Union[Path, str]] = None,
         verbose: bool = False,
         skip_schema_migration: bool = False,
+        silent: bool = False,
     ) -> None:
         """
         Initialize the SQLiteMemory instance.
@@ -71,6 +73,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             verbose (bool): Whether to enable verbose logging.
                 Defaults to False.
             skip_schema_migration (bool): Whether to skip schema migration.
+                Defaults to False.
+            silent (bool): If True, suppresses schema migration console output.
                 Defaults to False.
         """
         super().__init__()
@@ -84,7 +88,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         self.engine = self._create_engine(has_echo=verbose)
         self.SessionFactory = sessionmaker(bind=self.engine)
         if not skip_schema_migration:
-            self._run_schema_migration()
+            self._run_schema_migration(silent=silent)
 
     def _init_storage_io(self) -> None:
         # Handles disk-based storage for SQLite local memory.
@@ -220,7 +224,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             json_column (InstrumentedAttribute[Any]): The JSON-backed model field to query.
             property_path (str): The JSON path for the property to match.
             value (str): The string value that must match the extracted JSON property value.
-            partial_match (bool): Whether to perform a substring match.
+            partial_match (bool): Whether to perform a substring match. Defaults to False.
             case_sensitive (bool): Whether the match should be case-sensitive. Defaults to False.
 
         Returns:
@@ -300,8 +304,15 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
     def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
         Insert a list of message pieces into the memory storage.
+
+        Pieces flagged via ``MessagePiece.not_in_memory = True`` are
+        silently filtered out so callers don't need to track persistence policy
+        themselves.
         """
-        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in message_pieces])
+        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_memory]
+        if not pieces_to_insert:
+            return
+        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in pieces_to_insert])
 
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
         """
@@ -499,6 +510,11 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Raises:
             ValueError: If the specified export format is not supported.
         """
+        print_deprecation_message(
+            old_item="SQLiteMemory.export_conversations",
+            new_item="the pyrit.output module or direct serialization of get_message_pieces results",
+            removed_in="0.15.0",
+        )
         # Import here to avoid circular import issues
         from pyrit.memory.memory_exporter import MemoryExporter
 
@@ -540,10 +556,10 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         # Merge conversations and scores - create the data structure manually
         merged_data = []
         for piece in message_pieces:
-            piece_data = piece.to_dict()
+            piece_data = piece.model_dump(mode="json")
             # Find associated scores
             piece_scores = [score for score in scores if score.message_piece_id == piece.id]
-            piece_data["scores"] = [score.to_dict() for score in piece_scores]
+            piece_data["scores"] = [score.model_dump(mode="json") for score in piece_scores]
             merged_data.append(piece_data)
 
         if not merged_data:
@@ -585,6 +601,11 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Args:
             export_type (str): The format to export the data in (defaults to "json").
         """
+        print_deprecation_message(
+            old_item="SQLiteMemory.export_all_tables",
+            new_item="the pyrit.output module or direct serialization of table query results",
+            removed_in="0.15.0",
+        )
         table_models = self.get_all_table_models()
 
         for model in table_models:
@@ -718,19 +739,25 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         placeholders = ", ".join(f":cid{i}" for i in range(len(conversation_ids)))
         params = {f"cid{i}": cid for i, cid in enumerate(conversation_ids)}
 
-        max_len = ConversationStats.PREVIEW_MAX_LEN
         sql = text(
             f"""
             SELECT
                 pme.conversation_id,
                 COUNT(DISTINCT pme.sequence) AS msg_count,
                 (
-                    SELECT SUBSTR(p2.converted_value, 1, {max_len + 3})
+                    SELECT SUBSTR(p2.converted_value, 1, {ConversationStats.PREVIEW_FETCH_MAX_LEN})
                     FROM "PromptMemoryEntries" p2
                     WHERE p2.conversation_id = pme.conversation_id
                     ORDER BY p2.sequence DESC, p2.id DESC
                     LIMIT 1
                 ) AS last_preview,
+                (
+                    SELECT p2b.converted_value_data_type
+                    FROM "PromptMemoryEntries" p2b
+                    WHERE p2b.conversation_id = pme.conversation_id
+                    ORDER BY p2b.sequence DESC, p2b.id DESC
+                    LIMIT 1
+                ) AS last_data_type,
                 (
                     SELECT p3.labels
                     FROM "PromptMemoryEntries" p3
@@ -753,11 +780,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         result: dict[str, ConversationStats] = {}
         for row in rows:
-            conv_id, msg_count, last_preview, raw_labels, raw_created_at = row
-
-            preview = None
-            if last_preview:
-                preview = last_preview[:max_len] + "..." if len(last_preview) > max_len else last_preview
+            conv_id, msg_count, last_preview, last_data_type, raw_labels, raw_created_at = row
 
             labels: dict[str, str] = {}
             if raw_labels and raw_labels not in ("null", "{}"):
@@ -773,7 +796,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
             result[conv_id] = ConversationStats(
                 message_count=msg_count,
-                last_message_preview=preview,
+                last_message_preview=last_preview,
+                last_message_data_type=last_data_type,
                 labels=labels,
                 created_at=created_at,
             )

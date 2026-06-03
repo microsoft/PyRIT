@@ -10,6 +10,12 @@ Import concrete implementations to trigger registration.
 from pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset import (
     _AegisContentSafetyDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset import (
+    ATRCategory,
+    ATRDetectionField,
+    ATRVariationType,
+    _AgentThreatRulesDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.aya_redteaming_dataset import (
     _AyaRedteamingDataset,
 )  # noqa: F401
@@ -28,6 +34,12 @@ from pyrit.datasets.seed_datasets.remote.cbt_bench_dataset import (
 from pyrit.datasets.seed_datasets.remote.ccp_sensitive_prompts_dataset import (
     _CCPSensitivePromptsDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.coconot_dataset import (
+    CoCoNotCategory,
+    CoCoNotSplit,
+    _CoCoNotContrastDataset,
+    _CoCoNotRefusalDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset import (
     COMIC_JAILBREAK_TEMPLATES,
     ComicJailbreakTemplateConfig,
@@ -39,8 +51,17 @@ from pyrit.datasets.seed_datasets.remote.dangerous_qa_dataset import (
 from pyrit.datasets.seed_datasets.remote.darkbench_dataset import (
     _DarkBenchDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.decoding_trust_toxicity_dataset import (
+    DecodingTrustToxicitySubset,
+    _DecodingTrustToxicityDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.equitymedqa_dataset import (
     _EquityMedQADataset,
+)  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.figstep_dataset import (
+    FigStepCategory,
+    FigStepVariant,
+    _FigStepDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.forbidden_questions_dataset import (
     _ForbiddenQuestionsDataset,
@@ -58,6 +79,12 @@ from pyrit.datasets.seed_datasets.remote.hixstest_dataset import (
     HiXSTestLanguage,
     _HiXSTestDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.jailbreakv_28k_dataset import (
+    _JailbreakV28KDataset,
+)  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.jailbreakv_redteam_2k_dataset import (
+    _JailbreakVRedteam2KDataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.jbb_behaviors_dataset import (
     _JBBBehaviorsDataset,
 )  # noqa: F401
@@ -72,6 +99,13 @@ from pyrit.datasets.seed_datasets.remote.medsafetybench_dataset import (
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.mlcommons_ailuminate_dataset import (
     _MLCommonsAILuminateDataset,
+)  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.moral_integrity_corpus_dataset import (
+    _MICDataset,
+)  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.mossbench_dataset import (
+    MossBenchOversensitivityType,
+    _MossBenchDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.msts_dataset import (
     _MSTSDataset,
@@ -108,11 +142,18 @@ from pyrit.datasets.seed_datasets.remote.sgxstest_dataset import (
 from pyrit.datasets.seed_datasets.remote.simple_safety_tests_dataset import (
     _SimpleSafetyTestsDataset,
 )  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.siuo_dataset import (
+    SIUOCategory,
+    _SIUODataset,
+)  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.sorry_bench_dataset import (
     _SorryBenchDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.sosbench_dataset import (
     _SOSBenchDataset,
+)  # noqa: F401
+from pyrit.datasets.seed_datasets.remote.strong_reject_dataset import (
+    _StrongRejectDataset,
 )  # noqa: F401
 from pyrit.datasets.seed_datasets.remote.tdc23_redteaming_dataset import (
     _TDC23RedteamingDataset,
@@ -142,36 +183,55 @@ from pyrit.datasets.seed_datasets.remote.xstest_dataset import (
 )  # noqa: F401
 
 __all__ = [
+    "CoCoNotCategory",
+    "CoCoNotSplit",
+    "DecodingTrustToxicitySubset",
+    "FigStepCategory",
+    "FigStepVariant",
     "HiXSTestLanguage",
+    "MossBenchOversensitivityType",
     "PromptIntelCategory",
     "PromptIntelSeverity",
     "SGXSTestLabel",
+    "SIUOCategory",
     "VLGuardCategory",
     "VLGuardSubcategory",
     "VLGuardSubset",
     "_AegisContentSafetyDataset",
+    "ATRCategory",
+    "ATRDetectionField",
+    "ATRVariationType",
+    "_AgentThreatRulesDataset",
     "_AyaRedteamingDataset",
     "_BabelscapeAlertDataset",
     "_BeaverTailsDataset",
     "_CBTBenchDataset",
     "_CCPSensitivePromptsDataset",
     "_CategoricalHarmfulQADataset",
+    "_CoCoNotContrastDataset",
+    "_CoCoNotRefusalDataset",
     "_ComicJailbreakDataset",
     "COMIC_JAILBREAK_TEMPLATES",
     "ComicJailbreakTemplateConfig",
     "_DangerousQADataset",
     "_DarkBenchDataset",
+    "_DecodingTrustToxicityDataset",
     "_EquityMedQADataset",
+    "_FigStepDataset",
     "_ForbiddenQuestionsDataset",
     "_HarmBenchDataset",
     "_HarmBenchMultimodalDataset",
     "_HarmfulQADataset",
     "_HiXSTestDataset",
+    "_JailbreakV28KDataset",
+    "_JailbreakVRedteam2KDataset",
     "_JBBBehaviorsDataset",
     "_LibrAIDoNotAnswerDataset",
     "_LLMLatentAdversarialTrainingDataset",
     "_MedSafetyBenchDataset",
+    "_MICDataset",
     "_MLCommonsAILuminateDataset",
+    "_MossBenchDataset",
     "_MSTSDataset",
     "_MultilingualVulnerabilityDataset",
     "_ORBench80KDataset",
@@ -184,8 +244,10 @@ __all__ = [
     "_SGXSTestDataset",
     "_SaladBenchDataset",
     "_SimpleSafetyTestsDataset",
+    "_SIUODataset",
     "_SOSBenchDataset",
     "_SorryBenchDataset",
+    "_StrongRejectDataset",
     "_TDC23RedteamingDataset",
     "_ToxicChatDataset",
     "_TransphobiaAwarenessDataset",

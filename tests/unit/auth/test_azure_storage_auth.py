@@ -14,7 +14,7 @@ from pyrit.auth import AzureStorageAuth
 MOCK_CONTAINER_URL = "https://storageaccountname.blob.core.windows.net/containername"
 
 
-async def test_get_user_delegation_key():
+async def test_get_user_delegation_key_async():
     mock_blob_service_client = AsyncMock(spec=BlobServiceClient)
     expected_start_time = datetime.now(tz=timezone.utc)
     expected_expiry_time = expected_start_time + timedelta(days=1)
@@ -29,7 +29,7 @@ async def test_get_user_delegation_key():
 
     mock_blob_service_client.get_user_delegation_key.return_value = mock_user_delegation_key
 
-    actual_delegation_key = await AzureStorageAuth.get_user_delegation_key(mock_blob_service_client)
+    actual_delegation_key = await AzureStorageAuth.get_user_delegation_key_async(mock_blob_service_client)
 
     assert actual_delegation_key.signed_oid == mock_user_delegation_key.signed_oid
     assert actual_delegation_key.signed_tid == mock_user_delegation_key.signed_tid
@@ -39,11 +39,11 @@ async def test_get_user_delegation_key():
     assert actual_delegation_key.signed_version == mock_user_delegation_key.signed_version
 
 
-@patch("pyrit.auth.AzureStorageAuth.get_user_delegation_key", new_callable=AsyncMock)
+@patch("pyrit.auth.AzureStorageAuth.get_user_delegation_key_async", new_callable=AsyncMock)
 @patch("azure.storage.blob.aio.BlobServiceClient")
 @patch("azure.storage.blob.aio.ContainerClient")
 @patch("azure.storage.blob._shared_access_signature.BlobSharedAccessSignature")
-async def test_get_sas_token(
+async def test_get_sas_token_async(
     mock_blob_sas, mock_container_client, mock_blob_service_client, mock_get_user_delegation_key
 ):
     # Mocking the user delegation key
@@ -62,7 +62,7 @@ async def test_get_sas_token(
     mock_sas_instance = mock_blob_sas.return_value
     mock_sas_instance.generate_container.return_value = "mock_sas_token"
 
-    sas_token = await AzureStorageAuth.get_sas_token(container_url)
+    sas_token = await AzureStorageAuth.get_sas_token_async(container_url)
 
     # Assertions
     assert sas_token == "mock_sas_token"
@@ -71,17 +71,17 @@ async def test_get_sas_token(
     mock_sas_instance.generate_container.assert_called_once()
 
 
-async def test_get_sas_token_no_url():
+async def test_get_sas_token_no_url_async():
     # Test with no container URL
     with pytest.raises(
         ValueError,
         match="Azure Storage Container URL is not provided."
         " The correct format is 'https://storageaccountname.core.windows.net/containername'.",
     ):
-        await AzureStorageAuth.get_sas_token("")
+        await AzureStorageAuth.get_sas_token_async("")
 
 
-async def test_get_sas_token_invalid_url_scheme():
+async def test_get_sas_token_invalid_url_scheme_async():
     # Test with invalid container URL (no scheme)
     invalid_url = "mockaccount.blob.core.windows.net/mockcontainer"
     with pytest.raises(
@@ -89,10 +89,10 @@ async def test_get_sas_token_invalid_url_scheme():
         match="Invalid Azure Storage Container URL."
         " The correct format is 'https://storageaccountname.core.windows.net/containername'.",
     ):
-        await AzureStorageAuth.get_sas_token(invalid_url)
+        await AzureStorageAuth.get_sas_token_async(invalid_url)
 
 
-async def test_get_sas_token_invalid_url_netloc():
+async def test_get_sas_token_invalid_url_netloc_async():
     # Test with invalid container URL (no netloc)
     invalid_url = "https:///mockcontainer"
     with pytest.raises(
@@ -100,10 +100,10 @@ async def test_get_sas_token_invalid_url_netloc():
         match="Invalid Azure Storage Container URL."
         " The correct format is 'https://storageaccountname.core.windows.net/containername'.",
     ):
-        await AzureStorageAuth.get_sas_token(invalid_url)
+        await AzureStorageAuth.get_sas_token_async(invalid_url)
 
 
-async def test_get_sas_token_invalid_url_path():
+async def test_get_sas_token_invalid_url_path_async():
     # Test with invalid container URL (no path)
     invalid_url = "https://storageaccountname.core.windows.net"
     with pytest.raises(
@@ -111,4 +111,32 @@ async def test_get_sas_token_invalid_url_path():
         match="Invalid Azure Storage Container URL."
         " The correct format is 'https://storageaccountname.core.windows.net/containername'.",
     ):
-        await AzureStorageAuth.get_sas_token(invalid_url)
+        await AzureStorageAuth.get_sas_token_async(invalid_url)
+
+
+async def test_get_user_delegation_key_emits_deprecation_warning_and_delegates():
+    mock_blob_service_client = AsyncMock(spec=BlobServiceClient)
+    expected_key = UserDelegationKey()
+    with patch.object(
+        AzureStorageAuth,
+        "get_user_delegation_key_async",
+        new=AsyncMock(return_value=expected_key),
+    ) as mock_new:
+        with pytest.warns(DeprecationWarning, match="get_user_delegation_key_async"):
+            result = await AzureStorageAuth.get_user_delegation_key(mock_blob_service_client)
+
+    assert result is expected_key
+    mock_new.assert_awaited_once_with(mock_blob_service_client)
+
+
+async def test_get_sas_token_emits_deprecation_warning_and_delegates():
+    with patch.object(
+        AzureStorageAuth,
+        "get_sas_token_async",
+        new=AsyncMock(return_value="shim-sas-token"),
+    ) as mock_new:
+        with pytest.warns(DeprecationWarning, match="get_sas_token_async"):
+            result = await AzureStorageAuth.get_sas_token(MOCK_CONTAINER_URL)
+
+    assert result == "shim-sas-token"
+    mock_new.assert_awaited_once_with(MOCK_CONTAINER_URL)

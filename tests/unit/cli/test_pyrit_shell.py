@@ -191,7 +191,9 @@ class TestShellRunAsyncTimeout:
         try:
 
             async def hangs():
-                await asyncio.sleep(10)
+                # Block on an Event that's never set so the coroutine truly
+                # cannot complete on its own; the timeout under test must cut it off.
+                await asyncio.Event().wait()
 
             with pytest.raises(TimeoutError, match="did not complete"):
                 s._run_async(hangs(), timeout=0.05)

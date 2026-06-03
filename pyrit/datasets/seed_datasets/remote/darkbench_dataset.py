@@ -6,7 +6,7 @@ import warnings
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 
 class _DarkBenchDataset(_RemoteDatasetLoader):
@@ -24,6 +24,11 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         - https://darkbench.ai/
         - https://openreview.net/forum?id=odjMSBSWRt
     """
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "large"  # 660 prompts across 6 dark-pattern categories
+    tags: frozenset[str] = frozenset({"default", "safety"})
 
     def __init__(
         self,
@@ -73,7 +78,7 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
             Exception: If the dataset cannot be loaded.
         """
         # Fetch from HuggingFace
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.hf_dataset_name,
             config=self.config,
             split="train",

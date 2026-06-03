@@ -134,7 +134,6 @@ class _MSTSDataset(_RemoteDatasetLoader):
         *,
         languages: list[str] | None = None,
         text_modifiers: list[str] | None = None,
-        max_examples: int | None = None,
         token: str | None = None,
     ) -> None:
         """
@@ -146,11 +145,6 @@ class _MSTSDataset(_RemoteDatasetLoader):
                 language. Defaults to ``["en"]``.
             text_modifiers (list[str] | None): Subset of {"assistance", "intention"} to include.
                 Defaults to both.
-            max_examples (int | None): Maximum number of test pairs to successfully load
-                across all languages and modifiers combined. Rows whose image fetch fails
-                are skipped and do NOT count toward this limit, so a request for N examples
-                returns up to N pairs as long as enough source rows succeed. Each loaded
-                pair produces 2 SeedPrompts (image + text). Defaults to None (no limit).
             token (str | None): Optional HuggingFace authentication token.
 
         Raises:
@@ -158,7 +152,6 @@ class _MSTSDataset(_RemoteDatasetLoader):
         """
         self.languages = self._resolve_languages(languages)
         self.text_modifiers = self._resolve_text_modifiers(text_modifiers)
-        self.max_examples = max_examples
         self.token = token
         self.source = f"https://huggingface.co/datasets/{_HF_REPO_ID}"
 
@@ -175,10 +168,6 @@ class _MSTSDataset(_RemoteDatasetLoader):
         and both have ``sequence=0``, so they are delivered together as a single
         multimodal user message (image + text) rather than as two separate turns.
 
-        When ``max_examples`` is set, only successfully loaded pairs count toward the
-        limit; rows whose image fetch fails are logged and skipped without consuming
-        the quota.
-
         Args:
             cache (bool): Whether to cache the fetched dataset and images. Defaults to True.
 
@@ -189,11 +178,10 @@ class _MSTSDataset(_RemoteDatasetLoader):
 
         prompts: list[SeedPrompt] = []
         failed_image_count = 0
-        successful_pairs = 0
 
         for language in self.languages:
             split_name = _LANGUAGE_TO_SPLIT[language]
-            split_data = await self._fetch_from_huggingface(
+            split_data = await self._fetch_from_huggingface_async(
                 dataset_name=_HF_REPO_ID,
                 split=split_name,
                 cache=cache,
@@ -201,9 +189,6 @@ class _MSTSDataset(_RemoteDatasetLoader):
             )
 
             for row in split_data:
-                if self.max_examples is not None and successful_pairs >= self.max_examples:
-                    break
-
                 if row.get("prompt_type") not in self.text_modifiers:
                     continue
 
@@ -218,10 +203,6 @@ class _MSTSDataset(_RemoteDatasetLoader):
                     continue
 
                 prompts.extend(pair)
-                successful_pairs += 1
-
-            if self.max_examples is not None and successful_pairs >= self.max_examples:
-                break
 
         if failed_image_count > 0:
             logger.warning(f"[MSTS] Skipped {failed_image_count} example(s) due to image fetch failures")
@@ -450,7 +431,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
             )
         serializer.value = str(Path(str(results_path) + serializer.data_sub_directory, filename))
         try:
-            if await results_storage_io.path_exists(serializer.value):
+            if await results_storage_io.path_exists_async(serializer.value):
                 return serializer.value
         except Exception as e:
             logger.warning(f"[MSTS] Failed to check if image {image_id} exists in cache: {e}")
@@ -460,7 +441,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
             response = await make_request_and_raise_if_error_async(endpoint_uri=image_url, method="GET")
             image_bytes = response.content
 
-        await serializer.save_data(data=image_bytes, output_filename=filename.rsplit(".", 1)[0])
+        await serializer.save_data_async(data=image_bytes, output_filename=filename.rsplit(".", 1)[0])
 
         return str(serializer.value)
 

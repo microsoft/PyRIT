@@ -311,7 +311,7 @@ class TestDiscoverTargetCapabilitiesAsync:
         # the seeded user + assistant history followed by the new user turn.
         assert len(first_conv) == 1
         assert len(second_conv) >= 3
-        roles = [msg.message_pieces[0]._role for msg in second_conv]
+        roles = [msg.message_pieces[0].role for msg in second_conv]
         assert roles[-3:] == ["user", "assistant", "user"]
 
     async def test_multi_turn_probe_short_circuits_on_first_failure(self) -> None:
@@ -449,11 +449,11 @@ class TestDiscoverTargetCapabilitiesAsync:
         # separate. Verify the system message is in memory and the wire
         # payload contains the system + user history.
         normalized: list[Message] = target._send_prompt_to_target_async.await_args.kwargs["normalized_conversation"]
-        roles_sent = [piece._role for msg in normalized for piece in msg.message_pieces]
+        roles_sent = [piece.role for msg in normalized for piece in msg.message_pieces]
         assert "system" in roles_sent
         assert roles_sent[-1] == "user"
         # The last sent Message itself should be user-only.
-        assert [piece._role for piece in normalized[-1].message_pieces] == ["user"]
+        assert [piece.role for piece in normalized[-1].message_pieces] == ["user"]
 
     async def test_multi_message_pieces_probe_sends_two_pieces(self) -> None:
         target = MockPromptTarget()
@@ -503,7 +503,7 @@ class TestDiscoverTargetCapabilitiesAsync:
         )
 
         async def reject_system_roles(*, normalized_conversation: list[Message]) -> list[Message]:
-            roles = [piece._role for message in normalized_conversation for piece in message.message_pieces]
+            roles = [piece.role for message in normalized_conversation for piece in message.message_pieces]
             if "system" in roles:
                 raise RuntimeError("system messages are not natively supported")
             return _ok_response()
@@ -530,7 +530,7 @@ class TestDiscoverTargetCapabilitiesAsync:
         )
 
         async def require_native_system_role(*, normalized_conversation: list[Message]) -> list[Message]:
-            roles = [piece._role for message in normalized_conversation for piece in message.message_pieces]
+            roles = [piece.role for message in normalized_conversation for piece in message.message_pieces]
             if "system" not in roles:
                 raise RuntimeError("probe used adapted system-prompt shaping")
             return _ok_response()
@@ -755,7 +755,9 @@ class TestSendAndCheckTimeout:
         target = MockPromptTarget()
 
         async def _hang(**_kwargs: object) -> list[Message]:
-            await asyncio.sleep(10)
+            # Block on an Event that's never set so the probe truly cannot
+            # complete on its own; per_probe_timeout_s must cut it off.
+            await asyncio.Event().wait()
             return _ok_response()
 
         target._send_prompt_to_target_async = AsyncMock(side_effect=_hang)  # type: ignore[method-assign]
@@ -799,7 +801,7 @@ class TestVerifyTargetAsync:
     async def test_returns_target_capabilities_assembled_from_probes(self) -> None:
         """
         ``discover_target_capabilities_async`` runs both the capability and modality probes
-        and assembles a :class:`TargetCapabilities` populated from the
+        and assembles a ``TargetCapabilities`` populated from the
         queried results, copying ``output_modalities`` from the target's
         declared capabilities and deriving editable history conservatively.
         """
@@ -874,11 +876,8 @@ class TestVerifyTargetAsync:
         """Responses whose Messages have no pieces must also be rejected."""
         target = MockPromptTarget()
         target._send_prompt_to_target_async = AsyncMock(  # type: ignore[method-assign]
-            return_value=[Message.__new__(Message)]
+            return_value=[Message.model_construct(message_pieces=[])]
         )
-        # Bypass __init__ to construct a Message with no pieces (Message.__init__ rejects empty).
-        empty_msg = target._send_prompt_to_target_async.return_value[0]
-        empty_msg.message_pieces = []
 
         result = await _discover_capability_flags_async(
             target=target,
@@ -891,8 +890,7 @@ class TestVerifyTargetAsync:
         """Any empty Message in a multi-message response must cause the probe to fail."""
         target = MockPromptTarget()
         ok = _ok_response()[0]
-        empty = Message.__new__(Message)
-        empty.message_pieces = []
+        empty = Message.model_construct(message_pieces=[])
         target._send_prompt_to_target_async = AsyncMock(return_value=[ok, empty])  # type: ignore[method-assign]
 
         result = await _discover_capability_flags_async(

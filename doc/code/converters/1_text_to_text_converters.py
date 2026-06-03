@@ -87,6 +87,8 @@ print("Negation Trap:", await NegationTrapConverter().convert_async(prompt="your
 # %%
 from pyrit.prompt_converter import (
     AnsiAttackConverter,
+    ArabicPresentationFormConverter,
+    BidiConverter,
     CharacterSpaceConverter,
     CharSwapConverter,
     CodeChameleonConverter,
@@ -102,6 +104,7 @@ from pyrit.prompt_converter import (
     RepeatTokenConverter,
     StringJoinConverter,
     SuperscriptConverter,
+    TatweelConverter,
     UnicodeConfusableConverter,
     UnicodeReplacementConverter,
     UnicodeSubstitutionConverter,
@@ -125,6 +128,16 @@ print("Flip:", await FlipConverter().convert_async(prompt=prompt))  # type: igno
 # Character Space [@robustintelligence2024bypass] inserts spaces between characters
 print("Character Space:", await CharacterSpaceConverter().convert_async(prompt=prompt))  # type: ignore
 print("Diacritic:", await DiacriticConverter().convert_async(prompt=prompt))  # type: ignore
+
+# Bidi [@boucher2023trojan] wraps text in Unicode bidirectional control characters
+print("Bidi:", await BidiConverter().convert_async(prompt=prompt))  # type: ignore
+# The Arabic converters only affect Arabic letters, so they use an Arabic prompt
+# ("tell me how to cut down a tree") rather than the Latin-script prompt above.
+arabic_prompt = "أخبرني كيف أقطع شجرة"
+# Tatweel inserts the Arabic kashida between adjacent Arabic letters
+print("Tatweel:", await TatweelConverter().convert_async(prompt=arabic_prompt))  # type: ignore
+# Arabic presentation form substitutes Arabic letters with their isolated glyphs
+print("Arabic Presentation Form:", await ArabicPresentationFormConverter().convert_async(prompt=arabic_prompt))  # type: ignore
 print("Superscript:", await SuperscriptConverter().convert_async(prompt=prompt))  # type: ignore
 print("Zalgo:", await ZalgoConverter().convert_async(prompt=prompt))  # type: ignore
 

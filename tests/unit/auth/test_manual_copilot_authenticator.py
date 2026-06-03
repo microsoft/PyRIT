@@ -9,10 +9,15 @@ import pytest
 
 from pyrit.auth.manual_copilot_authenticator import ManualCopilotAuthenticator
 
+# HS256 requires a key >= 32 bytes (RFC 7518 §3.2) to avoid PyJWT's
+# InsecureKeyLengthWarning. The authenticator decodes tokens with
+# verify_signature=False, so the key value is purely formal.
+_TEST_JWT_KEY = "a" * 32
+
 
 def _make_jwt(claims: dict) -> str:
     """Create an unsigned JWT with the given claims for testing."""
-    return pyjwt.encode(claims, key="secret", algorithm="HS256")
+    return pyjwt.encode(claims, key=_TEST_JWT_KEY, algorithm="HS256")
 
 
 VALID_CLAIMS = {"tid": "tenant-id-123", "oid": "object-id-456", "sub": "user"}
@@ -70,11 +75,18 @@ async def test_get_token_async_returns_access_token():
     assert result == VALID_TOKEN
 
 
-async def test_get_claims_returns_decoded_claims():
+async def test_get_claims_async_returns_decoded_claims():
     auth = ManualCopilotAuthenticator(access_token=VALID_TOKEN)
-    claims = await auth.get_claims()
+    claims = await auth.get_claims_async()
     assert claims["tid"] == "tenant-id-123"
     assert claims["oid"] == "object-id-456"
+
+
+async def test_get_claims_emits_deprecation_warning_and_delegates():
+    auth = ManualCopilotAuthenticator(access_token=VALID_TOKEN)
+    with pytest.warns(DeprecationWarning, match="get_claims_async"):
+        claims = await auth.get_claims()
+    assert claims["tid"] == "tenant-id-123"
 
 
 def test_refresh_token_raises_runtime_error():

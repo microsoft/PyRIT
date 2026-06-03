@@ -126,7 +126,7 @@ async def test_fetch_dataset_returns_paired_prompts(english_rows):
     loader = _MSTSDataset()
 
     with (
-        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=english_rows)),
+        patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=english_rows)),
         patch.object(
             loader,
             "_fetch_and_save_image_async",
@@ -155,7 +155,7 @@ async def test_prompt_pair_shares_group_id(english_rows):
     loader = _MSTSDataset()
 
     with (
-        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=english_rows[:2])),
+        patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=english_rows[:2])),
         patch.object(
             loader,
             "_fetch_and_save_image_async",
@@ -180,7 +180,7 @@ async def test_text_modifier_filter_excludes_intention_rows(english_rows):
     loader = _MSTSDataset(text_modifiers=["assistance"])
 
     with (
-        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=english_rows)),
+        patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=english_rows)),
         patch.object(
             loader,
             "_fetch_and_save_image_async",
@@ -201,7 +201,7 @@ async def test_language_filter_loads_only_requested_splits(english_rows):
     mock_fetch = AsyncMock(return_value=english_rows)
 
     with (
-        patch.object(loader, "_fetch_from_huggingface", new=mock_fetch),
+        patch.object(loader, "_fetch_from_huggingface_async", new=mock_fetch),
         patch.object(
             loader,
             "_fetch_and_save_image_async",
@@ -221,7 +221,7 @@ async def test_failed_image_is_skipped(english_rows):
     loader = _MSTSDataset()
 
     with (
-        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=english_rows)),
+        patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=english_rows)),
         patch.object(
             loader,
             "_fetch_and_save_image_async",
@@ -234,47 +234,11 @@ async def test_failed_image_is_skipped(english_rows):
     assert len(dataset.seeds) == 6
 
 
-async def test_max_examples_limits_rows(english_rows):
-    loader = _MSTSDataset(max_examples=1)
-
-    with (
-        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=english_rows)),
-        patch.object(
-            loader,
-            "_fetch_and_save_image_async",
-            new=AsyncMock(return_value="/tmp/msts.jpg"),
-        ),
-    ):
-        dataset = await loader.fetch_dataset_async()
-
-    # Only 1 row processed → 2 prompts
-    assert len(dataset.seeds) == 2
-
-
-async def test_max_examples_does_not_count_failed_rows(english_rows):
-    loader = _MSTSDataset(max_examples=2)
-
-    # First row fails, next three succeed. max_examples=2 should still return 2 pairs
-    # (4 prompts) by skipping the failed row, not 1 pair (2 prompts).
-    with (
-        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=english_rows)),
-        patch.object(
-            loader,
-            "_fetch_and_save_image_async",
-            new=AsyncMock(side_effect=[Exception("network error"), "/tmp/a.jpg", "/tmp/b.jpg", "/tmp/c.jpg"]),
-        ),
-    ):
-        dataset = await loader.fetch_dataset_async()
-
-    # 2 successful pairs × 2 prompts each = 4 prompts (failed row did not consume quota)
-    assert len(dataset.seeds) == 4
-
-
 async def test_metadata_includes_msts_fields(english_rows):
     loader = _MSTSDataset()
 
     with (
-        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=english_rows[:1])),
+        patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=english_rows[:1])),
         patch.object(
             loader,
             "_fetch_and_save_image_async",
@@ -310,7 +274,7 @@ async def test_metadata_handles_none_nullable_fields():
     row["hazard_subcategory"] = None
 
     with (
-        patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=[row])),
+        patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=[row])),
         patch.object(
             loader,
             "_fetch_and_save_image_async",
@@ -368,7 +332,7 @@ async def test_fetch_and_save_image_returns_cached_path():
     mock_memory = MagicMock()
     mock_memory.results_path = "/results"
     mock_storage_io = AsyncMock()
-    mock_storage_io.path_exists = AsyncMock(return_value=True)
+    mock_storage_io.path_exists_async = AsyncMock(return_value=True)
     mock_memory.results_storage_io = mock_storage_io
     mock_serializer._memory = mock_memory
     mock_serializer.data_sub_directory = "/images"
@@ -443,11 +407,11 @@ async def test_fetch_and_save_image_saves_pil_bytes_when_path_missing(tmp_path):
     mock_memory = MagicMock()
     mock_memory.results_path = str(tmp_path)
     mock_storage_io = AsyncMock()
-    mock_storage_io.path_exists = AsyncMock(return_value=False)
+    mock_storage_io.path_exists_async = AsyncMock(return_value=False)
     mock_memory.results_storage_io = mock_storage_io
     mock_serializer._memory = mock_memory
     mock_serializer.data_sub_directory = "/images"
-    mock_serializer.save_data = AsyncMock()
+    mock_serializer.save_data_async = AsyncMock()
 
     img = Image.new("RGB", (4, 4), color="green")
 
@@ -463,8 +427,8 @@ async def test_fetch_and_save_image_saves_pil_bytes_when_path_missing(tmp_path):
             extension="jpg",
         )
 
-    mock_serializer.save_data.assert_awaited_once()
-    save_kwargs = mock_serializer.save_data.await_args.kwargs
+    mock_serializer.save_data_async.assert_awaited_once()
+    save_kwargs = mock_serializer.save_data_async.await_args.kwargs
     assert save_kwargs["output_filename"] == "msts_img_0001"
     assert isinstance(save_kwargs["data"], bytes) and len(save_kwargs["data"]) > 0
     assert result == str(Path(str(tmp_path) + "/images", "msts_img_0001.jpg"))
@@ -475,11 +439,11 @@ async def test_fetch_and_save_image_falls_back_to_url_when_pil_unavailable(tmp_p
     mock_memory = MagicMock()
     mock_memory.results_path = str(tmp_path)
     mock_storage_io = AsyncMock()
-    mock_storage_io.path_exists = AsyncMock(return_value=False)
+    mock_storage_io.path_exists_async = AsyncMock(return_value=False)
     mock_memory.results_storage_io = mock_storage_io
     mock_serializer._memory = mock_memory
     mock_serializer.data_sub_directory = "/images"
-    mock_serializer.save_data = AsyncMock()
+    mock_serializer.save_data_async = AsyncMock()
 
     mock_response = MagicMock()
     mock_response.content = b"network-bytes"
@@ -503,7 +467,7 @@ async def test_fetch_and_save_image_falls_back_to_url_when_pil_unavailable(tmp_p
         )
 
     mock_request.assert_awaited_once_with(endpoint_uri="https://example.com/img.png", method="GET")
-    mock_serializer.save_data.assert_awaited_once_with(data=b"network-bytes", output_filename="msts_img_0002")
+    mock_serializer.save_data_async.assert_awaited_once_with(data=b"network-bytes", output_filename="msts_img_0002")
     assert result == str(Path(str(tmp_path) + "/images", "msts_img_0002.png"))
 
 
@@ -512,11 +476,11 @@ async def test_fetch_and_save_image_continues_when_path_exists_raises(tmp_path):
     mock_memory = MagicMock()
     mock_memory.results_path = str(tmp_path)
     mock_storage_io = AsyncMock()
-    mock_storage_io.path_exists = AsyncMock(side_effect=OSError("disk error"))
+    mock_storage_io.path_exists_async = AsyncMock(side_effect=OSError("disk error"))
     mock_memory.results_storage_io = mock_storage_io
     mock_serializer._memory = mock_memory
     mock_serializer.data_sub_directory = "/images"
-    mock_serializer.save_data = AsyncMock()
+    mock_serializer.save_data_async = AsyncMock()
 
     mock_response = MagicMock()
     mock_response.content = b"recovered-bytes"
@@ -539,5 +503,5 @@ async def test_fetch_and_save_image_continues_when_path_exists_raises(tmp_path):
             extension="jpg",
         )
 
-    mock_serializer.save_data.assert_awaited_once_with(data=b"recovered-bytes", output_filename="msts_img_0003")
+    mock_serializer.save_data_async.assert_awaited_once_with(data=b"recovered-bytes", output_filename="msts_img_0003")
     assert result == str(Path(str(tmp_path) + "/images", "msts_img_0003.jpg"))

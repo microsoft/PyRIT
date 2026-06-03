@@ -5,8 +5,7 @@ from typing import Optional
 
 import segno
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType, data_serializer_factory
+from pyrit.models import ComponentIdentifier, PromptDataType, data_serializer_factory
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 
@@ -96,7 +95,7 @@ class QRCodeConverter(PromptConverter):
         if prompt.strip() == "":
             raise ValueError("Please provide valid text value")
         # Generate random unique filename
-        img_serializer_file = str(await self._img_serializer.get_data_filename())
+        img_serializer_file = str(await self._img_serializer.get_data_filename_async())
 
         # Create QRCode object
         qr = segno.make_qr(prompt)

@@ -11,7 +11,7 @@ Targets have two concepts:
 This module defines the Instance models for runtime target management.
 """
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -80,3 +80,11 @@ class CreateTargetRequest(BaseModel):
 
     type: str = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
     params: dict[str, Any] = Field(default_factory=dict, description="Target constructor parameters")
+    auth_mode: Literal["api_key", "entra"] = Field(
+        "api_key",
+        description=(
+            "Authentication mode. 'api_key' uses the api_key in params (default). "
+            "'entra' uses Microsoft Entra ID; requires an Azure endpoint and is "
+            "supported by OpenAI-family targets and AzureMLChatTarget."
+        ),
+    )
