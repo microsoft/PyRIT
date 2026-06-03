@@ -116,7 +116,7 @@ context = BargeInAttackContext(
 result = await attack.execute_with_context_async(context=context)  # type: ignore
 print(f"executed_turns: {result.executed_turns}")
 await ConsoleAttackResultPrinter(width=200).write_async(result=result)  # type: ignore
-await target.cleanup_target()  # type: ignore
+await target.cleanup_target_async()  # type: ignore
 
 # %% [markdown]
 # ## Section 2: Barge-in (interrupting the assistant mid-response)
@@ -124,6 +124,17 @@ await target.cleanup_target()  # type: ignore
 # Plays the question twice with timing arranged so turn 2's speech arrives during turn 1's
 # response. Server VAD detects the new speech, cancels turn 1's response, and resolves it
 # with `interrupted=True`.
+
+# %% [markdown]
+# ### Reading the barge-in output
+#
+# After running the next cell, if barge-in fired successfully:
+# - `executed_turns: 2` (two VAD-detected user turns)
+# - First assistant turn shows `[INTERRUPTED]` with a truncated transcript
+# - Second assistant turn completes normally
+#
+# If you don't see `[INTERRUPTED]`, decrease `TURN1_RESPONSE_WAIT_S` so turn 2's audio
+# arrives earlier in turn 1's response window.
 
 # %%
 TURN1_RESPONSE_WAIT_S = 0.2  # how long to let the model start speaking before barging in
@@ -180,18 +191,7 @@ for message in turns:
         print(f"  {piece._role} {piece.converted_value_data_type}{marker}: {value_preview}")
 
 await ConsoleAttackResultPrinter(width=200).write_async(result=barge_in_result)  # type: ignore
-await target2.cleanup_target()  # type: ignore
-
-# %% [markdown]
-# ### Reading the barge-in output
-#
-# If barge-in fired successfully:
-# - `executed_turns: 2` (two VAD-detected user turns)
-# - First assistant turn shows `[INTERRUPTED]` with a truncated transcript
-# - Second assistant turn completes normally
-#
-# If you don't see `[INTERRUPTED]`, decrease `TURN1_RESPONSE_WAIT_S` so turn 2's audio
-# arrives earlier in turn 1's response window.
+await target2.cleanup_target_async()  # type: ignore
 
 # %% [markdown]
 # ## Alternate chunk sources

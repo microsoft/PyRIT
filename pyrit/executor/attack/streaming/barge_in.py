@@ -93,8 +93,6 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             params_type=params_type,
             logger=logger,
         )
-        # Capability validation (STREAMING_AUDIO) runs in super().__init__ via
-        # TARGET_REQUIREMENTS; the cast records the concrete dependency for the call site.
         self._realtime_target = cast("RealtimeTarget", objective_target)
         attack_converter_config = attack_converter_config or AttackConverterConfig()
         self._request_converters = attack_converter_config.request_converters
@@ -110,7 +108,8 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         Validate the context before executing.
 
         Raises:
-            ValueError: If the context is missing required fields.
+            ValueError: If the objective is missing/empty or ``audio_chunks`` is not set
+                to an async iterator of PCM bytes.
         """
         if not context.objective or context.objective.isspace():
             raise ValueError("Attack objective must be provided and non-empty in the context")
