@@ -47,18 +47,28 @@ from pyrit.auxiliary_attacks.gcg.config import (
 # mechanism so all GCG public symbols share one re-export pathway.
 _LAZY_IMPORTS = {
     "CandidateFilter": ("pyrit.auxiliary_attacks.gcg.extension_protocols", "CandidateFilter"),
+    "CrossEntropyLoss": ("pyrit.auxiliary_attacks.gcg.default_implementations", "CrossEntropyLoss"),
     "GCG": ("pyrit.auxiliary_attacks.gcg.generator", "GCGGenerator"),
     "GCGContext": ("pyrit.auxiliary_attacks.gcg.generator", "GCGContext"),
     "GCGGenerator": ("pyrit.auxiliary_attacks.gcg.generator", "GCGGenerator"),
     "GCGResult": ("pyrit.auxiliary_attacks.gcg.generator", "GCGResult"),
+    "LengthPreservingFilter": ("pyrit.auxiliary_attacks.gcg.default_implementations", "LengthPreservingFilter"),
+    "LiteralStringInit": ("pyrit.auxiliary_attacks.gcg.default_implementations", "LiteralStringInit"),
     "LossFunction": ("pyrit.auxiliary_attacks.gcg.extension_protocols", "LossFunction"),
     "SamplingStrategy": ("pyrit.auxiliary_attacks.gcg.extension_protocols", "SamplingStrategy"),
+    "StandardGCGSampling": ("pyrit.auxiliary_attacks.gcg.default_implementations", "StandardGCGSampling"),
     "SuffixInitializer": ("pyrit.auxiliary_attacks.gcg.extension_protocols", "SuffixInitializer"),
     "load_goals_and_targets": ("pyrit.auxiliary_attacks.gcg.data", "load_goals_and_targets"),
 }
 
 if TYPE_CHECKING:
     from pyrit.auxiliary_attacks.gcg.data import load_goals_and_targets
+    from pyrit.auxiliary_attacks.gcg.default_implementations import (
+        CrossEntropyLoss,
+        LengthPreservingFilter,
+        LiteralStringInit,
+        StandardGCGSampling,
+    )
     from pyrit.auxiliary_attacks.gcg.extension_protocols import (
         CandidateFilter,
         LossFunction,
@@ -91,6 +101,7 @@ def __dir__() -> list[str]:
 
 __all__ = [
     "CandidateFilter",
+    "CrossEntropyLoss",
     "GCG",
     "GCGAlgorithmConfig",
     "GCGConfig",
@@ -101,8 +112,11 @@ __all__ = [
     "GCGOutputConfig",
     "GCGResult",
     "GCGStrategyConfig",
+    "LengthPreservingFilter",
+    "LiteralStringInit",
     "LossFunction",
     "SamplingStrategy",
+    "StandardGCGSampling",
     "SuffixInitializer",
     "load_goals_and_targets",
 ]
