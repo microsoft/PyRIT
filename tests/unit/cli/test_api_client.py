@@ -226,7 +226,7 @@ async def test_list_scenario_runs_async(client, mock_httpx_client):
 
 
 # ---------------------------------------------------------------------------
-# _get_json error path
+# _get_json_async error path
 # ---------------------------------------------------------------------------
 
 

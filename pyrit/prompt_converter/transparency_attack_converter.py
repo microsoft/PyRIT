@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import base64
 import logging
 from io import BytesIO
@@ -255,7 +256,7 @@ class TransparencyAttackConverter(PromptConverter):
 
         return la_image
 
-    async def _save_blended_image(self, attack_image: np.ndarray, alpha: np.ndarray) -> str:
+    async def _save_blended_image_async(self, attack_image: np.ndarray, alpha: np.ndarray) -> str:
         """
         Save the blended image with transparency as a PNG file.
 
@@ -280,7 +281,7 @@ class TransparencyAttackConverter(PromptConverter):
             la_pil.save(image_buffer, format="PNG")
             image_str = base64.b64encode(image_buffer.getvalue())
 
-            await img_serializer.save_b64_image(data=image_str.decode())
+            await img_serializer.save_b64_image_async(data=image_str.decode())
             return img_serializer.value
         except Exception as e:
             raise ValueError(f"Failed to save blended image: {e}") from e
@@ -305,7 +306,7 @@ class TransparencyAttackConverter(PromptConverter):
 
         self._validate_input_image(prompt)
 
-        background_image = self._load_and_preprocess_image(prompt)
+        background_image = await asyncio.to_thread(self._load_and_preprocess_image, prompt)
         background_tensor = background_image * 0.5  # darkening for better blending optimization
 
         alpha = np.ones_like(background_tensor)  # optimized to determine transparency pattern
@@ -341,5 +342,5 @@ class TransparencyAttackConverter(PromptConverter):
             alpha = optimizer.update(params=alpha, grads=grad_alpha)
             alpha = np.clip(alpha, 0.0, 1.0)
 
-        image_path = await self._save_blended_image(background_tensor, alpha)
+        image_path = await self._save_blended_image_async(background_tensor, alpha)
         return ConverterResult(output_text=image_path, output_type="image_path")

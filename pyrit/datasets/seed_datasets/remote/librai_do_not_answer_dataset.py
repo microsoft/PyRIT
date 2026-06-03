@@ -57,7 +57,7 @@ class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading LibrAI Do Not Answer dataset from {self.source}")
 
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.source,
             split="train",
             cache=cache,

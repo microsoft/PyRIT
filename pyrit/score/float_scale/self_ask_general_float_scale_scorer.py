@@ -140,7 +140,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
                 message_piece=message_piece,
             )
 
-        unvalidated: UnvalidatedScore = await self._score_value_with_llm(
+        unvalidated: UnvalidatedScore = await self._score_value_with_llm_async(
             prompt_target=self._prompt_target,
             system_prompt=system_prompt,
             message_value=user_prompt,

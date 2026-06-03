@@ -138,15 +138,15 @@ class TestLogException:
         retry_state.outcome = outcome
 
         retry_state.fn = MagicMock()
-        retry_state.fn.__name__ = "_score_value_with_llm"
+        retry_state.fn.__name__ = "_score_value_with_llm_async"
 
         with patch("pyrit.exceptions.exceptions_helpers.logger") as mock_logger:
             log_exception(retry_state)
             mock_logger.error.assert_called_once()
             call_args = mock_logger.error.call_args[0][0]
-            # New format: "objective scorer; TrueFalseScorer::_score_value_with_llm"
+            # New format: "objective scorer; TrueFalseScorer::_score_value_with_llm_async"
             assert "objective scorer" in call_args
-            assert "TrueFalseScorer::_score_value_with_llm" in call_args
+            assert "TrueFalseScorer::_score_value_with_llm_async" in call_args
             assert "Connection failed" in call_args
 
     def test_log_exception_with_context_no_component_name(self):

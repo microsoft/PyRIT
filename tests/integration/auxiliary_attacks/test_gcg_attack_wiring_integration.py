@@ -1,12 +1,28 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Tests that exercise the full attack class wiring without mocking manager classes.
+"""Integration tests for GCG attack-class wiring.
 
-These tests catch kwarg mismatches between IndividualPromptAttack/ProgressiveMultiPromptAttack
-and MultiPromptAttack.__init__(), and template compatibility issues in _update_ids().
+These tests construct real ``IndividualPromptAttack`` / ``ProgressiveMultiPromptAttack``
+instances and exercise their wiring all the way down through
+``GCGAttackPrompt._update_ids``, which calls ``tokenizer.apply_chat_template`` and
+walks character positions via ``char_to_token``. They live here (not under
+``tests/unit/``) because they require a real HuggingFace tokenizer (gpt2) to
+back the chat-template pipeline — mocking that out would defeat the test's
+purpose, which is to catch kwarg-mismatch and template-compatibility bugs that
+mocked tests miss.
+
+Network dependency: the gpt2 tokenizer is fetched from HuggingFace on first
+use (and then cached). This is why these tests run only in the integration tier
+(``make integration-test``), not in the PR-time unit-test matrix.
+
+Requires: torch, transformers (GCG optional deps).
+Skipped via importorskip when deps are not installed.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,12 +38,29 @@ gcg_attack_mod = pytest.importorskip(
     reason="GCG optional dependencies not installed",
 )
 
+generator_mod = pytest.importorskip(
+    "pyrit.auxiliary_attacks.gcg.generator",
+    reason="GCG optional dependencies (torch, transformers, etc.) not installed",
+)
+
+from pyrit.auxiliary_attacks.gcg.config import (  # noqa: E402
+    GCGAlgorithmConfig,
+    GCGModelConfig,
+    GCGOutputConfig,
+    GCGStrategyConfig,
+)
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
 IndividualPromptAttack = attack_manager_mod.IndividualPromptAttack
 ProgressiveMultiPromptAttack = attack_manager_mod.ProgressiveMultiPromptAttack
 MultiPromptAttack = attack_manager_mod.MultiPromptAttack
 GCGAttackPrompt = gcg_attack_mod.GCGAttackPrompt
 GCGPromptManager = gcg_attack_mod.GCGPromptManager
 GCGMultiPromptAttack = gcg_attack_mod.GCGMultiPromptAttack
+GCGGenerator = generator_mod.GCGGenerator
+GCGContext = generator_mod.GCGContext
 
 MANAGERS = {
     "AP": GCGAttackPrompt,
@@ -35,16 +68,18 @@ MANAGERS = {
     "MPA": GCGMultiPromptAttack,
 }
 
+_LLAMA_2 = "meta-llama/Llama-2-7b-chat-hf"
 
-def _make_mock_worker() -> MagicMock:
-    """Create a mock worker whose tokenizer can stand in for a real chat tokenizer.
+
+def _make_mock_worker_with_real_tokenizer() -> MagicMock:
+    """Worker mock backed by a real gpt2 tokenizer.
 
     The wiring tests construct real ``GCGAttackPrompt`` instances which call
     ``tokenizer.apply_chat_template`` and then walk character positions in the
     rendered prompt. We need a real string + a tokenizer that can answer
-    ``char_to_token`` queries on it, so we back the mock with a real
-    distilgpt2 tokenizer (the smallest available transformers tokenizer that
-    ships with all the methods we touch).
+    ``char_to_token`` queries on it, so we back the mock with the smallest
+    workable real HF tokenizer (gpt2) plus an explicit llama-2-style chat
+    template (gpt2 ships without one).
     """
     from transformers import AutoTokenizer
 
@@ -67,9 +102,9 @@ def _make_mock_worker() -> MagicMock:
 
 
 class TestAttackClassWiring:
-    """Tests that verify attack classes can be constructed with real manager classes.
+    """Verify attack classes can be constructed and run with real manager classes.
 
-    These catch kwarg mismatches that mocked tests miss.
+    Catches kwarg mismatches that mocked tests miss.
     """
 
     def test_individual_attack_creates_mpa_without_error(self) -> None:
@@ -78,7 +113,7 @@ class TestAttackClassWiring:
         This catches the mpa_kwargs bug where dead kwargs (deterministic, lr, etc.)
         were passed to MultiPromptAttack.__init__() which didn't accept them.
         """
-        worker = _make_mock_worker()
+        worker = _make_mock_worker_with_real_tokenizer()
 
         # Create IndividualPromptAttack with the real GCG manager classes
         attack = IndividualPromptAttack(
@@ -114,7 +149,7 @@ class TestAttackClassWiring:
 
     def test_progressive_attack_creates_mpa_without_error(self) -> None:
         """ProgressiveMultiPromptAttack.run() should create MultiPromptAttack without TypeError."""
-        worker = _make_mock_worker()
+        worker = _make_mock_worker_with_real_tokenizer()
 
         attack = ProgressiveMultiPromptAttack(
             goals=["test goal"],
@@ -145,3 +180,54 @@ class TestAttackClassWiring:
                 verbose=False,
                 filter_cand=True,
             )
+
+
+class TestCreateAttackWiring:
+    """Construct real attack classes via :meth:`GCGGenerator._create_attack` to catch kwarg mismatches."""
+
+    def test_transfer_false_returns_individual(self, tmp_path: Path) -> None:
+        gen = GCGGenerator(
+            models=[GCGModelConfig(name=_LLAMA_2)],
+            algorithm=GCGAlgorithmConfig(n_steps=5, batch_size=64, control_init="! ! !"),
+            output=GCGOutputConfig(result_prefix=str(tmp_path / "gcg")),
+        )
+        worker = _make_mock_worker_with_real_tokenizer()
+        context = GCGContext(goals=["g"], targets=["t"])
+        params = gen._to_attack_params(context=context)
+
+        attack = gen._create_attack(
+            params=params,
+            managers=MANAGERS,
+            train_goals=["g"],
+            train_targets=["t"],
+            test_goals=[],
+            test_targets=[],
+            workers=[worker],
+            test_workers=[],
+            logfile_path=str(tmp_path / "log.json"),
+        )
+        assert isinstance(attack, IndividualPromptAttack)
+
+    def test_transfer_true_returns_progressive(self, tmp_path: Path) -> None:
+        gen = GCGGenerator(
+            models=[GCGModelConfig(name=_LLAMA_2)],
+            algorithm=GCGAlgorithmConfig(n_steps=5, batch_size=64, control_init="! ! !"),
+            strategy=GCGStrategyConfig(transfer=True, progressive_goals=True, progressive_models=True),
+            output=GCGOutputConfig(result_prefix=str(tmp_path / "gcg")),
+        )
+        worker = _make_mock_worker_with_real_tokenizer()
+        context = GCGContext(goals=["g"], targets=["t"])
+        params = gen._to_attack_params(context=context)
+
+        attack = gen._create_attack(
+            params=params,
+            managers=MANAGERS,
+            train_goals=["g"],
+            train_targets=["t"],
+            test_goals=[],
+            test_targets=[],
+            workers=[worker],
+            test_workers=[],
+            logfile_path=str(tmp_path / "log.json"),
+        )
+        assert isinstance(attack, ProgressiveMultiPromptAttack)

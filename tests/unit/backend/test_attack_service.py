@@ -1508,7 +1508,7 @@ class TestPersistBase64Pieces:
         )
 
         mock_serializer = MagicMock()
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
         mock_serializer.value = "/saved/image.png"
 
         with patch(
@@ -1522,7 +1522,7 @@ class TestPersistBase64Pieces:
             data_type="image_path",
             extension=".png",
         )
-        mock_serializer.save_b64_image.assert_awaited_once_with(data="aW1hZ2VkYXRh")
+        mock_serializer.save_b64_image_async.assert_awaited_once_with(data="aW1hZ2VkYXRh")
         assert request.pieces[0].original_value == "/saved/image.png"
 
     async def test_mixed_pieces_only_persists_non_text(self, attack_service) -> None:
@@ -1542,7 +1542,7 @@ class TestPersistBase64Pieces:
         )
 
         mock_serializer = MagicMock()
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
         mock_serializer.value = "/saved/photo.jpg"
 
         with patch(
@@ -1569,7 +1569,7 @@ class TestPersistBase64Pieces:
         )
 
         mock_serializer = MagicMock()
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
         mock_serializer.value = "/saved/file.bin"
 
         with patch(
@@ -1600,7 +1600,7 @@ class TestPersistBase64Pieces:
         )
 
         mock_serializer = MagicMock()
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
         mock_serializer.value = "/saved/image.png"
 
         with patch(
@@ -1610,7 +1610,7 @@ class TestPersistBase64Pieces:
             await AttackService._persist_base64_pieces_async(request)
 
         # Should receive only the base64 payload, not the data URI prefix
-        mock_serializer.save_b64_image.assert_awaited_once_with(data="aW1hZ2VkYXRh")
+        mock_serializer.save_b64_image_async.assert_awaited_once_with(data="aW1hZ2VkYXRh")
         assert request.pieces[0].original_value == "/saved/image.png"
 
     async def test_http_url_is_kept_as_is(self, attack_service) -> None:
@@ -1673,7 +1673,7 @@ class TestPersistBase64Pieces:
             await AttackService._persist_base64_pieces_async(request)
 
             mock_factory.assert_called_once()
-            mock_serializer.save_b64_image.assert_called_once_with(data=long_b64)
+            mock_serializer.save_b64_image_async.assert_called_once_with(data=long_b64)
             assert request.pieces[0].original_value == "/tmp/saved_audio.wav"
 
 

@@ -108,7 +108,7 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
     source-of-truth harmful imperative — ``Changed Question`` from upstream)
     so that scorers can evaluate intent rather than the surface prompt.
 
-    Each row in the resulting :class:`SeedDataset` is a 3-seed group sharing a
+    Each row in the resulting ``SeedDataset`` is a 3-seed group sharing a
     ``prompt_group_id`` and ``sequence=0``:
 
     1. ``SeedObjective`` carrying the harmful imperative (``Changed Question``).
@@ -212,7 +212,7 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
-        Fetch MM-SafetyBench examples and return as a :class:`SeedDataset`.
+        Fetch MM-SafetyBench examples and return as a ``SeedDataset``.
 
         Args:
             cache (bool): Whether to cache the fetched data. Defaults to True.
@@ -301,7 +301,7 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         Returns:
             dict mapping ``id`` (string) to the objective text.
         """
-        text_only = await self._fetch_from_huggingface(
+        text_only = await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
             config=category_value,
             split="Text_only",
@@ -321,7 +321,7 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         Returns:
             The HuggingFace dataset split (an iterable of dict-like rows).
         """
-        return await self._fetch_from_huggingface(
+        return await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
             config=category_value,
             split=self.variant.value,

@@ -129,7 +129,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
             scoring_value = f"objective: {objective}\nresponse: {message_piece.converted_value}"
             scoring_data_type = "text"
 
-        unvalidated_score: UnvalidatedScore = await self._score_value_with_llm(
+        unvalidated_score: UnvalidatedScore = await self._score_value_with_llm_async(
             prompt_target=self._prompt_target,
             system_prompt=self._system_prompt,
             message_value=scoring_value,

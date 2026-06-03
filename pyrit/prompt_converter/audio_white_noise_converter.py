@@ -103,7 +103,7 @@ class AudioWhiteNoiseConverter(PromptConverter):
             audio_serializer = data_serializer_factory(
                 category="prompt-memory-entries", data_type="audio_path", extension=self._output_format, value=prompt
             )
-            audio_bytes = await audio_serializer.read_data()
+            audio_bytes = await audio_serializer.read_data_async()
 
             # Read the audio file bytes and process the data
             bytes_io = io.BytesIO(audio_bytes)
@@ -123,7 +123,7 @@ class AudioWhiteNoiseConverter(PromptConverter):
 
             # Save the converted bytes using the serializer
             converted_bytes = output_bytes_io.getvalue()
-            await audio_serializer.save_data(data=converted_bytes)
+            await audio_serializer.save_data_async(data=converted_bytes)
             audio_serializer_file = str(audio_serializer.value)
             logger.info(
                 "White noise (scale=%.4f) added to [%s], saved to [%s]",

@@ -82,7 +82,7 @@ class TestSeedDatasetProvider:
         mock_provider_cls = MagicMock(__name__="TestProvider")
         mock_provider_instance = mock_provider_cls.return_value
         mock_provider_instance.dataset_name = "test_dataset"
-        mock_provider_instance._parse_metadata = AsyncMock(return_value=None)
+        mock_provider_instance._parse_metadata_async = AsyncMock(return_value=None)
 
         with patch.dict(SeedDatasetProvider._registry, {"TestProvider": mock_provider_cls}, clear=True):
             names = await SeedDatasetProvider.get_all_dataset_names_async()
@@ -93,14 +93,14 @@ class TestSeedDatasetProvider:
         # Mock providers
         mock_provider1 = MagicMock(__name__="P1")
         mock_provider1.return_value.dataset_name = "d1"
-        mock_provider1.return_value._parse_metadata = AsyncMock(return_value=None)
+        mock_provider1.return_value._parse_metadata_async = AsyncMock(return_value=None)
         mock_provider1.return_value.fetch_dataset_async = AsyncMock(
             return_value=SeedDataset(seeds=[SeedPrompt(value="p1", data_type="text")], dataset_name="d1")
         )
 
         mock_provider2 = MagicMock(__name__="P2")
         mock_provider2.return_value.dataset_name = "d2"
-        mock_provider2.return_value._parse_metadata = AsyncMock(return_value=None)
+        mock_provider2.return_value._parse_metadata_async = AsyncMock(return_value=None)
         mock_provider2.return_value.fetch_dataset_async = AsyncMock(
             return_value=SeedDataset(seeds=[SeedPrompt(value="p2", data_type="text")], dataset_name="d2")
         )
@@ -113,14 +113,14 @@ class TestSeedDatasetProvider:
         """Test fetching datasets with filter."""
         mock_provider1 = MagicMock(__name__="P1")
         mock_provider1.return_value.dataset_name = "d1"
-        mock_provider1.return_value._parse_metadata = AsyncMock(return_value=None)
+        mock_provider1.return_value._parse_metadata_async = AsyncMock(return_value=None)
         mock_provider1.return_value.fetch_dataset_async = AsyncMock(
             return_value=SeedDataset(seeds=[SeedPrompt(value="p1", data_type="text")], dataset_name="d1")
         )
 
         mock_provider2 = MagicMock(__name__="P2")
         mock_provider2.return_value.dataset_name = "d2"
-        mock_provider2.return_value._parse_metadata = AsyncMock(return_value=None)
+        mock_provider2.return_value._parse_metadata_async = AsyncMock(return_value=None)
         mock_provider2.return_value.fetch_dataset_async = AsyncMock(side_effect=Exception("Should not be called"))
 
         with patch.dict(SeedDatasetProvider._registry, {"P1": mock_provider1, "P2": mock_provider2}, clear=True):
@@ -132,14 +132,14 @@ class TestSeedDatasetProvider:
         """Test that fetch_datasets_async raises ValueError for invalid dataset names."""
         mock_provider1 = MagicMock(__name__="P1")
         mock_provider1.return_value.dataset_name = "d1"
-        mock_provider1.return_value._parse_metadata = AsyncMock(return_value=None)
+        mock_provider1.return_value._parse_metadata_async = AsyncMock(return_value=None)
         mock_provider1.return_value.fetch_dataset_async = AsyncMock(
             return_value=SeedDataset(seeds=[SeedPrompt(value="p1", data_type="text")], dataset_name="d1")
         )
 
         mock_provider2 = MagicMock(__name__="P2")
         mock_provider2.return_value.dataset_name = "d2"
-        mock_provider2.return_value._parse_metadata = AsyncMock(return_value=None)
+        mock_provider2.return_value._parse_metadata_async = AsyncMock(return_value=None)
         mock_provider2.return_value.fetch_dataset_async = AsyncMock(
             return_value=SeedDataset(seeds=[SeedPrompt(value="p2", data_type="text")], dataset_name="d2")
         )
@@ -308,7 +308,7 @@ class TestDarkBenchDataset:
         """Test fetching DarkBench dataset."""
         loader = _DarkBenchDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", return_value=mock_darkbench_data):
+        with patch.object(loader, "_fetch_from_huggingface_async", return_value=mock_darkbench_data):
             dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
@@ -335,7 +335,7 @@ class TestDarkBenchDataset:
             split="test",
         )
 
-        with patch.object(loader, "_fetch_from_huggingface", return_value=mock_darkbench_data) as mock_fetch:
+        with patch.object(loader, "_fetch_from_huggingface_async", return_value=mock_darkbench_data) as mock_fetch:
             dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 2
@@ -350,9 +350,9 @@ class TestMetadataParsingRemote:
     """Test metadata parsing and filter matching for remote providers."""
 
     async def test_parse_metadata_from_class_attrs(self):
-        """Test _parse_metadata correctly extracts class-level metadata attributes."""
+        """Test _parse_metadata_async correctly extracts class-level metadata attributes."""
         loader = _HarmBenchDataset()
-        metadata = await loader._parse_metadata()
+        metadata = await loader._parse_metadata_async()
         assert metadata is not None
         assert metadata.tags == {"default", "safety"}
         assert metadata.size == {"medium"}
@@ -450,7 +450,7 @@ class TestMetadataParsingRemote:
         mock_provider_cls = MagicMock(__name__="NoProv")
         mock_provider_instance = mock_provider_cls.return_value
         mock_provider_instance.dataset_name = "no_metadata"
-        mock_provider_instance._parse_metadata = AsyncMock(return_value=None)
+        mock_provider_instance._parse_metadata_async = AsyncMock(return_value=None)
 
         with patch.dict(SeedDatasetProvider._registry, {"NoProv": mock_provider_cls}, clear=True):
             names = await SeedDatasetProvider.get_all_dataset_names_async(filters=SeedDatasetFilter(tags={"safety"}))
@@ -497,7 +497,7 @@ class TestRemoteLoaderMetadataCoverage:
     async def test_loader_declares_complete_metadata(self, loader_cls):
         """Every concrete remote loader must declare tags, size, and modalities."""
         loader = loader_cls()
-        metadata = await loader._parse_metadata()
+        metadata = await loader._parse_metadata_async()
 
         assert metadata is not None, (
             f"{loader_cls.__name__} has no class-level metadata. Declare `tags`, "
@@ -700,7 +700,7 @@ class TestFilterValidation:
         """'all' in get_all_dataset_names_async includes providers with no metadata."""
         mock_cls = MagicMock(__name__="BareProv")
         mock_cls.return_value.dataset_name = "bare"
-        mock_cls.return_value._parse_metadata = AsyncMock(return_value=None)
+        mock_cls.return_value._parse_metadata_async = AsyncMock(return_value=None)
 
         with patch.dict(SeedDatasetProvider._registry, {"Bare": mock_cls}, clear=True):
             # Without 'all', bare datasets are skipped
@@ -719,7 +719,7 @@ class TestFilterValidation:
         """'all' in get_all_dataset_names_async doesn't call _match_filter at all."""
         mock_cls = MagicMock(__name__="Prov")
         mock_cls.return_value.dataset_name = "test"
-        mock_cls.return_value._parse_metadata = AsyncMock(return_value=None)
+        mock_cls.return_value._parse_metadata_async = AsyncMock(return_value=None)
 
         with (
             patch.dict(SeedDatasetProvider._registry, {"P": mock_cls}, clear=True),
@@ -748,7 +748,7 @@ class TestMetadataParsingLocal:
         return path
 
     async def test_parse_metadata_extracts_fields(self, tmp_path):
-        """Test _parse_metadata correctly extracts metadata fields from YAML."""
+        """Test _parse_metadata_async correctly extracts metadata fields from YAML."""
         yaml_path = self._write_yaml(
             tmp_path,
             "test",
@@ -762,7 +762,7 @@ class TestMetadataParsingLocal:
             """),
         )
         loader = self._make_loader(yaml_path)
-        metadata = await loader._parse_metadata()
+        metadata = await loader._parse_metadata_async()
         assert metadata is not None
         assert metadata.harm_categories == {"violence"}
 
@@ -783,7 +783,7 @@ class TestMetadataParsingLocal:
             """),
         )
         loader = self._make_loader(yaml_path)
-        metadata = await loader._parse_metadata()
+        metadata = await loader._parse_metadata_async()
         assert metadata is not None
         filters = SeedDatasetFilter(tags={"all"})
         assert SeedDatasetProvider._match_filter_to_metadata(metadata=metadata, dataset_filter=filters)
@@ -804,7 +804,7 @@ class TestMetadataParsingLocal:
             """),
         )
         loader = self._make_loader(yaml_path)
-        metadata = await loader._parse_metadata()
+        metadata = await loader._parse_metadata_async()
         assert metadata is not None
         filters = SeedDatasetFilter(tags={"safety"})
         assert SeedDatasetProvider._match_filter_to_metadata(metadata=metadata, dataset_filter=filters)
@@ -823,7 +823,7 @@ class TestMetadataParsingLocal:
             """),
         )
         loader = self._make_loader(yaml_path)
-        metadata = await loader._parse_metadata()
+        metadata = await loader._parse_metadata_async()
         assert metadata is not None
         filters = SeedDatasetFilter(size={"large"})
         assert SeedDatasetProvider._match_filter_to_metadata(metadata=metadata, dataset_filter=filters)
@@ -843,7 +843,7 @@ class TestMetadataParsingLocal:
             """),
         )
         loader = self._make_loader(yaml_path)
-        metadata = await loader._parse_metadata()
+        metadata = await loader._parse_metadata_async()
         assert metadata is not None
         filters = SeedDatasetFilter(modalities={"text"})
         assert SeedDatasetProvider._match_filter_to_metadata(metadata=metadata, dataset_filter=filters)
@@ -862,7 +862,7 @@ class TestMetadataParsingLocal:
             """),
         )
         loader = self._make_loader(yaml_path)
-        metadata = await loader._parse_metadata()
+        metadata = await loader._parse_metadata_async()
         assert metadata is not None
         filters = SeedDatasetFilter(source_type={"remote"})
         assert SeedDatasetProvider._match_filter_to_metadata(metadata=metadata, dataset_filter=filters)
@@ -881,7 +881,7 @@ class TestMetadataParsingLocal:
             """),
         )
         loader = self._make_loader(yaml_path)
-        metadata = await loader._parse_metadata()
+        metadata = await loader._parse_metadata_async()
         assert metadata is not None
         filters = SeedDatasetFilter(load_time={SeedDatasetLoadTime.FAST})
         assert SeedDatasetProvider._match_filter_to_metadata(metadata=metadata, dataset_filter=filters)
@@ -902,7 +902,7 @@ class TestMetadataParsingLocal:
             """),
         )
         loader = self._make_loader(yaml_path)
-        metadata = await loader._parse_metadata()
+        metadata = await loader._parse_metadata_async()
         assert metadata is not None
         filters = SeedDatasetFilter(harm_categories={"violence"})
         assert SeedDatasetProvider._match_filter_to_metadata(metadata=metadata, dataset_filter=filters)
@@ -922,13 +922,13 @@ class TestMetadataParsingLocal:
             """),
         )
         loader = self._make_loader(yaml_path)
-        metadata = await loader._parse_metadata()
+        metadata = await loader._parse_metadata_async()
         assert metadata is not None
         filters = SeedDatasetFilter()
         assert SeedDatasetProvider._match_filter_to_metadata(metadata=metadata, dataset_filter=filters)
 
     async def test_no_metadata(self, tmp_path):
-        """YAML without any metadata fields returns None from _parse_metadata."""
+        """YAML without any metadata fields returns None from _parse_metadata_async."""
         yaml_path = self._write_yaml(
             tmp_path,
             "test",
@@ -940,14 +940,14 @@ class TestMetadataParsingLocal:
             """),
         )
         loader = self._make_loader(yaml_path)
-        metadata = await loader._parse_metadata()
+        metadata = await loader._parse_metadata_async()
         assert metadata is None
 
 
 class TestLocalDatasetMetadataCollisions:
     """
     Regression tests that scan every real .prompt file under seed_datasets/local
-    to verify _parse_metadata does not crash from field-name collisions between
+    to verify _parse_metadata_async does not crash from field-name collisions between
     the YAML schema and SeedDatasetMetadata.
 
     The previous `source` field collision (URLs parsed as SeedDatasetSourceType)
@@ -962,12 +962,12 @@ class TestLocalDatasetMetadataCollisions:
 
     @pytest.mark.parametrize("prompt_file", _get_local_prompt_files.__func__(), ids=lambda p: p.stem)
     async def test_parse_metadata_does_not_crash(self, prompt_file):
-        """_parse_metadata must not raise on any real local dataset file."""
+        """_parse_metadata_async must not raise on any real local dataset file."""
         loader = _LocalDatasetLoader.__new__(_LocalDatasetLoader)
         loader.file_path = prompt_file
         loader._dataset_name = prompt_file.stem
 
-        metadata = await loader._parse_metadata()
+        metadata = await loader._parse_metadata_async()
         # metadata can be None (no matching fields) or a valid SeedDatasetMetadata
         if metadata is not None:
             assert isinstance(metadata, SeedDatasetMetadata)

@@ -57,7 +57,7 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading SOSBench dataset from {self.source}")
 
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.source,
             config="default",
             split="train",

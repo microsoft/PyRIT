@@ -926,11 +926,11 @@ async def test_add_seed_prompts_no_serialization_for_text(sqlite_instance: Memor
     text_prompt = SeedPrompt(value="Simple text prompt", dataset_name="test_dataset", data_type="text")
     original_value = text_prompt.value
 
-    # Mock the _serialize_seed_value method
-    with patch.object(sqlite_instance, "_serialize_seed_value") as mock_serialize:
+    # Mock the _serialize_seed_value_async method
+    with patch.object(sqlite_instance, "_serialize_seed_value_async") as mock_serialize:
         await sqlite_instance.add_seeds_to_memory_async(seeds=[text_prompt], added_by="test_user")
 
-        # Verify that _serialize_seed_value was NOT called for text
+        # Verify that _serialize_seed_value_async was NOT called for text
         mock_serialize.assert_not_called()
 
         # Verify that the prompt value was not changed
