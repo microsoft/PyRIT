@@ -22,6 +22,7 @@ from pyrit.prompt_converter.arabic_presentation_form_converter import ArabicPres
 from pyrit.prompt_converter.ascii_art_converter import AsciiArtConverter
 from pyrit.prompt_converter.ask_to_decode_converter import AskToDecodeConverter
 from pyrit.prompt_converter.atbash_converter import AtbashConverter
+from pyrit.prompt_converter.bijection_converter import BijectionConverter
 from pyrit.prompt_converter.azure_speech_audio_to_text_converter import AzureSpeechAudioToTextConverter
 from pyrit.prompt_converter.azure_speech_text_to_audio_converter import AzureSpeechTextToAudioConverter
 from pyrit.prompt_converter.base64_converter import Base64Converter
@@ -151,6 +152,7 @@ __all__ = [
     "AsciiSmugglerConverter",
     "AskToDecodeConverter",
     "AtbashConverter",
+    "BijectionConverter",
     "AudioEchoConverter",
     "AudioFrequencyConverter",
     "AudioSpeedConverter",
