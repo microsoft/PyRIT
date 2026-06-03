@@ -23,11 +23,14 @@ This module provides:
 from __future__ import annotations
 
 from abc import ABC
-from typing import Any, ClassVar, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier, config_hash
+
+if TYPE_CHECKING:
+    from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 
 # Behavioral params that define model output quality for scoring.
 TARGET_EVAL_PARAMS: frozenset[str] = frozenset({"underlying_model_name", "temperature", "top_p"})
@@ -358,3 +361,25 @@ class ObjectiveTargetEvaluationIdentifier(EvaluationIdentifier):
         included_params=TARGET_EVAL_PARAMS,
         param_fallbacks=TARGET_EVAL_PARAM_FALLBACKS,
     )
+
+
+def compute_inner_attack_eval_hash(*, attack: AttackStrategy) -> str:
+    """
+    Predict the eval hash the executor will stamp on persisted child rows
+    for this attack.
+
+    Mirrors the inner-attack write path so callers can look up historical
+    results matching the same behavioral configuration *before* any row is
+    written. Use this rather than reconstructing the recipe inline.
+
+    Args:
+        attack (AttackStrategy): Inner attack strategy.
+
+    Returns:
+        str: The eval hash that will appear on persisted child rows.
+    """
+    # Local import avoids a circular dependency inside the identifiers package.
+    from pyrit.models.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+
+    composite = build_atomic_attack_identifier(attack_identifier=attack.get_identifier())
+    return AtomicAttackEvaluationIdentifier(composite).eval_hash

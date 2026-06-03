@@ -4,11 +4,13 @@
 import warnings
 from datetime import datetime, timezone
 
+import pytest
+
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import ComponentIdentifier, build_atomic_attack_identifier
-from pyrit.models.attack_result import AttackOutcome, AttackResult
 from pyrit.models.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.messages.message_piece import MessagePiece
+from pyrit.models.results.attack_result import AttackOutcome, AttackResult
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import Score
 
@@ -434,3 +436,138 @@ def test_to_dict_from_dict_roundtrip():
     )
     roundtripped = AttackResult.from_dict(original.to_dict())
     assert original.to_dict() == roundtripped.to_dict()
+
+
+class TestAttackResultValidation:
+    """Tests for the Pydantic validation behaviour introduced by the BaseModel conversion."""
+
+    def test_extra_fields_are_forbidden(self) -> None:
+        """Unknown kwargs must raise (extra='forbid' on the StrategyResult config)."""
+        with pytest.raises(ValueError):
+            AttackResult(conversation_id="c1", objective="test", not_a_field="boom")
+
+    def test_naive_datetime_timestamp_is_rejected(self) -> None:
+        """Naive datetimes are rejected (AwareDatetime), matching Score/MessagePiece.
+
+        SQLite-loaded naive timestamps are normalized to UTC by the memory layer
+        (``AttackResultEntry.get_attack_result`` via ``_ensure_utc``) before they
+        ever reach this constructor, so the model itself stays strict.
+        """
+        naive = datetime(2026, 1, 1, 12, 0, 0)  # noqa: DTZ001
+        with pytest.raises(ValueError):
+            AttackResult(conversation_id="c1", objective="test", timestamp=naive)
+
+    def test_aware_iso_string_timestamp_is_preserved(self) -> None:
+        """An ISO string carrying an offset is parsed without altering the instant."""
+        result = AttackResult(conversation_id="c1", objective="test", timestamp="2026-01-01T12:00:00+00:00")
+        assert result.timestamp == datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+    def test_deprecated_kwarg_promotes_without_extra_field_error(self) -> None:
+        """The promote before-validator pops attack_identifier before extra='forbid' runs."""
+        attack_id = ComponentIdentifier(class_name="TestAttack", class_module="tests.unit")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = AttackResult(
+                conversation_id="c1",
+                objective="test",
+                attack_identifier=attack_id,
+            )
+
+        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert len(deprecation_warnings) >= 1
+        assert result.atomic_attack_identifier is not None
+
+    def test_model_validate_does_not_mutate_input_dict(self) -> None:
+        """The promote before-validator must copy, not mutate, the caller-provided payload dict."""
+        attack_id = ComponentIdentifier(class_name="TestAttack", class_module="tests.unit")
+        payload = {
+            "conversation_id": "c1",
+            "objective": "test",
+            "attack_identifier": attack_id,
+            "timestamp": "2026-01-01T12:00:00+00:00",
+        }
+        original = dict(payload)
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            AttackResult.model_validate(payload)
+
+        assert payload == original, "model_validate must not mutate the input dict"
+
+
+class TestAttackResultLegacyDictDeprecation:
+    """to_dict()/from_dict() are retained as deprecated shims and must warn."""
+
+    def test_to_dict_emits_deprecation_warning(self) -> None:
+        result = AttackResult(conversation_id="c1", objective="test")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result.to_dict()
+
+        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert len(deprecation_warnings) >= 1
+        assert "to_dict" in str(deprecation_warnings[0].message).lower()
+
+    def test_from_dict_emits_deprecation_warning(self) -> None:
+        result = AttackResult(conversation_id="c1", objective="test")
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            payload = result.to_dict()
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            AttackResult.from_dict(payload)
+
+        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert len(deprecation_warnings) >= 1
+        assert "from_dict" in str(deprecation_warnings[0].message).lower()
+
+
+class TestAttackResultDuplicate:
+    """duplicate() must deep-copy so mutations on the copy never touch the original."""
+
+    def test_duplicate_metadata_is_independent(self) -> None:
+        original = AttackResult(
+            conversation_id="c1",
+            objective="test",
+            metadata={"nested": {"key": "value"}},
+        )
+        copy = original.duplicate()
+        copy.metadata["nested"]["key"] = "mutated"
+        copy.metadata["added"] = "new"
+
+        assert original.metadata == {"nested": {"key": "value"}}
+        assert type(copy) is AttackResult
+
+    def test_duplicate_preserves_subclass_type(self) -> None:
+        """duplicate() on a subclass returns the same subclass."""
+        from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttackResult
+
+        original = CrescendoAttackResult(conversation_id="c1", objective="test")
+        original.backtrack_count = 3
+        copy = original.duplicate()
+
+        assert type(copy) is CrescendoAttackResult
+        assert copy.backtrack_count == 3
+        copy.backtrack_count = 9
+        assert original.backtrack_count == 3
+
+
+class TestAttackResultShim:
+    """The relocated module must be importable from the legacy path silently."""
+
+    def test_shim_reexports_same_classes_silently(self) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            from pyrit.models.attack_result import AttackOutcome as ShimOutcome
+            from pyrit.models.attack_result import AttackResult as ShimResult
+
+        assert ShimResult is AttackResult
+        assert ShimOutcome is AttackOutcome
+        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert len(deprecation_warnings) == 0, "Shim import must be silent"
+
+    def test_shim_getattr_reexports_dynamic_names(self) -> None:
+        """The module __getattr__ falls through to the relocated module."""
+        import pyrit.models.attack_result as shim
+
+        assert shim.AttackResultT is not None

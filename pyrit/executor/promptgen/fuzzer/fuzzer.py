@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union, overload
 
 import numpy as np
 from colorama import Fore, Style
+from pydantic import Field
 
 from pyrit.common.utils import combine_dict, get_kwarg_param
 from pyrit.exceptions import MissingPromptPlaceholderException, pyrit_placeholder_retry
@@ -212,7 +213,6 @@ class FuzzerContext(PromptGeneratorStrategyContext):
             )
 
 
-@dataclass
 class FuzzerResult(PromptGeneratorStrategyResult):
     """
     Result of the Fuzzer prompt generation strategy execution.
@@ -222,8 +222,8 @@ class FuzzerResult(PromptGeneratorStrategyResult):
     """
 
     # Concrete fields instead of metadata storage
-    successful_templates: list[str] = field(default_factory=list)
-    jailbreak_conversation_ids: list[Union[str, uuid.UUID]] = field(default_factory=list)
+    successful_templates: list[str] = Field(default_factory=list)
+    jailbreak_conversation_ids: list[Union[str, uuid.UUID]] = Field(default_factory=list)
     total_queries: int = 0
     templates_explored: int = 0
 

@@ -586,6 +586,77 @@ class TestInnerChildName:
         assert eval_direct == eval_rr
 
 
+class TestComputeInnerAttackEvalHash:
+    """``compute_inner_attack_eval_hash`` should match what the executor stamps."""
+
+    def _attack_with_identifier(self, identifier: ComponentIdentifier):
+        from unittest.mock import MagicMock
+
+        attack = MagicMock()
+        attack.get_identifier.return_value = identifier
+        return attack
+
+    def test_matches_manual_two_step_composition(self):
+        """Helper equals the executor recipe (build_atomic_attack_identifier + AtomicAttackEvaluationIdentifier)."""
+        from pyrit.models.identifiers import (
+            AtomicAttackEvaluationIdentifier,
+            build_atomic_attack_identifier,
+            compute_inner_attack_eval_hash,
+        )
+
+        inner_id = ComponentIdentifier(
+            class_name="PromptSendingAttack",
+            class_module="pyrit.executor.attack.single_turn.prompt_sending",
+        )
+        attack = self._attack_with_identifier(inner_id)
+
+        expected = AtomicAttackEvaluationIdentifier(
+            build_atomic_attack_identifier(attack_identifier=inner_id),
+        ).eval_hash
+        assert compute_inner_attack_eval_hash(attack=attack) == expected
+
+    def test_differs_when_attack_class_differs(self):
+        from pyrit.models.identifiers import compute_inner_attack_eval_hash
+
+        a = self._attack_with_identifier(
+            ComponentIdentifier(class_name="A", class_module="m"),
+        )
+        b = self._attack_with_identifier(
+            ComponentIdentifier(class_name="B", class_module="m"),
+        )
+        assert compute_inner_attack_eval_hash(attack=a) != compute_inner_attack_eval_hash(attack=b)
+
+    def test_stable_across_calls_for_same_attack(self):
+        from pyrit.models.identifiers import compute_inner_attack_eval_hash
+
+        attack = self._attack_with_identifier(
+            ComponentIdentifier(class_name="Same", class_module="m"),
+        )
+        assert compute_inner_attack_eval_hash(attack=attack) == compute_inner_attack_eval_hash(attack=attack)
+
+    def test_matches_persisted_row_eval_hash(self):
+        """Whatever the helper returns, persisting an attack result with the same
+        identifier must yield an entry with the same eval_hash."""
+        from pyrit.memory.memory_models import AttackResultEntry
+        from pyrit.models import AttackResult
+        from pyrit.models.identifiers import build_atomic_attack_identifier, compute_inner_attack_eval_hash
+
+        inner_id = ComponentIdentifier(
+            class_name="MyAttack",
+            class_module="pyrit.attacks",
+        )
+        attack = self._attack_with_identifier(inner_id)
+        predicted = compute_inner_attack_eval_hash(attack=attack)
+
+        result = AttackResult(
+            conversation_id="conv_1",
+            objective="o",
+            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=inner_id),
+        )
+        entry = AttackResultEntry(entry=result)
+        assert entry.atomic_attack_identifier["eval_hash"] == predicted
+
+
 # ---------------------------------------------------------------------------
 # OWN_RULE / leaf-entity eval-hash tests
 # ---------------------------------------------------------------------------

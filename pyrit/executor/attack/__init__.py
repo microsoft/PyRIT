@@ -58,6 +58,7 @@ from pyrit.executor.attack.single_turn import (
     SingleTurnAttackStrategy,
     SkeletonKeyAttack,
 )
+from pyrit.executor.attack.streaming import BargeInAttack, BargeInAttackContext
 
 # Backward-compatibility aliases — import from pyrit.output.attack_result directly.
 # TODO: Remove these re-exports in two releases (target removal: 0.16.0).
@@ -75,6 +76,8 @@ __all__ = [
     "AttackResultPrinter",
     "AttackScoringConfig",
     "AttackStrategy",
+    "BargeInAttack",
+    "BargeInAttackContext",
     "ChunkedRequestAttack",
     "ChunkedRequestAttackContext",
     "ConsoleAttackResultPrinter",

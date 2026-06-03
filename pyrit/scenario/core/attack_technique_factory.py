@@ -332,6 +332,11 @@ class AttackTechniqueFactory(Identifiable):
         """Whether this technique drives an adversarial chat during execution."""
         return self._uses_adversarial
 
+    @property
+    def scoring_config_type(self) -> type | None:
+        """The required ``attack_scoring_config`` subtype, or ``None`` if any config is accepted."""
+        return self._get_scoring_config_type()
+
     def create(
         self,
         *,

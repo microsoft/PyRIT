@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal
 
 import pyrit
-from pyrit.models import AttackOutcome, AttackResult
+from pyrit.models.attack_result import AttackOutcome, AttackResult
 
 if TYPE_CHECKING:
     from pyrit.models.identifiers.component_identifier import ComponentIdentifier
