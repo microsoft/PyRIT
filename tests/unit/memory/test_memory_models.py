@@ -17,7 +17,9 @@ from pyrit.memory.memory_models import (
     ScenarioResultEntry,
     ScoreEntry,
     SeedEntry,
-    _ensure_utc,
+    UTCDateTime,
+    _dump_identifier,
+    _load_identifier,
 )
 from pyrit.models import (
     AttackOutcome,
@@ -111,26 +113,59 @@ def _make_attack_result(**overrides) -> AttackResult:
 
 
 # ---------------------------------------------------------------------------
-# _ensure_utc
+# UTCDateTime
 # ---------------------------------------------------------------------------
 
 
-def test_ensure_utc_with_none():
-    assert _ensure_utc(None) is None
-
-
-def test_ensure_utc_naive_datetime_gets_utc():
+def test_utcdatetime_attaches_utc_to_naive_datetime():
     naive = datetime(2024, 1, 1, 12, 0, 0, tzinfo=None)  # noqa: DTZ001
-    result = _ensure_utc(naive)
+    result = UTCDateTime().process_result_value(naive, dialect=MagicMock())
+    assert result is not None
     assert result.tzinfo == timezone.utc
     assert result.year == 2024
 
 
-def test_ensure_utc_aware_datetime_unchanged():
+def test_utcdatetime_leaves_aware_datetime_unchanged():
     aware = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-    result = _ensure_utc(aware)
+    result = UTCDateTime().process_result_value(aware, dialect=MagicMock())
     assert result == aware
     assert result.tzinfo == timezone.utc
+
+
+def test_utcdatetime_passes_through_none():
+    assert UTCDateTime().process_result_value(None, dialect=MagicMock()) is None
+
+
+# ---------------------------------------------------------------------------
+# Identifier (de)serialization helpers
+# ---------------------------------------------------------------------------
+
+
+def test_dump_identifier_returns_none_for_none():
+    assert _dump_identifier(None) is None
+
+
+def test_load_identifier_returns_none_for_falsy():
+    assert _load_identifier(None) is None
+    assert _load_identifier({}) is None
+
+
+def test_dump_then_load_identifier_round_trips():
+    identifier = ComponentIdentifier(class_name="MyConverter", class_module="pyrit.converters", pyrit_version="0.1.0")
+    stored = _dump_identifier(identifier)
+    assert stored is not None
+    loaded = _load_identifier(stored)
+    assert loaded is not None
+    assert loaded.class_name == "MyConverter"
+    assert loaded.class_module == "pyrit.converters"
+
+
+def test_load_identifier_injects_pyrit_version():
+    identifier = ComponentIdentifier(class_name="MyConverter", class_module="pyrit.converters", pyrit_version="0.1.0")
+    stored = _dump_identifier(identifier)
+    loaded = _load_identifier(stored, pyrit_version="9.9.9")
+    assert loaded is not None
+    assert loaded.pyrit_version == "9.9.9"
 
 
 # ---------------------------------------------------------------------------
