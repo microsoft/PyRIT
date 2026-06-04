@@ -4,10 +4,12 @@
 import logging
 import warnings
 
+from typing_extensions import override
+
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +61,12 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
         self.source = source
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "forbidden_questions"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Forbidden Questions dataset and return as SeedDataset.
@@ -92,7 +96,7 @@ The focus is on 13 scenarios, including Illegal Activity, Hate Speech, Malware G
 Physical Harm, Economic Harm, Fraud, Pornography, Political Lobbying, Privacy Violence, Legal Opinion,
 Financial Advice, Health Consultation, and Government Decision."""
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=item["question"],
                 data_type="text",

@@ -4,7 +4,9 @@
 import logging
 import uuid
 from enum import Enum
-from typing import TYPE_CHECKING, Literal, Optional, override
+from typing import TYPE_CHECKING, Literal, Optional
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,

@@ -9,7 +9,9 @@ import uuid
 import zipfile
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional, override
+from typing import TYPE_CHECKING, Literal, Optional
+
+from typing_extensions import override
 
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.common.path import DB_DATA_PATH

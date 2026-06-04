@@ -2,12 +2,13 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import override
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -101,21 +102,12 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
                 cache=cache,
             )
 
-            # Define common metadata
-            common_metadata = {
-                "dataset_name": self.dataset_name,
-                "authors": self._AUTHORS,
-                "groups": self._GROUPS,
-                "description": (
-                    "A dataset of harmful behaviors for jailbreaking evaluation from JailbreakBench. "
-                    "Contains behaviors designed to test AI safety measures."
-                ),
-                "source": self.source,
-                "data_type": "text",
-                "name": "JBB-Behaviors",
-            }
+            description = (
+                "A dataset of harmful behaviors for jailbreaking evaluation from JailbreakBench. "
+                "Contains behaviors designed to test AI safety measures."
+            )
 
-            seed_prompts = []
+            seed_prompts: list[SeedUnion] = []
 
             for item in data:
                 # Extract the required fields
@@ -132,12 +124,18 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
                 # Create SeedPrompt object with all metadata
                 seed_prompt = SeedPrompt(
                     value=behavior,
+                    data_type="text",
+                    name="JBB-Behaviors",
+                    dataset_name=self.dataset_name,
                     harm_categories=harm_categories,
+                    description=description,
+                    authors=self._AUTHORS,
+                    groups=self._GROUPS,
+                    source=self.source,
                     metadata={
                         "jbb_category": category,
                         "original_source": "JailbreakBench",
                     },
-                    **common_metadata,  # type: ignore[ty:invalid-argument-type]
                 )
 
                 seed_prompts.append(seed_prompt)

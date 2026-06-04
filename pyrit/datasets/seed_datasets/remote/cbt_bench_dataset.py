@@ -5,10 +5,12 @@ import logging
 import warnings
 from typing import Any
 
+from typing_extensions import override
+
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -63,10 +65,12 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
         self.config = config
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "cbt_bench"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch CBT-Bench dataset from HuggingFace and return as SeedDataset.
@@ -114,7 +118,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
             "cognitive model understanding, and therapeutic response generation."
         )
 
-        seed_prompts = []
+        seed_prompts: list[SeedUnion] = []
 
         for item in data:
             situation = item.get("situation", "").strip()

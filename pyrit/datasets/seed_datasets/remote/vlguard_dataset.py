@@ -9,9 +9,10 @@ import uuid
 import zipfile
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING
 
 from huggingface_hub import hf_hub_download
+from typing_extensions import override
 
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (

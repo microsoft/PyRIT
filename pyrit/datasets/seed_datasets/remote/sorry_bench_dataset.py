@@ -3,12 +3,14 @@
 
 import logging
 import os
-from typing import Optional, override
+from typing import Optional
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -198,17 +200,9 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                 token=self.token,
             )
 
-            common_metadata = {
-                "dataset_name": self.dataset_name,
-                "authors": self._AUTHORS,
-                "groups": self._GROUPS,
-                "description": "Adversarial prompts for testing LLM safety across 44 categories",
-                "source": self.source,
-                "data_type": "text",
-                "name": "Sorry-Bench 2025-03",
-            }
+            description = "Adversarial prompts for testing LLM safety across 44 categories"
 
-            seed_prompts = []
+            seed_prompts: list[SeedUnion] = []
 
             for item in data:
                 category = item.get("category", "")
@@ -234,13 +228,19 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
 
                 seed_prompt = SeedPrompt(
                     value=prompt_text,
+                    data_type="text",
+                    name="Sorry-Bench 2025-03",
+                    dataset_name=self.dataset_name,
                     harm_categories=[category],
+                    description=description,
+                    authors=self._AUTHORS,
+                    groups=self._GROUPS,
+                    source=self.source,
                     metadata={
                         "sorry_bench_category": category,
                         "prompt_style": item_prompt_style,
                         "question_id": question_id,
                     },
-                    **common_metadata,  # type: ignore[ty:invalid-argument-type]
                 )
 
                 seed_prompts.append(seed_prompt)

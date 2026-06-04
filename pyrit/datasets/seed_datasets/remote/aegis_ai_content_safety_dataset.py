@@ -2,9 +2,10 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional, override
+from typing import Literal, Optional
 
 from datasets import load_dataset
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,

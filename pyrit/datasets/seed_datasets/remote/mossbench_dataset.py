@@ -7,13 +7,15 @@ from collections.abc import Iterable
 from enum import Enum
 from typing import Any, Literal, cast
 
+from typing_extensions import override
+
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
 )
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -173,10 +175,12 @@ class _MossBenchDataset(_RemoteDatasetLoader):
             )
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "mossbench"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch MOSSBench examples and return them as a ``SeedDataset``.
@@ -202,7 +206,7 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         logger.info(f"Loading MOSSBench dataset from {self.source}")
 
         examples = self._load_examples(cache=cache)
-        prompts: list[SeedPrompt] = []
+        prompts: list[SeedUnion] = []
         failed_image_count = 0
 
         for example in examples:

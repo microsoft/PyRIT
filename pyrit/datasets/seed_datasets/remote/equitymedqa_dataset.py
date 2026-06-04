@@ -3,7 +3,9 @@
 
 import logging
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Literal, override
+from typing import TYPE_CHECKING, Literal
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,

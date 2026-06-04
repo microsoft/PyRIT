@@ -5,8 +5,10 @@ import io
 import logging
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
+
+from typing_extensions import override
 
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (

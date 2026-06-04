@@ -6,13 +6,15 @@ import uuid
 from enum import Enum
 from typing import Literal, Optional
 
+from typing_extensions import override
+
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
 )
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -113,10 +115,12 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             self._validate_enums(pii_types, VisualLeakBenchPIIType, "PII type")
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "visual_leak_bench"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch VisualLeakBench examples and return as SeedDataset.
@@ -143,7 +147,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        prompts: list[SeedPrompt] = []
+        prompts: list[SeedUnion] = []
         failed_image_count = 0
 
         for example in examples:
