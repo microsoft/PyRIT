@@ -48,7 +48,7 @@ jobs:
         run: docker save pyrit-devcontainer:latest | gzip > devcontainer.tar.gz
 
       - name: Upload devcontainer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: devcontainer-image
           path: devcontainer.tar.gz
@@ -93,7 +93,7 @@ jobs:
         run: docker save pyrit:local-test | gzip > local.tar.gz
 
       - name: Upload production artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-local-image
           path: local.tar.gz
@@ -146,7 +146,7 @@ jobs:
         run: docker save pyrit:pypi-test | gzip > pypi.tar.gz
 
       - name: Upload production artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-pypi-image
           path: pypi.tar.gz
