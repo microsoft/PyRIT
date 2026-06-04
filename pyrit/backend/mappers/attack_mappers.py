@@ -33,9 +33,7 @@ from pyrit.backend.models.attacks import (
     ScoreView,
 )
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models import MEDIA_PATH_DATA_TYPES, AttackResult, ChatMessageRole, PromptDataType
-from pyrit.models import Message as PyritMessage
-from pyrit.models import MessagePiece as PyritMessagePiece
+from pyrit.models import MEDIA_PATH_DATA_TYPES, AttackResult, ChatMessageRole, Message, MessagePiece, PromptDataType
 
 logger = logging.getLogger(__name__)
 
@@ -239,7 +237,7 @@ def _resolve_summary_timestamps(ar: AttackResult) -> tuple[datetime, datetime]:
     return created_at, updated_at
 
 
-def _summary_last_response(piece: Optional[PyritMessagePiece]) -> Optional[MessagePieceView]:
+def _summary_last_response(piece: Optional[MessagePiece]) -> Optional[MessagePieceView]:
     """
     Build a ``MessagePieceView`` for a summary's last response (sync media resolution, no SAS).
 
@@ -273,7 +271,7 @@ async def _resolve_and_sign_media_async(*, value: Optional[str], data_type: str)
     return resolved
 
 
-async def pyrit_messages_to_dto_async(pyrit_messages: list[PyritMessage]) -> list[MessageView]:
+async def pyrit_messages_to_dto_async(pyrit_messages: list[Message]) -> list[MessageView]:
     """
     Translate PyRIT messages to backend MessageView responses.
 
@@ -316,7 +314,7 @@ def request_piece_to_pyrit_message_piece(
     conversation_id: str,
     sequence: int,
     labels: Optional[dict[str, str]] = None,  # deprecated
-) -> PyritMessagePiece:
+) -> MessagePiece:
     """
     Convert a single request piece DTO to a PyRIT MessagePiece domain object.
 
@@ -329,7 +327,7 @@ def request_piece_to_pyrit_message_piece(
             Deprecated: This parameter will be removed in a release 0.16.0.
 
     Returns:
-        PyritMessagePiece domain object.
+        MessagePiece domain object.
     """
     if labels is not None:
         print_deprecation_message(
@@ -343,7 +341,7 @@ def request_piece_to_pyrit_message_piece(
     elif piece.mime_type:
         metadata = {"mime_type": piece.mime_type}
     original_prompt_id = uuid.UUID(piece.original_prompt_id) if piece.original_prompt_id else None
-    return PyritMessagePiece(
+    return MessagePiece(
         role=role,
         original_value=piece.original_value,
         original_value_data_type=cast("PromptDataType", piece.data_type),
@@ -363,7 +361,7 @@ def request_to_pyrit_message(
     conversation_id: str,
     sequence: int,
     labels: Optional[dict[str, str]] = None,  # deprecated
-) -> PyritMessage:
+) -> Message:
     """
     Build a PyRIT Message from an AddMessageRequest DTO.
 
@@ -375,7 +373,7 @@ def request_to_pyrit_message(
             Deprecated: This parameter will be removed in a release 0.16.0.
 
     Returns:
-        PyritMessage ready to send to the target.
+        Message ready to send to the target.
     """
     if labels is not None:
         print_deprecation_message(
@@ -393,7 +391,7 @@ def request_to_pyrit_message(
         )
         for p in request.pieces
     ]
-    return PyritMessage(message_pieces=pieces)
+    return Message(message_pieces=pieces)
 
 
 # ============================================================================

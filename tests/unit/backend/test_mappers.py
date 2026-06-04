@@ -30,10 +30,7 @@ from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.backend.models.attacks import ScoreView
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
-from pyrit.models import Message as PyritMessage
-from pyrit.models import MessagePiece as PyritMessagePiece
-from pyrit.models import Score as PyritScore
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.prompt_target import PromptTarget, TargetCapabilities
 
@@ -94,9 +91,9 @@ def _make_piece(
     original_value_data_type: str = "text",
     converted_value_data_type: str = "text",
     role: str = "user",
-) -> PyritMessagePiece:
+) -> MessagePiece:
     """Create a real domain message piece for mapper tests."""
-    return PyritMessagePiece(
+    return MessagePiece(
         role=role,
         original_value=original_value,
         converted_value=converted_value,
@@ -113,9 +110,9 @@ def _make_score(
     score_type: str = "float_scale",
     score_category: Optional[list[str]] = None,
     scorer_name: str = "TrueFalseScorer",
-) -> PyritScore:
+) -> Score:
     """Create a real domain score for mapper tests."""
-    return PyritScore(
+    return Score(
         score_value=score_value,
         score_type=score_type,
         score_category=score_category,
@@ -444,7 +441,7 @@ class TestAttackResultToSummary:
 
     def test_scorer_type_unknown_without_identifier(self) -> None:
         """Test that scorer_type falls back to 'Unknown' when no identifier is set."""
-        score = PyritScore(score_value="0.5", score_type="float_scale", message_piece_id=str(uuid.uuid4()))
+        score = Score(score_value="0.5", score_type="float_scale", message_piece_id=str(uuid.uuid4()))
 
         view = ScoreView.from_domain(score)
 
@@ -470,7 +467,7 @@ class TestPyritMessagesToDto:
     async def test_maps_single_message(self) -> None:
         """Test mapping a single message with one piece."""
         piece = _make_piece(original_value="hi", converted_value="hi")
-        msg = PyritMessage(message_pieces=[piece])
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
@@ -488,7 +485,7 @@ class TestPyritMessagesToDto:
             original_value_data_type="text",
             converted_value_data_type="image_path",
         )
-        msg = PyritMessage(message_pieces=[piece])
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
@@ -508,7 +505,7 @@ class TestPyritMessagesToDto:
             original_value_data_type="image_path",
             converted_value_data_type="image_path",
         )
-        msg = PyritMessage(message_pieces=[piece])
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
@@ -518,7 +515,7 @@ class TestPyritMessagesToDto:
     async def test_mime_type_none_for_text(self) -> None:
         """Test that MIME type is None for text pieces."""
         piece = _make_piece(original_value="hello", converted_value="hello")
-        msg = PyritMessage(message_pieces=[piece])
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
@@ -533,7 +530,7 @@ class TestPyritMessagesToDto:
             original_value_data_type="audio_path",
             converted_value_data_type="audio_path",
         )
-        msg = PyritMessage(message_pieces=[piece])
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
@@ -554,7 +551,7 @@ class TestPyritMessagesToDto:
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
             )
-            msg = PyritMessage(message_pieces=[piece])
+            msg = Message(message_pieces=[piece])
 
             result = await pyrit_messages_to_dto_async([msg])
 
@@ -572,7 +569,7 @@ class TestPyritMessagesToDto:
             original_value_data_type="image_path",
             converted_value_data_type="image_path",
         )
-        msg = PyritMessage(message_pieces=[piece])
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
@@ -587,7 +584,7 @@ class TestPyritMessagesToDto:
             original_value_data_type="image_path",
             converted_value_data_type="image_path",
         )
-        msg = PyritMessage(message_pieces=[piece])
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 
@@ -604,7 +601,7 @@ class TestPyritMessagesToDto:
             original_value_data_type="image_path",
             converted_value_data_type="image_path",
         )
-        msg = PyritMessage(message_pieces=[piece])
+        msg = Message(message_pieces=[piece])
 
         with patch(
             "pyrit.backend.mappers.attack_mappers._sign_blob_url_async",
@@ -625,7 +622,7 @@ class TestPyritMessagesToDto:
             original_value_data_type="image_path",
             converted_value_data_type="image_path",
         )
-        msg = PyritMessage(message_pieces=[piece])
+        msg = Message(message_pieces=[piece])
 
         with patch(
             "pyrit.backend.mappers.attack_mappers._sign_blob_url_async",
@@ -645,7 +642,7 @@ class TestPyritMessagesToDto:
             original_value_data_type="image_path",
             converted_value_data_type="image_path",
         )
-        msg = PyritMessage(message_pieces=[piece])
+        msg = Message(message_pieces=[piece])
 
         result = await pyrit_messages_to_dto_async([msg])
 

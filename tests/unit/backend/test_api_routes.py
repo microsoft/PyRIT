@@ -40,12 +40,12 @@ from pyrit.backend.models.targets import (
     TargetListResponse,
 )
 from pyrit.backend.routes.labels import get_label_options
-from pyrit.models import MessagePiece as PyritMessagePiece
+from pyrit.models import MessagePiece
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
     """Build a ``MessageView`` from a single text piece for route tests."""
-    piece = PyritMessagePiece(
+    piece = MessagePiece(
         role=role,
         original_value=value,
         converted_value=value,
