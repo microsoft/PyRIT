@@ -28,6 +28,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
 
+from pydantic import Field
+
 from pyrit.executor.attack.core.attack_executor import AttackExecutor
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
@@ -110,7 +112,6 @@ class SequentialChildAttack:
     memory_labels: Mapping[str, str] = field(default_factory=dict)
 
 
-@dataclass
 class SequentialAttackResult(AttackResult):
     """
     Result of a ``SequentialAttack`` execution.
@@ -138,7 +139,7 @@ class SequentialAttackResult(AttackResult):
             round-trip.
     """
 
-    child_attack_results: list[AttackResult] = field(default_factory=list)
+    child_attack_results: list[AttackResult] = Field(default_factory=list)
     completion_policy: SequenceCompletionPolicy = SequenceCompletionPolicy.FIRST_SUCCESS
 
     @property

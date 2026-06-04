@@ -27,8 +27,7 @@ class WorkflowContext(StrategyContext, ABC):
     """Base class for all workflow contexts."""
 
 
-@dataclass
-class WorkflowResult(StrategyResult, ABC):
+class WorkflowResult(StrategyResult, ABC):  # noqa: B024
     """Base class for all workflow results."""
 
 

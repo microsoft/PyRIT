@@ -6,8 +6,7 @@ import base64
 import logging
 import re
 import wave
-from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Optional
 
 from openai import AsyncOpenAI
 
@@ -22,57 +21,29 @@ from pyrit.models import (
     construct_response_from_request,
     data_serializer_factory,
 )
+from pyrit.prompt_target.common.realtime_audio import (
+    RealtimeTargetResult,
+    ServerVadConfig,
+)
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
+from pyrit.prompt_target.openai._openai_realtime_streaming_session import (
+    _OpenAIRealtimeStreamingSession,
+)
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+
 logger = logging.getLogger(__name__)
-
-
-def _read_wav_sync(path: str) -> tuple[int, int, int, bytes]:
-    """
-    Read a WAV file synchronously.
-
-    Returns:
-        Tuple of ``(channels, sample_width, frame_rate, frames)`` extracted from the file.
-    """
-    with wave.open(path, "rb") as wav_file:
-        return (
-            wav_file.getnchannels(),
-            wav_file.getsampwidth(),
-            wav_file.getframerate(),
-            wav_file.readframes(wav_file.getnframes()),
-        )
-
 
 # Voices supported by the OpenAI Realtime API.
 # See: https://platform.openai.com/docs/guides/realtime-conversations#voice-options
 # For best quality, OpenAI recommends using "marin" or "cedar".
 RealTimeVoice = Literal["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"]
-
-
-@dataclass
-class RealtimeTargetResult:
-    """
-    Represents the result of a Realtime API request, containing audio data and transcripts.
-
-    Attributes:
-        audio_bytes: Raw audio data returned by the API
-        transcripts: List of text transcripts generated from the audio
-    """
-
-    audio_bytes: bytes = field(default_factory=lambda: b"")
-    transcripts: list[str] = field(default_factory=list)
-
-    def flatten_transcripts(self) -> str:
-        """
-        Flattens the list of transcripts into a single string.
-
-        Returns:
-            A single string containing all transcripts concatenated together.
-        """
-        return "".join(self.transcripts)
 
 
 class RealtimeTarget(OpenAITarget):
@@ -92,6 +63,7 @@ class RealtimeTarget(OpenAITarget):
             supports_editable_history=True,
             supports_multi_message_pieces=True,
             supports_system_prompt=True,
+            supports_streaming_audio=True,
             input_modalities=frozenset(
                 {
                     frozenset(["text"]),
@@ -107,6 +79,10 @@ class RealtimeTarget(OpenAITarget):
             ),
         )
     )
+
+    #: PCM sample rate in Hz negotiated by the OpenAI Realtime protocol. Single source
+    #: of truth for both atomic (send_text/send_audio) and streaming session paths.
+    SAMPLE_RATE_HZ: ClassVar[int] = 24000
 
     def __init__(
         self,
@@ -146,6 +122,64 @@ class RealtimeTarget(OpenAITarget):
         self.voice = voice
         self._existing_conversation = existing_convo if existing_convo is not None else {}
         self._realtime_client: Optional[AsyncOpenAI] = None
+
+    def open_streaming_session(
+        self,
+        *,
+        audio_chunks: "AsyncIterator[bytes]",
+        prompt_normalizer: "PromptNormalizer",
+        conversation_id: str | None = None,
+        request_converter_configurations: "list[PromptConverterConfiguration] | None" = None,
+        response_converter_configurations: "list[PromptConverterConfiguration] | None" = None,
+        prepended_conversation: list[Message] | None = None,
+        server_vad: bool | ServerVadConfig = True,
+        attack_identifier: "ComponentIdentifier | None" = None,
+        persist_prepended_conversation: bool = True,
+    ) -> "_OpenAIRealtimeStreamingSession":
+        """
+        Open a new server-VAD streaming session bound to this target.
+
+        Args:
+            audio_chunks: Async iterator yielding PCM16 mono bytes at the target's
+                ``SAMPLE_RATE_HZ`` rate.
+            prompt_normalizer: Normalizer used to apply converters and persist messages.
+            conversation_id: Conversation id for this session. Auto-generated when omitted.
+            request_converter_configurations: Converters applied to each committed user turn
+                before swap-and-respond.
+            response_converter_configurations: Converters applied to each assistant turn
+                before persistence.
+            prepended_conversation: Optional conversation history. The leading system
+                message becomes session instructions.
+            server_vad: Server-side voice activity detection. ``True`` (default) enables
+                VAD with default tuning. Pass a ``ServerVadConfig`` for custom tuning, or
+                ``False`` to disable (sending streaming config will then raise).
+            attack_identifier: Stamped on every persisted user / assistant piece for
+                attribution. Pass the caller's identifier so live messages share the
+                provenance contract of prepended messages.
+            persist_prepended_conversation: When ``True`` (default), the session writes
+                ``prepended_conversation`` to memory itself. Pass ``False`` when the
+                caller already persisted the prepended conversation (e.g. via
+                ``ConversationManager.initialize_context_async``) to avoid double-writes.
+
+        Returns:
+            A fresh ``_OpenAIRealtimeStreamingSession``. Drive it by iterating
+            ``await session.run_async()``; one assistant ``Message`` is yielded per
+            VAD-committed turn, and the matching user message is persisted to memory
+            (but not yielded). The session owns its websocket connection + dispatcher
+            for the duration of ``run_async``.
+        """
+        return _OpenAIRealtimeStreamingSession(
+            target=self,
+            audio_chunks=audio_chunks,
+            prompt_normalizer=prompt_normalizer,
+            conversation_id=conversation_id,
+            request_converter_configurations=request_converter_configurations,
+            response_converter_configurations=response_converter_configurations,
+            prepended_conversation=prepended_conversation,
+            server_vad=server_vad,
+            attack_identifier=attack_identifier,
+            persist_prepended_conversation=persist_prepended_conversation,
+        )
 
     def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_REALTIME_MODEL"
@@ -258,42 +292,18 @@ class RealtimeTarget(OpenAITarget):
 
         return self._realtime_client
 
-    async def connect_async(self, conversation_id: str) -> Any:
-        """
-        Connect to Realtime API using AsyncOpenAI client and return the realtime connection.
-
-        Returns:
-            The Realtime API connection.
-        """
-        logger.info(f"Connecting to Realtime API: {self._endpoint}")
-
-        client = self._get_openai_client()
-        connection = await client.realtime.connect(model=self._model_name).__aenter__()
-
-        logger.info("Successfully connected to AzureOpenAI Realtime API")
-        return connection
-
-    async def connect(self, conversation_id: str) -> Any:  # pyrit-async-suffix-exempt
-        """
-        Use ``connect_async`` instead; this is a deprecated alias.
-
-        Returns:
-            Any: Same as ``connect_async``.
-        """
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.connect",
-            new_item="pyrit.prompt_target.RealtimeTarget.connect_async",
-            removed_in="0.16.0",
-        )
-        return await self.connect_async(conversation_id=conversation_id)
-
-    def _set_system_prompt_and_config_vars(self, system_prompt: str) -> dict[str, Any]:
+    def _set_system_prompt_and_config_vars(
+        self, system_prompt: str, *, server_vad: ServerVadConfig | None = None
+    ) -> dict[str, Any]:
         """
         Create session configuration for OpenAI client.
         Uses the Azure GA format with nested audio config.
 
         Args:
             system_prompt: The system prompt to use in the session configuration.
+            server_vad: When provided, emits a ``turn_detection`` block tuned by this
+                config. The atomic path always omits it (server VAD is a streaming-only
+                concept); the streaming session passes its resolved VAD here.
 
         Returns:
             dict: Session configuration dictionary.
@@ -309,17 +319,27 @@ class RealtimeTarget(OpenAITarget):
                     },
                     "format": {
                         "type": "audio/pcm",
-                        "rate": 24000,
+                        "rate": self.SAMPLE_RATE_HZ,
                     },
                 },
                 "output": {
                     "format": {
                         "type": "audio/pcm",
-                        "rate": 24000,
+                        "rate": self.SAMPLE_RATE_HZ,
                     }
                 },
             },
         }
+
+        if server_vad is not None:
+            session_config["audio"]["input"]["turn_detection"] = {  # type: ignore[ty:invalid-assignment]
+                "type": "server_vad",
+                "threshold": server_vad.threshold,
+                "prefix_padding_ms": server_vad.prefix_padding_ms,
+                "silence_duration_ms": server_vad.silence_duration_ms,
+                "create_response": True,
+                "interrupt_response": True,
+            }
 
         if self.voice:
             session_config["audio"]["output"]["voice"] = self.voice  # type: ignore[ty:invalid-assignment]
@@ -387,6 +407,10 @@ class RealtimeTarget(OpenAITarget):
         """
         Asynchronously send a message to the OpenAI realtime target.
 
+        Dispatches to the atomic send_audio / send_text path based on the
+        request's data type. Streaming attacks bypass this entry point and drive
+        the connection through ``_OpenAIRealtimeStreamingSession`` instead.
+
         Args:
             normalized_conversation (list[Message]): The full conversation
                 (history + current message) after running the normalization
@@ -400,8 +424,10 @@ class RealtimeTarget(OpenAITarget):
         """
         message = normalized_conversation[-1]
         conversation_id = message.message_pieces[0].conversation_id
+        request = message.message_pieces[0]
+
         if conversation_id not in self._existing_conversation:
-            connection = await self.connect_async(conversation_id=conversation_id)
+            connection = await self._connect_async(conversation_id=conversation_id)
             self._existing_conversation[conversation_id] = connection
 
             # Only send config when creating a new connection
@@ -409,7 +435,6 @@ class RealtimeTarget(OpenAITarget):
             # Give the server a moment to process the session update
             await asyncio.sleep(0.5)
 
-        request = message.message_pieces[0]
         response_type = request.converted_value_data_type
 
         # Order of messages sent varies based on the data format of the prompt
@@ -435,8 +460,89 @@ class RealtimeTarget(OpenAITarget):
             request=request, response_text_pieces=[output_audio_path], response_type="audio_path"
         ).message_pieces[0]
 
+        if result.interrupted:
+            text_response_piece.prompt_metadata["interrupted"] = True
+            audio_response_piece.prompt_metadata["interrupted"] = True
+
         response_entry = Message(message_pieces=[text_response_piece, audio_response_piece])
         return [response_entry]
+
+    async def cleanup_target_async(self) -> None:
+        """
+        Disconnects from the Realtime API connections.
+
+        Closes every connection cached in ``_existing_conversation`` and the
+        shared ``AsyncOpenAI`` client, swallowing per-connection errors so a
+        single bad close does not block the rest. Safe to call multiple times.
+        """
+        for conversation_id, connection in list(self._existing_conversation.items()):
+            if connection:
+                try:
+                    await connection.close()
+                    logger.info(f"Disconnected from {self._endpoint} with conversation ID: {conversation_id}")
+                except Exception as e:
+                    logger.warning(f"Error closing connection for {conversation_id}: {e}")
+        self._existing_conversation = {}
+
+        if self._realtime_client:
+            try:
+                await self._realtime_client.close()
+            except Exception as e:
+                logger.warning(f"Error closing realtime client: {e}")
+            self._realtime_client = None
+
+    async def cleanup_target(self) -> None:  # pyrit-async-suffix-exempt
+        """Use ``cleanup_target_async`` instead; this is a deprecated alias."""
+        print_deprecation_message(
+            old_item="pyrit.prompt_target.RealtimeTarget.cleanup_target",
+            new_item="pyrit.prompt_target.RealtimeTarget.cleanup_target_async",
+            removed_in="0.16.0",
+        )
+        await self.cleanup_target_async()
+
+    async def cleanup_conversation_async(self, conversation_id: str) -> None:
+        """
+        Disconnects from the Realtime API for a specific conversation.
+
+        Args:
+            conversation_id (str): The conversation ID to disconnect from.
+        """
+        connection = self._existing_conversation.get(conversation_id)
+        if connection:
+            try:
+                await connection.close()
+                logger.info(f"Disconnected from {self._endpoint} with conversation ID: {conversation_id}")
+            except Exception as e:
+                logger.warning(f"Error closing connection for {conversation_id}: {e}")
+            del self._existing_conversation[conversation_id]
+
+    async def cleanup_conversation(self, conversation_id: str) -> None:  # pyrit-async-suffix-exempt
+        """Use ``cleanup_conversation_async`` instead; this is a deprecated alias."""
+        print_deprecation_message(
+            old_item="pyrit.prompt_target.RealtimeTarget.cleanup_conversation",
+            new_item="pyrit.prompt_target.RealtimeTarget.cleanup_conversation_async",
+            removed_in="0.16.0",
+        )
+        await self.cleanup_conversation_async(conversation_id=conversation_id)
+
+    async def _connect_async(self, *, conversation_id: str) -> Any:
+        """
+        Open a fresh Realtime API websocket connection and return the connection handle.
+
+        Args:
+            conversation_id: Conversation ID for logging/diagnostics; the connection
+                itself is not bound to a conversation server-side.
+
+        Returns:
+            The Realtime API connection handle.
+        """
+        logger.info(f"Connecting to Realtime API: {self._endpoint} (conversation_id={conversation_id})")
+
+        client = self._get_openai_client()
+        connection = await client.realtime.connect(model=self._model_name).__aenter__()
+
+        logger.info("Successfully connected to AzureOpenAI Realtime API")
+        return connection
 
     async def save_audio_async(
         self,
@@ -491,67 +597,12 @@ class RealtimeTarget(OpenAITarget):
             removed_in="0.16.0",
         )
         return await self.save_audio_async(
-            audio_bytes=audio_bytes,
+            audio_bytes,
             num_channels=num_channels,
             sample_width=sample_width,
             sample_rate=sample_rate,
             output_filename=output_filename,
         )
-
-    async def cleanup_target_async(self) -> None:
-        """
-        Disconnects from the Realtime API connections.
-        """
-        for conversation_id, connection in list(self._existing_conversation.items()):
-            if connection:
-                try:
-                    await connection.close()
-                    logger.info(f"Disconnected from {self._endpoint} with conversation ID: {conversation_id}")
-                except Exception as e:
-                    logger.warning(f"Error closing connection for {conversation_id}: {e}")
-        self._existing_conversation = {}
-
-        if self._realtime_client:
-            try:
-                await self._realtime_client.close()
-            except Exception as e:
-                logger.warning(f"Error closing realtime client: {e}")
-            self._realtime_client = None
-
-    async def cleanup_target(self) -> None:  # pyrit-async-suffix-exempt
-        """Use ``cleanup_target_async`` instead; this is a deprecated alias."""
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.cleanup_target",
-            new_item="pyrit.prompt_target.RealtimeTarget.cleanup_target_async",
-            removed_in="0.16.0",
-        )
-        await self.cleanup_target_async()
-
-    async def cleanup_conversation_async(self, conversation_id: str) -> None:
-        """
-        Disconnects from the Realtime API for a specific conversation.
-
-        Args:
-            conversation_id (str): The conversation ID to disconnect from.
-
-        """
-        connection = self._existing_conversation.get(conversation_id)
-        if connection:
-            try:
-                await connection.close()
-                logger.info(f"Disconnected from {self._endpoint} with conversation ID: {conversation_id}")
-            except Exception as e:
-                logger.warning(f"Error closing connection for {conversation_id}: {e}")
-            del self._existing_conversation[conversation_id]
-
-    async def cleanup_conversation(self, conversation_id: str) -> None:  # pyrit-async-suffix-exempt
-        """Use ``cleanup_conversation_async`` instead; this is a deprecated alias."""
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.cleanup_conversation",
-            new_item="pyrit.prompt_target.RealtimeTarget.cleanup_conversation_async",
-            removed_in="0.16.0",
-        )
-        await self.cleanup_conversation_async(conversation_id=conversation_id)
 
     async def send_response_create_async(self, conversation_id: str) -> None:
         """
@@ -870,7 +921,14 @@ class RealtimeTarget(OpenAITarget):
         """
         connection = self._get_connection(conversation_id=conversation_id)
 
-        num_channels, sample_width, frame_rate, audio_content = await asyncio.to_thread(_read_wav_sync, filename)
+        with wave.open(filename, "rb") as wav_file:
+            # Read WAV parameters
+            num_channels = wav_file.getnchannels()
+            sample_width = wav_file.getsampwidth()  # Should be 2 bytes for PCM16
+            frame_rate = wav_file.getframerate()
+            num_frames = wav_file.getnframes()
+
+            audio_content = wav_file.readframes(num_frames)
 
         receive_tasks = asyncio.create_task(self.receive_events_async(conversation_id=conversation_id))
 

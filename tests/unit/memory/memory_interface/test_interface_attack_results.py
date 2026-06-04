@@ -1360,6 +1360,62 @@ def test_get_attack_results_attack_classes_empty_returns_all(sqlite_instance: Me
     assert len(results) == 2
 
 
+def _eval_hash_for(class_name: str) -> str:
+    from pyrit.models.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
+
+    return AtomicAttackEvaluationIdentifier(
+        build_atomic_attack_identifier(
+            attack_identifier=ComponentIdentifier(
+                class_name=class_name,
+                class_module="pyrit.attacks",
+            ),
+        ),
+    ).eval_hash
+
+
+def test_get_attack_results_by_atomic_attack_eval_hashes_single(sqlite_instance: MemoryInterface):
+    """Filter by a single eval_hash; only matching rows are returned."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
+    ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+
+    target_hash = _eval_hash_for("CrescendoAttack")
+    results = sqlite_instance.get_attack_results(atomic_attack_eval_hashes=[target_hash])
+    assert len(results) == 1
+    assert results[0].conversation_id == "conv_1"
+
+
+def test_get_attack_results_by_atomic_attack_eval_hashes_multi_uses_or(sqlite_instance: MemoryInterface):
+    """Multiple eval_hashes OR-combine — matches any of the listed hashes."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
+    ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
+    ar3 = _make_attack_result_with_identifier("conv_3", "TreeOfAttacksAttack")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
+
+    hashes = [_eval_hash_for("CrescendoAttack"), _eval_hash_for("ManualAttack")]
+    results = sqlite_instance.get_attack_results(atomic_attack_eval_hashes=hashes)
+    assert {r.conversation_id for r in results} == {"conv_1", "conv_2"}
+
+
+def test_get_attack_results_atomic_attack_eval_hashes_empty_returns_all(sqlite_instance: MemoryInterface):
+    """atomic_attack_eval_hashes=[] behaves like None (no filter applied)."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
+    ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+
+    results = sqlite_instance.get_attack_results(atomic_attack_eval_hashes=[])
+    assert len(results) == 2
+
+
+def test_get_attack_results_atomic_attack_eval_hashes_no_match(sqlite_instance: MemoryInterface):
+    """A non-matching eval_hash returns no rows."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1])
+
+    results = sqlite_instance.get_attack_results(atomic_attack_eval_hashes=["deadbeef" * 8])
+    assert len(results) == 0
+
+
 def test_get_attack_results_converter_classes_none_returns_all(sqlite_instance: MemoryInterface):
     """Test that converter_classes=None (omitted) returns all attacks unfiltered."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])

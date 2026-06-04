@@ -998,7 +998,7 @@ class TestEnrichAtomicAttackIdentifiers:
         assert persisted["class_name"] == "AtomicAttack"
 
     async def test_enrichment_skips_db_update_when_no_attack_result_id(self, mock_attack):
-        """Test that enrichment does not attempt a DB update when attack_result_id is None."""
+        """Test that enrichment does not attempt a DB update when attack_result_id is empty."""
         seed_groups = [
             SeedAttackGroup(
                 seeds=[
@@ -1013,7 +1013,7 @@ class TestEnrichAtomicAttackIdentifiers:
             objective="obj1",
             outcome=AttackOutcome.SUCCESS,
             executed_turns=1,
-            attack_result_id=None,
+            attack_result_id="",
             atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack_id),
         )
 
