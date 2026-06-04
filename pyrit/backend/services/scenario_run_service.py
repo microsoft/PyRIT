@@ -272,10 +272,7 @@ class ScenarioRunService:
         is preserved when the caller overrides ``dataset_names`` or
         ``max_dataset_size``. Subclasses commonly override
         ``get_all_seed_attack_groups()`` or ``_load_seed_groups_for_dataset()``
-        to shape seeds into scenario-appropriate ``SeedAttackGroup`` objects;
-        substituting a plain ``DatasetConfiguration`` silently loses that
-        behavior and surfaces as obscure downstream errors at attack-construction
-        time (e.g. ``SeedAttackGroup must have exactly one objective``).
+        to shape seeds into scenario-appropriate ``SeedAttackGroup`` objects.
 
         Args:
             request: The run request.
@@ -335,42 +332,42 @@ class ScenarioRunService:
                     ) from None
             init_kwargs["scenario_strategies"] = strategy_enums
 
-        default_config = introspection_instance._default_dataset_config
+        if request.dataset_names or request.max_dataset_size is not None:
+            default_config = introspection_instance._default_dataset_config
 
-        if request.dataset_names:
-            # Construct a fresh instance of the scenario's own dataset-config
-            # class so subclass-specific behavior (e.g. EncodingDatasetConfiguration's
-            # objective-shaping in get_all_seed_attack_groups) is preserved.
-            default_config_class = type(default_config)
-            try:
-                init_kwargs["dataset_config"] = default_config_class(
-                    dataset_names=request.dataset_names,
-                    max_dataset_size=request.max_dataset_size,
-                )
-            except TypeError as exc:
-                # The subclass __init__ takes extra required kwargs we cannot
-                # supply from a backend request. Fall back to the base
-                # DatasetConfiguration so the run can still proceed; downstream
-                # scenarios that strictly require the subclass should either
-                # define a no-extra-required-args constructor or surface the
-                # incompatibility through their own initialize_async validation.
-                logger.warning(
-                    "Cannot construct %s(dataset_names=..., max_dataset_size=...) (%s). "
-                    "Falling back to a generic DatasetConfiguration; scenario-specific "
-                    "dataset-config behavior may be lost.",
-                    default_config_class.__name__,
-                    exc,
-                )
-                init_kwargs["dataset_config"] = DatasetConfiguration(
-                    dataset_names=request.dataset_names,
-                    max_dataset_size=request.max_dataset_size,
-                )
-        elif request.max_dataset_size is not None:
-            # Reuse the scenario's default dataset config (preserves subtype +
-            # the scenario's own default dataset names) and override only the
-            # sample cap. Safe because the introspection instance is throwaway.
-            default_config.max_dataset_size = request.max_dataset_size
-            init_kwargs["dataset_config"] = default_config
+            if request.dataset_names:
+                # Construct a fresh instance of the scenario's own dataset-config
+                # class so subclass-specific behavior is preserved.
+                default_config_class = type(default_config)
+                try:
+                    init_kwargs["dataset_config"] = default_config_class(
+                        dataset_names=request.dataset_names,
+                        max_dataset_size=request.max_dataset_size,
+                    )
+                except TypeError as exc:
+                    # The subclass __init__ takes extra required kwargs we cannot
+                    # supply from a backend request. Fall back to the base
+                    # DatasetConfiguration so the run can still proceed; downstream
+                    # scenarios that strictly require the subclass should either
+                    # define a no-extra-required-args constructor or surface the
+                    # incompatibility through their own initialize_async validation.
+                    logger.warning(
+                        "Cannot construct %s(dataset_names=..., max_dataset_size=...) (%s). "
+                        "Falling back to a generic DatasetConfiguration; scenario-specific "
+                        "dataset-config behavior may be lost.",
+                        default_config_class.__name__,
+                        exc,
+                    )
+                    init_kwargs["dataset_config"] = DatasetConfiguration(
+                        dataset_names=request.dataset_names,
+                        max_dataset_size=request.max_dataset_size,
+                    )
+            elif request.max_dataset_size is not None:
+                # Reuse the scenario's default dataset config (preserves subtype +
+                # the scenario's own default dataset names) and override only the
+                # sample cap. Safe because the introspection instance is throwaway.
+                default_config.max_dataset_size = request.max_dataset_size
+                init_kwargs["dataset_config"] = default_config
 
         return init_kwargs
 
