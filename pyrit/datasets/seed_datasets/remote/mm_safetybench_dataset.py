@@ -47,15 +47,21 @@ class MMSafetyBenchVariant(Enum):
     Image variants in the MM-SafetyBench dataset.
 
     - ``SD``: Stable Diffusion render of the harmful concept (no typography).
-    - ``SD_TYPO``: Stable Diffusion render with the key phrase rendered as
-      typography at the bottom of the image. This is the main variant used in
-      the paper.
-    - ``TYPO``: Typography of the key phrase only (no Stable Diffusion image).
+    - ``SD_TYPOGRAPHY``: Stable Diffusion render with the key phrase rendered
+      as typography at the bottom of the image. This is the main variant used
+      in the paper.
+    - ``TYPOGRAPHY``: Typography of the key phrase only (no Stable Diffusion
+      image).
+
+    Values match the upstream HuggingFace split names (``SD``, ``SD_TYPO``,
+    ``TYPO``), which abbreviate ``TYPOGRAPHY`` to ``TYPO``. The enum members
+    spell out ``TYPOGRAPHY`` for readability so it is not confused with the
+    English word "typo" (typographical error).
     """
 
     SD = "SD"
-    SD_TYPO = "SD_TYPO"
-    TYPO = "TYPO"
+    SD_TYPOGRAPHY = "SD_TYPO"
+    TYPOGRAPHY = "TYPO"
 
 
 # Maps MMSafetyBenchCategory.value to the ``NN-Scenario`` key used in
@@ -116,13 +122,13 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
     3. ``SeedPrompt`` of ``data_type='text'`` for the rephrased question
        paired with that variant by the upstream evaluation protocol:
 
-       =========== ========================================
-       Variant     Paired ``question`` text
-       =========== ========================================
-       ``SD``      ``Rephrased Question(SD)`` ("The image shows a phrase…")
-       ``SD_TYPO`` ``Rephrased Question`` ("The bottom of the image shows…")
-       ``TYPO``    ``Rephrased Question`` ("The bottom of the image shows…")
-       =========== ========================================
+       ================= ========================================
+       Variant           Paired ``question`` text
+       ================= ========================================
+       ``SD``            ``Rephrased Question(SD)`` ("The image shows a phrase…")
+       ``SD_TYPOGRAPHY`` ``Rephrased Question`` ("The bottom of the image shows…")
+       ``TYPOGRAPHY``    ``Rephrased Question`` ("The bottom of the image shows…")
+       ================= ========================================
 
        (Confirmed against the README in the MM-SafetyBench GitHub repo,
        section ``Evaluation``.)
@@ -171,7 +177,7 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
     def __init__(
         self,
         *,
-        variant: MMSafetyBenchVariant = MMSafetyBenchVariant.SD_TYPO,
+        variant: MMSafetyBenchVariant = MMSafetyBenchVariant.SD_TYPOGRAPHY,
         categories: Optional[list[MMSafetyBenchCategory]] = None,
         use_tiny: bool = False,
         token: Optional[str] = None,
@@ -181,7 +187,7 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
 
         Args:
             variant (MMSafetyBenchVariant): Which image variant to load.
-                Defaults to ``MMSafetyBenchVariant.SD_TYPO``, the variant
+                Defaults to ``MMSafetyBenchVariant.SD_TYPOGRAPHY``, the variant
                 primarily used in the paper.
             categories (list[MMSafetyBenchCategory] | None): Risk scenarios to
                 include. If None, all 13 scenarios are loaded.
