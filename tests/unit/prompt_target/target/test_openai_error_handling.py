@@ -89,6 +89,18 @@ def test_is_content_filter_error_invalid_prompt_non_safety():
     assert _is_content_filter_error(data) is False
 
 
+def test_is_content_filter_error_invalid_prompt_non_safety_with_content_filter_marker():
+    """invalid_prompt with no safety message but a CONTENT_FILTER_MARKERS substring elsewhere is detected."""
+    data = {
+        "error": {
+            "code": "invalid_prompt",
+            "message": "Invalid prompt.",
+            "inner_error": {"code": "content_filter"},
+        }
+    }
+    assert _is_content_filter_error(data) is True
+
+
 def test_is_content_filter_error_no_filter():
     """Unrelated errors return False."""
     assert _is_content_filter_error({"error": {"code": "rate_limit", "message": "Too many requests"}}) is False

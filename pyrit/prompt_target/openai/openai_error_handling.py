@@ -124,7 +124,8 @@ def _is_content_filter_error(data: Union[dict[str, object], str]) -> bool:
         error_obj = data.get("error")
         if isinstance(error_obj, dict) and error_obj.get("code") == "invalid_prompt":  # type: ignore[ty:invalid-argument-type]
             message = str(error_obj.get("message", "")).lower()  # type: ignore[ty:no-matching-overload]
-            return any(marker in message for marker in SAFETY_MESSAGE_MARKERS)
+            if any(marker in message for marker in SAFETY_MESSAGE_MARKERS):
+                return True
         haystack = json.dumps(data).lower()
     else:
         haystack = str(data).lower()
