@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import json
-from typing import override
 
 from pyrit.message_normalizer.message_normalizer import MessageListNormalizer
 from pyrit.models import JSON_SCHEMA_METADATA_KEY, JsonSchemaDefinition, Message, MessagePiece
@@ -80,7 +79,6 @@ class JsonSchemaNormalizer(MessageListNormalizer[Message]):
             raise ValueError("schema_instructions_template must contain a '{schema_json}' placeholder.")
         self._schema_instructions_template = schema_instructions_template
 
-    @override
     async def normalize_async(self, messages: list[Message]) -> list[Message]:
         """
         Return messages adapted for a target that does not support JSON schemas.
