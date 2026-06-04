@@ -19,8 +19,8 @@ This module is the single source of truth for:
   full schema body. Bundled schemas live as YAML files under
   ``pyrit/datasets/json_schemas/`` (filename = registry name); on first
   access the directory is scanned once and the entries are cached. Extensions
-  register additional schemas via :func:`register_common_json_schema` and
-  clean up via :func:`unregister_common_json_schema` — both work uniformly
+  register additional schemas via ``register_common_json_schema`` and
+  clean up via ``unregister_common_json_schema`` — both work uniformly
   on top of YAML-discovered entries.
 
 The pieces here are intentionally generic. Scorers, attacks, and converters
@@ -74,12 +74,12 @@ SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY = "__response_json_schema__"
 # Mutable backing dict that holds the registered schemas.
 #
 # This dict is populated lazily on first access by
-# :func:`_ensure_discovered`, which scans ``JSON_SCHEMAS_PATH`` for
+# ``_ensure_discovered``, which scans ``JSON_SCHEMAS_PATH`` for
 # ``*.yaml`` files (filename = registry name). Runtime callers and PyRIT
-# initializers extend it via :func:`register_common_json_schema`; tests
-# clean up via :func:`unregister_common_json_schema`. The mutable dict is
+# initializers extend it via ``register_common_json_schema``; tests
+# clean up via ``unregister_common_json_schema``. The mutable dict is
 # private; external readers go through ``COMMON_JSON_SCHEMAS`` (a read-only
-# view) or :func:`get_common_json_schema` (deep-copying getter).
+# view) or ``get_common_json_schema`` (deep-copying getter).
 _COMMON_JSON_SCHEMAS: dict[str, JsonSchemaDefinition] = {}
 
 # Discovery flag. Flipped to True after the bundled YAML directory has been
@@ -136,7 +136,7 @@ def _ensure_discovered() -> None:
 
     The flag is set BEFORE loading so a directory whose listing fails does
     not cause discovery to loop on every subsequent access; loader errors
-    are already logged as warnings inside :func:`_load_yaml_schemas`.
+    are already logged as warnings inside ``_load_yaml_schemas``.
     """
     global _DISCOVERED
     if _DISCOVERED:
@@ -248,7 +248,7 @@ def register_common_json_schema(
     a test fixture).
 
     Tests that register custom schemas should clean up via
-    :func:`unregister_common_json_schema` (typically in a fixture's
+    ``unregister_common_json_schema`` (typically in a fixture's
     teardown) so registrations do not leak between tests.
 
     Args:

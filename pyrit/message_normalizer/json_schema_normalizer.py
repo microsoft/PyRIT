@@ -33,7 +33,7 @@ class JsonSchemaNormalizer(MessageListNormalizer[Message]):
     The conversation normalization pipeline invokes this normalizer when the
     JSON_SCHEMA capability is not natively supported by the prompt target.
     For every message piece carrying a schema in
-    :data:`pyrit.models.JSON_SCHEMA_METADATA_KEY`:
+    ``JSON_SCHEMA_METADATA_KEY``:
 
     * If the piece is text, the schema is rendered into prompt text appended
       to the existing value so the model is still instructed to produce a
@@ -69,7 +69,7 @@ class JsonSchemaNormalizer(MessageListNormalizer[Message]):
                 appended to text pieces. Must contain a ``{schema_json}``
                 placeholder, which is replaced with the pretty-printed JSON
                 schema body. Defaults to
-                :data:`DEFAULT_SCHEMA_INSTRUCTIONS_TEMPLATE`.
+                ``DEFAULT_SCHEMA_INSTRUCTIONS_TEMPLATE``.
 
         Raises:
             ValueError: If ``schema_instructions_template`` does not contain
