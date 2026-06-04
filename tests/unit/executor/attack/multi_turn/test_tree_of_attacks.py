@@ -95,7 +95,7 @@ class MockNodeFactory:
         # Set up objective score
         if config.objective_score_value is not None:
             node.objective_score = MagicMock(
-                get_value=MagicMock(return_value=config.objective_score_value), score_metadata=None
+                spec=Score, get_value=MagicMock(return_value=config.objective_score_value), score_metadata=None
             )
         else:
             node.objective_score = None
@@ -2207,11 +2207,13 @@ def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _
         node.completed = True
         if b.error is not None:
             node.objective_score = MagicMock(
+                spec=Score,
                 get_value=MagicMock(return_value=0.0),
                 score_metadata=None,
             )
         elif b.score is not None:
             node.objective_score = MagicMock(
+                spec=Score,
                 get_value=MagicMock(return_value=b.score),
                 score_metadata=None,
             )

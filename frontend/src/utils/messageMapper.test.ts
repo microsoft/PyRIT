@@ -398,6 +398,121 @@ describe("messageMapper", () => {
     });
   });
 
+  describe("pieceToAttachment size handling", () => {
+    function makeMediaMessage(
+      converted_value: string,
+      converted_value_data_type = "image_path",
+      converted_value_mime_type: string | undefined = "image/png",
+    ): BackendMessage {
+      return {
+        turn_number: 1,
+        role: "assistant",
+        pieces: [
+          {
+            piece_id: "p1abcdef",
+            original_value_data_type: "text",
+            converted_value_data_type,
+            original_value: "prompt",
+            converted_value,
+            converted_value_mime_type,
+            scores: [],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-02-15T00:00:00Z",
+      };
+    }
+
+    it("omits size for /api/media path URLs (the originally reported bug)", () => {
+      // Reproduces the screenshot: a backend-served PNG referenced via
+      // /api/media?path=... would otherwise produce a chip like "(119 B)"
+      // because value.length was used as size.
+      const url = "/api/media?path=C%3A%5CUsers%5Cromanlutz%5Cgit%5CPyRIT%5Cdbdata%5Cprompt-memory-entries%5Cimages%5Cimage_150c901b9db7.png";
+      expect(url.length).toBeGreaterThan(50); // sanity: long enough for the old bug to bite
+
+      const result = backendMessageToFrontend(makeMediaMessage(url));
+
+      expect(result.attachments).toHaveLength(1);
+      expect(result.attachments![0].url).toBe(url);
+      expect(result.attachments![0].size).toBeUndefined();
+    });
+
+    it("omits size for Windows absolute paths", () => {
+      const result = backendMessageToFrontend(
+        makeMediaMessage("C:\\Users\\me\\dbdata\\prompt-memory-entries\\images\\img.png")
+      );
+      expect(result.attachments![0].size).toBeUndefined();
+    });
+
+    it("omits size for Unix absolute paths", () => {
+      const result = backendMessageToFrontend(
+        makeMediaMessage("/dbdata/prompt-memory-entries/images/img.png")
+      );
+      expect(result.attachments![0].size).toBeUndefined();
+    });
+
+    it("omits size for data: / blob: / file: URI schemes", () => {
+      for (const url of [
+        "data:image/png;base64,aGVsbG8=",
+        "blob:https://example.com/abc-123",
+        "file:///tmp/img.png",
+      ]) {
+        const result = backendMessageToFrontend(makeMediaMessage(url));
+        expect(result.attachments![0].size).toBeUndefined();
+      }
+    });
+
+    it("sets size to the decoded byte count for base64-inlined media", () => {
+      // btoa("hello world") = "aGVsbG8gd29ybGQ=" — 11 decoded bytes.
+      const base64 = "aGVsbG8gd29ybGQ=";
+      const result = backendMessageToFrontend(makeMediaMessage(base64));
+
+      expect(result.attachments![0].url).toBe(`data:image/png;base64,${base64}`);
+      expect(result.attachments![0].size).toBe(11);
+    });
+
+    it("computes base64 size correctly without padding", () => {
+      // 16-char base64 with no padding decodes to floor(16 * 3 / 4) = 12 bytes.
+      const base64 = "YWJjZGVmZ2hpamtsbW5vcA"; // "abcdefghijklmnop" without '=' padding
+      const result = backendMessageToFrontend(makeMediaMessage(base64));
+      expect(result.attachments![0].size).toBe(16);
+    });
+
+    it("omits size on the original-side attachment for path values", () => {
+      // Same /api/media URL on original_value — used when originalAttachments
+      // is populated via pieceToAttachment(piece, 'original').
+      const url = "/api/media?path=output%2Fimage.png";
+      const msg: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        pieces: [
+          {
+            piece_id: "p1abcdef",
+            original_value_data_type: "image_path",
+            converted_value_data_type: "image_path",
+            original_value: url,
+            converted_value: "aW1hZ2VkYXRhYWFhYWFh", // 20 chars base64
+            converted_value_mime_type: "image/png",
+            original_value_mime_type: "image/png",
+            scores: [],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-02-15T00:00:00Z",
+      };
+
+      const result = backendMessageToFrontend(msg);
+
+      // Converted attachment should be present with computed size.
+      expect(result.attachments).toHaveLength(1);
+      expect(result.attachments![0].size).toBe(15); // floor(20 * 3 / 4)
+
+      // originalAttachments only populated when URLs differ — they do here.
+      expect(result.originalAttachments).toHaveLength(1);
+      expect(result.originalAttachments![0].size).toBeUndefined();
+    });
+  });
+
   describe("backendMessagesToFrontend", () => {
     it("should convert multiple messages", () => {
       const messages: BackendMessage[] = [

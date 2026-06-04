@@ -101,13 +101,20 @@ class AttackParameters:
             An instance of this AttackParameters type.
 
         Raises:
-            ValueError: If seed_group has no objective or if overrides contain invalid fields.
-            ValueError: If seed_group has simulated conversation but adversarial_chat/scorer not provided.
+            TypeError: If ``seed_group`` is not a ``SeedAttackGroup``.
+            ValueError: If overrides contain invalid fields, or if seed_group has simulated
+                conversation but adversarial_chat/scorer not provided.
         """
         # Import here to avoid circular imports
         from pyrit.executor.attack.multi_turn.simulated_conversation import (
             generate_simulated_conversation_async,
         )
+
+        if not isinstance(seed_group, SeedAttackGroup):
+            raise TypeError(
+                f"seed_group must be a SeedAttackGroup, got {type(seed_group).__name__}. "
+                "Plain SeedGroup does not enforce the 'exactly one objective' invariant required for an attack."
+            )
 
         # Get valid field names for this params type
         valid_fields = {f.name for f in dataclasses.fields(cls)}
@@ -119,12 +126,8 @@ class AttackParameters:
                 f"{cls.__name__} does not accept parameters: {invalid_fields}. Accepted parameters: {valid_fields}"
             )
 
-        # Validate seed_group state before extracting parameters
-        seed_group.validate()
-
-        # SeedAttackGroup validates in __init__ that objective is set
-        if seed_group.objective is None:
-            raise ValueError("seed_group.objective is not initialized")
+        # SeedAttackGroup's Pydantic validator guarantees exactly one objective is present.
+        assert seed_group.objective is not None
 
         # Build params dict, only including fields this class accepts
         params: dict[str, Any] = {}

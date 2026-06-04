@@ -81,7 +81,6 @@ class XPIAContext(WorkflowContext):
     memory_labels: dict[str, str] = field(default_factory=dict)
 
 
-@dataclass
 class XPIAResult(WorkflowResult):
     """
     Result of XPIA workflow execution.

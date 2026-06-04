@@ -176,7 +176,6 @@ class TAPAttackContext(MultiTurnAttackContext[Any]):
     best_adversarial_conversation_id: str | None = None
 
 
-@dataclass
 class TAPAttackResult(AttackResult):
     """
     Result of the Tree of Attacks with Pruning (TAP) attack strategy execution.

@@ -26,6 +26,7 @@ from pyrit.models.identifiers.evaluation_identifier import (
     ObjectiveTargetEvaluationIdentifier,
     ScorerEvaluationIdentifier,
     compute_eval_hash,
+    compute_inner_attack_eval_hash,
 )
 from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 
@@ -43,6 +44,7 @@ __all__ = [
     "class_name_to_snake_case",
     "ComponentIdentifier",
     "compute_eval_hash",
+    "compute_inner_attack_eval_hash",
     "EvaluationIdentifier",
     "Identifiable",
     "ObjectiveTargetEvaluationIdentifier",

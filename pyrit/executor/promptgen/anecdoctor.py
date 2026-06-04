@@ -57,7 +57,6 @@ class AnecdoctorContext(PromptGeneratorStrategyContext):
     memory_labels: dict[str, str] = field(default_factory=dict)
 
 
-@dataclass
 class AnecdoctorResult(PromptGeneratorStrategyResult):
     """
     Result of Anecdoctor prompt generation.

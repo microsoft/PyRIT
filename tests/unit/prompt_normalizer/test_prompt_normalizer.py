@@ -3,6 +3,8 @@
 
 import os
 import tempfile
+import wave
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -629,6 +631,191 @@ async def test_add_prepended_conversation_to_memory(mock_memory_instance):
     assert result[0].message_pieces[0].conversation_id == conv_id
     assert result[0].message_pieces[0].attack_identifier == attack_id
     mock_memory_instance.add_message_to_memory.assert_called_once()
+
+
+_AUDIO_SAMPLE_RATE_HZ = 24000
+_AUDIO_NUM_CHANNELS = 1
+_AUDIO_SAMPLE_WIDTH_BYTES = 2
+
+
+def _write_test_wav(*, pcm: bytes, sample_rate_hz: int, num_channels: int, sample_width_bytes: int) -> str:
+    fd, path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    with wave.open(path, "wb") as wav_out:
+        wav_out.setnchannels(num_channels)
+        wav_out.setsampwidth(sample_width_bytes)
+        wav_out.setframerate(sample_rate_hz)
+        wav_out.writeframes(pcm)
+    return path
+
+
+@pytest.fixture
+def sample_pcm() -> bytes:
+    return b"\x01\x02\x03\x04" * 1000
+
+
+@pytest.fixture
+def dummy_audio_converter_config() -> PromptConverterConfiguration:
+    return PromptConverterConfiguration(converters=[MagicMock(spec=PromptConverter)])
+
+
+async def test_convert_audio_async_no_converters_returns_input_unchanged(mock_memory_instance, sample_pcm):
+    normalizer = PromptNormalizer()
+    with patch.object(normalizer, "convert_values", new_callable=AsyncMock) as mock_convert:
+        result = await normalizer.convert_audio_async(
+            raw_pcm=sample_pcm,
+            converter_configurations=[],
+            sample_rate_hz=_AUDIO_SAMPLE_RATE_HZ,
+            num_channels=_AUDIO_NUM_CHANNELS,
+            sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+        )
+    assert result == sample_pcm
+    mock_convert.assert_not_called()
+
+
+async def test_convert_audio_async_no_op_converter_round_trips_pcm(
+    mock_memory_instance, sample_pcm, dummy_audio_converter_config
+):
+    normalizer = PromptNormalizer()
+    with patch.object(normalizer, "convert_values", new_callable=AsyncMock):
+        result = await normalizer.convert_audio_async(
+            raw_pcm=sample_pcm,
+            converter_configurations=[dummy_audio_converter_config],
+            sample_rate_hz=_AUDIO_SAMPLE_RATE_HZ,
+            num_channels=_AUDIO_NUM_CHANNELS,
+            sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+        )
+    assert result == sample_pcm
+
+
+async def test_convert_audio_async_returns_pcm_from_converted_value(
+    mock_memory_instance, sample_pcm, dummy_audio_converter_config
+):
+    transformed_pcm = b"\xfb\xfc\xfd\xfe" * 1000
+    new_wav_path = _write_test_wav(
+        pcm=transformed_pcm,
+        sample_rate_hz=_AUDIO_SAMPLE_RATE_HZ,
+        num_channels=_AUDIO_NUM_CHANNELS,
+        sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+    )
+
+    async def swap_converted_value(*, converter_configurations, message):
+        message.message_pieces[0].converted_value = new_wav_path
+
+    normalizer = PromptNormalizer()
+    try:
+        with patch.object(normalizer, "convert_values", side_effect=swap_converted_value):
+            result = await normalizer.convert_audio_async(
+                raw_pcm=sample_pcm,
+                converter_configurations=[dummy_audio_converter_config],
+                sample_rate_hz=_AUDIO_SAMPLE_RATE_HZ,
+                num_channels=_AUDIO_NUM_CHANNELS,
+                sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+            )
+        assert result == transformed_pcm
+    finally:
+        Path(new_wav_path).unlink(missing_ok=True)
+
+
+async def test_convert_audio_async_cleans_up_temp_file_on_success(
+    mock_memory_instance, sample_pcm, dummy_audio_converter_config
+):
+    captured_paths: list[str] = []
+
+    async def capture_input_path(*, converter_configurations, message):
+        captured_paths.append(message.message_pieces[0].converted_value)
+
+    normalizer = PromptNormalizer()
+    with patch.object(normalizer, "convert_values", side_effect=capture_input_path):
+        await normalizer.convert_audio_async(
+            raw_pcm=sample_pcm,
+            converter_configurations=[dummy_audio_converter_config],
+            sample_rate_hz=_AUDIO_SAMPLE_RATE_HZ,
+            num_channels=_AUDIO_NUM_CHANNELS,
+            sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+        )
+    assert len(captured_paths) == 1
+    assert not Path(captured_paths[0]).exists()
+
+
+async def test_convert_audio_async_cleans_up_temp_file_on_converter_failure(
+    mock_memory_instance, sample_pcm, dummy_audio_converter_config
+):
+    captured_paths: list[str] = []
+
+    async def capture_then_raise(*, converter_configurations, message):
+        captured_paths.append(message.message_pieces[0].converted_value)
+        raise RuntimeError("converter blew up")
+
+    normalizer = PromptNormalizer()
+    with patch.object(normalizer, "convert_values", side_effect=capture_then_raise):
+        with pytest.raises(RuntimeError, match="converter blew up"):
+            await normalizer.convert_audio_async(
+                raw_pcm=sample_pcm,
+                converter_configurations=[dummy_audio_converter_config],
+                sample_rate_hz=_AUDIO_SAMPLE_RATE_HZ,
+                num_channels=_AUDIO_NUM_CHANNELS,
+                sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+            )
+    assert len(captured_paths) == 1
+    assert not Path(captured_paths[0]).exists()
+
+
+async def test_convert_audio_async_raises_on_sample_rate_mismatch(
+    mock_memory_instance, sample_pcm, dummy_audio_converter_config
+):
+    wrong_rate_path = _write_test_wav(
+        pcm=b"\x00" * 100,
+        sample_rate_hz=16000,
+        num_channels=_AUDIO_NUM_CHANNELS,
+        sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+    )
+
+    async def swap_to_wrong_rate(*, converter_configurations, message):
+        message.message_pieces[0].converted_value = wrong_rate_path
+
+    normalizer = PromptNormalizer()
+    try:
+        with patch.object(normalizer, "convert_values", side_effect=swap_to_wrong_rate):
+            with pytest.raises(ValueError, match="format mismatch"):
+                await normalizer.convert_audio_async(
+                    raw_pcm=sample_pcm,
+                    converter_configurations=[dummy_audio_converter_config],
+                    sample_rate_hz=_AUDIO_SAMPLE_RATE_HZ,
+                    num_channels=_AUDIO_NUM_CHANNELS,
+                    sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+                )
+    finally:
+        Path(wrong_rate_path).unlink(missing_ok=True)
+
+
+async def test_convert_audio_async_raises_on_channel_mismatch(
+    mock_memory_instance, sample_pcm, dummy_audio_converter_config
+):
+    stereo_pcm = b"\x00\x01\x02\x03" * 100
+    wrong_channels_path = _write_test_wav(
+        pcm=stereo_pcm,
+        sample_rate_hz=_AUDIO_SAMPLE_RATE_HZ,
+        num_channels=2,
+        sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+    )
+
+    async def swap_to_stereo(*, converter_configurations, message):
+        message.message_pieces[0].converted_value = wrong_channels_path
+
+    normalizer = PromptNormalizer()
+    try:
+        with patch.object(normalizer, "convert_values", side_effect=swap_to_stereo):
+            with pytest.raises(ValueError, match="format mismatch"):
+                await normalizer.convert_audio_async(
+                    raw_pcm=sample_pcm,
+                    converter_configurations=[dummy_audio_converter_config],
+                    sample_rate_hz=_AUDIO_SAMPLE_RATE_HZ,
+                    num_channels=_AUDIO_NUM_CHANNELS,
+                    sample_width_bytes=_AUDIO_SAMPLE_WIDTH_BYTES,
+                )
+    finally:
+        Path(wrong_channels_path).unlink(missing_ok=True)
 
 
 async def test_convert_values_emits_deprecation_warning_and_delegates(mock_memory_instance, response: Message):

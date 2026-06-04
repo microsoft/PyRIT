@@ -13,7 +13,7 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import PromptConvert
 from pyrit.prompt_normalizer.prompt_normalizer import PromptNormalizer
 
 __all__ = [
-    "PromptNormalizer",
-    "PromptConverterConfiguration",
     "NormalizerRequest",
+    "PromptConverterConfiguration",
+    "PromptNormalizer",
 ]
