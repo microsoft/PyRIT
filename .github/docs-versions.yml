@@ -1,0 +1,23 @@
+# Versions exposed on the PyRIT documentation site.
+#
+# This file is the single source of truth consumed by:
+#   * .github/workflows/docs.yml   - builds each version listed below
+#   * the version picker injected into every doc page
+#   * doc/contributing/10_release_process.md - tells the releaser to edit this file
+#
+# To add a new release version: append an entry under `versions:`, and update
+# `default:` / `stable:` if the new release should become the landing page.
+
+default: "0.13.0"  # served at the site root (microsoft.github.io/PyRIT/)
+stable: "0.13.0"   # served at /stable/ and shown as "(stable)" in the picker
+
+versions:
+  - slug: latest
+    name: "latest (dev, main)"
+    ref: main
+  - slug: "0.13.0"
+    name: "0.13.0"
+    ref: releases/v0.13.0
+  - slug: "0.12.1"
+    name: "0.12.1"
+    ref: releases/v0.12.1

@@ -19,10 +19,10 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     RTASystemPromptPaths,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
     Message,
@@ -851,7 +851,9 @@ class TestPromptGeneration:
         mock_prompt_normalizer.send_prompt_async.return_value = sample_response
 
         # Mock build_adversarial_prompt
-        with patch.object(attack, "_build_adversarial_prompt", new_callable=AsyncMock, return_value="Built prompt"):
+        with patch.object(
+            attack, "_build_adversarial_prompt_async", new_callable=AsyncMock, return_value="Built prompt"
+        ):
             result = await attack._generate_next_prompt_async(context=basic_context)
 
         assert result.get_value() == sample_response.get_value()
@@ -880,7 +882,9 @@ class TestPromptGeneration:
         mock_prompt_normalizer.send_prompt_async.return_value = None
 
         # Mock build_adversarial_prompt
-        with patch.object(attack, "_build_adversarial_prompt", new_callable=AsyncMock, return_value="Built prompt"):
+        with patch.object(
+            attack, "_build_adversarial_prompt_async", new_callable=AsyncMock, return_value="Built prompt"
+        ):
             with pytest.raises(ValueError, match="Received no response from adversarial chat"):
                 await attack._generate_next_prompt_async(context=basic_context)
 
@@ -908,7 +912,7 @@ class TestAdversarialPromptBuilding:
         )
 
         basic_context.last_response = None
-        result = await attack._build_adversarial_prompt(basic_context)
+        result = await attack._build_adversarial_prompt_async(basic_context)
 
         assert result == seed
 
@@ -1662,6 +1666,7 @@ class TestRedTeamingConversationTracking:
             mock_send.return_value = sample_response
             mock_score.return_value = {"objective_scores": [success_score]}
             mock_generate.return_value = generated_message
+            mock_objective_scorer.score_async = AsyncMock(return_value=[success_score])
 
             # Run setup and attack
             await attack._setup_async(context=basic_context)

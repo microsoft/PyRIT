@@ -26,9 +26,9 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TAPAttackScoringConfig,
     _TreeOfAttacksNode,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
     Message,
@@ -95,7 +95,7 @@ class MockNodeFactory:
         # Set up objective score
         if config.objective_score_value is not None:
             node.objective_score = MagicMock(
-                get_value=MagicMock(return_value=config.objective_score_value), score_metadata=None
+                spec=Score, get_value=MagicMock(return_value=config.objective_score_value), score_metadata=None
             )
         else:
             node.objective_score = None
@@ -293,7 +293,6 @@ class TestHelpers:
     def create_score(value: float = 0.9) -> Score:
         """Create a mock Score object."""
         return Score(
-            id=None,
             score_type="float_scale",
             score_value=str(value),
             score_category=["test"],
@@ -332,7 +331,6 @@ class TestHelpers:
 
         # Create the float scale score that the mock scorer will return
         float_score = Score(
-            id=None,
             score_type="float_scale",
             score_value=str(original_float_value),
             score_category=["objective"],
@@ -2209,11 +2207,13 @@ def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _
         node.completed = True
         if b.error is not None:
             node.objective_score = MagicMock(
+                spec=Score,
                 get_value=MagicMock(return_value=0.0),
                 score_metadata=None,
             )
         elif b.score is not None:
             node.objective_score = MagicMock(
+                spec=Score,
                 get_value=MagicMock(return_value=b.score),
                 score_metadata=None,
             )

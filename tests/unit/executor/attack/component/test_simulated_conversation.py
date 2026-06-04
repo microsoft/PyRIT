@@ -11,10 +11,10 @@ from pyrit.executor.attack import AttackConverterConfig, RTASystemPromptPaths
 from pyrit.executor.attack.multi_turn.simulated_conversation import (
     generate_simulated_conversation_async,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     Message,
     MessagePiece,
     NextMessageSystemPromptPaths,
@@ -162,7 +162,7 @@ class TestGenerateSimulatedConversationAsync:
             )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier=ComponentIdentifier(
+                    atomic_attack_identifier=ComponentIdentifier(
                         class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
                     ),
                     conversation_id=str(uuid.uuid4()),
@@ -206,7 +206,7 @@ class TestGenerateSimulatedConversationAsync:
             )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier=ComponentIdentifier(
+                    atomic_attack_identifier=ComponentIdentifier(
                         class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
                     ),
                     conversation_id=str(uuid.uuid4()),
@@ -249,7 +249,7 @@ class TestGenerateSimulatedConversationAsync:
             )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier=ComponentIdentifier(
+                    atomic_attack_identifier=ComponentIdentifier(
                         class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
                     ),
                     conversation_id=str(uuid.uuid4()),
@@ -295,7 +295,7 @@ class TestGenerateSimulatedConversationAsync:
             )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier=ComponentIdentifier(
+                    atomic_attack_identifier=ComponentIdentifier(
                         class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
                     ),
                     conversation_id=conversation_id,
@@ -344,7 +344,7 @@ class TestGenerateSimulatedConversationAsync:
             )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier=ComponentIdentifier(
+                    atomic_attack_identifier=ComponentIdentifier(
                         class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
                     ),
                     conversation_id=str(uuid.uuid4()),
@@ -395,7 +395,7 @@ class TestGenerateSimulatedConversationAsync:
             )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier=ComponentIdentifier(
+                    atomic_attack_identifier=ComponentIdentifier(
                         class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
                     ),
                     conversation_id=str(uuid.uuid4()),
@@ -441,7 +441,7 @@ class TestGenerateSimulatedConversationAsync:
             )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier=ComponentIdentifier(
+                    atomic_attack_identifier=ComponentIdentifier(
                         class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
                     ),
                     conversation_id=str(uuid.uuid4()),
@@ -485,7 +485,7 @@ class TestGenerateSimulatedConversationAsync:
             )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier=ComponentIdentifier(
+                    atomic_attack_identifier=ComponentIdentifier(
                         class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
                     ),
                     conversation_id=str(uuid.uuid4()),
@@ -533,7 +533,7 @@ class TestGenerateSimulatedConversationAsync:
             )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier=ComponentIdentifier(
+                    atomic_attack_identifier=ComponentIdentifier(
                         class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
                     ),
                     conversation_id=str(uuid.uuid4()),
@@ -591,7 +591,7 @@ class TestGenerateSimulatedConversationAsync:
             )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier=ComponentIdentifier(
+                    atomic_attack_identifier=ComponentIdentifier(
                         class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
                     ),
                     conversation_id=conversation_id,
@@ -660,7 +660,7 @@ class TestGenerateSimulatedConversationAsync:
             )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier=ComponentIdentifier(
+                    atomic_attack_identifier=ComponentIdentifier(
                         class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
                     ),
                     conversation_id=conversation_id,
@@ -707,7 +707,7 @@ class TestGenerateSimulatedConversationAsync:
             )
             mock_attack.execute_async = AsyncMock(
                 return_value=AttackResult(
-                    attack_identifier=ComponentIdentifier(
+                    atomic_attack_identifier=ComponentIdentifier(
                         class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
                     ),
                     conversation_id=conversation_id,

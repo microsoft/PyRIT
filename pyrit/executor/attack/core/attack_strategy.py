@@ -24,12 +24,13 @@ from pyrit.executor.core import (
     StrategyEventData,
     StrategyEventHandler,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationReference,
+    Identifiable,
     Message,
 )
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
@@ -145,13 +146,15 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         """
         self._logger = logger
         self._events = {
-            StrategyEvent.ON_PRE_EXECUTE: self._on_pre_execute,
-            StrategyEvent.ON_POST_EXECUTE: self._on_post_execute,
+            StrategyEvent.ON_PRE_EXECUTE: self._on_pre_execute_async,
+            StrategyEvent.ON_POST_EXECUTE: self._on_post_execute_async,
             StrategyEvent.ON_ERROR: self._on_error_async,
         }
         self._memory = CentralMemory.get_memory_instance()
 
-    async def on_event(self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]) -> None:
+    async def on_event_async(
+        self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]
+    ) -> None:
         """
         Handle an event during the attack strategy execution.
 
@@ -163,9 +166,9 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             handler = self._events[event_data.event]
             await handler(event_data)
         else:
-            await self._on(event_data)
+            await self._on_async(event_data)
 
-    async def _on(self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]) -> None:
+    async def _on_async(self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]) -> None:
         """
         Handle specific events during the attack strategy execution.
 
@@ -175,7 +178,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         """
         self._logger.debug(f"Attack is in '{event_data.event.value}' stage for {self.__class__.__name__}")
 
-    async def _on_pre_execute(
+    async def _on_pre_execute_async(
         self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]
     ) -> None:
         """
@@ -200,7 +203,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         # Log the start of the attack
         self._logger.info(f"Starting attack: {event_data.context.objective}")
 
-    async def _on_post_execute(
+    async def _on_post_execute_async(
         self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]
     ) -> None:
         """

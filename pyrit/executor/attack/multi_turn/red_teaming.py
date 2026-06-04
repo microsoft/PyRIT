@@ -26,7 +26,6 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     MultiTurnAttackContext,
     MultiTurnAttackStrategy,
 )
-from pyrit.identifiers import build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -36,6 +35,7 @@ from pyrit.models import (
     Message,
     Score,
     SeedPrompt,
+    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName
@@ -247,6 +247,23 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             memory_labels=self._memory_labels,
         )
 
+        adversarial_system_prompt = self._adversarial_chat_system_prompt_template.render_template_value(
+            objective=context.objective,
+            max_turns=self._max_turns,
+        )
+        if not adversarial_system_prompt:
+            raise ValueError("Adversarial chat system prompt must be defined")
+
+        # ``set_system_prompt`` rejects any conversation that already has messages,
+        # so it must run before we hydrate the adversarial chat with the swapped
+        # prepended turns below.
+        self._adversarial_chat.set_system_prompt(
+            system_prompt=adversarial_system_prompt,
+            conversation_id=context.session.adversarial_chat_conversation_id,
+            attack_identifier=self.get_identifier(),
+            labels=context.memory_labels,  # deprecated
+        )
+
         # Set up adversarial chat with prepended conversation
         if context.prepended_conversation:
             # Get adversarial messages with swapped roles
@@ -260,20 +277,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
 
             for msg in adversarial_messages:
                 self._memory.add_message_to_memory(request=msg)
-
-        adversarial_system_prompt = self._adversarial_chat_system_prompt_template.render_template_value(
-            objective=context.objective,
-            max_turns=self._max_turns,
-        )
-        if not adversarial_system_prompt:
-            raise ValueError("Adversarial chat system prompt must be defined")
-
-        self._adversarial_chat.set_system_prompt(
-            system_prompt=adversarial_system_prompt,
-            conversation_id=context.session.adversarial_chat_conversation_id,
-            attack_identifier=self.get_identifier(),
-            labels=context.memory_labels,  # deprecated
-        )
 
     async def _perform_async(self, *, context: MultiTurnAttackContext[Any]) -> AttackResult:
         """
@@ -376,7 +379,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         logger.debug(f"Generating prompt for turn {context.executed_turns + 1}")
 
         # Prepare prompt for the adversarial chat
-        prompt_text = await self._build_adversarial_prompt(context)
+        prompt_text = await self._build_adversarial_prompt_async(context)
 
         # Send the prompt to the adversarial chat and get the response
         logger.debug(f"Sending prompt to adversarial chat: {prompt_text[:50]}...")
@@ -405,7 +408,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         # Return as a user message for sending to objective target
         return Message.from_prompt(prompt=response.get_value(), role="user")
 
-    async def _build_adversarial_prompt(
+    async def _build_adversarial_prompt_async(
         self,
         context: MultiTurnAttackContext[Any],
     ) -> str:

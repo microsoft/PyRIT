@@ -3,8 +3,8 @@
 
 """Public API for the Greedy Coordinate Gradient (GCG) auxiliary attack.
 
-The primary entry point is :class:`GCG` (alias for :class:`GCGGenerator`), a
-:class:`pyrit.executor.promptgen.core.PromptGeneratorStrategy` that produces
+The primary entry point is ``GCG`` (alias for ``GCGGenerator``), a
+``pyrit.executor.promptgen.core.PromptGeneratorStrategy`` that produces
 adversarial suffixes via the GCG algorithm.
 
 Example:
@@ -41,16 +41,30 @@ from pyrit.auxiliary_attacks.gcg.config import (
 # only have the base `dev` extra (no torch). Touching any of these names from
 # the package root triggers the underlying module import on first access; if
 # torch is missing the user gets a clear ModuleNotFoundError pointing at torch.
+#
+# The extension Protocols live in ``extension_protocols`` (typing-only — that
+# module imports cleanly without torch) but are routed through the same lazy
+# mechanism so all GCG public symbols share one re-export pathway.
 _LAZY_IMPORTS = {
+    "CandidateFilter": ("pyrit.auxiliary_attacks.gcg.extension_protocols", "CandidateFilter"),
     "GCG": ("pyrit.auxiliary_attacks.gcg.generator", "GCGGenerator"),
     "GCGContext": ("pyrit.auxiliary_attacks.gcg.generator", "GCGContext"),
     "GCGGenerator": ("pyrit.auxiliary_attacks.gcg.generator", "GCGGenerator"),
     "GCGResult": ("pyrit.auxiliary_attacks.gcg.generator", "GCGResult"),
+    "LossFunction": ("pyrit.auxiliary_attacks.gcg.extension_protocols", "LossFunction"),
+    "SamplingStrategy": ("pyrit.auxiliary_attacks.gcg.extension_protocols", "SamplingStrategy"),
+    "SuffixInitializer": ("pyrit.auxiliary_attacks.gcg.extension_protocols", "SuffixInitializer"),
     "load_goals_and_targets": ("pyrit.auxiliary_attacks.gcg.data", "load_goals_and_targets"),
 }
 
 if TYPE_CHECKING:
     from pyrit.auxiliary_attacks.gcg.data import load_goals_and_targets
+    from pyrit.auxiliary_attacks.gcg.extension_protocols import (
+        CandidateFilter,
+        LossFunction,
+        SamplingStrategy,
+        SuffixInitializer,
+    )
     from pyrit.auxiliary_attacks.gcg.generator import (
         GCGContext,
         GCGGenerator,
@@ -76,6 +90,7 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "CandidateFilter",
     "GCG",
     "GCGAlgorithmConfig",
     "GCGConfig",
@@ -86,5 +101,8 @@ __all__ = [
     "GCGOutputConfig",
     "GCGResult",
     "GCGStrategyConfig",
+    "LossFunction",
+    "SamplingStrategy",
+    "SuffixInitializer",
     "load_goals_and_targets",
 ]

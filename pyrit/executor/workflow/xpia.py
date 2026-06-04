@@ -14,9 +14,10 @@ from pyrit.executor.workflow.core import (
     WorkflowResult,
     WorkflowStrategy,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    ComponentIdentifier,
+    Identifiable,
     Message,
     MessagePiece,
     Score,
@@ -80,7 +81,6 @@ class XPIAContext(WorkflowContext):
     memory_labels: dict[str, str] = field(default_factory=dict)
 
 
-@dataclass
 class XPIAResult(WorkflowResult):
     """
     Result of XPIA workflow execution.

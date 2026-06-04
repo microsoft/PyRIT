@@ -112,7 +112,7 @@ async def test_video_send_prompt_async_success(
     # Mock data serializer
     mock_serializer = MagicMock()
     mock_serializer.value = "/path/to/video.mp4"
-    mock_serializer.save_data = AsyncMock()
+    mock_serializer.save_data_async = AsyncMock()
 
     with (
         patch.object(video_target._async_client.videos, "create_and_poll", new_callable=AsyncMock) as mock_create,
@@ -133,7 +133,7 @@ async def test_video_send_prompt_async_success(
             seconds="4",
         )
         mock_download.assert_called_once_with("video_123")
-        mock_serializer.save_data.assert_called_once_with(data=b"video data content")
+        mock_serializer.save_data_async.assert_called_once_with(data=b"video data content")
 
         # Verify response
         assert len(response) == 1
@@ -498,10 +498,10 @@ class TestVideoTargetImageToVideo:
 
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/output.mp4"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
 
         mock_image_serializer = MagicMock()
-        mock_image_serializer.read_data = AsyncMock(return_value=b"image bytes")
+        mock_image_serializer.read_data_async = AsyncMock(return_value=b"image bytes")
 
         with (
             patch.object(video_target._async_client.videos, "create_and_poll", new_callable=AsyncMock) as mock_create,
@@ -573,7 +573,7 @@ class TestVideoTargetRemix:
 
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/remixed.mp4"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
 
         with (
             patch.object(video_target._async_client.videos, "remix", new_callable=AsyncMock) as mock_remix,
@@ -620,7 +620,7 @@ class TestVideoTargetRemix:
 
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/remixed.mp4"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
 
         with (
             patch.object(video_target._async_client.videos, "remix", new_callable=AsyncMock) as mock_remix,
@@ -674,7 +674,7 @@ class TestVideoTargetRemix:
 
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/remixed.mp4"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
 
         with (
             patch.object(video_target._async_client.videos, "remix", new_callable=AsyncMock) as mock_remix,
@@ -730,7 +730,7 @@ class TestVideoTargetMetadata:
 
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/video.mp4"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
 
         with (
             patch.object(video_target._async_client.videos, "create_and_poll", new_callable=AsyncMock) as mock_create,
@@ -807,10 +807,10 @@ class TestVideoTargetEdgeCases:
 
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/output.mp4"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
 
         mock_image_serializer = MagicMock()
-        mock_image_serializer.read_data = AsyncMock(return_value=b"jpeg bytes")
+        mock_image_serializer.read_data_async = AsyncMock(return_value=b"jpeg bytes")
 
         with (
             patch.object(video_target._async_client.videos, "create_and_poll", new_callable=AsyncMock) as mock_create,
@@ -860,10 +860,10 @@ class TestVideoTargetEdgeCases:
 
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/output.mp4"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
 
         mock_image_serializer = MagicMock()
-        mock_image_serializer.read_data = AsyncMock(return_value=b"webp bytes")
+        mock_image_serializer.read_data_async = AsyncMock(return_value=b"webp bytes")
 
         with (
             patch.object(video_target._async_client.videos, "create_and_poll", new_callable=AsyncMock) as mock_create,
@@ -907,7 +907,7 @@ class TestVideoTargetEdgeCases:
         )
 
         mock_image_serializer = MagicMock()
-        mock_image_serializer.read_data = AsyncMock(return_value=b"unknown bytes")
+        mock_image_serializer.read_data_async = AsyncMock(return_value=b"unknown bytes")
 
         with (
             patch("pyrit.prompt_target.openai.openai_video_target.data_serializer_factory") as mock_factory,

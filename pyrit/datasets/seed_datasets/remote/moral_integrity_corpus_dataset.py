@@ -32,7 +32,7 @@ class _MICDataset(_RemoteDatasetLoader):
     harm_categories = {"care", "fairness", "loyalty", "authority", "sanctity", "liberty"}
     modalities = ["text"]
     size = "huge"
-    tags = ["moral", "ethics", "dialogue"]
+    tags = {"safety", "ethics", "multiturn"}
     VALID_SPLITS = ["train", "dev", "test"]
     AUTHORS = ["Caleb Ziems", "Jane Yu", "Yi-Chia Wang", "Alon Halevy", "Diyi Yang"]
 
@@ -61,7 +61,7 @@ class _MICDataset(_RemoteDatasetLoader):
         logger.info("Downloading SALT-NLP MIC dataset...")
 
         inner_files = [f"MIC/{split}.jsonl" for split in self.VALID_SPLITS]
-        split_rows = await self._fetch_zip_from_url(
+        split_rows = await self._fetch_zip_from_url_async(
             source=self.source,
             inner_files=inner_files,
             cache=cache,

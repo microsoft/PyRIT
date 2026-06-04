@@ -12,10 +12,9 @@ from pyrit.common.utils import combine_dict
 from pyrit.executor.attack.component.prepended_conversation_config import (
     PrependedConversationConfig,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
-from pyrit.models import ChatMessageRole, Message, MessagePiece, Score
+from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
 )
@@ -46,8 +45,8 @@ def mark_messages_as_simulated(messages: Sequence[Message]) -> list[Message]:
     result = list(messages)
     for message in result:
         for piece in message.message_pieces:
-            if piece._role == "assistant":
-                piece._role = "simulated_assistant"
+            if piece.role == "assistant":
+                piece.role = "simulated_assistant"
     return result
 
 
@@ -117,7 +116,7 @@ def get_adversarial_chat_messages(
                 conversation_id=adversarial_chat_conversation_id,
                 attack_identifier=attack_identifier,
                 prompt_target_identifier=adversarial_chat_target_identifier,
-                labels=labels,  # deprecated
+                labels=labels or {},  # deprecated
             )
 
             result.append(adversarial_piece.to_message())
@@ -482,7 +481,7 @@ class ConversationManager:
         turn_count = 0
 
         for i, message in enumerate(valid_messages):
-            message_copy = message.duplicate_message()
+            message_copy = message.duplicate()
 
             message_copy.set_simulated_role()
 
@@ -605,7 +604,7 @@ class ConversationManager:
                 continue
 
             temp_message = Message(message_pieces=[piece])
-            await self._prompt_normalizer.convert_values(
+            await self._prompt_normalizer.convert_values_async(
                 message=temp_message,
                 converter_configurations=request_converters,
             )

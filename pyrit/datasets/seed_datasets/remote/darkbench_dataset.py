@@ -1,10 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import warnings
+
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 
 class _DarkBenchDataset(_RemoteDatasetLoader):
@@ -23,12 +25,17 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         - https://openreview.net/forum?id=odjMSBSWRt
     """
 
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "large"  # 660 prompts across 6 dark-pattern categories
+    tags: frozenset[str] = frozenset({"default", "safety"})
+
     def __init__(
         self,
         *,
         dataset_name: str = "apart/darkbench",
         config: str = "default",
-        split: str = "train",
+        split: str | None = None,
     ) -> None:
         """
         Initialize the DarkBench dataset loader.
@@ -36,11 +43,20 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         Args:
             dataset_name: HuggingFace dataset identifier. Defaults to "apart/darkbench".
             config: Dataset configuration. Defaults to "default".
-            split: Dataset split to load. Defaults to "train".
+            split: **Deprecated.** Upstream ``apart/darkbench`` publishes only the
+                ``"train"`` split, so this kwarg has no effect. It will be removed in
+                v0.16.0.
         """
+        if split is not None:
+            warnings.warn(
+                "'split' is deprecated and will be removed in v0.16.0. "
+                "Upstream apart/darkbench publishes only the 'train' split, "
+                "so this kwarg has no effect.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.hf_dataset_name = dataset_name
         self.config = config
-        self.split = split
 
     @property
     def dataset_name(self) -> str:
@@ -62,10 +78,10 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
             Exception: If the dataset cannot be loaded.
         """
         # Fetch from HuggingFace
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.hf_dataset_name,
             config=self.config,
-            split=self.split,
+            split="train",
             cache=cache,
             data_files="darkbench.tsv",
         )

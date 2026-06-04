@@ -309,12 +309,14 @@ class TestExcluding:
             )
 
 
-async def test_from_seed_group_async_raises_when_objective_is_none():
-    """Test that from_seed_group_async raises ValueError when seed_group.objective is None."""
-    seed_group = MagicMock(spec=SeedAttackGroup)
-    seed_group.validate = MagicMock()
-    seed_group.objective = None
-    seed_group.simulated_conversation = None
+async def test_from_seed_group_async_rejects_plain_seed_group():
+    """Plain SeedGroup is rejected at the boundary because it doesn't enforce the
+    'exactly one objective' invariant SeedAttackGroup does. A real SeedAttackGroup
+    can't reach this method with objective=None — Pydantic validation at construction
+    blocks that — so the runtime guard targets the more interesting failure mode:
+    callers passing the wrong subtype."""
+    from pyrit.models import SeedGroup
 
-    with pytest.raises(ValueError, match="seed_group.objective is not initialized"):
-        await AttackParameters.from_seed_group_async(seed_group=seed_group)
+    plain_group = SeedGroup(seeds=[SeedObjective(value="Test objective")])
+    with pytest.raises(TypeError, match="seed_group must be a SeedAttackGroup"):
+        await AttackParameters.from_seed_group_async(seed_group=plain_group)  # type: ignore[arg-type]

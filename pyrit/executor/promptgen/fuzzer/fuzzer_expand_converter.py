@@ -66,7 +66,7 @@ class FuzzerExpandConverter(FuzzerConverter):
 
         prompt_metadata: dict[str, str | int] = {"response_format": "json"}
         request = Message(
-            [
+            message_pieces=[
                 MessagePiece(
                     role="user",
                     original_value=formatted_prompt,

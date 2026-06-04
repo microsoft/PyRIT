@@ -31,15 +31,12 @@ from sqlalchemy.types import Uuid
 
 import pyrit
 from pyrit.common.utils import to_sha256
-from pyrit.identifiers.component_identifier import ComponentIdentifier
-from pyrit.identifiers.evaluation_identifier import (
-    AtomicAttackEvaluationIdentifier,
-    ScorerEvaluationIdentifier,
-)
 from pyrit.models import (
+    AtomicAttackEvaluationIdentifier,
     AttackOutcome,
     AttackResult,
     ChatMessageRole,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
     MessagePiece,
@@ -47,6 +44,7 @@ from pyrit.models import (
     ScenarioIdentifier,
     ScenarioResult,
     Score,
+    ScorerEvaluationIdentifier,
     Seed,
     SeedObjective,
     SeedPrompt,
@@ -59,7 +57,7 @@ logger = logging.getLogger(__name__)
 # Default pyrit_version for database records created before version tracking was added
 LEGACY_PYRIT_VERSION = "<0.10.0"
 
-# Maximum length for string values in ComponentIdentifier.to_dict() when storing to the database.
+# Maximum length for string values in ComponentIdentifier.model_dump() when storing to the database.
 # Longer values are truncated with a "..." suffix.
 MAX_IDENTIFIER_VALUE_LENGTH: int = 80
 
@@ -225,7 +223,7 @@ class PromptMemoryEntry(Base):
             entry (MessagePiece): The message piece to convert into a database entry.
         """
         self.id = entry.id
-        self.role = entry._role
+        self.role = entry.role
         self.conversation_id = entry.conversation_id
         self.sequence = entry.sequence
         self.timestamp = entry.timestamp
@@ -233,16 +231,17 @@ class PromptMemoryEntry(Base):
         self.prompt_metadata = entry.prompt_metadata
         self.targeted_harm_categories = entry.targeted_harm_categories
         self.converter_identifiers = [
-            conv.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH) for conv in entry.converter_identifiers
+            conv.model_dump(context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH})
+            for conv in entry.converter_identifiers
         ]
         # Normalize prompt_target_identifier and convert to dict for JSON serialization
         self.prompt_target_identifier = (
-            entry.prompt_target_identifier.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH)
+            entry.prompt_target_identifier.model_dump(context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH})
             if entry.prompt_target_identifier
             else {}
         )
         self.attack_identifier = (
-            entry.attack_identifier.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH)
+            entry.attack_identifier.model_dump(context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH})
             if entry.attack_identifier
             else {}
         )
@@ -272,21 +271,21 @@ class PromptMemoryEntry(Base):
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
         if self.converter_identifiers:
             converter_ids = [
-                ComponentIdentifier.from_dict({**c, "pyrit_version": stored_version})
+                ComponentIdentifier.model_validate({**c, "pyrit_version": stored_version})
                 for c in self.converter_identifiers
             ]
 
         # Reconstruct ComponentIdentifier with the stored pyrit_version
         target_id: ComponentIdentifier | None = None
         if self.prompt_target_identifier:
-            target_id = ComponentIdentifier.from_dict(
+            target_id = ComponentIdentifier.model_validate(
                 {**self.prompt_target_identifier, "pyrit_version": stored_version}
             )
 
         # Reconstruct ComponentIdentifier with the stored pyrit_version
         attack_id: ComponentIdentifier | None = None
         if self.attack_identifier:
-            attack_id = ComponentIdentifier.from_dict({**self.attack_identifier, "pyrit_version": stored_version})
+            attack_id = ComponentIdentifier.model_validate({**self.attack_identifier, "pyrit_version": stored_version})
 
         message_piece = MessagePiece(
             role=self.role,
@@ -298,7 +297,7 @@ class PromptMemoryEntry(Base):
             conversation_id=self.conversation_id,
             sequence=self.sequence,
             prompt_metadata=self.prompt_metadata,
-            converter_identifiers=converter_ids,
+            converter_identifiers=converter_ids or [],
             prompt_target_identifier=target_id,
             attack_identifier=attack_id,
             original_value_data_type=self.original_value_data_type,
@@ -307,9 +306,13 @@ class PromptMemoryEntry(Base):
             original_prompt_id=self.original_prompt_id,
             timestamp=_ensure_utc(self.timestamp),
         )
-        message_piece.scores = [score.get_score() for score in self.scores]
+        # Assign deprecated containers post-construction so the DB-load path
+        # does not trip the ``MessagePiece`` deprecation-kwarg validator.
+        # ``validate_assignment=False`` on the model makes this assignment
+        # bypass the model_validator entirely.
         message_piece.labels = self.labels or {}
         message_piece.targeted_harm_categories = self.targeted_harm_categories or []
+        message_piece.scores = [score.get_score() for score in self.scores]
         return message_piece
 
     def __str__(self) -> str:
@@ -398,14 +401,17 @@ class ScoreEntry(Base):
         self.score_rationale = entry.score_rationale
         self.score_metadata = entry.score_metadata or {}
         normalized_scorer = entry.scorer_class_identifier
-        # Ensure eval_hash is set before truncation so it survives the DB round-trip
-        if normalized_scorer.eval_hash is None:
-            normalized_scorer = normalized_scorer.with_eval_hash(
-                ScorerEvaluationIdentifier(normalized_scorer).eval_hash
+        if normalized_scorer is None:
+            self.scorer_class_identifier = {}
+        else:
+            # Ensure eval_hash is set before truncation so it survives the DB round-trip
+            if normalized_scorer.eval_hash is None:
+                normalized_scorer = normalized_scorer.with_eval_hash(
+                    ScorerEvaluationIdentifier(normalized_scorer).eval_hash
+                )
+            self.scorer_class_identifier = normalized_scorer.model_dump(
+                context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH},
             )
-        self.scorer_class_identifier = normalized_scorer.to_dict(
-            max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
-        )
         self.prompt_request_response_id = entry.message_piece_id if entry.message_piece_id else None
         self.timestamp = entry.timestamp
         # Store in both columns for backward compatibility
@@ -425,7 +431,7 @@ class ScoreEntry(Base):
         scorer_identifier = None
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
         if self.scorer_class_identifier:
-            scorer_identifier = ComponentIdentifier.from_dict(
+            scorer_identifier = ComponentIdentifier.model_validate(
                 {**self.scorer_class_identifier, "pyrit_version": stored_version}
             )
         return Score(
@@ -436,7 +442,7 @@ class ScoreEntry(Base):
             score_category=self.score_category,
             score_rationale=self.score_rationale,
             score_metadata=self.score_metadata,
-            scorer_class_identifier=scorer_identifier,  # type: ignore[ty:invalid-argument-type]
+            scorer_class_identifier=scorer_identifier,
             message_piece_id=self.prompt_request_response_id,
             timestamp=_ensure_utc(self.timestamp),
             objective=self.objective,
@@ -777,7 +783,9 @@ class AttackResultEntry(Base):
         # Will be removed in 0.15.0.
         _attack_strategy_id = entry.get_attack_strategy_identifier()
         self.attack_identifier = (
-            _attack_strategy_id.to_dict(max_value_length=MAX_IDENTIFIER_VALUE_LENGTH) if _attack_strategy_id else {}
+            _attack_strategy_id.model_dump(context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH})
+            if _attack_strategy_id
+            else {}
         )
         # Ensure eval_hash is set before truncation so it survives the DB round-trip
         if entry.atomic_attack_identifier and entry.atomic_attack_identifier.eval_hash is None:
@@ -785,8 +793,8 @@ class AttackResultEntry(Base):
                 AtomicAttackEvaluationIdentifier(entry.atomic_attack_identifier).eval_hash
             )
         self.atomic_attack_identifier = (
-            entry.atomic_attack_identifier.to_dict(
-                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+            entry.atomic_attack_identifier.model_dump(
+                context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH},
             )
             if entry.atomic_attack_identifier
             else None
@@ -909,13 +917,13 @@ class AttackResultEntry(Base):
         # Reconstruct atomic_attack_identifier, with backward compatibility for
         # legacy rows that only have the attack_identifier column.
         atomic_id = (
-            ComponentIdentifier.from_dict(self.atomic_attack_identifier) if self.atomic_attack_identifier else None
+            ComponentIdentifier.model_validate(self.atomic_attack_identifier) if self.atomic_attack_identifier else None
         )
         if atomic_id is None and self.attack_identifier:
-            from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+            from pyrit.models import build_atomic_attack_identifier
 
             atomic_id = build_atomic_attack_identifier(
-                attack_identifier=ComponentIdentifier.from_dict(self.attack_identifier),
+                attack_identifier=ComponentIdentifier.model_validate(self.attack_identifier),
             )
 
         # Deserialize retry events from JSON
@@ -970,8 +978,8 @@ class ScenarioResultEntry(Base):
         scenario_init_data (dict): Optional initialization parameters used to configure the scenario.
         objective_target_identifier (dict): Identifier for the target being evaluated in the scenario.
         objective_scorer_identifier (dict): Optional identifier for the scorer used to evaluate results.
-        scenario_run_state (Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED"]): Current execution state
-            of the scenario.
+        scenario_run_state (str): Current execution state of the scenario
+            (one of CREATED, IN_PROGRESS, COMPLETED, FAILED, CANCELLED).
         attack_results_json (str): JSON-serialized dictionary mapping attack names to conversation IDs.
             Format: {"attack_name": ["conversation_id1", "conversation_id2", ...]}.
             The full AttackResult objects are stored in AttackResultEntries and can be queried by conversation_id.
@@ -998,9 +1006,7 @@ class ScenarioResultEntry(Base):
     scenario_init_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     objective_target_identifier: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
     objective_scorer_identifier: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
-    scenario_run_state: Mapped[Literal["CREATED", "IN_PROGRESS", "COMPLETED", "FAILED", "CANCELLED"]] = mapped_column(
-        String, nullable=False, default="CREATED"
-    )
+    scenario_run_state: Mapped[str] = mapped_column(String, nullable=False, default="CREATED")
     attack_results_json: Mapped[str] = mapped_column(Unicode, nullable=False)
     display_group_map_json: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     labels: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
@@ -1035,8 +1041,8 @@ class ScenarioResultEntry(Base):
         self.scenario_init_data = entry.scenario_identifier.init_data
         # Convert ComponentIdentifier to dict for JSON storage
         self.objective_target_identifier = (
-            entry.objective_target_identifier.to_dict(
-                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+            entry.objective_target_identifier.model_dump(
+                context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH},
             )
             if entry.objective_target_identifier
             else None
@@ -1048,8 +1054,8 @@ class ScenarioResultEntry(Base):
             )
 
         self.objective_scorer_identifier = (
-            entry.objective_scorer_identifier.to_dict(
-                max_value_length=MAX_IDENTIFIER_VALUE_LENGTH,
+            entry.objective_scorer_identifier.model_dump(
+                context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH},
             )
             if entry.objective_scorer_identifier
             else None
@@ -1067,7 +1073,7 @@ class ScenarioResultEntry(Base):
         self.attack_results_json = json.dumps(serialized_attack_results)
 
         # Serialize display_group_map if present
-        self.display_group_map_json = json.dumps(entry._display_group_map) if entry._display_group_map else None
+        self.display_group_map_json = json.dumps(entry.display_group_map) if entry.display_group_map else None
 
         self.error_message = entry.error_message
         self.error_type = entry.error_type
@@ -1102,12 +1108,12 @@ class ScenarioResultEntry(Base):
         # Convert dict back to ComponentIdentifier with the stored pyrit_version
         scorer_identifier = None
         if self.objective_scorer_identifier:
-            scorer_identifier = ComponentIdentifier.from_dict(
+            scorer_identifier = ComponentIdentifier.model_validate(
                 {**self.objective_scorer_identifier, "pyrit_version": stored_version}
             )
 
         # Convert dict back to ComponentIdentifier for reconstruction
-        target_identifier = ComponentIdentifier.from_dict(self.objective_target_identifier)
+        target_identifier = ComponentIdentifier.model_validate(self.objective_target_identifier)
 
         # Deserialize display_group_map if stored
         display_group_map: dict[str, str] | None = None
@@ -1121,14 +1127,14 @@ class ScenarioResultEntry(Base):
             attack_results=attack_results,
             objective_scorer_identifier=scorer_identifier,
             scenario_run_state=self.scenario_run_state,
-            labels=self.labels,
+            labels=self.labels or {},
             creation_time=self.timestamp,
             number_tries=self.number_tries,
             completion_time=self.completion_time,
-            display_group_map=display_group_map,
+            display_group_map=display_group_map or {},
             error_message=self.error_message,
             error_type=self.error_type,
-            metadata=dict(self.scenario_metadata) if self.scenario_metadata else None,
+            metadata=dict(self.scenario_metadata) if self.scenario_metadata else {},
         )
 
     def get_conversation_ids_by_attack_name(self) -> dict[str, list[str]]:

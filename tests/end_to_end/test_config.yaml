@@ -1,3 +1,14 @@
 # Minimal PyRIT config for end-to-end tests.
 # Uses in-memory SQLite to avoid polluting persistent databases.
 memory_db_type: in_memory
+
+# The catalog endpoint (GET /api/scenarios/catalog[/<name>]) instantiates every
+# scenario class to build metadata. Most scenarios rely on the
+# AttackTechniqueRegistry (e.g. airt.cyber via _build_cyber_strategy, airt.leakage
+# via _build_leakage_strategy) and will raise at __init__ time if no factories have
+# been registered yet, so the canonical attack technique factories must be loaded
+# before the first catalog request. Per-scenario run initializers
+# (target, load_default_datasets) are still passed via the CLI invocation in
+# test_scenarios.py.
+initializers:
+  - scenario_technique
