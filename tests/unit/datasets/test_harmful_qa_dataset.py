@@ -39,7 +39,7 @@ class TestHarmfulQADataset:
         """Test fetching HarmfulQA dataset."""
         loader = _HarmfulQADataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_harmful_qa_data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_harmful_qa_data)):
             dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
@@ -55,3 +55,8 @@ class TestHarmfulQADataset:
         """Test dataset_name property."""
         loader = _HarmfulQADataset()
         assert loader.dataset_name == "harmful_qa"
+
+    def test_split_kwarg_emits_deprecation_warning(self):
+        """Passing the deprecated ``split`` kwarg emits a DeprecationWarning."""
+        with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
+            _HarmfulQADataset(split="train")

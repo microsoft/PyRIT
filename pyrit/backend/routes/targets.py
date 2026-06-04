@@ -30,7 +30,7 @@ router = APIRouter(prefix="/targets", tags=["targets"])
         500: {"model": ProblemDetail, "description": "Internal server error"},
     },
 )
-async def list_targets(
+async def list_targets(  # pyrit-async-suffix-exempt
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
     cursor: Optional[str] = Query(None, description="Pagination cursor (target_registry_name)"),
 ) -> TargetListResponse:
@@ -54,7 +54,7 @@ async def list_targets(
         400: {"model": ProblemDetail, "description": "Invalid target type or parameters"},
     },
 )
-async def create_target(request: CreateTargetRequest) -> TargetInstance:
+async def create_target(request: CreateTargetRequest) -> TargetInstance:  # pyrit-async-suffix-exempt
     """
     Create a new target instance.
 
@@ -89,7 +89,7 @@ async def create_target(request: CreateTargetRequest) -> TargetInstance:
         404: {"model": ProblemDetail, "description": "Target not found"},
     },
 )
-async def get_target(target_registry_name: str) -> TargetInstance:
+async def get_target(target_registry_name: str) -> TargetInstance:  # pyrit-async-suffix-exempt
     """
     Get a target instance by registry name.
 

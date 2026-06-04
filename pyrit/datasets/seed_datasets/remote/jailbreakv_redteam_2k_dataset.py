@@ -118,7 +118,7 @@ class _JailbreakVRedteam2KDataset(_RemoteDatasetLoader):
             logger.info(f"Loading JailBreakV Redteam_2k dataset from {self.source}")
 
             # Load dataset from HuggingFace using the helper method
-            data = await self._fetch_from_huggingface(
+            data = await self._fetch_from_huggingface_async(
                 dataset_name=self.source,
                 config="RedTeam_2K",
                 split="RedTeam_2K",

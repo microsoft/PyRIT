@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
+import warnings
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -34,17 +35,28 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
         self,
         *,
         source: str = "TrustAIRLab/forbidden_question_set",
-        split: str = "default",
+        split: str | None = None,
     ) -> None:
         """
         Initialize the Forbidden Questions dataset loader.
 
         Args:
             source: HuggingFace dataset identifier. Defaults to "TrustAIRLab/forbidden_question_set".
-            split: Dataset split to load. Defaults to "default".
+            split: **Deprecated.** This kwarg was misforwarded to HuggingFace as ``config``,
+                and ``TrustAIRLab/forbidden_question_set`` publishes only one config
+                (``"default"``) with one split (``"train"``), so it never did anything
+                useful. It will be removed in v0.16.0.
         """
+        if split is not None:
+            warnings.warn(
+                "'split' is deprecated and will be removed in v0.16.0. "
+                "It was misforwarded to HuggingFace as 'config', and "
+                "TrustAIRLab/forbidden_question_set publishes only one config ('default') "
+                "with one split ('train'), so this kwarg has no effect.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.source = source
-        self.split = split
 
     @property
     def dataset_name(self) -> str:
@@ -64,9 +76,9 @@ class _ForbiddenQuestionsDataset(_RemoteDatasetLoader):
         logger.info(f"Loading Forbidden Questions dataset from {self.source}")
 
         # Load from HuggingFace
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.source,
-            config=self.split,
+            config="default",
             split="train",
             cache=cache,
         )

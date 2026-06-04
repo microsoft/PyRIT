@@ -81,7 +81,6 @@ class CrescendoAttackContext(MultiTurnAttackContext[Any]):
     backtrack_count: int = 0
 
 
-@dataclass
 class CrescendoAttackResult(AttackResult):
     """Result of the Crescendo attack strategy execution."""
 
@@ -569,11 +568,9 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         """
         Parse and validate the JSON response from the adversarial chat.
 
-        camelCase keys are normalized to snake_case before validation. The
-        Crescendo system prompts specify a snake_case JSON schema, but some
-        backends drift to camelCase (``generatedQuestion`` instead of
-        ``generated_question``); accepting both prevents the attack from
-        burning all its retries on a casing mismatch.
+        Keys are normalized from camelCase to snake_case before validation, so
+        backends that drift to ``generatedQuestion`` still parse correctly
+        without burning retries on a casing mismatch.
 
         Args:
             response_text (str): The response text to parse.
@@ -832,7 +829,9 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
         # Check for refusal using the scorer (handles blocked/error responses internally)
         refusal_score = await self._check_refusal_async(context, prompt_sent)
-        self._logger.debug(f"Refusal check: {refusal_score.get_value()} - {refusal_score.score_rationale[:100]}...")
+        self._logger.debug(
+            f"Refusal check: {refusal_score.get_value()} - {(refusal_score.score_rationale or '')[:100]}..."
+        )
         is_refusal = bool(refusal_score.get_value())
 
         if not is_refusal:

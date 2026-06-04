@@ -101,13 +101,20 @@ class AttackParameters:
             An instance of this AttackParameters type.
 
         Raises:
-            ValueError: If seed_group has no objective or if overrides contain invalid fields.
-            ValueError: If seed_group has simulated conversation but adversarial_chat/scorer not provided.
+            TypeError: If ``seed_group`` is not a ``SeedAttackGroup``.
+            ValueError: If overrides contain invalid fields, or if seed_group has simulated
+                conversation but adversarial_chat/scorer not provided.
         """
         # Import here to avoid circular imports
         from pyrit.executor.attack.multi_turn.simulated_conversation import (
             generate_simulated_conversation_async,
         )
+
+        if not isinstance(seed_group, SeedAttackGroup):
+            raise TypeError(
+                f"seed_group must be a SeedAttackGroup, got {type(seed_group).__name__}. "
+                "Plain SeedGroup does not enforce the 'exactly one objective' invariant required for an attack."
+            )
 
         # Get valid field names for this params type
         valid_fields = {f.name for f in dataclasses.fields(cls)}
@@ -119,12 +126,8 @@ class AttackParameters:
                 f"{cls.__name__} does not accept parameters: {invalid_fields}. Accepted parameters: {valid_fields}"
             )
 
-        # Validate seed_group state before extracting parameters
-        seed_group.validate()
-
-        # SeedAttackGroup validates in __init__ that objective is set
-        if seed_group.objective is None:
-            raise ValueError("seed_group.objective is not initialized")
+        # SeedAttackGroup's Pydantic validator guarantees exactly one objective is present.
+        assert seed_group.objective is not None
 
         # Build params dict, only including fields this class accepts
         params: dict[str, Any] = {}
@@ -239,13 +242,13 @@ class AttackParameters:
         _classmethod_descriptor = cls.__dict__["from_seed_group_async"]
         original_method = _classmethod_descriptor.__func__
 
-        async def from_seed_group_async_wrapper(
+        async def from_seed_group_wrapper_async(
             c: Any, /, *, seed_group: Any, adversarial_chat: Any = None, objective_scorer: Any = None, **ov: Any
         ) -> Any:
             return await original_method(
                 c, seed_group=seed_group, adversarial_chat=adversarial_chat, objective_scorer=objective_scorer, **ov
             )
 
-        new_cls.from_seed_group_async = classmethod(from_seed_group_async_wrapper)  # type: ignore[ty:unresolved-attribute]
+        new_cls.from_seed_group_async = classmethod(from_seed_group_wrapper_async)  # type: ignore[ty:unresolved-attribute]
 
         return new_cls  # type: ignore[ty:invalid-return-type]

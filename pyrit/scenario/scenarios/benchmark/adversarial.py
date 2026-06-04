@@ -357,13 +357,13 @@ class AdversarialBenchmark(Scenario):
         Returns:
             ScenarioResult: The scenario result with cached attack results merged
             into ``attack_results`` and cached display groups merged into
-            ``_display_group_map``.
+            ``display_group_map``.
         """
         result = await super().run_async()
         if self._precomputed_cached_results:
             for attack_name, prior_results in self._precomputed_cached_results.items():
                 result.attack_results.setdefault(attack_name, []).extend(prior_results)
-            result._display_group_map.update(self._precomputed_cached_display_groups)
+            result.display_group_map.update(self._precomputed_cached_display_groups)
         return result
 
     def _collect_cached_completion_pairs(self, *, atomic_attacks: list[AtomicAttack]) -> set[str]:

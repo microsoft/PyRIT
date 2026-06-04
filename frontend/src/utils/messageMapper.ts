@@ -105,6 +105,16 @@ function extractReasoningSummaries(value: string): string[] {
 }
 
 /**
+ * Compute the decoded byte count of a base64-encoded string. Whitespace and
+ * trailing `=` padding are stripped before applying the standard
+ * `floor(n * 3 / 4)` formula.
+ */
+function decodedBase64ByteCount(value: string): number {
+  const stripped = value.replace(/\s+/g, '').replace(/=+$/, '')
+  return Math.floor((stripped.length * 3) / 4)
+}
+
+/**
  * Build a frontend MessageAttachment from a backend piece.
  *
  * When `source` is `'converted'` (the default), uses `converted_value*` fields.
@@ -134,12 +144,17 @@ function pieceToAttachment(
   const filename = isOriginal ? piece.original_filename : piece.converted_filename
   const fallbackName = `${prefix}${dataType}_${piece.piece_id.slice(0, 8)}`
 
+  // For base64-inlined media, derive the decoded byte count. For path / URL
+  // values the string length is meaningless (e.g. /api/media?path=... is a
+  // reference, not the payload), so size is omitted and the UI must hide it.
+  const size = isBase64 ? decodedBase64ByteCount(value) : undefined
+
   return {
     type: dataTypeToAttachmentType(dataType),
     name: filename || fallbackName,
     url,
     mimeType: mime,
-    size: value.length,
+    size,
     pieceId: piece.piece_id,
     metadata: piece.prompt_metadata || undefined,
   }

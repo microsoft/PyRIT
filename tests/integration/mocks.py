@@ -69,7 +69,7 @@ class MockPromptTarget(PromptTarget):
                     converted_value=system_prompt,
                     conversation_id=conversation_id,
                     attack_identifier=attack_identifier,
-                    labels=labels,
+                    labels=labels or {},
                 ).to_message()
             )
 

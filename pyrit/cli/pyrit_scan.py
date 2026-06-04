@@ -30,6 +30,44 @@ from pyrit.cli._cli_args import (
 _TERMINAL_STATUSES = {"COMPLETED", "FAILED", "CANCELLED"}
 
 
+def _print_cli_exception(*, exc: BaseException) -> None:
+    """
+    Print a user-facing error line for an exception that bubbled out of the CLI.
+
+    Surfaces the exception class (so callers can tell ``ReadTimeout`` apart from
+    ``HTTPStatusError``) and dumps the traceback when log-level is ``DEBUG``.
+    Adds a specific hint for ``httpx.ReadTimeout`` since that case usually means
+    the server is taking longer than ``--request-timeout`` to respond and the
+    default bare ``str(exc)`` is empty.
+
+    Args:
+        exc (BaseException): The exception caught by the CLI.
+    """
+    import traceback
+
+    try:
+        import httpx
+
+        is_read_timeout = isinstance(exc, httpx.ReadTimeout)
+    except Exception:
+        is_read_timeout = False
+
+    cls_name = type(exc).__name__
+    detail = str(exc) or repr(exc)
+
+    if is_read_timeout:
+        print(
+            "\nError (ReadTimeout): server did not respond in time. "
+            "Pass '--request-timeout <seconds>' to wait longer, or check the "
+            "server logs for a blocked event loop."
+        )
+    else:
+        print(f"\nError ({cls_name}): {detail}")
+
+    if logging.getLogger().isEnabledFor(logging.DEBUG):
+        traceback.print_exception(type(exc), exc, exc.__traceback__)
+
+
 _DESCRIPTION = """PyRIT Scanner - Run AI security scenarios from the command line.
 
 Requires a running PyRIT backend server. Use --start-server to launch one,
@@ -112,6 +150,16 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
         type=validate_log_level_argparse,
         default=logging.WARNING,
         help="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) (default: WARNING)",
+    )
+    server_group.add_argument(
+        "--request-timeout",
+        type=float,
+        default=None,
+        help=(
+            "HTTP read timeout in seconds for non-polling server requests "
+            "(catalog/results/cancel/etc). Defaults to 60. Polling a live "
+            "scenario run always waits indefinitely regardless of this value."
+        ),
     )
 
     # -- Discovery --
@@ -696,7 +744,10 @@ async def _run_async(*, parsed_args: Namespace) -> int:
         return 0
 
     try:
-        async with PyRITApiClient(base_url=base_url_result) as client:
+        async with PyRITApiClient(
+            base_url=base_url_result,
+            request_timeout=getattr(parsed_args, "request_timeout", None),
+        ) as client:
             return await _dispatch_with_client_async(client=client, parsed_args=parsed_args)
     except ServerNotAvailableError as exc:
         _output.print_error_with_hint(
@@ -705,7 +756,7 @@ async def _run_async(*, parsed_args: Namespace) -> int:
         )
         return 1
     except Exception as exc:
-        print(f"\nError: {exc}")
+        _print_cli_exception(exc=exc)
         return 1
 
 
