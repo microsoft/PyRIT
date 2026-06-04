@@ -267,6 +267,13 @@ class ScenarioRunService:
 
         Resolves strategies and dataset configuration from the request.
 
+        Dataset configuration is built so that the scenario's default
+        ``DatasetConfiguration`` *subclass* (e.g. ``EncodingDatasetConfiguration``)
+        is preserved when the caller overrides ``dataset_names`` or
+        ``max_dataset_size``. Subclasses commonly override
+        ``get_all_seed_attack_groups()`` or ``_load_seed_groups_for_dataset()``
+        to shape seeds into scenario-appropriate ``SeedAttackGroup`` objects.
+
         Args:
             request: The run request.
             scenario_class: The resolved scenario class.
@@ -276,7 +283,10 @@ class ScenarioRunService:
             Dict of kwargs to pass to scenario.initialize_async.
 
         Raises:
-            ValueError: If a strategy name is invalid for the scenario.
+            ValueError: If a strategy name is invalid for the scenario, or the
+                scenario class cannot be instantiated with no arguments when
+                introspection is required to resolve strategies or dataset
+                configuration.
         """
         init_kwargs: dict[str, Any] = {
             "objective_target": objective_target,
@@ -287,46 +297,77 @@ class ScenarioRunService:
         if request.labels:
             init_kwargs["memory_labels"] = request.labels
 
-        # Resolve strategies and default dataset config from a temporary instance
-        # of the scenario. The downstream _initialize_scenario_async builds its
-        # own instance (so that scenario_result_id can be passed), so this is a
-        # cheap throwaway used only for introspection.
-        needs_introspection = bool(request.strategies) or (
-            request.max_dataset_size is not None and not request.dataset_names
+        # Resolve strategies and dataset config from a temporary instance of the
+        # scenario. The downstream _initialize_scenario_async builds its own
+        # instance (so scenario_result_id can be passed), so this is a cheap
+        # throwaway used only for introspection. Introspection is required
+        # whenever the caller wants to override strategies, dataset names, or
+        # the sample cap, because each of those needs the scenario's own
+        # strategy enum or dataset-config subclass to be resolved correctly.
+        needs_introspection = (
+            bool(request.strategies) or bool(request.dataset_names) or request.max_dataset_size is not None
         )
-        if needs_introspection:
-            try:
-                introspection_instance = scenario_class()  # type: ignore[ty:missing-argument]
-            except Exception as exc:
-                raise ValueError(
-                    f"Cannot resolve runtime configuration for scenario '{request.scenario_name}': "
-                    f"scenario class is not instantiable without arguments ({exc})."
-                ) from exc
+        if not needs_introspection:
+            return init_kwargs
 
-            if request.strategies:
-                strategy_class = introspection_instance._strategy_class
-                strategy_enums = []
-                for name in request.strategies:
-                    try:
-                        strategy_enums.append(strategy_class(name))
-                    except ValueError:
-                        available_strategies = [s.value for s in strategy_class]
-                        raise ValueError(
-                            f"Strategy '{name}' not found for scenario '{request.scenario_name}'. "
-                            f"Available: {', '.join(available_strategies)}"
-                        ) from None
-                init_kwargs["scenario_strategies"] = strategy_enums
+        try:
+            introspection_instance = scenario_class()  # type: ignore[ty:missing-argument]
+        except Exception as exc:
+            raise ValueError(
+                f"Cannot resolve runtime configuration for scenario '{request.scenario_name}': "
+                f"scenario class is not instantiable without arguments ({exc})."
+            ) from exc
 
-            if request.max_dataset_size is not None and not request.dataset_names:
-                default_config = introspection_instance._default_dataset_config
+        if request.strategies:
+            strategy_class = introspection_instance._strategy_class
+            strategy_enums = []
+            for name in request.strategies:
+                try:
+                    strategy_enums.append(strategy_class(name))
+                except ValueError:
+                    available_strategies = [s.value for s in strategy_class]
+                    raise ValueError(
+                        f"Strategy '{name}' not found for scenario '{request.scenario_name}'. "
+                        f"Available: {', '.join(available_strategies)}"
+                    ) from None
+            init_kwargs["scenario_strategies"] = strategy_enums
+
+        if request.dataset_names or request.max_dataset_size is not None:
+            default_config = introspection_instance._default_dataset_config
+
+            if request.dataset_names:
+                # Construct a fresh instance of the scenario's own dataset-config
+                # class so subclass-specific behavior is preserved.
+                default_config_class = type(default_config)
+                try:
+                    init_kwargs["dataset_config"] = default_config_class(
+                        dataset_names=request.dataset_names,
+                        max_dataset_size=request.max_dataset_size,
+                    )
+                except TypeError as exc:
+                    # The subclass __init__ takes extra required kwargs we cannot
+                    # supply from a backend request. Fall back to the base
+                    # DatasetConfiguration so the run can still proceed; downstream
+                    # scenarios that strictly require the subclass should either
+                    # define a no-extra-required-args constructor or surface the
+                    # incompatibility through their own initialize_async validation.
+                    logger.warning(
+                        "Cannot construct %s(dataset_names=..., max_dataset_size=...) (%s). "
+                        "Falling back to a generic DatasetConfiguration; scenario-specific "
+                        "dataset-config behavior may be lost.",
+                        default_config_class.__name__,
+                        exc,
+                    )
+                    init_kwargs["dataset_config"] = DatasetConfiguration(
+                        dataset_names=request.dataset_names,
+                        max_dataset_size=request.max_dataset_size,
+                    )
+            elif request.max_dataset_size is not None:
+                # Reuse the scenario's default dataset config (preserves subtype +
+                # the scenario's own default dataset names) and override only the
+                # sample cap. Safe because the introspection instance is throwaway.
                 default_config.max_dataset_size = request.max_dataset_size
                 init_kwargs["dataset_config"] = default_config
-
-        if request.dataset_names:
-            init_kwargs["dataset_config"] = DatasetConfiguration(
-                dataset_names=request.dataset_names,
-                max_dataset_size=request.max_dataset_size,
-            )
 
         return init_kwargs
 

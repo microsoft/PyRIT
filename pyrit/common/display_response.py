@@ -24,6 +24,11 @@ async def display_image_response_async(response_piece: MessagePiece) -> None:
     Raises:
         RuntimeError: If storage IO is not initialized.
     """
+    print_deprecation_message(
+        old_item="pyrit.common.display_response.display_image_response_async",
+        new_item="pyrit.output.conversation.PrettyConversationPrinter",
+        removed_in="0.16.0",
+    )
     memory = CentralMemory.get_memory_instance()
     if (
         response_piece.response_error == "none"
@@ -61,7 +66,7 @@ async def display_image_response(response_piece: MessagePiece) -> None:  # pyrit
     """Delegate to ``display_image_response_async`` (deprecated alias)."""
     print_deprecation_message(
         old_item="pyrit.common.display_response.display_image_response",
-        new_item="pyrit.common.display_response.display_image_response_async",
+        new_item="pyrit.output.conversation.PrettyConversationPrinter",
         removed_in="0.16.0",
     )
     await display_image_response_async(response_piece)
