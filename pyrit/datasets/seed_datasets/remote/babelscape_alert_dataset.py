@@ -2,34 +2,17 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional, override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from pyrit.models.seeds.seed_group import SeedUnion
 
-_AUTHORS = [
-    "Simone Tedeschi",
-    "Felix Friedrich",
-    "Patrick Schramowski",
-    "Kristian Kersting",
-    "Roberto Navigli",
-    "Huu Nguyen",
-    "Bo Li",
-]
-_GROUPS = [
-    "Sapienza University of Rome",
-    "Babelscape",
-    "TU Darmstadt",
-    "Hessian.AI",
-    "DFKI",
-    "Ontocord.AI",
-    "University of Chicago",
-    "University of Illinois Urbana-Champaign",
-]
+logger = logging.getLogger(__name__)
 
 
 class _BabelscapeAlertDataset(_RemoteDatasetLoader):
@@ -42,6 +25,27 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
 
     Reference: [@tedeschi2024alert]
     """
+
+    _AUTHORS = [
+        "Simone Tedeschi",
+        "Felix Friedrich",
+        "Patrick Schramowski",
+        "Kristian Kersting",
+        "Roberto Navigli",
+        "Huu Nguyen",
+        "Bo Li",
+    ]
+
+    _GROUPS = [
+        "Sapienza University of Rome",
+        "Babelscape",
+        "TU Darmstadt",
+        "Hessian.AI",
+        "DFKI",
+        "Ontocord.AI",
+        "University of Chicago",
+        "University of Illinois Urbana-Champaign",
+    ]
 
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
@@ -72,10 +76,12 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
             raise ValueError(f"Invalid Parameter: {category}. Expected 'alert_adversarial', 'alert', or None")
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "babelscape_alert"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Babelscape ALERT dataset and return as SeedDataset.
@@ -101,7 +107,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
             )
             prompts.extend((item["prompt"], item["category"]) for item in data)
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=prompt,
                 harm_categories=[category],
@@ -113,8 +119,8 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
                     "red teaming prompts."
                 ),
                 source=f"https://huggingface.co/datasets/{self.source}",
-                authors=_AUTHORS,
-                groups=_GROUPS,
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
             for prompt, category in prompts
         ]

@@ -9,6 +9,7 @@ import uuid
 import zipfile
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING, override
 
 from huggingface_hub import hf_hub_download
 
@@ -18,18 +19,12 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt
 
+if TYPE_CHECKING:
+    from pyrit.models.seeds.seed_group import SeedUnion
+
 logger = logging.getLogger(__name__)
 
 _HF_REPO_ID = "ys-zong/VLGuard"
-
-_AUTHORS = [
-    "Yongshuo Zong",
-    "Ondrej Bohdal",
-    "Tingyang Yu",
-    "Yongxin Yang",
-    "Timothy Hospedales",
-]
-_GROUPS = ["University of Edinburgh", "EPFL"]
 
 
 class VLGuardCategory(Enum):
@@ -103,6 +98,16 @@ class _VLGuardDataset(_RemoteDatasetLoader):
     Paper: Safety Fine-Tuning at (Almost) No Cost: A Baseline for Vision Large Language Models (ICML 2024)
     """
 
+    _AUTHORS = [
+        "Yongshuo Zong",
+        "Ondrej Bohdal",
+        "Tingyang Yu",
+        "Yongxin Yang",
+        "Timothy Hospedales",
+    ]
+
+    _GROUPS = ["University of Edinburgh", "EPFL"]
+
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT, Modality.IMAGE)
     size: str = "large"  # 884 image-instruction pairs across 4 categories
@@ -142,10 +147,12 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 raise ValueError(f"Invalid VLGuard categories: {', '.join(invalid_categories)}")
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "vlguard"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch VLGuard multimodal examples and return as SeedDataset.
@@ -164,7 +171,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
 
         metadata, image_dir = await self._download_dataset_files_async(cache=cache)
 
-        prompts: list[SeedPrompt] = []
+        prompts: list[SeedUnion] = []
 
         for example in metadata:
             image_filename = example.get("image")
@@ -218,8 +225,8 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                     "subset": self.subset.value,
                     "safe_image": is_safe,
                 },
-                authors=_AUTHORS,
-                groups=_GROUPS,
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
 
             image_prompt = SeedPrompt(
@@ -239,8 +246,8 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                     "safe_image": is_safe,
                     "original_filename": image_filename,
                 },
-                authors=_AUTHORS,
-                groups=_GROUPS,
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
 
             prompts.append(text_prompt)

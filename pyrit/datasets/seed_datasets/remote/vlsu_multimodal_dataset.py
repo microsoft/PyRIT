@@ -4,7 +4,7 @@
 import logging
 import uuid
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal, Optional, override
 
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
@@ -15,22 +15,6 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
 from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
-
-_AUTHORS = [
-    "Shruti Palaskar",
-    "Leon Gatys",
-    "Mona Abdelrahman",
-    "Mar Jacobo",
-    "Larry Lindsey",
-    "Rutika Moharir",
-    "Gunnar Lund",
-    "Yang Xu",
-    "Navid Shiee",
-    "Jeffrey Bigham",
-    "Charles Maalouf",
-    "Joseph Yitan Cheng",
-]
-_GROUPS = ["Apple"]
 
 
 class VLSUCategory(Enum):
@@ -67,6 +51,23 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
 
     Reference: [@palaskar2025vlsu]
     """
+
+    _AUTHORS = [
+        "Shruti Palaskar",
+        "Leon Gatys",
+        "Mona Abdelrahman",
+        "Mar Jacobo",
+        "Larry Lindsey",
+        "Rutika Moharir",
+        "Gunnar Lund",
+        "Yang Xu",
+        "Navid Shiee",
+        "Jeffrey Bigham",
+        "Charles Maalouf",
+        "Joseph Yitan Cheng",
+    ]
+
+    _GROUPS = ["Apple"]
 
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT, Modality.IMAGE)
@@ -112,10 +113,12 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
             self._validate_enums(categories, VLSUCategory, "VLSU category")
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "ml_vlsu"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch ML-VLSU multimodal examples and return as SeedDataset.
@@ -244,8 +247,8 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
             prompt_group_id=group_id,
             sequence=0,
             metadata=metadata,
-            authors=_AUTHORS,
-            groups=_GROUPS,
+            authors=self._AUTHORS,
+            groups=self._GROUPS,
         )
 
         image_prompt = SeedPrompt(
@@ -259,8 +262,8 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
             prompt_group_id=group_id,
             sequence=0,
             metadata={**metadata, "original_image_url": image_url},
-            authors=_AUTHORS,
-            groups=_GROUPS,
+            authors=self._AUTHORS,
+            groups=self._GROUPS,
         )
 
         return [text_prompt, image_prompt]

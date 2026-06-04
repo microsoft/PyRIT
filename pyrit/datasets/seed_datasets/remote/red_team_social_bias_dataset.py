@@ -3,6 +3,7 @@
 
 import ast
 import logging
+from typing import override
 from uuid import uuid4
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
@@ -11,9 +12,6 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
 from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
-
-_AUTHORS = ["Simone Van Taylor"]
-_GROUPS = ["Humane Intelligence"]
 
 
 class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
@@ -26,6 +24,10 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
 
     Reference: [@vantaylor2024socialbias]
     """
+
+    _AUTHORS = ["Simone Van Taylor"]
+
+    _GROUPS = ["Humane Intelligence"]
 
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
@@ -46,10 +48,12 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
         self.source = source
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "red_team_social_bias"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Red Team Social Bias dataset and return as SeedDataset.
@@ -74,8 +78,8 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
 
         common_metadata = {
             "dataset_name": self.dataset_name,
-            "authors": _AUTHORS,
-            "groups": _GROUPS,
+            "authors": self._AUTHORS,
+            "groups": self._GROUPS,
             "description": (
                 "This dataset contains aggregated and unified existing red-teaming prompts "
                 "designed to identify stereotypes, discrimination, hate speech, and other "

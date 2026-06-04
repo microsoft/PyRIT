@@ -2,33 +2,17 @@
 # Licensed under the MIT license.
 
 import logging
+from typing import TYPE_CHECKING, override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from pyrit.models.seeds.seed_group import SeedUnion
 
-_AUTHORS = [
-    "Mantas Mazeika",
-    "Andy Zou",
-    "Norman Mu",
-    "Long Phan",
-    "Zifan Wang",
-    "Chunru Yu",
-    "Adam Khoja",
-    "Fengqing Jiang",
-    "Aidan O'Gara",
-    "Ellie Sakhaee",
-    "Zhen Xiang",
-    "Arezoo Rajabi",
-    "Dan Hendrycks",
-    "Radha Poovendran",
-    "Bo Li",
-    "David Forsyth",
-]
-_GROUPS = ["Center for AI Safety"]
+logger = logging.getLogger(__name__)
 
 
 class _TDC23RedteamingDataset(_RemoteDatasetLoader):
@@ -41,6 +25,27 @@ class _TDC23RedteamingDataset(_RemoteDatasetLoader):
 
     Reference: [@mazeika2023tdc]
     """
+
+    _AUTHORS = [
+        "Mantas Mazeika",
+        "Andy Zou",
+        "Norman Mu",
+        "Long Phan",
+        "Zifan Wang",
+        "Chunru Yu",
+        "Adam Khoja",
+        "Fengqing Jiang",
+        "Aidan O'Gara",
+        "Ellie Sakhaee",
+        "Zhen Xiang",
+        "Arezoo Rajabi",
+        "Dan Hendrycks",
+        "Radha Poovendran",
+        "Bo Li",
+        "David Forsyth",
+    ]
+
+    _GROUPS = ["Center for AI Safety"]
 
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
@@ -61,10 +66,12 @@ class _TDC23RedteamingDataset(_RemoteDatasetLoader):
         self.source = source
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "tdc23_redteaming"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch TDC23-RedTeaming dataset and return as SeedDataset.
@@ -84,7 +91,7 @@ class _TDC23RedteamingDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=item["prompt"],
                 data_type="text",
@@ -96,8 +103,8 @@ class _TDC23RedteamingDataset(_RemoteDatasetLoader):
                     "in the style of writing narratives."
                 ),
                 source=f"https://huggingface.co/datasets/{self.source}",
-                authors=_AUTHORS,
-                groups=_GROUPS,
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
             for item in data
         ]

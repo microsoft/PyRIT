@@ -3,7 +3,7 @@
 
 import ast
 import logging
-from typing import Literal, Optional
+from typing import Literal, Optional, override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -11,17 +11,6 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
 from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
-
-_AUTHORS = [
-    "Aakanksha",
-    "Arash Ahmadian",
-    "Beyza Ermis",
-    "Seraphina Goldfarb-Tarrant",
-    "Julia Kreutzer",
-    "Marzieh Fadaee",
-    "Sara Hooker",
-]
-_GROUPS = ["Cohere For AI", "Cohere"]
 
 
 class _AyaRedteamingDataset(_RemoteDatasetLoader):
@@ -38,6 +27,18 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
     Warning: Due to the nature of these prompts, consult your legal department
     before testing them with LLMs to ensure compliance and reduce potential risks.
     """
+
+    _AUTHORS = [
+        "Aakanksha",
+        "Arash Ahmadian",
+        "Beyza Ermis",
+        "Seraphina Goldfarb-Tarrant",
+        "Julia Kreutzer",
+        "Marzieh Fadaee",
+        "Sara Hooker",
+    ]
+
+    _GROUPS = ["Cohere For AI", "Cohere"]
 
     LANGUAGE_CODES = {
         "English": "eng",
@@ -96,10 +97,12 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
         self.source = f"https://huggingface.co/datasets/CohereForAI/aya_redteaming/raw/main/aya_{lang_code}.jsonl"
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "aya_redteaming"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Aya Red-teaming dataset with optional filtering and return as SeedDataset.
@@ -140,8 +143,8 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
                     dataset_name=self.dataset_name,
                     harm_categories=categories,
                     source="https://huggingface.co/datasets/CohereForAI/aya_redteaming",
-                    authors=_AUTHORS,
-                    groups=_GROUPS,
+                    authors=self._AUTHORS,
+                    groups=self._GROUPS,
                 )
             )
 

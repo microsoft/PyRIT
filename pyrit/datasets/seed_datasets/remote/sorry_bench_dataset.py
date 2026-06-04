@@ -3,7 +3,7 @@
 
 import logging
 import os
-from typing import Optional
+from typing import Optional, override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -11,33 +11,6 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
 from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
-
-_AUTHORS = [
-    "Tinghao Xie",
-    "Xiangyu Qi",
-    "Yi Zeng",
-    "Yangsibo Huang",
-    "Udari Madhushani Sehwag",
-    "Kaixuan Huang",
-    "Luxi He",
-    "Boyi Wei",
-    "Dacheng Li",
-    "Ying Sheng",
-    "Ruoxi Jia",
-    "Bo Li",
-    "Kai Li",
-    "Danqi Chen",
-    "Peter Henderson",
-    "Prateek Mittal",
-]
-_GROUPS = [
-    "Princeton University",
-    "Virginia Tech",
-    "Stanford University",
-    "UC Berkeley",
-    "University of Illinois Urbana-Champaign",
-    "University of Chicago",
-]
 
 
 class _SorryBenchDataset(_RemoteDatasetLoader):
@@ -49,6 +22,34 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
 
     Reference: [@xie2024sorrybench]
     """
+
+    _AUTHORS = [
+        "Tinghao Xie",
+        "Xiangyu Qi",
+        "Yi Zeng",
+        "Yangsibo Huang",
+        "Udari Madhushani Sehwag",
+        "Kaixuan Huang",
+        "Luxi He",
+        "Boyi Wei",
+        "Dacheng Li",
+        "Ying Sheng",
+        "Ruoxi Jia",
+        "Bo Li",
+        "Kai Li",
+        "Danqi Chen",
+        "Peter Henderson",
+        "Prateek Mittal",
+    ]
+
+    _GROUPS = [
+        "Princeton University",
+        "Virginia Tech",
+        "Stanford University",
+        "UC Berkeley",
+        "University of Illinois Urbana-Champaign",
+        "University of Chicago",
+    ]
 
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
@@ -168,10 +169,12 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                 )
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "sorry_bench"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Sorry-Bench dataset and return as SeedDataset.
@@ -197,8 +200,8 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
 
             common_metadata = {
                 "dataset_name": self.dataset_name,
-                "authors": _AUTHORS,
-                "groups": _GROUPS,
+                "authors": self._AUTHORS,
+                "groups": self._GROUPS,
                 "description": "Adversarial prompts for testing LLM safety across 44 categories",
                 "source": self.source,
                 "data_type": "text",

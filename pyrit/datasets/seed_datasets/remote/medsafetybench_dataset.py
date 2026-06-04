@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal
+from typing import Literal, override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -10,9 +10,6 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
 from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
-
-_AUTHORS = ["Tessa Han", "Aounon Kumar", "Chirag Agarwal", "Himabindu Lakkaraju"]
-_GROUPS = ["Harvard University", "University of Virginia"]
 
 
 class _MedSafetyBenchDataset(_RemoteDatasetLoader):
@@ -25,6 +22,10 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
     Reference: https://github.com/AI4LIFE-GROUP/med-safety-bench
     Paper: [@han2024medsafetybench]
     """
+
+    _AUTHORS = ["Tessa Han", "Aounon Kumar", "Chirag Agarwal", "Himabindu Lakkaraju"]
+
+    _GROUPS = ["Harvard University", "University of Virginia"]
 
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
@@ -77,10 +78,12 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
             )
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "medsafetybench"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch MedSafetyBench dataset and return as SeedDataset.
@@ -138,8 +141,8 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
                             f"category {category}, type {file_type}."
                         ),
                         source=source,
-                        authors=_AUTHORS,
-                        groups=_GROUPS,
+                        authors=self._AUTHORS,
+                        groups=self._GROUPS,
                     )
                 )
 
