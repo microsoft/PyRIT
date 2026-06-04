@@ -1666,6 +1666,7 @@ class TestRedTeamingConversationTracking:
             mock_send.return_value = sample_response
             mock_score.return_value = {"objective_scores": [success_score]}
             mock_generate.return_value = generated_message
+            mock_objective_scorer.score_async = AsyncMock(return_value=[success_score])
 
             # Run setup and attack
             await attack._setup_async(context=basic_context)

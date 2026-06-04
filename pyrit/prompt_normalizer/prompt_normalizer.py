@@ -4,7 +4,11 @@
 import asyncio
 import copy
 import logging
+import os
+import tempfile
 import traceback
+import wave
+from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -19,6 +23,7 @@ from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     ComponentIdentifier,
     Message,
+    MessagePiece,
     construct_response_from_request,
 )
 from pyrit.prompt_normalizer import NormalizerRequest, PromptConverterConfiguration
@@ -298,10 +303,95 @@ class PromptNormalizer:
                 piece.converted_value = converted_text
                 piece.converted_value_data_type = converted_text_data_type
 
+    async def convert_audio_async(
+        self,
+        *,
+        raw_pcm: bytes,
+        converter_configurations: list[PromptConverterConfiguration],
+        sample_rate_hz: int,
+        num_channels: int,
+        sample_width_bytes: int,
+    ) -> bytes:
+        """
+        Apply converters to raw PCM audio and return the converted PCM.
+
+        Wraps the input PCM in a temporary WAV file, builds a single-piece
+        ``audio_path`` ``Message``, runs ``convert_values``, then reads the
+        converted file back as raw PCM. The caller's PCM format is preserved
+        end-to-end; converters that change the format trigger a ``ValueError``
+        on read-back.
+
+        Args:
+            raw_pcm (bytes): Raw PCM audio samples (no WAV header).
+            converter_configurations (list[PromptConverterConfiguration]):
+                Converters to apply. If empty, ``raw_pcm`` is returned unchanged
+                and no temp file is written.
+            sample_rate_hz (int): Sample rate of the PCM in Hz.
+            num_channels (int): Channel count (1 for mono, 2 for stereo).
+            sample_width_bytes (int): Bytes per sample (2 for PCM16).
+
+        Returns:
+            bytes: The converted raw PCM, matching the input format.
+
+        Raises:
+            ValueError: If the converted audio has a different sample rate,
+                channel count, or sample width than the input.
+        """
+        if not converter_configurations:
+            return raw_pcm
+
+        input_path = _write_pcm_to_temp_wav(
+            raw_pcm=raw_pcm,
+            sample_rate_hz=sample_rate_hz,
+            num_channels=num_channels,
+            sample_width_bytes=sample_width_bytes,
+        )
+        try:
+            piece = MessagePiece(
+                role="user",
+                original_value=input_path,
+                original_value_data_type="audio_path",
+                converted_value=input_path,
+                converted_value_data_type="audio_path",
+            )
+            message = Message(message_pieces=[piece])
+            await self.convert_values(
+                converter_configurations=converter_configurations,
+                message=message,
+            )
+            actual_rate, actual_channels, actual_width, converted_pcm = _read_pcm_from_wav(piece.converted_value)
+            if (actual_rate, actual_channels, actual_width) != (
+                sample_rate_hz,
+                num_channels,
+                sample_width_bytes,
+            ):
+                raise ValueError(
+                    "Converted audio format mismatch: expected "
+                    f"channels={num_channels} sampwidth={sample_width_bytes} "
+                    f"rate={sample_rate_hz}, got channels={actual_channels} "
+                    f"sampwidth={actual_width} rate={actual_rate}."
+                )
+            return converted_pcm
+        finally:
+            Path(input_path).unlink(missing_ok=True)
+
     async def _calc_hash_async(self, request: Message) -> None:
         """Add a request to the memory."""
         tasks = [asyncio.create_task(piece.set_sha256_values_async()) for piece in request.message_pieces]
         await asyncio.gather(*tasks)
+
+    async def hash_and_persist_message_async(self, *, message: Message) -> None:
+        """
+        Hash and persist a Message to memory.
+
+        Use when a target assembles a Message outside the ``send_prompt_async`` flow
+        (e.g. streaming sessions that yield per-turn Messages directly).
+
+        Args:
+            message (Message): The message to hash and persist.
+        """
+        await self._calc_hash_async(request=message)
+        self.memory.add_message_to_memory(request=message)
 
     async def add_prepended_conversation_to_memory_async(
         self,
@@ -385,4 +475,33 @@ class PromptNormalizer:
             converter_configurations=converter_configurations,
             attack_identifier=attack_identifier,
             prepended_conversation=prepended_conversation,
+        )
+
+
+def _write_pcm_to_temp_wav(
+    *,
+    raw_pcm: bytes,
+    sample_rate_hz: int,
+    num_channels: int,
+    sample_width_bytes: int,
+) -> str:
+    """Return the path of a new temp WAV file containing the given PCM."""
+    fd, path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    with wave.open(path, "wb") as wav_out:
+        wav_out.setnchannels(num_channels)
+        wav_out.setsampwidth(sample_width_bytes)
+        wav_out.setframerate(sample_rate_hz)
+        wav_out.writeframes(raw_pcm)
+    return path
+
+
+def _read_pcm_from_wav(wav_path: str) -> tuple[int, int, int, bytes]:
+    """Return (sample_rate_hz, num_channels, sample_width_bytes, pcm_bytes) from a WAV file."""
+    with wave.open(wav_path, "rb") as wav_in:
+        return (
+            wav_in.getframerate(),
+            wav_in.getnchannels(),
+            wav_in.getsampwidth(),
+            wav_in.readframes(wav_in.getnframes()),
         )
