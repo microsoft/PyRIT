@@ -30,25 +30,12 @@ source .venv/bin/activate
 
 ### Dependency conflicts
 
-Try regenerating the lock file:
+Try regenerating the lock file (`rm` works in PowerShell as an alias for `Remove-Item`, so the same commands work everywhere):
 
-::::{tab-set}
-
-:::{tab-item} PowerShell (Windows)
-```powershell
-Remove-Item uv.lock
-uv sync
-```
-:::
-
-:::{tab-item} Bash (macOS / Linux)
 ```bash
 rm uv.lock
 uv sync
 ```
-:::
-
-::::
 
 ### Module not found errors
 
