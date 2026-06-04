@@ -127,6 +127,33 @@ def test_legacy_opt_out_false_still_raises() -> None:
                 self.foo = foo
 
 
+def test_legacy_opt_out_is_not_inherited_by_subclass() -> None:
+    """The opt-out only applies to the class that sets it; subclasses still hard-fail."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+
+        class Grandfathered(_FakeBase):
+            _brick_legacy_init = True
+
+            def __init__(self, foo: str) -> None:
+                self.foo = foo
+
+    deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert len(deprecations) == 1
+
+    with pytest.raises(TypeError) as excinfo:
+
+        class NewSubclass(Grandfathered):
+            def __init__(self, foo: str, bar: int = 0) -> None:
+                self.foo = foo
+                self.bar = bar
+
+    message = str(excinfo.value)
+    assert "_FakeBase contract" in message
+    assert "foo" in message
+    assert "bar" in message
+
+
 def test_error_message_lists_only_positional_offenders() -> None:
     """The error message should only list positional offenders, not kw-only ones."""
     with pytest.raises(TypeError) as excinfo:

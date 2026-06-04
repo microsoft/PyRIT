@@ -60,7 +60,10 @@ def enforce_keyword_only_init(cls: type, *, base_name: str) -> None:
         TypeError: If ``cls.__init__`` accepts any positional or
             positional-or-keyword parameters after ``self``, and ``cls`` does
             not opt into the legacy-init grace period via the
-            ``_brick_legacy_init`` class attribute.
+            ``_brick_legacy_init`` class attribute. The opt-out is only
+            honored when set directly on ``cls`` (it is not inherited from a
+            base class), so new subclasses always get the hard check by
+            default.
     """
     if "__init__" not in cls.__dict__:
         # Subclass inherits __init__ from its parent; the parent has already
@@ -75,7 +78,7 @@ def enforce_keyword_only_init(cls: type, *, base_name: str) -> None:
     if not offenders:
         return
 
-    if getattr(cls, LEGACY_INIT_OPT_OUT_ATTR, False):
+    if cls.__dict__.get(LEGACY_INIT_OPT_OUT_ATTR, False):
         # Opt-in legacy period: warn rather than break, so existing users
         # whose code calls these constructors positionally have one release
         # cycle to migrate.
