@@ -7,6 +7,8 @@ import uuid
 from enum import Enum
 from typing import Any, Optional
 
+from typing_extensions import override
+
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
 )
@@ -212,10 +214,12 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         self.source = self.SOURCE_URL
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "mm_safetybench"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch MM-SafetyBench examples and return as a ``SeedDataset``.
