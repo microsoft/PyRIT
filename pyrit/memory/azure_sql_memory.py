@@ -19,7 +19,6 @@ from sqlalchemy.sql.expression import ColumnElement, TextClause
 from pyrit.auth.azure_auth import AzureAuth
 from pyrit.common import default_values
 from pyrit.common.singleton import Singleton
-from pyrit.io import AzureBlobStorageIO
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -27,6 +26,7 @@ from pyrit.memory.memory_models import (
     EmbeddingDataEntry,
     PromptMemoryEntry,
 )
+from pyrit.memory.storage import AzureBlobStorageIO
 from pyrit.models import ConversationStats, MessagePiece
 
 if TYPE_CHECKING:

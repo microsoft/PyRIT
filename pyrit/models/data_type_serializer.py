@@ -2,11 +2,12 @@
 # Licensed under the MIT license.
 
 """
-Deprecation shim — the data-type serializers moved to ``pyrit.io.serializers``.
+Deprecation shim — the data-type serializers now live in
+``pyrit.memory.storage``.
 
 Importing names from ``pyrit.models.data_type_serializer`` still works for one
 release but emits a one-time ``DeprecationWarning`` per name. Import from
-``pyrit.io`` instead. This shim will be removed in 0.17.0.
+``pyrit.memory.storage`` instead. This shim will be removed in 0.17.0.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ __all__ = [
 
 __getattr__ = module_deprecation_getattr(
     old_module="pyrit.models.data_type_serializer",
-    target_module="pyrit.io.serializers",
+    target_module="pyrit.memory.storage.serializers",
     names=__all__,
     removed_in="0.17.0",
 )

@@ -21,7 +21,6 @@ from sqlalchemy.sql.expression import TextClause
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.common.singleton import Singleton
-from pyrit.io import DiskStorageIO
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -30,6 +29,7 @@ from pyrit.memory.memory_models import (
     PromptMemoryEntry,
     ScenarioResultEntry,
 )
+from pyrit.memory.storage import DiskStorageIO
 from pyrit.models import ConversationStats, MessagePiece
 
 logger = logging.getLogger(__name__)

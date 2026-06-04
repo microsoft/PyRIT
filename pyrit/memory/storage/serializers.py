@@ -18,7 +18,7 @@ import aiofiles
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.io.storage import DiskStorageIO, StorageIO
+from pyrit.memory.storage.storage import DiskStorageIO, StorageIO
 
 if TYPE_CHECKING:
     from pyrit.memory import MemoryInterface
@@ -368,8 +368,8 @@ class DataTypeSerializer(abc.ABC):
             output_filename: Optional filename to store data as.
         """
         print_deprecation_message(
-            old_item="pyrit.io.serializers.DataTypeSerializer.save_data",
-            new_item="pyrit.io.serializers.DataTypeSerializer.save_data_async",
+            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_data",
+            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_data_async",
             removed_in="0.16.0",
         )
         await self.save_data_async(data, output_filename)
@@ -385,8 +385,8 @@ class DataTypeSerializer(abc.ABC):
             output_filename: Optional filename to store image as.
         """
         print_deprecation_message(
-            old_item="pyrit.io.serializers.DataTypeSerializer.save_b64_image",
-            new_item="pyrit.io.serializers.DataTypeSerializer.save_b64_image_async",
+            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_b64_image",
+            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_b64_image_async",
             removed_in="0.16.0",
         )
         await self.save_b64_image_async(data, output_filename)
@@ -410,8 +410,8 @@ class DataTypeSerializer(abc.ABC):
             output_filename: Optional filename to store audio as.
         """
         print_deprecation_message(
-            old_item="pyrit.io.serializers.DataTypeSerializer.save_formatted_audio",
-            new_item="pyrit.io.serializers.DataTypeSerializer.save_formatted_audio_async",
+            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_formatted_audio",
+            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_formatted_audio_async",
             removed_in="0.16.0",
         )
         await self.save_formatted_audio_async(data, num_channels, sample_width, sample_rate, output_filename)
@@ -424,8 +424,8 @@ class DataTypeSerializer(abc.ABC):
             bytes: The data read from storage.
         """
         print_deprecation_message(
-            old_item="pyrit.io.serializers.DataTypeSerializer.read_data",
-            new_item="pyrit.io.serializers.DataTypeSerializer.read_data_async",
+            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.read_data",
+            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.read_data_async",
             removed_in="0.16.0",
         )
         return await self.read_data_async()
@@ -438,8 +438,8 @@ class DataTypeSerializer(abc.ABC):
             str: Base64-encoded data.
         """
         print_deprecation_message(
-            old_item="pyrit.io.serializers.DataTypeSerializer.read_data_base64",
-            new_item="pyrit.io.serializers.DataTypeSerializer.read_data_base64_async",
+            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.read_data_base64",
+            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.read_data_base64_async",
             removed_in="0.16.0",
         )
         return await self.read_data_base64_async()
@@ -452,8 +452,8 @@ class DataTypeSerializer(abc.ABC):
             str: Hex digest of the computed SHA256 hash.
         """
         print_deprecation_message(
-            old_item="pyrit.io.serializers.DataTypeSerializer.get_sha256",
-            new_item="pyrit.io.serializers.DataTypeSerializer.get_sha256_async",
+            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.get_sha256",
+            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.get_sha256_async",
             removed_in="0.16.0",
         )
         return await self.get_sha256_async()
@@ -471,8 +471,8 @@ class DataTypeSerializer(abc.ABC):
             Union[Path, str]: Full storage path for the generated data file.
         """
         print_deprecation_message(
-            old_item="pyrit.io.serializers.DataTypeSerializer.get_data_filename",
-            new_item="pyrit.io.serializers.DataTypeSerializer.get_data_filename_async",
+            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.get_data_filename",
+            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.get_data_filename_async",
             removed_in="0.16.0",
         )
         return await self.get_data_filename_async(file_name)

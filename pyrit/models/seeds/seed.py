@@ -234,7 +234,7 @@ class Seed(BaseModel):
         Compute the SHA256 hash value asynchronously.
 
         .. deprecated:: 0.15.0
-            Use ``pyrit.io.serializers.set_seed_sha256_async`` instead.
+            Use ``pyrit.memory.storage.serializers.set_seed_sha256_async`` instead.
             This method will be removed in 0.17.0.
         """
         import importlib
@@ -243,10 +243,10 @@ class Seed(BaseModel):
 
         print_deprecation_message(
             old_item="pyrit.models.seeds.seed.Seed.set_sha256_value_async",
-            new_item="pyrit.io.serializers.set_seed_sha256_async",
+            new_item="pyrit.memory.storage.serializers.set_seed_sha256_async",
             removed_in="0.17.0",
         )
-        serializers = importlib.import_module("pyrit.io.serializers")
+        serializers = importlib.import_module("pyrit.memory.storage.serializers")
         await serializers.set_seed_sha256_async(self)
 
     @staticmethod

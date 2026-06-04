@@ -11,7 +11,7 @@ from PIL import Image, ImageFont
 from PIL.ImageFont import FreeTypeFont
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.io import data_serializer_factory
+from pyrit.memory.storage import data_serializer_factory
 from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.base_image_text_converter import _BaseImageTextConverter
 from pyrit.prompt_converter.prompt_converter import ConverterResult

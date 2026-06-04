@@ -9,7 +9,7 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy.io import wavfile
 
-from pyrit.io import data_serializer_factory
+from pyrit.memory.storage import data_serializer_factory
 from pyrit.models import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 

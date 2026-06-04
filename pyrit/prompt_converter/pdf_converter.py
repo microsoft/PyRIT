@@ -13,7 +13,7 @@ from reportlab.lib.utils import simpleSplit
 from reportlab.pdfgen import canvas
 
 from pyrit.common.logger import logger
-from pyrit.io import DataTypeSerializer, data_serializer_factory
+from pyrit.memory.storage import DataTypeSerializer, data_serializer_factory
 from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 

@@ -2,18 +2,20 @@
 # Licensed under the MIT license.
 
 """
-I/O layer for PyRIT: storage backends and multi-modal data serializers.
+Storage layer for PyRIT: storage backends and multi-modal data serializers.
 
 Provides the disk and blob storage adapters (``StorageIO`` and its
 implementations) and the data-type serializers (``data_serializer_factory`` and
 the per-type ``*DataTypeSerializer`` classes) used to read and write prompt
 payloads such as text, images, audio, and video.
 
-Unlike ``pyrit.models``, modules in this package may depend on ``pyrit.memory``
-and ``pyrit.auth`` (resolved lazily to avoid import cycles).
+These serializers write payload files into the location configured on the active
+memory instance (``results_path`` / ``results_storage_io``), which is why they
+live alongside ``pyrit.memory``: the database holds the records and this package
+holds the blob payloads those records point to.
 """
 
-from pyrit.io.serializers import (
+from pyrit.memory.storage.serializers import (
     AllowedCategories,
     AudioPathDataTypeSerializer,
     BinaryPathDataTypeSerializer,
@@ -27,7 +29,7 @@ from pyrit.io.serializers import (
     set_message_piece_sha256_async,
     set_seed_sha256_async,
 )
-from pyrit.io.storage import (
+from pyrit.memory.storage.storage import (
     AzureBlobStorageIO,
     DiskStorageIO,
     StorageIO,

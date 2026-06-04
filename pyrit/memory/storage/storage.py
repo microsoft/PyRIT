@@ -76,8 +76,8 @@ class StorageIO(ABC):
             bytes: The content of the file.
         """
         print_deprecation_message(
-            old_item="pyrit.io.storage.StorageIO.read_file",
-            new_item="pyrit.io.storage.StorageIO.read_file_async",
+            old_item="pyrit.memory.storage.storage.StorageIO.read_file",
+            new_item="pyrit.memory.storage.storage.StorageIO.read_file_async",
             removed_in="0.16.0",
         )
         return await self.read_file_async(path)
@@ -91,8 +91,8 @@ class StorageIO(ABC):
             data (bytes): The content to write to the file.
         """
         print_deprecation_message(
-            old_item="pyrit.io.storage.StorageIO.write_file",
-            new_item="pyrit.io.storage.StorageIO.write_file_async",
+            old_item="pyrit.memory.storage.storage.StorageIO.write_file",
+            new_item="pyrit.memory.storage.storage.StorageIO.write_file_async",
             removed_in="0.16.0",
         )
         await self.write_file_async(path, data)
@@ -108,8 +108,8 @@ class StorageIO(ABC):
             bool: True if the path exists, False otherwise.
         """
         print_deprecation_message(
-            old_item="pyrit.io.storage.StorageIO.path_exists",
-            new_item="pyrit.io.storage.StorageIO.path_exists_async",
+            old_item="pyrit.memory.storage.storage.StorageIO.path_exists",
+            new_item="pyrit.memory.storage.storage.StorageIO.path_exists_async",
             removed_in="0.16.0",
         )
         return await self.path_exists_async(path)
@@ -125,8 +125,8 @@ class StorageIO(ABC):
             bool: True if the path is a file, False otherwise.
         """
         print_deprecation_message(
-            old_item="pyrit.io.storage.StorageIO.is_file",
-            new_item="pyrit.io.storage.StorageIO.is_file_async",
+            old_item="pyrit.memory.storage.storage.StorageIO.is_file",
+            new_item="pyrit.memory.storage.storage.StorageIO.is_file_async",
             removed_in="0.16.0",
         )
         return await self.is_file_async(path)
@@ -139,8 +139,8 @@ class StorageIO(ABC):
             path (Union[Path, str]): The directory path to create.
         """
         print_deprecation_message(
-            old_item="pyrit.io.storage.StorageIO.create_directory_if_not_exists",
-            new_item="pyrit.io.storage.StorageIO.create_directory_if_not_exists_async",
+            old_item="pyrit.memory.storage.storage.StorageIO.create_directory_if_not_exists",
+            new_item="pyrit.memory.storage.storage.StorageIO.create_directory_if_not_exists_async",
             removed_in="0.16.0",
         )
         await self.create_directory_if_not_exists_async(path)

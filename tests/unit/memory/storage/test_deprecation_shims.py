@@ -5,11 +5,11 @@
 Tests for the Phase 9 deprecation shims.
 
 ``pyrit.models.storage_io`` and ``pyrit.models.data_type_serializer`` moved to
-``pyrit.io.storage`` / ``pyrit.io.serializers``. The old module paths, the
+``pyrit.memory.storage.storage`` / ``pyrit.memory.storage.serializers``. The old module paths, the
 ``pyrit.models`` package-root re-exports, and the
 ``MessagePiece.set_sha256_values_async`` / ``Seed.set_sha256_value_async``
 method shims all still work but emit a ``DeprecationWarning`` pointing at the
-new ``pyrit.io`` location. These tests pin that contract. The shims will be
+new ``pyrit.memory.storage`` location. These tests pin that contract. The shims will be
 removed in 0.17.0.
 """
 
@@ -23,8 +23,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import pyrit.io.serializers as new_serializers
-import pyrit.io.storage as new_storage
+import pyrit.memory.storage.serializers as new_serializers
+import pyrit.memory.storage.storage as new_storage
 import pyrit.models as models_pkg
 import pyrit.models.data_type_serializer as serializer_shim
 import pyrit.models.storage_io as storage_shim
@@ -32,8 +32,8 @@ from pyrit.models.messages.message_piece import MessagePiece
 from pyrit.models.seeds.seed import Seed
 
 MODULE_SHIM_PAIRS = [
-    (storage_shim, new_storage, "pyrit.models.storage_io", "pyrit.io.storage"),
-    (serializer_shim, new_serializers, "pyrit.models.data_type_serializer", "pyrit.io.serializers"),
+    (storage_shim, new_storage, "pyrit.models.storage_io", "pyrit.memory.storage.storage"),
+    (serializer_shim, new_serializers, "pyrit.models.data_type_serializer", "pyrit.memory.storage.serializers"),
 ]
 
 
@@ -86,10 +86,10 @@ def test_module_shim_dir_returns_sorted_all(shim_mod, new_mod, old_path, new_pat
     assert dir(shim_mod) == sorted(shim_mod.__all__)
 
 
-def test_moved_to_pyrit_io_contains_expected_root_exports():
+def test_moved_to_memory_storage_contains_expected_root_exports():
     # Guards against accidentally dropping a previously root-importable name from the
     # forwarding table. These are exactly the names that used to be importable from
-    # ``pyrit.models`` and now live in ``pyrit.io``. URLDataTypeSerializer and
+    # ``pyrit.models`` and now live in ``pyrit.memory.storage``. URLDataTypeSerializer and
     # SupportedContentType were never root-exported, so they are intentionally absent.
     expected = {
         "AllowedCategories",
@@ -105,12 +105,12 @@ def test_moved_to_pyrit_io_contains_expected_root_exports():
         "DiskStorageIO",
         "StorageIO",
     }
-    assert set(models_pkg._MOVED_TO_PYRIT_IO) == expected
+    assert set(models_pkg._MOVED_TO_MEMORY_STORAGE) == expected
 
 
-@pytest.mark.parametrize("name", sorted(models_pkg._MOVED_TO_PYRIT_IO))
+@pytest.mark.parametrize("name", sorted(models_pkg._MOVED_TO_MEMORY_STORAGE))
 def test_models_package_root_forwards_and_warns_once(name):
-    target_module = models_pkg._MOVED_TO_PYRIT_IO[name]
+    target_module = models_pkg._MOVED_TO_MEMORY_STORAGE[name]
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", DeprecationWarning)
         first = getattr(models_pkg, name)
@@ -139,7 +139,7 @@ def test_importing_pyrit_models_does_not_warn():
         "    import pyrit.models\n"
         "offenders = [str(w.message) for w in caught\n"
         "             if issubclass(w.category, DeprecationWarning)\n"
-        "             and ('pyrit.io' in str(w.message) or 'pyrit.models.storage_io' in str(w.message)\n"
+        "             and ('pyrit.memory.storage' in str(w.message) or 'pyrit.models.storage_io' in str(w.message)\n"
         "                  or 'pyrit.models.data_type_serializer' in str(w.message))]\n"
         "assert not offenders, offenders\n"
     )
@@ -160,7 +160,7 @@ async def test_message_piece_method_shim_warns_and_delegates():
     assert len(dep) == 1
     message = str(dep[0].message)
     assert "MessagePiece.set_sha256_values_async" in message
-    assert "pyrit.io.serializers.set_message_piece_sha256_async" in message
+    assert "pyrit.memory.storage.serializers.set_message_piece_sha256_async" in message
     assert "0.17.0" in message
 
 
@@ -177,5 +177,5 @@ async def test_seed_method_shim_warns_and_delegates():
     assert len(dep) == 1
     message = str(dep[0].message)
     assert "Seed.set_sha256_value_async" in message
-    assert "pyrit.io.serializers.set_seed_sha256_async" in message
+    assert "pyrit.memory.storage.serializers.set_seed_sha256_async" in message
     assert "0.17.0" in message

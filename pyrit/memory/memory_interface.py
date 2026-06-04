@@ -23,12 +23,6 @@ if TYPE_CHECKING:
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.io import (
-    DataTypeSerializer,
-    StorageIO,
-    data_serializer_factory,
-    set_seed_sha256_async,
-)
 from pyrit.memory.memory_exporter import MemoryExporter
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -38,6 +32,12 @@ from pyrit.memory.memory_models import (
     ScenarioResultEntry,
     ScoreEntry,
     SeedEntry,
+)
+from pyrit.memory.storage import (
+    DataTypeSerializer,
+    StorageIO,
+    data_serializer_factory,
+    set_seed_sha256_async,
 )
 from pyrit.models import (
     AttackResult,

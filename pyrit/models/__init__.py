@@ -188,22 +188,22 @@ _DEPRECATED_RENAME_ALIASES: dict[str, Any] = {
     "ScorerIdentifier": ComponentIdentifier,
 }
 
-# Names that moved to ``pyrit.io`` in Phase 9. Served lazily via importlib so that
+# Names that moved to ``pyrit.memory.storage``. Served lazily via importlib so that
 # importing ``pyrit.models`` stays import-boundary clean and fires no warning until a
 # moved name is actually accessed. Will be removed in 0.17.0.
-_MOVED_TO_PYRIT_IO: dict[str, str] = {
-    "AllowedCategories": "pyrit.io.serializers",
-    "AudioPathDataTypeSerializer": "pyrit.io.serializers",
-    "BinaryPathDataTypeSerializer": "pyrit.io.serializers",
-    "DataTypeSerializer": "pyrit.io.serializers",
-    "ErrorDataTypeSerializer": "pyrit.io.serializers",
-    "ImagePathDataTypeSerializer": "pyrit.io.serializers",
-    "TextDataTypeSerializer": "pyrit.io.serializers",
-    "VideoPathDataTypeSerializer": "pyrit.io.serializers",
-    "data_serializer_factory": "pyrit.io.serializers",
-    "AzureBlobStorageIO": "pyrit.io.storage",
-    "DiskStorageIO": "pyrit.io.storage",
-    "StorageIO": "pyrit.io.storage",
+_MOVED_TO_MEMORY_STORAGE: dict[str, str] = {
+    "AllowedCategories": "pyrit.memory.storage.serializers",
+    "AudioPathDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "BinaryPathDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "DataTypeSerializer": "pyrit.memory.storage.serializers",
+    "ErrorDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "ImagePathDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "TextDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "VideoPathDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "data_serializer_factory": "pyrit.memory.storage.serializers",
+    "AzureBlobStorageIO": "pyrit.memory.storage.storage",
+    "DiskStorageIO": "pyrit.memory.storage.storage",
+    "StorageIO": "pyrit.memory.storage.storage",
 }
 
 _warned: set[str] = set()
@@ -220,8 +220,8 @@ def __getattr__(name: str) -> Any:
             )
             _warned.add(name)
         return target
-    if name in _MOVED_TO_PYRIT_IO:
-        target_module = _MOVED_TO_PYRIT_IO[name]
+    if name in _MOVED_TO_MEMORY_STORAGE:
+        target_module = _MOVED_TO_MEMORY_STORAGE[name]
         if name not in _warned:
             print_deprecation_message(
                 old_item=f"{__name__}.{name}",

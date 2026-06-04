@@ -19,8 +19,8 @@ from pyrit.exceptions import (
     execution_context,
     get_execution_context,
 )
-from pyrit.io import set_message_piece_sha256_async
 from pyrit.memory import CentralMemory, MemoryInterface
+from pyrit.memory.storage import set_message_piece_sha256_async
 from pyrit.models import (
     ComponentIdentifier,
     Message,

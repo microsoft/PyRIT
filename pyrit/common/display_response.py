@@ -8,8 +8,8 @@ from PIL import Image
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.notebook_utils import is_in_ipython_session
-from pyrit.io import AzureBlobStorageIO, DiskStorageIO
 from pyrit.memory import CentralMemory
+from pyrit.memory.storage import AzureBlobStorageIO, DiskStorageIO
 from pyrit.models import MessagePiece
 
 logger = logging.getLogger(__name__)

@@ -306,17 +306,17 @@ class MessagePiece(BaseModel):
         Compute SHA256 hash values for original and converted payloads.
 
         .. deprecated:: 0.15.0
-            Use ``pyrit.io.serializers.set_message_piece_sha256_async`` instead.
+            Use ``pyrit.memory.storage.serializers.set_message_piece_sha256_async`` instead.
             This method will be removed in 0.17.0.
         """
         import importlib
 
         print_deprecation_message(
             old_item="pyrit.models.messages.message_piece.MessagePiece.set_sha256_values_async",
-            new_item="pyrit.io.serializers.set_message_piece_sha256_async",
+            new_item="pyrit.memory.storage.serializers.set_message_piece_sha256_async",
             removed_in="0.17.0",
         )
-        serializers = importlib.import_module("pyrit.io.serializers")
+        serializers = importlib.import_module("pyrit.memory.storage.serializers")
         await serializers.set_message_piece_sha256_async(self)
 
 

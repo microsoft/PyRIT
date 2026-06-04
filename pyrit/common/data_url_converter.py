@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.io import DataTypeSerializer, data_serializer_factory
+from pyrit.memory.storage import DataTypeSerializer, data_serializer_factory
 
 # Supported image formats for Azure OpenAI GPT-4o,
 # https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/use-your-image-data
