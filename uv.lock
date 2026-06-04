@@ -7008,11 +7008,11 @@ wheels = [
 
 [[package]]
 name = "types-decorator"
-version = "5.2.0.20251101"
+version = "5.2.0.20260519"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a6/e4/929a77f6580928a5b4914a62834a0570d2449428ecdbb0a2e916150ed978/types_decorator-5.2.0.20251101.tar.gz", hash = "sha256:120e2bf4792ec8a47653db1cb380c7aacb6862a797c1490a910aacc21548286c", size = 9059, upload-time = "2025-11-01T03:04:02.355Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f2/a1/2f53c1ee0bd6898e853cd4c6a1107a79083d76412c247aec49b8ca242142/types_decorator-5.2.0.20260519.tar.gz", hash = "sha256:b5b23b2f0d11c06748780697d345c8a684fc2d0c753f08ee8063660d9d7a23d9", size = 9351, upload-time = "2026-05-19T05:56:20.221Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bb/cc/aa53df63915e10d429b7aa0491ba520abe4b80aef0304d1b02425cd5bd08/types_decorator-5.2.0.20251101-py3-none-any.whl", hash = "sha256:8176470ec0a2190e9d688577d4987b24039ae4a23913211707eda96bf2755b0c", size = 8074, upload-time = "2025-11-01T03:04:01.353Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/b2/4fb36b644e0464d4a613de14db5871cfa1455e92916f99b70527af522a8e/types_decorator-5.2.0.20260519-py3-none-any.whl", hash = "sha256:c50a13519d2b995b3bb866dba9525b412ebf7d67ed229960e01a52f07f8e58c3", size = 8185, upload-time = "2026-05-19T05:56:19.167Z" },
 ]
 
 [[package]]
