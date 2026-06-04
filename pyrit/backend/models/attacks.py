@@ -296,13 +296,6 @@ class AttackSummary(AttackResult):
         return sorted(ref.conversation_id for ref in self.related_conversations)
 
 
-# Note: no ``from_domain`` classmethod here. The mapper assembles ``AttackSummary``
-# directly with ``model_construct`` because the construction overlays view-narrowed
-# values (``last_response``, ``last_score``, merged ``labels``) on top of the
-# canonical ``AttackResult`` fields — a smell that a ``from_domain`` signature
-# couldn't express without competing parameters.
-
-
 # ============================================================================
 # Conversation Messages Response
 # ============================================================================

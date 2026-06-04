@@ -198,23 +198,15 @@ def attack_result_to_summary(
     Returns:
         AttackSummary view ready for the API response.
     """
-    # Merge attack-result labels with conversation-level labels; conversation
-    # labels take precedence on key collision.
     labels = dict(ar.labels) if ar.labels else {}
     labels.update(stats.labels or {})
     created_at, updated_at = _resolve_summary_timestamps(ar)
 
-    # Start with every canonical AttackResult field, then overlay view-narrowed
-    # values (last_response/last_score) and presentation extras (message_count,
-    # previews, timestamps, merged labels). ``model_construct`` skips validation
-    # because the source AttackResult is already valid.
     data = {name: getattr(ar, name) for name in AttackResult.model_fields}
     data.update(
-        # Overlays — narrow domain types to view types.
         last_response=_summary_last_response(ar.last_response),
         last_score=ScoreView.from_domain(ar.last_score) if ar.last_score else None,
         labels=labels,
-        # Presentation extras — not on AttackResult.
         message_count=stats.message_count,
         last_message_preview=format_last_message_preview(
             value=stats.last_message_preview,
