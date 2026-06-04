@@ -5,9 +5,9 @@
 Scenario technique initializer.
 
 This module owns the canonical catalog of scenario attack techniques as a
-flat list of self-describing :class:`AttackTechniqueFactory` instances and
-registers them into the singleton :class:`AttackTechniqueRegistry` via
-:class:`ScenarioTechniqueInitializer`.
+flat list of self-describing ``AttackTechniqueFactory`` instances and
+registers them into the singleton ``AttackTechniqueRegistry`` via
+``ScenarioTechniqueInitializer``.
 
 Per-name registration is idempotent: pre-existing entries in the registry are
 not overwritten.
@@ -41,14 +41,14 @@ def build_scenario_technique_factories() -> list[AttackTechniqueFactory]:
 
     Factories that need an adversarial chat target do not bake one in; the
     default adversarial target is resolved lazily inside
-    :meth:`AttackTechniqueFactory.create` via
+    ``AttackTechniqueFactory.create`` via
     ``get_default_adversarial_target()``. Scenarios may also pass
     ``attack_adversarial_config_override`` at create time (but only when the
     factory did not bake one in at construction).
 
     A bare ``PromptSendingAttack`` factory is intentionally omitted from the
     catalog: every scenario whose ``BASELINE_ATTACK_POLICY`` is
-    :attr:`BaselineAttackPolicy.Enabled` already auto-prepends an equivalent
+    ``BaselineAttackPolicy.Enabled`` already auto-prepends an equivalent
     baseline atomic attack via ``Scenario._build_baseline_atomic_attack``.
 
     Returns:
@@ -120,7 +120,7 @@ class ScenarioTechniqueInitializer(PyRITInitializer):
     ``Scenario._build_baseline_atomic_attack``) already covers that case.
 
     Registration is per-name idempotent: pre-existing entries in
-    :class:`AttackTechniqueRegistry` are not overwritten.
+    ``AttackTechniqueRegistry`` are not overwritten.
     """
 
     async def initialize_async(self) -> None:
