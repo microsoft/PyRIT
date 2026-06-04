@@ -84,7 +84,7 @@ function AttachmentList({ attachments, mediaConversions, onRemove, onClearMediaC
                   {att.type === 'audio' && '🎵'}
                   {att.type === 'video' && '🎥'}
                   {att.type === 'file' && '📄'}
-                  {' '}{att.name} ({formatFileSize(att.size)})
+                  {' '}{att.name}{att.size != null ? ` (${formatFileSize(att.size)})` : ''}
                 </Caption1>
               </span>
               <Button

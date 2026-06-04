@@ -5,11 +5,16 @@ from build_scripts.gen_api_md import (
     SymbolEntry,
     _build_symbol_index,
     _class_anchor,
+    _format_bases,
+    _format_reexport_alias,
+    _format_reexport_target,
     _function_anchor,
     _method_anchor,
     _process_docstring_text,
     _rewrite_symbol_refs,
+    render_class,
     render_function,
+    render_module,
 )
 
 
@@ -348,3 +353,191 @@ def test_render_function_uses_method_anchor_when_class_name_given() -> None:
     assert "(api-pyrit_prompt_target-PromptTarget-validate)=" in out
     assert "#### `validate`" in out
     assert "[``send_prompt_async``](#api-pyrit_prompt_target-PromptTarget-send_prompt_async)" in out
+
+
+def _prompt_target_entry() -> SymbolEntry:
+    return SymbolEntry(
+        module="pyrit.prompt_target",
+        kind="class",
+        name="PromptTarget",
+        qualname="PromptTarget",
+        anchor="api-pyrit_prompt_target-PromptTarget",
+    )
+
+
+def test_format_bases_links_known_pyrit_base() -> None:
+    index = {"PromptTarget": [_prompt_target_entry()]}
+    out = _format_bases(["PromptTarget"], index)
+    assert out == "[`PromptTarget`](#api-pyrit_prompt_target-PromptTarget)"
+
+
+def test_format_bases_keeps_external_base_as_plain_code_span() -> None:
+    """Bases not in the symbol index (stdlib types like ``str``/``Enum``) stay
+    as plain backtick code spans instead of being mangled into broken links."""
+    out = _format_bases(["str", "Enum"], {})
+    assert out == "`str`, `Enum`"
+
+
+def test_format_bases_links_mixed_pyrit_and_external() -> None:
+    """A mix of resolvable and external bases produces a clean
+    comma-separated list with only the known names linked."""
+    index = {"PromptTarget": [_prompt_target_entry()]}
+    out = _format_bases(["PromptTarget", "ABC", "Identifiable"], index)
+    assert out == "[`PromptTarget`](#api-pyrit_prompt_target-PromptTarget), `ABC`, `Identifiable`"
+
+
+def test_format_bases_empty_or_none_returns_empty_string() -> None:
+    assert _format_bases([], {}) == ""
+    # Without a symbol index we still emit plain code spans.
+    assert _format_bases(["str"], None) == "`str`"
+
+
+def test_render_class_emits_linked_bases_line() -> None:
+    """End-to-end: a class with a known PyRIT base renders the ``Bases:`` line
+    as a MyST link rather than a plain code span."""
+    index = {"PromptTarget": [_prompt_target_entry()]}
+    cls = {"name": "MyTarget", "kind": "class", "bases": ["PromptTarget", "str"]}
+    out = render_class(cls, module="pyrit.factories", symbol_index=index)
+
+    assert "(api-pyrit_factories-MyTarget)=" in out
+    assert "Bases: [`PromptTarget`](#api-pyrit_prompt_target-PromptTarget), `str`" in out
+    # No accidental wrapper backticks around the whole comma-joined list.
+    assert "Bases: `PromptTarget" not in out
+
+
+def test_render_class_without_bases_omits_bases_line() -> None:
+    cls = {"name": "Standalone", "kind": "class", "bases": []}
+    out = render_class(cls, module="pyrit.misc", symbol_index={})
+    assert "Bases:" not in out
+
+
+def test_format_reexport_alias_prefers_module_qualified_lookup() -> None:
+    """The alias usually lives on the re-exporting module, so the FQN form
+    (``mod_name.alias_name``) is tried before the short name."""
+    canonical = SymbolEntry(
+        module="pyrit.models",
+        kind="class",
+        name="SeedPrompt",
+        qualname="SeedPrompt",
+        anchor="api-pyrit_models-SeedPrompt",
+    )
+    re_exported = SymbolEntry(
+        module="pyrit",
+        kind="class",
+        name="SeedPrompt",
+        qualname="SeedPrompt",
+        anchor="api-pyrit-SeedPrompt",
+    )
+    index = {
+        "SeedPrompt": [canonical, re_exported],
+        "pyrit.SeedPrompt": [re_exported],
+        "pyrit.models.SeedPrompt": [canonical],
+    }
+    out = _format_reexport_alias("pyrit", "SeedPrompt", index)
+    # Picks the alias's own page rather than the canonical definition page.
+    assert out == "[`SeedPrompt`](#api-pyrit-SeedPrompt)"
+
+
+def test_format_reexport_alias_falls_back_to_short_name() -> None:
+    """When no module-qualified entry exists, the short-name rewriter still
+    links unambiguous names so the re-export remains navigable."""
+    entry = _prompt_target_entry()
+    index = {"PromptTarget": [entry], "pyrit.prompt_target.PromptTarget": [entry]}
+    out = _format_reexport_alias("pyrit", "PromptTarget", index)
+    assert out == "[`PromptTarget`](#api-pyrit_prompt_target-PromptTarget)"
+
+
+def test_format_reexport_alias_leaves_unresolvable_name_plain() -> None:
+    out = _format_reexport_alias("pyrit.misc", "Mystery", {})
+    assert out == "`Mystery`"
+
+
+def test_format_reexport_target_links_fqn_when_indexed() -> None:
+    entry = _prompt_target_entry()
+    index = {"pyrit.prompt_target.PromptTarget": [entry]}
+    out = _format_reexport_target("pyrit.prompt_target.PromptTarget", index)
+    assert out == "[`pyrit.prompt_target.PromptTarget`](#api-pyrit_prompt_target-PromptTarget)"
+
+
+def test_format_reexport_target_leaves_unresolvable_target_plain() -> None:
+    out = _format_reexport_target("pyrit.unknown.Symbol", {})
+    assert out == "`pyrit.unknown.Symbol`"
+
+
+def test_format_reexport_target_empty_returns_empty() -> None:
+    assert _format_reexport_target("", {}) == ""
+
+
+def test_render_module_links_both_reexport_sides() -> None:
+    """End-to-end: a module with an alias whose FQN target is in the index
+    renders both the alias name and the target as MyST links."""
+    canonical = _prompt_target_entry()
+    re_exported = SymbolEntry(
+        module="pyrit",
+        kind="class",
+        name="PromptTarget",
+        qualname="PromptTarget",
+        anchor="api-pyrit-PromptTarget",
+    )
+    index = {
+        "PromptTarget": [canonical, re_exported],
+        "pyrit.PromptTarget": [re_exported],
+        "pyrit.prompt_target.PromptTarget": [canonical],
+    }
+    module = _fake_module(
+        "pyrit",
+        [{"name": "PromptTarget", "kind": "alias", "target": "pyrit.prompt_target.PromptTarget"}],
+    )
+    out = render_module(module, symbol_index=index)
+
+    assert "## Re-exports" in out
+    assert "[`PromptTarget`](#api-pyrit-PromptTarget)" in out
+    assert "[`pyrit.prompt_target.PromptTarget`](#api-pyrit_prompt_target-PromptTarget)" in out
+    assert " → " in out
+
+
+def test_render_module_leaves_unresolvable_reexport_target_plain() -> None:
+    """When a re-export target points outside the index (e.g. a fake/external
+    path), it stays as a plain code span instead of becoming a broken link."""
+    canonical = _prompt_target_entry()
+    index = {
+        "PromptTarget": [canonical],
+        "pyrit.prompt_target.PromptTarget": [canonical],
+    }
+    module = _fake_module(
+        "pyrit",
+        [{"name": "Mystery", "kind": "alias", "target": "pyrit.unknown.Mystery"}],
+    )
+    out = render_module(module, symbol_index=index)
+
+    assert "- `Mystery` → `pyrit.unknown.Mystery`" in out
+    # Plain code spans, not links.
+    assert "(#" not in out.split("## Re-exports")[1]
+
+
+def test_render_module_emits_module_level_anchor_in_frontmatter() -> None:
+    """The page-level label is emitted as a frontmatter ``label:`` field so
+    cross-page references like ``[](#api-pyrit_prompt_target)`` target the
+    page itself. MyST consumes the H1 as the page title and discards any
+    label placed in the body before it, so frontmatter is the only reliable
+    place to bind a page-level anchor."""
+    module = _fake_module("pyrit.prompt_target", [_fake_class("PromptTarget")])
+    out = render_module(module, symbol_index={})
+
+    assert "label: api-pyrit_prompt_target" in out
+    # Heading still present.
+    assert "# pyrit.prompt_target" in out
+    # Frontmatter still wraps the page.
+    assert out.startswith("---")
+    assert "short_title: prompt_target" in out
+    # Label is inside the frontmatter, not after it.
+    fm_end = out.index("---\n", 4)  # skip the opening "---"
+    assert out.index("label: api-pyrit_prompt_target") < fm_end
+
+
+def test_render_module_label_uses_module_slug_for_nested_packages() -> None:
+    module = _fake_module("pyrit.executor.attack", [_fake_class("AttackStrategy")])
+    out = render_module(module, symbol_index={})
+
+    assert "label: api-pyrit_executor_attack" in out
+    assert "# pyrit.executor.attack" in out
