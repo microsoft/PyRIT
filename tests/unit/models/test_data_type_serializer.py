@@ -621,6 +621,7 @@ async def test_save_formatted_audio_azure_storage_unlinks_local_temp(tmp_path):
     assert mock_storage_io.write_file_async.call_args[0][0] == azure_url
     assert serializer.value == azure_url
 
+
 @pytest.mark.asyncio
 async def test_save_formatted_audio_async_cleans_up_temp_file_on_azure_upload_failure(tmp_path):
     """Regression test: temp file must be deleted even when Azure upload fails."""
