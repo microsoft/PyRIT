@@ -106,7 +106,7 @@ async def test_convert_tokens_raises_with_non_text_input_type():
     prompt = "This is a test ⟪to convert⟪ and ⟫another part⟫."
     converter = Base64Converter()
     with pytest.raises(ValueError, match="Input type must be text when start or end tokens are present."):
-        await converter.convert_tokens_async(prompt=prompt, input_type="non-text")
+        await converter.convert_tokens_async(prompt=prompt, input_type="non-text")  # type: ignore[ty:invalid-argument-type]
 
 
 async def test_convert_tokens_raises_uneven_tokens():
@@ -175,13 +175,13 @@ async def test_str_join_converter_init() -> None:
 async def test_str_join_converter_none_raises() -> None:
     converter = StringJoinConverter()
     with pytest.raises(TypeError):
-        assert await converter.convert_async(prompt=None, input_type="text")
+        assert await converter.convert_async(prompt=None, input_type="text")  # type: ignore[ty:invalid-argument-type]
 
 
 async def test_str_join_converter_invalid_type_raises() -> None:
     converter = StringJoinConverter()
     with pytest.raises(ValueError):
-        assert await converter.convert_async(prompt="test", input_type="invalid")  # type: ignore[arg-type] # noqa: PGH003
+        assert await converter.convert_async(prompt="test", input_type="invalid")  # type: ignore[arg-type, ty:invalid-argument-type] # noqa: PGH003
 
 
 async def test_str_join_converter_unsupported_type_raises() -> None:
@@ -454,15 +454,15 @@ def test_input_supported_text_only(converter_class):
 @pytest.fixture
 def setup_memory():
     memory = SQLiteMemory(db_path=":memory:")
-    CentralMemory.set_memory_instance(memory)
+    CentralMemory.set_memory_instance(memory)  # type: ignore[ty:invalid-argument-type]
     mock_target = MockPromptTarget()
     yield mock_target
-    CentralMemory.set_memory_instance(None)
+    CentralMemory.set_memory_instance(None)  # type: ignore[ty:invalid-argument-type]
 
 
 def is_speechsdk_installed():
     try:
-        import azure.cognitiveservices.speech  # noqa: F401
+        import azure.cognitiveservices.speech  # type: ignore[ty:unresolved-import]  # noqa: F401
 
         return True
     except ModuleNotFoundError:

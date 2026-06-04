@@ -185,28 +185,6 @@ include = ["pyrit/prompt_target/hugging_face/**"]
 [tool.ty.overrides.rules]
 invalid-argument-type = "warn"
 
-# Test files that conditionally import optional-extra packages (azure-speech,
-# cv2, playwright, torch, spacy) inside try/except ImportError blocks. The
-# pyrit/ source files that do the same use inline
-# ``# type: ignore[ty:unresolved-import]`` comments instead, so they get full
-# type checking with surgical silencing at the import sites. Test files keep
-# the broader override because they tend to monkeypatch and re-import these
-# modules in ways that would multiply the ignore sites.
-[[tool.ty.overrides]]
-include = [
-    "tests/unit/auth/test_azure_auth.py",
-    "tests/unit/prompt_converter/test_prompt_converter.py",
-    "tests/unit/prompt_converter/test_azure_speech_converter.py",
-    "tests/unit/prompt_converter/test_azure_speech_text_converter.py",
-    "tests/unit/prompt_converter/test_add_image_video_converter.py",
-    "tests/unit/score/test_video_scorer.py",
-    "tests/unit/prompt_target/target/test_huggingface_chat_target.py",
-    "tests/unit/executor/benchmark/test_fairness_bias.py",
-    "tests/unit/auxiliary_attacks/gcg/test_generator.py",
-]
-[tool.ty.overrides.rules]
-unresolved-import = "ignore"
-
 [tool.uv]
 constraint-dependencies = [
     "aiohttp>=3.13.4",

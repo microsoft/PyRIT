@@ -22,7 +22,7 @@ from pyrit.score.true_false.video_true_false_scorer import VideoTrueFalseScorer
 
 def is_opencv_installed():
     try:
-        import cv2  # noqa: F401
+        import cv2  # type: ignore[ty:unresolved-import]  # noqa: F401
 
         return True
     except ModuleNotFoundError:
@@ -35,7 +35,7 @@ def video_converter_sample_video(tmp_path, patch_central_database):
     video_path = str(tmp_path / "test_video.mp4")
     width, height = 512, 512
     if is_opencv_installed():
-        import cv2  # noqa: F401
+        import cv2  # type: ignore[ty:unresolved-import]  # noqa: F401
 
         # Create a video writer object
         video_encoding = cv2.VideoWriter_fourcc(*"mp4v")
@@ -126,7 +126,7 @@ class MockFloatScaleScorer(FloatScaleScorer):
 @pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
 async def test_extract_frames_true_false(video_converter_sample_video):
     """Test that frame extraction produces the expected number of frames"""
-    import cv2
+    import cv2  # type: ignore[ty:unresolved-import]
 
     image_scorer = MockTrueFalseScorer()
     scorer = VideoTrueFalseScorer(image_capable_scorer=image_scorer, num_sampled_frames=3)
@@ -149,7 +149,7 @@ async def test_extract_frames_true_false(video_converter_sample_video):
 @pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
 async def test_extract_frames_float_scale(video_converter_sample_video):
     """Test that frame extraction produces the expected number of frames for float scale scorer"""
-    import cv2
+    import cv2  # type: ignore[ty:unresolved-import]
 
     image_scorer = MockFloatScaleScorer()
     scorer = VideoFloatScaleScorer(image_capable_scorer=image_scorer, num_sampled_frames=3)
@@ -219,7 +219,7 @@ async def test_score_video_no_frames(video_converter_sample_video):
     scorer = VideoTrueFalseScorer(image_capable_scorer=image_scorer, num_sampled_frames=3)
 
     # Mock _extract_frames to return empty list
-    scorer._video_helper._extract_frames = MagicMock(return_value=[])
+    scorer._video_helper._extract_frames = MagicMock(return_value=[])  # type: ignore[ty:invalid-assignment]
 
     with pytest.raises(ValueError, match="No frames extracted from video for scoring."):
         await scorer._score_piece_async(video_converter_sample_video)
@@ -231,7 +231,7 @@ async def test_score_video_no_scores(video_converter_sample_video):
     image_scorer = MockTrueFalseScorer()
 
     # Mock score_prompts_batch_async to return empty list
-    image_scorer.score_prompts_batch_async = AsyncMock(return_value=[])
+    image_scorer.score_prompts_batch_async = AsyncMock(return_value=[])  # type: ignore[ty:invalid-assignment]
     scorer = VideoTrueFalseScorer(image_capable_scorer=image_scorer, num_sampled_frames=3)
 
     with pytest.raises(ValueError, match="No scores returned for image frames extracted from video."):

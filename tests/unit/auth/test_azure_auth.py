@@ -21,7 +21,7 @@ mock_token = "fake token"
 
 def is_speechsdk_installed():
     try:
-        import azure.cognitiveservices.speech  # noqa: F401
+        import azure.cognitiveservices.speech  # type: ignore[ty:unresolved-import]  # noqa: F401
 
         return True
     except ModuleNotFoundError:
