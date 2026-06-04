@@ -149,6 +149,14 @@ async def test_display_image_azure_and_disk_both_fail(mock_disk_io_cls, mock_ipy
     assert "Failed to read image" in caplog.text
 
 
+async def test_display_image_response_async_emits_warning_and_delegates(_mock_central_memory):
+    piece = MagicMock()
+    piece.response_error = "blocked"
+    piece.converted_value_data_type = "text"
+    with pytest.warns(DeprecationWarning, match="display_image_response_async"):
+        await display_image_response_async(piece)
+
+
 async def test_deprecated_alias_emits_warning_and_delegates(_mock_central_memory):
     piece = MagicMock()
     piece.response_error = "blocked"
