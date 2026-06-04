@@ -24,7 +24,7 @@ class SneakyBitsSmugglerConverter(SmugglerConverter):
 
     # Grandfathered: ``action`` is inherited from SmugglerConverter's public API.
     # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
-    _lego_brick_legacy_init = True
+    _brick_legacy_init = True
 
     def __init__(
         self,

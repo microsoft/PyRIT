@@ -9,8 +9,8 @@ Style rules from `style-guide.instructions.md` (async `_async` suffix, keyword-o
 
 The keyword-only `__init__` rule is **enforced at class-definition time** by
 `SeedDatasetProvider.__init_subclass__` calling `enforce_keyword_only_init` (see
-`pyrit/common/lego_brick_contract.py`). Loaders with positional `__init__` params raise
-`TypeError` at import time; existing offenders may set `_lego_brick_legacy_init = True`
+`pyrit/common/brick_contract.py`). Loaders with positional `__init__` params raise
+`TypeError` at import time; existing offenders may set `_brick_legacy_init = True`
 to opt into a one-release grace period that downgrades the error to a
 `DeprecationWarning(removed_in="0.16.0")`.
 

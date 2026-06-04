@@ -5,7 +5,7 @@ import warnings
 
 import pytest
 
-from pyrit.common.lego_brick_contract import enforce_keyword_only_init
+from pyrit.common.brick_contract import enforce_keyword_only_init
 
 
 class _FakeBase:
@@ -60,7 +60,7 @@ def test_positional_init_raises_typeerror() -> None:
     assert "_FakeBase contract" in message
     assert "foo" in message
     assert "bar" in message
-    assert "_lego_brick_legacy_init" in message
+    assert "_brick_legacy_init" in message
 
 
 def test_positional_or_keyword_default_still_raises() -> None:
@@ -99,7 +99,7 @@ def test_legacy_opt_out_downgrades_to_warning() -> None:
         warnings.simplefilter("always")
 
         class Grandfathered(_FakeBase):
-            _lego_brick_legacy_init = True
+            _brick_legacy_init = True
 
             def __init__(self, foo: str, bar: int = 0) -> None:
                 self.foo = foo
@@ -121,7 +121,7 @@ def test_legacy_opt_out_false_still_raises() -> None:
     with pytest.raises(TypeError):
 
         class NotGrandfathered(_FakeBase):
-            _lego_brick_legacy_init = False
+            _brick_legacy_init = False
 
             def __init__(self, foo: str) -> None:
                 self.foo = foo

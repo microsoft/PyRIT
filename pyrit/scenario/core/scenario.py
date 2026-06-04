@@ -168,7 +168,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         See ``.github/instructions/scenarios.instructions.md`` for the contract.
         """
         super().__init_subclass__(**kwargs)
-        from pyrit.common.lego_brick_contract import enforce_keyword_only_init
+        from pyrit.common.brick_contract import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="Scenario")
 

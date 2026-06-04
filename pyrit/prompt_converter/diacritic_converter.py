@@ -21,7 +21,7 @@ class DiacriticConverter(PromptConverter):
     # Grandfathered: ``target_chars`` and ``accent`` are part of the public
     # positional API.
     # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
-    _lego_brick_legacy_init = True
+    _brick_legacy_init = True
 
     def __init__(self, target_chars: str = "aeiou", accent: str = "acute") -> None:
         """

@@ -93,7 +93,7 @@ class Scorer(Identifiable, abc.ABC):
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.lego_brick_contract import enforce_keyword_only_init
+        from pyrit.common.brick_contract import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="Scorer")
 

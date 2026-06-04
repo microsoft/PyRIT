@@ -58,7 +58,7 @@ class PromptShieldTarget(PromptTarget):
     # positional API.
     # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0
     # (this will be a BREAKING CHANGE for callers passing arguments positionally).
-    _lego_brick_legacy_init = True
+    _brick_legacy_init = True
 
     def __init__(
         self,

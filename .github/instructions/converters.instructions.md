@@ -102,10 +102,10 @@ It rejects:
 def __init__(self, foo: str, bar: int = 0) -> None: ...    # missing *
 ```
 
-### Temporary opt-out: ``_lego_brick_legacy_init``
+### Temporary opt-out: ``_brick_legacy_init``
 
 A handful of legacy converters whose positional ``__init__`` is part of the
-public API are grandfathered with ``_lego_brick_legacy_init = True``. They
+public API are grandfathered with ``_brick_legacy_init = True``. They
 emit a ``DeprecationWarning`` at import time and the opt-out is scheduled
 for removal in **0.16.0**. Do not set this flag on new converters; new
 converters MUST follow the keyword-only contract.

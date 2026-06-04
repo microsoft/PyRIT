@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 """
-Constructor contract enforcement for PyRIT's "Lego brick" base classes.
+Constructor contract enforcement for PyRIT's pluggable brick base classes.
 
 Several PyRIT base classes (``PromptConverter``, ``Scorer``, ``PromptTarget``,
 ``Scenario``, ``AttackStrategy``, ``SeedDatasetProvider``) are extension
@@ -15,7 +15,7 @@ that bases invoke from their own ``__init_subclass__`` hook. The helper
 inspects the subclass's directly-defined ``__init__`` (not inherited) and
 classifies it as compliant or non-compliant. Non-compliant subclasses either
 raise ``TypeError`` at class definition time, or, if they opt in via the
-``_lego_brick_legacy_init`` class attribute, emit a ``DeprecationWarning``
+``_brick_legacy_init`` class attribute, emit a ``DeprecationWarning``
 via ``print_deprecation_message`` and continue.
 The opt-out is intended to be removed in ``0.16.0``.
 """
@@ -30,7 +30,7 @@ from pyrit.common.deprecation import print_deprecation_message
 #: Class attribute name that opts a subclass into the legacy-init grace period.
 #: When ``True`` on a class, ``enforce_keyword_only_init`` downgrades the
 #: ``TypeError`` to a ``DeprecationWarning`` until ``_LEGACY_REMOVED_IN``.
-LEGACY_INIT_OPT_OUT_ATTR = "_lego_brick_legacy_init"
+LEGACY_INIT_OPT_OUT_ATTR = "_brick_legacy_init"
 
 #: Version in which the legacy-init opt-out is removed; non-conforming
 #: subclasses will hard-fail at that point.
@@ -42,7 +42,7 @@ def enforce_keyword_only_init(cls: type, *, base_name: str) -> None:
     Validate that ``cls.__init__`` only accepts keyword-only parameters.
 
     Intended to be called from a base class's ``__init_subclass__`` hook to
-    enforce the Lego-brick constructor contract on subclasses.
+    enforce the brick constructor contract on subclasses.
 
     The helper only inspects ``__init__`` defined directly on ``cls`` (i.e.
     ``"__init__" in cls.__dict__``). Subclasses that inherit ``__init__``
@@ -60,7 +60,7 @@ def enforce_keyword_only_init(cls: type, *, base_name: str) -> None:
         TypeError: If ``cls.__init__`` accepts any positional or
             positional-or-keyword parameters after ``self``, and ``cls`` does
             not opt into the legacy-init grace period via the
-            ``_lego_brick_legacy_init`` class attribute.
+            ``_brick_legacy_init`` class attribute.
     """
     if "__init__" not in cls.__dict__:
         # Subclass inherits __init__ from its parent; the parent has already

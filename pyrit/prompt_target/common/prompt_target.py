@@ -51,11 +51,11 @@ class PromptTarget(Identifiable):
 
         Raises:
             TypeError: If the subclass ``__init__`` accepts positional parameters
-                after ``self`` and is not grandfathered via ``_lego_brick_legacy_init``.
+                after ``self`` and is not grandfathered via ``_brick_legacy_init``.
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.lego_brick_contract import enforce_keyword_only_init
+        from pyrit.common.brick_contract import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="PromptTarget")
 
