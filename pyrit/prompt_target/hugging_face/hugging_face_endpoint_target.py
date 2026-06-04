@@ -6,8 +6,7 @@ import warnings
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, construct_response_from_request
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p

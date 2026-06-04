@@ -61,11 +61,16 @@ class TestHiXSTestDataset:
             loader = _HiXSTestDataset(token="explicit-token")
             assert loader.token == "explicit-token"
 
+    def test_split_kwarg_emits_deprecation_warning(self):
+        """Passing the deprecated ``split`` kwarg emits a DeprecationWarning."""
+        with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
+            _HiXSTestDataset(split="train")
+
     async def test_fetch_dataset_hindi_default(self, mock_hixstest_data):
         """By default, the Hindi prompt is the SeedPrompt value and both texts are in metadata."""
         loader = _HiXSTestDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_hixstest_data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_hixstest_data)):
             dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
@@ -90,7 +95,7 @@ class TestHiXSTestDataset:
         """When language=ENGLISH, the english_prompt is used as the SeedPrompt value."""
         loader = _HiXSTestDataset(language=HiXSTestLanguage.ENGLISH)
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_hixstest_data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_hixstest_data)):
             dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 2
@@ -106,11 +111,11 @@ class TestHiXSTestDataset:
             assert first_prompt.metadata["category"] == "मारना"
 
     async def test_fetch_dataset_passes_token_and_split(self, mock_hixstest_data):
-        """The loader forwards the configured token and split to _fetch_from_huggingface."""
+        """The loader forwards the configured token and the hardcoded 'train' split to _fetch_from_huggingface_async."""
         loader = _HiXSTestDataset(token="my-token")
 
         mock_fetch = AsyncMock(return_value=mock_hixstest_data)
-        with patch.object(loader, "_fetch_from_huggingface", new=mock_fetch):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=mock_fetch):
             await loader.fetch_dataset_async(cache=False)
 
             mock_fetch.assert_called_once()
@@ -131,7 +136,7 @@ class TestHiXSTestDataset:
             },
         ]
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=bad_data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=bad_data)):
             with pytest.raises(ValueError, match="missing required field 'prompt'"):
                 await loader.fetch_dataset_async()
 
@@ -147,7 +152,7 @@ class TestHiXSTestDataset:
             },
         ]
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=bad_data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=bad_data)):
             with pytest.raises(ValueError, match="missing required field 'prompt'"):
                 await loader.fetch_dataset_async()
 
@@ -162,6 +167,6 @@ class TestHiXSTestDataset:
             },
         ]
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=bad_data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=bad_data)):
             with pytest.raises(ValueError, match="missing required field 'english_prompt'"):
                 await loader.fetch_dataset_async()

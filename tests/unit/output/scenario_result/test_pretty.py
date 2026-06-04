@@ -5,8 +5,7 @@ import uuid
 
 import pytest
 
-from pyrit.identifiers.component_identifier import ComponentIdentifier
-from pyrit.models import AttackOutcome, AttackResult
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 
@@ -36,7 +35,7 @@ def _scenario_result(
         objective_target_identifier=_target_identifier(**(target_params or {})),
         attack_results=attack_results or {"strategy_a": [_attack_result()]},
         objective_scorer_identifier=objective_scorer_identifier,
-        display_group_map=display_group_map,
+        display_group_map=display_group_map or {},
     )
 
 

@@ -17,13 +17,13 @@ from pyrit.executor.attack.single_turn import (
     PromptSendingAttack,
 )
 from pyrit.executor.core import Strategy, StrategyContext
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     Message,
+    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -183,7 +183,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
         last_attack_result = None  # this is the last AttackResult
 
         for experiment_num in range(context.num_experiments):
-            attack_result = await self._run_experiment(context=context)
+            attack_result = await self._run_experiment_async(context=context)
             experiment_data = self._format_experiment_results(
                 context=context, attack_result=attack_result, experiment_num=experiment_num
             )
@@ -205,7 +205,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
 
         return last_attack_result
 
-    async def _run_experiment(self, context: FairnessBiasBenchmarkContext) -> AttackResult:
+    async def _run_experiment_async(self, context: FairnessBiasBenchmarkContext) -> AttackResult:
         """
         Run a single experiment for the benchmark.
 

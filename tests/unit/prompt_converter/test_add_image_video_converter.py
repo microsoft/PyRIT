@@ -63,7 +63,7 @@ async def test_add_image_video_converter_invalid_image_path(tmp_path, video_conv
     output_path = str(tmp_path / "output_video.mp4")
     converter = AddImageVideoConverter(video_path=video_converter_sample_video, output_path=output_path)
     with pytest.raises(FileNotFoundError):
-        await converter._add_image_to_video(image_path="invalid_image.png", output_path=output_path)
+        await converter._add_image_to_video_async(image_path="invalid_image.png", output_path=output_path)
 
 
 @pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
@@ -71,14 +71,16 @@ async def test_add_image_video_converter_invalid_video_path(tmp_path, video_conv
     output_path = str(tmp_path / "output_video.mp4")
     converter = AddImageVideoConverter(video_path="invalid_video.mp4", output_path=output_path)
     with pytest.raises(FileNotFoundError):
-        await converter._add_image_to_video(image_path=video_converter_sample_image, output_path=output_path)
+        await converter._add_image_to_video_async(image_path=video_converter_sample_image, output_path=output_path)
 
 
 @pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
 async def test_add_image_video_converter(tmp_path, video_converter_sample_video, video_converter_sample_image):
     output_path = str(tmp_path / "output_video.mp4")
     converter = AddImageVideoConverter(video_path=video_converter_sample_video, output_path=output_path)
-    result_path = await converter._add_image_to_video(image_path=video_converter_sample_image, output_path=output_path)
+    result_path = await converter._add_image_to_video_async(
+        image_path=video_converter_sample_image, output_path=output_path
+    )
     assert result_path == output_path
 
 
@@ -103,13 +105,13 @@ async def test_add_image_to_video_raises_when_decode_returns_none(tmp_path, vide
     converter = AddImageVideoConverter(video_path=video_converter_sample_video, output_path=output_path)
 
     mock_image_serializer = AsyncMock()
-    mock_image_serializer.read_data = AsyncMock(return_value=b"not_valid_image_data")
+    mock_image_serializer.read_data_async = AsyncMock(return_value=b"not_valid_image_data")
     mock_image_serializer._is_azure_storage_url = lambda x: False
 
     mock_video_serializer = AsyncMock()
     with open(video_converter_sample_video, "rb") as f:
         video_bytes = f.read()
-    mock_video_serializer.read_data = AsyncMock(return_value=video_bytes)
+    mock_video_serializer.read_data_async = AsyncMock(return_value=video_bytes)
     mock_video_serializer._is_azure_storage_url = lambda x: False
 
     def factory_side_effect(*, category, data_type, value):
@@ -122,4 +124,46 @@ async def test_add_image_to_video_raises_when_decode_returns_none(tmp_path, vide
         side_effect=factory_side_effect,
     ):
         with pytest.raises(ValueError, match="Failed to decode overlay image"):
-            await converter._add_image_to_video(image_path="fake_image.png", output_path=output_path)
+            await converter._add_image_to_video_async(image_path="fake_image.png", output_path=output_path)
+
+
+@pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
+async def test_add_image_to_video_azure_storage_unlinks_local_temp(
+    tmp_path, video_converter_sample_video, video_converter_sample_image
+):
+    """When the video is in Azure storage, the downloaded local temp file is unlinked after processing."""
+    from unittest.mock import AsyncMock, patch
+
+    output_path = str(tmp_path / "output_video.mp4")
+    converter = AddImageVideoConverter(video_path=video_converter_sample_video, output_path=output_path)
+
+    with open(video_converter_sample_video, "rb") as f:
+        video_bytes = f.read()
+    with open(video_converter_sample_image, "rb") as f:
+        image_bytes = f.read()
+
+    mock_image_serializer = AsyncMock()
+    mock_image_serializer.read_data_async = AsyncMock(return_value=image_bytes)
+    mock_image_serializer._is_azure_storage_url = lambda x: False
+
+    mock_video_serializer = AsyncMock()
+    mock_video_serializer.read_data_async = AsyncMock(return_value=video_bytes)
+    # Flag this video as living in Azure storage so the cleanup branch runs.
+    mock_video_serializer._is_azure_storage_url = lambda x: True
+
+    def factory_side_effect(*, category, data_type, value):
+        if data_type == "image_path":
+            return mock_image_serializer
+        return mock_video_serializer
+
+    with (
+        patch(
+            "pyrit.prompt_converter.add_image_to_video_converter.data_serializer_factory",
+            side_effect=factory_side_effect,
+        ),
+        patch("pyrit.prompt_converter.add_image_to_video_converter.DB_DATA_PATH", tmp_path),
+    ):
+        await converter._add_image_to_video_async(image_path=video_converter_sample_image, output_path=output_path)
+
+    # The local copy of the Azure-stored video should be removed by the cleanup branch.
+    assert not (tmp_path / "temp_video.mp4").exists()

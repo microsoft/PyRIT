@@ -22,7 +22,7 @@ from abc import ABC
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from pyrit.identifiers import ComponentIdentifier, Identifiable
+from pyrit.models import ComponentIdentifier, Identifiable
 from pyrit.registry.base import RegistryProtocol
 
 if TYPE_CHECKING:

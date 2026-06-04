@@ -3,15 +3,14 @@
 
 import base64
 import logging
-import warnings
 from io import BytesIO
 from typing import cast
 
 from PIL import Image, ImageFont
 from PIL.ImageFont import FreeTypeFont
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType, data_serializer_factory
+from pyrit.common.deprecation import print_deprecation_message
+from pyrit.models import ComponentIdentifier, PromptDataType, data_serializer_factory
 from pyrit.prompt_converter.base_image_text_converter import _BaseImageTextConverter
 from pyrit.prompt_converter.prompt_converter import ConverterResult
 
@@ -83,12 +82,10 @@ class AddImageTextConverter(_BaseImageTextConverter):
                 raise TypeError(f"AddImageTextConverter takes at most 1 positional argument, got {len(args)}")
             if img_to_add:
                 raise TypeError("Cannot pass img_to_add as both positional and keyword argument")
-            warnings.warn(
-                "Passing 'img_to_add' as a positional argument is deprecated. "
-                "Use img_to_add=... as a keyword argument. "
-                "It will be keyword-only starting in version 0.15.0.",
-                FutureWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="Passing img_to_add as a positional argument to AddImageTextConverter",
+                new_item="AddImageTextConverter(img_to_add=...) keyword argument",
+                removed_in="0.15.0",
             )
             img_to_add = args[0]
         if x_pos is not _UNSET or y_pos is not _UNSET:
@@ -96,11 +93,10 @@ class AddImageTextConverter(_BaseImageTextConverter):
                 raise ValueError(
                     "Cannot pass x_pos/y_pos together with bounding_box. Use bounding_box=(x, y, x2, y2) instead."
                 )
-            warnings.warn(
-                "x_pos and y_pos are deprecated. Use bounding_box=(x, y, x2, y2) instead. "
-                "They will be removed in version 0.15.0.",
-                FutureWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="AddImageTextConverter(x_pos=..., y_pos=...)",
+                new_item="AddImageTextConverter(bounding_box=(x1, y1, x2, y2))",
+                removed_in="0.15.0",
             )
         # Resolve defaults after deprecation check
         if x_pos is _UNSET:
@@ -127,6 +123,11 @@ class AddImageTextConverter(_BaseImageTextConverter):
         self._bounding_box = bounding_box
         self._rotation = rotation
         self._center_text = center_text
+        # Load the base image once at construction time so the hot path (`_add_text_to_image`)
+        # doesn't do file I/O or image decode on each `convert_async` call.
+        with Image.open(self._img_to_add) as img:
+            img.load()
+            self._base_image = img.copy()
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -243,7 +244,7 @@ class AddImageTextConverter(_BaseImageTextConverter):
         if not text:
             raise ValueError("Please provide valid text value")
 
-        image = Image.open(self._img_to_add)
+        image = self._base_image.copy()
 
         if self._bounding_box:
             bounding_box = self._bounding_box
@@ -307,5 +308,5 @@ class AddImageTextConverter(_BaseImageTextConverter):
         updated_img.save(image_bytes, format=image_type)
         image_str = base64.b64encode(image_bytes.getvalue())
         # Save image as generated UUID filename
-        await img_serializer.save_b64_image(data=image_str)
+        await img_serializer.save_b64_image_async(data=image_str)
         return ConverterResult(output_text=str(img_serializer.value), output_type="image_path")

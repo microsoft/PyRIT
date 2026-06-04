@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+import uuid
 from textwrap import dedent
 from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,9 +11,8 @@ import pytest
 from unit.mocks import get_mock_target_identifier
 
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
-from pyrit.models import Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
     Scorer,
@@ -173,7 +173,7 @@ async def test_scorer_send_chat_target_async_bad_json_exception_retries(bad_json
     chat_target.send_prompt_async = AsyncMock(return_value=[bad_json_resp])
     scorer = MockScorer()
     with pytest.raises(InvalidJsonException):
-        await scorer._score_value_with_llm(
+        await scorer._score_value_with_llm_async(
             prompt_target=chat_target,
             system_prompt="system_prompt",
             message_value="message_value",
@@ -195,7 +195,7 @@ async def test_scorer_score_value_with_llm_exception_display_prompt_id():
     scorer = MockScorer()
 
     with pytest.raises(Exception, match="Error scoring prompt with original prompt ID: 123"):
-        await scorer._score_value_with_llm(
+        await scorer._score_value_with_llm_async(
             prompt_target=chat_target,
             system_prompt="system_prompt",
             message_value="message_value",
@@ -221,7 +221,7 @@ async def test_scorer_score_value_with_llm_use_provided_attack_identifier(good_j
     expected_attack_identifier = ComponentIdentifier(class_name="TestAttack", class_module="test.module")
     expected_scored_prompt_id = "123"
 
-    await scorer._score_value_with_llm(
+    await scorer._score_value_with_llm_async(
         prompt_target=chat_target,
         system_prompt=expected_system_prompt,
         message_value="message_value",
@@ -253,7 +253,7 @@ async def test_scorer_score_value_with_llm_does_not_add_score_prompt_id_for_empt
 
     expected_system_prompt = "system_prompt"
 
-    await scorer._score_value_with_llm(
+    await scorer._score_value_with_llm_async(
         prompt_target=chat_target,
         system_prompt=expected_system_prompt,
         message_value="message_value",
@@ -282,7 +282,7 @@ async def test_scorer_send_chat_target_async_good_response(good_json):
 
     scorer = MockScorer()
 
-    await scorer._score_value_with_llm(
+    await scorer._score_value_with_llm_async(
         prompt_target=chat_target,
         system_prompt="system_prompt",
         message_value="message_value",
@@ -306,7 +306,7 @@ async def test_scorer_remove_markdown_json_called(good_json):
     scorer = MockScorer()
 
     with patch("pyrit.score.scorer.remove_markdown_json", wraps=remove_markdown_json) as mock_remove_markdown_json:
-        await scorer._score_value_with_llm(
+        await scorer._score_value_with_llm_async(
             prompt_target=chat_target,
             system_prompt="system_prompt",
             message_value="message_value",
@@ -330,7 +330,7 @@ async def test_score_value_with_llm_prepended_text_message_piece_creates_multipi
 
     scorer = MockScorer()
 
-    await scorer._score_value_with_llm(
+    await scorer._score_value_with_llm_async(
         prompt_target=chat_target,
         system_prompt="system_prompt",
         message_value="test_image.png",
@@ -373,7 +373,7 @@ async def test_score_value_with_llm_no_prepended_text_creates_single_piece_messa
 
     scorer = MockScorer()
 
-    await scorer._score_value_with_llm(
+    await scorer._score_value_with_llm_async(
         prompt_target=chat_target,
         system_prompt="system_prompt",
         message_value="objective: test\nresponse: some text",
@@ -408,7 +408,7 @@ async def test_score_value_with_llm_prepended_text_works_with_audio(good_json):
 
     scorer = MockScorer()
 
-    await scorer._score_value_with_llm(
+    await scorer._score_value_with_llm_async(
         prompt_target=chat_target,
         system_prompt="system_prompt",
         message_value="test_audio.wav",
@@ -998,15 +998,15 @@ async def test_score_response_async_concurrent_execution():
 
     async def mock_aux_score_async(message: Message, **kwargs) -> list[Score]:
         call_order.append("aux_start")
-        # Simulate some async work
-        await asyncio.sleep(0.01)
+        # Yield so the other scorer can interleave (proves concurrent execution).
+        await asyncio.sleep(0)
         call_order.append("aux_end")
         return [MagicMock(spec=Score)]
 
     async def mock_obj_score_async(message: Message, **kwargs) -> list[Score]:
         call_order.append("obj_start")
-        # Simulate some async work
-        await asyncio.sleep(0.01)
+        # Yield so the other scorer can interleave (proves concurrent execution).
+        await asyncio.sleep(0)
         call_order.append("obj_end")
         score = MagicMock(spec=Score)
         score.get_value.return_value = True
@@ -1052,25 +1052,26 @@ async def test_get_supported_pieces_filters_unsupported_data_types(patch_central
     )
 
     # Create a response with mixed data types
+    text_id = uuid.uuid4()
     text_piece = MessagePiece(
         role="assistant",
         original_value="text response",
         converted_value_data_type="text",
-        id="text-1",
+        id=text_id,
         conversation_id="test-convo",
     )
     image_piece = MessagePiece(
         role="assistant",
         original_value="image.png",
         converted_value_data_type="image_path",
-        id="image-1",
+        id=uuid.uuid4(),
         conversation_id="test-convo",
     )
     audio_piece = MessagePiece(
         role="assistant",
         original_value="audio.wav",
         converted_value_data_type="audio_path",
-        id="audio-1",
+        id=uuid.uuid4(),
         conversation_id="test-convo",
     )
 
@@ -1086,9 +1087,9 @@ async def test_get_supported_pieces_filters_unsupported_data_types(patch_central
 
     # Should only score the text piece
     assert len(scorer.scored_piece_ids) == 1
-    assert scorer.scored_piece_ids[0] == "text-1"
+    assert scorer.scored_piece_ids[0] == str(text_id)
     assert len(scores) == 1
-    assert scores[0].message_piece_id == "text-1"
+    assert scores[0].message_piece_id == text_id
 
 
 async def test_unsupported_pieces_ignored_when_enforce_all_pieces_valid_false(patch_central_database):
@@ -1097,18 +1098,19 @@ async def test_unsupported_pieces_ignored_when_enforce_all_pieces_valid_false(pa
     scorer = MockFloatScorer(validator=validator)
 
     # Create a response with only unsupported types and one supported
+    text_id = uuid.uuid4()
     text_piece = MessagePiece(
         role="assistant",
         original_value="text response",
         converted_value_data_type="text",
-        id="text-1",
+        id=text_id,
         conversation_id="test-convo",
     )
     image_piece = MessagePiece(
         role="assistant",
         original_value="image.png",
         converted_value_data_type="image_path",
-        id="image-1",
+        id=uuid.uuid4(),
         conversation_id="test-convo",
     )
 
@@ -1119,7 +1121,7 @@ async def test_unsupported_pieces_ignored_when_enforce_all_pieces_valid_false(pa
 
     assert len(scores) == 1
     assert len(scorer.scored_piece_ids) == 1
-    assert scorer.scored_piece_ids[0] == "text-1"
+    assert scorer.scored_piece_ids[0] == str(text_id)
 
 
 async def test_all_unsupported_pieces_raises_error(patch_central_database):
@@ -1132,14 +1134,14 @@ async def test_all_unsupported_pieces_raises_error(patch_central_database):
         role="assistant",
         original_value="image.png",
         converted_value_data_type="image_path",
-        id="image-1",
+        id=uuid.uuid4(),
         conversation_id="test-convo",
     )
     audio_piece = MessagePiece(
         role="assistant",
         original_value="audio.wav",
         converted_value_data_type="audio_path",
-        id="audio-1",
+        id=uuid.uuid4(),
         conversation_id="test-convo",
     )
 
@@ -1187,18 +1189,19 @@ async def test_true_false_scorer_uses_supported_pieces_only(patch_central_databa
     scorer = TestTrueFalseScorer()
 
     # Create mixed response
+    text_id = uuid.uuid4()
     text_piece = MessagePiece(
         role="assistant",
         original_value="text",
         converted_value_data_type="text",
-        id="text-1",
+        id=text_id,
         conversation_id="test-convo",
     )
     image_piece = MessagePiece(
         role="assistant",
         original_value="image.png",
         converted_value_data_type="image_path",
-        id="image-1",
+        id=uuid.uuid4(),
         conversation_id="test-convo",
     )
 
@@ -1209,7 +1212,7 @@ async def test_true_false_scorer_uses_supported_pieces_only(patch_central_databa
 
     # Should only score the text piece
     assert len(scorer.scored_piece_ids) == 1
-    assert scorer.scored_piece_ids[0] == "text-1"
+    assert scorer.scored_piece_ids[0] == text_id
     # TrueFalseScorer aggregates to single score
     assert len(scores) == 1
     assert scores[0].score_value == "true"
@@ -1221,18 +1224,20 @@ async def test_base_scorer_score_async_implementation(patch_central_database):
     scorer = MockFloatScorer(validator=validator)
 
     # Create response with multiple supported pieces
+    text_id1 = uuid.uuid4()
+    text_id2 = uuid.uuid4()
     text_piece1 = MessagePiece(
         role="assistant",
         original_value="text 1",
         converted_value_data_type="text",
-        id="text-1",
+        id=text_id1,
         conversation_id="test-convo",
     )
     text_piece2 = MessagePiece(
         role="assistant",
         original_value="text 2",
         converted_value_data_type="text",
-        id="text-2",
+        id=text_id2,
         conversation_id="test-convo",
     )
 
@@ -1243,8 +1248,8 @@ async def test_base_scorer_score_async_implementation(patch_central_database):
 
     # Should score both pieces
     assert len(scorer.scored_piece_ids) == 2
-    assert "text-1" in scorer.scored_piece_ids
-    assert "text-2" in scorer.scored_piece_ids
+    assert str(text_id1) in scorer.scored_piece_ids
+    assert str(text_id2) in scorer.scored_piece_ids
     assert len(scores) == 2
 
 
@@ -1366,7 +1371,6 @@ class TestTrueFalseScorerEmptyScoreListRationale:
             original_value="",
             converted_value="",
             converted_value_data_type="text",
-            id="blocked-piece-id",
             conversation_id="test-convo",
             response_error="blocked",
         )
@@ -1389,7 +1393,6 @@ class TestTrueFalseScorerEmptyScoreListRationale:
             original_value="",
             converted_value="",
             converted_value_data_type="text",
-            id="error-piece-id",
             conversation_id="test-convo",
             response_error="unknown",
         )
@@ -1412,7 +1415,6 @@ class TestTrueFalseScorerEmptyScoreListRationale:
             original_value="some text",
             converted_value="some text",
             converted_value_data_type="text",
-            id="normal-piece-id",
             conversation_id="test-convo",
             response_error="none",
         )
@@ -1436,7 +1438,6 @@ class TestTrueFalseScorerEmptyScoreListRationale:
             original_value="",
             converted_value="",
             converted_value_data_type="text",
-            id="blocked-piece-id",
             conversation_id="test-convo",
             response_error="blocked",
         )
@@ -1496,7 +1497,6 @@ class TestFloatScaleScorerEmptyScoreListRationale:
             original_value="",
             converted_value="",
             converted_value_data_type="error",
-            id="blocked-piece-id",
             conversation_id="test-convo",
             response_error="blocked",
         )
@@ -1519,7 +1519,6 @@ class TestFloatScaleScorerEmptyScoreListRationale:
             original_value="",
             converted_value="",
             converted_value_data_type="error",
-            id="error-piece-id",
             conversation_id="test-convo",
             response_error="unknown",
         )
@@ -1541,7 +1540,6 @@ class TestFloatScaleScorerEmptyScoreListRationale:
             original_value="some text",
             converted_value="some text",
             converted_value_data_type="text",
-            id="normal-piece-id",
             conversation_id="test-convo",
             response_error="none",
         )
@@ -1564,7 +1562,6 @@ class TestFloatScaleScorerEmptyScoreListRationale:
             original_value="",
             converted_value="error-json-blob",
             converted_value_data_type="error",
-            id="blocked-piece-id",
             conversation_id="test-convo",
             response_error="blocked",
         )
@@ -1605,7 +1602,7 @@ async def test_score_value_with_llm_skips_reasoning_piece(good_json):
 
     scorer = MockScorer()
 
-    result = await scorer._score_value_with_llm(
+    result = await scorer._score_value_with_llm_async(
         prompt_target=chat_target,
         system_prompt="system_prompt",
         message_value="message_value",

@@ -32,8 +32,13 @@ from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackScoringConfig,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable, build_seed_identifier
-from pyrit.models import SeedAttackTechniqueGroup, SeedSimulatedConversation
+from pyrit.models import (
+    ComponentIdentifier,
+    Identifiable,
+    SeedAttackTechniqueGroup,
+    SeedSimulatedConversation,
+    build_seed_identifier,
+)
 from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemPromptPaths
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
@@ -326,6 +331,11 @@ class AttackTechniqueFactory(Identifiable):
     def uses_adversarial(self) -> bool:
         """Whether this technique drives an adversarial chat during execution."""
         return self._uses_adversarial
+
+    @property
+    def scoring_config_type(self) -> type | None:
+        """The required ``attack_scoring_config`` subtype, or ``None`` if any config is accepted."""
+        return self._get_scoring_config_type()
 
     def create(
         self,

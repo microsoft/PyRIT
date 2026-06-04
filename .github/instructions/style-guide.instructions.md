@@ -6,11 +6,44 @@ applyTo: '**/*.py'
 
 Follow these coding standards to ensure consistent, readable, and maintainable code across the PyRIT project.
 
+## Async Code
+
+### No Blocking I/O in Async Paths
+- **MANDATORY**: Inside `async def` (and any sync helper reached from one), never call blocking I/O or `time.sleep`. They stall the event loop and serialize all concurrent work.
+- File I/O → `aiofiles` (already a project dep). HTTP → `httpx.AsyncClient` or `pyrit.common.net_utility.make_request_and_raise_if_error_async`. Sleeps → `asyncio.sleep`. Subprocess → `asyncio.create_subprocess_*`. Blocking-only libs (`wave`, `av`, `cv2`, `PIL.Image.open` from disk, `zipfile`, `yaml`, `json` reads from file) → wrap the blocking section in a sync helper and call via `await asyncio.to_thread(_helper, ...)`.
+- I/O that runs **once at construction time** (`__init__`) is sync by design; prefer doing one-shot reads there rather than on every async call.
+
+```python
+# WRONG — blocks the event loop on every send
+async def _send_async(self):
+    with open(self.file_path, "rb") as fp:
+        return fp.read()
+
+# CORRECT — async file read
+async def _send_async(self):
+    async with aiofiles.open(self.file_path, "rb") as fp:
+        return await fp.read()
+
+# WRONG — sync-only library called directly
+async def _read_audio_async(self, path):
+    with wave.open(path, "rb") as wav:
+        return wav.readframes(wav.getnframes())
+
+# CORRECT — wrap blocking lib in to_thread
+def _read_wav_sync(path):
+    with wave.open(path, "rb") as wav:
+        return wav.readframes(wav.getnframes())
+
+async def _read_audio_async(self, path):
+    return await asyncio.to_thread(_read_wav_sync, path)
+```
+
 ## Function and Method Naming
 
 ### Async Functions
 - **MANDATORY**: All async functions and methods MUST end with `_async` suffix
 - This applies to ALL async functions without exception
+- Enforced by the `check-async-suffix` pre-commit hook (`build_scripts/check_async_suffix.py`)
 
 ```python
 # CORRECT
@@ -21,6 +54,13 @@ async def send_prompt_async(self, prompt: str) -> Message:
 async def send_prompt(self, prompt: str) -> Message:  # Missing _async suffix
     ...
 ```
+
+**Exemptions** are limited and explicit:
+- Async dunders (`__aenter__`, `__aexit__`, `__aiter__`, `__anext__`) are exempt automatically.
+- A small set of framework-mandated names (`lifespan`, `dispatch`, `__call__`) is exempt
+  automatically; see `_FRAMEWORK_EXEMPT_NAMES` in `build_scripts/check_async_suffix.py`.
+- For one-off exemptions (e.g. an external SDK protocol method) add a
+  `# pyrit-async-suffix-exempt` trailing comment on the `async def` line.
 
 ### Private Methods
 - Private methods MUST start with underscore
@@ -196,28 +236,43 @@ def calculate_score(
 
 The PyRIT docs build uses **MyST** (Markdown-flavoured), not reStructuredText.
 Do **not** use reST cross-reference roles in docstrings or module comments —
-they render as raw text under MyST and are inconsistent with the rest of the
-codebase, which uses plain double-backtick code spans for symbol names.
+they render as raw text under MyST. A pre-commit hook
+(`check_no_rest_roles`) blocks new ones from landing.
+
+Use plain double-backticks for symbol references. The API page generator
+(`build_scripts/gen_api_md.py`) automatically rewrites known PyRIT symbol
+names into MyST cross-reference links at build time, so you get clickable
+navigation in the rendered docs without any extra markup.
 
 ```python
-# WRONG — reST roles render as literal `:class:\`SeedPrompt\`` under MyST
+# WRONG — reST roles render as literal `:class:\`SeedPrompt\`` under MyST,
+# and the pre-commit guard will reject them
 """Returns a :class:`SeedPrompt` instance."""
 """Delegate to :func:`download_files_async` (deprecated alias)."""
 """See :meth:`PromptTarget.apply_capabilities` for details."""
 
-# CORRECT — plain double-backtick code span (matches existing convention)
+# CORRECT — plain double-backticks; gen_api_md.py auto-links these
 """Returns a ``SeedPrompt`` instance."""
 """Delegate to ``download_files_async`` (deprecated alias)."""
 """See ``PromptTarget.apply_capabilities`` for details."""
 ```
 
-Roles to avoid include `:class:`, `:func:`, `:meth:`, `:mod:`, `:attr:`,
-`:data:`, `:exc:`, `:obj:`, `:ref:`, and any `:py:*:` variants
-(e.g. `:py:class:`, `:py:func:`).
+The auto-linker resolves:
 
-If you genuinely need a Sphinx cross-reference (rare in PyRIT — most
-docstrings just name the symbol in backticks), use the MyST role syntax
-`` {class}`Name` `` instead. The default, though, is plain double-backticks.
+- bare class/function names (`` ``SeedPrompt`` ``)
+- `Class.method` references (`` ``PromptTarget.apply_capabilities`` ``)
+- fully-qualified paths (`` ``pyrit.models.SeedPrompt`` ``)
+- bare method names when the docstring is on the owning class
+  (`` ``send_prompt_async`` `` inside `PromptTarget`)
+
+Ambiguous short names (e.g. two unrelated classes both called `Scorer`)
+are left as plain code-spans; spell out the FQN when you need a stable
+cross-reference. Unknown names also stay as plain code-spans, so
+docstrings remain safe to write without consulting the symbol index.
+
+If you need an explicit MyST link in markdown documentation, use the
+standard syntax `` [`Name`](#api-pyrit_module-Name) `` — but inside
+Python docstrings this should be rare; plain backticks are the default.
 
 ### Class-Level Constants
 - Define constants as class attributes, not module-level
@@ -503,6 +558,7 @@ def process_large_dataset(self, *, file_path: Path) -> list[Result]:
 ## Final Checklist
 
 Before committing code, ensure:
+- [ ] No blocking I/O on async paths (no sync `open`, `requests.*`, `time.sleep`, `wave.open`, etc. inside `async def` or sync helpers reached from `async def`)
 - [ ] All async functions have `_async` suffix
 - [ ] All functions have complete type annotations
 - [ ] Functions with >1 parameter use keyword-only arguments

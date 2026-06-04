@@ -45,7 +45,7 @@ def generate_request(conversation_id: Optional[str] = None) -> Message:
     )
 
 
-@patch("requests.post")
+@patch("pyrit.score.true_false.gandalf_scorer.make_request_and_raise_if_error_async", new_callable=AsyncMock)
 @pytest.mark.parametrize("password_correct", [True, False])
 @pytest.mark.parametrize("level", [GandalfLevel.LEVEL_1, GandalfLevel.LEVEL_2, GandalfLevel.LEVEL_3])
 async def test_gandalf_scorer_score(
@@ -63,9 +63,7 @@ async def test_gandalf_scorer_score(
 
     scorer = GandalfScorer(level=level, chat_target=chat_target)
 
-    mocked_post.return_value = MagicMock(
-        status_code=200, json=lambda: {"success": password_correct, "message": "Message"}
-    )
+    mocked_post.return_value = MagicMock(json=lambda: {"success": password_correct, "message": "Message"})
 
     scores = await scorer.score_async(response)
 
@@ -82,7 +80,7 @@ async def test_gandalf_scorer_score(
     assert scores[0].scorer_class_identifier.class_name == "GandalfScorer"
 
 
-@patch("requests.post")
+@patch("pyrit.score.true_false.gandalf_scorer.make_request_and_raise_if_error_async", new_callable=AsyncMock)
 @pytest.mark.parametrize("level", [GandalfLevel.LEVEL_1, GandalfLevel.LEVEL_2, GandalfLevel.LEVEL_3])
 async def test_gandalf_scorer_set_system_prompt(
     mocked_post,
@@ -100,7 +98,7 @@ async def test_gandalf_scorer_set_system_prompt(
 
     scorer = GandalfScorer(chat_target=chat_target, level=level)
 
-    mocked_post.return_value = MagicMock(status_code=200, json=lambda: {"success": True, "message": "Message"})
+    mocked_post.return_value = MagicMock(json=lambda: {"success": True, "message": "Message"})
 
     await scorer.score_async(response)
 
@@ -109,7 +107,7 @@ async def test_gandalf_scorer_set_system_prompt(
     mocked_post.assert_called_once()
 
 
-@patch("requests.post")
+@patch("pyrit.score.true_false.gandalf_scorer.make_request_and_raise_if_error_async", new_callable=AsyncMock)
 @pytest.mark.parametrize("level", [GandalfLevel.LEVEL_1, GandalfLevel.LEVEL_2, GandalfLevel.LEVEL_3])
 async def test_gandalf_scorer_adds_to_memory(mocked_post, level: GandalfLevel, sqlite_instance: MemoryInterface):
     conversation_id = str(uuid.uuid4())
@@ -122,8 +120,7 @@ async def test_gandalf_scorer_adds_to_memory(mocked_post, level: GandalfLevel, s
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[response])
 
-    # Mock the requests.post call to return a successful response
-    mocked_post.return_value = MagicMock(status_code=200, json=lambda: {"success": True, "message": "Message"})
+    mocked_post.return_value = MagicMock(json=lambda: {"success": True, "message": "Message"})
 
     with patch.object(sqlite_instance, "get_message_pieces", return_value=[generated_request.message_pieces[0]]):
         scorer = GandalfScorer(level=level, chat_target=chat_target)
@@ -147,3 +144,28 @@ async def test_gandalf_scorer_runtime_error_retries(level: GandalfLevel, sqlite_
         await scorer.score_async(response)
 
     assert chat_target.send_prompt_async.call_count == 1
+
+
+@patch("pyrit.score.true_false.gandalf_scorer.make_request_and_raise_if_error_async", new_callable=AsyncMock)
+async def test_gandalf_scorer_wraps_httpx_error_as_pyrit_exception(mocked_post, sqlite_instance: MemoryInterface):
+    """A failure from the Gandalf API call surfaces as PyritException (not a raw httpx error)."""
+    import httpx
+
+    conversation_id = str(uuid.uuid4())
+    sqlite_instance.add_message_to_memory(request=generate_request(conversation_id=conversation_id))
+    response = generate_password_extraction_response("SUNSHINE", conversation_id=conversation_id)
+    sqlite_instance.add_message_to_memory(request=response)
+
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(return_value=[response])
+
+    mocked_post.side_effect = httpx.HTTPStatusError(
+        "boom",
+        request=httpx.Request("POST", "https://gandalf.example/score"),
+        response=httpx.Response(500),
+    )
+
+    scorer = GandalfScorer(level=GandalfLevel.LEVEL_1, chat_target=chat_target)
+    with pytest.raises(PyritException, match="Error in scorer GandalfScorer"):
+        await scorer.score_async(response)

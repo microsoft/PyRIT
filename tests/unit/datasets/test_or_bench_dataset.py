@@ -35,7 +35,7 @@ class TestORBench80KDataset:
         """Test fetching OR-Bench 80K dataset."""
         loader = _ORBench80KDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_or_bench_data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_or_bench_data)):
             dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
@@ -60,7 +60,7 @@ class TestORBenchHardDataset:
         loader = _ORBenchHardDataset()
 
         with patch.object(
-            loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_or_bench_data)
+            loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_or_bench_data)
         ) as mock_fetch:
             dataset = await loader.fetch_dataset_async()
 
@@ -82,7 +82,7 @@ class TestORBenchToxicDataset:
         loader = _ORBenchToxicDataset()
 
         with patch.object(
-            loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_or_bench_data)
+            loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_or_bench_data)
         ) as mock_fetch:
             dataset = await loader.fetch_dataset_async()
 
@@ -94,3 +94,10 @@ class TestORBenchToxicDataset:
         """Test dataset_name property."""
         loader = _ORBenchToxicDataset()
         assert loader.dataset_name == "or_bench_toxic"
+
+
+def test_split_kwarg_emits_deprecation_warning():
+    """All OR-Bench loaders inherit the deprecated ``split`` kwarg from the base class."""
+    for cls in (_ORBench80KDataset, _ORBenchHardDataset, _ORBenchToxicDataset):
+        with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
+            cls(split="train")

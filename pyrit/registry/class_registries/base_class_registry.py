@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
     from typing_extensions import Self
 
-from pyrit.identifiers.class_name_utils import class_name_to_snake_case
+from pyrit.models import class_name_to_snake_case
 from pyrit.registry.base import ClassRegistryEntry, RegistryProtocol
 
 # Type variable for the registered class type

@@ -10,8 +10,7 @@ from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
-    from pyrit.identifiers import ComponentIdentifier
-    from pyrit.models import MessagePiece, Score, UnvalidatedScore
+    from pyrit.models import ComponentIdentifier, MessagePiece, Score, UnvalidatedScore
     from pyrit.prompt_target import PromptTarget
 
 
@@ -141,12 +140,12 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
                 message_piece=message_piece,
             )
 
-        unvalidated: UnvalidatedScore = await self._score_value_with_llm(
+        unvalidated: UnvalidatedScore = await self._score_value_with_llm_async(
             prompt_target=self._prompt_target,
             system_prompt=system_prompt,
             message_value=user_prompt,
             message_data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+            scored_prompt_id=message_piece.id,
             category=self._score_category,
             objective=objective,
             attack_identifier=message_piece.attack_identifier,

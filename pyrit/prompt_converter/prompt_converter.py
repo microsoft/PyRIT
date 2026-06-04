@@ -9,8 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, get_args
 
 from pyrit import prompt_converter
-from pyrit.identifiers import ComponentIdentifier, Identifiable
-from pyrit.models import PromptDataType
+from pyrit.models import ComponentIdentifier, Identifiable, PromptDataType
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
@@ -168,7 +167,7 @@ class PromptConverter(Identifiable):
         if prompt.count(start_token) != prompt.count(end_token):
             raise ValueError("Uneven number of start tokens and end tokens.")
 
-        tasks = [self._replace_text_match(match) for match in matches]
+        tasks = [self._replace_text_match_async(match) for match in matches]
         converted_parts = await asyncio.gather(*tasks)
 
         for original, converted in zip(matches, converted_parts, strict=False):
@@ -176,7 +175,7 @@ class PromptConverter(Identifiable):
 
         return ConverterResult(output_text=prompt, output_type="text")
 
-    async def _replace_text_match(self, match: str) -> ConverterResult:
+    async def _replace_text_match_async(self, match: str) -> ConverterResult:
         return await self.convert_async(prompt=match, input_type="text")
 
     def _build_identifier(self) -> ComponentIdentifier:

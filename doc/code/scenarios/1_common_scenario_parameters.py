@@ -118,7 +118,7 @@ await baseline_scenario.initialize_async(  # type: ignore
     dataset_config=dataset_config,
 )
 baseline_result = await baseline_scenario.run_async()  # type: ignore
-await output_scenario_async(baseline_result)
+await output_scenario_async(baseline_result)  # type: ignore [top-level-await]
 
 # %% [markdown]
 # ### Sorting the Per-Group Breakdown by Success Rate
@@ -170,5 +170,6 @@ await custom_scenario.initialize_async(  # type: ignore
     scenario_strategies=[FoundryStrategy.Base64],
     dataset_config=dataset_config,
 )
+
 custom_result = await custom_scenario.run_async()  # type: ignore
 await output_scenario_async(custom_result)
