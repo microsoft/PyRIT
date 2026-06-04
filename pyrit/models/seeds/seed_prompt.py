@@ -49,14 +49,6 @@ class SeedPrompt(Seed):
     # response shape; otherwise the normalization pipeline omits it.
     response_json_schema: JsonSchemaDefinition | None = None
 
-    # Init-only YAML/constructor sugar: pass a registry name (e.g.
-    # ``true_false_with_rationale``) and a ``mode="before"`` validator resolves
-    # it against ``COMMON_JSON_SCHEMAS`` into ``response_json_schema``. The
-    # name is popped before Pydantic field validation so it never becomes an
-    # instance attribute — runtime consumers (scorers, memory, attacks) read
-    # ``response_json_schema`` only. Mutually exclusive with
-    # ``response_json_schema`` — setting both raises ``ValueError``.
-
     # Role of the prompt in a conversation (e.g., "user", "assistant")
     role: ChatMessageRole | None = None
 

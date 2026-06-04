@@ -7,7 +7,7 @@ from typing import override
 from pyrit.message_normalizer.message_normalizer import MessageListNormalizer
 from pyrit.models import JSON_SCHEMA_METADATA_KEY, JsonSchemaDefinition, Message, MessagePiece
 
-# Block appended to a text message piece when the target cannot natively
+# Default text appended to a message piece when the target cannot natively
 # enforce a JSON schema. The exact phrasing mirrors the legacy in-prompt
 # instructions in the refusal scorer YAMLs and is generic enough to apply
 # to any schema body. The schema itself is pretty-printed so a model can
