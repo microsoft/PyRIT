@@ -12,34 +12,17 @@ import json
 import logging
 from typing import Optional, Union
 
+from pyrit.exceptions.exception_classes import CONTENT_FILTER_MARKERS
+
 logger = logging.getLogger(__name__)
 
 
-# Empirically-observed markers in OpenAI / Azure OpenAI / MAI error payloads that
-# indicate the response was blocked by a content filter or safety system.
-#
-# There is no canonical spec for these — providers expose the signal through
-# different field names (``error.code``, ``finish_reason``, ``incomplete_details.reason``,
-# free-form ``error.message``) and the exact wording evolves over time. Rather than
-# try to track every (provider, field) combination as an exact match, we scan the
-# entire payload as a substring search for resilience: adding support for a new
-# provider variant is then a one-line change to the set below.
-#
-# Each marker below is justified by a concrete provider response shape:
-#   - ``content_filter``           - OpenAI ``finish_reason``; Azure ``error.code``;
-#                                    Azure ``content_filter_results`` field name.
-#   - ``content_safety_violation`` - MAI image models ``error.code`` (added in PR #1890).
-#   - ``policy_violation``         - Substring of Azure's ``content_policy_violation``
-#                                    and OpenAI moderation's ``usage_policy_violation``.
-#   - ``moderation_blocked``       - OpenAI moderation ``error.code``.
-CONTENT_FILTER_MARKERS = frozenset(
-    {
-        "content_filter",
-        "content_safety_violation",
-        "policy_violation",
-        "moderation_blocked",
-    }
-)
+# Re-export ``CONTENT_FILTER_MARKERS`` so external callers that historically imported
+# the constant from this module continue to work. The single source of truth lives in
+# ``pyrit.exceptions.exception_classes`` so the substring fallback in
+# ``handle_bad_request_exception`` and ``_is_content_filter_error`` cannot drift.
+__all__ = ["CONTENT_FILTER_MARKERS"]
+
 
 # OpenAI uses ``error.code == "invalid_prompt"`` for both model-level safety blocks
 # (e.g. CBRN topics) and unrelated failures (e.g. schema validation errors), so the
