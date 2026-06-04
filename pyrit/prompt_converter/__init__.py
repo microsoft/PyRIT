@@ -19,6 +19,7 @@ from pyrit.prompt_converter.add_image_to_video_converter import AddImageVideoCon
 from pyrit.prompt_converter.add_text_image_converter import AddTextImageConverter
 from pyrit.prompt_converter.ansi_escape.ansi_attack_converter import AnsiAttackConverter
 from pyrit.prompt_converter.arabic_presentation_form_converter import ArabicPresentationFormConverter
+from pyrit.prompt_converter.arabizi_converter import ArabiziConverter
 from pyrit.prompt_converter.ascii_art_converter import AsciiArtConverter
 from pyrit.prompt_converter.ask_to_decode_converter import AskToDecodeConverter
 from pyrit.prompt_converter.atbash_converter import AtbashConverter
@@ -147,6 +148,7 @@ __all__ = [
     "AllWordsSelectionStrategy",
     "AnsiAttackConverter",
     "ArabicPresentationFormConverter",
+    "ArabiziConverter",
     "AsciiArtConverter",
     "AsciiSmugglerConverter",
     "AskToDecodeConverter",
