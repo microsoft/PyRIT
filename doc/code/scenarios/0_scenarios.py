@@ -162,6 +162,9 @@ class MyScenario(Scenario):
 from pyrit.backend.services.scenario_service import get_scenario_service
 from pyrit.cli._output import print_scenario_list
 
+import logging
+logging.getLogger("pyrit").setLevel(logging.ERROR)
+
 response = await get_scenario_service().list_scenarios_async(limit=200)  # type: ignore
 print_scenario_list(items=[s.model_dump() for s in response.items])
 
