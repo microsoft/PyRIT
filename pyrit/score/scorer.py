@@ -664,7 +664,7 @@ class Scorer(Identifiable, abc.ABC):
         metadata_output_key: str = "metadata",
         category_output_key: str = "category",
         attack_identifier: Optional[ComponentIdentifier] = None,
-        response_json_schema: Optional[dict[str, str]] = None,
+        response_json_schema: Optional[dict[str, Any]] = None,
     ) -> UnvalidatedScore:
         """
         Send a request to a target, and take care of retries.
@@ -700,7 +700,7 @@ class Scorer(Identifiable, abc.ABC):
                 Defaults to "category".
             attack_identifier (Optional[ComponentIdentifier]): The attack identifier.
                 Defaults to None.
-            response_json_schema (Optional[dict[str, str]]): An optional JSON schema (not just dict[str, str])
+            response_json_schema (Optional[dict[str, Any]]): An optional JSON schema
                 to validate the response against. Defaults to None.
 
         Returns:
