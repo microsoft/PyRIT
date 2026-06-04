@@ -99,9 +99,7 @@ class SeedPrompt(Seed):
         try:
             data["response_json_schema"] = get_common_json_schema(name)
         except KeyError as exc:
-            raise ValueError(
-                f"response_json_schema_name {name!r} is not registered in COMMON_JSON_SCHEMAS."
-            ) from exc
+            raise ValueError(f"response_json_schema_name {name!r} is not registered in COMMON_JSON_SCHEMAS.") from exc
         return data
 
     @model_validator(mode="after")
