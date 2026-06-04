@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from typing import TYPE_CHECKING, Optional, Union
 
 from tinytag import TinyTag
 
 from pyrit.common.path import PATHS_DICT
 from pyrit.models import DataTypeSerializer
+from pyrit.models.json_schema_definition import get_common_json_schema
 from pyrit.models.seeds.seed import Seed
 
 if TYPE_CHECKING:
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from pyrit.models import Message
+    from pyrit.models.json_schema_definition import JsonSchemaDefinition
     from pyrit.models.literals import ChatMessageRole, PromptDataType
 
 logger = logging.getLogger(__name__)
@@ -37,11 +39,19 @@ class SeedPrompt(Seed):
     # This field shadows the base class property to allow per-prompt data types
     data_type: Optional[PromptDataType] = None
 
-    # Optional JSON schema for constraining the response
-    # Not actually dict[str,str], necessarily, but a full JSON object.
-    # Type follows pattern from json_helper.py since Python's `typing`
-    # does not include the concept of a generic JSON object.
-    response_json_schema: Optional[dict[str, str]] = None
+    # Optional JSON schema for constraining the scoring response. When set and the
+    # target supports JSON schemas, it is forwarded so the target can enforce the
+    # response shape; otherwise the normalization pipeline omits it.
+    response_json_schema: JsonSchemaDefinition | None = None
+
+    # Init-only YAML/constructor sugar: pass a registry name (e.g.
+    # ``true_false_with_rationale``) and ``__post_init__`` resolves it against
+    # ``COMMON_JSON_SCHEMAS`` into ``response_json_schema``. Because it is an
+    # ``InitVar`` it is NOT an instance attribute after construction — runtime
+    # consumers (scorers, memory, attacks) read ``response_json_schema`` only.
+    # Mutually exclusive with ``response_json_schema`` — setting both raises
+    # ``ValueError``.
+    response_json_schema_name: InitVar[Optional[str]] = None
 
     # Role of the prompt in a conversation (e.g., "user", "assistant")
     role: Optional[ChatMessageRole] = None
@@ -53,14 +63,27 @@ class SeedPrompt(Seed):
     # Parameters that can be used in the prompt template
     parameters: Optional[Sequence[str]] = field(default_factory=list)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, response_json_schema_name: Optional[str]) -> None:
         """
-        Render template placeholders and infer data_type after initialization.
+        Render template placeholders, resolve named schemas, and infer data_type.
+
+        Args:
+            response_json_schema_name: Optional registry name supplied via the
+                ``response_json_schema_name`` constructor kwarg or YAML key. It
+                is an ``InitVar`` and is **not** stored on the instance; it is
+                resolved here into ``response_json_schema`` and then discarded.
 
         Raises:
-            ValueError: If file-based data type cannot be inferred from extension.
+            ValueError: If both ``response_json_schema`` and
+                ``response_json_schema_name`` are set, if the named schema is not
+                registered in ``COMMON_JSON_SCHEMAS``, or if a file-based
+                ``data_type`` cannot be inferred from extension.
 
         """
+        # Resolve a named JSON schema before anything else so callers can rely
+        # on ``response_json_schema`` being populated after construction.
+        self._resolve_response_json_schema_name(response_json_schema_name)
+
         # Only trusted templates (is_jinja_template=True, e.g. from YAML files) are rendered
         # through Jinja. Untrusted text (e.g. from remote datasets) must NOT be rendered — a
         # crafted payload containing "{% endraw %}" can escape the raw wrapper and execute
@@ -84,6 +107,40 @@ class SeedPrompt(Seed):
                     raise ValueError(f"Unable to infer data_type from file extension: {ext}")
             else:
                 self.data_type = "text"
+
+    def _resolve_response_json_schema_name(self, response_json_schema_name: Optional[str]) -> None:
+        """
+        Resolve a ``response_json_schema_name`` value against ``COMMON_JSON_SCHEMAS``.
+
+        Populates ``response_json_schema`` with a deep copy of the named schema
+        so downstream consumers (scorers, attacks, converters) can read a
+        single field regardless of how the schema was supplied.
+
+        Args:
+            response_json_schema_name: Registry name to resolve, or ``None`` to
+                skip resolution.
+
+        Raises:
+            ValueError: If both ``response_json_schema`` and
+                ``response_json_schema_name`` are set, or if the name is not
+                registered in ``COMMON_JSON_SCHEMAS``.
+        """
+        if response_json_schema_name is None:
+            return
+
+        if self.response_json_schema is not None:
+            raise ValueError(
+                "Set only one of response_json_schema or response_json_schema_name on SeedPrompt; "
+                f"both were provided (name={response_json_schema_name!r})."
+            )
+
+        try:
+            self.response_json_schema = get_common_json_schema(response_json_schema_name)
+        except KeyError as exc:
+            raise ValueError(
+                f"response_json_schema_name {response_json_schema_name!r} is not registered "
+                "in COMMON_JSON_SCHEMAS."
+            ) from exc
 
     def set_encoding_metadata(self) -> None:
         """

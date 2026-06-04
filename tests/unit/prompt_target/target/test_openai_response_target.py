@@ -24,8 +24,8 @@ from pyrit.exceptions.exception_classes import (
 )
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import ComponentIdentifier, Message, MessagePiece
-from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
+from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 
 
 def create_mock_response(response_dict: dict = None) -> MagicMock:

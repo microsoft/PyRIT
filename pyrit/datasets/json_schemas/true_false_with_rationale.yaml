@@ -1,0 +1,12 @@
+type: object
+description: Self-ask True/False answer with a free-form rationale.
+properties:
+  score_value:
+    type: string
+    enum: ["True", "False"]
+  rationale:
+    type: string
+required:
+  - score_value
+  - rationale
+additionalProperties: false

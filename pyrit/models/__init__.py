@@ -62,6 +62,15 @@ from pyrit.models.identifiers import (
     snake_case_to_class_name,
     validate_registry_name,
 )
+from pyrit.models.json_schema_definition import (
+    COMMON_JSON_SCHEMAS,
+    JSON_SCHEMA_METADATA_KEY,
+    SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
+    JsonSchemaDefinition,
+    get_common_json_schema,
+    register_common_json_schema,
+    unregister_common_json_schema,
+)
 from pyrit.models.literals import ChatMessageRole, Modality, PromptDataType, PromptResponseError, SeedType
 from pyrit.models.message import (
     Message,
@@ -136,6 +145,13 @@ __all__ = [
     "IdentifierFilter",
     "IdentifierType",
     "ImagePathDataTypeSerializer",
+    "COMMON_JSON_SCHEMAS",
+    "get_common_json_schema",
+    "register_common_json_schema",
+    "unregister_common_json_schema",
+    "JSON_SCHEMA_METADATA_KEY",
+    "SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY",
+    "JsonSchemaDefinition",
     "Message",
     "MessagePiece",
     "Modality",

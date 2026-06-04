@@ -51,6 +51,9 @@ KNOWN_TOP_LEVEL_VIOLATIONS: dict[str, dict[str, str]] = {
     "pyrit.models.harm_definition": {
         "pyrit.common.path": "phase-1",
     },
+    "pyrit.models.json_schema_definition": {
+        "pyrit.common.path": "phase-1",
+    },
     "pyrit.models.data_type_serializer": {
         "pyrit.common.path": "phase-8",
     },
