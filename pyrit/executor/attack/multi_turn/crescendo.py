@@ -568,11 +568,9 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         """
         Parse and validate the JSON response from the adversarial chat.
 
-        camelCase keys are normalized to snake_case before validation. The
-        Crescendo system prompts specify a snake_case JSON schema, but some
-        backends drift to camelCase (``generatedQuestion`` instead of
-        ``generated_question``); accepting both prevents the attack from
-        burning all its retries on a casing mismatch.
+        Keys are normalized from camelCase to snake_case before validation, so
+        backends that drift to ``generatedQuestion`` still parse correctly
+        without burning retries on a casing mismatch.
 
         Args:
             response_text (str): The response text to parse.

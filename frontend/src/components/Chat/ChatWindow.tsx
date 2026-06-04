@@ -222,7 +222,6 @@ export default function ChatWindow({
         name: basenameFromValue(textConversion.convertedValue, `output.${kind}`),
         url,
         mimeType: 'application/octet-stream',
-        size: 0,
       })
     }
 

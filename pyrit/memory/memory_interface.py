@@ -1722,6 +1722,7 @@ class MemoryInterface(abc.ABC):
         outcome: Optional[str] = None,
         attack_class: Optional[str] = None,
         attack_classes: Optional[Sequence[str]] = None,
+        atomic_attack_eval_hashes: Optional[Sequence[str]] = None,
         converter_classes: Optional[Sequence[str]] = None,
         converter_classes_match: Literal["all", "any"] = "all",
         has_converters: Optional[bool] = None,
@@ -1747,6 +1748,11 @@ class MemoryInterface(abc.ABC):
             attack_classes (Optional[Sequence[str]], optional): Filter by exact attack class_name in
                 attack_identifier. Returns attacks matching ANY of the listed class names (OR logic,
                 case-sensitive). An empty sequence applies no filter. Defaults to None.
+            atomic_attack_eval_hashes (Optional[Sequence[str]], optional): Filter by behavioral
+                equivalence hash on ``atomic_attack_identifier.eval_hash`` (auto-stamped on persistence
+                by ``AtomicAttackEvaluationIdentifier``). Returns results matching ANY of the listed
+                hashes (OR logic, case-sensitive). Designed for ASR aggregation by technique
+                configuration. An empty sequence applies no filter. Defaults to None.
             converter_classes (Optional[Sequence[str]], optional): Filter by converter class names.
                 Combination semantics for multiple entries are controlled by ``converter_classes_match``.
                 An empty sequence filters to attacks that used no converters; ``None`` applies no
@@ -1831,6 +1837,24 @@ class MemoryInterface(abc.ABC):
                             value=ac,
                         )
                         for ac in attack_classes
+                    ]
+                )
+            )
+
+        if atomic_attack_eval_hashes:
+            # Single JSON path query on the auto-stamped eval_hash. OR-combined across
+            # supplied hashes so callers can fetch history for multiple technique
+            # configurations in one round trip.
+            conditions.append(
+                or_(
+                    *[
+                        self._get_condition_json_property_match(
+                            json_column=AttackResultEntry.atomic_attack_identifier,
+                            property_path="$.eval_hash",
+                            value=h,
+                            case_sensitive=True,
+                        )
+                        for h in atomic_attack_eval_hashes
                     ]
                 )
             )

@@ -81,7 +81,7 @@ repos:
       args: [--fix]
 
   - repo: https://github.com/allganize/ty-pre-commit
-    rev: v0.0.32
+    rev: v0.0.43
     hooks:
       - id: ty-check
         name: ty (type check)

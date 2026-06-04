@@ -59,6 +59,26 @@ async def test_async_context_manager_opens_and_closes(mock_httpx_client):
         # After exit, close was called
         mock_httpx_client.aclose.assert_awaited_once()
         assert c._client is None
+    # Default request_timeout (60s) propagates to the httpx client constructor.
+    fake_async_client_cls.assert_called_once_with(base_url="http://localhost:8000", timeout=60.0)
+
+
+async def test_async_context_manager_passes_custom_request_timeout(mock_httpx_client):
+    c = PyRITApiClient(base_url="http://localhost:8000", request_timeout=120.0)
+    fake_async_client_cls = MagicMock(return_value=mock_httpx_client)
+    with patch("httpx.AsyncClient", fake_async_client_cls):
+        async with c:
+            pass
+    fake_async_client_cls.assert_called_once_with(base_url="http://localhost:8000", timeout=120.0)
+
+
+async def test_async_context_manager_uses_default_when_request_timeout_is_none(mock_httpx_client):
+    c = PyRITApiClient(base_url="http://localhost:8000", request_timeout=None)
+    fake_async_client_cls = MagicMock(return_value=mock_httpx_client)
+    with patch("httpx.AsyncClient", fake_async_client_cls):
+        async with c:
+            pass
+    fake_async_client_cls.assert_called_once_with(base_url="http://localhost:8000", timeout=60.0)
 
 
 async def test_close_async_is_noop_when_already_closed():
@@ -199,10 +219,27 @@ async def test_start_scenario_run_async(client, mock_httpx_client):
 
 
 async def test_get_scenario_run_async(client, mock_httpx_client):
+    import httpx as _httpx
+
     mock_httpx_client.get.return_value = _make_response(json_data={"status": "RUNNING"})
     result = await client.get_scenario_run_async(scenario_result_id="abc")
     assert result == {"status": "RUNNING"}
-    mock_httpx_client.get.assert_awaited_once_with("/api/scenarios/runs/abc", params=None)
+    # Polling uses read=None so a busy server doesn't trip the client default
+    # timeout while a scenario is executing.
+    mock_httpx_client.get.assert_awaited_once()
+    args, kwargs = mock_httpx_client.get.call_args
+    assert args == ("/api/scenarios/runs/abc",)
+    assert kwargs["params"] is None
+    timeout = kwargs["timeout"]
+    assert isinstance(timeout, _httpx.Timeout)
+    assert timeout.read is None
+    assert timeout.connect == 10.0
+
+
+async def test_get_scenario_run_async_wraps_connect_error(client, mock_httpx_client):
+    mock_httpx_client.get.side_effect = httpx.ConnectError("nope")
+    with pytest.raises(ServerNotAvailableError, match="Cannot connect"):
+        await client.get_scenario_run_async(scenario_result_id="abc")
 
 
 async def test_get_scenario_run_results_async(client, mock_httpx_client):
