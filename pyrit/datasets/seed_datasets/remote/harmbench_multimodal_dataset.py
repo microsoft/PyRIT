@@ -16,6 +16,28 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = [
+    "Mantas Mazeika",
+    "Long Phan",
+    "Xuwang Yin",
+    "Andy Zou",
+    "Zifan Wang",
+    "Norman Mu",
+    "Elham Sakhaee",
+    "Nathaniel Li",
+    "Steven Basart",
+    "Bo Li",
+    "David Forsyth",
+    "Dan Hendrycks",
+]
+_GROUPS = [
+    "University of Illinois Urbana-Champaign",
+    "Center for AI Safety",
+    "Carnegie Mellon University",
+    "UC Berkeley",
+    "Microsoft",
+]
+
 
 class SemanticCategory(Enum):
     """Semantic categories in the HarmBench multimodal dataset."""
@@ -169,6 +191,8 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
                     "redacted_image_description": redacted_description,
                     "original_image_url": image_url,
                 },
+                authors=_AUTHORS,
+                groups=_GROUPS,
             )
             prompts.append(image_prompt)
 
@@ -185,27 +209,8 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
                 metadata={
                     "behavior_id": behavior_id,
                 },
-                authors=[
-                    "Mantas Mazeika",
-                    "Long Phan",
-                    "Xuwang Yin",
-                    "Andy Zou",
-                    "Zifan Wang",
-                    "Norman Mu",
-                    "Elham Sakhaee",
-                    "Nathaniel Li",
-                    "Steven Basart",
-                    "Bo Li",
-                    "David Forsyth",
-                    "Dan Hendrycks",
-                ],
-                groups=[
-                    "University of Illinois Urbana-Champaign",
-                    "Center for AI Safety",
-                    "Carnegie Mellon University",
-                    "UC Berkeley",
-                    "Microsoft",
-                ],
+                authors=_AUTHORS,
+                groups=_GROUPS,
             )
             prompts.append(text_prompt)
 

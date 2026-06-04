@@ -11,6 +11,16 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = [
+    "Bertie Vidgen",
+    "Adarsh Agrawal",
+    "Ahmed M. Ahmed",
+    "Victor Akinwande",
+    "Namir Al-Nuaimi",
+    "and others",
+]
+_GROUPS = ["MLCommons AI Safety Working Group"]
+
 
 class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
     """
@@ -102,6 +112,8 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
                     " prompts. This dataset is a 10% subset of the full AILuminate training dataset."
                 ),
                 source="https://github.com/mlcommons/ailuminate",
+                authors=_AUTHORS,
+                groups=_GROUPS,
             )
             for example in examples
         ]

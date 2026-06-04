@@ -10,6 +10,27 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = [
+    "Patrick Chao",
+    "Edoardo Debenedetti",
+    "Alexander Robey",
+    "Maksym Andriushchenko",
+    "Francesco Croce",
+    "Vikash Sehwag",
+    "Edgar Dobriban",
+    "Nicolas Flammarion",
+    "George J. Pappas",
+    "Florian Tramer",
+    "Hamed Hassani",
+    "Eric Wong",
+]
+_GROUPS = [
+    "University of Pennsylvania",
+    "ETH Zurich",
+    "EPFL",
+    "Sony AI",
+]
+
 
 class _JBBBehaviorsDataset(_RemoteDatasetLoader):
     """
@@ -79,7 +100,8 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
             # Define common metadata
             common_metadata = {
                 "dataset_name": self.dataset_name,
-                "authors": ["JailbreakBench Team"],
+                "authors": _AUTHORS,
+                "groups": _GROUPS,
                 "description": (
                     "A dataset of harmful behaviors for jailbreaking evaluation from JailbreakBench. "
                     "Contains behaviors designed to test AI safety measures."
@@ -107,7 +129,6 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
                 seed_prompt = SeedPrompt(
                     value=behavior,
                     harm_categories=harm_categories,
-                    groups=[category] if category else [],
                     metadata={
                         "jbb_category": category,
                         "original_source": "JailbreakBench",

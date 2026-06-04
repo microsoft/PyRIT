@@ -16,6 +16,22 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = [
+    "Shruti Palaskar",
+    "Leon Gatys",
+    "Mona Abdelrahman",
+    "Mar Jacobo",
+    "Larry Lindsey",
+    "Rutika Moharir",
+    "Gunnar Lund",
+    "Yang Xu",
+    "Navid Shiee",
+    "Jeffrey Bigham",
+    "Charles Maalouf",
+    "Joseph Yitan Cheng",
+]
+_GROUPS = ["Apple"]
+
 
 class VLSUCategory(Enum):
     """Categories in the ML-VLSU dataset."""
@@ -228,6 +244,8 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
             prompt_group_id=group_id,
             sequence=0,
             metadata=metadata,
+            authors=_AUTHORS,
+            groups=_GROUPS,
         )
 
         image_prompt = SeedPrompt(
@@ -241,6 +259,8 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
             prompt_group_id=group_id,
             sequence=0,
             metadata={**metadata, "original_image_url": image_url},
+            authors=_AUTHORS,
+            groups=_GROUPS,
         )
 
         return [text_prompt, image_prompt]

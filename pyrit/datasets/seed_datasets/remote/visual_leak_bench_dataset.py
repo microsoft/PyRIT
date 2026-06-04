@@ -210,6 +210,12 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             Exception: If the image cannot be fetched.
         """
         authors = ["Youting Wang", "Yuan Tang", "Yitian Qian", "Chen Zhao"]
+        groups = [
+            "Northeastern University",
+            "Carnegie Mellon University",
+            "Boston University",
+            "New York University",
+        ]
         description = (
             "VisualLeakBench is a benchmark for evaluating Large Vision-Language Models against "
             "visual privacy attacks. It contains 1,000 adversarial images spanning OCR Injection "
@@ -239,6 +245,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             harm_categories=harm_categories,
             description=description,
             authors=authors,
+            groups=groups,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
             sequence=0,
@@ -258,6 +265,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             harm_categories=harm_categories,
             description=description,
             authors=authors,
+            groups=groups,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
             sequence=0,

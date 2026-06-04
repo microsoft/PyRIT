@@ -92,6 +92,12 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
                     "Zhen Xiang",
                     "Radha Poovendran",
                 ],
+                groups=[
+                    "University of Washington",
+                    "University of Georgia",
+                    "Western Washington University",
+                    "University of Illinois Urbana-Champaign",
+                ],
             )
             for item in data
         ]

@@ -12,6 +12,9 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = ["Simone Van Taylor"]
+_GROUPS = ["Humane Intelligence"]
+
 
 class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
     """
@@ -71,7 +74,8 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
 
         common_metadata = {
             "dataset_name": self.dataset_name,
-            "authors": ["Simone van Taylor"],
+            "authors": _AUTHORS,
+            "groups": _GROUPS,
             "description": (
                 "This dataset contains aggregated and unified existing red-teaming prompts "
                 "designed to identify stereotypes, discrimination, hate speech, and other "
@@ -96,9 +100,9 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
                     if not isinstance(item.get("categorization"), list)
                     else item.get("categorization", [])
                 ),
-                "groups": [item.get("organization", "")],
                 "metadata": {
                     "prompt_type": prompt_type,
+                    "organization": item.get("organization", ""),
                 },
             }
 

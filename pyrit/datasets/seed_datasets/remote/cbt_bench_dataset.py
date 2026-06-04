@@ -101,6 +101,13 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
             "William Yang Wang",
             "Zhiyu Zoey Chen",
         ]
+        groups = [
+            "University of Texas at Dallas",
+            "University of California, Santa Barbara",
+            "University of Pittsburgh",
+            "Princeton University",
+            "Carnegie Mellon University",
+        ]
         description = (
             "CBT-Bench is a benchmark designed to evaluate the proficiency of Large Language Models "
             "in assisting Cognitive Behavioral Therapy (CBT). The dataset covers basic CBT knowledge, "
@@ -142,6 +149,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
                 description=description,
                 source=f"https://huggingface.co/datasets/{self.source}",
                 authors=authors,
+                groups=groups,
                 metadata=metadata,
             )
 

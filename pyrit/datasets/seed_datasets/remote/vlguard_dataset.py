@@ -22,6 +22,15 @@ logger = logging.getLogger(__name__)
 
 _HF_REPO_ID = "ys-zong/VLGuard"
 
+_AUTHORS = [
+    "Yongshuo Zong",
+    "Ondrej Bohdal",
+    "Tingyang Yu",
+    "Yongxin Yang",
+    "Timothy Hospedales",
+]
+_GROUPS = ["University of Edinburgh", "EPFL"]
+
 
 class VLGuardCategory(Enum):
     """
@@ -90,7 +99,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
     https://huggingface.co/datasets/ys-zong/VLGuard before use, and provide
     a HuggingFace token.
 
-    Reference: https://arxiv.org/abs/2402.02207
+    Reference: [@zong2024vlguard]
     Paper: Safety Fine-Tuning at (Almost) No Cost: A Baseline for Vision Large Language Models (ICML 2024)
     """
 
@@ -209,6 +218,8 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                     "subset": self.subset.value,
                     "safe_image": is_safe,
                 },
+                authors=_AUTHORS,
+                groups=_GROUPS,
             )
 
             image_prompt = SeedPrompt(
@@ -228,6 +239,8 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                     "safe_image": is_safe,
                     "original_filename": image_filename,
                 },
+                authors=_AUTHORS,
+                groups=_GROUPS,
             )
 
             prompts.append(text_prompt)

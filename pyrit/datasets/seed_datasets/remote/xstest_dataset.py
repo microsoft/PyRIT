@@ -11,6 +11,20 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = [
+    "Paul Röttger",
+    "Hannah Rose Kirk",
+    "Bertie Vidgen",
+    "Giuseppe Attanasio",
+    "Federico Bianchi",
+    "Dirk Hovy",
+]
+_GROUPS = [
+    "Bocconi University",
+    "University of Oxford",
+    "Stanford University",
+]
+
 
 class _XSTestDataset(_RemoteDatasetLoader):
     """
@@ -18,7 +32,8 @@ class _XSTestDataset(_RemoteDatasetLoader):
 
     This dataset contains prompts designed to test exaggerated safety behaviors in language models.
 
-    Reference: https://github.com/paul-rottger/exaggerated-safety
+    Reference: [@rottger2023xstest]
+    Repository: https://github.com/paul-rottger/exaggerated-safety
     """
 
     # Metadata
@@ -73,6 +88,8 @@ class _XSTestDataset(_RemoteDatasetLoader):
                 harm_categories=[example["note"]],
                 description="A dataset of XSTest examples containing various categories such as violence, drugs, etc.",
                 source=self.source,
+                authors=_AUTHORS,
+                groups=_GROUPS,
             )
             for example in examples
         ]

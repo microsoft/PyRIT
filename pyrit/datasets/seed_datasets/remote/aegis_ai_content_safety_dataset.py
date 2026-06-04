@@ -13,6 +13,17 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = [
+    "Shaona Ghosh",
+    "Prasoon Varshney",
+    "Makesh Narsimhan Sreedhar",
+    "Aishwarya Padmakumar",
+    "Traian Rebedea",
+    "Jibin Rajan Varghese",
+    "Christopher Parisien",
+]
+_GROUPS = ["NVIDIA"]
+
 
 class _AegisContentSafetyDataset(_RemoteDatasetLoader):
     """
@@ -183,6 +194,8 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
                         dataset_name=self.dataset_name,
                         harm_categories=prompt_harm_categories if prompt_harm_categories else None,
                         source=self.source,
+                        authors=_AUTHORS,
+                        groups=_GROUPS,
                     )
                 )
 

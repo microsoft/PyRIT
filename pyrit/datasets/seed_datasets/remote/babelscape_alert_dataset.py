@@ -11,6 +11,26 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = [
+    "Simone Tedeschi",
+    "Felix Friedrich",
+    "Patrick Schramowski",
+    "Kristian Kersting",
+    "Roberto Navigli",
+    "Huu Nguyen",
+    "Bo Li",
+]
+_GROUPS = [
+    "Sapienza University of Rome",
+    "Babelscape",
+    "TU Darmstadt",
+    "Hessian.AI",
+    "DFKI",
+    "Ontocord.AI",
+    "University of Chicago",
+    "University of Illinois Urbana-Champaign",
+]
+
 
 class _BabelscapeAlertDataset(_RemoteDatasetLoader):
     """
@@ -93,6 +113,8 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
                     "red teaming prompts."
                 ),
                 source=f"https://huggingface.co/datasets/{self.source}",
+                authors=_AUTHORS,
+                groups=_GROUPS,
             )
             for prompt, category in prompts
         ]

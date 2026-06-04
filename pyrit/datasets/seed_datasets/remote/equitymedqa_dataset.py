@@ -12,6 +12,47 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = [
+    "Stephen R. Pfohl",
+    "Heather Cole-Lewis",
+    "Rory Sayres",
+    "Darlene Neal",
+    "Mercy Asiedu",
+    "Awa Dieng",
+    "Nenad Tomasev",
+    "Qazi Mamunur Rashid",
+    "Shekoofeh Azizi",
+    "Negar Rostamzadeh",
+    "Liam G. McCoy",
+    "Leo Anthony Celi",
+    "Yun Liu",
+    "Mike Schaekermann",
+    "Alanna Walton",
+    "Alicia Parrish",
+    "Chirag Nagpal",
+    "Preeti Singh",
+    "Akeiylah Dewitt",
+    "Philip Mansfield",
+    "Sushant Prakash",
+    "Katherine Heller",
+    "Alan Karthikesalingam",
+    "Christopher Semturs",
+    "Joelle Barral",
+    "Greg Corrado",
+    "Yossi Matias",
+    "Jamila Smith-Loud",
+    "Ivor Horn",
+    "Karan Singhal",
+]
+_GROUPS = [
+    "Google Research",
+    "Google DeepMind",
+    "University of Alberta",
+    "Massachusetts Institute of Technology",
+    "Beth Israel Deaconess Medical Center",
+    "Harvard T.H. Chan School of Public Health",
+]
+
 
 class _EquityMedQADataset(_RemoteDatasetLoader):
     """
@@ -145,6 +186,8 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
                 description="This dataset contains prompts used to assess medical biases in AI systems",
                 harm_categories=["health_bias"],
                 source=f"https://huggingface.co/datasets/{self.source}",
+                authors=_AUTHORS,
+                groups=_GROUPS,
             )
             for prompt in unique_prompts
         ]

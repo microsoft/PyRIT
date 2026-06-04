@@ -10,6 +10,18 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = [
+    "Yuxia Wang",
+    "Haonan Li",
+    "Xudong Han",
+    "Preslav Nakov",
+    "Timothy Baldwin",
+]
+_GROUPS = [
+    "Mohamed bin Zayed University of Artificial Intelligence",
+    "University of Melbourne",
+]
+
 
 class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
     """
@@ -74,6 +86,8 @@ class _LibrAIDoNotAnswerDataset(_RemoteDatasetLoader):
                     f"harm type: {entry['types_of_harm']}, and specific harm: {entry['specific_harms']}."
                 ),
                 source=f"https://huggingface.co/datasets/{self.source}",
+                authors=_AUTHORS,
+                groups=_GROUPS,
             )
             for entry in data
         ]

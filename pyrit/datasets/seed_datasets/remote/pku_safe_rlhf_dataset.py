@@ -11,6 +11,27 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = [
+    "Jiaming Ji",
+    "Donghai Hong",
+    "Borong Zhang",
+    "Boyuan Chen",
+    "Juntao Dai",
+    "Boren Zheng",
+    "Tianyi Qiu",
+    "Jiayi Zhou",
+    "Kaile Wang",
+    "Boxuan Li",
+    "Sirui Han",
+    "Yike Guo",
+    "Yaodong Yang",
+]
+_GROUPS = [
+    "Peking University",
+    "The Hong Kong University of Science and Technology",
+    "Infinigence-AI",
+]
+
 
 class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
     """
@@ -130,6 +151,8 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
                             "their helpfulness or harmfulness. Only the 'prompt' column is extracted."
                         ),
                         source=f"https://huggingface.co/datasets/{self.source}",
+                        authors=_AUTHORS,
+                        groups=_GROUPS,
                     )
                 )
 

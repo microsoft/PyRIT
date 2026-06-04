@@ -35,6 +35,7 @@ class _MICDataset(_RemoteDatasetLoader):
     tags = {"safety", "ethics", "multiturn"}
     VALID_SPLITS = ["train", "dev", "test"]
     AUTHORS = ["Caleb Ziems", "Jane Yu", "Yi-Chia Wang", "Alon Halevy", "Diyi Yang"]
+    GROUPS = ["Georgia Institute of Technology", "Facebook AI Research"]
 
     def __init__(self) -> None:
         """Initialize the MIC dataset loader."""
@@ -91,6 +92,7 @@ class _MICDataset(_RemoteDatasetLoader):
                         source=self.source,
                         harm_categories=categories,
                         authors=self.AUTHORS,
+                        groups=self.GROUPS,
                     )
                 )
 

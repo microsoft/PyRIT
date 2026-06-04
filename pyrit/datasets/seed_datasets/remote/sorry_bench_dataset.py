@@ -12,6 +12,33 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = [
+    "Tinghao Xie",
+    "Xiangyu Qi",
+    "Yi Zeng",
+    "Yangsibo Huang",
+    "Udari Madhushani Sehwag",
+    "Kaixuan Huang",
+    "Luxi He",
+    "Boyi Wei",
+    "Dacheng Li",
+    "Ying Sheng",
+    "Ruoxi Jia",
+    "Bo Li",
+    "Kai Li",
+    "Danqi Chen",
+    "Peter Henderson",
+    "Prateek Mittal",
+]
+_GROUPS = [
+    "Princeton University",
+    "Virginia Tech",
+    "Stanford University",
+    "UC Berkeley",
+    "University of Illinois Urbana-Champaign",
+    "University of Chicago",
+]
+
 
 class _SorryBenchDataset(_RemoteDatasetLoader):
     """
@@ -170,7 +197,8 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
 
             common_metadata = {
                 "dataset_name": self.dataset_name,
-                "authors": ["Sorry-Bench Team"],
+                "authors": _AUTHORS,
+                "groups": _GROUPS,
                 "description": "Adversarial prompts for testing LLM safety across 44 categories",
                 "source": self.source,
                 "data_type": "text",
@@ -204,7 +232,6 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                 seed_prompt = SeedPrompt(
                     value=prompt_text,
                     harm_categories=[category],
-                    groups=[item_prompt_style] if item_prompt_style else [],
                     metadata={
                         "sorry_bench_category": category,
                         "prompt_style": item_prompt_style,

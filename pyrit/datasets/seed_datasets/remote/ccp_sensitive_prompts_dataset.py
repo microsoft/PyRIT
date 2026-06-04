@@ -10,6 +10,9 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = ["Ian Webster"]
+_GROUPS = ["Promptfoo"]
+
 
 class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
     """
@@ -70,7 +73,8 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
                 dataset_name=self.dataset_name,
                 harm_categories=[row["subject"]],
                 description="Prompts covering topics sensitive to the CCP.",
-                groups=["promptfoo"],
+                authors=_AUTHORS,
+                groups=_GROUPS,
                 source=f"https://huggingface.co/datasets/{self.source}",
             )
             for row in data

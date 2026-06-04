@@ -11,6 +11,9 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = ["Tessa Han", "Aounon Kumar", "Chirag Agarwal", "Himabindu Lakkaraju"]
+_GROUPS = ["Harvard University", "University of Virginia"]
+
 
 class _MedSafetyBenchDataset(_RemoteDatasetLoader):
     """
@@ -135,6 +138,8 @@ class _MedSafetyBenchDataset(_RemoteDatasetLoader):
                             f"category {category}, type {file_type}."
                         ),
                         source=source,
+                        authors=_AUTHORS,
+                        groups=_GROUPS,
                     )
                 )
 

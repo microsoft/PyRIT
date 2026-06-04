@@ -10,6 +10,31 @@ from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
+_AUTHORS = [
+    "Abhay Sheshadri",
+    "Aidan Ewart",
+    "Phillip Guo",
+    "Aengus Lynch",
+    "Cindy Wu",
+    "Vivek Hebbar",
+    "Henry Sleight",
+    "Asa Cooper Stickland",
+    "Ethan Perez",
+    "Dylan Hadfield-Menell",
+    "Stephen Casper",
+]
+_GROUPS = [
+    "Georgia Institute of Technology",
+    "University of Bristol",
+    "University of Maryland",
+    "University College London",
+    "MATS",
+    "Astra",
+    "New York University",
+    "Anthropic",
+    "MIT CSAIL",
+]
+
 
 class _LLMLatentAdversarialTrainingDataset(_RemoteDatasetLoader):
     """
@@ -70,6 +95,8 @@ class _LLMLatentAdversarialTrainingDataset(_RemoteDatasetLoader):
                 dataset_name=self.dataset_name,
                 description="This dataset contains prompts used to assess and analyze harmful behaviors in llm",
                 source=f"https://huggingface.co/datasets/{self.source}",
+                authors=_AUTHORS,
+                groups=_GROUPS,
             )
             for item in data
         ]
