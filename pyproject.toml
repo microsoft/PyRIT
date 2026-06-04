@@ -185,22 +185,15 @@ include = ["pyrit/prompt_target/hugging_face/**"]
 [tool.ty.overrides.rules]
 invalid-argument-type = "warn"
 
-# Files that conditionally import optional-extra packages (azure-speech, cv2,
-# playwright, torch, spacy) inside try/except ImportError blocks. The packages
-# aren't installed in the base dev .venv, so ty can't resolve them — but the
-# import shape is intentional (graceful degradation when the extra isn't installed).
+# Test files that conditionally import optional-extra packages (azure-speech,
+# cv2, playwright, torch, spacy) inside try/except ImportError blocks. The
+# pyrit/ source files that do the same use inline
+# ``# type: ignore[ty:unresolved-import]`` comments instead, so they get full
+# type checking with surgical silencing at the import sites. Test files keep
+# the broader override because they tend to monkeypatch and re-import these
+# modules in ways that would multiply the ignore sites.
 [[tool.ty.overrides]]
 include = [
-    "pyrit/auth/azure_auth.py",
-    "pyrit/auth/copilot_authenticator.py",
-    "pyrit/prompt_converter/azure_speech_audio_to_text_converter.py",
-    "pyrit/prompt_converter/azure_speech_text_to_audio_converter.py",
-    "pyrit/prompt_converter/add_image_to_video_converter.py",
-    "pyrit/prompt_target/hugging_face/hugging_face_chat_target.py",
-    "pyrit/prompt_target/playwright_target.py",
-    "pyrit/prompt_target/playwright_copilot_target.py",
-    "pyrit/score/video_scorer.py",
-    "pyrit/executor/benchmark/fairness_bias.py",
     "tests/unit/auth/test_azure_auth.py",
     "tests/unit/prompt_converter/test_prompt_converter.py",
     "tests/unit/prompt_converter/test_azure_speech_converter.py",

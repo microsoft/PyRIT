@@ -144,7 +144,7 @@ class HuggingFaceChatTarget(PromptTarget):
             self.huggingface_token = None
 
         try:
-            import torch
+            import torch  # type: ignore[ty:unresolved-import]
         except ModuleNotFoundError as e:
             raise RuntimeError("Could not import torch. You may need to install it via 'pip install pyrit[all]'") from e
 
@@ -473,7 +473,7 @@ class HuggingFaceChatTarget(PromptTarget):
             the same process may interfere with determinism.
         """
         if self._random_seed is not None:
-            import torch
+            import torch  # type: ignore[ty:unresolved-import]
 
             torch.manual_seed(self._random_seed)
             if self.use_cuda:

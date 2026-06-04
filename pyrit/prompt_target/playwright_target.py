@@ -14,7 +14,7 @@ from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 # Avoid errors for users who don't have playwright installed
 if TYPE_CHECKING:
-    from playwright.async_api import Page
+    from playwright.async_api import Page  # type: ignore[ty:unresolved-import]
 else:
     Page = None
 

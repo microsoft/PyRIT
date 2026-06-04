@@ -299,7 +299,7 @@ class CopilotAuthenticator(Authenticator):
         import sys
 
         try:
-            from playwright.async_api import async_playwright  # noqa: F401
+            from playwright.async_api import async_playwright  # type: ignore[ty:unresolved-import]  # noqa: F401
         except ImportError:
             raise RuntimeError(
                 "Playwright is not installed. Please install it with: "
@@ -357,7 +357,7 @@ class CopilotAuthenticator(Authenticator):
         Raises:
             ValueError: If the username is not set.
         """
-        from playwright.async_api import async_playwright
+        from playwright.async_api import async_playwright  # type: ignore[ty:unresolved-import]
 
         bearer_token = None
         token_expires_in = None

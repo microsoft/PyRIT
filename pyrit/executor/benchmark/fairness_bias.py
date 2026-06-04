@@ -287,7 +287,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
         """
         # Try spaCy-based extraction first (more robust)
         try:
-            import spacy
+            import spacy  # type: ignore[ty:unresolved-import]
 
             self._nlp = spacy.load("en_core_web_sm")
         except Exception:

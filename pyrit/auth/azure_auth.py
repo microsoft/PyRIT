@@ -25,7 +25,7 @@ from azure.identity.aio import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    import azure.cognitiveservices.speech as speechsdk
+    import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]
 
 from pyrit.auth.auth_config import REFRESH_TOKEN_BEFORE_MSEC
 from pyrit.auth.authenticator import Authenticator
@@ -412,7 +412,7 @@ def get_speech_config(resource_id: Union[str, None], key: Union[str, None], regi
         ValueError: If neither key/region nor resource_id/region is provided.
     """
     try:
-        import azure.cognitiveservices.speech as speechsdk  # noqa: F811
+        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]  # noqa: F811
     except ModuleNotFoundError as e:
         logger.error(
             "Could not import azure.cognitiveservices.speech. "
@@ -463,7 +463,7 @@ async def get_speech_config_async(
     """
     if token_provider:
         try:
-            import azure.cognitiveservices.speech as speechsdk  # noqa: F811
+            import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]  # noqa: F811
         except ModuleNotFoundError as e:
             logger.error(
                 "Could not import azure.cognitiveservices.speech. "
@@ -495,7 +495,7 @@ def get_speech_config_from_default_azure_credential(resource_id: str, region: st
         ModuleNotFoundError: If azure.cognitiveservices.speech is not installed.
     """
     try:
-        import azure.cognitiveservices.speech as speechsdk  # noqa: F811
+        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]  # noqa: F811
     except ModuleNotFoundError as e:
         logger.error(
             "Could not import azure.cognitiveservices.speech. "
