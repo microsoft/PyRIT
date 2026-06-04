@@ -179,6 +179,12 @@ unused-ignore-comment = "warn"
 unused-type-ignore-comment = "warn"
 # Allow empty function bodies during development
 empty-body = "ignore"
+# ty 0.0.43 (bumped from 0.0.32 in #1919) activated this rule under
+# [tool.ty.rules] all = "error". Adopting @override across pyrit/ would require
+# the typing_extensions backport on Python 3.10/3.11 (typing.override is 3.12+),
+# which adds a direct dep and ongoing import-path friction. Suppressing the
+# rule keeps the codebase consistent with the existing pragmatic ignores above.
+missing-override-decorator = "ignore"
 
 [tool.ty.analysis]
 respect-type-ignore-comments = true
