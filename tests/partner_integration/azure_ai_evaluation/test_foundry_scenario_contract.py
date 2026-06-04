@@ -37,7 +37,7 @@ class TestDatasetConfigurationContract:
 
     def test_dataset_configuration_importable(self):
         """DatasetConfigurationBuilder produces DatasetConfiguration."""
-        from pyrit.scenario import DatasetConfiguration  # noqa: F811
+        from pyrit.scenario import DatasetConfiguration
 
         assert DatasetConfiguration is not None
 
@@ -57,7 +57,7 @@ class TestScenarioResultContract:
 
     def test_scenario_result_importable(self):
         """ScenarioOrchestrator reads ScenarioResult."""
-        from pyrit.models.scenario_result import ScenarioResult  # noqa: F811
+        from pyrit.models.scenario_result import ScenarioResult
 
         assert ScenarioResult is not None
 

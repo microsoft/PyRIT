@@ -26,7 +26,7 @@ class PromptGeneratorStrategyContext(StrategyContext, ABC):
     """Base class for all prompt generator strategy contexts."""
 
 
-class PromptGeneratorStrategyResult(StrategyResult, ABC):  # noqa: B024
+class PromptGeneratorStrategyResult(StrategyResult, ABC):
     """Base class for all prompt generator strategy results."""
 
 

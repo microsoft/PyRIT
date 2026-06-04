@@ -174,7 +174,7 @@ class VideoHelper:
             ModuleNotFoundError: If OpenCV is not installed.
         """
         try:
-            import cv2  # noqa: F401
+            import cv2
         except ModuleNotFoundError as e:
             logger.error("Could not import opencv. You may need to install it via 'pip install pyrit[opencv]'")
             raise e

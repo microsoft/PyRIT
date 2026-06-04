@@ -30,7 +30,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str) -> Any:  # noqa: N807 - module __getattr__ hook must use this name
+def __getattr__(name: str) -> Any:
     if name == "MemoryExporter":
         from pyrit.common.deprecation import print_deprecation_message
         from pyrit.memory.memory_exporter import MemoryExporter

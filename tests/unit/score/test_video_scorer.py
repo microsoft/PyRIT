@@ -34,7 +34,7 @@ def video_converter_sample_video(tmp_path, patch_central_database):
     video_path = str(tmp_path / "test_video.mp4")
     width, height = 512, 512
     if is_opencv_installed():
-        import cv2  # noqa: F401
+        import cv2
 
         # Create a video writer object
         video_encoding = cv2.VideoWriter_fourcc(*"mp4v")

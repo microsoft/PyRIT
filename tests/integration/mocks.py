@@ -49,7 +49,7 @@ class MockPromptTarget(PromptTarget):
 
     def __init__(self, id=None, rpm=None) -> None:  # noqa: A002
         super().__init__(max_requests_per_minute=rpm)
-        self.id = id  # noqa: A003
+        self.id = id
         self.prompt_sent = []
 
     def set_system_prompt(
