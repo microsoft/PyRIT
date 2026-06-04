@@ -227,7 +227,8 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
             ModuleNotFoundError: If the azure.cognitiveservices.speech module is not installed.
         """
         try:
-            import azure.cognitiveservices.speech as speechsdk  # noqa: F811
+            # Runtime import; the TYPE_CHECKING binding at module top is for type annotations only.
+            import azure.cognitiveservices.speech as speechsdk
         except ModuleNotFoundError as e:
             logger.error(
                 "Could not import azure.cognitiveservices.speech. "
@@ -285,7 +286,8 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
             ModuleNotFoundError: If the azure.cognitiveservices.speech module is not installed.
         """
         try:
-            import azure.cognitiveservices.speech as speechsdk  # noqa: F811
+            # Runtime import; the TYPE_CHECKING binding at module top is for type annotations only.
+            import azure.cognitiveservices.speech as speechsdk
         except ModuleNotFoundError as e:
             logger.error(
                 "Could not import azure.cognitiveservices.speech. "
