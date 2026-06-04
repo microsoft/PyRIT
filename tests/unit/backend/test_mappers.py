@@ -539,7 +539,7 @@ class TestPyritMessagesToDto:
         assert result[0].message_pieces[0].converted_value_mime_type == "audio/mpeg"
 
     async def test_local_media_file_returns_media_url(self) -> None:
-        """Test that local media files are converted to /api/media URLs."""
+        """Local media files surface a /api/media URL via *_value_url; raw value stays unchanged."""
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             tmp.write(b"PNGDATA")
             tmp_path = tmp.name
@@ -555,14 +555,20 @@ class TestPyritMessagesToDto:
 
             result = await pyrit_messages_to_dto_async([msg])
 
-            assert result[0].message_pieces[0].original_value is not None
-            assert result[0].message_pieces[0].original_value.startswith("/api/media?path=")
-            assert result[0].message_pieces[0].converted_value.startswith("/api/media?path=")
+            view = result[0].message_pieces[0]
+            # Raw stored value (inherited from MessagePiece) — unchanged
+            assert view.original_value == tmp_path
+            assert view.converted_value == tmp_path
+            # Client-fetchable URL — populated by the mapper
+            assert view.original_value_url is not None
+            assert view.original_value_url.startswith("/api/media?path=")
+            assert view.converted_value_url is not None
+            assert view.converted_value_url.startswith("/api/media?path=")
         finally:
             os.unlink(tmp_path)
 
     async def test_data_uri_passthrough(self) -> None:
-        """Test that pre-encoded data URIs are not re-encoded."""
+        """Pre-encoded data URIs surface as both the raw value and the URL."""
         piece = _make_piece(
             original_value="data:image/png;base64,AAAA",
             converted_value="data:image/jpeg;base64,BBBB",
@@ -573,11 +579,14 @@ class TestPyritMessagesToDto:
 
         result = await pyrit_messages_to_dto_async([msg])
 
-        assert result[0].message_pieces[0].original_value == "data:image/png;base64,AAAA"
-        assert result[0].message_pieces[0].converted_value == "data:image/jpeg;base64,BBBB"
+        view = result[0].message_pieces[0]
+        assert view.original_value == "data:image/png;base64,AAAA"
+        assert view.converted_value == "data:image/jpeg;base64,BBBB"
+        assert view.original_value_url == "data:image/png;base64,AAAA"
+        assert view.converted_value_url == "data:image/jpeg;base64,BBBB"
 
     async def test_non_blob_http_url_passthrough(self) -> None:
-        """Test that non-Azure-Blob HTTP URLs are passed through as-is."""
+        """Non-Azure-Blob HTTP URLs surface as both the raw value and the URL."""
         piece = _make_piece(
             original_value="http://example.com/image.png",
             converted_value="http://example.com/image.png",
@@ -588,11 +597,14 @@ class TestPyritMessagesToDto:
 
         result = await pyrit_messages_to_dto_async([msg])
 
-        assert result[0].message_pieces[0].original_value == "http://example.com/image.png"
-        assert result[0].message_pieces[0].converted_value == "http://example.com/image.png"
+        view = result[0].message_pieces[0]
+        assert view.original_value == "http://example.com/image.png"
+        assert view.converted_value == "http://example.com/image.png"
+        assert view.original_value_url == "http://example.com/image.png"
+        assert view.converted_value_url == "http://example.com/image.png"
 
     async def test_azure_blob_url_is_signed(self) -> None:
-        """Test that Azure Blob Storage URLs are signed with SAS tokens."""
+        """Azure Blob URLs are signed into *_value_url; raw value keeps the unsigned URL."""
         blob_url = "https://myaccount.blob.core.windows.net/dbdata/prompt-memory-entries/images/test.png"
         signed_url = blob_url + "?sig=abc123"
         piece = _make_piece(
@@ -610,11 +622,16 @@ class TestPyritMessagesToDto:
         ):
             result = await pyrit_messages_to_dto_async([msg])
 
-        assert result[0].message_pieces[0].original_value == signed_url
-        assert result[0].message_pieces[0].converted_value == signed_url
+        view = result[0].message_pieces[0]
+        # Raw blob URL — unsigned, as stored
+        assert view.original_value == blob_url
+        assert view.converted_value == blob_url
+        # Signed URL — what the client should fetch
+        assert view.original_value_url == signed_url
+        assert view.converted_value_url == signed_url
 
     async def test_azure_blob_url_sign_failure_returns_raw_url(self) -> None:
-        """Test that blob sign failure falls back to the raw blob URL."""
+        """Sign failure falls back to the unsigned blob URL on both raw and *_value_url."""
         blob_url = "https://myaccount.blob.core.windows.net/dbdata/images/test.png"
         piece = _make_piece(
             original_value=blob_url,
@@ -631,11 +648,14 @@ class TestPyritMessagesToDto:
         ):
             result = await pyrit_messages_to_dto_async([msg])
 
-        assert result[0].message_pieces[0].original_value == blob_url
-        assert result[0].message_pieces[0].converted_value == blob_url
+        view = result[0].message_pieces[0]
+        assert view.original_value == blob_url
+        assert view.converted_value == blob_url
+        assert view.original_value_url == blob_url
+        assert view.converted_value_url == blob_url
 
     async def test_nonexistent_media_file_returns_raw_path(self) -> None:
-        """Test that non-existent local media files fall back to raw path values."""
+        """Non-existent local media paths fall back to the raw path on both fields."""
         piece = _make_piece(
             original_value="/tmp/nonexistent.png",
             converted_value="/tmp/nonexistent.png",
@@ -646,8 +666,24 @@ class TestPyritMessagesToDto:
 
         result = await pyrit_messages_to_dto_async([msg])
 
-        assert result[0].message_pieces[0].original_value == "/tmp/nonexistent.png"
-        assert result[0].message_pieces[0].converted_value == "/tmp/nonexistent.png"
+        view = result[0].message_pieces[0]
+        assert view.original_value == "/tmp/nonexistent.png"
+        assert view.converted_value == "/tmp/nonexistent.png"
+        assert view.original_value_url == "/tmp/nonexistent.png"
+        assert view.converted_value_url == "/tmp/nonexistent.png"
+
+    async def test_text_piece_url_fields_are_none(self) -> None:
+        """Text pieces don't have a fetchable URL — *_value_url is None."""
+        piece = _make_piece(original_value="hello world", converted_value="hello world")
+        msg = Message(message_pieces=[piece])
+
+        result = await pyrit_messages_to_dto_async([msg])
+
+        view = result[0].message_pieces[0]
+        assert view.original_value == "hello world"
+        assert view.converted_value == "hello world"
+        assert view.original_value_url is None
+        assert view.converted_value_url is None
 
 
 class TestIsAzureBlobUrl:
@@ -724,9 +760,13 @@ class TestSignBlobUrlAsync:
 class TestResolveMediaUrl:
     """Tests for _resolve_media_url helper."""
 
-    def test_text_value_passes_through(self) -> None:
-        """Non-media types are returned as-is."""
-        assert _resolve_media_url(value="hello world", data_type="text") == "hello world"
+    def test_text_value_returns_none(self) -> None:
+        """Non-media types have no fetchable URL — return None."""
+        assert _resolve_media_url(value="hello world", data_type="text") is None
+
+    def test_text_empty_value_returns_none(self) -> None:
+        """Empty values return None even for media data types."""
+        assert _resolve_media_url(value="", data_type="image_path") is None
 
     def test_data_uri_passes_through(self) -> None:
         """Pre-encoded data URIs are returned as-is."""

@@ -186,8 +186,10 @@ export interface BackendMessagePiece {
   original_value_data_type: string
   converted_value_data_type: string
   original_value?: string | null
+  original_value_url?: string | null
   original_value_mime_type?: string | null
   converted_value: string
+  converted_value_url?: string | null
   converted_value_mime_type?: string | null
   original_filename?: string | null
   converted_filename?: string | null

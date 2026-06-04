@@ -83,13 +83,35 @@ class MessagePieceView(MessagePiece):
     """
     API view of a ``pyrit.models.MessagePiece``.
 
-    ``original_value`` / ``converted_value`` carry frontend-fetchable URLs for
-    media pieces (the raw on-disk path is never exposed); text pieces keep their
-    literal values. MIME types and download filenames are derived from the raw
-    values at map time.
+    Inherits the canonical piece fields unchanged: ``original_value`` /
+    ``converted_value`` carry the raw stored content the server holds (text, a
+    local file path, a blob URL, or a data URI — whatever the database has).
+
+    Adds presentation-only fields the client needs:
+
+    - ``original_value_url`` / ``converted_value_url`` — client-fetchable URLs
+      populated by the mapper for media pieces (``/api/media?path=...`` for
+      local files; SAS-signed URLs for Azure Blob; pass-through for data URIs
+      and existing http(s) URLs). ``None`` for plain text and empty values.
+    - MIME types, download filenames and the response-error description are
+      derived from the raw values at map time.
     """
 
     scores: list[ScoreView] = Field(default_factory=list)
+    original_value_url: Optional[str] = Field(
+        default=None,
+        description=(
+            "Client-fetchable URL for the original media value (e.g. "
+            "/api/media?path=... or a SAS-signed blob URL). None for text pieces."
+        ),
+    )
+    converted_value_url: Optional[str] = Field(
+        default=None,
+        description=(
+            "Client-fetchable URL for the converted media value (e.g. "
+            "/api/media?path=... or a SAS-signed blob URL). None for text pieces."
+        ),
+    )
     original_value_mime_type: Optional[str] = Field(default=None, description="MIME type of the original value")
     converted_value_mime_type: Optional[str] = Field(default=None, description="MIME type of the converted value")
     original_filename: Optional[str] = Field(default=None, description="Download filename for the original value")
@@ -109,16 +131,23 @@ class MessagePieceView(MessagePiece):
         cls,
         piece: MessagePiece,
         *,
-        original_value: Optional[str],
-        converted_value: str,
+        original_value_url: Optional[str] = None,
+        converted_value_url: Optional[str] = None,
     ) -> "MessagePieceView":
         """
         Build a ``MessagePieceView`` from a domain piece without re-validating.
 
+        The canonical piece fields (``original_value``, ``converted_value``,
+        sha256s, role, ids, etc.) are copied through unchanged. The optional URL
+        kwargs are purely additive — they populate the presentation-only
+        ``*_value_url`` fields the client uses to fetch media.
+
         Args:
             piece: The domain message piece.
-            original_value: Resolved/fetchable original value (a URL for media).
-            converted_value: Resolved/fetchable converted value (a URL for media).
+            original_value_url: Client-fetchable URL for ``piece.original_value``
+                when it's media; ``None`` for text.
+            converted_value_url: Client-fetchable URL for ``piece.converted_value``
+                when it's media; ``None`` for text.
 
         Returns:
             A ``MessagePieceView`` with derived MIME types, filenames, and views.
@@ -127,9 +156,9 @@ class MessagePieceView(MessagePiece):
         orig_dtype = piece.original_value_data_type or "text"
         conv_dtype = piece.converted_value_data_type or "text"
         data.update(
-            original_value=original_value,
-            converted_value=converted_value,
             scores=[ScoreView.from_domain(score) for score in piece.scores],
+            original_value_url=original_value_url,
+            converted_value_url=converted_value_url,
             original_value_mime_type=infer_mime_type(value=piece.original_value, data_type=orig_dtype),
             converted_value_mime_type=infer_mime_type(value=piece.converted_value, data_type=conv_dtype),
             original_filename=build_filename(
@@ -179,14 +208,14 @@ class MessageView(Message):
         return self.message_pieces
 
     @classmethod
-    def from_domain(cls, *, pieces: list[MessagePieceView]) -> "MessageView":
+    def from_domain(cls, *, message_pieces: list[MessagePieceView]) -> "MessageView":
         """
         Build a ``MessageView`` from already-mapped piece views.
 
         Returns:
             A ``MessageView`` wrapping the provided piece views.
         """
-        return cls.model_construct(message_pieces=pieces)
+        return cls.model_construct(message_pieces=message_pieces)
 
 
 class AttackSummary(AttackResult):
@@ -266,36 +295,12 @@ class AttackSummary(AttackResult):
         """Return the IDs of related conversations, sorted for stable output."""
         return sorted(ref.conversation_id for ref in self.related_conversations)
 
-    @classmethod
-    def from_domain(
-        cls,
-        attack_result: AttackResult,
-        *,
-        last_response: Optional[MessagePieceView],
-        last_score: Optional[ScoreView],
-        message_count: int,
-        last_message_preview: Optional[str],
-        labels: dict[str, str],
-        created_at: datetime,
-        updated_at: datetime,
-    ) -> "AttackSummary":
-        """
-        Build an ``AttackSummary`` from a domain ``AttackResult`` and mapper-derived stats.
 
-        Returns:
-            An ``AttackSummary`` combining the attack result with presentation stats.
-        """
-        data = {name: getattr(attack_result, name) for name in AttackResult.model_fields}
-        data.update(
-            last_response=last_response,
-            last_score=last_score,
-            labels=labels,
-            message_count=message_count,
-            last_message_preview=last_message_preview,
-            created_at=created_at,
-            updated_at=updated_at,
-        )
-        return cls.model_construct(**data)
+# Note: no ``from_domain`` classmethod here. The mapper assembles ``AttackSummary``
+# directly with ``model_construct`` because the construction overlays view-narrowed
+# values (``last_response``, ``last_score``, merged ``labels``) on top of the
+# canonical ``AttackResult`` fields — a smell that a ``from_domain`` signature
+# couldn't express without competing parameters.
 
 
 # ============================================================================

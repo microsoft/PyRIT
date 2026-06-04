@@ -149,6 +149,38 @@ describe("messageMapper", () => {
       );
     });
 
+    it("prefers converted_value_url over the raw converted_value for media", () => {
+      // New shape (Phase 10+): raw storage path stays in converted_value;
+      // the client-fetchable URL the mapper resolves goes to converted_value_url.
+      const msg: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        message_pieces: [
+          {
+            id: "p1",
+            original_value_data_type: "text",
+            converted_value_data_type: "image_path",
+            original_value: "generate an image",
+            converted_value: "C:\\dbdata\\prompt-memory-entries\\images\\image.png",
+            converted_value_url: "/api/media?path=C%3A%5Cdbdata%5Cimages%5Cimage.png",
+            converted_value_mime_type: "image/png",
+            scores: [],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-02-15T00:00:00Z",
+      };
+
+      const result = backendMessageToFrontend(msg);
+
+      expect(result.attachments).toHaveLength(1);
+      expect(result.attachments![0].url).toBe(
+        "/api/media?path=C%3A%5Cdbdata%5Cimages%5Cimage.png"
+      );
+      // Path-style URLs don't have a known payload size to display.
+      expect(result.attachments![0].size).toBeUndefined();
+    });
+
     it("should convert an audio response", () => {
       const msg: BackendMessage = {
         turn_number: 1,

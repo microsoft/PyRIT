@@ -54,10 +54,8 @@ def _make_message_view(*, role: str = "user", value: str = "hello", sequence: in
         conversation_id="attack-1",
         sequence=sequence,
     )
-    piece_view = MessagePieceView.from_domain(
-        piece, original_value=piece.original_value, converted_value=piece.converted_value
-    )
-    return MessageView.from_domain(pieces=[piece_view])
+    piece_view = MessagePieceView.from_domain(piece)
+    return MessageView.from_domain(message_pieces=[piece_view])
 
 
 @pytest.fixture

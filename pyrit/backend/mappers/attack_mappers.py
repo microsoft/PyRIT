@@ -150,21 +150,25 @@ async def _sign_blob_url_async(*, blob_url: str) -> str:
 
 def _resolve_media_url(*, value: Optional[str], data_type: str) -> Optional[str]:
     """
-    For media path types, convert a local file path to a ``/api/media`` URL.
+    Resolve a media value to a client-fetchable URL.
 
-    Non-media types and Azure Blob URLs are returned as-is (blob URLs are
-    signed later in ``pyrit_messages_to_dto_async``).
+    Returns ``None`` for non-media data types or empty values — there's no URL
+    to expose for plain text. For media values:
+
+    - Local file paths -> ``/api/media?path=...``
+    - data URIs and http(s) URLs -> passed through as-is (blob URLs are
+      signed later in ``pyrit_messages_to_dto_async``)
+    - Anything else (e.g. nonexistent paths) -> passed through unchanged
 
     Args:
         value: The stored value (file path, blob URL, data URI, or text).
         data_type: The prompt data type (e.g. ``image_path``, ``text``).
 
     Returns:
-        The value unchanged for non-media types, a ``/api/media?path=...``
-        URL for local file paths, or the original value for blob URLs / data URIs.
+        A client-fetchable URL for media, or ``None`` for text / empty values.
     """
     if not value or data_type not in MEDIA_PATH_DATA_TYPES:
-        return value
+        return None
     # Already a URL or data URI — pass through
     if value.startswith(("http://", "https://", "data:")):
         return value
@@ -199,19 +203,27 @@ def attack_result_to_summary(
     labels = dict(ar.labels) if ar.labels else {}
     labels.update(stats.labels or {})
     created_at, updated_at = _resolve_summary_timestamps(ar)
-    return AttackSummary.from_domain(
-        ar,
+
+    # Start with every canonical AttackResult field, then overlay view-narrowed
+    # values (last_response/last_score) and presentation extras (message_count,
+    # previews, timestamps, merged labels). ``model_construct`` skips validation
+    # because the source AttackResult is already valid.
+    data = {name: getattr(ar, name) for name in AttackResult.model_fields}
+    data.update(
+        # Overlays — narrow domain types to view types.
         last_response=_summary_last_response(ar.last_response),
         last_score=ScoreView.from_domain(ar.last_score) if ar.last_score else None,
+        labels=labels,
+        # Presentation extras — not on AttackResult.
         message_count=stats.message_count,
         last_message_preview=format_last_message_preview(
             value=stats.last_message_preview,
             data_type=stats.last_message_data_type,
         ),
-        labels=labels,
         created_at=created_at,
         updated_at=updated_at,
     )
+    return AttackSummary.model_construct(**data)
 
 
 def _resolve_summary_timestamps(ar: AttackResult) -> tuple[datetime, datetime]:
@@ -248,13 +260,12 @@ def _summary_last_response(piece: Optional[MessagePiece]) -> Optional[MessagePie
         return None
     return MessagePieceView.from_domain(
         piece,
-        original_value=_resolve_media_url(
+        original_value_url=_resolve_media_url(
             value=piece.original_value, data_type=piece.original_value_data_type or "text"
         ),
-        converted_value=_resolve_media_url(
-            value=piece.converted_value or "", data_type=piece.converted_value_data_type or "text"
-        )
-        or "",
+        converted_value_url=_resolve_media_url(
+            value=piece.converted_value, data_type=piece.converted_value_data_type or "text"
+        ),
     )
 
 
@@ -275,7 +286,10 @@ async def pyrit_messages_to_dto_async(pyrit_messages: list[Message]) -> list[Mes
     """
     Translate PyRIT messages to backend MessageView responses.
 
-    Media file paths are converted to URLs the frontend can fetch directly:
+    The raw stored ``original_value`` / ``converted_value`` are passed through
+    unchanged. Media file paths are additionally resolved into client-fetchable
+    URLs and exposed via ``original_value_url`` / ``converted_value_url``:
+
     - Local files -> ``/api/media?path=...`` (served by the media endpoint)
     - Azure Blob Storage files -> signed URLs with SAS tokens
 
@@ -286,19 +300,18 @@ async def pyrit_messages_to_dto_async(pyrit_messages: list[Message]) -> list[Mes
     for msg in pyrit_messages:
         pieces: list[MessagePieceView] = []
         for p in msg.message_pieces:
-            original_value = await _resolve_and_sign_media_async(
+            original_value_url = await _resolve_and_sign_media_async(
                 value=p.original_value, data_type=p.original_value_data_type or "text"
             )
-            converted_value = (
-                await _resolve_and_sign_media_async(
-                    value=p.converted_value or "", data_type=p.converted_value_data_type or "text"
-                )
-                or ""
+            converted_value_url = await _resolve_and_sign_media_async(
+                value=p.converted_value, data_type=p.converted_value_data_type or "text"
             )
             pieces.append(
-                MessagePieceView.from_domain(p, original_value=original_value, converted_value=converted_value)
+                MessagePieceView.from_domain(
+                    p, original_value_url=original_value_url, converted_value_url=converted_value_url
+                )
             )
-        messages.append(MessageView.from_domain(pieces=pieces))
+        messages.append(MessageView.from_domain(message_pieces=pieces))
     return messages
 
 

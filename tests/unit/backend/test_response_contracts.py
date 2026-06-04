@@ -94,11 +94,13 @@ class TestMessagePieceViewContract:
     def test_dump_has_canonical_and_presentation_fields(self) -> None:
         """Test that the serialized piece exposes canonical and derived presentation fields."""
         piece = _make_piece()
-        view = MessagePieceView.from_domain(piece, original_value="hello", converted_value="hello")
+        view = MessagePieceView.from_domain(piece)
         dumped = view.model_dump(mode="json")
 
         assert dumped["role"] == "user"
         assert dumped["original_value"] == "hello"
+        assert "original_value_url" in dumped
+        assert "converted_value_url" in dumped
         assert "original_value_mime_type" in dumped
         assert "converted_value_mime_type" in dumped
         assert "original_filename" in dumped
@@ -110,7 +112,7 @@ class TestMessagePieceViewContract:
         """Test that nested scores serialize with the ScoreView computed field."""
         piece = _make_piece()
         piece.scores = [_make_score()]
-        view = MessagePieceView.from_domain(piece, original_value="hello", converted_value="hello")
+        view = MessagePieceView.from_domain(piece)
         dumped = view.model_dump(mode="json")
 
         assert dumped["scores"][0]["scorer_type"] == "FloatScaleScorer"
@@ -121,10 +123,8 @@ class TestMessageViewContract:
 
     def test_dump_has_turn_metadata_and_pieces(self) -> None:
         """Test that the serialized message exposes turn metadata and piece views."""
-        piece = MessagePieceView.from_domain(
-            _make_piece(sequence=3, role="assistant"), original_value="hello", converted_value="hello"
-        )
-        view = MessageView.from_domain(pieces=[piece])
+        piece = MessagePieceView.from_domain(_make_piece(sequence=3, role="assistant"))
+        view = MessageView.from_domain(message_pieces=[piece])
         dumped = view.model_dump(mode="json")
 
         assert dumped["turn_number"] == 3
@@ -139,16 +139,17 @@ class TestAttackSummaryContract:
 
     def _summary(self, ar: AttackResult) -> AttackSummary:
         now = datetime.now(timezone.utc)
-        return AttackSummary.from_domain(
-            ar,
+        data = {name: getattr(ar, name) for name in AttackResult.model_fields}
+        data.update(
             last_response=None,
             last_score=None,
+            labels={"env": "prod"},
             message_count=2,
             last_message_preview="hi",
-            labels={"env": "prod"},
             created_at=now,
             updated_at=now,
         )
+        return AttackSummary.model_construct(**data)
 
     def test_dump_has_canonical_computed_and_stats_fields(self) -> None:
         """Test that the serialized summary exposes canonical, computed, and stats fields."""
@@ -203,15 +204,15 @@ class TestDeprecatedWireAliases:
 
     def test_message_piece_view_emits_deprecated_alias(self) -> None:
         """Test that MessagePieceView still emits piece_id mirroring id."""
-        view = MessagePieceView.from_domain(_make_piece(), original_value="hello", converted_value="hello")
+        view = MessagePieceView.from_domain(_make_piece())
         dumped = view.model_dump(mode="json")
 
         assert dumped["piece_id"] == str(view.id)
 
     def test_message_view_emits_deprecated_alias(self) -> None:
         """Test that MessageView still emits pieces mirroring message_pieces."""
-        piece = MessagePieceView.from_domain(_make_piece(), original_value="hello", converted_value="hello")
-        dumped = MessageView.from_domain(pieces=[piece]).model_dump(mode="json")
+        piece = MessagePieceView.from_domain(_make_piece())
+        dumped = MessageView.from_domain(message_pieces=[piece]).model_dump(mode="json")
 
         assert dumped["pieces"] == dumped["message_pieces"]
 
