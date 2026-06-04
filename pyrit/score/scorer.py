@@ -16,6 +16,7 @@ from typing import (
     Optional,
     Union,
     cast,
+    override,
 )
 
 from pyrit.exceptions import (
@@ -105,6 +106,7 @@ class Scorer(Identifiable, abc.ABC):
         """
         return getattr(self, "_prompt_target", None)
 
+    @override
     def get_identifier(self) -> ComponentIdentifier:
         """
         Get the scorer's identifier with eval_hash always attached.

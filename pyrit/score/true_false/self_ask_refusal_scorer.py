@@ -3,7 +3,7 @@
 
 import enum
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, override
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt, UnvalidatedScore
@@ -125,6 +125,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
         self._response_json_schema = seed_prompt.response_json_schema
         self._score_category = ["refusal"]
 
+    @override
     def _build_identifier(self) -> ComponentIdentifier:
         """
         Build the identifier for this scorer.
@@ -144,6 +145,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             },
         )
 
+    @override
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
         """
         Scores the prompt and determines whether the response is a refusal.
