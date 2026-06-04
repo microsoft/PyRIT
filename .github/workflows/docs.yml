@@ -223,7 +223,7 @@ jobs:
         run: pip install --quiet "pyyaml>=6.0"
 
       - name: Download all version artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           pattern: site-*
