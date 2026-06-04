@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import warnings
+from contextlib import closing
 from datetime import datetime, timezone
 
 import pytest
@@ -200,13 +201,20 @@ class TestAttackResultTimestamp:
 
         assert hydrated.timestamp == persisted_ts
 
-    def test_naive_entry_timestamp_is_normalized_to_utc_on_hydration(self) -> None:
-        """SQLite returns naive datetimes; hydration must attach UTC tzinfo."""
+    def test_naive_entry_timestamp_is_normalized_to_utc_on_hydration(self, sqlite_instance) -> None:
+        """SQLite stores datetimes without tzinfo; the UTCDateTime column attaches UTC on read."""
         original = AttackResult(conversation_id="c1", objective="test")
         entry = AttackResultEntry(entry=original)
         entry.timestamp = datetime(2026, 4, 17, 12, 0, 0)  # noqa: DTZ001
 
-        hydrated = entry.get_attack_result()
+        with closing(sqlite_instance.get_session()) as session:
+            session.add(entry)
+            session.commit()
+            entry_id = entry.id
+
+        with closing(sqlite_instance.get_session()) as session:
+            reloaded = session.get(AttackResultEntry, entry_id)
+            hydrated = reloaded.get_attack_result()
 
         assert hydrated.timestamp is not None
         assert hydrated.timestamp.tzinfo is timezone.utc
@@ -450,8 +458,8 @@ class TestAttackResultValidation:
         """Naive datetimes are rejected (AwareDatetime), matching Score/MessagePiece.
 
         SQLite-loaded naive timestamps are normalized to UTC by the memory layer
-        (``AttackResultEntry.get_attack_result`` via ``_ensure_utc``) before they
-        ever reach this constructor, so the model itself stays strict.
+        (the ``UTCDateTime`` column type on ``AttackResultEntry.timestamp``) before
+        they ever reach this constructor, so the model itself stays strict.
         """
         naive = datetime(2026, 1, 1, 12, 0, 0)  # noqa: DTZ001
         with pytest.raises(ValueError):
