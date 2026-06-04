@@ -212,9 +212,7 @@ class DataTypeSerializer(abc.ABC):
 
         # save audio file locally first if in AzureStorageBlob so we can use wave.open to set audio parameters
         if self._is_azure_storage_url(str(file_path)):
-            with tempfile.NamedTemporaryFile(
-                suffix=".wav", dir=DB_DATA_PATH, delete=False
-            ) as tmp:
+            with tempfile.NamedTemporaryFile(suffix=".wav", dir=DB_DATA_PATH, delete=False) as tmp:
                 local_temp_path = Path(tmp.name)
             try:
                 await asyncio.to_thread(
