@@ -23,6 +23,12 @@ if TYPE_CHECKING:
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DB_DATA_PATH
+from pyrit.io import (
+    DataTypeSerializer,
+    StorageIO,
+    data_serializer_factory,
+    set_seed_sha256_async,
+)
 from pyrit.memory.memory_exporter import MemoryExporter
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -36,7 +42,6 @@ from pyrit.memory.memory_models import (
 from pyrit.models import (
     AttackResult,
     ConversationStats,
-    DataTypeSerializer,
     IdentifierFilter,
     IdentifierType,
     Message,
@@ -47,8 +52,6 @@ from pyrit.models import (
     SeedDataset,
     SeedGroup,
     SeedType,
-    StorageIO,
-    data_serializer_factory,
     group_conversation_message_pieces_by_sequence,
     sort_message_pieces,
 )
@@ -1397,7 +1400,7 @@ class MemoryInterface(abc.ABC):
                 serialized_prompt_value = await self._serialize_seed_value_async(prompt=prompt)
                 prompt.value = serialized_prompt_value
 
-            await prompt.set_sha256_value_async()
+            await set_seed_sha256_async(prompt)
 
             if prompt.value_sha256 and not self.get_seeds(
                 value_sha256=[prompt.value_sha256], dataset_name=prompt.dataset_name
