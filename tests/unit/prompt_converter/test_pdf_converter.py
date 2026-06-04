@@ -11,7 +11,7 @@ from pypdf import PageObject, PdfReader
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
-from pyrit.memory.storage import DataTypeSerializer
+from pyrit.memory import DataTypeSerializer
 from pyrit.models import SeedPrompt
 from pyrit.prompt_converter import ConverterResult, PDFConverter
 

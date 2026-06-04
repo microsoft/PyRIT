@@ -36,7 +36,7 @@ from pyrit.backend.models.converters import (
     CreateConverterResponse,
     PreviewStep,
 )
-from pyrit.memory.storage import data_serializer_factory
+from pyrit.memory import data_serializer_factory
 from pyrit.models import PromptDataType
 from pyrit.prompt_converter import PromptConverter
 from pyrit.prompt_target import PromptTarget

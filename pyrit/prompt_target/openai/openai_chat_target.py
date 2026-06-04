@@ -13,7 +13,7 @@ from pyrit.exceptions import (
     PyritException,
     pyrit_target_retry,
 )
-from pyrit.memory.storage import DataTypeSerializer, data_serializer_factory
+from pyrit.memory import DataTypeSerializer, data_serializer_factory
 from pyrit.models import ChatMessage, ComponentIdentifier, Message, MessagePiece, construct_response_from_request
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities

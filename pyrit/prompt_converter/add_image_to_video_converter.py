@@ -10,7 +10,7 @@ from typing import Optional
 import numpy as np
 
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.memory.storage import data_serializer_factory
+from pyrit.memory import data_serializer_factory
 from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
