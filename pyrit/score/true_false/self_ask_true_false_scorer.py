@@ -164,6 +164,8 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
         true_category = true_false_question["true_description"]
         false_category = true_false_question["false_description"]
 
+        # TrueFalseQuestion is a custom class without .get(); the ternary handles both dicts
+        # and that class via __getitem__ / __contains__, so SIM401 doesn't apply cleanly here.
         metadata = true_false_question["metadata"] if "metadata" in true_false_question else ""  # noqa: SIM401
 
         scoring_instructions_template = SeedPrompt.from_yaml_file(true_false_system_prompt_path)
