@@ -27,7 +27,7 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
 
     _AUTHORS = ["Simone Van Taylor"]
 
-    _GROUPS = ["Humane Intelligence"]
+    _GROUPS: list[str] = []
 
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)

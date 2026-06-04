@@ -23,15 +23,15 @@ class _MLCommonsAILuminateDataset(_RemoteDatasetLoader):
     hazard categories. It's a 10% subset of the full AILuminate training dataset.
 
     Reference: https://github.com/mlcommons/ailuminate
-    Paper: [@vidgen2024ailuminate]
+    Paper: [@ghosh2025ailuminate]
     """
 
     _AUTHORS = [
-        "Bertie Vidgen",
-        "Adarsh Agrawal",
-        "Ahmed M. Ahmed",
-        "Victor Akinwande",
-        "Namir Al-Nuaimi",
+        "Shaona Ghosh",
+        "Heather Frase",
+        "Adina Williams",
+        "Sarah Luger",
+        "Paul Röttger",
         "and others",
     ]
 
