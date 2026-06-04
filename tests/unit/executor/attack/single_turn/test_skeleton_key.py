@@ -343,7 +343,7 @@ class TestSkeletonKeyAttackExecution:
                 mock_parent.return_value = AttackResult(
                     conversation_id=basic_context.conversation_id,
                     objective=basic_context.objective,
-                    last_response=sample_response,
+                    last_response=sample_response.get_piece(),
                     last_score=success_score,
                     outcome=AttackOutcome.SUCCESS,
                     executed_turns=1,
@@ -360,7 +360,7 @@ class TestSkeletonKeyAttackExecution:
                 # Verify result properties
                 assert result.outcome == AttackOutcome.SUCCESS
                 assert result.executed_turns == 2  # Should be updated to 2 turns
-                assert result.last_response == sample_response
+                assert result.last_response == sample_response.get_piece()
                 assert result.last_score == success_score
 
     async def test_perform_attack_skeleton_key_failure(self, mock_target, basic_context):
@@ -408,7 +408,7 @@ class TestSkeletonKeyAttackExecution:
                 mock_parent.return_value = AttackResult(
                     conversation_id=basic_context.conversation_id,
                     objective=basic_context.objective,
-                    last_response=sample_response,
+                    last_response=sample_response.get_piece(),
                     last_score=failure_score,
                     outcome=AttackOutcome.FAILURE,
                     executed_turns=1,

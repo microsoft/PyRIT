@@ -3,6 +3,7 @@
 
 import logging
 import os
+import warnings
 from enum import Enum
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
@@ -74,7 +75,7 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
         self,
         *,
         label: SGXSTestLabel = SGXSTestLabel.UNSAFE,
-        split: str = "train",
+        split: str | None = None,
         token: str | None = None,
     ) -> None:
         """
@@ -84,18 +85,26 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
             label: Which subset of prompts to load. Defaults to ``SGXSTestLabel.UNSAFE``
                 (the truly-harmful prompts). Use ``SGXSTestLabel.SAFE`` for the
                 over-refusal targets or ``SGXSTestLabel.ALL`` for the full 200-prompt set.
-            split: Dataset split to load. Defaults to "train" (the only split currently
-                published by the upstream dataset).
+            split: **Deprecated.** Upstream ``walledai/SGXSTest`` publishes only the
+                ``"train"`` split, so this kwarg has no effect. It will be removed in
+                v0.16.0.
             token: Hugging Face authentication token. If not provided, reads from
                 the HUGGINGFACE_TOKEN env var.
 
         Raises:
             ValueError: If ``label`` is not an SGXSTestLabel member.
         """
+        if split is not None:
+            warnings.warn(
+                "'split' is deprecated and will be removed in v0.16.0. "
+                "Upstream walledai/SGXSTest publishes only the 'train' split, "
+                "so this kwarg has no effect.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self._validate_enum(value=label, enum_cls=SGXSTestLabel, label="label")
 
         self.label = label
-        self.split = split
         self.token = token if token is not None else os.environ.get("HUGGINGFACE_TOKEN")
 
     @property
@@ -122,7 +131,7 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
 
         data = await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
-            split=self.split,
+            split="train",
             cache=cache,
             token=self.token,
         )
