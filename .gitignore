@@ -1,6 +1,6 @@
 # PyRIT-specific configs
 submodules/
-results/
+/results/
 dbdata/
 eval/
 default_memory.json.memory

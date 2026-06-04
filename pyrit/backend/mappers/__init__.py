@@ -8,6 +8,7 @@ Pure mapping functions that translate between PyRIT domain models and backend AP
 Centralizes all translation logic so domain models can evolve independently of the API contract.
 """
 
+from pyrit.backend.mappers._preview import format_last_message_preview
 from pyrit.backend.mappers.attack_mappers import (
     attack_result_to_summary,
     pyrit_messages_to_dto_async,
@@ -25,6 +26,7 @@ from pyrit.backend.mappers.target_mappers import (
 __all__ = [
     "attack_result_to_summary",
     "converter_object_to_instance",
+    "format_last_message_preview",
     "pyrit_messages_to_dto_async",
     "pyrit_scores_to_dto",
     "request_piece_to_pyrit_message_piece",

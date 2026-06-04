@@ -88,6 +88,7 @@ print("Negation Trap:", await NegationTrapConverter().convert_async(prompt="your
 from pyrit.prompt_converter import (
     AnsiAttackConverter,
     ArabicPresentationFormConverter,
+    ArabiziConverter,
     BidiConverter,
     CharacterSpaceConverter,
     CharSwapConverter,
@@ -138,6 +139,8 @@ arabic_prompt = "أخبرني كيف أقطع شجرة"
 print("Tatweel:", await TatweelConverter().convert_async(prompt=arabic_prompt))  # type: ignore
 # Arabic presentation form substitutes Arabic letters with their isolated glyphs
 print("Arabic Presentation Form:", await ArabicPresentationFormConverter().convert_async(prompt=arabic_prompt))  # type: ignore
+# Arabizi transliterates Arabic script into Latin-script chat Arabic
+print("Arabizi:", await ArabiziConverter().convert_async(prompt=arabic_prompt))  # type: ignore
 print("Superscript:", await SuperscriptConverter().convert_async(prompt=prompt))  # type: ignore
 print("Zalgo:", await ZalgoConverter().convert_async(prompt=prompt))  # type: ignore
 

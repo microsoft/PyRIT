@@ -20,7 +20,6 @@ a deprecation shim through ``0.16.0``.
 from typing import TYPE_CHECKING, Any
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models.attack_result import AttackOutcome, AttackResult, AttackResultT
 from pyrit.models.chat_message import (
     ALLOWED_CHAT_MESSAGE_ROLES,
     ChatMessage,
@@ -62,7 +61,14 @@ from pyrit.models.identifiers import (
     snake_case_to_class_name,
     validate_registry_name,
 )
-from pyrit.models.literals import ChatMessageRole, Modality, PromptDataType, PromptResponseError, SeedType
+from pyrit.models.literals import (
+    MEDIA_PATH_DATA_TYPES,
+    ChatMessageRole,
+    Modality,
+    PromptDataType,
+    PromptResponseError,
+    SeedType,
+)
 from pyrit.models.messages import (
     Message,
     MessagePiece,
@@ -74,6 +80,8 @@ from pyrit.models.messages import (
     sort_message_pieces,
 )
 from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
+from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultT
+from pyrit.models.results.strategy_result import StrategyResult, StrategyResultT
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
 from pyrit.models.score import Score, ScoreType, UnvalidatedScore
@@ -96,7 +104,6 @@ from pyrit.models.seeds import (
 # Keep old module-level imports working (deprecated, will be removed)
 # These are re-exported from the seeds submodule
 from pyrit.models.storage_io import AzureBlobStorageIO, DiskStorageIO, StorageIO
-from pyrit.models.strategy_result import StrategyResult, StrategyResultT
 
 __all__ = [
     "ALLOWED_CHAT_MESSAGE_ROLES",
@@ -141,6 +148,7 @@ __all__ = [
     "IdentifierFilter",
     "IdentifierType",
     "ImagePathDataTypeSerializer",
+    "MEDIA_PATH_DATA_TYPES",
     "Message",
     "MessagePiece",
     "Modality",
