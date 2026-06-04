@@ -172,17 +172,17 @@ export interface CreateAttackResponse {
 // --- Messages ---
 
 export interface BackendScore {
-  score_id: string
+  id: string
   scorer_type: string
   score_type: string
   score_value: string
   score_category?: string[] | null
   score_rationale?: string | null
-  scored_at: string
+  timestamp: string
 }
 
 export interface BackendMessagePiece {
-  piece_id: string
+  id: string
   original_value_data_type: string
   converted_value_data_type: string
   original_value?: string | null
@@ -200,7 +200,7 @@ export interface BackendMessagePiece {
 export interface BackendMessage {
   turn_number: number
   role: string
-  pieces: BackendMessagePiece[]
+  message_pieces: BackendMessagePiece[]
   created_at: string
 }
 

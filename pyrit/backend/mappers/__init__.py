@@ -12,7 +12,6 @@ from pyrit.backend.mappers._preview import format_last_message_preview
 from pyrit.backend.mappers.attack_mappers import (
     attack_result_to_summary,
     pyrit_messages_to_dto_async,
-    pyrit_scores_to_dto,
     request_piece_to_pyrit_message_piece,
     request_to_pyrit_message,
 )
@@ -28,7 +27,6 @@ __all__ = [
     "converter_object_to_instance",
     "format_last_message_preview",
     "pyrit_messages_to_dto_async",
-    "pyrit_scores_to_dto",
     "request_piece_to_pyrit_message_piece",
     "request_to_pyrit_message",
     "target_object_to_instance",

@@ -26,7 +26,14 @@ from pyrit.backend.services.attack_service import (
     AttackService,
     get_attack_service,
 )
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, build_atomic_attack_identifier
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    ComponentIdentifier,
+    Message,
+    MessagePiece,
+    build_atomic_attack_identifier,
+)
 from pyrit.models.conversation_stats import ConversationStats
 
 
@@ -1436,23 +1443,18 @@ class TestMessageBuilding:
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
 
-        # Create mock message with pieces
-        mock_piece = MagicMock()
-        mock_piece.id = "piece-1"
-        mock_piece.converted_value_data_type = "text"
-        mock_piece.original_value_data_type = "text"
-        mock_piece.original_value = "Hello"
-        mock_piece.converted_value = "Hello"
-        mock_piece.response_error = None
-        mock_piece.sequence = 0
-        mock_piece.role = "user"
-        mock_piece.timestamp = datetime.now(timezone.utc)
-        mock_piece.scores = None
+        piece = MessagePiece(
+            role="user",
+            original_value="Hello",
+            converted_value="Hello",
+            original_value_data_type="text",
+            converted_value_data_type="text",
+            conversation_id="test-id",
+            sequence=0,
+        )
+        msg = Message(message_pieces=[piece])
 
-        mock_msg = MagicMock()
-        mock_msg.message_pieces = [mock_piece]
-
-        mock_memory.get_conversation.return_value = [mock_msg]
+        mock_memory.get_conversation.return_value = [msg]
 
         result = await attack_service.get_conversation_messages_async(
             attack_result_id="test-id", conversation_id="test-id"
@@ -1461,8 +1463,8 @@ class TestMessageBuilding:
         assert result is not None
         assert len(result.messages) == 1
         assert result.messages[0].role == "user"
-        assert len(result.messages[0].pieces) == 1
-        assert result.messages[0].pieces[0].original_value == "Hello"
+        assert len(result.messages[0].message_pieces) == 1
+        assert result.messages[0].message_pieces[0].original_value == "Hello"
 
 
 # ============================================================================
@@ -1965,8 +1967,7 @@ class TestAddMessageTargetConversation:
         mock_summary = AttackSummary(
             attack_result_id="ar-attack-1",
             conversation_id="attack-1",
-            attack_type="ManualAttack",
-            converters=[],
+            objective="test objective",
             message_count=1,
             labels={},
             created_at=now,
@@ -2243,8 +2244,7 @@ class TestAttackServiceAdditionalCoverage:
                     return_value=AttackSummary(
                         attack_result_id="ar-attack-1",
                         conversation_id="attack-1",
-                        attack_type="ManualAttack",
-                        converters=[],
+                        objective="test objective",
                         message_count=0,
                         labels={},
                         created_at=datetime.now(timezone.utc),
@@ -2322,8 +2322,7 @@ class TestAttackServiceAdditionalCoverage:
                     return_value=AttackSummary(
                         attack_result_id="ar-flat-1",
                         conversation_id="flat-1",
-                        attack_type="ManualAttack",
-                        converters=[],
+                        objective="test objective",
                         message_count=0,
                         labels={},
                         created_at=datetime.now(timezone.utc),

@@ -142,7 +142,7 @@ function pieceToAttachment(
   const url = isBase64 ? buildDataUri(value, mime) : value
   const prefix = isOriginal ? 'original_' : ''
   const filename = isOriginal ? piece.original_filename : piece.converted_filename
-  const fallbackName = `${prefix}${dataType}_${piece.piece_id.slice(0, 8)}`
+  const fallbackName = `${prefix}${dataType}_${piece.id.slice(0, 8)}`
 
   // For base64-inlined media, derive the decoded byte count. For path / URL
   // values the string length is meaningless (e.g. /api/media?path=... is a
@@ -155,7 +155,7 @@ function pieceToAttachment(
     url,
     mimeType: mime,
     size,
-    pieceId: piece.piece_id,
+    pieceId: piece.id,
     metadata: piece.prompt_metadata || undefined,
   }
 }
@@ -184,7 +184,7 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
   const reasoningSummaries: string[] = []
   let error: MessageError | undefined
 
-  for (const piece of msg.pieces) {
+  for (const piece of msg.message_pieces) {
     // Check for errors
     const pieceError = pieceToError(piece)
     if (pieceError && !error) {

@@ -12,7 +12,6 @@ constructs local media endpoint URLs for media content.
 from __future__ import annotations
 
 import logging
-import mimetypes
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -28,24 +27,20 @@ from pyrit.backend.mappers._preview import format_last_message_preview
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
     AttackSummary,
-    Message,
-    MessagePiece,
     MessagePieceRequest,
-    RetryEventResponse,
-    Score,
-    TargetInfo,
+    MessagePieceView,
+    MessageView,
+    ScoreView,
 )
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import MEDIA_PATH_DATA_TYPES, AttackResult, ChatMessageRole, PromptDataType
 from pyrit.models import Message as PyritMessage
 from pyrit.models import MessagePiece as PyritMessagePiece
-from pyrit.models import Score as PyritScore
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pyrit.models.conversation_stats import ConversationStats
-    from pyrit.models.retry_event import RetryEvent
 
 # ============================================================================
 # Domain → DTO  (for API responses)
@@ -181,62 +176,57 @@ def _resolve_media_url(*, value: Optional[str], data_type: str) -> Optional[str]
     return value
 
 
-def retry_events_to_response(retry_events: list[RetryEvent] | None) -> list[RetryEventResponse] | None:
-    """
-    Convert a list of RetryEvent domain objects to RetryEventResponse DTOs.
-
-    Args:
-        retry_events: Domain retry events, or None.
-
-    Returns:
-        List of RetryEventResponse DTOs, or None if the input is None or empty.
-    """
-    if not retry_events:
-        return None
-    return [
-        RetryEventResponse(
-            timestamp=evt.timestamp,
-            attempt_number=evt.attempt_number,
-            function_name=evt.function_name,
-            exception_type=evt.exception_type,
-            exception_message=evt.exception_message,
-            component_role=evt.component_role,
-            component_name=evt.component_name,
-            endpoint=evt.endpoint,
-            elapsed_seconds=evt.elapsed_seconds,
-        )
-        for evt in retry_events
-    ]
-
-
 def attack_result_to_summary(
     ar: AttackResult,
     *,
     stats: ConversationStats,
 ) -> AttackSummary:
     """
-    Build an AttackSummary DTO from an AttackResult.
+    Build an AttackSummary view from an AttackResult.
+
+    Conversation-level stats (message count, preview, labels, timestamps) are
+    injected here; every other field is inherited from the AttackResult. The
+    summary's ``last_response`` media is resolved to a ``/api/media`` URL but not
+    SAS-signed — Azure Blob signing only happens on the async ``/messages`` path.
 
     Args:
         ar: The domain AttackResult.
         stats: Pre-aggregated conversation stats (from ``get_conversation_stats``).
 
     Returns:
-        AttackSummary DTO ready for the API response.
+        AttackSummary view ready for the API response.
     """
-    message_count = stats.message_count
-    last_preview = format_last_message_preview(
-        value=stats.last_message_preview,
-        data_type=stats.last_message_data_type,
-    )
-
-    # Merge attack-result labels with conversation-level labels.
-    # Conversation labels take precedence on key collision.
+    # Merge attack-result labels with conversation-level labels; conversation
+    # labels take precedence on key collision.
     labels = dict(ar.labels) if ar.labels else {}
     labels.update(stats.labels or {})
-    # Resolution order for created_at: explicit metadata override, then the
-    # persisted AttackResult.timestamp, and finally datetime.now() as a
-    # last-resort fallback for never-persisted results.
+    created_at, updated_at = _resolve_summary_timestamps(ar)
+    return AttackSummary.from_domain(
+        ar,
+        last_response=_summary_last_response(ar.last_response),
+        last_score=ScoreView.from_domain(ar.last_score) if ar.last_score else None,
+        message_count=stats.message_count,
+        last_message_preview=format_last_message_preview(
+            value=stats.last_message_preview,
+            data_type=stats.last_message_data_type,
+        ),
+        labels=labels,
+        created_at=created_at,
+        updated_at=updated_at,
+    )
+
+
+def _resolve_summary_timestamps(ar: AttackResult) -> tuple[datetime, datetime]:
+    """
+    Resolve ``created_at`` / ``updated_at`` for a summary.
+
+    Resolution order for ``created_at``: explicit metadata override, then the
+    persisted ``AttackResult.timestamp``, and finally ``datetime.now`` as a
+    last-resort fallback for never-persisted results.
+
+    Returns:
+        A ``(created_at, updated_at)`` tuple.
+    """
     created_str = ar.metadata.get("created_at")
     updated_str = ar.metadata.get("updated_at")
     if created_str:
@@ -246,208 +236,71 @@ def attack_result_to_summary(
     else:
         created_at = datetime.now(timezone.utc)
     updated_at = datetime.fromisoformat(updated_str) if updated_str else created_at
+    return created_at, updated_at
 
-    aid = ar.get_attack_strategy_identifier()
 
-    # Extract only frontend-relevant fields from ComponentIdentifier
-    target_id = aid.get_child("objective_target") if aid else None
-    converter_ids = aid.get_child_list("request_converters") if aid else []
+def _summary_last_response(piece: Optional[PyritMessagePiece]) -> Optional[MessagePieceView]:
+    """
+    Build a ``MessagePieceView`` for a summary's last response (sync media resolution, no SAS).
 
-    target_info = (
-        TargetInfo(
-            target_type=target_id.class_name,
-            endpoint=target_id.params.get("endpoint") or None,
-            model_name=target_id.params.get("model_name") or None,
+    Returns:
+        A ``MessagePieceView`` for the piece, or ``None`` when no piece is given.
+    """
+    if piece is None:
+        return None
+    return MessagePieceView.from_domain(
+        piece,
+        original_value=_resolve_media_url(
+            value=piece.original_value, data_type=piece.original_value_data_type or "text"
+        ),
+        converted_value=_resolve_media_url(
+            value=piece.converted_value or "", data_type=piece.converted_value_data_type or "text"
         )
-        if target_id
-        else None
-    )
-
-    # Build retry event responses if available
-    retry_event_responses = retry_events_to_response(ar.retry_events)
-
-    return AttackSummary(
-        attack_result_id=ar.attack_result_id,
-        conversation_id=ar.conversation_id,
-        attack_type=aid.class_name if aid else "Unknown",
-        attack_specific_params=(aid.params or None) if aid else None,
-        target=target_info,
-        converters=[c.class_name for c in converter_ids] if converter_ids else [],
-        outcome=ar.outcome.value,
-        last_message_preview=last_preview,
-        message_count=message_count,
-        related_conversation_ids=[ref.conversation_id for ref in ar.related_conversations],
-        labels=labels,
-        created_at=created_at,
-        updated_at=updated_at,
-        error_message=ar.error_message,
-        error_type=ar.error_type,
-        error_traceback=ar.error_traceback,
-        total_retries=ar.total_retries,
-        retry_events=retry_event_responses,
+        or "",
     )
 
 
-def pyrit_scores_to_dto(scores: list[PyritScore]) -> list[Score]:
+async def _resolve_and_sign_media_async(*, value: Optional[str], data_type: str) -> Optional[str]:
     """
-    Translate PyRIT score objects to backend Score DTOs.
+    Resolve a media value to a fetchable URL, signing Azure Blob URLs when present.
 
     Returns:
-        List of Score DTOs for the API.
+        The resolved (and signed, if a blob) URL, or ``None`` when *value* is empty.
     """
-    return [
-        Score(
-            score_id=str(score.id),
-            scorer_type=(
-                score.scorer_class_identifier.class_name or "Unknown" if score.scorer_class_identifier else "Unknown"
-            ),
-            score_type=score.score_type,
-            score_value=score.score_value,
-            score_category=score.score_category,
-            score_rationale=score.score_rationale,
-            scored_at=score.timestamp,
-        )
-        for score in scores
-    ]
+    resolved = _resolve_media_url(value=value, data_type=data_type)
+    if resolved and _is_azure_blob_url(resolved):
+        return await _sign_blob_url_async(blob_url=resolved)
+    return resolved
 
 
-def _infer_mime_type(*, value: Optional[str], data_type: PromptDataType) -> Optional[str]:
+async def pyrit_messages_to_dto_async(pyrit_messages: list[PyritMessage]) -> list[MessageView]:
     """
-    Infer MIME type from a value and its data type.
-
-    For non-text data types, attempts to guess the MIME type from the value
-    treated as a file path (using the file extension).  Returns ``None`` for
-    text content or when the type cannot be determined.
-
-    Args:
-        value: The value (typically a file path for media content).
-        data_type: The prompt data type (e.g., 'text', 'image', 'audio').
-
-    Returns:
-        MIME type string (e.g., 'image/png') or None.
-    """
-    if not value or data_type == "text":
-        return None
-    mime_type, _ = mimetypes.guess_type(value)
-    return mime_type
-
-
-def _build_filename(
-    *,
-    data_type: str,
-    sha256: Optional[str],
-    value: Optional[str],
-) -> Optional[str]:
-    """
-    Build a human-readable download filename from the data type and hash.
-
-    Produces names like ``image_a1b2c3d4e5f6.png`` or ``audio_e5f6g7h8i9j0.wav``.
-    The hash is truncated to 12 characters for readability.
-
-    Falls back to the file extension from *value* (path or URL) when the
-    MIME type cannot be determined from the data type alone.
-
-    Returns ``None`` for text-like types that don't need a download filename.
-
-    Args:
-        data_type: The prompt data type (e.g. ``image_path``, ``audio_path``).
-        sha256: The SHA256 hash of the content, if available.
-        value: The original value (path or URL) used to infer file extension.
-
-    Returns:
-        Optional[str]: A filename like ``image_a1b2c3d4e5f6.png``, or ``None`` for text-like types.
-    """
-    # Map data types to friendly prefixes
-    prefix_map = {
-        "image_path": "image",
-        "audio_path": "audio",
-        "video_path": "video",
-        "binary_path": "file",
-    }
-    prefix = prefix_map.get(data_type)
-    if not prefix:
-        return None
-
-    short_hash = sha256[:12] if sha256 else uuid.uuid4().hex[:12]
-
-    # Derive extension from the value (file path or URL)
-    ext = ""
-    if value and not value.startswith("data:"):
-        source = value
-        if source.startswith("http"):
-            source = urlparse(source).path
-        ext = Path(source).suffix  # e.g. ".png"
-
-    if not ext:
-        # Fallback: guess from mime type based on data type prefix
-        default_ext = {"image": ".png", "audio": ".wav", "video": ".mp4", "file": ".bin"}
-        ext = default_ext.get(prefix, ".bin")
-
-    return f"{prefix}_{short_hash}{ext}"
-
-
-async def pyrit_messages_to_dto_async(pyrit_messages: list[PyritMessage]) -> list[Message]:
-    """
-    Translate PyRIT messages to backend Message DTOs.
+    Translate PyRIT messages to backend MessageView responses.
 
     Media file paths are converted to URLs the frontend can fetch directly:
-    - Local files → ``/api/media?path=...`` (served by the media endpoint)
-    - Azure Blob Storage files → signed URLs with SAS tokens
+    - Local files -> ``/api/media?path=...`` (served by the media endpoint)
+    - Azure Blob Storage files -> signed URLs with SAS tokens
 
     Returns:
-        List of Message DTOs for the API.
+        List of MessageView responses for the API.
     """
-    messages = []
+    messages: list[MessageView] = []
     for msg in pyrit_messages:
-        pieces = []
+        pieces: list[MessagePieceView] = []
         for p in msg.message_pieces:
-            orig_dtype = p.original_value_data_type or "text"
-            conv_dtype = p.converted_value_data_type or "text"
-
-            orig_val = _resolve_media_url(value=p.original_value, data_type=orig_dtype)
-            conv_val = _resolve_media_url(value=p.converted_value or "", data_type=conv_dtype) or ""
-
-            # Sign Azure Blob Storage URLs so the frontend can fetch them directly
-            if orig_val and _is_azure_blob_url(orig_val):
-                orig_val = await _sign_blob_url_async(blob_url=orig_val)
-            if conv_val and _is_azure_blob_url(conv_val):
-                conv_val = await _sign_blob_url_async(blob_url=conv_val)
-
-            pieces.append(
-                MessagePiece(
-                    piece_id=str(p.id),
-                    original_value_data_type=orig_dtype,
-                    converted_value_data_type=conv_dtype,
-                    original_value=orig_val,
-                    original_value_mime_type=_infer_mime_type(value=p.original_value, data_type=orig_dtype),
-                    converted_value=conv_val,
-                    converted_value_mime_type=_infer_mime_type(value=p.converted_value, data_type=conv_dtype),
-                    prompt_metadata=dict(p.prompt_metadata) if p.prompt_metadata else None,
-                    scores=pyrit_scores_to_dto(p.scores) if p.scores else [],
-                    response_error=p.response_error or "none",
-                    original_filename=_build_filename(
-                        data_type=orig_dtype,
-                        sha256=p.original_value_sha256,
-                        value=p.original_value,
-                    ),
-                    converted_filename=_build_filename(
-                        data_type=conv_dtype,
-                        sha256=p.converted_value_sha256,
-                        value=p.converted_value,
-                    ),
+            original_value = await _resolve_and_sign_media_async(
+                value=p.original_value, data_type=p.original_value_data_type or "text"
+            )
+            converted_value = (
+                await _resolve_and_sign_media_async(
+                    value=p.converted_value or "", data_type=p.converted_value_data_type or "text"
                 )
+                or ""
             )
-
-        first = msg.message_pieces[0] if msg.message_pieces else None
-        messages.append(
-            Message(
-                turn_number=first.sequence if first else 0,
-                role=first.role if first else "user",
-                pieces=pieces,
-                created_at=first.timestamp if first else datetime.now(timezone.utc),
+            pieces.append(
+                MessagePieceView.from_domain(p, original_value=original_value, converted_value=converted_value)
             )
-        )
-
+        messages.append(MessageView.from_domain(pieces=pieces))
     return messages
 
 
