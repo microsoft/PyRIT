@@ -415,6 +415,26 @@ class TestListAttacks:
         assert len(result.items) == 1
         assert result.items[0].labels == {"env": "prod", "team": "red", "test_ar_label": "test_ar_value"}
 
+    async def test_list_attacks_formats_media_preview(self, attack_service, mock_memory) -> None:
+        """list_attacks AttackSummary previews must not leak absolute media paths."""
+        ar = make_attack_result(conversation_id="attack-1")
+        mock_memory.get_attack_results.return_value = [ar]
+        path = r"C:\Users\someone\PyRIT\dbdata\prompt-memory-entries\images\1780010098266691.png"
+        mock_memory.get_conversation_stats.return_value = {
+            "attack-1": ConversationStats(
+                message_count=1,
+                last_message_preview=path,
+                last_message_data_type="image_path",
+            ),
+        }
+
+        result = await attack_service.list_attacks_async()
+
+        assert len(result.items) == 1
+        preview = result.items[0].last_message_preview
+        assert preview == "[Image: 1780010098266691.png]"
+        assert "C:\\" not in (preview or "")
+
     async def test_list_attacks_filters_by_labels_directly(self, attack_service, mock_memory) -> None:
         """Test that label filters are passed directly to the DB query (no legacy expansion)."""
         ar = make_attack_result(conversation_id="attack-canonical")
@@ -1508,7 +1528,7 @@ class TestPersistBase64Pieces:
         )
 
         mock_serializer = MagicMock()
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
         mock_serializer.value = "/saved/image.png"
 
         with patch(
@@ -1522,7 +1542,7 @@ class TestPersistBase64Pieces:
             data_type="image_path",
             extension=".png",
         )
-        mock_serializer.save_b64_image.assert_awaited_once_with(data="aW1hZ2VkYXRh")
+        mock_serializer.save_b64_image_async.assert_awaited_once_with(data="aW1hZ2VkYXRh")
         assert request.pieces[0].original_value == "/saved/image.png"
 
     async def test_mixed_pieces_only_persists_non_text(self, attack_service) -> None:
@@ -1542,7 +1562,7 @@ class TestPersistBase64Pieces:
         )
 
         mock_serializer = MagicMock()
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
         mock_serializer.value = "/saved/photo.jpg"
 
         with patch(
@@ -1569,7 +1589,7 @@ class TestPersistBase64Pieces:
         )
 
         mock_serializer = MagicMock()
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
         mock_serializer.value = "/saved/file.bin"
 
         with patch(
@@ -1600,7 +1620,7 @@ class TestPersistBase64Pieces:
         )
 
         mock_serializer = MagicMock()
-        mock_serializer.save_b64_image = AsyncMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
         mock_serializer.value = "/saved/image.png"
 
         with patch(
@@ -1610,7 +1630,7 @@ class TestPersistBase64Pieces:
             await AttackService._persist_base64_pieces_async(request)
 
         # Should receive only the base64 payload, not the data URI prefix
-        mock_serializer.save_b64_image.assert_awaited_once_with(data="aW1hZ2VkYXRh")
+        mock_serializer.save_b64_image_async.assert_awaited_once_with(data="aW1hZ2VkYXRh")
         assert request.pieces[0].original_value == "/saved/image.png"
 
     async def test_http_url_is_kept_as_is(self, attack_service) -> None:
@@ -1673,7 +1693,7 @@ class TestPersistBase64Pieces:
             await AttackService._persist_base64_pieces_async(request)
 
             mock_factory.assert_called_once()
-            mock_serializer.save_b64_image.assert_called_once_with(data=long_b64)
+            mock_serializer.save_b64_image_async.assert_called_once_with(data=long_b64)
             assert request.pieces[0].original_value == "/tmp/saved_audio.wav"
 
 
@@ -1708,6 +1728,26 @@ class TestGetConversations:
         assert result.main_conversation_id == "attack-1"
         assert len(result.conversations) == 1
         assert result.conversations[0].message_count == 2
+
+    async def test_conversation_summary_formats_media_preview(self, attack_service, mock_memory):
+        """ConversationSummary previews must not leak absolute media paths."""
+        ar = make_attack_result(conversation_id="attack-1")
+        mock_memory.get_attack_results.return_value = [ar]
+        path = r"C:\Users\someone\PyRIT\dbdata\prompt-memory-entries\audio\1780010098266691.mp3"
+        mock_memory.get_conversation_stats.return_value = {
+            "attack-1": ConversationStats(
+                message_count=1,
+                last_message_preview=path,
+                last_message_data_type="audio_path",
+            ),
+        }
+
+        result = await attack_service.get_conversations_async(attack_result_id="attack-1")
+
+        assert result is not None
+        preview = result.conversations[0].last_message_preview
+        assert preview == "[Audio: 1780010098266691.mp3]"
+        assert "C:\\" not in (preview or "")
 
     async def test_returns_main_and_related_conversations(self, attack_service, mock_memory):
         """Should return main and PRUNED conversations sorted by timestamp."""

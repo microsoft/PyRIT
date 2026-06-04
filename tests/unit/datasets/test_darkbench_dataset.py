@@ -20,7 +20,7 @@ def mock_darkbench_data():
 async def test_fetch_dataset(mock_darkbench_data):
     loader = _DarkBenchDataset()
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_darkbench_data)):
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_darkbench_data)):
         dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)
@@ -32,15 +32,23 @@ async def test_fetch_dataset(mock_darkbench_data):
 
 
 async def test_fetch_dataset_passes_config(mock_darkbench_data):
-    loader = _DarkBenchDataset(config="custom", split="test")
+    loader = _DarkBenchDataset(config="custom")
 
-    with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_darkbench_data)) as mock_fetch:
+    with patch.object(
+        loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_darkbench_data)
+    ) as mock_fetch:
         await loader.fetch_dataset_async()
 
         mock_fetch.assert_called_once()
         call_kwargs = mock_fetch.call_args.kwargs
         assert call_kwargs["config"] == "custom"
-        assert call_kwargs["split"] == "test"
+        assert call_kwargs["split"] == "train"
+
+
+def test_split_kwarg_emits_deprecation_warning():
+    """Passing the deprecated ``split`` kwarg emits a DeprecationWarning."""
+    with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
+        _DarkBenchDataset(split="train")
 
 
 def test_dataset_name():

@@ -8,36 +8,41 @@ SeedPrompt class for representing seed prompts with role and sequence informatio
 from __future__ import annotations
 
 import logging
-import os
-from dataclasses import InitVar, dataclass, field
-from typing import TYPE_CHECKING, Optional, Union
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
 
+from pydantic import Field, model_validator
 from tinytag import TinyTag
 
 from pyrit.common.path import PATHS_DICT
-from pyrit.models import DataTypeSerializer
-from pyrit.models.json_schema_definition import get_common_json_schema
+from pyrit.models.data_type_serializer import DataTypeSerializer
+from pyrit.models.json_schema_definition import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    JsonSchemaDefinition,
+    get_common_json_schema,
+)
+from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    ChatMessageRole,
+    PromptDataType,
+)
 from pyrit.models.seeds.seed import Seed
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Sequence
-    from pathlib import Path
 
     from pyrit.models import Message
-    from pyrit.models.json_schema_definition import JsonSchemaDefinition
-    from pyrit.models.literals import ChatMessageRole, PromptDataType
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
 class SeedPrompt(Seed):
     """Represents a seed prompt with various attributes and metadata."""
 
+    # Discriminator field for the polymorphic Seed union (see seed_group.SeedUnion).
+    seed_type: Literal["prompt"] = "prompt"
+
     # The type of data this prompt represents (e.g., text, image_path, audio_path, video_path)
-    # This field shadows the base class property to allow per-prompt data types
-    data_type: Optional[PromptDataType] = None
+    # This field overrides the base default to allow per-prompt data types inferred from the value
+    data_type: PromptDataType | None = None
 
     # Optional JSON schema for constraining the scoring response. When set and the
     # target supports JSON schemas, it is forwarded so the target can enforce the
@@ -45,45 +50,80 @@ class SeedPrompt(Seed):
     response_json_schema: JsonSchemaDefinition | None = None
 
     # Init-only YAML/constructor sugar: pass a registry name (e.g.
-    # ``true_false_with_rationale``) and ``__post_init__`` resolves it against
-    # ``COMMON_JSON_SCHEMAS`` into ``response_json_schema``. Because it is an
-    # ``InitVar`` it is NOT an instance attribute after construction — runtime
-    # consumers (scorers, memory, attacks) read ``response_json_schema`` only.
-    # Mutually exclusive with ``response_json_schema`` — setting both raises
-    # ``ValueError``.
-    response_json_schema_name: InitVar[Optional[str]] = None
+    # ``true_false_with_rationale``) and a ``mode="before"`` validator resolves
+    # it against ``COMMON_JSON_SCHEMAS`` into ``response_json_schema``. The
+    # name is popped before Pydantic field validation so it never becomes an
+    # instance attribute — runtime consumers (scorers, memory, attacks) read
+    # ``response_json_schema`` only. Mutually exclusive with
+    # ``response_json_schema`` — setting both raises ``ValueError``.
 
     # Role of the prompt in a conversation (e.g., "user", "assistant")
-    role: Optional[ChatMessageRole] = None
+    role: ChatMessageRole | None = None
 
     # Sequence number for ordering prompts in a conversation, prompts with
     # the same sequence number are grouped together if they also share the same prompt_group_id
     sequence: int = 0
 
     # Parameters that can be used in the prompt template
-    parameters: Optional[Sequence[str]] = field(default_factory=list)
+    parameters: list[str] | None = Field(default_factory=list)
 
-    def __post_init__(self, response_json_schema_name: Optional[str]) -> None:
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_response_json_schema_name(cls, data: Any) -> Any:
         """
-        Render template placeholders, resolve named schemas, and infer data_type.
+        Resolve a ``response_json_schema_name`` init kwarg into ``response_json_schema``.
+
+        Runs in ``mode="before"`` so the name key is popped from the input dict
+        before Pydantic's ``extra="forbid"`` rejects it. The base class sets
+        ``extra="forbid"``, so ``response_json_schema_name`` cannot be a real
+        field — this validator is the only place it is accepted.
 
         Args:
-            response_json_schema_name: Optional registry name supplied via the
-                ``response_json_schema_name`` constructor kwarg or YAML key. It
-                is an ``InitVar`` and is **not** stored on the instance; it is
-                resolved here into ``response_json_schema`` and then discarded.
+            data: Raw input passed to the model constructor. Typically a dict
+                from YAML loading or direct kwargs.
+
+        Returns:
+            The (possibly mutated) input, with ``response_json_schema_name``
+            removed and ``response_json_schema`` populated when applicable.
 
         Raises:
             ValueError: If both ``response_json_schema`` and
-                ``response_json_schema_name`` are set, if the named schema is not
-                registered in ``COMMON_JSON_SCHEMAS``, or if a file-based
-                ``data_type`` cannot be inferred from extension.
+                ``response_json_schema_name`` are set, or if the name is not
+                registered in ``COMMON_JSON_SCHEMAS``.
+        """
+        if not isinstance(data, dict):
+            return data
+
+        name = data.pop("response_json_schema_name", None)
+        if name is None:
+            return data
+
+        if data.get("response_json_schema") is not None:
+            raise ValueError(
+                "Set only one of response_json_schema or response_json_schema_name on SeedPrompt; "
+                f"both were provided (name={name!r})."
+            )
+
+        try:
+            data["response_json_schema"] = get_common_json_schema(name)
+        except KeyError as exc:
+            raise ValueError(
+                f"response_json_schema_name {name!r} is not registered in COMMON_JSON_SCHEMAS."
+            ) from exc
+        return data
+
+    @model_validator(mode="after")
+    def _render_and_infer_data_type(self) -> SeedPrompt:
+        """
+        Render template placeholders and infer data_type after initialization.
+
+        Returns:
+            SeedPrompt: The validated prompt with rendered value and inferred data_type.
+
+        Raises:
+            ValueError: If file-based data type cannot be inferred from extension.
 
         """
-        # Resolve a named JSON schema before anything else so callers can rely
-        # on ``response_json_schema`` being populated after construction.
-        self._resolve_response_json_schema_name(response_json_schema_name)
-
         # Only trusted templates (is_jinja_template=True, e.g. from YAML files) are rendered
         # through Jinja. Untrusted text (e.g. from remote datasets) must NOT be rendered — a
         # crafted payload containing "{% endraw %}" can escape the raw wrapper and execute
@@ -94,8 +134,15 @@ class SeedPrompt(Seed):
         if not self.data_type:
             # If data_type is not provided, infer it from the value
             # Note: Does not assign 'error' or 'url' implicitly
-            if os.path.isfile(self.value):
-                _, ext = os.path.splitext(self.value)
+            # Guard against OSError / ValueError so values that aren't valid path
+            # strings (too long, null bytes, etc.) are treated as text, matching
+            # the prior os.path.isfile semantics.
+            try:
+                is_file = Path(self.value).is_file()
+            except (OSError, ValueError):
+                is_file = False
+            if is_file:
+                ext = Path(self.value).suffix
                 ext = ext.lstrip(".").lower()
                 if ext in ["mp4", "avi", "mov", "mkv", "ogv", "flv", "wmv", "webm"]:
                     self.data_type = "video_path"
@@ -108,39 +155,7 @@ class SeedPrompt(Seed):
             else:
                 self.data_type = "text"
 
-    def _resolve_response_json_schema_name(self, response_json_schema_name: Optional[str]) -> None:
-        """
-        Resolve a ``response_json_schema_name`` value against ``COMMON_JSON_SCHEMAS``.
-
-        Populates ``response_json_schema`` with a deep copy of the named schema
-        so downstream consumers (scorers, attacks, converters) can read a
-        single field regardless of how the schema was supplied.
-
-        Args:
-            response_json_schema_name: Registry name to resolve, or ``None`` to
-                skip resolution.
-
-        Raises:
-            ValueError: If both ``response_json_schema`` and
-                ``response_json_schema_name`` are set, or if the name is not
-                registered in ``COMMON_JSON_SCHEMAS``.
-        """
-        if response_json_schema_name is None:
-            return
-
-        if self.response_json_schema is not None:
-            raise ValueError(
-                "Set only one of response_json_schema or response_json_schema_name on SeedPrompt; "
-                f"both were provided (name={response_json_schema_name!r})."
-            )
-
-        try:
-            self.response_json_schema = get_common_json_schema(response_json_schema_name)
-        except KeyError as exc:
-            raise ValueError(
-                f"response_json_schema_name {response_json_schema_name!r} is not registered "
-                "in COMMON_JSON_SCHEMAS."
-            ) from exc
+        return self
 
     def set_encoding_metadata(self) -> None:
         """
@@ -183,12 +198,15 @@ class SeedPrompt(Seed):
     @classmethod
     def from_yaml_with_required_parameters(
         cls,
-        template_path: Union[str, Path],
+        template_path: str | Path,
         required_parameters: list[str],
-        error_message: Optional[str] = None,
+        error_message: str | None = None,
     ) -> SeedPrompt:
         """
-        Load a Seed from a YAML file and validate that it contains specific parameters.
+        Load a SeedPrompt from a YAML file and validate that it declares each required parameter.
+
+        Thin shim that delegates to
+        ``pyrit.models.seeds.yaml_seed_loader.load_seed_prompt_from_yaml_with_required_parameters``.
 
         Args:
             template_path: Path to the YAML file containing the template.
@@ -196,27 +214,25 @@ class SeedPrompt(Seed):
             error_message: Custom error message if validation fails. If None, a default message is used.
 
         Returns:
-            SeedPrompt: The loaded and validated SeedPrompt of the specific subclass type.
+            SeedPrompt: The loaded and validated SeedPrompt.
 
         Raises:
             ValueError: If the template doesn't contain all required parameters.
-
         """
-        sp = cls.from_yaml_file(template_path)
+        # Deferred import: yaml_seed_loader imports SeedPrompt at module load, so importing
+        # it at the top of this module would create a circular import.
+        from pyrit.models.seeds.yaml_seed_loader import load_seed_prompt_from_yaml_with_required_parameters
 
-        if sp.parameters is None or not all(param in sp.parameters for param in required_parameters):
-            if error_message is None:
-                error_message = f"Template must have these parameters: {', '.join(required_parameters)}"
-            raise ValueError(f"{error_message}: '{sp}'")
-
-        return sp
+        return load_seed_prompt_from_yaml_with_required_parameters(
+            template_path, required_parameters, error_message=error_message
+        )
 
     @staticmethod
     def from_messages(
         messages: list[Message],
         *,
         starting_sequence: int = 0,
-        prompt_group_id: Optional[uuid.UUID] = None,
+        prompt_group_id: uuid.UUID | None = None,
     ) -> list[SeedPrompt]:
         """
         Convert a list of Messages to a list of SeedPrompts.

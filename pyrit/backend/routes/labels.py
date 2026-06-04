@@ -28,7 +28,7 @@ class LabelOptionsResponse(BaseModel):
     "",
     response_model=LabelOptionsResponse,
 )
-async def get_label_options(
+async def get_label_options(  # pyrit-async-suffix-exempt
     source: Literal["attacks"] = Query(
         "attacks",
         description="Source type to get labels from. Currently only 'attacks' is supported.",

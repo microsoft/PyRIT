@@ -158,7 +158,7 @@ async def test_construct_request_body_includes_extra_body_params(
     request = Message(message_pieces=[dummy_text_message_piece])
 
     jrc = _JsonResponseConfig.from_metadata(metadata=None)
-    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+    body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["key"] == "value"
 
 
@@ -166,7 +166,7 @@ async def test_construct_request_body_json_object(target: OpenAIChatTarget, dumm
     request = Message(message_pieces=[dummy_text_message_piece])
     jrc = _JsonResponseConfig.from_metadata(metadata={"response_format": "json"})
 
-    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+    body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["response_format"] == {"type": "json_object"}
 
 
@@ -175,7 +175,7 @@ async def test_construct_request_body_json_schema(target: OpenAIChatTarget, dumm
     request = Message(message_pieces=[dummy_text_message_piece])
     jrc = _JsonResponseConfig.from_metadata(metadata={"response_format": "json", "json_schema": schema_obj})
 
-    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+    body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["response_format"] == {
         "type": "json_schema",
         "json_schema": {"name": "CustomSchema", "schema": schema_obj, "strict": True},
@@ -196,7 +196,7 @@ async def test_construct_request_body_json_schema_optional_params(
         }
     )
 
-    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+    body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["response_format"] == {
         "type": "json_schema",
         "json_schema": {"name": "MySchema", "schema": schema_obj, "strict": False},
@@ -209,7 +209,7 @@ async def test_construct_request_body_removes_empty_values(
     request = Message(message_pieces=[dummy_text_message_piece])
 
     jrc = _JsonResponseConfig.from_metadata(metadata=None)
-    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+    body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert "max_completion_tokens" not in body
     assert "max_tokens" not in body
     assert "temperature" not in body
@@ -225,7 +225,7 @@ async def test_construct_request_body_serializes_text_message(
     request = Message(message_pieces=[dummy_text_message_piece])
     jrc = _JsonResponseConfig.from_metadata(metadata=None)
 
-    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+    body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["messages"][0]["content"] == "dummy text", (
         "Text messages are serialized in a simple way that's more broadly supported"
     )
@@ -239,7 +239,7 @@ async def test_construct_request_body_serializes_complex_message(
     request = Message(message_pieces=[dummy_text_message_piece, image_piece])
     jrc = _JsonResponseConfig.from_metadata(metadata=None)
 
-    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+    body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     messages = body["messages"][0]["content"]
     assert len(messages) == 2, "Complex messages are serialized as a list"
     assert messages[0]["type"] == "text", "Text messages are serialized properly when multi-modal"
@@ -646,7 +646,7 @@ async def test_send_prompt_async_content_filter_400(target: OpenAIChatTarget):
 
     with (
         patch.object(target, "_validate_request"),
-        patch.object(target, "_construct_request_body", new_callable=AsyncMock) as mock_construct,
+        patch.object(target, "_construct_request_body_async", new_callable=AsyncMock) as mock_construct,
     ):
         mock_construct.return_value = {"model": "gpt-4", "messages": [], "stream": False}
 
@@ -1057,7 +1057,7 @@ async def test_construct_message_from_response(target: OpenAIChatTarget, dummy_t
     """Test _construct_message_from_response extracts content correctly."""
     mock_response = create_mock_completion(content="Hello from AI", finish_reason="stop")
 
-    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
     assert isinstance(result, Message)
     assert len(result.message_pieces) == 1
@@ -1236,7 +1236,7 @@ async def test_construct_request_body_with_audio_config(patch_central_database, 
     request = Message(message_pieces=[dummy_text_message_piece])
     jrc = _JsonResponseConfig.from_metadata(metadata=None)
 
-    body = await target._construct_request_body(conversation=[request], json_config=jrc)
+    body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
 
     assert body.get("modalities") == ["text", "audio"]
     assert body.get("audio") == {"voice": "alloy", "format": "wav"}
@@ -1501,7 +1501,7 @@ async def test_save_audio_response_async_wav_format(patch_central_database):
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.wav"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1514,8 +1514,8 @@ async def test_save_audio_response_async_wav_format(patch_central_database):
         )
 
         # Verify save_data was called (not save_formatted_audio for wav)
-        mock_serializer.save_data.assert_called_once_with(audio_bytes)
-        mock_serializer.save_formatted_audio.assert_not_called()
+        mock_serializer.save_data_async.assert_called_once_with(audio_bytes)
+        mock_serializer.save_formatted_audio_async.assert_not_called()
 
         assert result == "/path/to/saved/audio.wav"
 
@@ -1536,7 +1536,7 @@ async def test_save_audio_response_async_mp3_format(patch_central_database):
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.mp3"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1549,7 +1549,7 @@ async def test_save_audio_response_async_mp3_format(patch_central_database):
         )
 
         # Verify save_data was called (not save_formatted_audio for mp3)
-        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+        mock_serializer.save_data_async.assert_called_once_with(audio_bytes)
 
         assert result == "/path/to/saved/audio.mp3"
 
@@ -1571,7 +1571,7 @@ async def test_save_audio_response_async_pcm16_format(patch_central_database):
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.wav"
-        mock_serializer.save_formatted_audio = AsyncMock()
+        mock_serializer.save_formatted_audio_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1584,14 +1584,14 @@ async def test_save_audio_response_async_pcm16_format(patch_central_database):
         )
 
         # Verify save_formatted_audio was called with correct PCM16 parameters
-        mock_serializer.save_formatted_audio.assert_called_once_with(
+        mock_serializer.save_formatted_audio_async.assert_called_once_with(
             data=audio_bytes,
             num_channels=1,
             sample_width=2,
             sample_rate=24000,
         )
         # save_data should not be called for pcm16
-        mock_serializer.save_data.assert_not_called()
+        mock_serializer.save_data_async.assert_not_called()
 
         assert result == "/path/to/saved/audio.wav"
 
@@ -1668,7 +1668,7 @@ async def test_save_audio_response_async_flac_format(patch_central_database):
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.flac"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1678,7 +1678,7 @@ async def test_save_audio_response_async_flac_format(patch_central_database):
             data_type="audio_path",
             extension=".flac",
         )
-        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+        mock_serializer.save_data_async.assert_called_once_with(audio_bytes)
 
         assert result == "/path/to/saved/audio.flac"
 
@@ -1699,7 +1699,7 @@ async def test_save_audio_response_async_opus_format(patch_central_database):
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.opus"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1709,7 +1709,7 @@ async def test_save_audio_response_async_opus_format(patch_central_database):
             data_type="audio_path",
             extension=".opus",
         )
-        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+        mock_serializer.save_data_async.assert_called_once_with(audio_bytes)
 
         assert result == "/path/to/saved/audio.opus"
 
@@ -1729,7 +1729,7 @@ async def test_save_audio_response_async_no_config_defaults_to_wav(patch_central
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/saved/audio.wav"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
         result = await target._save_audio_response_async(audio_data_base64=audio_data_base64)
@@ -1740,7 +1740,7 @@ async def test_save_audio_response_async_no_config_defaults_to_wav(patch_central
             data_type="audio_path",
             extension=".wav",
         )
-        mock_serializer.save_data.assert_called_once_with(audio_bytes)
+        mock_serializer.save_data_async.assert_called_once_with(audio_bytes)
 
         assert result == "/path/to/saved/audio.wav"
 
@@ -1770,10 +1770,10 @@ async def test_construct_message_from_response_audio_transcript_has_metadata(
     with patch("pyrit.prompt_target.openai.openai_chat_target.data_serializer_factory") as mock_factory:
         mock_serializer = MagicMock()
         mock_serializer.value = "/path/to/audio.wav"
-        mock_serializer.save_data = AsyncMock()
+        mock_serializer.save_data_async = AsyncMock()
         mock_factory.return_value = mock_serializer
 
-        result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+        result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
         # Should have 2 pieces: transcript (text) and audio file (audio_path)
         assert len(result.message_pieces) == 2
@@ -1798,7 +1798,7 @@ async def test_construct_message_from_response_text_content_no_transcript_metada
     """Test that regular text content does not have transcript metadata."""
     mock_response = create_mock_completion(content="Regular text response", finish_reason="stop")
 
-    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
     assert len(result.message_pieces) == 1
     text_piece = result.message_pieces[0]
@@ -1900,7 +1900,7 @@ async def test_construct_message_from_response_with_tool_calls(
     tool_call = create_mock_tool_call("call_abc123", "get_current_weather", '{"location": "Seattle, WA"}')
     mock_response = create_mock_completion_with_tool_calls([tool_call])
 
-    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
     assert isinstance(result, Message)
     assert len(result.message_pieces) == 1
@@ -1924,7 +1924,7 @@ async def test_construct_message_from_response_with_multiple_tool_calls(
     tool_call2 = create_mock_tool_call("call_2", "get_time", '{"timezone": "EST"}')
     mock_response = create_mock_completion_with_tool_calls([tool_call1, tool_call2])
 
-    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
     assert isinstance(result, Message)
     assert len(result.message_pieces) == 2
@@ -2008,7 +2008,7 @@ async def test_construct_message_from_response_captures_token_usage(
     mock_response.usage.total_tokens = 30
     mock_response.usage.cached_tokens = 5
 
-    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
     piece = result.message_pieces[0]
     assert piece.prompt_metadata["token_usage_model_name"] == "gpt-4o-2024-05-13"
@@ -2025,7 +2025,7 @@ async def test_construct_message_from_response_no_usage_no_metadata(
     mock_response = create_mock_completion(content="Hello")
     mock_response.usage = None
 
-    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
     piece = result.message_pieces[0]
     assert "token_usage_model_name" not in piece.prompt_metadata
@@ -2046,7 +2046,7 @@ async def test_construct_message_from_response_token_usage_defaults_on_missing_a
     # Remove model attribute to test default
     del mock_response.model
 
-    result = await target._construct_message_from_response(mock_response, dummy_text_message_piece)
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
     piece = result.message_pieces[0]
     assert piece.prompt_metadata["token_usage_model_name"] == "unknown"

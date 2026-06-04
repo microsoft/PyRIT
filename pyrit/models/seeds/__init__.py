@@ -27,16 +27,24 @@ from pyrit.models.seeds.seed_simulated_conversation import (
     SeedSimulatedConversation,
     SimulatedTargetSystemPromptPaths,
 )
+from pyrit.models.seeds.yaml_seed_loader import (
+    load_seed_dataset_from_yaml,
+    load_seed_from_yaml,
+    load_seed_prompt_from_yaml_with_required_parameters,
+)
 
 __all__ = [
+    "load_seed_dataset_from_yaml",
+    "load_seed_from_yaml",
+    "load_seed_prompt_from_yaml_with_required_parameters",
+    "NextMessageSystemPromptPaths",
     "Seed",
-    "SeedPrompt",
-    "SeedObjective",
-    "SeedGroup",
     "SeedAttackGroup",
     "SeedAttackTechniqueGroup",
+    "SeedDataset",
+    "SeedGroup",
+    "SeedObjective",
+    "SeedPrompt",
     "SeedSimulatedConversation",
     "SimulatedTargetSystemPromptPaths",
-    "NextMessageSystemPromptPaths",
-    "SeedDataset",
 ]

@@ -38,7 +38,7 @@ class RetryEvent(BaseModel):
         Serialize to a dictionary suitable for JSON storage.
 
         .. deprecated::
-            Use :meth:`model_dump` with ``mode="json"`` instead. This method
+            Use ``model_dump`` with ``mode="json"`` instead. This method
             will be removed in version 0.16.0.
 
         Returns:
@@ -57,7 +57,7 @@ class RetryEvent(BaseModel):
         Deserialize from a dictionary.
 
         .. deprecated::
-            Use :meth:`model_validate` instead. This method will be removed
+            Use ``model_validate`` instead. This method will be removed
             in version 0.16.0.
 
         Args:

@@ -74,7 +74,7 @@ context: SingleTurnAttackContext = SingleTurnAttackContext(
 attack = PromptSendingAttack(objective_target=target)
 result = await attack.execute_with_context_async(context=context)  # type: ignore
 await output_attack_async(result)
-await target.cleanup_target()  # type: ignore
+await target.cleanup_target_async()  # type: ignore
 
 # %% [markdown]
 # ## Text Conversation

@@ -308,6 +308,57 @@ def _rewrite_param_table(params: list[dict], index: dict[str, list[SymbolEntry]]
             p["desc"] = _rewrite_symbol_refs(p["desc"], index, current_class=current_class)
 
 
+def _format_bases(bases: list[str], symbol_index: dict[str, list[SymbolEntry]] | None) -> str:
+    """Render each base class as an individually-linkable code span.
+
+    Each base is wrapped in single backticks and run through the symbol
+    rewriter separately so that known PyRIT bases become MyST cross-reference
+    links while external bases (e.g. ``str``, ``Enum``) stay as plain code
+    spans. The comma-joined output keeps the rendered ``Bases:`` line readable
+    even when only some bases resolve.
+    """
+    if not bases:
+        return ""
+    if symbol_index is None:
+        return ", ".join(f"`{b}`" for b in bases if b)
+    return ", ".join(_rewrite_symbol_refs(f"`{b}`", symbol_index) for b in bases if b)
+
+
+def _format_reexport_alias(
+    mod_name: str,
+    name: str,
+    symbol_index: dict[str, list[SymbolEntry]] | None,
+) -> str:
+    """Render a re-export alias name as a MyST link when unambiguous.
+
+    Aliases usually live on the current module, so the module-qualified path
+    is tried first. If that lookup is unambiguous we link directly to it;
+    otherwise we fall back to the regular short-name rewriter so unresolvable
+    aliases get the same plain code-span treatment as the rest of the docs.
+    """
+    if not name:
+        return ""
+    if symbol_index is None:
+        return f"`{name}`"
+    fqn = f"{mod_name}.{name}" if mod_name else name
+    entries = symbol_index.get(fqn)
+    if entries and len(entries) == 1:
+        return f"[`{name}`](#{entries[0].anchor})"
+    return _rewrite_symbol_refs(f"`{name}`", symbol_index)
+
+
+def _format_reexport_target(
+    target: str,
+    symbol_index: dict[str, list[SymbolEntry]] | None,
+) -> str:
+    """Render a re-export target FQN as a MyST link when it resolves."""
+    if not target:
+        return ""
+    if symbol_index is None:
+        return f"`{target}`"
+    return _rewrite_symbol_refs(f"`{target}`", symbol_index)
+
+
 def _rewrite_returns_or_raises(
     items: list[dict], index: dict[str, list[SymbolEntry]], current_class: str | None
 ) -> None:
@@ -392,12 +443,12 @@ def render_class(
     """Render a class as markdown."""
     name = cls["name"]
     bases = cls.get("bases", [])
-    bases_str = f"({', '.join(bases)})" if bases else ""
 
     anchor = _class_anchor(module, name)
     parts = [f"({anchor})=", f"## `{name}`\n"]
-    if bases_str:
-        parts.append(f"Bases: `{bases_str[1:-1]}`\n")
+    bases_md = _format_bases(bases, symbol_index)
+    if bases_md:
+        parts.append(f"Bases: {bases_md}\n")
 
     ds = cls.get("docstring", {})
     text = _process_docstring_text(ds.get("text") if ds else None, symbol_index, current_class=name)
@@ -451,8 +502,10 @@ def render_module(
     """Render a full module page."""
     mod_name = data["name"]
     short_name = mod_name.rsplit(".", 1)[-1]
+    mod_label = f"api-{_module_slug(mod_name)}"
     parts = [
         "---",
+        f"label: {mod_label}",
         f"short_title: {short_name}",
         "---\n",
         f"# {mod_name}\n",
@@ -478,8 +531,12 @@ def render_module(
     if aliases:
         parts.append("## Re-exports\n")
         for a in aliases:
-            target = a.get("target", "")
-            parts.append(f"- `{a['name']}` → `{target}`\n")
+            name_md = _format_reexport_alias(mod_name, a.get("name", ""), symbol_index)
+            target_md = _format_reexport_target(a.get("target", ""), symbol_index)
+            if target_md:
+                parts.append(f"- {name_md} → {target_md}\n")
+            else:
+                parts.append(f"- {name_md}\n")
 
     return "\n".join(parts)
 

@@ -6,6 +6,7 @@ Tests for ScenarioRunService.
 """
 
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,6 +21,7 @@ from pyrit.backend.services.scenario_run_service import (
     ScenarioRunService,
 )
 from pyrit.models import AttackOutcome
+from pyrit.scenario.core import DatasetConfiguration
 
 _REGISTRY_PATCH_BASE = "pyrit.registry"
 _MEMORY_PATCH = "pyrit.memory.CentralMemory.get_memory_instance"
@@ -278,6 +280,139 @@ class TestScenarioRunServiceStartRun:
         assert default_config.max_dataset_size == 5
         init_call = scenario_instance.initialize_async.await_args
         assert init_call.kwargs["dataset_config"] is default_config
+
+    async def test_start_run_dataset_names_preserves_subclass_config_type(self, mock_all_registries) -> None:
+        """``dataset_names`` rebuilds the config using the scenario's own DatasetConfiguration subclass.
+
+        Regression: passing ``dataset_names`` via the backend used to construct
+        a plain ``DatasetConfiguration``, silently losing subclass behavior
+        (e.g. ``EncodingDatasetConfiguration``'s objective shaping).
+        """
+
+        # Create a marker subclass so we can verify type preservation without
+        # depending on any concrete scenario implementation.
+        class _MarkerDatasetConfiguration(DatasetConfiguration):
+            pass
+
+        default_config = _MarkerDatasetConfiguration(dataset_names=["original"], max_dataset_size=100)
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._default_dataset_config = default_config
+
+        service = ScenarioRunService()
+        await service.start_run_async(request=_make_request(dataset_names=["custom_a", "custom_b"], max_dataset_size=3))
+
+        init_call = scenario_instance.initialize_async.await_args
+        built_config = init_call.kwargs["dataset_config"]
+
+        # Type is preserved (this is the regression assertion)
+        assert type(built_config) is _MarkerDatasetConfiguration
+        # And carries the caller-supplied values, not the scenario defaults
+        assert built_config.get_default_dataset_names() == ["custom_a", "custom_b"]
+        assert built_config.max_dataset_size == 3
+        # The original default config is not mutated when a fresh dataset_names is supplied
+        assert default_config.get_default_dataset_names() == ["original"]
+        assert default_config.max_dataset_size == 100
+
+    async def test_start_run_dataset_names_without_max_dataset_size_preserves_subclass(
+        self, mock_all_registries
+    ) -> None:
+        """``dataset_names`` alone (no ``max_dataset_size``) still preserves the subclass type."""
+
+        class _MarkerDatasetConfiguration(DatasetConfiguration):
+            pass
+
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._default_dataset_config = _MarkerDatasetConfiguration(dataset_names=["original"])
+
+        service = ScenarioRunService()
+        await service.start_run_async(request=_make_request(dataset_names=["only_this"]))
+
+        init_call = scenario_instance.initialize_async.await_args
+        built_config = init_call.kwargs["dataset_config"]
+        assert type(built_config) is _MarkerDatasetConfiguration
+        assert built_config.get_default_dataset_names() == ["only_this"]
+        assert built_config.max_dataset_size is None
+
+    async def test_start_run_dataset_names_falls_back_when_subclass_constructor_incompatible(
+        self, mock_all_registries, caplog
+    ) -> None:
+        """If the subclass __init__ rejects standard kwargs, fall back to plain ``DatasetConfiguration``."""
+
+        class _RequiresExtraArgConfiguration(DatasetConfiguration):
+            def __init__(self, *, required_extra: str, **kwargs: Any) -> None:
+                super().__init__(**kwargs)
+                self._required_extra = required_extra
+
+        scenario_instance = mock_all_registries["scenario_instance"]
+        # Build the default with the required kwarg so introspection succeeds.
+        scenario_instance._default_dataset_config = _RequiresExtraArgConfiguration(
+            required_extra="seeded", dataset_names=["original"]
+        )
+
+        service = ScenarioRunService()
+        with caplog.at_level("WARNING", logger=_svc_mod.logger.name):
+            await service.start_run_async(request=_make_request(dataset_names=["custom"]))
+
+        init_call = scenario_instance.initialize_async.await_args
+        built_config = init_call.kwargs["dataset_config"]
+
+        # Fallback is the generic base class, not the subclass
+        assert type(built_config) is DatasetConfiguration
+        assert built_config.get_default_dataset_names() == ["custom"]
+        # Warning was logged so the operator can see the silent degradation
+        assert any(
+            "_RequiresExtraArgConfiguration" in record.message
+            and "Falling back to a generic DatasetConfiguration" in record.message
+            for record in caplog.records
+        )
+
+    async def test_start_run_dataset_names_introspection_failure_raises(self, mock_memory) -> None:
+        """Passing ``dataset_names`` against a non-no-arg-instantiable scenario fails fast."""
+        # Mirrors test_start_run_scenario_not_no_arg_instantiable_raises but for the dataset_names path.
+        mock_scenario_class = MagicMock(
+            side_effect=[
+                TypeError("missing 1 required positional argument: 'objective_target'"),
+            ]
+        )
+        mock_sr = MagicMock()
+        mock_sr.get_class.return_value = mock_scenario_class
+
+        mock_tr = MagicMock()
+        mock_tr.get_instance_by_name.return_value = MagicMock()
+        mock_tr.get_names.return_value = ["my_target"]
+
+        mock_ir = MagicMock()
+
+        service = ScenarioRunService()
+
+        with (
+            patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=mock_sr),
+            patch(f"{_REGISTRY_PATCH_BASE}.TargetRegistry.get_registry_singleton", return_value=mock_tr),
+            patch(f"{_REGISTRY_PATCH_BASE}.InitializerRegistry.get_registry_singleton", return_value=mock_ir),
+        ):
+            with pytest.raises(ValueError, match="not instantiable without arguments"):
+                await service.start_run_async(request=_make_request(dataset_names=["custom"]))
+
+    async def test_start_run_max_dataset_size_with_dataset_names_uses_subclass_with_both(
+        self, mock_all_registries
+    ) -> None:
+        """When both ``dataset_names`` and ``max_dataset_size`` are supplied, both flow into the subclass instance."""
+
+        class _MarkerDatasetConfiguration(DatasetConfiguration):
+            pass
+
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._default_dataset_config = _MarkerDatasetConfiguration(
+            dataset_names=["original"], max_dataset_size=99
+        )
+
+        service = ScenarioRunService()
+        await service.start_run_async(request=_make_request(dataset_names=["a", "b"], max_dataset_size=7))
+
+        built_config = scenario_instance.initialize_async.await_args.kwargs["dataset_config"]
+        assert type(built_config) is _MarkerDatasetConfiguration
+        assert built_config.get_default_dataset_names() == ["a", "b"]
+        assert built_config.max_dataset_size == 7
 
     async def test_start_run_exceeds_concurrent_limit(self, mock_all_registries) -> None:
         """Test that exceeding concurrent run limit raises ValueError."""

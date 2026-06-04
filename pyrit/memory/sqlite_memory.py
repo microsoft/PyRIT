@@ -62,6 +62,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         db_path: Optional[Union[Path, str]] = None,
         verbose: bool = False,
         skip_schema_migration: bool = False,
+        silent: bool = False,
     ) -> None:
         """
         Initialize the SQLiteMemory instance.
@@ -72,6 +73,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             verbose (bool): Whether to enable verbose logging.
                 Defaults to False.
             skip_schema_migration (bool): Whether to skip schema migration.
+                Defaults to False.
+            silent (bool): If True, suppresses schema migration console output.
                 Defaults to False.
         """
         super().__init__()
@@ -85,7 +88,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         self.engine = self._create_engine(has_echo=verbose)
         self.SessionFactory = sessionmaker(bind=self.engine)
         if not skip_schema_migration:
-            self._run_schema_migration()
+            self._run_schema_migration(silent=silent)
 
     def _init_storage_io(self) -> None:
         # Handles disk-based storage for SQLite local memory.
@@ -556,7 +559,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             piece_data = piece.model_dump(mode="json")
             # Find associated scores
             piece_scores = [score for score in scores if score.message_piece_id == piece.id]
-            piece_data["scores"] = [score.to_dict() for score in piece_scores]
+            piece_data["scores"] = [score.model_dump(mode="json") for score in piece_scores]
             merged_data.append(piece_data)
 
         if not merged_data:
@@ -736,19 +739,25 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         placeholders = ", ".join(f":cid{i}" for i in range(len(conversation_ids)))
         params = {f"cid{i}": cid for i, cid in enumerate(conversation_ids)}
 
-        max_len = ConversationStats.PREVIEW_MAX_LEN
         sql = text(
             f"""
             SELECT
                 pme.conversation_id,
                 COUNT(DISTINCT pme.sequence) AS msg_count,
                 (
-                    SELECT SUBSTR(p2.converted_value, 1, {max_len + 3})
+                    SELECT SUBSTR(p2.converted_value, 1, {ConversationStats.PREVIEW_FETCH_MAX_LEN})
                     FROM "PromptMemoryEntries" p2
                     WHERE p2.conversation_id = pme.conversation_id
                     ORDER BY p2.sequence DESC, p2.id DESC
                     LIMIT 1
                 ) AS last_preview,
+                (
+                    SELECT p2b.converted_value_data_type
+                    FROM "PromptMemoryEntries" p2b
+                    WHERE p2b.conversation_id = pme.conversation_id
+                    ORDER BY p2b.sequence DESC, p2b.id DESC
+                    LIMIT 1
+                ) AS last_data_type,
                 (
                     SELECT p3.labels
                     FROM "PromptMemoryEntries" p3
@@ -771,11 +780,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         result: dict[str, ConversationStats] = {}
         for row in rows:
-            conv_id, msg_count, last_preview, raw_labels, raw_created_at = row
-
-            preview = None
-            if last_preview:
-                preview = last_preview[:max_len] + "..." if len(last_preview) > max_len else last_preview
+            conv_id, msg_count, last_preview, last_data_type, raw_labels, raw_created_at = row
 
             labels: dict[str, str] = {}
             if raw_labels and raw_labels not in ("null", "{}"):
@@ -791,7 +796,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
             result[conv_id] = ConversationStats(
                 message_count=msg_count,
-                last_message_preview=preview,
+                last_message_preview=last_preview,
+                last_message_data_type=last_data_type,
                 labels=labels,
                 created_at=created_at,
             )

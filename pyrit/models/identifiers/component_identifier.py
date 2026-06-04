@@ -168,7 +168,7 @@ class ComponentIdentifier(BaseModel):
     #: may have been truncated.
     hash: Optional[str] = None
     #: Version tag for storage. Not included in the content hash.
-    pyrit_version: str = Field(default_factory=lambda: pyrit.__version__)
+    pyrit_version: str = Field(default=pyrit.__version__)
     #: Evaluation hash. Computed by EvaluationIdentifier subclasses and attached
     #: to the identifier so it survives DB round-trips with truncated params.
     eval_hash: Optional[str] = None

@@ -374,7 +374,9 @@ class PlaywrightCopilotTarget(PromptTarget):
             logger.debug(f"Error checking content readiness: {e}")
             return None
 
-    async def _extract_text_from_message_groups(self, ai_message_groups: list[Any], text_selector: str) -> list[str]:
+    async def _extract_text_from_message_groups_async(
+        self, ai_message_groups: list[Any], text_selector: str
+    ) -> list[str]:
         """
         Extract text content from message groups using the provided selector.
 
@@ -415,7 +417,7 @@ class PlaywrightCopilotTarget(PromptTarget):
         ]
         return [text for text in text_parts if text.lower() not in placeholder_texts]
 
-    async def _count_images_in_groups(self, message_groups: list[Any]) -> int:
+    async def _count_images_in_groups_async(self, message_groups: list[Any]) -> int:
         """
         Count total images in message groups (both iframes and direct).
 
@@ -444,7 +446,7 @@ class PlaywrightCopilotTarget(PromptTarget):
 
         return image_count
 
-    async def _wait_minimum_time(self, seconds: int) -> None:
+    async def _wait_minimum_time_async(self, seconds: int) -> None:
         """
         Wait for a minimum amount of time, logging progress.
 
@@ -455,7 +457,7 @@ class PlaywrightCopilotTarget(PromptTarget):
             await asyncio.sleep(1)
             logger.debug(f"Minimum wait: {i + 1}/{seconds} seconds")
 
-    async def _wait_for_images_to_stabilize(
+    async def _wait_for_images_to_stabilize_async(
         self, selectors: CopilotSelectors, ai_message_groups: list[Any], initial_group_count: int = 0
     ) -> list[Any]:
         """
@@ -480,7 +482,7 @@ class PlaywrightCopilotTarget(PromptTarget):
         max_wait = self.MAX_IMAGE_WAIT_SECONDS  # But don't wait more than 15 seconds total
 
         # Always wait minimum time first (images often take 2-5 seconds)
-        await self._wait_minimum_time(min_wait)
+        await self._wait_minimum_time_async(min_wait)
 
         # Then check periodically if images have appeared
         last_stable_count = len(ai_message_groups)
@@ -495,7 +497,7 @@ class PlaywrightCopilotTarget(PromptTarget):
             logger.debug(f"After {min_wait + i + 1}s total, new message group count: {current_count}")
 
             # Check for images in both iframes and direct elements
-            image_count = await self._count_images_in_groups(new_groups)
+            image_count = await self._count_images_in_groups_async(new_groups)
 
             if image_count > 0:
                 logger.debug(f"Found {image_count} images after {min_wait + i + 1}s!")
@@ -524,7 +526,7 @@ class PlaywrightCopilotTarget(PromptTarget):
         all_groups = await self._page.query_selector_all(selectors.ai_messages_group_selector)
         return all_groups[initial_group_count:]
 
-    async def _extract_images_from_iframes(self, ai_message_groups: list[Any]) -> list[Any]:
+    async def _extract_images_from_iframes_async(self, ai_message_groups: list[Any]) -> list[Any]:
         """
         Extract images from iframes within message groups.
 
@@ -560,7 +562,7 @@ class PlaywrightCopilotTarget(PromptTarget):
 
         return iframe_images
 
-    async def _extract_images_from_message_groups(
+    async def _extract_images_from_message_groups_async(
         self, selectors: CopilotSelectors, ai_message_groups: list[Any]
     ) -> list[Any]:
         """
@@ -609,7 +611,7 @@ class PlaywrightCopilotTarget(PromptTarget):
 
         return image_elements
 
-    async def _process_image_elements(self, image_elements: list[Any]) -> list[tuple[str, PromptDataType]]:
+    async def _process_image_elements_async(self, image_elements: list[Any]) -> list[tuple[str, PromptDataType]]:
         """
         Process image elements and save them to disk.
 
@@ -634,7 +636,7 @@ class PlaywrightCopilotTarget(PromptTarget):
 
                         # Save the image using data serializer
                         serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
-                        await serializer.save_b64_image(data=data)
+                        await serializer.save_b64_image_async(data=data)
                         image_path = serializer.value
                         logger.debug(f"Saved image to: {image_path}")
                         image_pieces.append((image_path, "image_path"))
@@ -661,7 +663,7 @@ class PlaywrightCopilotTarget(PromptTarget):
         Returns:
             List of text response pieces (empty if no valid text found)
         """
-        all_text_parts = await self._extract_text_from_message_groups(ai_message_groups, text_selector)
+        all_text_parts = await self._extract_text_from_message_groups_async(ai_message_groups, text_selector)
         logger.debug(f"Extracted text parts from all groups: {all_text_parts}")
 
         filtered_text_parts = self._filter_placeholder_text(all_text_parts)
@@ -692,21 +694,23 @@ class PlaywrightCopilotTarget(PromptTarget):
             List of image response pieces
         """
         # Wait for images to appear and DOM to stabilize
-        updated_groups = await self._wait_for_images_to_stabilize(selectors, ai_message_groups, initial_group_count)
+        updated_groups = await self._wait_for_images_to_stabilize_async(
+            selectors, ai_message_groups, initial_group_count
+        )
         logger.debug(f"Final new message group count for image search: {len(updated_groups)}")
 
         # Try to extract images from iframes first (M365 uses iframes)
-        iframe_images = await self._extract_images_from_iframes(updated_groups)
+        iframe_images = await self._extract_images_from_iframes_async(updated_groups)
 
         if iframe_images:
             logger.debug(f"Total {len(iframe_images)} images found in iframes within message groups!")
             image_elements = iframe_images
         else:
             logger.debug("No images found in iframes, searching message groups directly")
-            image_elements = await self._extract_images_from_message_groups(selectors, updated_groups)
+            image_elements = await self._extract_images_from_message_groups_async(selectors, updated_groups)
 
         # Process and save images
-        return await self._process_image_elements(image_elements)
+        return await self._process_image_elements_async(image_elements)
 
     async def _extract_fallback_text_async(self, *, ai_message_groups: list[Any]) -> str:
         """

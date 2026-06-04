@@ -61,7 +61,7 @@ class _MICDataset(_RemoteDatasetLoader):
         logger.info("Downloading SALT-NLP MIC dataset...")
 
         inner_files = [f"MIC/{split}.jsonl" for split in self.VALID_SPLITS]
-        split_rows = await self._fetch_zip_from_url(
+        split_rows = await self._fetch_zip_from_url_async(
             source=self.source,
             inner_files=inner_files,
             cache=cache,

@@ -70,14 +70,27 @@ class TestScorerInitializerInitialize:
             if var in os.environ:
                 del os.environ[var]
 
-    def _register_mock_target(self, *, name: str) -> OpenAIChatTarget:
+    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> OpenAIChatTarget:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
+        from pyrit.models.identifiers import ComponentIdentifier
+
         target = MagicMock(spec=OpenAIChatTarget)
         target._temperature = None
         target._endpoint = f"https://test-{name}.openai.azure.com"
         target._api_key = "test_key"
         target._model_name = "test-model"
-        target._underlying_model = "gpt-4o"
+        target._underlying_model = underlying_model
+        # _get_chat_target_prefer_rr computes the RR name from the target's identifier
+        target.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            params={
+                "underlying_model_name": underlying_model,
+                "model_name": "test-model",
+                "temperature": None,
+                "top_p": None,
+            },
+        )
         registry = TargetRegistry.get_registry_singleton()
         registry.register_instance(target, name=name)
         return target
@@ -233,14 +246,26 @@ class TestScorerInitializerBestObjective:
         ScorerRegistry.reset_instance()
         TargetRegistry.reset_instance()
 
-    def _register_mock_target(self, *, name: str) -> OpenAIChatTarget:
+    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> OpenAIChatTarget:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
+        from pyrit.models.identifiers import ComponentIdentifier
+
         target = MagicMock(spec=OpenAIChatTarget)
         target._temperature = None
         target._endpoint = f"https://test-{name}.openai.azure.com"
         target._api_key = "test_key"
         target._model_name = "test-model"
-        target._underlying_model = "gpt-4o"
+        target._underlying_model = underlying_model
+        target.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            params={
+                "underlying_model_name": underlying_model,
+                "model_name": "test-model",
+                "temperature": None,
+                "top_p": None,
+            },
+        )
         registry = TargetRegistry.get_registry_singleton()
         registry.register_instance(target, name=name)
         return target
@@ -353,14 +378,26 @@ class TestScorerInitializerCategoryTags:
         for var in self.CONTENT_SAFETY_ENV_VARS:
             os.environ.pop(var, None)
 
-    def _register_mock_target(self, *, name: str) -> OpenAIChatTarget:
+    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> OpenAIChatTarget:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
+        from pyrit.models.identifiers import ComponentIdentifier
+
         target = MagicMock(spec=OpenAIChatTarget)
         target._temperature = None
         target._endpoint = f"https://test-{name}.openai.azure.com"
         target._api_key = "test_key"
         target._model_name = "test-model"
-        target._underlying_model = "gpt-4o"
+        target._underlying_model = underlying_model
+        target.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            params={
+                "underlying_model_name": underlying_model,
+                "model_name": "test-model",
+                "temperature": None,
+                "top_p": None,
+            },
+        )
         registry = TargetRegistry.get_registry_singleton()
         registry.register_instance(target, name=name)
         return target
@@ -479,3 +516,126 @@ class TestScorerInitializerCategoryTags:
         best = registry.get_by_tag(tag=ScorerInitializerTags.BEST_ACS_THRESHOLD)
         assert len(best) == 1
         assert best[0].name == "acs_threshold_05"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestScorerInitializerRoundRobin:
+    """Tests for ScorerInitializer round-robin target preference via _get_chat_target_prefer_rr."""
+
+    def setup_method(self) -> None:
+        ScorerRegistry.reset_instance()
+        TargetRegistry.reset_instance()
+
+    def teardown_method(self) -> None:
+        ScorerRegistry.reset_instance()
+        TargetRegistry.reset_instance()
+
+    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> OpenAIChatTarget:
+        """Register a mock OpenAIChatTarget in the TargetRegistry."""
+        from pyrit.models.identifiers import ComponentIdentifier
+
+        target = MagicMock(spec=OpenAIChatTarget)
+        target._temperature = None
+        target._endpoint = f"https://test-{name}.openai.azure.com"
+        target._api_key = "test_key"
+        target._model_name = "test-model"
+        target._underlying_model = underlying_model
+        # _get_chat_target_prefer_rr computes the RR name from the target's identifier
+        target.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            params={
+                "underlying_model_name": underlying_model,
+                "model_name": "test-model",
+                "temperature": None,
+                "top_p": None,
+            },
+        )
+        registry = TargetRegistry.get_registry_singleton()
+        registry.register_instance(target, name=name)
+        return target
+
+    def _register_mock_rr_target(self, *, name: str) -> MagicMock:
+        """Register a mock RoundRobinTarget under the given name."""
+        from pyrit.prompt_target import RoundRobinTarget
+
+        rr_mock = MagicMock(spec=RoundRobinTarget)
+        registry = TargetRegistry.get_registry_singleton()
+        registry.register_instance(rr_mock, name=name)
+        return rr_mock
+
+    async def test_refusal_unsafe_uses_round_robin_when_available(self) -> None:
+        """Test that refusal_gpt4o_unsafe scorer uses round-robin target wrapping the unsafe target."""
+        self._register_mock_target(name=GPT4O_TARGET)
+        self._register_mock_target(name=GPT4O_UNSAFE_TARGET)
+        rr_mock = self._register_mock_rr_target(name="OpenAIChatTarget_gpt-4o_rr")
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        scorer = registry.get_instance_by_name("refusal_gpt4o_unsafe")
+        assert scorer is not None
+        assert scorer._prompt_target is rr_mock
+
+    async def test_refusal_unsafe_falls_back_to_individual_when_no_rr(self) -> None:
+        """Test that refusal_gpt4o_unsafe scorer uses individual target when no RR wraps it."""
+        self._register_mock_target(name=GPT4O_TARGET)
+        individual_mock = self._register_mock_target(name=GPT4O_UNSAFE_TARGET)
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        scorer = registry.get_instance_by_name("refusal_gpt4o_unsafe")
+        assert scorer is not None
+        assert scorer._prompt_target is individual_mock
+
+    async def test_refusal_unsafe_skipped_when_target_not_available(self) -> None:
+        """Test that refusal_gpt4o_unsafe is skipped when the unsafe target doesn't exist."""
+        self._register_mock_target(name=GPT4O_TARGET)
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        assert registry.get_instance_by_name("refusal_gpt4o_unsafe") is None
+
+    async def test_refusal_gpt4o_uses_round_robin_when_available(self) -> None:
+        """Test that gpt4o-based refusal scorers use round-robin target wrapping gpt4o."""
+        gpt4o_individual = self._register_mock_target(name=GPT4O_TARGET)
+        rr_mock = self._register_mock_rr_target(name="OpenAIChatTarget_gpt-4o_rr")
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        scorer = registry.get_instance_by_name("refusal_gpt4o_objective_strict")
+        assert scorer is not None
+        assert scorer._prompt_target is rr_mock
+
+    async def test_refusal_gpt4o_falls_back_to_individual_when_no_rr(self) -> None:
+        """Test that gpt4o-based refusal scorers fall back to individual when no RR exists."""
+        individual_mock = self._register_mock_target(name=GPT4O_TARGET)
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        scorer = registry.get_instance_by_name("refusal_gpt4o_objective_strict")
+        assert scorer is not None
+        assert scorer._prompt_target is individual_mock
+
+    async def test_likert_scorers_use_round_robin_when_available(self) -> None:
+        """Test that likert scorers use round-robin target wrapping gpt4o."""
+        gpt4o_individual = self._register_mock_target(name=GPT4O_TARGET)
+        rr_mock = self._register_mock_rr_target(name="OpenAIChatTarget_gpt-4o_rr")
+
+        init = ScorerInitializer()
+        await init.initialize_async()
+
+        registry = ScorerRegistry.get_registry_singleton()
+        likert_entries = registry.get_by_tag(tag=ScorerInitializerTags.LIKERT)
+        assert len(likert_entries) > 0
+        for entry in likert_entries:
+            assert entry.instance._prompt_target is rr_mock
