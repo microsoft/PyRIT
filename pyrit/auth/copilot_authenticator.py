@@ -380,6 +380,7 @@ class CopilotAuthenticator(Authenticator):
         async with async_playwright() as playwright:
             browser = None
             context = None
+            page = None
 
             try:
                 logger.info(f"Launching browser for authentication (headless={self._headless})...")
