@@ -23,6 +23,12 @@ class SmugglerConverter(PromptConverter, abc.ABC):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
+    # Grandfathered: ``action`` is part of the public positional API of every
+    # SmugglerConverter subclass.
+    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0
+    # (this will be a BREAKING CHANGE for callers passing ``action`` positionally).
+    _brick_legacy_init = True
+
     def __init__(self, action: Literal["encode", "decode"] = "encode") -> None:
         """
         Initialize the converter with options for encoding/decoding.

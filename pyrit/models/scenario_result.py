@@ -103,7 +103,7 @@ class ScenarioResult(BaseModel):
     )
 
     #: Scenario result ID.
-    id: uuid.UUID = Field(default_factory=uuid.uuid4)  # noqa: A003
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
     #: Identifier for the executed scenario.
     scenario_identifier: ScenarioIdentifier
     #: Target identifier.

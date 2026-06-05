@@ -166,7 +166,8 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
             ValueError: If the input type is not supported or if the prompt is empty.
         """
         try:
-            import azure.cognitiveservices.speech as speechsdk  # noqa: F811
+            # Runtime import; the TYPE_CHECKING binding at module top is for type annotations only.
+            import azure.cognitiveservices.speech as speechsdk
         except ModuleNotFoundError as e:
             logger.error(
                 "Could not import azure.cognitiveservices.speech. "

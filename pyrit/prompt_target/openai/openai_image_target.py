@@ -53,6 +53,13 @@ class OpenAIImageTarget(OpenAITarget):
     # DALL-E-only quality values that are deprecated in favor of GPT image model values.
     _DEPRECATED_QUALITY_VALUES = {"standard", "hd"}
 
+    # Grandfathered: positional params predate the kwargs-only contract; the
+    # sandwiched ``*args``/``**kwargs`` shape forwards extras to ``OpenAITarget``.
+    # TODO: remove this opt-out and move ``*args`` up to immediately after
+    # ``self`` (or insert ``*,`` and drop ``*args`` entirely) in 0.16.0
+    # (this will be a BREAKING CHANGE for callers passing arguments positionally).
+    _brick_legacy_init = True
+
     def __init__(
         self,
         image_size: Literal[

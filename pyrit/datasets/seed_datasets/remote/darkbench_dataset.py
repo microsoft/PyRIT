@@ -3,10 +3,12 @@
 
 import warnings
 
+from typing_extensions import override
+
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 
 class _DarkBenchDataset(_RemoteDatasetLoader):
@@ -59,10 +61,12 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         self.config = config
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "dark_bench"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch DarkBench dataset from HuggingFace and return as SeedDataset.
@@ -87,7 +91,7 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         )
 
         # Process into SeedPrompts
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=item["Example"],
                 data_type="text",
@@ -110,6 +114,7 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
                     "Jinsuk Park",
                     "Mateusz Maria Jurewicz",
                 ],
+                groups=["Apart Research", "METR"],
             )
             for item in data
         ]

@@ -71,7 +71,13 @@ def __init__(
 
 Requirements:
 - `@apply_defaults` decorator on `__init__`
-- All parameters keyword-only via `*`
+- All parameters keyword-only via `*` — **enforced at class-definition time** by
+  `Scenario.__init_subclass__` calling `enforce_keyword_only_init` (see
+  `pyrit/common/brick_contract.py`). Violators raise `TypeError` at
+  import time. Existing classes that cannot adopt the contract immediately
+  may opt into a one-release grace period via the class attribute
+  `_brick_legacy_init = True`, which downgrades the error to a
+  `DeprecationWarning(removed_in="0.16.0")`. The opt-out is removed in 0.16.0.
 - **All constructor parameters must be optional** (default to `None`) so the registry can instantiate the scenario with no arguments for metadata introspection. Defer required-input validation to `initialize_async()` or `_get_atomic_attacks_async()`. `ScenarioRegistry._build_metadata` raises `TypeError` if `scenario_class()` cannot be called with no arguments.
 - `super().__init__()` called with `version`, `strategy_class`, `default_strategy`, `default_dataset_config`, `objective_scorer`
 - complex objects like `adversarial_chat` or `objective_scorer` should be passed into the constructor.

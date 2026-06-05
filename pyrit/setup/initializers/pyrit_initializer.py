@@ -43,7 +43,7 @@ class PyRITInitializer(ABC):
     are provided — no explicit execution_order is needed.
     """
 
-    def __init__(self) -> None:  # noqa: B027
+    def __init__(self) -> None:
         """Initialize the PyRIT initializer with no parameters."""
         self.params: dict[str, list[str]] = {}
 

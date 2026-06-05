@@ -7,6 +7,7 @@ import abc
 import asyncio
 import base64
 import hashlib
+import tempfile
 import time
 import wave
 from mimetypes import guess_type
@@ -211,23 +212,24 @@ class DataTypeSerializer(abc.ABC):
 
         # save audio file locally first if in AzureStorageBlob so we can use wave.open to set audio parameters
         if self._is_azure_storage_url(str(file_path)):
-            local_temp_path = Path(DB_DATA_PATH, "temp_audio.wav")
-            await asyncio.to_thread(
-                _write_wav_sync,
-                str(local_temp_path),
-                num_channels=num_channels,
-                sample_width=sample_width,
-                sample_rate=sample_rate,
-                data=data,
-            )
-
-            async with aiofiles.open(local_temp_path, "rb") as f:
-                audio_data = await f.read()
+            with tempfile.NamedTemporaryFile(suffix=".wav", dir=DB_DATA_PATH, delete=False) as tmp:
+                local_temp_path = Path(tmp.name)
+            try:
+                await asyncio.to_thread(
+                    _write_wav_sync,
+                    str(local_temp_path),
+                    num_channels=num_channels,
+                    sample_width=sample_width,
+                    sample_rate=sample_rate,
+                    data=data,
+                )
+                async with aiofiles.open(local_temp_path, "rb") as f:
+                    audio_data = await f.read()
                 if self._memory.results_storage_io is None:
                     raise RuntimeError("self._memory.results_storage_io is not initialized")
                 await self._memory.results_storage_io.write_file_async(file_path, audio_data)
-            local_temp_path.unlink()
-
+            finally:
+                local_temp_path.unlink(missing_ok=True)
         # If local, we can just save straight to disk and do not need to delete temp file after
         else:
             await asyncio.to_thread(

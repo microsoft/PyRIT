@@ -22,6 +22,10 @@ class AsciiSmugglerConverter(SmugglerConverter):
     [@embracethered2024unicode]
     """
 
+    # Grandfathered: ``action`` is inherited from SmugglerConverter's public API.
+    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
+    _brick_legacy_init = True
+
     def __init__(self, action: Literal["encode", "decode"] = "encode", unicode_tags: bool = False) -> None:
         """
         Initialize the converter with options for encoding/decoding.
