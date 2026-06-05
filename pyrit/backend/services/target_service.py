@@ -290,32 +290,73 @@ class TargetService:
         """
         Resolve registry names to target objects and create a RoundRobinTarget.
 
+        Targets resolving to the same ``ComponentIdentifier.hash`` are deduplicated
+        before construction (mirroring ``TargetInitializer._auto_group_targets``)
+        so duplicate registry aliases for the same underlying endpoint do not
+        produce a rotation that hits one target twice. If fewer than 2 distinct
+        targets remain after dedup, a ``ValueError`` is raised.
+
         The RoundRobinTarget constructor validates all compatibility requirements
         (same class, same configuration, same behavioral params, ≥2 targets).
 
         Args:
             params: Must contain ``target_registry_names`` (list of registry name
-                strings). May contain ``weights`` (list of positive ints).
+                strings). May contain ``weights`` (list of positive ints) of the
+                same length as ``target_registry_names``; weights for deduped
+                entries are dropped along with their target.
 
         Returns:
-            A new RoundRobinTarget wrapping the resolved targets.
+            A new RoundRobinTarget wrapping the resolved (deduped) targets.
 
         Raises:
-            ValueError: If names are missing, a name is not found in the registry,
-                or the RoundRobinTarget constructor rejects the combination.
+            ValueError: If fewer than 2 names are supplied, a name is not found
+                in the registry, weights length does not match, dedup leaves
+                fewer than 2 distinct targets, or the RoundRobinTarget
+                constructor rejects the combination.
         """
         registry_names: list[str] = params.get("target_registry_names", [])
-        if not registry_names or len(registry_names) < 2:
+        if len(registry_names) < 2:
             raise ValueError("RoundRobinTarget requires at least 2 target_registry_names in params.")
 
+        raw_weights: list[int] | None = params.get("weights") or None
+        if raw_weights is not None and len(raw_weights) != len(registry_names):
+            raise ValueError(
+                f"weights length ({len(raw_weights)}) must match target_registry_names length "
+                f"({len(registry_names)})."
+            )
+
+        # Deduplicate by ComponentIdentifier hash: two registry entries that
+        # resolve to the same identifier (same endpoint, model, api_version, etc.)
+        # would just hit the same target twice in the rotation. This mirrors the
+        # dedup in TargetInitializer._auto_group_targets so user-driven and
+        # auto-grouped flows behave the same.
+        seen_hashes: set[str | None] = set()
         resolved_targets: list[PromptTarget] = []
-        for name in registry_names:
+        resolved_weights: list[int] = []
+        duplicates: list[str] = []
+        for idx, name in enumerate(registry_names):
             target_obj = self._registry.get_instance_by_name(name)
             if target_obj is None:
                 raise ValueError(f"Target '{name}' not found in the registry.")
+            target_hash = target_obj.get_identifier().hash
+            if target_hash in seen_hashes:
+                duplicates.append(name)
+                logger.debug(f"Skipping duplicate target '{name}' (hash {target_hash}) in RoundRobinTarget creation")
+                continue
+            seen_hashes.add(target_hash)
             resolved_targets.append(target_obj)
+            if raw_weights is not None:
+                resolved_weights.append(raw_weights[idx])
 
-        weights: list[int] | None = params.get("weights") or None
+        if len(resolved_targets) < 2:
+            raise ValueError(
+                f"RoundRobinTarget requires at least 2 distinct targets, but the provided names "
+                f"resolved to {len(resolved_targets)} unique target(s) after deduplication. "
+                f"Duplicate names skipped: {duplicates}. Please select targets with different "
+                f"endpoints or configurations."
+            )
+
+        weights = resolved_weights if raw_weights is not None else None
 
         # The constructor validates same-class, same-config, behavioral consistency, etc.
         return RoundRobinTarget(targets=resolved_targets, weights=weights)

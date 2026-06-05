@@ -673,6 +673,93 @@ class TestCreateRoundRobinTarget:
         with pytest.raises(ValueError, match="not found"):
             await service.create_target_async(request=rr_request)
 
+    async def test_create_round_robin_target_deduplicates_identical_targets(self, sqlite_instance) -> None:
+        """Targets that resolve to the same identifier hash are deduplicated, and
+        the corresponding weights are dropped alongside them."""
+        service = TargetService()
+
+        # mock_a and mock_a_alias share the same identifier params, so their
+        # ComponentIdentifier.hash is identical — they should dedupe to one entry.
+        identifier_a = _mock_target_identifier(
+            class_name="OpenAIChatTarget", endpoint="https://a.openai.azure.com", model_name="gpt-4o"
+        )
+        mock_a = MagicMock()
+        mock_a.get_identifier.return_value = identifier_a
+        mock_a_alias = MagicMock()
+        mock_a_alias.get_identifier.return_value = identifier_a
+
+        mock_b = MagicMock()
+        mock_b.get_identifier.return_value = _mock_target_identifier(
+            class_name="OpenAIChatTarget", endpoint="https://b.openai.azure.com", model_name="gpt-4o"
+        )
+
+        service._registry.register_instance(mock_a, name="target-a")
+        service._registry.register_instance(mock_a_alias, name="target-a-alias")
+        service._registry.register_instance(mock_b, name="target-b")
+
+        mock_rr = MagicMock()
+        mock_rr.get_identifier.return_value = ComponentIdentifier(
+            class_name="RoundRobinTarget",
+            class_module="pyrit.prompt_target.round_robin_target",
+            params={"weights": [3, 1]},
+        )
+        mock_rr._targets = [mock_a, mock_b]
+
+        with patch(
+            "pyrit.backend.services.target_service.RoundRobinTarget",
+            return_value=mock_rr,
+        ) as mock_rr_cls:
+            rr_request = CreateTargetRequest(
+                type="RoundRobinTarget",
+                params={
+                    "target_registry_names": ["target-a", "target-a-alias", "target-b"],
+                    "weights": [3, 2, 1],
+                },
+            )
+
+            await service.create_target_async(request=rr_request)
+
+            # The duplicate alias and its weight (2) should be dropped.
+            mock_rr_cls.assert_called_once_with(targets=[mock_a, mock_b], weights=[3, 1])
+
+    async def test_create_round_robin_target_all_duplicates_raises(self, sqlite_instance) -> None:
+        """If dedup leaves fewer than 2 distinct targets, raise a clear error."""
+        service = TargetService()
+
+        identifier = _mock_target_identifier(
+            class_name="OpenAIChatTarget", endpoint="https://a.openai.azure.com", model_name="gpt-4o"
+        )
+        mock_a = MagicMock()
+        mock_a.get_identifier.return_value = identifier
+        mock_a_alias = MagicMock()
+        mock_a_alias.get_identifier.return_value = identifier
+
+        service._registry.register_instance(mock_a, name="target-a")
+        service._registry.register_instance(mock_a_alias, name="target-a-alias")
+
+        rr_request = CreateTargetRequest(
+            type="RoundRobinTarget",
+            params={"target_registry_names": ["target-a", "target-a-alias"]},
+        )
+
+        with pytest.raises(ValueError, match="at least 2 distinct targets"):
+            await service.create_target_async(request=rr_request)
+
+    async def test_create_round_robin_target_weights_length_mismatch_raises(self, sqlite_instance) -> None:
+        """Mismatched weights length raises before any registry lookups."""
+        service = TargetService()
+
+        rr_request = CreateTargetRequest(
+            type="RoundRobinTarget",
+            params={
+                "target_registry_names": ["a", "b", "c"],
+                "weights": [1, 2],
+            },
+        )
+
+        with pytest.raises(ValueError, match="weights length"):
+            await service.create_target_async(request=rr_request)
+
 
 class TestTargetServiceSingleton:
     """Tests for get_target_service singleton function."""
