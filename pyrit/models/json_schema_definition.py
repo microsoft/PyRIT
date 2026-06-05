@@ -228,9 +228,9 @@ def get_common_json_schema(name: str) -> JsonSchemaDefinition:
 
 
 def register_common_json_schema(
+    *,
     name: str,
     schema: JsonSchemaDefinition,
-    *,
     overwrite: bool = False,
 ) -> None:
     """

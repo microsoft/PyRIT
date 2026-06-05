@@ -200,12 +200,12 @@ def test_loader_missing_directory_returns_empty(
 def test_register_after_discovery_collides_on_bundled_name():
     """Discovery runs before the register collision check, so bundled names also collide."""
     with pytest.raises(ValueError, match="already registered"):
-        register_common_json_schema("true_false_with_rationale", {"type": "string"})
+        register_common_json_schema(name="true_false_with_rationale", schema={"type": "string"})
 
 
 def test_runtime_register_survives_alongside_yaml_entries(transient_schema_name: str):
     """Runtime registrations coexist with YAML-loaded entries and do not perturb them."""
-    register_common_json_schema(transient_schema_name, {"type": "object"})
+    register_common_json_schema(name=transient_schema_name, schema={"type": "object"})
     assert transient_schema_name in COMMON_JSON_SCHEMAS
     assert "true_false_with_rationale" in COMMON_JSON_SCHEMAS
 
@@ -220,7 +220,7 @@ def test_runtime_register_survives_alongside_yaml_entries(transient_schema_name:
 
 def test_register_common_json_schema_adds_entry(transient_schema_name: str):
     schema: JsonSchemaDefinition = {"type": "object", "properties": {"x": {"type": "string"}}}
-    register_common_json_schema(transient_schema_name, schema)
+    register_common_json_schema(name=transient_schema_name, schema=schema)
 
     assert transient_schema_name in COMMON_JSON_SCHEMAS
     fetched = get_common_json_schema(transient_schema_name)
@@ -228,15 +228,15 @@ def test_register_common_json_schema_adds_entry(transient_schema_name: str):
 
 
 def test_register_common_json_schema_duplicate_raises_by_default(transient_schema_name: str):
-    register_common_json_schema(transient_schema_name, {"type": "object"})
+    register_common_json_schema(name=transient_schema_name, schema={"type": "object"})
 
     with pytest.raises(ValueError, match="already registered"):
-        register_common_json_schema(transient_schema_name, {"type": "string"})
+        register_common_json_schema(name=transient_schema_name, schema={"type": "string"})
 
 
 def test_register_common_json_schema_overwrite_replaces(transient_schema_name: str):
-    register_common_json_schema(transient_schema_name, {"type": "object"})
-    register_common_json_schema(transient_schema_name, {"type": "string"}, overwrite=True)
+    register_common_json_schema(name=transient_schema_name, schema={"type": "object"})
+    register_common_json_schema(name=transient_schema_name, schema={"type": "string"}, overwrite=True)
 
     assert get_common_json_schema(transient_schema_name) == {"type": "string"}
 
@@ -244,7 +244,7 @@ def test_register_common_json_schema_overwrite_replaces(transient_schema_name: s
 def test_register_common_json_schema_deep_copies_input(transient_schema_name: str):
     """Mutating the caller's dict after registration must not affect the registry."""
     source: JsonSchemaDefinition = {"type": "object", "properties": {"x": {"type": "string"}}}
-    register_common_json_schema(transient_schema_name, source)
+    register_common_json_schema(name=transient_schema_name, schema=source)
 
     source["properties"]["x"]["type"] = "integer"
     source["new_key"] = "tampered"
@@ -256,11 +256,11 @@ def test_register_common_json_schema_deep_copies_input(transient_schema_name: st
 
 def test_register_common_json_schema_non_dict_raises_typeerror(transient_schema_name: str):
     with pytest.raises(TypeError, match="schema must be a dict"):
-        register_common_json_schema(transient_schema_name, "not a dict")  # type: ignore[arg-type]
+        register_common_json_schema(name=transient_schema_name, schema="not a dict")  # type: ignore[arg-type]
 
 
 def test_unregister_common_json_schema_removes_entry(transient_schema_name: str):
-    register_common_json_schema(transient_schema_name, {"type": "object"})
+    register_common_json_schema(name=transient_schema_name, schema={"type": "object"})
     assert transient_schema_name in COMMON_JSON_SCHEMAS
 
     unregister_common_json_schema(transient_schema_name)
@@ -275,5 +275,5 @@ def test_unregister_common_json_schema_unknown_raises_keyerror():
 def test_register_then_get_is_visible_via_proxy_view(transient_schema_name: str):
     """COMMON_JSON_SCHEMAS is a live read-only view of the mutable backing dict."""
     assert transient_schema_name not in COMMON_JSON_SCHEMAS
-    register_common_json_schema(transient_schema_name, {"type": "boolean"})
+    register_common_json_schema(name=transient_schema_name, schema={"type": "boolean"})
     assert COMMON_JSON_SCHEMAS[transient_schema_name] == {"type": "boolean"}
