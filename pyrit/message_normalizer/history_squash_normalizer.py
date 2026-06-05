@@ -46,7 +46,7 @@ class HistorySquashNormalizer(MessageListNormalizer[Message]):
             "[Conversation History]\n" + "\n".join(history_lines) + "\n\n[Current Message]\n" + "\n".join(current_parts)
         )
 
-        return [build_squashed_user_message(text=combined, source_messages=messages)]
+        return [build_squashed_user_message(new_message_content=combined, source_messages=messages)]
 
     def _format_history(self, *, messages: list[Message]) -> list[str]:
         """

@@ -16,7 +16,7 @@ centralizes that propagation rule.
 from pyrit.models import Message
 
 
-def build_squashed_user_message(*, text: str, source_messages: list[Message]) -> Message:
+def build_squashed_user_message(*, new_message_content: str, source_messages: list[Message]) -> Message:
     """
     Build a fresh user-role ``Message`` that subsumes ``source_messages``.
 
@@ -27,7 +27,7 @@ def build_squashed_user_message(*, text: str, source_messages: list[Message]) ->
     subsequent capability adaptation would silently no-op.
 
     Args:
-        text: The combined text content for the new piece.
+        new_message_content: The combined text content for the new piece.
         source_messages: The messages being subsumed. The LAST message's
             first piece supplies the ``prompt_metadata`` carried onto the new
             piece. Must be non-empty.
@@ -43,4 +43,4 @@ def build_squashed_user_message(*, text: str, source_messages: list[Message]) ->
 
     last_message = source_messages[-1]
     propagated_metadata = dict(last_message.message_pieces[0].prompt_metadata)
-    return Message.from_prompt(prompt=text, role="user", prompt_metadata=propagated_metadata)
+    return Message.from_prompt(prompt=new_message_content, role="user", prompt_metadata=propagated_metadata)

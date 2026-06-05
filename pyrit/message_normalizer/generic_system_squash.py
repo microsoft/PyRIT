@@ -42,7 +42,11 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
 
         if len(messages) == 1:
             # Only system message, convert to user message.
-            return [build_squashed_user_message(text=first_piece.converted_value, source_messages=messages[:1])]
+            return [
+                build_squashed_user_message(
+                    new_message_content=first_piece.converted_value, source_messages=messages[:1]
+                )
+            ]
 
         # Combine system with first user message
         system_content = first_piece.converted_value
@@ -50,10 +54,9 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
         user_content = user_piece.converted_value
 
         combined_content = f"### Instructions ###\n\n{system_content}\n\n######\n\n{user_content}"
-        # The user piece represents the current request being sent (the system
-        # message is being subsumed into its envelope), so its metadata is
-        # authoritative — pass the [system, user] slice so the helper picks up
-        # the user piece (the last element) for metadata propagation.
-        squashed_message = build_squashed_user_message(text=combined_content, source_messages=messages[:2])
+
+        squashed_message = build_squashed_user_message(
+            new_message_content=combined_content, source_messages=messages[:2]
+        )
         # Return the squashed message followed by remaining messages (skip first two)
         return [squashed_message] + list(messages[2:])
