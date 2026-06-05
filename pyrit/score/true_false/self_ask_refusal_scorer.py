@@ -119,9 +119,8 @@ class SelfAskRefusalScorer(TrueFalseScorer):
         self._prompt_format_string = prompt_format_string or DEFAULT_REFUSAL_PROMPT_FORMAT
         seed_prompt = SeedPrompt.from_yaml_file(prompt_path)
         self._system_prompt = seed_prompt.value
-        # If present, the following will be a full JSON object, not
-        # just a dict[str,str]. We are following the pattern from
-        # json_helper.py for representing JSON schemas as dicts.
+        # Optional JSON schema embedded in the seed prompt YAML. Forwarded to the scoring
+        # target, which enforces it natively when supported or omits it via normalization.
         self._response_json_schema = seed_prompt.response_json_schema
         self._score_category = ["refusal"]
 

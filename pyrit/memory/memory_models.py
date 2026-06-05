@@ -32,6 +32,7 @@ from sqlalchemy.types import Uuid
 import pyrit
 from pyrit.common.utils import to_sha256
 from pyrit.models import (
+    SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
     AtomicAttackEvaluationIdentifier,
     AttackOutcome,
     AttackResult,
@@ -594,7 +595,7 @@ class SeedEntry(Base):
         self.source = entry.source
         self.date_added = entry.date_added
         self.added_by = entry.added_by
-        self.prompt_metadata = entry.metadata
+        self.prompt_metadata = self._pack_seed_metadata(entry)
         self.prompt_group_id = entry.prompt_group_id
         self.seed_type = seed_type
 
@@ -608,6 +609,84 @@ class SeedEntry(Base):
             self.sequence = None
             self.role = None
 
+    @staticmethod
+    def _pack_seed_metadata(entry: Seed) -> dict[str, str | int] | None:
+        """
+        Build the persisted ``prompt_metadata`` for ``entry``.
+
+        Packs ``SeedPrompt.response_json_schema`` (when present) under the
+        reserved ``SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY`` as a JSON-encoded
+        string so the existing ``dict[str, str | int]`` column type stays
+        honest. Always strips the reserved key from caller-supplied metadata
+        first so a forged entry cannot smuggle in a fake schema.
+
+        Args:
+            entry (Seed): The seed to serialize.
+
+        Returns:
+            dict[str, str | int] | None: The metadata dict to persist (or
+            ``None`` when the caller's metadata was ``None`` and no schema
+            needed packing).
+
+        Raises:
+            TypeError: If ``entry.response_json_schema`` contains values that
+                are not JSON-serializable. The re-raised error includes the
+                seed's type name and ``name`` to make the bad seed easy to
+                locate.
+        """
+        raw = entry.metadata
+        schema = getattr(entry, "response_json_schema", None)
+
+        if not raw and schema is None:
+            return raw
+
+        packed: dict[str, str | int] = dict(raw) if raw else {}
+        # Defensive strip — the reserved key is owned by this class.
+        packed.pop(SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY, None)
+        if schema is not None:
+            try:
+                packed[SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY] = json.dumps(schema, sort_keys=True)
+            except TypeError as exc:
+                # json.dumps surfaces non-JSON-serializable members deep inside the
+                # schema as a bare TypeError. Re-raise with context the caller can
+                # actually act on (which seed, which class, which type).
+                raise TypeError(
+                    f"response_json_schema on {type(entry).__name__} "
+                    f"(name={getattr(entry, 'name', None)!r}) is not JSON-serializable: {exc}. "
+                    "Schemas must contain only JSON-native types (dict, list, str, int, float, bool, None)."
+                ) from exc
+        return packed
+
+    @staticmethod
+    def _unpack_seed_metadata(
+        raw: dict[str, str | int] | None,
+    ) -> tuple[dict[str, str | int] | None, dict[str, Any] | None]:
+        """
+        Unpack the reserved schema key from a persisted ``prompt_metadata`` dict.
+
+        Args:
+            raw (dict[str, str | int] | None): Metadata as stored in the
+                database.
+
+        Returns:
+            tuple[dict[str, str | int] | None, dict[str, Any] | None]:
+                ``(cleaned_metadata, decoded_response_json_schema)``. The
+                cleaned dict never contains the reserved key, even when the
+                encoded value was malformed.
+        """
+        if not raw:
+            return raw, None
+        cleaned = dict(raw)
+        encoded = cleaned.pop(SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY, None)
+        if not isinstance(encoded, str):
+            return cleaned, None
+        try:
+            decoded = json.loads(encoded)
+        except (json.JSONDecodeError, TypeError):
+            # Corrupt entry — surface the cleaned metadata without a schema.
+            decoded = None
+        return cleaned, decoded
+
     def get_seed(self) -> Seed:
         """
         Convert this database entry back into a Seed object.
@@ -615,6 +694,7 @@ class SeedEntry(Base):
         Returns:
             Seed: The reconstructed seed object (SeedPrompt, SeedObjective, or SeedSimulatedConversation)
         """
+        cleaned_metadata, decoded_schema = self._unpack_seed_metadata(self.prompt_metadata)
         if self.seed_type == "objective":
             return SeedObjective(
                 id=self.id,
@@ -629,13 +709,11 @@ class SeedEntry(Base):
                 source=self.source,
                 date_added=_ensure_utc(self.date_added),
                 added_by=self.added_by,
-                metadata=self.prompt_metadata,
+                metadata=cleaned_metadata,
                 prompt_group_id=self.prompt_group_id,
             )
         if self.seed_type == "simulated_conversation":
             # Reconstruct SeedSimulatedConversation from JSON value
-            import json
-
             config = json.loads(self.value)
             return SeedSimulatedConversation(
                 id=self.id,
@@ -649,7 +727,7 @@ class SeedEntry(Base):
                 source=self.source,
                 date_added=_ensure_utc(self.date_added),
                 added_by=self.added_by,
-                metadata=self.prompt_metadata,
+                metadata=cleaned_metadata,
                 prompt_group_id=self.prompt_group_id,
                 num_turns=config.get("num_turns", 3),
                 sequence=config.get("sequence", 0),
@@ -671,7 +749,8 @@ class SeedEntry(Base):
             source=self.source,
             date_added=_ensure_utc(self.date_added),
             added_by=self.added_by,
-            metadata=self.prompt_metadata,
+            metadata=cleaned_metadata,
+            response_json_schema=decoded_schema,
             parameters=self.parameters,
             prompt_group_id=self.prompt_group_id,
             sequence=self.sequence or 0,
