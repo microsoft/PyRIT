@@ -38,14 +38,22 @@ class HistorySquashNormalizer(MessageListNormalizer[Message]):
         if len(messages) == 1:
             return list(messages)
 
+        last_message = messages[-1]
         history_lines = self._format_history(messages=messages[:-1])
-        current_parts = [piece.converted_value for piece in messages[-1].message_pieces]
+        current_parts = [piece.converted_value for piece in last_message.message_pieces]
 
         combined = (
             "[Conversation History]\n" + "\n".join(history_lines) + "\n\n[Current Message]\n" + "\n".join(current_parts)
         )
 
-        return [Message.from_prompt(prompt=combined, role="user")]
+        # Carry the last message's prompt_metadata onto the squashed piece so
+        # downstream normalizers (e.g. JsonSchemaNormalizer) still see request-
+        # level metadata such as the JSON schema key. Without this, a fresh
+        # piece from Message.from_prompt would have empty metadata and any
+        # subsequent capability adaptation would silently no-op.
+        propagated_metadata = dict(last_message.message_pieces[0].prompt_metadata)
+
+        return [Message.from_prompt(prompt=combined, role="user", prompt_metadata=propagated_metadata)]
 
     def _format_history(self, *, messages: list[Message]) -> list[str]:
         """
