@@ -17,13 +17,6 @@ from pyrit.exceptions.exception_classes import CONTENT_FILTER_MARKERS
 logger = logging.getLogger(__name__)
 
 
-# Re-export ``CONTENT_FILTER_MARKERS`` so external callers that historically imported
-# the constant from this module continue to work. The single source of truth lives in
-# ``pyrit.exceptions.exception_classes`` so the substring fallback in
-# ``handle_bad_request_exception`` and ``_is_content_filter_error`` cannot drift.
-__all__ = ["CONTENT_FILTER_MARKERS"]
-
-
 # OpenAI uses ``error.code == "invalid_prompt"`` for both model-level safety blocks
 # (e.g. CBRN topics) and unrelated failures (e.g. schema validation errors), so the
 # code alone is too generic to treat as a content-filter signal. Only treat

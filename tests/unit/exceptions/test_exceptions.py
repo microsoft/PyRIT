@@ -120,13 +120,6 @@ def test_content_filter_markers_exported_from_pyrit_exceptions():
     assert "content_safety_violation" in CONTENT_FILTER_MARKERS
 
 
-def test_content_filter_markers_shared_with_openai_error_handling():
-    """The shared constant must be identity-equal to the one re-exported from the OpenAI module."""
-    from pyrit.prompt_target.openai.openai_error_handling import CONTENT_FILTER_MARKERS as OPENAI_MARKERS
-
-    assert CONTENT_FILTER_MARKERS is OPENAI_MARKERS
-
-
 @pytest.mark.parametrize(
     "marker_response_text",
     [

@@ -3,8 +3,8 @@
 
 import pytest
 
+from pyrit.exceptions import CONTENT_FILTER_MARKERS
 from pyrit.prompt_target.openai.openai_error_handling import (
-    CONTENT_FILTER_MARKERS,
     SAFETY_MESSAGE_MARKERS,
     _is_content_filter_error,
 )
