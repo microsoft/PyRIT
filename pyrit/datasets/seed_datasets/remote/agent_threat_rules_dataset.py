@@ -3,7 +3,7 @@
 
 import logging
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal
 
 from typing_extensions import override
 
@@ -136,10 +136,10 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
             "db793f9/data/autoresearch/adversarial-samples.json"
         ),
         source_type: Literal["public_url", "file"] = "public_url",
-        categories: Optional[list[ATRCategory]] = None,
-        techniques: Optional[list[str]] = None,
-        detection_fields: Optional[list[ATRDetectionField]] = None,
-        variation_types: Optional[list[ATRVariationType]] = None,
+        categories: list[ATRCategory] | None = None,
+        techniques: list[str] | None = None,
+        detection_fields: list[ATRDetectionField] | None = None,
+        variation_types: list[ATRVariationType] | None = None,
     ) -> None:
         """
         Initialize the ATR dataset loader.

@@ -501,7 +501,7 @@ class ConverterService:
                 continue
 
             origin = get_origin(annotation)
-            # Unwrap Optional[X] to X
+            # Unwrap X | None to X
             if origin is Union:
                 args = get_args(annotation)
                 non_none = [a for a in args if a is not type(None)]

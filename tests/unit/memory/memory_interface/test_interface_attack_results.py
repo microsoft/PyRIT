@@ -3,7 +3,7 @@
 
 
 import uuid
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -1270,7 +1270,7 @@ def test_get_unique_attack_labels_deduplicates_across_sources(sqlite_instance: M
 def _make_attack_result_with_identifier(
     conversation_id: str,
     class_name: str,
-    converter_class_names: Optional[list[str]] = None,
+    converter_class_names: list[str] | None = None,
 ) -> AttackResult:
     """Helper to create an AttackResult with a ComponentIdentifier containing converters."""
     children: dict = {}

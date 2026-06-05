@@ -8,7 +8,6 @@ from enum import Enum
 from typing import (
     Any,
     Literal,
-    Optional,
     cast,
 )
 
@@ -91,15 +90,15 @@ class OpenAIResponseTarget(OpenAITarget):
     def __init__(
         self,
         *,
-        custom_functions: Optional[dict[str, ToolExecutor]] = None,
-        max_output_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        reasoning_effort: Optional[ReasoningEffort] = None,
-        reasoning_summary: Optional[Literal["auto", "concise", "detailed"]] = None,
-        extra_body_parameters: Optional[dict[str, Any]] = None,
+        custom_functions: dict[str, ToolExecutor] | None = None,
+        max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
+        reasoning_summary: Literal["auto", "concise", "detailed"] | None = None,
+        extra_body_parameters: dict[str, Any] | None = None,
         fail_on_missing_function: bool = False,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -396,12 +395,12 @@ class OpenAIResponseTarget(OpenAITarget):
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}
 
-    def _build_reasoning_config(self) -> Optional[dict[str, Any]]:
+    def _build_reasoning_config(self) -> dict[str, Any] | None:
         """
         Build the reasoning configuration dict for the Responses API.
 
         Returns:
-            Optional[Dict[str, Any]]: The reasoning config, or None if neither effort nor summary is set.
+            dict[str, Any] | None: The reasoning config, or None if neither effort nor summary is set.
         """
         if self._reasoning_effort is None and self._reasoning_summary is None:
             return None
@@ -413,7 +412,7 @@ class OpenAIResponseTarget(OpenAITarget):
             reasoning["summary"] = self._reasoning_summary
         return reasoning
 
-    def _build_text_format(self, json_config: _JsonResponseConfig) -> Optional[dict[str, Any]]:
+    def _build_text_format(self, json_config: _JsonResponseConfig) -> dict[str, Any] | None:
         if not json_config.enabled:
             return None
 
@@ -459,7 +458,7 @@ class OpenAIResponseTarget(OpenAITarget):
 
         return False
 
-    def _extract_partial_content(self, response: Any) -> Optional[str]:
+    def _extract_partial_content(self, response: Any) -> str | None:
         """
         Extract partial content from a Response API response that was content-filtered.
 
@@ -493,7 +492,7 @@ class OpenAIResponseTarget(OpenAITarget):
         except (AttributeError, IndexError, TypeError):
             return None
 
-    def _validate_response(self, response: Any, request: MessagePiece) -> Optional[Message]:
+    def _validate_response(self, response: Any, request: MessagePiece) -> Message | None:
         """
         Validate a Response API response for errors.
 
@@ -584,7 +583,7 @@ class OpenAIResponseTarget(OpenAITarget):
         responses_to_return: list[Message] = []
 
         # Main agentic loop - each back-and-forth creates a new message
-        tool_call_section: Optional[dict[str, Any]] = None
+        tool_call_section: dict[str, Any] | None = None
 
         while True:
             logger.info(f"Sending conversation with {len(working_conversation)} messages to the prompt target")
@@ -625,7 +624,7 @@ class OpenAIResponseTarget(OpenAITarget):
         return responses_to_return
 
     def _parse_response_output_section(
-        self, *, section: Any, message_piece: MessagePiece, error: Optional[PromptResponseError]
+        self, *, section: Any, message_piece: MessagePiece, error: PromptResponseError | None
     ) -> MessagePiece | None:
         """
         Parse model output sections, forwarding tool-calls for the agentic loop.
@@ -726,7 +725,7 @@ class OpenAIResponseTarget(OpenAITarget):
 
     # Agentic helpers (module scope)
 
-    def _find_last_pending_tool_call(self, reply: Message) -> Optional[dict[str, Any]]:
+    def _find_last_pending_tool_call(self, reply: Message) -> dict[str, Any] | None:
         """
         Return the last tool-call section in assistant messages, or None.
         Looks for a piece whose value parses as JSON with a 'type' key matching function_call.

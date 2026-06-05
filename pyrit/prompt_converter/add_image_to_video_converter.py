@@ -5,7 +5,6 @@ import asyncio
 import contextlib
 import logging
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -44,7 +43,7 @@ class AddImageVideoConverter(PromptConverter):
     def __init__(
         self,
         video_path: str,
-        output_path: Optional[str] = None,
+        output_path: str | None = None,
         img_position: tuple[int, int] = (10, 10),
         img_resize_size: tuple[int, int] = (500, 500),
     ) -> None:
@@ -99,7 +98,7 @@ class AddImageVideoConverter(PromptConverter):
             ValueError: If the image path is invalid or unsupported video format.
         """
         try:
-            import cv2  # noqa: F401
+            import cv2  # type: ignore[ty:unresolved-import]  # noqa: F401
         except ModuleNotFoundError as e:
             logger.error("Could not import opencv. You may need to install it via 'pip install pyrit[opencv]'")
             raise e
@@ -152,9 +151,9 @@ class AddImageVideoConverter(PromptConverter):
         import cv2
 
         video_path = self._video_path
-        local_temp_path: Optional[Path] = None
-        cap: Optional[cv2.VideoCapture] = None
-        output_video: Optional[cv2.VideoWriter] = None
+        local_temp_path: Path | None = None
+        cap: cv2.VideoCapture | None = None
+        output_video: cv2.VideoWriter | None = None
 
         try:
             if azure_storage_flag:
@@ -174,7 +173,7 @@ class AddImageVideoConverter(PromptConverter):
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             file_extension = video_path.split(".")[-1].lower()
             if file_extension in video_encoding_map:
-                video_char_code = cv2.VideoWriter_fourcc(*video_encoding_map[file_extension])
+                video_char_code = cv2.VideoWriter.fourcc(*video_encoding_map[file_extension])
                 output_video = cv2.VideoWriter(output_path, video_char_code, fps, (width, height))
             else:
                 raise ValueError(f"Unsupported video format: {file_extension}")

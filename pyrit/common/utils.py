@@ -8,12 +8,12 @@ import logging
 import math
 import random
 from pathlib import Path
-from typing import Any, Optional, TypeVar, Union
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
 
-def verify_and_resolve_path(path: Union[str, Path]) -> Path:
+def verify_and_resolve_path(path: str | Path) -> Path:
     """
     Verify that a path is valid and resolve it to an absolute path.
 
@@ -21,7 +21,7 @@ def verify_and_resolve_path(path: Union[str, Path]) -> Path:
     such as in scorers, converters, or other components that accept file paths.
 
     Args:
-        path (Union[str, Path]): A path as a string or Path object.
+        path (str | Path): A path as a string or Path object.
 
     Returns:
         Path: The resolved absolute Path object.
@@ -39,9 +39,7 @@ def verify_and_resolve_path(path: Union[str, Path]) -> Path:
     return path_obj
 
 
-def combine_dict(
-    existing_dict: Optional[dict[str, Any]] = None, new_dict: Optional[dict[str, Any]] = None
-) -> dict[str, Any]:
+def combine_dict(existing_dict: dict[str, Any] | None = None, new_dict: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     Combine two dictionaries containing string keys and values into one.
 
@@ -58,13 +56,13 @@ def combine_dict(
     return result
 
 
-def combine_list(list1: Union[str, list[str]], list2: Union[str, list[str]]) -> list[str]:
+def combine_list(list1: str | list[str], list2: str | list[str]) -> list[str]:
     """
     Combine two lists or strings into a single list with unique values.
 
     Args:
-        list1 (Union[str, List[str]]): First list or string to combine.
-        list2 (Union[str, List[str]]): Second list or string to combine.
+        list1 (str | list[str]): First list or string to combine.
+        list2 (str | list[str]): Second list or string to combine.
 
     Returns:
         list: Combined list containing unique values from both inputs.
@@ -91,7 +89,7 @@ def get_random_indices(*, start: int, size: int, proportion: float) -> list[int]
             For example, if `proportion` is 0.5 and `size` is 10, 5 randomly selected indices will be returned.
 
     Returns:
-        List[int]: A list of randomly selected indices based on the specified proportion.
+        list[int]: A list of randomly selected indices based on the specified proportion.
 
     Raises:
         ValueError: If `start` is negative, `size` is not positive, or `proportion` is not between 0 and 1.
@@ -126,7 +124,7 @@ def to_sha256(data: str) -> str:
 
 
 def warn_if_set(
-    *, config: Any, unused_fields: list[str], log: Union[logging.Logger, logging.LoggerAdapter[logging.Logger]] = logger
+    *, config: Any, unused_fields: list[str], log: logging.Logger | logging.LoggerAdapter[logging.Logger] = logger
 ) -> None:
     """
     Warn about unused parameters in configurations.
@@ -137,8 +135,8 @@ def warn_if_set(
 
     Args:
         config (Any): The configuration object to check for unused fields.
-        unused_fields (List[str]): List of field names to check in the config object.
-        log (Union[logging.Logger, logging.LoggerAdapter]): Logger to use for warning messages.
+        unused_fields (list[str]): List of field names to check in the config object.
+        log (logging.Logger | logging.LoggerAdapter): Logger to use for warning messages.
     """
     config_name = config.__class__.__name__
 
@@ -169,20 +167,20 @@ def get_kwarg_param(
     param_name: str,
     expected_type: type[_T],
     required: bool = True,
-    default_value: Optional[_T] = None,
-) -> Optional[_T]:
+    default_value: _T | None = None,
+) -> _T | None:
     """
     Validate and extract a parameter from kwargs.
 
     Args:
-        kwargs (Dict[str, Any]): The dictionary containing parameters.
+        kwargs (dict[str, Any]): The dictionary containing parameters.
         param_name (str): The name of the parameter to validate.
-        expected_type (Type[_T]): The expected type of the parameter.
+        expected_type (type[_T]): The expected type of the parameter.
         required (bool): Whether the parameter is required. If True, raises ValueError if missing.
-        default_value (Optional[_T]): Default value to return if the parameter is not required and not present.
+        default_value (_T | None): Default value to return if the parameter is not required and not present.
 
     Returns:
-        Optional[_T]: The validated parameter value if present and valid, otherwise None.
+        _T | None: The validated parameter value if present and valid, otherwise None.
 
     Raises:
         ValueError: If the parameter is missing or None.

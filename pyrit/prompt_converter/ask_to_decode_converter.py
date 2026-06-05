@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import random
-from typing import Optional
 
 from pyrit.models import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
@@ -44,7 +43,7 @@ class AskToDecodeConverter(PromptConverter):
     # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
     _brick_legacy_init = True
 
-    def __init__(self, template: Optional[str] = None, encoding_name: str = "cipher") -> None:
+    def __init__(self, template: str | None = None, encoding_name: str = "cipher") -> None:
         """
         Initialize the converter with a specified encoding name and template.
 

@@ -3,7 +3,6 @@
 
 import uuid
 from textwrap import dedent
-from typing import Optional
 
 import httpx
 from openai import BadRequestError
@@ -37,7 +36,7 @@ class GandalfScorer(TrueFalseScorer):
         *,
         level: GandalfLevel,
         chat_target: PromptTarget,
-        validator: Optional[ScorerPromptValidator] = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
     ) -> None:
         """
@@ -46,7 +45,7 @@ class GandalfScorer(TrueFalseScorer):
         Args:
             level (GandalfLevel): The Gandalf challenge level to score against.
             chat_target (PromptTarget): The chat target used for password extraction.
-            validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to text data type validator.
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to text data type validator.
             score_aggregator (TrueFalseAggregatorFunc): Aggregator for combining scores. Defaults to
                 TrueFalseScoreAggregator.OR.
         """
@@ -143,13 +142,13 @@ class GandalfScorer(TrueFalseScorer):
             return ""
         return response_text
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the text based on the password found in the text.
 
         Args:
             message_piece (MessagePiece): The message piece containing the text to be scored.
-            objective (Optional[str]): The objective to evaluate against (the original attacker model's objective).
+            objective (str | None): The objective to evaluate against (the original attacker model's objective).
                 Currently not used for this scorer.
 
         Returns:

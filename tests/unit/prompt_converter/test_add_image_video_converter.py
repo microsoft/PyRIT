@@ -23,7 +23,7 @@ def video_converter_sample_video(tmp_path, patch_central_database):
     if is_opencv_installed():
         import cv2
 
-        video_encoding = cv2.VideoWriter_fourcc(*"mp4v")
+        video_encoding = cv2.VideoWriter.fourcc(*"mp4v")
         output_video = cv2.VideoWriter(video_path, video_encoding, 1, (width, height))
         for _i in range(10):
             frame = np.zeros((height, width, 3), dtype=np.uint8)

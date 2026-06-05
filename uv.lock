@@ -3294,18 +3294,6 @@ wheels = [
 ]
 
 [[package]]
-name = "mock-alchemy"
-version = "0.2.6"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "sqlalchemy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a7/80/5af6036ed9a97d927c36384b63ea2f270224726cda7f1402cb62781d7054/mock_alchemy-0.2.6.tar.gz", hash = "sha256:807cc2bd7f658fb98292900052eaa6eeb4a65b2d62364e639462480a275299ef", size = 17361, upload-time = "2023-03-26T21:39:31.339Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/aa/93/8d1f7ee9fa858d1c13511de6e0bedf7f57d15e9c7aab0e9fdf4d66074417/mock_alchemy-0.2.6-py3-none-any.whl", hash = "sha256:d5e17f2c92d0299d70cd9a0d3c8f96f759a81c285c76b03f4192451583bf865f", size = 16410, upload-time = "2023-03-26T21:39:29.486Z" },
-]
-
-[[package]]
 name = "mpmath"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -5261,7 +5249,6 @@ dev = [
     { name = "jupyter-book" },
     { name = "jupytext" },
     { name = "matplotlib" },
-    { name = "mock-alchemy" },
     { name = "pandas" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -5273,17 +5260,8 @@ dev = [
     { name = "ruff" },
     { name = "ty" },
     { name = "types-aiofiles" },
-    { name = "types-cachetools" },
-    { name = "types-decorator" },
-    { name = "types-paramiko" },
-    { name = "types-pycurl" },
-    { name = "types-pytz" },
     { name = "types-pyyaml" },
     { name = "types-requests" },
-    { name = "types-simplejson" },
-    { name = "types-six" },
-    { name = "types-tabulate" },
-    { name = "types-ujson" },
 ]
 
 [package.metadata]
@@ -5368,7 +5346,6 @@ dev = [
     { name = "jupyter-book", specifier = ">=2.0.0" },
     { name = "jupytext", specifier = ">=1.17.1" },
     { name = "matplotlib", specifier = ">=3.10.0" },
-    { name = "mock-alchemy", specifier = ">=0.2.6" },
     { name = "pandas", specifier = ">=2.2.0" },
     { name = "pre-commit", specifier = ">=4.2.0" },
     { name = "pytest", specifier = ">=9.0.3" },
@@ -5380,17 +5357,8 @@ dev = [
     { name = "ruff", specifier = ">=0.14.4" },
     { name = "ty", specifier = ">=0.0.32" },
     { name = "types-aiofiles", specifier = ">=24.1.0" },
-    { name = "types-cachetools", specifier = ">=5.5.0" },
-    { name = "types-decorator", specifier = ">=5.1.0" },
-    { name = "types-paramiko", specifier = ">=3.5.0" },
-    { name = "types-pycurl", specifier = ">=7.45.0" },
-    { name = "types-pytz", specifier = ">=2024.2.0" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20250516" },
     { name = "types-requests", specifier = ">=2.31.0.20250515" },
-    { name = "types-simplejson", specifier = ">=3.19.0" },
-    { name = "types-six", specifier = ">=1.16.0" },
-    { name = "types-tabulate", specifier = ">=0.9.0" },
-    { name = "types-ujson", specifier = ">=5.10.0" },
 ]
 
 [[package]]
@@ -7015,54 +6983,6 @@ wheels = [
 ]
 
 [[package]]
-name = "types-cachetools"
-version = "6.2.0.20251022"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/3b/a8/f9bcc7f1be63af43ef0170a773e2d88817bcc7c9d8769f2228c802826efe/types_cachetools-6.2.0.20251022.tar.gz", hash = "sha256:f1d3c736f0f741e89ec10f0e1b0138625023e21eb33603a930c149e0318c0cef", size = 9608, upload-time = "2025-10-22T03:03:58.16Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/98/2d/8d821ed80f6c2c5b427f650bf4dc25b80676ed63d03388e4b637d2557107/types_cachetools-6.2.0.20251022-py3-none-any.whl", hash = "sha256:698eb17b8f16b661b90624708b6915f33dbac2d185db499ed57e4997e7962cad", size = 9341, upload-time = "2025-10-22T03:03:57.036Z" },
-]
-
-[[package]]
-name = "types-decorator"
-version = "5.2.0.20260519"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f2/a1/2f53c1ee0bd6898e853cd4c6a1107a79083d76412c247aec49b8ca242142/types_decorator-5.2.0.20260519.tar.gz", hash = "sha256:b5b23b2f0d11c06748780697d345c8a684fc2d0c753f08ee8063660d9d7a23d9", size = 9351, upload-time = "2026-05-19T05:56:20.221Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9b/b2/4fb36b644e0464d4a613de14db5871cfa1455e92916f99b70527af522a8e/types_decorator-5.2.0.20260519-py3-none-any.whl", hash = "sha256:c50a13519d2b995b3bb866dba9525b412ebf7d67ed229960e01a52f07f8e58c3", size = 8185, upload-time = "2026-05-19T05:56:19.167Z" },
-]
-
-[[package]]
-name = "types-paramiko"
-version = "4.0.0.20250822"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cryptography" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b7/b8/c6ff3b10c2f7b9897650af746f0dc6c5cddf054db857bc79d621f53c7d22/types_paramiko-4.0.0.20250822.tar.gz", hash = "sha256:1b56b0cbd3eec3d2fd123c9eb2704e612b777e15a17705a804279ea6525e0c53", size = 28730, upload-time = "2025-08-22T03:03:43.262Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/79/a1/b3774ed924a66ee2c041224d89c36f0c21f4f6cf75036d6ee7698bf8a4b9/types_paramiko-4.0.0.20250822-py3-none-any.whl", hash = "sha256:55bdb14db75ca89039725ec64ae3fa26b8d57b6991cfb476212fa8f83a59753c", size = 38833, upload-time = "2025-08-22T03:03:42.072Z" },
-]
-
-[[package]]
-name = "types-pycurl"
-version = "7.46.0.20260509"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fb/3e/9b7e3779b7baf42d650ccc9943f3fd620207446bbdd5103c6a2be3bf2fbb/types_pycurl-7.46.0.20260509.tar.gz", hash = "sha256:719d328744d0a0f1765c7a2eb3e3b081edc8ddec4ca668b61e82625a4519b359", size = 16277, upload-time = "2026-05-09T04:58:55.002Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/24/b9/9635032e42e92d466edbed314d1ddbaf0e0dedc81bed4083e09f44a71799/types_pycurl-7.46.0.20260509-py3-none-any.whl", hash = "sha256:9399a9e0c2682e8740a8027bbc76e4510380bc71165d27c9f6107e5042926334", size = 14351, upload-time = "2026-05-09T04:58:53.891Z" },
-]
-
-[[package]]
-name = "types-pytz"
-version = "2025.2.0.20251108"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/40/ff/c047ddc68c803b46470a357454ef76f4acd8c1088f5cc4891cdd909bfcf6/types_pytz-2025.2.0.20251108.tar.gz", hash = "sha256:fca87917836ae843f07129567b74c1929f1870610681b4c92cb86a3df5817bdb", size = 10961, upload-time = "2025-11-08T02:55:57.001Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e7/c1/56ef16bf5dcd255155cc736d276efa6ae0a5c26fd685e28f0412a4013c01/types_pytz-2025.2.0.20251108-py3-none-any.whl", hash = "sha256:0f1c9792cab4eb0e46c52f8845c8f77cf1e313cb3d68bf826aa867fe4717d91c", size = 10116, upload-time = "2025-11-08T02:55:56.194Z" },
-]
-
-[[package]]
 name = "types-pyyaml"
 version = "6.0.12.20260518"
 source = { registry = "https://pypi.org/simple" }
@@ -7081,42 +7001,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e0/01/c5a19253fe1ac159159ddf9a3a07cec8bb5e486ec4d9002ad2821da0e5d2/types_requests-2.33.0.20260518.tar.gz", hash = "sha256:df7bd3bfe0ca8402dfb841e7d9be714bb5578203283d66d7dc4ef69343449a5e", size = 24752, upload-time = "2026-05-18T06:07:37.966Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1c/bc/b139710a3b6018f7fb2b9508b35c8af564e61bf2bf4fa619d088f3e16f85/types_requests-2.33.0.20260518-py3-none-any.whl", hash = "sha256:626d697d1adaaff76e2044dc8c5c051d8f21abc157bdfe204a75558076fe0bf0", size = 21391, upload-time = "2026-05-18T06:07:37.044Z" },
-]
-
-[[package]]
-name = "types-simplejson"
-version = "3.20.0.20260518"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a5/e4/f8ecdc3529688ad058b0496f67a1bdfbd2576c3669e1c478b6347b12cb7e/types_simplejson-3.20.0.20260518.tar.gz", hash = "sha256:298c5b2fc2df3eb128d2077abd5bd1f5b0419dcf72fdf0551b2af2f03b1ff2b3", size = 10777, upload-time = "2026-05-18T06:04:39.57Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/41/16937326596bec6283a51cc901c701a964019569b861ac5f88128bc98b43/types_simplejson-3.20.0.20260518-py3-none-any.whl", hash = "sha256:f4792dbc1ab049fcaee5d99ca950bd6468ea462fe79af25fe8ca08b6bee313ac", size = 10421, upload-time = "2026-05-18T06:04:38.706Z" },
-]
-
-[[package]]
-name = "types-six"
-version = "1.17.0.20260518"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/14/ec/31f3a70f3b4f7dbbf28025a5b2ed0b3a3eb237c01bc3357e45547c04defd/types_six-1.17.0.20260518.tar.gz", hash = "sha256:b0196d5188bd589bc5ab92901edc1a4ff3c5fd4b0dc19d074a5f1f8213e5213a", size = 15787, upload-time = "2026-05-18T06:04:07.387Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/54/2e/0e64ff848fa3d3ee1563ee3e6b3f9f226c25e5ce17020fb0be1f832a7e32/types_six-1.17.0.20260518-py3-none-any.whl", hash = "sha256:2ed782cafcef9614e51292ae39bae93e42ff7b20c1c0a00c6be35e1c0e493a70", size = 19940, upload-time = "2026-05-18T06:04:06.565Z" },
-]
-
-[[package]]
-name = "types-tabulate"
-version = "0.10.0.20260508"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/11/af/c100d86897d3fdb010d8f813569fa80355b5cb553f51080e37d4f3c451bb/types_tabulate-0.10.0.20260508.tar.gz", hash = "sha256:8e51f159e8b24976849706ae2ed1dc9adba8ebbd080b17e494ebb66a8cc92c74", size = 8395, upload-time = "2026-05-08T04:47:58.921Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/36/443b700f54a585cf8ed4e76d8ad08b12df6914f8782a2788ecd0d8491519/types_tabulate-0.10.0.20260508-py3-none-any.whl", hash = "sha256:b1e1a2d0456fbd655a71690b09a7aaeffdf2978d32049184ea436492aa51d20a", size = 8137, upload-time = "2026-05-08T04:47:57.872Z" },
-]
-
-[[package]]
-name = "types-ujson"
-version = "5.10.0.20250822"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5c/bd/d372d44534f84864a96c19a7059d9b4d29db8541828b8b9dc3040f7a46d0/types_ujson-5.10.0.20250822.tar.gz", hash = "sha256:0a795558e1f78532373cf3f03f35b1f08bc60d52d924187b97995ee3597ba006", size = 8437, upload-time = "2025-08-22T03:02:19.433Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/f2/d812543c350674d8b3f6e17c8922248ee3bb752c2a76f64beb8c538b40cf/types_ujson-5.10.0.20250822-py3-none-any.whl", hash = "sha256:3e9e73a6dc62ccc03449d9ac2c580cd1b7a8e4873220db498f7dd056754be080", size = 7657, upload-time = "2025-08-22T03:02:18.699Z" },
 ]
 
 [[package]]

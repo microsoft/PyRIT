@@ -5,7 +5,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import azure.cognitiveservices.speech as speechsdk
@@ -48,10 +48,10 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
     def __init__(
         self,
         *,
-        azure_speech_region: Optional[str] = None,
-        azure_speech_key: Optional[str | Callable[[], str | Awaitable[str]]] = None,
-        azure_speech_resource_id: Optional[str] = None,
-        use_entra_auth: Optional[bool] = None,
+        azure_speech_region: str | None = None,
+        azure_speech_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        azure_speech_resource_id: str | None = None,
+        use_entra_auth: bool | None = None,
         recognition_language: str = "en-US",
     ) -> None:
         """
