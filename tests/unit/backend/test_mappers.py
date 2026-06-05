@@ -20,7 +20,7 @@ from pyrit.backend.mappers.attack_mappers import (
     _is_azure_blob_url,
     _resolve_media_url,
     _sign_blob_url_async,
-    attack_result_to_summary,
+    attack_result_to_summary_async,
     pyrit_messages_to_dto_async,
     request_piece_to_pyrit_message_piece,
     request_to_pyrit_message,
@@ -130,14 +130,14 @@ def _make_score(
 
 
 class TestAttackResultToSummary:
-    """Tests for attack_result_to_summary function."""
+    """Tests for attack_result_to_summary_async function."""
 
-    def test_basic_mapping(self) -> None:
+    async def test_basic_mapping(self) -> None:
         """Test that all fields are mapped correctly."""
         ar = _make_attack_result(name="My Attack")
         stats = ConversationStats(message_count=2)
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.conversation_id == ar.conversation_id
         assert summary.outcome == "undetermined"
@@ -147,23 +147,23 @@ class TestAttackResultToSummary:
         assert summary.target is not None
         assert summary.target.target_type == "TextTarget"
 
-    def test_empty_pieces_gives_zero_messages(self) -> None:
+    async def test_empty_pieces_gives_zero_messages(self) -> None:
         """Test mapping with no message pieces."""
         ar = _make_attack_result()
         stats = ConversationStats(message_count=0)
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.message_count == 0
         assert summary.last_message_preview is None
 
-    def test_last_message_preview_truncates_long_raw_text(self) -> None:
+    async def test_last_message_preview_truncates_long_raw_text(self) -> None:
         """The mapper applies the preview formatter, which truncates long raw text."""
         ar = _make_attack_result()
         long_text = "x" * 200
         stats = ConversationStats(message_count=1, last_message_preview=long_text, last_message_data_type="text")
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.last_message_preview is not None
         assert len(summary.last_message_preview) == 103  # 100 + "..."
@@ -178,7 +178,7 @@ class TestAttackResultToSummary:
             ("binary_path", "[File: 1780010098266691.png]"),
         ],
     )
-    def test_media_last_message_preview_hides_absolute_path(self, data_type: str, expected: str) -> None:
+    async def test_media_last_message_preview_hides_absolute_path(self, data_type: str, expected: str) -> None:
         """The mapper renders media-type previews as friendly labels rather
         than leaking the raw on-disk path it receives from memory."""
         ar = _make_attack_result()
@@ -189,21 +189,21 @@ class TestAttackResultToSummary:
             last_message_data_type=data_type,
         )
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.last_message_preview == expected
         assert "C:\\" not in (summary.last_message_preview or "")
 
-    def test_labels_are_mapped(self) -> None:
+    async def test_labels_are_mapped(self) -> None:
         """Test that labels are derived from stats."""
         ar = _make_attack_result()
         stats = ConversationStats(message_count=1, labels={"env": "prod", "team": "red"})
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.labels == {"env": "prod", "team": "red", "test_ar_label": "test_ar_value"}
 
-    def test_labels_passed_through_without_normalization(self) -> None:
+    async def test_labels_passed_through_without_normalization(self) -> None:
         """Test that labels are passed through as-is (DB stores canonical keys after migration)."""
         ar = _make_attack_result()
         stats = ConversationStats(
@@ -211,7 +211,7 @@ class TestAttackResultToSummary:
             labels={"operator": "alice", "operation": "op_red", "env": "prod"},
         )
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.labels == {
             "operator": "alice",
@@ -220,7 +220,7 @@ class TestAttackResultToSummary:
             "test_ar_label": "test_ar_value",
         }
 
-    def test_conversation_labels_take_precedence_on_collision(self) -> None:
+    async def test_conversation_labels_take_precedence_on_collision(self) -> None:
         """Test that conversation-level labels override attack-result labels on key collision."""
         ar = _make_attack_result()
         stats = ConversationStats(
@@ -228,38 +228,38 @@ class TestAttackResultToSummary:
             labels={"test_ar_label": "conversation_wins"},
         )
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.labels["test_ar_label"] == "conversation_wins"
 
-    def test_outcome_success(self) -> None:
+    async def test_outcome_success(self) -> None:
         """Test that success outcome is mapped."""
         ar = _make_attack_result(outcome=AttackOutcome.SUCCESS)
         stats = ConversationStats(message_count=0)
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.outcome == "success"
 
-    def test_no_target_returns_none_fields(self) -> None:
+    async def test_no_target_returns_none_fields(self) -> None:
         """Test that target fields are None when no target identifier exists."""
         ar = _make_attack_result(has_target=False)
         stats = ConversationStats(message_count=0)
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.target is None
 
-    def test_attack_specific_params_passed_through(self) -> None:
+    async def test_attack_specific_params_passed_through(self) -> None:
         """Test that attack_specific_params are extracted from identifier."""
         ar = _make_attack_result()
         stats = ConversationStats(message_count=0)
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.attack_specific_params == {"source": "gui"}
 
-    def test_converters_extracted_from_identifier(self) -> None:
+    async def test_converters_extracted_from_identifier(self) -> None:
         """Test that converter class names are extracted into converters list."""
         now = datetime.now(timezone.utc)
         ar = AttackResult(
@@ -295,20 +295,20 @@ class TestAttackResultToSummary:
             labels={"test_label": "test_value"},
         )
 
-        summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
 
         assert summary.converters == ["Base64Converter", "ROT13Converter"]
 
-    def test_no_converters_returns_empty_list(self) -> None:
+    async def test_no_converters_returns_empty_list(self) -> None:
         """Test that converters is empty list when no converters in identifier."""
         ar = _make_attack_result()
         stats = ConversationStats(message_count=0)
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.converters == []
 
-    def test_related_conversation_ids_from_related_conversations(self) -> None:
+    async def test_related_conversation_ids_from_related_conversations(self) -> None:
         """Test that related_conversation_ids includes all related conversation IDs."""
         from pyrit.models.conversation_reference import ConversationReference, ConversationType
 
@@ -324,29 +324,29 @@ class TestAttackResultToSummary:
             ),
         }
 
-        summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
 
         assert sorted(summary.related_conversation_ids) == ["branch-1", "pruned-1"]
 
-    def test_related_conversation_ids_empty_when_no_related(self) -> None:
+    async def test_related_conversation_ids_empty_when_no_related(self) -> None:
         """Test that related_conversation_ids is empty when no related conversations exist."""
         ar = _make_attack_result()
         stats = ConversationStats(message_count=0)
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.related_conversation_ids == []
 
-    def test_message_count_from_stats(self) -> None:
+    async def test_message_count_from_stats(self) -> None:
         """Test that message_count comes from stats."""
         ar = _make_attack_result()
         stats = ConversationStats(message_count=5)
 
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.message_count == 5
 
-    def test_created_at_prefers_ar_timestamp_when_metadata_absent(self) -> None:
+    async def test_created_at_prefers_ar_timestamp_when_metadata_absent(self) -> None:
         """When metadata['created_at'] is absent but ar.timestamp is set, use ar.timestamp."""
         persisted_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
         ar = AttackResult(
@@ -355,12 +355,12 @@ class TestAttackResultToSummary:
             outcome=AttackOutcome.SUCCESS,
             timestamp=persisted_ts,
         )
-        summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
 
         assert summary.created_at == persisted_ts
         assert summary.updated_at == persisted_ts
 
-    def test_created_at_metadata_still_wins_over_ar_timestamp(self) -> None:
+    async def test_created_at_metadata_still_wins_over_ar_timestamp(self) -> None:
         """When both metadata['created_at'] and ar.timestamp are set, metadata wins (backward compat)."""
         metadata_ts = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
@@ -371,11 +371,11 @@ class TestAttackResultToSummary:
             timestamp=ar_ts,
             metadata={"created_at": metadata_ts.isoformat()},
         )
-        summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
 
         assert summary.created_at == metadata_ts
 
-    def test_created_at_falls_back_to_now_when_both_absent(self) -> None:
+    async def test_created_at_falls_back_to_now_when_both_absent(self) -> None:
         """When neither metadata nor ar.timestamp is set, fall back to datetime.now()."""
         ar = AttackResult(
             conversation_id="attack-1",
@@ -385,12 +385,12 @@ class TestAttackResultToSummary:
         ar.timestamp = None  # type: ignore[assignment]
 
         before = datetime.now(timezone.utc)
-        summary = attack_result_to_summary(ar, stats=ConversationStats(message_count=0))
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
         after = datetime.now(timezone.utc)
 
         assert before <= summary.created_at <= after
 
-    def test_retry_events_mapped_to_response(self) -> None:
+    async def test_retry_events_mapped_to_response(self) -> None:
         """Test that retry events on an AttackResult are inherited by the AttackSummary."""
         from pyrit.models.retry_event import RetryEvent
 
@@ -412,7 +412,7 @@ class TestAttackResultToSummary:
         ar.total_retries = 1
 
         stats = ConversationStats(message_count=0)
-        summary = attack_result_to_summary(ar, stats=stats)
+        summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.retry_events is not None
         assert len(summary.retry_events) == 1

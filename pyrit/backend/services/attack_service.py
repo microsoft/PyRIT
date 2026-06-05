@@ -25,7 +25,7 @@ from typing import Any, Literal, cast
 from urllib.parse import parse_qs, urlparse
 
 from pyrit.backend.mappers import (
-    attack_result_to_summary,
+    attack_result_to_summary_async,
     format_last_message_preview,
     pyrit_messages_to_dto_async,
     request_piece_to_pyrit_message_piece,
@@ -188,7 +188,7 @@ class AttackService:
                 labels=conv_labels,
             )
 
-            page.append(attack_result_to_summary(ar, stats=merged))
+            page.append(await attack_result_to_summary_async(ar, stats=merged))
 
         return AttackListResponse(
             items=page,
@@ -235,7 +235,7 @@ class AttackService:
         ar = results[0]
         stats_map = self._memory.get_conversation_stats(conversation_ids=[ar.conversation_id])
         stats = stats_map.get(ar.conversation_id, ConversationStats(message_count=0))
-        return attack_result_to_summary(ar, stats=stats)
+        return await attack_result_to_summary_async(ar, stats=stats)
 
     async def get_conversation_messages_async(
         self,

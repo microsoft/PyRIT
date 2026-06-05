@@ -178,7 +178,7 @@ def _resolve_media_url(*, value: str | None, data_type: str) -> str | None:
     return value
 
 
-def attack_result_to_summary(
+async def attack_result_to_summary_async(
     ar: AttackResult,
     *,
     stats: ConversationStats,
@@ -188,8 +188,8 @@ def attack_result_to_summary(
 
     Conversation-level stats (message count, preview, labels, timestamps) are
     injected here; every other field is inherited from the AttackResult. The
-    summary's ``last_response`` media is resolved to a ``/api/media`` URL but not
-    SAS-signed — Azure Blob signing only happens on the async ``/messages`` path.
+    summary's ``last_response`` media is resolved to a ``/api/media`` URL and
+    Azure Blob URLs are SAS-signed so they're directly fetchable by the client.
 
     Args:
         ar: The domain AttackResult.
@@ -204,7 +204,7 @@ def attack_result_to_summary(
 
     data = {name: getattr(ar, name) for name in AttackResult.model_fields}
     data.update(
-        last_response=_summary_last_response(ar.last_response),
+        last_response=await _summary_last_response_async(ar.last_response),
         last_score=ScoreView.from_domain(ar.last_score) if ar.last_score else None,
         labels=labels,
         message_count=stats.message_count,
@@ -241,9 +241,9 @@ def _resolve_summary_timestamps(ar: AttackResult) -> tuple[datetime, datetime]:
     return created_at, updated_at
 
 
-def _summary_last_response(piece: MessagePiece | None) -> MessagePieceView | None:
+async def _summary_last_response_async(piece: MessagePiece | None) -> MessagePieceView | None:
     """
-    Build a ``MessagePieceView`` for a summary's last response (sync media resolution, no SAS).
+    Build a ``MessagePieceView`` for a summary's last response with signed media URLs.
 
     Returns:
         A ``MessagePieceView`` for the piece, or ``None`` when no piece is given.
@@ -252,10 +252,10 @@ def _summary_last_response(piece: MessagePiece | None) -> MessagePieceView | Non
         return None
     return MessagePieceView.from_domain(
         piece,
-        original_value_url=_resolve_media_url(
+        original_value_url=await _resolve_and_sign_media_async(
             value=piece.original_value, data_type=piece.original_value_data_type or "text"
         ),
-        converted_value_url=_resolve_media_url(
+        converted_value_url=await _resolve_and_sign_media_async(
             value=piece.converted_value, data_type=piece.converted_value_data_type or "text"
         ),
     )
@@ -303,7 +303,7 @@ async def pyrit_messages_to_dto_async(pyrit_messages: list[Message]) -> list[Mes
                     p, original_value_url=original_value_url, converted_value_url=converted_value_url
                 )
             )
-        messages.append(MessageView.from_domain(message_pieces=pieces))
+        messages.append(MessageView.model_construct(message_pieces=pieces))
     return messages
 
 

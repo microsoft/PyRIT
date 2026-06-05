@@ -124,7 +124,7 @@ class TestMessageViewContract:
     def test_dump_has_turn_metadata_and_pieces(self) -> None:
         """Test that the serialized message exposes turn metadata and piece views."""
         piece = MessagePieceView.from_domain(_make_piece(sequence=3, role="assistant"))
-        view = MessageView.from_domain(message_pieces=[piece])
+        view = MessageView.model_construct(message_pieces=[piece])
         dumped = view.model_dump(mode="json")
 
         assert dumped["turn_number"] == 3
@@ -209,12 +209,13 @@ class TestDeprecatedWireAliases:
 
         assert dumped["piece_id"] == str(view.id)
 
-    def test_message_view_emits_deprecated_alias(self) -> None:
-        """Test that MessageView still emits pieces mirroring message_pieces."""
+    def test_message_view_does_not_emit_pieces_alias(self) -> None:
+        """The deprecated ``pieces`` alias was dropped; only ``message_pieces`` is emitted."""
         piece = MessagePieceView.from_domain(_make_piece())
-        dumped = MessageView.from_domain(message_pieces=[piece]).model_dump(mode="json")
+        dumped = MessageView.model_construct(message_pieces=[piece]).model_dump(mode="json")
 
-        assert dumped["pieces"] == dumped["message_pieces"]
+        assert "pieces" not in dumped
+        assert "message_pieces" in dumped
 
     def test_aliases_marked_deprecated_in_schema(self) -> None:
         """Test that the deprecated aliases are flagged deprecated in the OpenAPI schema."""
@@ -225,4 +226,4 @@ class TestDeprecatedWireAliases:
         assert score_props["score_id"]["deprecated"] is True
         assert score_props["scored_at"]["deprecated"] is True
         assert piece_props["piece_id"]["deprecated"] is True
-        assert message_props["pieces"]["deprecated"] is True
+        assert "pieces" not in message_props

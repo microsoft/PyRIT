@@ -199,24 +199,6 @@ class MessageView(Message):
         """Return the timestamp of the first piece."""
         return self.message_pieces[0].timestamp if self.message_pieces else datetime.now(timezone.utc)
 
-    @computed_field(  # type: ignore[prop-decorator]
-        deprecated="Use 'message_pieces' instead; 'pieces' is removed in 0.17.0."
-    )
-    @property
-    def pieces(self) -> list[MessagePieceView]:
-        """Deprecated alias for ``message_pieces``."""
-        return self.message_pieces
-
-    @classmethod
-    def from_domain(cls, *, message_pieces: list[MessagePieceView]) -> "MessageView":
-        """
-        Build a ``MessageView`` from already-mapped piece views.
-
-        Returns:
-            A ``MessageView`` wrapping the provided piece views.
-        """
-        return cls.model_construct(message_pieces=message_pieces)
-
 
 class AttackSummary(AttackResult):
     """
