@@ -138,7 +138,7 @@ class ConcreteScenario(Scenario):
     # so we don't have to thread include_baseline=False through every initialize_async call.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
-    def __init__(self, atomic_attacks_to_return=None, **kwargs):
+    def __init__(self, *, atomic_attacks_to_return=None, **kwargs):
         # Add required strategy_class if not provided
 
         class TestStrategy(ScenarioStrategy):
@@ -685,7 +685,7 @@ def create_mock_truefalse_scorer():
 class ConcreteScenarioWithTrueFalseScorer(Scenario):
     """Concrete implementation of Scenario for testing baseline-only execution."""
 
-    def __init__(self, atomic_attacks_to_return=None, **kwargs):
+    def __init__(self, *, atomic_attacks_to_return=None, **kwargs):
         # Add required strategy_class if not provided
 
         class TestStrategy(ScenarioStrategy):

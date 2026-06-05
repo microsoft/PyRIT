@@ -16,6 +16,11 @@ class SearchReplaceConverter(PromptConverter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
+    # Grandfathered: ``pattern`` and ``replace`` are part of the public
+    # positional API (often called as ``SearchReplaceConverter(pattern, replace)``).
+    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
+    _brick_legacy_init = True
+
     def __init__(self, pattern: str, replace: str | list[str], regex_flags: int = 0) -> None:
         """
         Initialize the converter with the specified regex pattern and replacement phrase(s).

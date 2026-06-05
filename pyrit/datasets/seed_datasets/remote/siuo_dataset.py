@@ -4,7 +4,9 @@
 import logging
 import uuid
 from enum import Enum
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
@@ -12,7 +14,10 @@ from pyrit.datasets.seed_datasets.remote._image_cache import (
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Seed, SeedDataset, SeedObjective, SeedPrompt
+from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
+
+if TYPE_CHECKING:
+    from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -30,23 +35,6 @@ class SIUOCategory(Enum):
     RELIGION_BELIEFS = "religion beliefs"
     CONTROVERSIAL_TOPICS_POLITICS = "controversial topics, politics"
 
-
-_AUTHORS = [
-    "Siyin Wang",
-    "Xingsong Ye",
-    "Qinyuan Cheng",
-    "Junwen Duan",
-    "Shimin Li",
-    "Jinlan Fu",
-    "Xipeng Qiu",
-    "Xuanjing Huang",
-]
-
-_GROUPS = [
-    "Fudan University",
-    "National University of Singapore",
-    "Shanghai AI Laboratory",
-]
 
 _DESCRIPTION = (
     "A multimodal example from the SIUO (Safe Inputs but Unsafe Output) benchmark. "
@@ -83,6 +71,23 @@ class _SIUODataset(_RemoteDatasetLoader):
     Reference: [@wang2025siuo]
     Paper: https://arxiv.org/abs/2406.15279
     """
+
+    _AUTHORS = [
+        "Siyin Wang",
+        "Xingsong Ye",
+        "Qinyuan Cheng",
+        "Junwen Duan",
+        "Shimin Li",
+        "Jinlan Fu",
+        "Xipeng Qiu",
+        "Xuanjing Huang",
+    ]
+
+    _GROUPS = [
+        "Fudan University",
+        "National University of Singapore",
+        "Shanghai AI Laboratory",
+    ]
 
     HF_COMMIT_SHA: str = "024e80a01795376b9fed12f8073a12f2275f22ee"
     GEN_JSON_URL: str = f"https://huggingface.co/datasets/sinwang/SIUO/resolve/{HF_COMMIT_SHA}/siuo_gen.json"
@@ -135,10 +140,12 @@ class _SIUODataset(_RemoteDatasetLoader):
             self._validate_enums(categories, SIUOCategory, "SIUO category")
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "siuo"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the SIUO dataset and return it as a SeedDataset.
@@ -169,7 +176,7 @@ class _SIUODataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        seeds: list[Seed] = []
+        seeds: list[SeedUnion] = []
         failed_image_count = 0
         kept_categories = {cat.value for cat in self.categories} if self.categories is not None else None
 
@@ -203,7 +210,7 @@ class _SIUODataset(_RemoteDatasetLoader):
         logger.info(f"Successfully loaded {len(seeds)} seeds from SIUO dataset")
         return SeedDataset(seeds=seeds, dataset_name=self.dataset_name)
 
-    async def _build_seed_group_async(self, *, example: dict[str, str]) -> list[Seed]:
+    async def _build_seed_group_async(self, *, example: dict[str, str]) -> list["SeedUnion"]:
         """
         Build a 3-piece (objective + text + image) seed group for a single SIUO row.
 
@@ -246,8 +253,8 @@ class _SIUODataset(_RemoteDatasetLoader):
             dataset_name=self.dataset_name,
             harm_categories=[category],
             description=_DESCRIPTION,
-            authors=_AUTHORS,
-            groups=_GROUPS,
+            authors=self._AUTHORS,
+            groups=self._GROUPS,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
         )
@@ -259,8 +266,8 @@ class _SIUODataset(_RemoteDatasetLoader):
             dataset_name=self.dataset_name,
             harm_categories=[category],
             description=_DESCRIPTION,
-            authors=_AUTHORS,
-            groups=_GROUPS,
+            authors=self._AUTHORS,
+            groups=self._GROUPS,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
             sequence=0,
@@ -274,8 +281,8 @@ class _SIUODataset(_RemoteDatasetLoader):
             dataset_name=self.dataset_name,
             harm_categories=[category],
             description=_DESCRIPTION,
-            authors=_AUTHORS,
-            groups=_GROUPS,
+            authors=self._AUTHORS,
+            groups=self._GROUPS,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
             sequence=0,

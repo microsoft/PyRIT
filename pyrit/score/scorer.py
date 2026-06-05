@@ -57,6 +57,11 @@ logger = logging.getLogger(__name__)
 class Scorer(Identifiable, abc.ABC):
     """
     Abstract base class for scorers.
+
+    Subclasses must use the keyword-only constructor shape
+    (``def __init__(self, *, ...)``); the contract is enforced at class
+    definition time via ``enforce_keyword_only_init``. See
+    ``.github/instructions/scorers.instructions.md`` for the full contract.
     """
 
     # Evaluation configuration - maps input dataset files to a result file.
@@ -79,6 +84,18 @@ class Scorer(Identifiable, abc.ABC):
     #: Note: Partial content extraction is supported for ``OpenAIChatTarget``
     #: (Chat Completions API) and ``OpenAIResponseTarget`` (Responses API).
     score_blocked_content: bool = False
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Enforce the keyword-only constructor contract on subclasses.
+
+        See ``.github/instructions/scorers.instructions.md`` for the contract.
+        """
+        super().__init_subclass__(**kwargs)
+        # Local import to avoid a circular dependency at package init time.
+        from pyrit.common.brick_contract import enforce_keyword_only_init
+
+        enforce_keyword_only_init(cls, base_name="Scorer")
 
     def __init__(self, *, validator: ScorerPromptValidator, chat_target: Optional[PromptTarget] = None) -> None:
         """

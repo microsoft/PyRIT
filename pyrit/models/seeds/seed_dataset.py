@@ -17,12 +17,12 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.models.literals import SeedType  # noqa: TC001  (runtime-required by Pydantic field annotations)
-from pyrit.models.seeds.seed import (  # noqa: TC001  (AwareDatetimeUTC is runtime-required by Pydantic)
+from pyrit.models.seeds.seed import (  # AwareDatetimeUTC is runtime-required by Pydantic
     AwareDatetimeUTC,
     Seed,
 )
 from pyrit.models.seeds.seed_attack_group import SeedAttackGroup
-from pyrit.models.seeds.seed_group import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+from pyrit.models.seeds.seed_group import (  # runtime-required by Pydantic field annotations
     PROMPT_ONLY_SEED_KEYS,
     SeedGroup,
     SeedUnion,

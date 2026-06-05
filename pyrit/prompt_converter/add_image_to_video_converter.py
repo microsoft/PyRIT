@@ -35,6 +35,11 @@ class AddImageVideoConverter(PromptConverter):
     SUPPORTED_INPUT_TYPES = ("image_path",)
     SUPPORTED_OUTPUT_TYPES = ("video_path",)
 
+    # Grandfathered: ``video_path`` is part of the public positional API.
+    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0
+    # (this will be a BREAKING CHANGE for callers passing arguments positionally).
+    _brick_legacy_init = True
+
     def __init__(
         self,
         video_path: str,

@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -58,7 +59,7 @@ class TestAzureSpeechTextToAudioConverter:
             file_path = converted_output.output_text
             assert file_path
             assert os.path.exists(file_path)
-            data = open(file_path, "rb").read()  # noqa: SIM115
+            data = Path(file_path).read_bytes()
             assert data == b"dummy_audio_data"
             os.remove(file_path)
             MockSpeechConfig.assert_called_once_with(subscription="dummy_value", region="dummy_value")

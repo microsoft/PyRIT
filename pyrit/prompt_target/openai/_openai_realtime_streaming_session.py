@@ -23,7 +23,7 @@ from pyrit.prompt_target.common.realtime_audio import (
 from pyrit.prompt_target.openai._openai_realtime_dispatcher import _OpenAIRealtimeDispatcher
 
 try:
-    from openai import BadRequestError as _OpenAIBadRequestError  # noqa: TC002
+    from openai import BadRequestError as _OpenAIBadRequestError
 except ImportError:  # pragma: no cover - openai is a hard dependency for this module
     _OpenAIBadRequestError = Exception  # type: ignore[misc, assignment, ty:invalid-assignment]
 

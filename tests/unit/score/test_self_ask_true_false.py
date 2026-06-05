@@ -227,6 +227,35 @@ def test_self_ask_true_false_with_question_no_path(patch_central_database):
     assert scorer._score_category == "custom_harm_category"
 
 
+def test_true_false_question_get_returns_metadata():
+    """TrueFalseQuestion.get exposes the metadata attribute that __iter__ omits."""
+    question = TrueFalseQuestion(
+        true_description="positive",
+        metadata="extra-context",
+    )
+
+    assert question.get("metadata") == "extra-context"
+    assert question.get("category") == ""
+    assert question.get("missing", "default") == "default"
+
+
+def test_self_ask_true_false_uses_metadata_from_question(patch_central_database):
+    """Metadata supplied via TrueFalseQuestion makes it into the rendered system prompt."""
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    custom_question = TrueFalseQuestion(
+        category="custom_harm_category",
+        true_description="positive",
+        false_description="negative",
+        metadata="extra-context",
+    )
+
+    scorer = SelfAskTrueFalseScorer(chat_target=chat_target, true_false_question=custom_question)
+
+    assert "extra-context" in scorer._system_prompt
+
+
 def test_self_ask_true_false_with_path_and_question(patch_central_database):
     """Test that providing both question_path and question raises ValueError."""
     chat_target = MagicMock()

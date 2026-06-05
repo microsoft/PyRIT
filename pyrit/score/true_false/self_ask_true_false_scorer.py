@@ -85,6 +85,10 @@ class TrueFalseQuestion:
         # Define which keys should be included when iterating
         return iter(self._keys)
 
+    def get(self, key: str, default: Any = None) -> Any:
+        """Return the value of the specified key, or ``default`` if absent."""
+        return getattr(self, key, default)
+
 
 class SelfAskTrueFalseScorer(TrueFalseScorer):
     """
@@ -164,7 +168,7 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
         true_category = true_false_question["true_description"]
         false_category = true_false_question["false_description"]
 
-        metadata = true_false_question["metadata"] if "metadata" in true_false_question else ""  # noqa: SIM401
+        metadata = true_false_question.get("metadata", "")
 
         scoring_instructions_template = SeedPrompt.from_yaml_file(true_false_system_prompt_path)
 

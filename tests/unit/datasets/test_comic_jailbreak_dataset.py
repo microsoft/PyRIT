@@ -147,8 +147,9 @@ class TestComicJailbreakDataset:
             dataset = await loader.fetch_dataset_async(cache=False)
 
         for seed in dataset.seeds:
-            assert "Zhiyuan Yu" in seed.authors
-            assert len(seed.authors) == 5
+            assert "Rui Yang Tan" in seed.authors
+            assert len(seed.authors) == 3
+            assert seed.groups == ["Singapore University of Technology and Design"]
 
     async def test_fetch_dataset_missing_goal_raises(self):
         mock_data = [{"Target": "Sure", "Behavior": "Test", "Category": "Test"}]

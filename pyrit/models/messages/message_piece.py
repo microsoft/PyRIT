@@ -95,7 +95,7 @@ class MessagePiece(BaseModel):
         validate_assignment=False,
     )
 
-    id: uuid.UUID = Field(default_factory=uuid4)  # noqa: A003
+    id: uuid.UUID = Field(default_factory=uuid4)
     role: ChatMessageRole
     conversation_id: str = Field(default_factory=lambda: str(uuid4()))
     sequence: int = -1

@@ -25,6 +25,11 @@ class InsertPunctuationConverter(PromptConverter):
     #: Common punctuation characters. Used if no punctuation list is provided.
     default_punctuation_list = [",", ".", "!", "?", ":", ";", "-"]
 
+    # Grandfathered: ``word_swap_ratio`` and ``between_words`` are part of the
+    # public positional API.
+    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
+    _brick_legacy_init = True
+
     def __init__(self, word_swap_ratio: float = 0.2, between_words: bool = True) -> None:
         """
         Initialize the converter with a word swap ratio and punctuation insertion mode.

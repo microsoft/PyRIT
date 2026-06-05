@@ -57,7 +57,7 @@ async def display_image_response_async(response_piece: MessagePiece) -> None:
         image = Image.open(image_stream)
 
         # Jupyter built-in display function only works in notebooks.
-        display(image)  # type: ignore[ty:unresolved-reference] # noqa: F821
+        display(image)  # type: ignore[ty:unresolved-reference]
     if response_piece.response_error == "blocked":
         logger.info("---\nContent blocked, cannot show a response.\n---")
 
