@@ -54,6 +54,12 @@ class PromptShieldTarget(PromptTarget):
     _api_version: str
     _force_entry_field: PromptShieldEntryField
 
+    # Grandfathered: ``endpoint`` and ``api_key`` are part of the public
+    # positional API.
+    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0
+    # (this will be a BREAKING CHANGE for callers passing arguments positionally).
+    _brick_legacy_init = True
+
     def __init__(
         self,
         endpoint: Optional[str] = None,

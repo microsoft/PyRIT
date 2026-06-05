@@ -21,6 +21,13 @@ class OpenAICompletionTarget(OpenAITarget):
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
 
+    # Grandfathered: positional params predate the kwargs-only contract; the
+    # sandwiched ``*args``/``**kwargs`` shape forwards extras to ``OpenAITarget``.
+    # TODO: remove this opt-out and move ``*args`` up to immediately after
+    # ``self`` (or insert ``*,`` and drop ``*args`` entirely) in 0.16.0
+    # (this will be a BREAKING CHANGE for callers passing arguments positionally).
+    _brick_legacy_init = True
+
     def __init__(
         self,
         max_tokens: Optional[int] = None,

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 StrategyResultT = TypeVar("StrategyResultT", bound="StrategyResult")
 
 
-class StrategyResult(BaseModel, ABC):  # noqa: B024
+class StrategyResult(BaseModel, ABC):
     """Base class for all strategy results."""
 
     model_config = ConfigDict(

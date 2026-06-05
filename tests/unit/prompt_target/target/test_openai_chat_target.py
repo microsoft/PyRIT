@@ -358,7 +358,7 @@ async def test_send_prompt_async_bad_request_error_adds_to_memory(target: OpenAI
     target._async_client.chat.completions.create = AsyncMock(side_effect=side_effect)  # type: ignore[method-assign]
 
     # Non-content-filter BadRequestError should be re-raised
-    with pytest.raises(Exception):  # noqa: B017  # Will raise since handle_bad_request_exception re-raises non-content-filter errors
+    with pytest.raises(Exception):  # Will raise since handle_bad_request_exception re-raises non-content-filter errors
         await target.send_prompt_async(message=message)
 
 
@@ -519,7 +519,7 @@ async def test_send_prompt_async_bad_request_error(target: OpenAIChatTarget):
     target._async_client.chat.completions.create = AsyncMock(side_effect=side_effect)  # type: ignore[method-assign]
 
     # Non-content-filter BadRequestError should be re-raised
-    with pytest.raises(Exception):  # noqa: B017  # Will raise since handle_bad_request_exception re-raises non-content-filter errors
+    with pytest.raises(Exception):  # Will raise since handle_bad_request_exception re-raises non-content-filter errors
         await target.send_prompt_async(message=message)
 
 

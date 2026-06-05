@@ -873,7 +873,7 @@ async def test_score_response_async_multiple_pieces():
     # The following commented-out lines should be uncommented when the permanent solution is implemented
     # # Should have all auxiliary scores
     # assert len(result["auxiliary_scores"]) == 4  # noqa: ERA001
-    # for score in aux_scores:  # noqa: ERA001
+    # for score in aux_scores:
     #     assert score in result["auxiliary_scores"]  # noqa: ERA001
 
     # Should have only one objective score (first success)
@@ -1348,7 +1348,7 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         """Create a TrueFalseScorer where _score_piece_async returns empty list."""
 
         class TestTrueFalseScorer(TrueFalseScorer):
-            def __init__(self, validator):
+            def __init__(self, *, validator):
                 super().__init__(validator=validator)
 
             def _build_identifier(self) -> ComponentIdentifier:
@@ -1475,7 +1475,7 @@ class TestFloatScaleScorerEmptyScoreListRationale:
         from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 
         class _TestFloatScaleScorer(FloatScaleScorer):
-            def __init__(self, validator):
+            def __init__(self, *, validator):
                 super().__init__(validator=validator)
 
             def _build_identifier(self) -> ComponentIdentifier:

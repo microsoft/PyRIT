@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    import azure.cognitiveservices.speech as speechsdk  # noqa: F401
+    import azure.cognitiveservices.speech as speechsdk
 
 from pyrit.auth.azure_auth import get_speech_config, get_speech_config_async
 from pyrit.common import default_values
@@ -285,7 +285,8 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
             ModuleNotFoundError: If the azure.cognitiveservices.speech module is not installed.
         """
         try:
-            import azure.cognitiveservices.speech as speechsdk  # noqa: F811
+            # Runtime import; the TYPE_CHECKING binding at module top is for type annotations only.
+            import azure.cognitiveservices.speech as speechsdk
         except ModuleNotFoundError as e:
             logger.error(
                 "Could not import azure.cognitiveservices.speech. "

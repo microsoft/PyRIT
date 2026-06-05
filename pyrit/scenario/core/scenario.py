@@ -142,6 +142,11 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
     A Scenario represents a comprehensive testing campaign composed of multiple
     atomic attack tests (AtomicAttacks). It executes each AtomicAttack in sequence and
     aggregates the results into a ScenarioResult.
+
+    Subclasses must use the keyword-only constructor shape (``def __init__(self, *, ...)``);
+    the contract is enforced at class-definition time via
+    ``enforce_keyword_only_init``. See
+    ``.github/instructions/scenarios.instructions.md`` for the full contract.
     """
 
     #: Capability requirements placed on ``objective_target``. Subclasses override to declare
@@ -155,6 +160,18 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
     #: ``Enabled`` and ``Disabled`` states; ``Forbidden`` is a hard constraint and a
     #: caller-supplied ``include_baseline=True`` raises ``ValueError``.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Enforce the keyword-only constructor contract on subclasses.
+
+        See ``.github/instructions/scenarios.instructions.md`` for the contract.
+        """
+        super().__init_subclass__(**kwargs)
+        # Local import to avoid a circular dependency at package init time.
+        from pyrit.common.brick_contract import enforce_keyword_only_init
+
+        enforce_keyword_only_init(cls, base_name="Scenario")
 
     @classmethod
     def _get_additional_scoring_questions(cls) -> Sequence[Path]:

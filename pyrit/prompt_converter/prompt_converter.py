@@ -60,16 +60,22 @@ class PromptConverter(Identifiable):
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
-        Validate that concrete subclasses define required class attributes.
+        Validate that concrete subclasses define required class attributes
+        and follow the keyword-only ``__init__`` contract.
 
         Args:
             **kwargs: Additional keyword arguments passed to the superclass.
 
         Raises:
             TypeError: If a concrete subclass does not define non-empty SUPPORTED_INPUT_TYPES
-                or SUPPORTED_OUTPUT_TYPES.
+                or SUPPORTED_OUTPUT_TYPES, or if its ``__init__`` accepts
+                positional parameters after ``self``.
         """
         super().__init_subclass__(**kwargs)
+        # Local import to avoid a circular dependency at package init time.
+        from pyrit.common.brick_contract import enforce_keyword_only_init
+
+        enforce_keyword_only_init(cls, base_name="PromptConverter")
         # Only validate concrete (non-abstract) classes
         if not inspect.isabstract(cls):
             if not cls.SUPPORTED_INPUT_TYPES:

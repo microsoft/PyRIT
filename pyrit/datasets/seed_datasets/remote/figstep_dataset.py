@@ -9,7 +9,9 @@ import uuid
 import zipfile
 from enum import Enum
 from pathlib import Path
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional
+
+from typing_extensions import override
 
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.common.path import DB_DATA_PATH
@@ -19,7 +21,10 @@ from pyrit.datasets.seed_datasets.remote._image_cache import (
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Seed, SeedDataset, SeedObjective, SeedPrompt
+from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
+
+if TYPE_CHECKING:
+    from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -45,19 +50,6 @@ class FigStepVariant(Enum):
     FIGSTEP = "figstep"
     FIGSTEP_PRO = "figstep_pro"
 
-
-_AUTHORS: tuple[str, ...] = (
-    "Yichen Gong",
-    "Delong Ran",
-    "Jinyuan Liu",
-    "Conglei Wang",
-    "Tianshuo Cong",
-    "Anyu Wang",
-    "Sisi Duan",
-    "Xiaoyun Wang",
-)
-
-_GROUPS: tuple[str, ...] = ("Tsinghua University",)
 
 _DESCRIPTION = (
     "Multimodal jailbreak prompt from the FigStep SafeBench benchmark. The image "
@@ -107,6 +99,19 @@ class _FigStepDataset(_RemoteDatasetLoader):
     Paper: https://arxiv.org/abs/2311.05608
     Repository: https://github.com/ThuCCSLab/FigStep
     """
+
+    _AUTHORS: tuple[str, ...] = (
+        "Yichen Gong",
+        "Delong Ran",
+        "Jinyuan Liu",
+        "Conglei Wang",
+        "Tianshuo Cong",
+        "Anyu Wang",
+        "Sisi Duan",
+        "Xiaoyun Wang",
+    )
+
+    _GROUPS: tuple[str, ...] = ("Tsinghua University",)
 
     COMMIT_SHA: str = "0861b17b3d67887c06ee3534ec65b3012f9becb7"
     RAW_BASE_URL: str = f"https://raw.githubusercontent.com/ThuCCSLab/FigStep/{COMMIT_SHA}/"
@@ -211,10 +216,12 @@ class _FigStepDataset(_RemoteDatasetLoader):
         self.source_type: Literal["public_url", "file"] = source_type
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "figstep"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch FigStep SafeBench rows and return them as a SeedDataset of multimodal groups.
@@ -246,7 +253,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
         if self.variant == FigStepVariant.FIGSTEP_PRO:
             pro_extract_dir, pro_benign_sentences = await self._ensure_figstep_pro_assets_async(cache=cache)
 
-        seeds: list[Seed] = []
+        seeds: list[SeedUnion] = []
         failed_image_count = 0
 
         for row_idx, row in enumerate(rows):
@@ -296,7 +303,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
         allowed = {c.value for c in self.categories}
         return row.get("category_name", "") in allowed
 
-    async def _build_figstep_group_async(self, *, row: dict[str, str]) -> list[Seed]:
+    async def _build_figstep_group_async(self, *, row: dict[str, str]) -> list["SeedUnion"]:
         """
         Build a SeedObjective + image + text group for a single FigStep row.
 
@@ -324,8 +331,8 @@ class _FigStepDataset(_RemoteDatasetLoader):
             dataset_name=self.dataset_name,
             harm_categories=[row["category_name"]],
             description=_DESCRIPTION,
-            authors=list(_AUTHORS),
-            groups=list(_GROUPS),
+            authors=list(self._AUTHORS),
+            groups=list(self._GROUPS),
             source=self.PAPER_URL,
             prompt_group_id=group_id,
         )
@@ -337,8 +344,8 @@ class _FigStepDataset(_RemoteDatasetLoader):
             dataset_name=self.dataset_name,
             harm_categories=[row["category_name"]],
             description=_DESCRIPTION,
-            authors=list(_AUTHORS),
-            groups=list(_GROUPS),
+            authors=list(self._AUTHORS),
+            groups=list(self._GROUPS),
             source=self.PAPER_URL,
             prompt_group_id=group_id,
             sequence=0,
@@ -352,8 +359,8 @@ class _FigStepDataset(_RemoteDatasetLoader):
             dataset_name=self.dataset_name,
             harm_categories=[row["category_name"]],
             description=_DESCRIPTION,
-            authors=list(_AUTHORS),
-            groups=list(_GROUPS),
+            authors=list(self._AUTHORS),
+            groups=list(self._GROUPS),
             source=self.PAPER_URL,
             prompt_group_id=group_id,
             sequence=0,
@@ -369,7 +376,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
         row_idx: int,
         extract_dir: Path,
         benign_sentences: list[str],
-    ) -> list[Seed]:
+    ) -> list["SeedUnion"]:
         """
         Build a SeedObjective + N image pieces + text group for a single FigStep-Pro row.
 
@@ -413,13 +420,13 @@ class _FigStepDataset(_RemoteDatasetLoader):
             dataset_name=self.dataset_name,
             harm_categories=[row["category_name"]],
             description=_DESCRIPTION,
-            authors=list(_AUTHORS),
-            groups=list(_GROUPS),
+            authors=list(self._AUTHORS),
+            groups=list(self._GROUPS),
             source=self.PAPER_URL,
             prompt_group_id=group_id,
         )
 
-        seeds: list[Seed] = [objective]
+        seeds: list[SeedUnion] = [objective]
         for split_idx, path in enumerate(image_paths):
             seeds.append(
                 SeedPrompt(
@@ -429,8 +436,8 @@ class _FigStepDataset(_RemoteDatasetLoader):
                     dataset_name=self.dataset_name,
                     harm_categories=[row["category_name"]],
                     description=_DESCRIPTION,
-                    authors=list(_AUTHORS),
-                    groups=list(_GROUPS),
+                    authors=list(self._AUTHORS),
+                    groups=list(self._GROUPS),
                     source=self.PAPER_URL,
                     prompt_group_id=group_id,
                     sequence=0,
@@ -447,8 +454,8 @@ class _FigStepDataset(_RemoteDatasetLoader):
                 dataset_name=self.dataset_name,
                 harm_categories=[row["category_name"]],
                 description=_DESCRIPTION,
-                authors=list(_AUTHORS),
-                groups=list(_GROUPS),
+                authors=list(self._AUTHORS),
+                groups=list(self._GROUPS),
                 source=self.PAPER_URL,
                 prompt_group_id=group_id,
                 sequence=0,
