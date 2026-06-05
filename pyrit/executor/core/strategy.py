@@ -165,7 +165,7 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
 
         Args:
             context_type (type[StrategyContextT]): The type of context this strategy will use.
-            event_handler (Optional[StrategyEventHandler[StrategyContextT, StrategyResultT]]): An optional
+            event_handler (StrategyEventHandler[StrategyContextT, StrategyResultT] | None): An optional
                 event handler for strategy events.
             logger (logging.Logger): The logger to use for this strategy.
         """
@@ -259,8 +259,8 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
         Args:
             event (StrategyEvent): The event that occurred.
             context (StrategyContextT): The context for the strategy.
-            result (Optional[StrategyResultT]): The result of the strategy execution, if applicable.
-            error (Optional[Exception]): An error that occurred during execution, if applicable.
+            result (StrategyResultT | None): The result of the strategy execution, if applicable.
+            error (Exception | None): An error that occurred during execution, if applicable.
         """
         event_data = StrategyEventData(
             event=event,

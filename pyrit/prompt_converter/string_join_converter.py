@@ -23,7 +23,7 @@ class StringJoinConverter(WordLevelConverter):
 
         Args:
             join_value (str): The string used to join characters of each word.
-            word_selection_strategy (Optional[WordSelectionStrategy]): Strategy for selecting which words to convert.
+            word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
                 If None, all words will be converted.
         """
         super().__init__(word_selection_strategy=word_selection_strategy)

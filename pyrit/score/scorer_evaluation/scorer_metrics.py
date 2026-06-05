@@ -74,7 +74,7 @@ class ScorerMetrics:
         fields (e.g., cached ``init=False`` attributes) before constructing the instance.
 
         Args:
-            file_path (Union[str, Path]): The path to the JSON file.
+            file_path (str | Path): The path to the JSON file.
 
         Returns:
             ScorerMetrics: An instance of ScorerMetrics (or subclass) with the loaded data.
@@ -104,7 +104,7 @@ class ScorerMetrics:
         string. Use ``from_json_file`` instead.
 
         Args:
-            file_path (Union[str, Path]): The path to the JSON file.
+            file_path (str | Path): The path to the JSON file.
 
         Returns:
             ScorerMetrics: An instance of ScorerMetrics (or subclass) with the loaded data.
@@ -205,7 +205,7 @@ class ObjectiveScorerMetrics(ScorerMetrics):
             in its positive predictions.
         recall (float): The recall of the model scores, an indicator of the model's ability to correctly
             identify positive labels.
-        trial_scores (Optional[np.ndarray]): The raw scores from each trial. Shape is (num_trials, num_responses).
+        trial_scores (np.ndarray | None): The raw scores from each trial. Shape is (num_trials, num_responses).
             Useful for debugging and analyzing scorer variance.
     """
 

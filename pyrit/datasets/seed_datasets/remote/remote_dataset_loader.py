@@ -155,7 +155,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             file_type (str): The file extension/type.
 
         Returns:
-            List[Dict[str, str]]: The cached examples.
+            list[dict[str, str]]: The cached examples.
 
         Raises:
             ValueError: If the file_type is invalid.
@@ -170,7 +170,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
 
         Args:
             cache_file (Path): Path to the cache file.
-            examples (List[Dict[str, str]]): The examples to cache.
+            examples (list[dict[str, str]]): The examples to cache.
             file_type (str): The file extension/type.
 
         Raises:
@@ -190,7 +190,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             file_type: The file extension/type.
 
         Returns:
-            List[Dict[str, str]]: The fetched examples.
+            list[dict[str, str]]: The fetched examples.
 
         Raises:
             ValueError: If the file_type is invalid.
@@ -220,7 +220,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             file_type: The file extension/type.
 
         Returns:
-            List[Dict[str, str]]: The fetched examples.
+            list[dict[str, str]]: The fetched examples.
 
         Raises:
             ValueError: If the file_type is invalid.
@@ -247,7 +247,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             cache: Whether to cache the fetched examples. Defaults to True.
 
         Returns:
-            List[Dict[str, str]]: A list of examples.
+            list[dict[str, str]]: A list of examples.
 
         Raises:
             ValueError: If the file_type is invalid.
@@ -364,7 +364,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         All are normalized into sets for the unified SeedDatasetMetadata schema.
 
         Returns:
-            Optional[SeedDatasetMetadata]: Parsed metadata if available, otherwise None.
+            SeedDatasetMetadata | None: Parsed metadata if available, otherwise None.
         """
         valid_fields = [f.name for f in fields(SeedDatasetMetadata)]
 

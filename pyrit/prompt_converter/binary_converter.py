@@ -37,7 +37,7 @@ class BinaryConverter(WordLevelConverter):
         Args:
             bits_per_char (BinaryConverter.BitsPerChar): Number of bits to use for each character (8, 16, or 32).
                 Default is 16 bits.
-            word_selection_strategy (Optional[WordSelectionStrategy]): Strategy for selecting which words to convert.
+            word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
                 If None, all words will be converted.
 
         Raises:

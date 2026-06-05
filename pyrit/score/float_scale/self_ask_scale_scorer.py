@@ -53,11 +53,11 @@ class SelfAskScaleScorer(FloatScaleScorer):
 
         Args:
             chat_target (PromptTarget): The chat target to use for scoring.
-            scale_arguments_path (Optional[Union[Path, str]]): Path to the YAML file containing scale definitions.
+            scale_arguments_path (Path | str | None): Path to the YAML file containing scale definitions.
                 Defaults to TREE_OF_ATTACKS_SCALE if not provided.
-            system_prompt_path (Optional[Union[Path, str]]): Path to the YAML file containing the system prompt.
+            system_prompt_path (Path | str | None): Path to the YAML file containing the system prompt.
                 Defaults to GENERAL_SYSTEM_PROMPT if not provided.
-            validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator for the scorer. Defaults to None.
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
 

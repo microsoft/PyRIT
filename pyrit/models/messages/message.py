@@ -366,7 +366,7 @@ class Message(BaseModel):
         Args:
             prompt (str): Prompt text.
             role (ChatMessageRole): Role assigned to the message piece.
-            prompt_metadata (Optional[Dict[str, Union[str, int]]]): Optional prompt metadata.
+            prompt_metadata (dict[str, str | int] | None): Optional prompt metadata.
 
         Returns:
             Message: Constructed message instance.

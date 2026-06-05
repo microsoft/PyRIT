@@ -97,9 +97,9 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
 
         Args:
             objective_target (PromptTarget): The target system to evaluate.
-            attack_converter_config (Optional[AttackConverterConfig]): Configuration for prompt converters.
-            attack_scoring_config (Optional[AttackScoringConfig]): Configuration for scoring components.
-            prompt_normalizer (Optional[PromptNormalizer]): Normalizer for handling prompts.
+            attack_converter_config (AttackConverterConfig | None): Configuration for prompt converters.
+            attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
+            prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
             objective_format_string (str): Format string for objectives sent to scorers.
             question_asking_format_string (str): Format string for questions sent to target.
             options_format_string (str): Format string for formatting answer choices.
@@ -279,8 +279,8 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
 
         Args:
             question_answering_entry (QuestionAnsweringEntry): The question answering entry to evaluate.
-            prepended_conversation (Optional[List[Message]]): Conversation to prepend.
-            memory_labels (Optional[Dict[str, str]]): Memory labels for the benchmark context.
+            prepended_conversation (list[Message] | None): Conversation to prepend.
+            memory_labels (dict[str, str] | None): Memory labels for the benchmark context.
             **kwargs: Additional parameters for the benchmark.
 
         Returns:

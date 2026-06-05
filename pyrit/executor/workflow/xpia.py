@@ -156,11 +156,11 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
         Args:
             attack_setup_target (PromptTarget): The target that generates the attack prompt
                 and gets it into the attack location.
-            scorer (Optional[Scorer]): Optional scorer to evaluate the processing response.
+            scorer (Scorer | None): Optional scorer to evaluate the processing response.
                 If no scorer is provided the workflow will skip scoring.
-            converter_config (Optional[StrategyConverterConfig]): Optional converter
+            converter_config (StrategyConverterConfig | None): Optional converter
                 configuration for request and response converters.
-            prompt_normalizer (Optional[PromptNormalizer]): Optional PromptNormalizer
+            prompt_normalizer (PromptNormalizer | None): Optional PromptNormalizer
                 instance. If not provided, a new one will be created.
             logger (logging.Logger): Logger instance for logging events.
         """
@@ -185,8 +185,8 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
         Construct the identifier for this XPIA workflow.
 
         Args:
-            params (Optional[Dict[str, Any]]): Additional behavioral parameters.
-            children (Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]]):
+            params (dict[str, Any] | None): Additional behavioral parameters.
+            children (dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None):
                 Named child component identifiers.
 
         Returns:
@@ -394,7 +394,7 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
             processing_response (str): The response from the processing target to score.
 
         Returns:
-            Optional[Score]: The score if a scorer is configured, None otherwise.
+            Score | None: The score if a scorer is configured, None otherwise.
         """
         if not self._scorer:
             self._logger.info("No scorer provided. Returning raw processing response.")
@@ -453,9 +453,9 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
             processing_callback (ProcessingCallback): The callback to execute after the attack prompt is positioned
                 in the attack location. This is generic on purpose to allow for flexibility. The callback should
                 return the processing response.
-            processing_prompt (Optional[Message]): The prompt to send to the processing target. This should
+            processing_prompt (Message | None): The prompt to send to the processing target. This should
                 include placeholders to invoke plugins (if any).
-            memory_labels (Optional[Dict[str, str]]): Memory labels for the attack context.
+            memory_labels (dict[str, str] | None): Memory labels for the attack context.
             **kwargs: Additional parameters for the attack.
 
         Returns:
@@ -517,9 +517,9 @@ class XPIATestWorkflow(XPIAWorkflow):
                 processing prompt. This should include references to invoke plugins (if any).
             scorer (Scorer): The scorer to use to score the processing response. This is
                 required for test workflows to evaluate attack success.
-            converter_config (Optional[StrategyConverterConfig]): Optional converter
+            converter_config (StrategyConverterConfig | None): Optional converter
                 configuration for request and response converters.
-            prompt_normalizer (Optional[PromptNormalizer]): Optional PromptNormalizer
+            prompt_normalizer (PromptNormalizer | None): Optional PromptNormalizer
                 instance. If not provided, a new one will be created.
             logger (logging.Logger): Logger instance for logging events.
         """
@@ -617,9 +617,9 @@ class XPIAManualProcessingWorkflow(XPIAWorkflow):
                 and gets it into the attack location.
             scorer (Scorer): The scorer to use to score the processing response. This is
                 required to evaluate the manually provided response.
-            converter_config (Optional[StrategyConverterConfig]): Optional converter
+            converter_config (StrategyConverterConfig | None): Optional converter
                 configuration for request and response converters.
-            prompt_normalizer (Optional[PromptNormalizer]): Optional PromptNormalizer
+            prompt_normalizer (PromptNormalizer | None): Optional PromptNormalizer
                 instance. If not provided, a new one will be created.
             logger (logging.Logger): Logger instance for logging events.
         """

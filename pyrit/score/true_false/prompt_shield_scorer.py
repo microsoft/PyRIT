@@ -40,7 +40,7 @@ class PromptShieldScorer(TrueFalseScorer):
 
         Args:
             prompt_shield_target (PromptShieldTarget): The Prompt Shield target to use for scoring.
-            validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
         """

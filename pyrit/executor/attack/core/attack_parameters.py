@@ -151,7 +151,7 @@ class AttackParameters:
             if objective_scorer is None:
                 raise ValueError("objective_scorer is required when seed_group has a simulated conversation config")
 
-            # Generate the simulated conversation - returns List[SeedPrompt]
+            # Generate the simulated conversation - returns list[SeedPrompt]
             simulated_prompts = await generate_simulated_conversation_async(
                 objective=seed_group.objective.value,
                 adversarial_chat=adversarial_chat,

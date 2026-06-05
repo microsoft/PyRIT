@@ -26,8 +26,8 @@ class LeetspeakConverter(WordLevelConverter):
         Args:
             deterministic (bool): If True, use the first substitution for each character.
                 If False, randomly choose a substitution for each character.
-            custom_substitutions (Optional[dict]): A dictionary of custom substitutions to override the defaults.
-            word_selection_strategy (Optional[WordSelectionStrategy]): Strategy for selecting which words to convert.
+            custom_substitutions (dict | None): A dictionary of custom substitutions to override the defaults.
+            word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
                 If None, all words will be converted.
         """
         super().__init__(word_selection_strategy=word_selection_strategy)

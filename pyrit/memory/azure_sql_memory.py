@@ -75,11 +75,11 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Initialize an Azure SQL Memory backend.
 
         Args:
-            connection_string (Optional[str]): The connection string for the Azure Sql Database. If not provided,
+            connection_string (str | None): The connection string for the Azure Sql Database. If not provided,
                 it falls back to the 'AZURE_SQL_DB_CONNECTION_STRING' environment variable.
-            results_container_url (Optional[str]): The URL to an Azure Storage Container. If not provided,
+            results_container_url (str | None): The URL to an Azure Storage Container. If not provided,
                 it falls back to the 'AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL' environment variable.
-            results_sas_token (Optional[str]): The Shared Access Signature (SAS) token for the storage container.
+            results_sas_token (str | None): The Shared Access Signature (SAS) token for the storage container.
                 If not provided, falls back to the 'AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN' environment variable.
             verbose (bool): Whether to enable verbose logging for the database engine. Defaults to False.
             skip_schema_migration (bool): Whether to skip schema migration. Defaults to False.
@@ -122,10 +122,10 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         Args:
             env_var_name (str): The environment variable name to look up.
-            passed_value (Optional[str]): A passed-in value for the SAS token.
+            passed_value (str | None): A passed-in value for the SAS token.
 
         Returns:
-            Optional[str]: Resolved SAS token or None if not provided.
+            str | None: Resolved SAS token or None if not provided.
         """
         try:
             return default_values.get_required_value(env_var_name=env_var_name, passed_value=passed_value)
@@ -292,7 +292,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Uses JSON_VALUE() function specific to SQL Azure to query metadata fields in JSON format.
 
         Args:
-            prompt_metadata (dict[str, Union[str, int]]): Dictionary of metadata key-value pairs to filter by.
+            prompt_metadata (dict[str, str | int]): Dictionary of metadata key-value pairs to filter by.
 
         Returns:
             list: List containing a single SQLAlchemy text condition with bound parameters.
@@ -318,7 +318,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         This is a convenience wrapper around _get_metadata_conditions.
 
         Args:
-            prompt_metadata (dict[str, Union[str, int]]): Dictionary of metadata key-value pairs to filter by.
+            prompt_metadata (dict[str, str | int]): Dictionary of metadata key-value pairs to filter by.
 
         Returns:
             list: List containing SQLAlchemy text conditions with bound parameters.
@@ -333,7 +333,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         the first (and only) condition.
 
         Args:
-            metadata (dict[str, Union[str, int]]): Dictionary of metadata key-value pairs to filter by.
+            metadata (dict[str, str | int]): Dictionary of metadata key-value pairs to filter by.
 
         Returns:
             Any: SQLAlchemy text condition with bound parameters.
@@ -403,7 +403,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Args:
             json_column (InstrumentedAttribute[Any]): The JSON-backed SQLAlchemy field to query.
             property_path (str): The JSON path for the target array.
-            array_element_path (Optional[str]): An optional JSON path applied to each array item before matching.
+            array_element_path (str | None): An optional JSON path applied to each array item before matching.
             array_to_match (Sequence[str]): The array that must match the extracted JSON array values.
                 Combination semantics for multiple entries are controlled by ``match_mode``.
                 If ``array_to_match`` is empty, the condition matches only if the target is also an

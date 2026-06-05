@@ -65,10 +65,10 @@ class SkeletonKeyAttack(PromptSendingAttack):
 
         Args:
             objective_target (PromptTarget): The target system to attack.
-            attack_converter_config (Optional[AttackConverterConfig]): Configuration for prompt converters.
-            attack_scoring_config (Optional[AttackScoringConfig]): Configuration for scoring components.
-            prompt_normalizer (Optional[PromptNormalizer]): Normalizer for handling prompts.
-            skeleton_key_prompt (Optional[str]): The skeleton key prompt to use.
+            attack_converter_config (AttackConverterConfig | None): Configuration for prompt converters.
+            attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
+            prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
+            skeleton_key_prompt (str | None): The skeleton key prompt to use.
                 If not provided, uses the default skeleton key prompt.
             max_attempts_on_failure (int): Maximum number of attempts to retry on failure.
         """
@@ -90,7 +90,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
         Load the skeleton key prompt from the provided string or default file.
 
         Args:
-            skeleton_key_prompt (Optional[str]): Custom skeleton key prompt if provided.
+            skeleton_key_prompt (str | None): Custom skeleton key prompt if provided.
 
         Returns:
             str: The skeleton key prompt to use.
@@ -143,7 +143,7 @@ class SkeletonKeyAttack(PromptSendingAttack):
             context (SingleTurnAttackContext): The attack context containing configuration.
 
         Returns:
-            Optional[Message]: The response from the target, or None if filtered.
+            Message | None: The response from the target, or None if filtered.
         """
         self._logger.debug("Sending skeleton key prompt to target")
 

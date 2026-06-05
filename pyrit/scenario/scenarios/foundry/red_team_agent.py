@@ -228,13 +228,13 @@ class RedTeamAgent(Scenario):
         Initialize a Foundry Scenario with the specified attack strategies.
 
         Args:
-            adversarial_chat (Optional[PromptTarget]): Target for multi-turn attacks
+            adversarial_chat (PromptTarget | None): Target for multi-turn attacks
                 like Crescendo and RedTeaming. Additionally used for scoring defaults.
                 If not provided, a default OpenAI target will be created using environment variables.
-            attack_scoring_config (Optional[AttackScoringConfig]): Configuration for attack scoring,
+            attack_scoring_config (AttackScoringConfig | None): Configuration for attack scoring,
                 including the objective scorer and auxiliary scorers. If not provided, creates a default
                 configuration with a composite scorer using Azure Content Filter and SelfAsk Refusal scorers.
-            scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
+            scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
             include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
                 ``include_baseline`` to ``initialize_async`` instead.
 
@@ -297,10 +297,10 @@ class RedTeamAgent(Scenario):
                 objects (for pairing an attack with converters), or a mix of both. Passing
                 ScenarioCompositeStrategy is deprecated — use FoundryComposite instead.
                 If None, uses the default aggregate (EASY).
-            dataset_config (Optional[DatasetConfiguration]): Configuration for the dataset source.
+            dataset_config (DatasetConfiguration | None): Configuration for the dataset source.
             max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 4.
             max_retries (int): Maximum number of retries on failure. Defaults to 0.
-            memory_labels (Optional[dict[str, str]]): Labels to attach to all memory entries.
+            memory_labels (dict[str, str] | None): Labels to attach to all memory entries.
             include_baseline (bool | None): See ``Scenario.initialize_async``.
         """
         # This override exists purely for type-widening: FoundryComposite is a dataclass,
@@ -394,7 +394,7 @@ class RedTeamAgent(Scenario):
         Resolve seed groups from the dataset configuration.
 
         Returns:
-            List[SeedGroup]: The resolved seed groups.
+            list[SeedGroup]: The resolved seed groups.
         """
         return self._dataset_config.get_all_seed_attack_groups()
 
@@ -403,7 +403,7 @@ class RedTeamAgent(Scenario):
         Retrieve the list of AtomicAttack instances in this scenario.
 
         Returns:
-            List[AtomicAttack]: The list of AtomicAttack instances in this scenario.
+            list[AtomicAttack]: The list of AtomicAttack instances in this scenario.
         """
         # Resolve seed groups now that initialize_async has been called
         self._seed_groups = self._resolve_seed_groups()
@@ -528,7 +528,7 @@ class RedTeamAgent(Scenario):
             attack_type (type[AttackStrategyT]): The attack strategy class to instantiate.
                 Must accept objective_target and attack_converter_config parameters.
             converters (list[PromptConverter]): List of converters to apply as request converters.
-            attack_kwargs (Optional[dict[str, Any]]): Additional attack-specific keyword arguments
+            attack_kwargs (dict[str, Any] | None): Additional attack-specific keyword arguments
                 to pass to the attack constructor (e.g., tree_width for TreeOfAttacksWithPruningAttack).
 
         Returns:

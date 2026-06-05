@@ -67,14 +67,14 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
 
         Args:
             objective_target (PromptTarget): The target system to attack.
-            attack_converter_config (Optional[AttackConverterConfig]): Configuration for prompt converters.
-            attack_scoring_config (Optional[AttackScoringConfig]): Configuration for scoring components.
-            prompt_normalizer (Optional[PromptNormalizer]): Normalizer for handling prompts.
+            attack_converter_config (AttackConverterConfig | None): Configuration for prompt converters.
+            attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
+            prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
             max_attempts_on_failure (int): Maximum number of attempts to retry on failure.
-            params_type (Type[AttackParamsT]): The type of parameters this strategy accepts.
+            params_type (type[AttackParamsT]): The type of parameters this strategy accepts.
                 Defaults to AttackParameters. Use AttackParameters.excluding() to create
                 a params type that rejects certain fields.
-            prepended_conversation_config (Optional[PrependedConversationConfiguration]):
+            prepended_conversation_config (PrependedConversationConfiguration | None):
                 Configuration for how to process prepended conversations. Controls converter
                 application by role, message normalization, and non-chat target behavior.
 
@@ -124,7 +124,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         Get the attack scoring configuration used by this strategy.
 
         Returns:
-            Optional[AttackScoringConfig]: The scoring configuration with objective and auxiliary scorers.
+            AttackScoringConfig | None: The scoring configuration with objective and auxiliary scorers.
         """
         return AttackScoringConfig(
             objective_scorer=self._objective_scorer,
@@ -248,12 +248,12 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         Determine the outcome of the attack based on the response and score.
 
         Args:
-            response (Optional[Message]): The last response from the target (if any).
-            score (Optional[Score]): The objective score (if any).
+            response (Message | None): The last response from the target (if any).
+            score (Score | None): The objective score (if any).
             context (SingleTurnAttackContext): The attack context containing configuration.
 
         Returns:
-            tuple[AttackOutcome, Optional[str]]: A tuple of (outcome, outcome_reason).
+            tuple[AttackOutcome, str | None]: A tuple of (outcome, outcome_reason).
         """
         if not self._objective_scorer:
             # No scorer means we can't determine success/failure
@@ -308,7 +308,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             context (SingleTurnAttackContext): The attack context containing parameters and labels.
 
         Returns:
-            Optional[Message]: The model's response if successful, or None if
+            Message | None: The model's response if successful, or None if
                 the request was filtered, blocked, or encountered an error.
         """
         with execution_context(
@@ -346,7 +346,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             objective (str): The natural-language description of the attack's objective.
 
         Returns:
-            Optional[Score]: The score from the objective scorer if configured, or None if
+            Score | None: The score from the objective scorer if configured, or None if
                 no objective scorer is set. Note that auxiliary scorer results are not returned
                 but are still executed and stored.
         """

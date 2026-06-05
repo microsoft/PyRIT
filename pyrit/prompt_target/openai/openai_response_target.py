@@ -400,7 +400,7 @@ class OpenAIResponseTarget(OpenAITarget):
         Build the reasoning configuration dict for the Responses API.
 
         Returns:
-            Optional[Dict[str, Any]]: The reasoning config, or None if neither effort nor summary is set.
+            dict[str, Any] | None: The reasoning config, or None if neither effort nor summary is set.
         """
         if self._reasoning_effort is None and self._reasoning_summary is None:
             return None

@@ -262,7 +262,7 @@ class PlaywrightCopilotTarget(PromptTarget):
             message: The message containing text and/or image pieces to send.
 
         Returns:
-            Union[str, List[Tuple[str, PromptDataType]]]: The response content from Copilot,
+            str | list[tuple[str, PromptDataType]]: The response content from Copilot,
                 either as a single text string or a list of (data, data_type) tuples.
         """
         selectors = self._get_selectors()
@@ -284,7 +284,7 @@ class PlaywrightCopilotTarget(PromptTarget):
             selectors (CopilotSelectors): The selectors for the Copilot interface.
 
         Returns:
-            Union[str, List[Tuple[str, PromptDataType]]]: The response content from Copilot,
+            str | list[tuple[str, PromptDataType]]: The response content from Copilot,
                 either as a single text string or a list of (data, data_type) tuples.
 
         Raises:
@@ -341,7 +341,7 @@ class PlaywrightCopilotTarget(PromptTarget):
             initial_group_count (int): Number of message groups before this response.
 
         Returns:
-            Union[str, List[Tuple[str, PromptDataType]], None]: The extracted content if ready,
+            str | list[tuple[str, PromptDataType]] | None: The extracted content if ready,
                 None if content is not ready yet or extraction fails.
         """
         try:

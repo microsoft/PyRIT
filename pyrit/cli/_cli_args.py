@@ -535,8 +535,8 @@ def parse_list_targets_arguments(*, args_string: str) -> dict[str, Any]:
 
     Returns:
         Dictionary with parsed arguments:
-            - initializers: Optional[list[str | dict[str, Any]]]
-            - initialization_scripts: Optional[list[str]]
+            - initializers: list[str | dict[str, Any]] | None
+            - initialization_scripts: list[str] | None
 
     Raises:
         ValueError: If parsing or validation fails.
@@ -655,7 +655,7 @@ def build_parameters_from_api(*, api_params: list[dict[str, Any]]) -> list[Param
         api_params: List of parameter dicts from ``GET /api/scenarios/catalog/{name}``.
 
     Returns:
-        Optional[list[Parameter]]: Parameter list when ``api_params`` is non-empty, else ``None``.
+        list[Parameter] | None: Parameter list when ``api_params`` is non-empty, else ``None``.
     """
     if not api_params:
         return None
@@ -711,7 +711,7 @@ def merge_config_scenario_args(
     Mutable values are deep-copied so they don't leak across runs.
 
     Args:
-        config_scenario (Optional[ScenarioConfig]): The ``scenario:`` block from
+        config_scenario (ScenarioConfig | None): The ``scenario:`` block from
             the layered config, or ``None`` when not configured.
         effective_scenario_name (str): The scenario about to run (CLI wins).
         cli_args (dict[str, Any]): Scenario args supplied on the CLI.

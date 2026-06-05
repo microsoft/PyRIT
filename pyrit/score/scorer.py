@@ -84,7 +84,7 @@ class Scorer(Identifiable, abc.ABC):
 
         Args:
             validator (ScorerPromptValidator): Validator for message pieces and scorer configuration.
-            chat_target (Optional[PromptTarget]): Chat target used by the scorer, if any. When
+            chat_target (PromptTarget | None): Chat target used by the scorer, if any. When
                 provided, it is validated against ``TARGET_REQUIREMENTS``.
         """
         self._validator = validator
@@ -159,10 +159,10 @@ class Scorer(Identifiable, abc.ABC):
         to set the identifier with their specific parameters.
 
         Args:
-            params (Optional[Dict[str, Any]]): Additional behavioral parameters from
+            params (dict[str, Any] | None): Additional behavioral parameters from
                 the subclass (e.g., system_prompt_template, score_aggregator). Merged
                 into the base params.
-            children (Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]]):
+            children (dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None):
                 Named child component identifiers (e.g., prompt_target, sub_scorers).
 
         Returns:
@@ -190,9 +190,9 @@ class Scorer(Identifiable, abc.ABC):
 
         Args:
             message (Message): The message to be scored.
-            objective (Optional[str]): The task or objective based on which the message should be scored.
+            objective (str | None): The task or objective based on which the message should be scored.
                 Defaults to None.
-            role_filter (Optional[ChatMessageRole]): Only score messages with this exact stored role.
+            role_filter (ChatMessageRole | None): Only score messages with this exact stored role.
                 Use "assistant" to score only real assistant responses, or "simulated_assistant"
                 to score only simulated responses. Defaults to None (no filtering).
             skip_on_error_result (bool): If True, skip scoring if the message contains an error.
@@ -274,7 +274,7 @@ class Scorer(Identifiable, abc.ABC):
 
         Args:
             message (Message): The message to score.
-            objective (Optional[str]): The objective to evaluate against. Defaults to None.
+            objective (str | None): The objective to evaluate against. Defaults to None.
 
         Returns:
             list[Score]: A list of Score objects.
@@ -398,7 +398,7 @@ class Scorer(Identifiable, abc.ABC):
 
         Args:
             message (Message): The (possibly substituted) message that was scored.
-            objective (Optional[str]): The objective associated with this scoring call.
+            objective (str | None): The objective associated with this scoring call.
 
         Returns:
             list[Score]: One or more fallback scores. Must not be empty.
@@ -494,7 +494,7 @@ class Scorer(Identifiable, abc.ABC):
 
         Args:
             text (str): The text to be scored.
-            objective (Optional[str]): The task based on which the text should be scored
+            objective (str | None): The task based on which the text should be scored
 
         Returns:
             list[Score]: A list of Score objects representing the results.
@@ -517,7 +517,7 @@ class Scorer(Identifiable, abc.ABC):
 
         Args:
             image_path (str): The path to the image file to be scored.
-            objective (Optional[str]): The objective based on which the image should be scored. Defaults to None.
+            objective (str | None): The objective based on which the image should be scored. Defaults to None.
 
         Returns:
             list[Score]: A list of Score objects representing the results.
@@ -553,7 +553,7 @@ class Scorer(Identifiable, abc.ABC):
             objectives (Sequence[str]): The objectives/tasks based on which the prompts should be scored.
                 Must have the same length as messages.
             batch_size (int): The maximum batch size for processing prompts. Defaults to 10.
-            role_filter (Optional[ChatMessageRole]): If provided, only score pieces with this role.
+            role_filter (ChatMessageRole | None): If provided, only score pieces with this role.
                 Defaults to None (no filtering).
             skip_on_error_result (bool): If True, skip scoring pieces that have errors. Defaults to False.
             infer_objective_from_request (bool): If True and objective is empty, attempt to infer
@@ -598,7 +598,7 @@ class Scorer(Identifiable, abc.ABC):
 
         Args:
             image_paths (Sequence[str]): Sequence of paths to image files to be scored.
-            objectives (Optional[Sequence[str]]): Optional sequence of objectives corresponding to each image.
+            objectives (Sequence[str] | None): Optional sequence of objectives corresponding to each image.
                 If provided, must match the length of image_paths. Defaults to None.
             batch_size (int): Maximum number of images to score concurrently. Defaults to 10.
 
@@ -675,13 +675,13 @@ class Scorer(Identifiable, abc.ABC):
             message_data_type (PromptDataType): The type of the data being sent in the message (e.g., "text",
                 "image_path", "audio_path").
             scored_prompt_id (str): The ID of the scored prompt.
-            prepended_text_message_piece (Optional[str]): Text context to prepend before the main
+            prepended_text_message_piece (str | None): Text context to prepend before the main
                 message_value. When provided, creates a multi-piece message with this text first, followed
                 by the message_value. Useful for adding objective/context when scoring non-text content.
                 Defaults to None.
-            category (Optional[Sequence[str] | str]): The category of the score. Can also be parsed from
+            category (Sequence[str] | str | None): The category of the score. Can also be parsed from
                 the JSON response if not provided. Defaults to None.
-            objective (Optional[str]): A description of the objective that is associated with the score,
+            objective (str | None): A description of the objective that is associated with the score,
                 used for contextualizing the result. Defaults to None.
             score_value_output_key (str): The key in the JSON response that contains the score value.
                 Defaults to "score_value".
@@ -693,7 +693,7 @@ class Scorer(Identifiable, abc.ABC):
                 Defaults to "metadata".
             category_output_key (str): The key in the JSON response that contains the category.
                 Defaults to "category".
-            attack_identifier (Optional[ComponentIdentifier]): The attack identifier.
+            attack_identifier (ComponentIdentifier | None): The attack identifier.
                 Defaults to None.
 
         Returns:
@@ -860,15 +860,15 @@ class Scorer(Identifiable, abc.ABC):
 
         Args:
             response (Message): Response containing pieces to score.
-            objective_scorer (Optional[Scorer]): The main scorer to determine success. Defaults to None.
-            auxiliary_scorers (Optional[List[Scorer]]): List of auxiliary scorers to apply. Defaults to None.
+            objective_scorer (Scorer | None): The main scorer to determine success. Defaults to None.
+            auxiliary_scorers (list[Scorer] | None): List of auxiliary scorers to apply. Defaults to None.
             role_filter (ChatMessageRole): Only score pieces with this exact stored role.
                 Defaults to "assistant" (real responses only, not simulated).
-            objective (Optional[str]): Task/objective for scoring context. Defaults to None.
+            objective (str | None): Task/objective for scoring context. Defaults to None.
             skip_on_error_result (bool): If True, skip scoring pieces that have errors. Defaults to True.
 
         Returns:
-            Dict[str, List[Score]]: Dictionary with keys `auxiliary_scores` and `objective_scores`
+            dict[str, list[Score]]: Dictionary with keys `auxiliary_scores` and `objective_scores`
                 containing lists of scores from each type of scorer.
 
         Raises:
@@ -938,14 +938,14 @@ class Scorer(Identifiable, abc.ABC):
 
         Args:
             response (Message): The response containing pieces to score.
-            scorers (List[Scorer]): List of scorers to apply.
+            scorers (list[Scorer]): List of scorers to apply.
             role_filter (ChatMessageRole): Only score pieces with this exact stored role.
                 Defaults to "assistant" (real responses only, not simulated).
-            objective (Optional[str]): Optional objective description for scoring context.
+            objective (str | None): Optional objective description for scoring context.
             skip_on_error_result (bool): If True, skip scoring pieces that have errors (default: True).
 
         Returns:
-            List[Score]: All scores from all scorers
+            list[Score]: All scores from all scorers
         """
         if not scorers:
             return []

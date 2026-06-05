@@ -27,7 +27,7 @@ def log_params(
 
     Args:
         params (Any): A config object with a `to_dict()` method containing all parameters.
-        param_keys (Optional[list[str]]): Keys to extract and log. Defaults to standard GCG training keys.
+        param_keys (list[str] | None): Keys to extract and log. Defaults to standard GCG training keys.
     """
     if param_keys is None:
         param_keys = _DEFAULT_PARAM_KEYS

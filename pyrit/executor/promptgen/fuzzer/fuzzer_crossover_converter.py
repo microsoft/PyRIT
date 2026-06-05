@@ -37,7 +37,7 @@ class FuzzerCrossOverConverter(FuzzerConverter):
                 Can be omitted if a default has been configured via PyRIT initialization.
             prompt_template (SeedPrompt, Optional): Template to be used instead of the default system prompt with
                 instructions for the chat target.
-            prompt_templates (List[str], Optional): List of prompt templates to use in addition to the default one.
+            prompt_templates (list[str], Optional): List of prompt templates to use in addition to the default one.
         """
         prompt_template = (
             prompt_template

@@ -145,7 +145,7 @@ class VideoFloatScaleScorer(
         # Get the ID from the message piece
         piece_id = message_piece.id if message_piece.id is not None else message_piece.original_prompt_id
 
-        # Call the aggregator - all aggregators now return List[ScoreAggregatorResult]
+        # Call the aggregator - all aggregators now return list[ScoreAggregatorResult]
         aggregator_results: list[ScoreAggregatorResult] = self._score_aggregator(all_scores)
 
         # Build rationale prefix

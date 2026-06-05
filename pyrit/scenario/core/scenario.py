@@ -186,14 +186,14 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         Args:
             name (str): Descriptive name for the scenario.
             version (int): Version number of the scenario.
-            strategy_class (Type[ScenarioStrategy]): The strategy enum class for this scenario.
+            strategy_class (type[ScenarioStrategy]): The strategy enum class for this scenario.
             default_strategy (ScenarioStrategy): The default strategy member used when no
                 ``scenario_strategies`` are passed to ``initialize_async``. Usually an aggregate
                 member like ``MyStrategy.ALL`` or ``MyStrategy.DEFAULT``.
             default_dataset_config (DatasetConfiguration): The default dataset configuration used
                 when no ``dataset_config`` is passed to ``initialize_async``.
             objective_scorer (Scorer): The objective scorer used to evaluate attack results.
-            scenario_result_id (Optional[Union[uuid.UUID, str]]): Optional ID of an existing scenario result to resume.
+            scenario_result_id (uuid.UUID | str | None): Optional ID of an existing scenario result to resume.
                 Can be either a UUID object or a string representation of a UUID.
                 If provided and found in memory, the scenario will resume from prior progress.
                 All other parameters must still match the stored scenario configuration.
@@ -578,10 +578,10 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         Args:
             objective_target (PromptTarget): The target system to attack.
-            scenario_strategies (Optional[Sequence[ScenarioStrategy]]): The strategies to execute.
+            scenario_strategies (Sequence[ScenarioStrategy] | None): The strategies to execute.
                 Can be a list of ScenarioStrategy enum members. If None, uses the default aggregate
                 from the scenario's configuration.
-            dataset_config (Optional[DatasetConfiguration]): Configuration for the dataset source.
+            dataset_config (DatasetConfiguration | None): Configuration for the dataset source.
                 Use this to specify dataset names or maximum dataset size from the CLI.
                 If not provided, scenarios use their constructor-supplied default_dataset_config.
             max_concurrency (int): Maximum number of concurrent units of work for the scenario.
@@ -596,7 +596,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
                 Set to 0 (default) for no automatic retries. If set to a positive number,
                 the scenario will automatically retry up to this many times after an exception.
                 For example, max_retries=3 allows up to 4 total attempts (1 initial + 3 retries).
-            memory_labels (Optional[Dict[str, str]]): Additional labels to apply to all
+            memory_labels (dict[str, str] | None): Additional labels to apply to all
                 attack runs in the scenario. These help track and categorize the scenario.
             include_baseline (bool | None): Whether to prepend a baseline atomic attack that sends
                 all objectives without modifications, allowing comparison between unmodified prompts
@@ -960,7 +960,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         join is sufficient.
 
         Returns:
-            List[AtomicAttack]: List of atomic attacks with uncompleted objectives.
+            list[AtomicAttack]: List of atomic attacks with uncompleted objectives.
         """
         if not self._scenario_result_id:
             # No scenario result yet, return all atomic attacks

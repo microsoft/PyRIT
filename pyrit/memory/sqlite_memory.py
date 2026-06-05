@@ -68,7 +68,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Initialize the SQLiteMemory instance.
 
         Args:
-            db_path (Optional[Union[Path, str]]): Path to the SQLite database file.
+            db_path (Path | str | None): Path to the SQLite database file.
                 Defaults to "pyrit.db".
             verbose (bool): Whether to enable verbose logging.
                 Defaults to False.
@@ -256,7 +256,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Args:
             json_column (InstrumentedAttribute[Any]): The JSON-backed SQLAlchemy field to query.
             property_path (str): The JSON path for the target array.
-            array_element_path (Optional[str]): An optional JSON path applied to each array item before matching.
+            array_element_path (str | None): An optional JSON path applied to each array item before matching.
             array_to_match (Sequence[str]): The array that must match the extracted JSON array values.
                 Combination semantics for multiple entries are controlled by ``match_mode``.
                 If ``array_to_match`` is empty, the condition matches only if the target is also an

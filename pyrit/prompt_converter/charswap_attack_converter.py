@@ -31,7 +31,7 @@ class CharSwapConverter(WordLevelConverter):
         Args:
             max_iterations (int): Number of times to generate perturbed prompts.
                 The higher the number the higher the chance that words are different from the original prompt.
-            word_selection_strategy (Optional[WordSelectionStrategy]): Strategy for selecting which words to convert.
+            word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
                 If None, defaults to WordProportionSelectionStrategy(proportion=0.2).
 
         Raises:

@@ -4,14 +4,14 @@
 """
 Base class registry for PyRIT.
 
-This module provides the abstract base class for registries that store classes (Type[T]).
+This module provides the abstract base class for registries that store classes (type[T]).
 These registries allow on-demand instantiation of registered classes.
 
 For registries that store pre-configured instances, see object_registries/.
 
 Terminology:
 - **Metadata**: A TypedDict describing a registered class (e.g., ScenarioMetadata)
-- **Class**: The actual Python class (Type[T]) that can be instantiated
+- **Class**: The actual Python class (type[T]) that can be instantiated
 - **Instance**: A created object of that class
 - **ClassEntry**: Internal wrapper holding a class plus optional factory/defaults
 """
@@ -38,14 +38,14 @@ class ClassEntry(Generic[T]):
     """
     Internal wrapper for a registered class.
 
-    This holds the class itself (Type[T]) along with optional factory
+    This holds the class itself (type[T]) along with optional factory
     and default parameters for creating instances.
 
     Note: This is an internal implementation detail. Users interact with
     registries via get_class(), create_instance(), and list_metadata().
 
     Attributes:
-        registered_class: The actual Python class (Type[T]).
+        registered_class: The actual Python class (type[T]).
         factory: Optional callable to create instances with custom logic.
         default_kwargs: Default keyword arguments for instance creation.
     """
@@ -61,7 +61,7 @@ class ClassEntry(Generic[T]):
         Initialize a class entry.
 
         Args:
-            registered_class: The actual Python class (Type[T]).
+            registered_class: The actual Python class (type[T]).
             factory: Optional callable that creates an instance.
             default_kwargs: Default keyword arguments for instantiation.
         """
@@ -97,7 +97,7 @@ class ClassEntry(Generic[T]):
 
 class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT]):
     """
-    Abstract base class for registries that store classes (Type[T]).
+    Abstract base class for registries that store classes (type[T]).
 
     This class implements RegistryProtocol and provides the common infrastructure
     for class registries including:
@@ -198,7 +198,7 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
             name: The registry name (snake_case identifier).
 
         Returns:
-            The registered class (Type[T]).
+            The registered class (type[T]).
             Note: This returns the class itself, not an instance.
 
         Raises:
@@ -294,7 +294,7 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
         Register a class with the registry.
 
         Args:
-            cls: The class to register (Type[T], not an instance).
+            cls: The class to register (type[T], not an instance).
             name: Optional custom registry name. If not provided, derived from class name.
             factory: Optional callable for creating instances with custom logic.
             default_kwargs: Default keyword arguments for instance creation.

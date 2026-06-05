@@ -143,7 +143,7 @@ def get_execution_context() -> ExecutionContext | None:
     Get the current execution context.
 
     Returns:
-        Optional[ExecutionContext]: The current context, or None if not set.
+        ExecutionContext | None: The current context, or None if not set.
 
     """
     return _execution_context.get()

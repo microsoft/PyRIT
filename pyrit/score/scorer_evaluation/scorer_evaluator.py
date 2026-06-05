@@ -60,11 +60,11 @@ class ScorerEvalDatasetFiles:
     Multiple files matching the patterns will be concatenated before evaluation.
 
     Args:
-        human_labeled_datasets_files (List[str]): List of glob patterns to match CSV files.
+        human_labeled_datasets_files (list[str]): List of glob patterns to match CSV files.
             Examples: ``["objective/*.csv"]``, ``["objective/hate_speech.csv", "objective/violence.csv"]``
         result_file (str): Name of the result file (stem used as dict key in results).
             Example: ``"objective_achieved_metrics.jsonl"``
-        harm_category (Optional[str]): The harm category for harm scorers (e.g., "hate_speech", "violence").
+        harm_category (str | None): The harm category for harm scorers (e.g., "hate_speech", "violence").
             Required for harm evaluations, ignored for objective evaluations. Defaults to None.
     """
 
@@ -282,13 +282,13 @@ class ScorerEvaluator(abc.ABC):
 
         Args:
             dataset_version (str): The version of the dataset.
-            harm_definition_version (Optional[str]): Version of the harm definition YAML. For harm evaluations.
+            harm_definition_version (str | None): Version of the harm definition YAML. For harm evaluations.
             num_scorer_trials (int): Number of scorer trials requested.
-            harm_category (Optional[str]): The harm category for harm scorers. Required for harm evaluations.
+            harm_category (str | None): The harm category for harm scorers. Required for harm evaluations.
             result_file_path (Path): Path to the result file to search.
 
         Returns:
-            Tuple[bool, Optional[ScorerMetrics]]: (should_skip, existing_metrics)
+            tuple[bool, ScorerMetrics | None]: (should_skip, existing_metrics)
                 - (True, metrics) if should skip and use existing metrics
                 - (False, None) if should run evaluation
         """

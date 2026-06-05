@@ -59,7 +59,7 @@ class SingleTurnAttackStrategy(AttackStrategy[SingleTurnAttackContext[Any], Atta
         Args:
             objective_target (PromptTarget): The target system to attack.
             context_type (type[SingleTurnAttackContext]): The type of context this strategy will use.
-            params_type (Type[AttackParamsT]): The type of parameters this strategy accepts.
+            params_type (type[AttackParamsT]): The type of parameters this strategy accepts.
             logger (logging.Logger): Logger instance for logging events and messages.
         """
         super().__init__(

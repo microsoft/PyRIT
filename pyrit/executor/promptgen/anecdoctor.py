@@ -112,11 +112,11 @@ class AnecdoctorGenerator(
 
         Args:
             objective_target (PromptTarget): The chat model to be used for prompt generation.
-            processing_model (Optional[PromptTarget]): The model used for knowledge graph extraction.
+            processing_model (PromptTarget | None): The model used for knowledge graph extraction.
                 If provided, the generator will extract a knowledge graph from the examples before generation.
                 If None, the generator will use few-shot examples directly.
-            converter_config (Optional[StrategyConverterConfig]): Configuration for prompt converters.
-            prompt_normalizer (Optional[PromptNormalizer]): Normalizer for handling prompts.
+            converter_config (StrategyConverterConfig | None): Configuration for prompt converters.
+            prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
         """
         # Initialize base class
         super().__init__(logger=logger, context_type=AnecdoctorContext)
@@ -153,8 +153,8 @@ class AnecdoctorGenerator(
         Construct the identifier for this prompt generator.
 
         Args:
-            params (Optional[Dict[str, Any]]): Additional behavioral parameters.
-            children (Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]]):
+            params (dict[str, Any] | None): Additional behavioral parameters.
+            children (dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None):
                 Named child component identifiers.
 
         Returns:
@@ -298,7 +298,7 @@ class AnecdoctorGenerator(
             context (AnecdoctorContext): The generation context containing conversation metadata.
 
         Returns:
-            Optional[Message]: The response from the target model,
+            Message | None: The response from the target model,
                 or None if the request failed.
         """
         # Create message from the formatted examples
@@ -343,7 +343,7 @@ class AnecdoctorGenerator(
         Format the evaluation data as few-shot examples.
 
         Args:
-            evaluation_data (List[str]): The evaluation data to format.
+            evaluation_data (list[str]): The evaluation data to format.
 
         Returns:
             str: Formatted string with examples prefixed by "### examples".
@@ -434,8 +434,8 @@ class AnecdoctorGenerator(
         Args:
             content_type (str): The type of content to generate (e.g., "viral tweet", "news article").
             language (str): The language of the content to generate (e.g., "english", "spanish").
-            evaluation_data (List[str]): The data in ClaimsReview format to use in constructing the prompt.
-            memory_labels (Optional[Dict[str, str]]): Memory labels for the generation context.
+            evaluation_data (list[str]): The data in ClaimsReview format to use in constructing the prompt.
+            memory_labels (dict[str, str] | None): Memory labels for the generation context.
             **kwargs: Additional parameters for the generation.
 
         Returns:

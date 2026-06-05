@@ -23,9 +23,9 @@ class LikertScaleEvalFiles:
     Configuration for evaluating a Likert scale scorer on a set of dataset files.
 
     Args:
-        human_labeled_datasets_files (List[str]): List of glob patterns to match CSV files.
+        human_labeled_datasets_files (list[str]): List of glob patterns to match CSV files.
         result_file (str): Name of the result file for storing evaluation results.
-        harm_category (Optional[str]): The harm category for harm scorers. Defaults to None.
+        harm_category (str | None): The harm category for harm scorers. Defaults to None.
             The harm definition path is derived as "{harm_category}.yaml".
     """
 
@@ -187,14 +187,14 @@ class SelfAskLikertScorer(FloatScaleScorer):
 
         Args:
             chat_target (PromptTarget): The chat target to use for scoring.
-            likert_scale (Optional[LikertScalePaths]): The Likert scale configuration to use for scoring.
-            custom_likert_path (Optional[Path]): Path to a custom YAML file containing the Likert scale definition.
+            likert_scale (LikertScalePaths | None): The Likert scale configuration to use for scoring.
+            custom_likert_path (Path | None): Path to a custom YAML file containing the Likert scale definition.
                 This allows users to use their own Likert scales without modifying the code, as long as
                 the YAML file follows the expected format. Only one of `likert_scale` or `custom_likert_path`
                 should be provided. Defaults to None.
-            custom_system_prompt_path (Optional[Path]): Path to a custom system prompt file. This allows users to
+            custom_system_prompt_path (Path | None): Path to a custom system prompt file. This allows users to
                 provide their own system prompt without modifying the code. Defaults to None.
-            validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator for the scorer. Defaults to None.
 
         Raises:
             ValueError: If both `likert_scale` and `custom_likert_path` are provided, if neither is provided,
@@ -439,7 +439,7 @@ class SelfAskLikertScorer(FloatScaleScorer):
 
         Args:
             message_piece (MessagePiece): The message piece containing the text to be scored.
-            objective (Optional[str]): The objective for scoring context. Currently not supported for this scorer.
+            objective (str | None): The objective for scoring context. Currently not supported for this scorer.
                 Defaults to None.
 
         Returns:

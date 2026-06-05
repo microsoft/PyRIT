@@ -103,7 +103,7 @@ def _load_initializers_from_scripts(*, script_paths: Sequence[str | pathlib.Path
     that inherit from PyRITInitializer will be automatically discovered and instantiated.
 
     Args:
-        script_paths (Sequence[Union[str, pathlib.Path]]): Sequence of file paths to Python scripts to load.
+        script_paths (Sequence[str | pathlib.Path]): Sequence of file paths to Python scripts to load.
 
     Returns:
         Sequence[PyRITInitializer]: List of PyRITInitializer instances loaded from the scripts.
@@ -240,17 +240,17 @@ async def initialize_pyrit_async(
     Args:
         memory_db_type (MemoryDatabaseType): The MemoryDatabaseType string literal which indicates the memory
             instance to use for central memory. Options include "InMemory", "SQLite", and "AzureSQL".
-        initialization_scripts (Optional[Sequence[Union[str, pathlib.Path]]]): Optional sequence of Python script paths
+        initialization_scripts (Sequence[str | pathlib.Path] | None): Optional sequence of Python script paths
             that contain PyRITInitializer classes. Each script must define either a get_initializers() function
             or an 'initializers' variable that returns/contains a list of PyRITInitializer instances.
-        initializers (Optional[Sequence[PyRITInitializer]]): Optional sequence of PyRITInitializer instances
+        initializers (Sequence[PyRITInitializer] | None): Optional sequence of PyRITInitializer instances
             to execute directly. These provide type-safe, validated configuration with clear documentation.
-        env_files (Optional[Sequence[pathlib.Path]]): Optional sequence of environment file paths to load
+        env_files (Sequence[pathlib.Path] | None): Optional sequence of environment file paths to load
             in order. If not provided, will load default .env and .env.local files from PyRIT home if they exist.
             All paths must be valid pathlib.Path objects.
         silent (bool): If True, suppresses print statements about environment file loading and
             schema migration. Defaults to False.
-        **memory_instance_kwargs (Optional[Any]): Additional keyword arguments to pass to the memory instance.
+        **memory_instance_kwargs (Any | None): Additional keyword arguments to pass to the memory instance.
 
     Raises:
         ValueError: If an unsupported memory_db_type is provided or if env_files contains non-existent files.

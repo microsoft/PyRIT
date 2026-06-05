@@ -53,7 +53,7 @@ class PDFConverter(PromptConverter):
         Initialize the converter with the specified parameters.
 
         Args:
-            prompt_template (Optional[SeedPrompt], optional): A ``SeedPrompt`` object representing a template.
+            prompt_template (SeedPrompt | None, optional): A ``SeedPrompt`` object representing a template.
             font_type (str): Font type for the PDF. Defaults to "Helvetica".
             font_size (int): Font size for the PDF. Defaults to 12.
             font_color (tuple): Font color for the PDF in RGB format. Defaults to (255, 255, 255).
@@ -61,8 +61,8 @@ class PDFConverter(PromptConverter):
             page_height (int): Height of the PDF page in mm. Defaults to 297 (A4 height).
             column_width (int): Width of each column in the PDF. Defaults to 0 (full page width).
             row_height (int): Height of each row in the PDF. Defaults to 10.
-            existing_pdf (Optional[Path], optional): Path to an existing PDF file. Defaults to None.
-            injection_items (Optional[List[Dict]], optional): A list of injection items for modifying an existing PDF.
+            existing_pdf (Path | None, optional): Path to an existing PDF file. Defaults to None.
+            injection_items (list[Dict] | None, optional): A list of injection items for modifying an existing PDF.
 
         Raises:
             ValueError: If the font color is invalid or the injection items are not provided as a list of dictionaries.

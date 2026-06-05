@@ -13,7 +13,7 @@ non-retrievable items (e.g., ``AttackTechniqueRegistry``).  For registries
 where callers retrieve stored objects directly, subclass
 ``RetrievableInstanceRegistry`` instead.
 
-For registries that store classes (Type[T]), see ``class_registries/``.
+For registries that store classes (type[T]), see ``class_registries/``.
 """
 
 from __future__ import annotations

@@ -57,15 +57,15 @@ class MathObfuscationConverter(PromptConverter):
             max_n (int):
                 Maximum integer value used for `n`. Must be greater than
                 or equal to `min_n`.
-            hint (Optional[str]):
+            hint (str | None):
                 Inline hint appended to the first equation line. If None,
                 uses the default hint explaining the variable encoding.
                 Set to empty string "" to disable hint entirely.
-            suffix (Optional[str]):
+            suffix (str | None):
                 Custom suffix to append after the obfuscated text. If None,
                 uses the default suffix prompting the model to decode.
                 Set to empty string "" to disable suffix entirely.
-            rng (Optional[random.Random]):
+            rng (random.Random | None):
                 Optional random number generator instance used to produce
                 reproducible obfuscation results. If omitted, a new
                 instance of `random.Random()` is created.

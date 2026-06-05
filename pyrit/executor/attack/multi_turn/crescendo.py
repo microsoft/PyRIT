@@ -159,13 +159,13 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
                 support editable conversation history.
             attack_adversarial_config (AttackAdversarialConfig): Configuration for the adversarial component,
                 including the adversarial chat target and optional system prompt path.
-            attack_converter_config (Optional[AttackConverterConfig]): Configuration for attack converters,
+            attack_converter_config (AttackConverterConfig | None): Configuration for attack converters,
                 including request and response converters.
-            attack_scoring_config (Optional[AttackScoringConfig]): Configuration for scoring responses.
-            prompt_normalizer (Optional[PromptNormalizer]): Normalizer for prompts.
+            attack_scoring_config (AttackScoringConfig | None): Configuration for scoring responses.
+            prompt_normalizer (PromptNormalizer | None): Normalizer for prompts.
             max_backtracks (int): Maximum number of backtracks allowed.
             max_turns (int): Maximum number of turns allowed.
-            prepended_conversation_config (Optional[PrependedConversationConfiguration]):
+            prepended_conversation_config (PrependedConversationConfiguration | None):
                 Configuration for how to process prepended conversations. Controls converter
                 application by role, message normalization, and non-chat target behavior.
 
@@ -254,7 +254,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Get the attack scoring configuration used by this strategy.
 
         Returns:
-            Optional[AttackScoringConfig]: The scoring configuration with objective scorer,
+            AttackScoringConfig | None: The scoring configuration with objective scorer,
                 auxiliary scorers, and refusal scorer.
         """
         return AttackScoringConfig(
@@ -765,7 +765,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Set the system prompt template for the adversarial chat.
 
         Args:
-            system_prompt_template_path (Union[Path, str]): Path to the system prompt template.
+            system_prompt_template_path (Path | str): Path to the system prompt template.
 
         Raises:
             ValueError: If the template doesn't contain required parameters.

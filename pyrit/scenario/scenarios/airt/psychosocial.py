@@ -102,7 +102,7 @@ class PsychosocialStrategy(ScenarioStrategy):
         Get the harm category filter for this strategy.
 
         Returns:
-            Optional[str]: The harm category to filter seeds by, or "psychosocial" as default.
+            str | None: The harm category to filter seeds by, or "psychosocial" as default.
         """
         # For specific strategies, filter by the strategy value (which matches harm_categories in data)
         # otherwise, use psychosocial as the default for ALL strategy
@@ -191,16 +191,16 @@ class Psychosocial(Scenario):
         Initialize the Psychosocial Harms Scenario.
 
         Args:
-            objectives (Optional[List[str]]): DEPRECATED - Use dataset_config in initialize_async instead.
+            objectives (list[str] | None): DEPRECATED - Use dataset_config in initialize_async instead.
                 List of objectives to test for psychosocial harms.
-            adversarial_chat (Optional[PromptTarget]): Additionally used for adversarial attacks
+            adversarial_chat (PromptTarget | None): Additionally used for adversarial attacks
                 and scoring defaults. If not provided, a default OpenAI target will be created using
                 environment variables.
-            objective_scorer (Optional[FloatScaleThresholdScorer]): Scorer to evaluate attack success.
+            objective_scorer (FloatScaleThresholdScorer | None): Scorer to evaluate attack success.
                 If not provided, creates a default scorer for evaluating psychosocial harms
                 (crisis management, harmful facilitation, etc.).
-            scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
-            subharm_configs (Optional[Dict[str, SubharmConfig]]): Dictionary mapping subharm names
+            scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
+            subharm_configs (dict[str, SubharmConfig] | None): Dictionary mapping subharm names
                 to their SubharmConfig. Each seed in the dataset specifies its subharm in
                 harm_categories[0], which is used to look up the appropriate config. Example:
                 {
@@ -305,7 +305,7 @@ class Psychosocial(Scenario):
         Extract harm category filter from scenario strategies.
 
         Returns:
-            Optional[str]: The harm category to filter by, or None if no filter is set.
+            str | None: The harm category to filter by, or None if no filter is set.
         """
         for strategy in self._scenario_strategies:
             if isinstance(strategy, PsychosocialStrategy):
@@ -324,11 +324,11 @@ class Psychosocial(Scenario):
         Filter seed groups by harm category.
 
         Args:
-            seed_groups (List[SeedAttackGroup]): List of seed attack groups to filter.
+            seed_groups (list[SeedAttackGroup]): List of seed attack groups to filter.
             harm_category (str): Harm category to filter by (e.g., 'imminent_crisis', 'psychosocial').
 
         Returns:
-            List[SeedAttackGroup]: Filtered seed groups containing only seeds with the specified harm category.
+            list[SeedAttackGroup]: Filtered seed groups containing only seeds with the specified harm category.
         """
         filtered_groups = []
         for group in seed_groups:
@@ -349,7 +349,7 @@ class Psychosocial(Scenario):
         3. Avoids facilitating harmful requests
 
         Args:
-            subharm (Optional[str]): The specific subharm category to get a scorer for
+            subharm (str | None): The specific subharm category to get a scorer for
                 (e.g., 'imminent_crisis', 'dependency'). If provided and exists in
                 subharm_configs, uses that rubric. Otherwise falls back to default.
 

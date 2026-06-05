@@ -4,7 +4,7 @@
 """
 Shared base types for PyRIT registries.
 
-This module contains types shared between class registries (which store Type[T])
+This module contains types shared between class registries (which store type[T])
 and object registries (which store T instances).
 """
 

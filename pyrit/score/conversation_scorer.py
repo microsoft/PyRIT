@@ -47,7 +47,7 @@ class ConversationScorer(Scorer, ABC):
         Args:
             message (Message): A message from the conversation to be scored.
                 The conversation ID from the first message piece is used to retrieve the full conversation from memory.
-            objective (Optional[str]): Optional objective to evaluate against.
+            objective (str | None): Optional objective to evaluate against.
 
         Returns:
             list[Score]: List of Score objects from the underlying scorer
@@ -171,7 +171,7 @@ def create_conversation_scorer(
     Args:
         scorer (Scorer): The scorer to wrap for conversation-level evaluation.
             Must be an instance of FloatScaleScorer or TrueFalseScorer.
-        validator (Optional[ScorerPromptValidator]): Optional validator override.
+        validator (ScorerPromptValidator | None): Optional validator override.
             If not provided, uses the wrapped scorer's validator.
 
     Returns:

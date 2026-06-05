@@ -20,7 +20,7 @@ class MemoryEmbedding:
         Initialize the memory embedding helper with a backing embedding model.
 
         Args:
-            embedding_model (Optional[EmbeddingSupport]): The embedding model used to
+            embedding_model (EmbeddingSupport | None): The embedding model used to
                 generate text embeddings. If not provided, a ValueError is raised.
 
         Raises:

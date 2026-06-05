@@ -102,10 +102,10 @@ class WebSocketCopilotTarget(PromptTarget):
         Args:
             websocket_base_url (str): Base URL for the Copilot WebSocket endpoint.
                 Defaults to ``wss://substrate.office.com/m365Copilot/Chathub``.
-            max_requests_per_minute (Optional[int]): Maximum number of requests per minute.
+            max_requests_per_minute (int | None): Maximum number of requests per minute.
             model_name (str): The model name. Defaults to "copilot".
             response_timeout_seconds (int): Timeout for receiving responses in seconds. Defaults to 60s.
-            authenticator (Optional[Union[CopilotAuthenticator, ManualCopilotAuthenticator]]): Authenticator
+            authenticator (CopilotAuthenticator | ManualCopilotAuthenticator | None): Authenticator
                 instance. Supports both ``CopilotAuthenticator`` and ``ManualCopilotAuthenticator``.
                 If None, a new ``CopilotAuthenticator`` instance will be created with default settings.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for

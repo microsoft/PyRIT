@@ -49,9 +49,9 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
             chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
                 CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
                 possibly via normalization-pipeline adaptation).
-            true_false_question_path (Optional[pathlib.Path]): The path to the true/false question file.
+            true_false_question_path (pathlib.Path | None): The path to the true/false question file.
                 Defaults to None, which uses the default question_answering.yaml file.
-            validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
         """
@@ -73,7 +73,7 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
 
         Args:
             message_piece (MessagePiece): The answer given by the target to be scored.
-            objective (Optional[str]): The objective, which usually contains the question and the correct answer.
+            objective (str | None): The objective, which usually contains the question and the correct answer.
                 Defaults to None.
 
         Returns:

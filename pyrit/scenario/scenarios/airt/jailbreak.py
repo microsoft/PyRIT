@@ -101,12 +101,12 @@ class Jailbreak(Scenario):
         Initialize the jailbreak scenario.
 
         Args:
-            objective_scorer (Optional[TrueFalseScorer]): Scorer for detecting successful jailbreaks
+            objective_scorer (TrueFalseScorer | None): Scorer for detecting successful jailbreaks
                 (non-refusal). If not provided, defaults to an inverted refusal scorer.
-            scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
-            num_templates (Optional[int]): Choose num_templates random jailbreaks rather than using all of them.
-            num_attempts (Optional[int]): Number of times to try each jailbreak.
-            jailbreak_names (Optional[List[str]]): List of jailbreak names from the template list under datasets.
+            scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
+            num_templates (int | None): Choose num_templates random jailbreaks rather than using all of them.
+            num_attempts (int | None): Number of times to try each jailbreak.
+            jailbreak_names (list[str] | None): List of jailbreak names from the template list under datasets.
                 to use.
             include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
                 ``include_baseline`` to ``initialize_async`` instead.
@@ -191,7 +191,7 @@ class Jailbreak(Scenario):
         Resolve seed groups from dataset configuration.
 
         Returns:
-            List[SeedAttackGroup]: List of seed attack groups with objectives to be tested.
+            list[SeedAttackGroup]: List of seed attack groups with objectives to be tested.
         """
         # Use dataset_config (guaranteed to be set by initialize_async)
         seed_groups = self._dataset_config.get_all_seed_attack_groups()
@@ -274,7 +274,7 @@ class Jailbreak(Scenario):
         This method creates an atomic attack for each retrieved jailbreak template.
 
         Returns:
-            List[AtomicAttack]: List of atomic attacks to execute, one per jailbreak template.
+            list[AtomicAttack]: List of atomic attacks to execute, one per jailbreak template.
         """
         atomic_attacks: list[AtomicAttack] = []
 

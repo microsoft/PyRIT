@@ -121,7 +121,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
         category and results are merged with deduplication by prompt ID.
 
         Returns:
-            List[Dict[str, Any]]: All fetched prompt records.
+            list[dict[str, Any]]: All fetched prompt records.
 
         Raises:
             ValueError: If no API key is provided and PROMPTINTEL_API_KEY is not set.
@@ -212,7 +212,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
             record: A single prompt record from the API.
 
         Returns:
-            Dict[str, str | int]: Metadata dictionary with string or integer values.
+            dict[str, str | int]: Metadata dictionary with string or integer values.
         """
         metadata: dict[str, str | int] = {}
 

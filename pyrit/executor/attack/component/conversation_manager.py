@@ -39,7 +39,7 @@ def mark_messages_as_simulated(messages: Sequence[Message]) -> list[Message]:
         messages (Sequence[Message]): The messages to mark as simulated.
 
     Returns:
-        List[Message]: The same messages with assistant roles converted to simulated_assistant.
+        list[Message]: The same messages with assistant roles converted to simulated_assistant.
             Modifies the messages in place and also returns them for convenience.
     """
     result = list(messages)

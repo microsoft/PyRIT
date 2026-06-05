@@ -368,7 +368,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Args:
             objective_target (PromptTarget): The target system to attack.
             context_type (type[AttackStrategyContextT]): The type of context this strategy operates on.
-            params_type (Type[AttackParamsT]): The type of parameters this strategy accepts.
+            params_type (type[AttackParamsT]): The type of parameters this strategy accepts.
                 Defaults to AttackParameters. Use AttackParameters.excluding() to create
                 a params type that rejects certain fields.
             logger (logging.Logger): Logger instance for logging events.
@@ -403,9 +403,9 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         additional params or children.
 
         Args:
-            params (Optional[Dict[str, Any]]): Additional behavioral parameters from
+            params (dict[str, Any] | None): Additional behavioral parameters from
                 the subclass.
-            children (Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]]):
+            children (dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None):
                 Named child component identifiers.
 
         Returns:
@@ -455,7 +455,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Get the parameters type for this attack strategy.
 
         Returns:
-            Type[AttackParameters]: The parameters type this strategy accepts.
+            type[AttackParameters]: The parameters type this strategy accepts.
         """
         return self._params_type
 
@@ -473,7 +473,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Get the attack scoring configuration used by this strategy.
 
         Returns:
-            Optional[AttackScoringConfig]: The scoring configuration, or None if not applicable.
+            AttackScoringConfig | None: The scoring configuration, or None if not applicable.
 
         Note:
             Subclasses that use scoring should override this method to return their
@@ -521,9 +521,9 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
 
         Args:
             objective (str): The objective of the attack.
-            next_message (Optional[Message]): Message to send to the target.
-            prepended_conversation (Optional[List[Message]]): Conversation to prepend.
-            memory_labels (Optional[Dict[str, str]]): Memory labels for the attack context.
+            next_message (Message | None): Message to send to the target.
+            prepended_conversation (list[Message] | None): Conversation to prepend.
+            memory_labels (dict[str, str] | None): Memory labels for the attack context.
             **kwargs: Additional context-specific parameters (conversation_id, system_prompt, etc.).
 
         Returns:

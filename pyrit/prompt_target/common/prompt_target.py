@@ -334,7 +334,7 @@ class PromptTarget(Identifiable):
         Args:
             params (dict[str, Any] | None): Additional behavioral parameters from
                 the subclass (e.g., temperature, top_p). Merged into the base params.
-            children (dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] | None):
+            children (dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None):
                 Named child component identifiers.
 
         Returns:

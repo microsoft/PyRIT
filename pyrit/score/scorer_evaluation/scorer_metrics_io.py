@@ -63,12 +63,12 @@ def get_all_objective_metrics(
     access like `entry.metrics.accuracy` or `entry.metrics.f1_score`.
 
     Args:
-        file_path (Optional[Path]): Path to a specific JSONL file to load.
+        file_path (Path | None): Path to a specific JSONL file to load.
             If not provided, uses the default path:
             SCORER_EVALS_PATH / "objective" / "objective_achieved_metrics.jsonl"
 
     Returns:
-        List[ScorerMetricsWithIdentity[ObjectiveScorerMetrics]]: List of metrics with scorer identity.
+        list[ScorerMetricsWithIdentity[ObjectiveScorerMetrics]]: List of metrics with scorer identity.
             Access metrics via `entry.metrics.accuracy`, `entry.metrics.f1_score`, etc.
             Access scorer info via `entry.scorer_identifier.class_name`, etc.
     """
@@ -92,7 +92,7 @@ def get_all_harm_metrics(
         harm_category (str): The harm category to load metrics for (e.g., "hate_speech", "violence").
 
     Returns:
-        List[ScorerMetricsWithIdentity[HarmScorerMetrics]]: List of metrics with scorer identity.
+        list[ScorerMetricsWithIdentity[HarmScorerMetrics]]: List of metrics with scorer identity.
             Access metrics via `entry.metrics.mean_absolute_error`, `entry.metrics.harm_category`, etc.
             Access scorer info via `entry.scorer_identifier.class_name`, etc.
     """
@@ -112,10 +112,10 @@ def _load_metrics_from_file(
 
     Args:
         file_path (Path): Path to the JSONL file to load.
-        metrics_class (Type[M]): The metrics class to instantiate (ObjectiveScorerMetrics or HarmScorerMetrics).
+        metrics_class (type[M]): The metrics class to instantiate (ObjectiveScorerMetrics or HarmScorerMetrics).
 
     Returns:
-        List[ScorerMetricsWithIdentity[M]]: List of metrics with scorer identity.
+        list[ScorerMetricsWithIdentity[M]]: List of metrics with scorer identity.
     """
     results: list[ScorerMetricsWithIdentity[M]] = []
     entries = _load_jsonl(file_path)
@@ -158,7 +158,7 @@ def find_objective_metrics_by_eval_hash(
 
     Args:
         eval_hash (str): The scorer evaluation hash to search for.
-        file_path (Optional[Path]): Path to the JSONL file to search.
+        file_path (Path | None): Path to the JSONL file to search.
             If not provided, uses the default path:
             SCORER_EVALS_PATH / "objective" / "objective_achieved_metrics.jsonl"
 
@@ -205,7 +205,7 @@ def _find_metrics_by_eval_hash(
     Args:
         file_path (Path): Path to the JSONL file to search.
         eval_hash (str): The scorer evaluation hash to search for.
-        metrics_class (Type[M]): The metrics class to instantiate.
+        metrics_class (type[M]): The metrics class to instantiate.
 
     Returns:
         The metrics instance if found, else None.

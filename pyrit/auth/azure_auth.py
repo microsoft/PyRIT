@@ -400,8 +400,8 @@ def get_speech_config(resource_id: str | None, key: str | None, region: str) -> 
     (for Entra auth scenarios).
 
     Args:
-        resource_id (Union[str, None]): The resource ID to get the token for.
-        key (Union[str, None]): The Azure Speech key
+        resource_id (str | None): The resource ID to get the token for.
+        key (str | None): The Azure Speech key
         region (str): The region to get the token for.
 
     Returns:

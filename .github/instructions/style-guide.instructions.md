@@ -90,6 +90,7 @@ def validate_input(self, data: dict) -> None:  # Should be private
   - `str | None` not `Optional[str]`
   - `int | float` not `Union[int, float]`
 - Still import `Any`, `Literal`, `TypeVar`, `Protocol`, `cast` etc. from `typing` as needed
+- **This rule applies to docstrings and comments too.** Argument type references inside docstrings (e.g. `Args:` blocks) and any comment mentioning a type should use the modern form so the docs stay consistent with the signatures.
 
 ```python
 # CORRECT

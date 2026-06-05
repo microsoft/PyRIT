@@ -130,11 +130,11 @@ class Scam(Scenario):
         Initialize the ScamScenario.
 
         Args:
-            objective_scorer (Optional[TrueFalseScorer]): Custom scorer for objective
+            objective_scorer (TrueFalseScorer | None): Custom scorer for objective
                 evaluation.
-            adversarial_chat (Optional[PromptTarget]): Chat target used to rephrase the
+            adversarial_chat (PromptTarget | None): Chat target used to rephrase the
                 objective into the role-play context (in single-turn strategies).
-            scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
+            scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
             include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
                 ``include_baseline`` to ``initialize_async`` instead.
         """
@@ -173,7 +173,7 @@ class Scam(Scenario):
         Resolve seed groups from dataset configuration.
 
         Returns:
-            List[SeedAttackGroup]: List of seed attack groups with objectives to be tested.
+            list[SeedAttackGroup]: List of seed attack groups with objectives to be tested.
         """
         # Use dataset_config (guaranteed to be set by initialize_async)
         seed_groups = self._dataset_config.get_all_seed_attack_groups()
@@ -246,7 +246,7 @@ class Scam(Scenario):
         Generate atomic attacks for each strategy.
 
         Returns:
-            List[AtomicAttack]: List of atomic attacks to execute.
+            list[AtomicAttack]: List of atomic attacks to execute.
         """
         # Resolve seed groups from deprecated objectives or dataset config
         self._seed_groups = self._resolve_seed_groups()

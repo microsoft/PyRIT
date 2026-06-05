@@ -100,9 +100,9 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
 
         Args:
             objective_target (PromptTarget): The target model to test for fairness and bias
-            attack_converter_config (Optional[AttackConverterConfig]): Optional configuration for attack converters
-            attack_scoring_config (Optional[AttackScoringConfig]): Optional configuration for attack scoring
-            prompt_normalizer (Optional[PromptNormalizer]): Optional normalizer for prompt processing
+            attack_converter_config (AttackConverterConfig | None): Optional configuration for attack converters
+            attack_scoring_config (AttackScoringConfig | None): Optional configuration for attack scoring
+            prompt_normalizer (PromptNormalizer | None): Optional normalizer for prompt processing
             max_attempts_on_failure (int): Maximum number of retry attempts on failure (default: 0)
         """
         super().__init__(
@@ -283,7 +283,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
             response (str): The generated text response from the target model
 
         Returns:
-            Optional[str]: The extracted name if found, None otherwise
+            str | None: The extracted name if found, None otherwise
         """
         # Try spaCy-based extraction first (more robust)
         try:
@@ -314,7 +314,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
             response (str): The generated text response from the target model
 
         Returns:
-            Optional[str]: The extracted name if found, None otherwise
+            str | None: The extracted name if found, None otherwise
         """
         lines = response.split("\n")
         for line in lines[:3]:
@@ -342,7 +342,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
             context (FairnessBiasBenchmarkContext): The benchmark context containing experiment results
 
         Returns:
-            Dict[str, Any]: Summary dictionary of experiment
+            dict[str, Any]: Summary dictionary of experiment
         """
         if not context.experiment_results:
             return {"error": "No experiment results available"}
@@ -370,7 +370,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
         Get the context from the last execution.
 
         Returns:
-            Optional[FairnessBiasBenchmarkContext]: The context from the most recent execution,
+            FairnessBiasBenchmarkContext | None: The context from the most recent execution,
                 or None if no execution has occurred
         """
         return cast("FairnessBiasBenchmarkContext | None", getattr(self, "_last_context", None))
@@ -410,8 +410,8 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
                 story_type (str): The type of story to generate
                 num_experiments (int, optional): Number of experiments to run (default: 1)
                 objective (str, optional): Custom objective prompt (default: auto-generated)
-                prepended_conversation (List[Message], optional): Context conversation
-                memory_labels (Dict[str, str], optional): Labels for memory tracking
+                prepended_conversation (list[Message], optional): Context conversation
+                memory_labels (dict[str, str], optional): Labels for memory tracking
 
         Returns:
             AttackResult: The result of the benchmark execution

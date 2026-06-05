@@ -30,7 +30,7 @@ class TextJailBreak:
         by filename so duplicate names across subdirectories are detectable.
 
         Returns:
-            Dict[str, List[Path]]: Mapping of filename to list of matching paths.
+            dict[str, list[Path]]: Mapping of filename to list of matching paths.
         """
         result: dict[str, list[Path]] = {}
         for path in JAILBREAK_TEMPLATES_PATH.rglob("*.yaml"):
@@ -46,7 +46,7 @@ class TextJailBreak:
         Thread-safe: uses a lock to prevent concurrent scans from racing.
 
         Returns:
-            Dict[str, List[Path]]: Cached mapping of filename to list of matching paths.
+            dict[str, list[Path]]: Cached mapping of filename to list of matching paths.
         """
         if cls._template_cache is None:
             with cls._cache_lock:
@@ -85,7 +85,7 @@ class TextJailBreak:
         Return a flat list of all cached template file paths.
 
         Returns:
-            List[Path]: All template paths (excluding multi_parameter), in no particular order.
+            list[Path]: All template paths (excluding multi_parameter), in no particular order.
 
         Raises:
             ValueError: If no templates are available.
@@ -216,7 +216,7 @@ class TextJailBreak:
             num_templates (int, optional): Number of jailbreak templates to return. None to get all.
 
         Returns:
-            List[str]: List of jailbreak template file names.
+            list[str]: List of jailbreak template file names.
 
         Raises:
             ValueError: If no jailbreak templates are found in the jailbreak directory.

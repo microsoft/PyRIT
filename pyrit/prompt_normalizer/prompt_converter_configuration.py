@@ -31,7 +31,7 @@ class PromptConverterConfiguration:
             converters: List of PromptConverters
 
         Returns:
-            List[PromptConverterConfiguration]: List of configurations, one per converter
+            list[PromptConverterConfiguration]: List of configurations, one per converter
         """
         if not converters:
             return []

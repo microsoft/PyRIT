@@ -144,7 +144,7 @@ def get_cached_results_for_technique(
             (also exposed as ``AtomicAttack.technique_eval_hash``).
         objective_target_eval_hash (str): Behavioral eval hash of the objective
             target, as produced by ``ObjectiveTargetEvaluationIdentifier.eval_hash``.
-        additional_filters (Optional[Sequence[IdentifierFilter]]): Extra
+        additional_filters (Sequence[IdentifierFilter] | None): Extra
             ``IdentifierFilter`` predicates appended to the SQL pre-filter.
             Defaults to None.
 
@@ -182,7 +182,7 @@ def _objective_target_eval_hash_for(attack_result: AttackResult) -> str | None:
             ``atomic_attack_identifier`` tree should be inspected.
 
     Returns:
-        Optional[str]: The ``ObjectiveTargetEvaluationIdentifier.eval_hash``
+        str | None: The ``ObjectiveTargetEvaluationIdentifier.eval_hash``
             computed from the persisted objective-target identifier, or
             ``None`` when the identifier tree is missing expected nodes
             (e.g. legacy rows or atomic attacks without a distinct objective

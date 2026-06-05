@@ -176,7 +176,7 @@ def get_all_harm_definitions() -> dict[str, HarmDefinition]:
     and loads each one as a HarmDefinition.
 
     Returns:
-        Dict[str, HarmDefinition]: A dictionary mapping category names to their
+        dict[str, HarmDefinition]: A dictionary mapping category names to their
             HarmDefinition objects. The keys are the category names from the YAML files
             (e.g., "violence", "hate_speech").
 

@@ -33,7 +33,7 @@ class MarkdownInjectionScorer(TrueFalseScorer):
         Initialize the MarkdownInjectionScorer.
 
         Args:
-            validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
         """
@@ -61,7 +61,7 @@ class MarkdownInjectionScorer(TrueFalseScorer):
         Args:
             message_piece (MessagePiece): The MessagePiece object containing the text to check for
                 markdown injection.
-            objective (Optional[str]): The objective to evaluate against. Defaults to None.
+            objective (str | None): The objective to evaluate against. Defaults to None.
                 Currently not used for this scorer.
 
         Returns:

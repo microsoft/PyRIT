@@ -55,7 +55,7 @@ class FloatScaleScorer(Scorer):
 
         Args:
             message (Message): The message whose first piece is inspected for status.
-            objective (Optional[str]): The objective associated with this scoring call.
+            objective (str | None): The objective associated with this scoring call.
 
         Returns:
             list[Score]: A single-element list containing a ``0.0`` ``float_scale`` score

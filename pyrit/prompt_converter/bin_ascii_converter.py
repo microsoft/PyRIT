@@ -38,9 +38,9 @@ class BinAsciiConverter(WordLevelConverter):
         Args:
             encoding_func (str): The encoding function to use. Options: "hex", "quoted-printable", "UUencode".
                 Defaults to "hex".
-            word_selection_strategy (Optional[WordSelectionStrategy]): Strategy for selecting which words to convert.
+            word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
                 If None, all words will be converted.
-            word_split_separator (Optional[str]): Separator used to split words in the input text.
+            word_split_separator (str | None): Separator used to split words in the input text.
                 Defaults to " ".
 
         Raises:

@@ -306,7 +306,7 @@ class CopilotAuthenticator(Authenticator):
         Fetch access token using Playwright browser automation.
 
         Returns:
-            Optional[str]: The bearer token if successfully retrieved, None otherwise.
+            str | None: The bearer token if successfully retrieved, None otherwise.
 
         Raises:
             RuntimeError: If Playwright is not installed or browser launch fails.
@@ -345,7 +345,7 @@ class CopilotAuthenticator(Authenticator):
         This is needed on Windows when the main loop is SelectorEventLoop (e.g., in Jupyter).
 
         Returns:
-            Optional[str]: The bearer token if successfully retrieved, None otherwise.
+            str | None: The bearer token if successfully retrieved, None otherwise.
         """
 
         def run_in_new_loop() -> str | None:
@@ -367,7 +367,7 @@ class CopilotAuthenticator(Authenticator):
         Execute the actual Playwright browser automation to fetch the access token.
 
         Returns:
-            Optional[str]: The bearer token if successfully retrieved, None otherwise.
+            str | None: The bearer token if successfully retrieved, None otherwise.
 
         Raises:
             ValueError: If the username is not set.

@@ -88,7 +88,7 @@ class PromptConverter(Identifiable):
         Initialize the prompt converter.
 
         Args:
-            converter_target (Optional[PromptTarget]): Target used by the converter, if any. When
+            converter_target (PromptTarget | None): Target used by the converter, if any. When
                 provided, it is validated against ``TARGET_REQUIREMENTS``.
         """
         super().__init__()
@@ -209,9 +209,9 @@ class PromptConverter(Identifiable):
         to set the identifier with their specific parameters.
 
         Args:
-            params (Optional[Dict[str, Any]]): Additional behavioral parameters from
+            params (dict[str, Any] | None): Additional behavioral parameters from
                 the subclass (e.g., font, encoding_func). Merged into the base params.
-            children (Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]]):
+            children (dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None):
                 Named child component identifiers (e.g., sub-converters, converter targets).
 
         Returns:

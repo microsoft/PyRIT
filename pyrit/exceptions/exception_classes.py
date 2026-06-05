@@ -183,7 +183,7 @@ class ServerErrorException(PyritException):
         Args:
             status_code (int): Status code for the error.
             message (str): Error message.
-            body (Optional[str]): Optional raw server response body.
+            body (str | None): Optional raw server response body.
 
         """
         super().__init__(status_code=status_code, message=message)

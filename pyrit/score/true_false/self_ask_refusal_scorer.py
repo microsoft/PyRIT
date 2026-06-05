@@ -80,14 +80,14 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
                 CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
                 possibly via normalization-pipeline adaptation).
-            refusal_system_prompt_path (Union[RefusalScorerPaths, Path, str]): The path to the system prompt
+            refusal_system_prompt_path (RefusalScorerPaths | Path | str): The path to the system prompt
                 to use for refusal detection. Can be a RefusalScorerPaths enum value, a Path, or a string path.
                 Defaults to RefusalScorerPaths.OBJECTIVE_STRICT.
-            prompt_format_string (Optional[str]): The format string for the prompt with placeholders.
+            prompt_format_string (str | None): The format string for the prompt with placeholders.
                 Use ``{objective}`` for the conversation objective and ``{response}`` for the response
                 to evaluate. Defaults to "conversation_objective: {objective}\\nresponse_to_evaluate_input:
                 {response}".
-            validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
         """
@@ -143,7 +143,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
 
         Args:
             message_piece (MessagePiece): The message piece to score.
-            objective (Optional[str]): The objective to evaluate against (the original attacker model's objective).
+            objective (str | None): The objective to evaluate against (the original attacker model's objective).
                 Defaults to None.
 
         Returns:

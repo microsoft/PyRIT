@@ -50,10 +50,10 @@ class SelfAskCategoryScorer(TrueFalseScorer):
 
         Args:
             chat_target (PromptTarget): The chat target to interact with.
-            content_classifier_path (Union[str, Path]): The path to the classifier YAML file.
+            content_classifier_path (str | Path): The path to the classifier YAML file.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
-            validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
         """
         super().__init__(
             score_aggregator=score_aggregator,
@@ -103,7 +103,7 @@ class SelfAskCategoryScorer(TrueFalseScorer):
         Convert the content classifier categories to a string representation to be put in a system prompt.
 
         Args:
-            categories (list[Dict[str, str]]): The categories to convert.
+            categories (list[dict[str, str]]): The categories to convert.
 
         Returns:
             str: The string representation of the categories.
@@ -134,7 +134,7 @@ class SelfAskCategoryScorer(TrueFalseScorer):
 
         Args:
             message_piece (MessagePiece): The message piece to score.
-            objective (Optional[str]): The task based on which the text should be scored
+            objective (str | None): The task based on which the text should be scored
                 (the original attacker model's objective). Defaults to None.
 
         Returns:

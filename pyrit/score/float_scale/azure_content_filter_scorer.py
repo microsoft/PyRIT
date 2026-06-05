@@ -104,18 +104,18 @@ class AzureContentFilterScorer(FloatScaleScorer):
         Initialize an Azure Content Filter Scorer.
 
         Args:
-            endpoint (Optional[str | None]): The endpoint URL for the Azure Content Safety service.
+            endpoint (str | None | None): The endpoint URL for the Azure Content Safety service.
                 Defaults to the `ENDPOINT_URI_ENVIRONMENT_VARIABLE` environment variable.
-            api_key (Optional[str | Callable[[], str | Awaitable[str]] | None]):
+            api_key (str | Callable[[], str | Awaitable[str]] | None | None):
                 The API key for accessing the Azure Content Safety service,
                 or a callable that returns an access token. Both synchronous and asynchronous
                 token providers are supported. Sync providers are automatically wrapped for
                 async compatibility. If not provided (via parameter or environment variable),
                 Entra ID authentication is used automatically.
                 Defaults to the `API_KEY_ENVIRONMENT_VARIABLE` environment variable.
-            harm_categories (Optional[list[TextCategory]]): The harm categories you want to query for as
+            harm_categories (list[TextCategory] | None): The harm categories you want to query for as
                 defined in azure.ai.contentsafety.models.TextCategory. If not provided, defaults to all categories.
-            validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator for the scorer. Defaults to None.
 
         Raises:
             ValueError: If no endpoint is provided.
@@ -257,7 +257,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
                 In case of an image, the image size must be less than 2048 x 2048 pixels,
                 but more than 50x50 pixels. The data size should not exceed 4 MB. Image must be
                 of type JPEG, PNG, GIF, BMP, TIFF, or WEBP.
-            objective (Optional[str]): The objective for scoring context. Currently not supported for this scorer.
+            objective (str | None): The objective for scoring context. Currently not supported for this scorer.
                 Defaults to None.
 
         Returns:
@@ -359,7 +359,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
 
         Args:
             message (Message): The message whose first piece is inspected for status.
-            objective (Optional[str]): The objective associated with this scoring call.
+            objective (str | None): The objective associated with this scoring call.
 
         Returns:
             list[Score]: One ``0.0`` ``float_scale`` score per configured harm category,

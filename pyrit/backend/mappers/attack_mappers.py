@@ -355,7 +355,7 @@ def _build_filename(
         value: The original value (path or URL) used to infer file extension.
 
     Returns:
-        Optional[str]: A filename like ``image_a1b2c3d4e5f6.png``, or ``None`` for text-like types.
+        str | None: A filename like ``image_a1b2c3d4e5f6.png``, or ``None`` for text-like types.
     """
     # Map data types to friendly prefixes
     prefix_map = {

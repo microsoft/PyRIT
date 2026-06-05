@@ -58,7 +58,7 @@ class EncodingDatasetConfiguration(DatasetConfiguration):
         - The original seed as a SeedPrompt
 
         Returns:
-            List[SeedAttackGroup]: All resolved seed attack groups with objectives.
+            list[SeedAttackGroup]: All resolved seed attack groups with objectives.
 
         Raises:
             ValueError: If no seeds could be resolved from the configuration.
@@ -146,12 +146,12 @@ class Encoding(Scenario):
         Initialize the Encoding Scenario.
 
         Args:
-            objective_scorer (Optional[TrueFalseScorer]): The scorer used to evaluate if the model
+            objective_scorer (TrueFalseScorer | None): The scorer used to evaluate if the model
                 successfully decoded the payload. Defaults to DecodingScorer with encoding_scenario
                 category.
-            encoding_templates (Optional[Sequence[str]]): Templates used to construct the decoding
+            encoding_templates (Sequence[str] | None): Templates used to construct the decoding
                 prompts. Defaults to AskToDecodeConverter.garak_templates.
-            scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
+            scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
             include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
                 ``include_baseline`` to ``initialize_async`` instead.
         """
@@ -205,7 +205,7 @@ class Encoding(Scenario):
         Retrieve the list of AtomicAttack instances in this scenario.
 
         Returns:
-            List[AtomicAttack]: The list of AtomicAttack instances in this scenario.
+            list[AtomicAttack]: The list of AtomicAttack instances in this scenario.
         """
         # Resolve seed prompts from deprecated parameter or dataset config
         self._resolved_seed_groups = self._resolve_seed_groups()

@@ -424,9 +424,9 @@ class PromptManager:
         Initializes the PromptManager object with the provided parameters.
 
         Args:
-            goals (List[str]):
+            goals (list[str]):
                 The list of intended goals of the attack
-            targets (List[str]):
+            targets (list[str]):
                 The list of targets of the attack
             tokenizer (Transformer Tokenizer):
                 The tokenizer used to convert text into tokens. Must have a chat template configured.
@@ -550,11 +550,11 @@ class MultiPromptAttack:
         Initializes the MultiPromptAttack object with the provided parameters.
 
         Args:
-            goals (List[str]):
+            goals (list[str]):
                 The list of intended goals of the attack
-            targets (List[str]):
+            targets (list[str]):
                 The list of targets of the attack
-            workers (List[Worker]):
+            workers (list[Worker]):
                 The list of workers used in the attack
             control_init (str, optional):
                 A string used to control the attack (default is "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !")
@@ -885,11 +885,11 @@ class ProgressiveMultiPromptAttack:
         Initializes the ProgressiveMultiPromptAttack object with the provided parameters.
 
         Args:
-            goals (List[str]):
+            goals (list[str]):
                 The list of intended goals of the attack
-            targets (List[str]):
+            targets (list[str]):
                 The list of targets of the attack
-            workers (List[Worker]):
+            workers (list[Worker]):
                 The list of workers used in the attack
             progressive_goals (bool, optional):
                 If true, goals progress over time (default is True)
@@ -897,17 +897,17 @@ class ProgressiveMultiPromptAttack:
                 If true, models progress over time (default is True)
             control_init (str, optional):
                 A string used to control the attack (default is "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !")
-            test_prefixes (List[str], optional):
+            test_prefixes (list[str], optional):
                 A list of prefixes to test the attack (default is _DEFAULT_TEST_PREFIXES).
             logfile (str, optional):
                 A file to which logs will be written
             managers (dict, optional):
                 A dictionary of manager objects, required to create the prompts.
-            test_goals (List[str], optional):
+            test_goals (list[str], optional):
                 The list of test goals of the attack
-            test_targets (List[str], optional):
+            test_targets (list[str], optional):
                 The list of test targets of the attack
-            test_workers (List[Worker], optional):
+            test_workers (list[Worker], optional):
                 The list of test workers used in the attack
         """
         if test_prefixes is None:

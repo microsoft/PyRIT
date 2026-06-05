@@ -37,7 +37,7 @@ class NormalizerRequest:
                 the request. Defaults to an empty list.
             response_converter_configurations (list[PromptConverterConfiguration]): Configurations for converting
                 the response. Defaults to an empty list.
-            conversation_id (Optional[str]): The ID of the conversation. Defaults to None.
+            conversation_id (str | None): The ID of the conversation. Defaults to None.
         """
         if response_converter_configurations is None:
             response_converter_configurations = []

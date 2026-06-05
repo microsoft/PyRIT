@@ -120,7 +120,7 @@ class _SIUODataset(_RemoteDatasetLoader):
                 HuggingFace mirror pinned to a commit SHA for reproducibility.
             source_type (Literal["public_url", "file"]): Whether source is a
                 public URL or a local file path. Defaults to 'public_url'.
-            categories (Optional[list[SIUOCategory]]): Optional filter; only rows
+            categories (list[SIUOCategory] | None): Optional filter; only rows
                 whose category matches one of these enum values are included.
                 If None, every category is included.
 

@@ -45,10 +45,10 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
         Args:
             converter_target (PromptTarget): The target for the prompt conversion.
                 Can be omitted if a default has been configured via PyRIT initialization.
-            system_prompt_template (Optional[SeedPrompt]): The system prompt template to use for the conversion.
+            system_prompt_template (SeedPrompt | None): The system prompt template to use for the conversion.
                 If not provided, a default template will be used.
-            languages (Optional[List[str]]): The list of available languages to use for translation.
-            word_selection_strategy (Optional[WordSelectionStrategy]): Strategy for selecting which words to convert.
+            languages (list[str] | None): The list of available languages to use for translation.
+            word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
                 If None, all words will be converted.
 
         Raises:

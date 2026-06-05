@@ -84,7 +84,7 @@ class _LocalDatasetLoader(SeedDatasetProvider):
         enum and set types expected by SeedDatasetMetadata before _match_filter can work.
 
         Returns:
-            Optional[SeedDatasetMetadata]: Parsed metadata if available, otherwise None.
+            SeedDatasetMetadata | None: Parsed metadata if available, otherwise None.
 
         Raises:
             Exception: If the dataset file cannot be read.

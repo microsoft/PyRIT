@@ -188,7 +188,7 @@ def construct_response_from_request(
         request (MessagePiece): Source request message piece.
         response_text_pieces (list[str]): Response values to include.
         response_type (PromptDataType): Data type for original and converted response values.
-        prompt_metadata (Optional[Dict[str, Union[str, int]]]): Additional metadata to merge.
+        prompt_metadata (dict[str, str | int] | None): Additional metadata to merge.
         error (PromptResponseError): Error classification for the response.
 
     Returns:

@@ -56,7 +56,7 @@ def config_hash(config_dict: dict[str, Any]) -> str:
     ensure determinism.
 
     Args:
-        config_dict (Dict[str, Any]): A JSON-serializable dictionary.
+        config_dict (dict[str, Any]): A JSON-serializable dictionary.
 
     Returns:
         str: Hex-encoded SHA256 hash string.
@@ -85,11 +85,11 @@ def _build_hash_dict(
     Args:
         class_name (str): The component's class name.
         class_module (str): The component's module path.
-        params (Dict[str, Any]): Behavioral parameters (non-None values only).
-        children (Dict[str, Any]): Child name to ComponentIdentifier or list of ComponentIdentifier.
+        params (dict[str, Any]): Behavioral parameters (non-None values only).
+        children (dict[str, Any]): Child name to ComponentIdentifier or list of ComponentIdentifier.
 
     Returns:
-        Dict[str, Any]: The canonical dictionary for hashing.
+        dict[str, Any]: The canonical dictionary for hashing.
     """
     hash_dict: dict[str, Any] = {
         ComponentIdentifier.KEY_CLASS_NAME: class_name,

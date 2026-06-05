@@ -159,7 +159,7 @@ class AudioTranscriptHelper:  # noqa: B024
 
         Args:
             message_piece (MessagePiece): The message piece containing the audio file path.
-            objective (Optional[str]): Optional objective description for scoring.
+            objective (str | None): Optional objective description for scoring.
 
         Returns:
             List of scores for the transcribed audio.

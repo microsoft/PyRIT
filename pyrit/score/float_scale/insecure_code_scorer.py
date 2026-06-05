@@ -33,9 +33,9 @@ class InsecureCodeScorer(FloatScaleScorer):
 
         Args:
             chat_target (PromptTarget): The target to use for scoring code security.
-            system_prompt_path (Optional[Union[str, Path]]): Path to the YAML file containing the system prompt.
+            system_prompt_path (str | Path | None): Path to the YAML file containing the system prompt.
                 Defaults to the default insecure code scoring prompt if not provided.
-            validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator for the scorer. Defaults to None.
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
 
@@ -77,7 +77,7 @@ class InsecureCodeScorer(FloatScaleScorer):
 
         Args:
             message_piece (MessagePiece): The code snippet to be scored.
-            objective (Optional[str]): Optional objective description for scoring. Defaults to None.
+            objective (str | None): Optional objective description for scoring. Defaults to None.
 
         Returns:
             list[Score]: A list containing a single Score object.

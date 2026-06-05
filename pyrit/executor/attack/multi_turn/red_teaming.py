@@ -180,7 +180,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         Get the attack scoring configuration used by this strategy.
 
         Returns:
-            Optional[AttackScoringConfig]: The scoring configuration with objective scorer
+            AttackScoringConfig | None: The scoring configuration with objective scorer
                 and use_score_as_feedback.
         """
         return AttackScoringConfig(
@@ -589,7 +589,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             context (MultiTurnAttackContext): The attack context containing the response to score.
 
         Returns:
-            Optional[Score]: The score of the response if available, otherwise None.
+            Score | None: The score of the response if available, otherwise None.
         """
         if not context.last_response:
             logger.warning("No response available in context to score")
@@ -618,7 +618,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         Set the seed prompt for the adversarial chat.
 
         Args:
-            seed_prompt (Union[str, SeedPrompt]): The seed prompt to set for the adversarial chat.
+            seed_prompt (str | SeedPrompt): The seed prompt to set for the adversarial chat.
 
         Raises:
             ValueError: If the seed prompt is not a string or SeedPrompt object.

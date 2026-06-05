@@ -610,7 +610,7 @@ class OpenAITarget(PromptTarget):
             request: The original request MessagePiece.
 
         Returns:
-            Optional[Message]: Error Message if validation fails, None otherwise.
+            Message | None: Error Message if validation fails, None otherwise.
 
         Raises:
             Various exceptions for validation failures.

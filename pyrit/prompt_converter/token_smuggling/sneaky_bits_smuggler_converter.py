@@ -33,8 +33,8 @@ class SneakyBitsSmugglerConverter(SmugglerConverter):
 
         Args:
             action (Literal["encode", "decode"]): The action to perform.
-            zero_char (Optional[str]): Character to represent binary 0 in ``sneaky_bits`` mode (default: U+2062).
-            one_char (Optional[str]): Character to represent binary 1 in ``sneaky_bits`` mode (default: U+2064).
+            zero_char (str | None): Character to represent binary 0 in ``sneaky_bits`` mode (default: U+2062).
+            one_char (str | None): Character to represent binary 1 in ``sneaky_bits`` mode (default: U+2064).
 
         Raises:
             ValueError: If an unsupported action or ``encoding_mode`` is provided.
@@ -69,7 +69,7 @@ class SneakyBitsSmugglerConverter(SmugglerConverter):
             message (str): The message to encode.
 
         Returns:
-            Tuple[str, str]: A tuple where the first element is a bit summary (empty in this implementation)
+            tuple[str, str]: A tuple where the first element is a bit summary (empty in this implementation)
             and the second element is the encoded message containing the invisible bits.
         """
         encoded_bits = []

@@ -80,7 +80,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         Delegate to the wrapped scorer.
 
         Returns:
-            Optional[PromptTarget]: The chat target from the wrapped scorer.
+            PromptTarget | None: The chat target from the wrapped scorer.
         """
         return self._scorer.get_chat_target()
 
@@ -96,9 +96,9 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
 
         Args:
             message (Message): The message to score.
-            objective (Optional[str]): The objective to evaluate against (the original attacker model's objective).
+            objective (str | None): The objective to evaluate against (the original attacker model's objective).
                 Defaults to None.
-            role_filter (Optional[ChatMessageRole]): Optional filter for message roles. Defaults to None.
+            role_filter (ChatMessageRole | None): Optional filter for message roles. Defaults to None.
 
         Returns:
             list[Score]: A list containing a single true/false Score object based on the threshold comparison.
@@ -179,7 +179,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
 
         Args:
             message_piece (MessagePiece): Unused.
-            objective (Optional[str]): Unused.
+            objective (str | None): Unused.
 
         Raises:
             NotImplementedError: Always, since composite scoring operates at the response level.
