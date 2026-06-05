@@ -192,6 +192,22 @@ from pyrit.common.net_utility import get_httpx_client
 
 Within the same package, import from the specific file to avoid circular imports.
 
+### Typing Backports (`typing_extensions`)
+
+For typing features that don't exist on every supported Python (`Self`,
+`override`, `TypeAlias`, `Unpack`, `NotRequired`, etc.), import from
+``typing_extensions`` rather than ``typing``. `typing_extensions` is already a
+transitive dependency (pulled in by ``pydantic``) and works across all supported
+Python versions, so this avoids per-version branching and ``# type: ignore`` noise.
+
+```python
+# CORRECT — works on 3.10+
+from typing_extensions import Self, override
+
+# INCORRECT — `Self` is 3.11+, `override` is 3.12+, breaks on older runtimes
+from typing import Self, override
+```
+
 ## Documentation Standards
 
 ### Docstring Format

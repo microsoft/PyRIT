@@ -9,7 +9,7 @@ from pyrit.prompt_converter import AddImageVideoConverter
 
 def is_opencv_installed():
     try:
-        import cv2  # type: ignore[ty:unresolved-import]  # noqa: F401
+        import cv2  # noqa: F401
 
         return True
     except ModuleNotFoundError:
@@ -21,9 +21,9 @@ def video_converter_sample_video(tmp_path, patch_central_database):
     video_path = str(tmp_path / "test_video.mp4")
     width, height = 640, 480
     if is_opencv_installed():
-        import cv2  # type: ignore[ty:unresolved-import]  # noqa: F401
+        import cv2
 
-        video_encoding = cv2.VideoWriter_fourcc(*"mp4v")
+        video_encoding = cv2.VideoWriter.fourcc(*"mp4v")
         output_video = cv2.VideoWriter(video_path, video_encoding, 1, (width, height))
         for _i in range(10):
             frame = np.zeros((height, width, 3), dtype=np.uint8)
@@ -37,7 +37,7 @@ def video_converter_sample_image(tmp_path):
     image_path = str(tmp_path / "test_image.png")
     image = np.zeros((100, 100, 3), dtype=np.uint8)
     if is_opencv_installed():
-        import cv2  # type: ignore[ty:unresolved-import]
+        import cv2
 
         cv2.imwrite(image_path, image)
     return image_path
