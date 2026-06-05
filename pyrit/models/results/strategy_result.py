@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING, TypeVar
 from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
-    from typing import Self
+    from typing import Self  # type: ignore[ty:unresolved-import]  # noqa: F401
 
 StrategyResultT = TypeVar("StrategyResultT", bound="StrategyResult")
 
 
-class StrategyResult(BaseModel, ABC):  # noqa: B024
+class StrategyResult(BaseModel, ABC):
     """Base class for all strategy results."""
 
     model_config = ConfigDict(
