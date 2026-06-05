@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import {
   Button,
   Text,
-  Badge,
   Tooltip,
 } from '@fluentui/react-components'
 import { AddRegular, PanelRightRegular } from '@fluentui/react-icons'
@@ -10,8 +9,9 @@ import MessageList from './MessageList'
 import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
 import ConverterPanel from './ConverterPanel'
+import TargetBadge from './TargetBadge'
 import type { PieceConversion } from './converterTypes'
-import { PIECE_TYPE_TO_DATA_TYPE } from './converterTypes'
+import { PIECE_TYPE_TO_DATA_TYPE, basenameFromValue, buildMediaUrl, dataTypeToAttachmentKind, isPathDataType } from './converterTypes'
 import LabelsBar from '../Labels/LabelsBar'
 import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi } from '../../services/api'
@@ -80,6 +80,31 @@ export default function ChatWindow({
     setAttachmentTypes(types)
     setAttachmentData(data)
   }, [])
+
+  // Auto-clear stale conversions when their original input no longer matches.
+  // For text: the typed text differs from the captured originalValue.
+  // For media: the uploaded base64 changed (or was removed).
+  useEffect(() => {
+    setPieceConversions((prev) => {
+      const entries = Object.entries(prev)
+      if (entries.length === 0) return prev
+      let changed = false
+      const next: Record<string, PieceConversion> = {}
+      for (const [key, conv] of entries) {
+        if (key === 'text') {
+          if (conv.originalValue !== chatInputText) {
+            changed = true
+            continue
+          }
+        } else if (attachmentData[key] !== conv.originalValue) {
+          changed = true
+          continue
+        }
+        next[key] = conv
+      }
+      return changed ? next : prev
+    })
+  }, [chatInputText, attachmentData])
 
   // Auto-open conversation sidebar when loading a historical attack with multiple conversations
   useEffect(() => {
@@ -176,23 +201,37 @@ export default function ChatWindow({
     // Capture all piece conversions upfront before any async work or state clears
     const conversions = { ...pieceConversions }
     const textConversion = conversions['text']
+    const isTextTextConversion = textConversion?.convertedDataType === 'text'
+    const isTextFileConversion = Boolean(textConversion) && !isTextTextConversion
 
     // Track which conversation this send belongs to (may be updated after attack creation)
     let sendConvId = activeConversationId || '__pending__'
     // Mark synchronously so the useEffect guard sees it immediately
     sendingConvIdsRef.current.add(sendConvId)
 
-    // When a text converter is active, show a preview locally
-    const hasTextConversion = textConversion != null && convertedValue != null
-    const displayContent = hasTextConversion ? convertedValue : originalValue
+    // When a text→text converter is active, show the converted text as the bubble's
+    // primary content. When a text→file converter is active, keep the typed text
+    // as content and synthesize a file attachment so the bubble shows both.
+    const displayContent = isTextTextConversion && convertedValue != null ? convertedValue : originalValue
+    const optimisticAttachments: MessageAttachment[] = [...attachments]
+    if (isTextFileConversion && textConversion) {
+      const url = buildMediaUrl(textConversion.convertedValue)
+      const kind = dataTypeToAttachmentKind(textConversion.convertedDataType)
+      optimisticAttachments.push({
+        type: kind,
+        name: basenameFromValue(textConversion.convertedValue, `output.${kind}`),
+        url,
+        mimeType: 'application/octet-stream',
+      })
+    }
 
     // Add user message with attachments for display
     const userMessage: Message = {
       role: 'user',
       content: displayContent,
       timestamp: new Date().toISOString(),
-      attachments: attachments.length > 0 ? attachments : undefined,
-      originalContent: hasTextConversion ? originalValue : undefined,
+      attachments: optimisticAttachments.length > 0 ? optimisticAttachments : undefined,
+      originalContent: isTextTextConversion ? originalValue : undefined,
     }
     setMessages(prev => [...prev, userMessage])
 
@@ -446,7 +485,7 @@ export default function ChatWindow({
     }
   }, [attackResultId])
 
-  const singleTurnLimitReached = activeTarget?.supports_multi_turn === false && messages.some(m => m.role === 'user')
+  const singleTurnLimitReached = activeTarget?.capabilities?.supports_multi_turn === false && messages.some(m => m.role === 'user')
 
   // Operator locking: if the loaded attack's operator differs from the current
   // user's operator label, the conversation should be read-only.
@@ -513,17 +552,8 @@ export default function ChatWindow({
       <div className={styles.chatArea}>
         <div className={styles.ribbon}>
           <div className={styles.conversationInfo}>
-            <Text>PyRIT Attack</Text>
             {activeTarget ? (
-              <div className={styles.targetInfo}>
-                <Text size={200}>→</Text>
-                <Tooltip content={activeTarget.target_registry_name} relationship="label">
-                  <Badge appearance="outline" size="medium">
-                    {activeTarget.target_type}
-                    {activeTarget.model_name ? ` (${activeTarget.model_name})` : ''}
-                  </Badge>
-                </Tooltip>
-              </div>
+              <TargetBadge target={activeTarget} />
             ) : (
               <Text size={200} className={styles.noTarget}>
                 No target selected
@@ -541,17 +571,22 @@ export default function ChatWindow({
                 onClick={() => setIsPanelOpen(!isPanelOpen)}
                 disabled={!attackResultId}
                 data-testid="toggle-panel-btn"
+                aria-label="Toggle conversations panel"
               />
             </Tooltip>
-            <Button
-              appearance="primary"
-              icon={<AddRegular />}
-              onClick={() => { setIsPanelOpen(false); onNewAttack() }}
-              disabled={!attackResultId}
-              data-testid="new-attack-btn"
-            >
-              New Attack
-            </Button>
+            <Tooltip content="New Attack" relationship="label">
+              <Button
+                appearance="primary"
+                icon={<AddRegular />}
+                onClick={() => { setIsPanelOpen(false); onNewAttack() }}
+                disabled={!attackResultId}
+                data-testid="new-attack-btn"
+                aria-label="New Attack"
+                className={styles.newAttackButton}
+              >
+                <span className={styles.newAttackLabel}>New Attack</span>
+              </Button>
+            </Tooltip>
           </div>
         </div>
         <MessageList
@@ -561,7 +596,7 @@ export default function ChatWindow({
           onBranchConversation={attackResultId && activeConversationId ? handleBranchConversation : undefined}
           onBranchAttack={activeTarget && activeConversationId ? handleBranchAttack : undefined}
           isLoading={isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
-          isSingleTurn={activeTarget?.supports_multi_turn === false}
+          isSingleTurn={activeTarget?.capabilities?.supports_multi_turn === false}
           isOperatorLocked={isOperatorLocked}
           isCrossTarget={isCrossTargetLocked}
           noTargetSelected={!activeTarget}
@@ -583,7 +618,7 @@ export default function ChatWindow({
           isConverterPanelOpen={isConverterPanelOpen}
           onInputChange={setChatInputText}
           onAttachmentsChange={handleAttachmentsChange}
-          convertedValue={pieceConversions['text']?.convertedValue ?? null}
+          convertedValue={pieceConversions['text']?.convertedDataType === 'text' ? (pieceConversions['text']?.convertedValue ?? null) : null}
           originalValue={pieceConversions['text']?.originalValue ?? null}
           onClearConversion={() => setPieceConversions((prev) => { const next = { ...prev }; delete next['text']; return next })}
           onConvertedValueChange={(val) => setPieceConversions((prev) => {
@@ -591,9 +626,21 @@ export default function ChatWindow({
             if (!existing) return prev
             return { ...prev, text: { ...existing, convertedValue: val } }
           })}
+          convertedFileChip={(() => {
+            const tc = pieceConversions['text']
+            if (!tc || tc.convertedDataType === 'text') return null
+            if (!isPathDataType(tc.convertedDataType)) return null
+            return {
+              name: basenameFromValue(tc.convertedValue, 'output'),
+              url: buildMediaUrl(tc.convertedValue),
+              iconKind: dataTypeToAttachmentKind(tc.convertedDataType),
+            }
+          })()}
+          onClearConvertedFileChip={() => setPieceConversions((prev) => { const next = { ...prev }; delete next['text']; return next })}
+          converterOutputDataTypes={Object.values(pieceConversions).map((c) => c.convertedDataType)}
           mediaConversions={Object.entries(pieceConversions)
             .filter(([k]) => k !== 'text')
-            .map(([k, v]) => ({ pieceType: k, convertedValue: v.convertedValue }))}
+            .map(([k, v]) => ({ pieceType: k, convertedValue: v.convertedValue, convertedDataType: v.convertedDataType }))}
           onClearMediaConversion={(pieceType) => setPieceConversions((prev) => {
             const next = { ...prev }
             delete next[pieceType]

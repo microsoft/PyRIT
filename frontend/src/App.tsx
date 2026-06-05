@@ -3,6 +3,7 @@ import { FluentProvider, webLightTheme, webDarkTheme } from '@fluentui/react-com
 import { useMsal } from '@azure/msal-react'
 import MainLayout from './components/Layout/MainLayout'
 import ChatWindow from './components/Chat/ChatWindow'
+import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
 import AttackHistory from './components/History/AttackHistory'
 import { DEFAULT_HISTORY_FILTERS } from './components/History/historyFilters'
@@ -39,7 +40,7 @@ function ConnectionBannerContainer() {
 function App() {
   const { instance } = useMsal()
   const [isDarkMode, setIsDarkMode] = useState(true)
-  const [currentView, setCurrentView] = useState<ViewName>('chat')
+  const [currentView, setCurrentView] = useState<ViewName>('home')
   const [activeTarget, setActiveTarget] = useState<TargetInstance | null>(null)
   const [globalLabels, setGlobalLabels] = useState<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
   /** True while loading a historical attack from the history view */
@@ -142,6 +143,19 @@ function App() {
   }, [])
 
   const handleOpenAttack = useCallback(async (openAttackResultId: string) => {
+    // Synchronously clear per-attack state before flipping attackResultId so
+    // ChatWindow does not fetch /messages with a conv_id that belonged to the
+    // previously loaded attack while getAttack is in flight. The branched-
+    // conversation case (activeConversationId pointing to a related conv of
+    // the old attack) would otherwise produce a 400 from the backend.
+    // Skip clearing when re-opening the same attack to avoid a redundant reload.
+    if (openAttackResultId !== attackResultId) {
+      setConversationId(null)
+      setActiveConversationId(null)
+      setAttackLabels(null)
+      setAttackTarget(null)
+      setRelatedConversationCount(0)
+    }
     setAttackResultId(openAttackResultId)
     setIsLoadingAttack(true)
     setCurrentView('chat')
@@ -158,7 +172,7 @@ function App() {
     } finally {
       setIsLoadingAttack(false)
     }
-  }, [clearAttackState])
+  }, [attackResultId, clearAttackState])
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode)
@@ -175,6 +189,15 @@ function App() {
             onToggleTheme={toggleTheme}
             isDarkMode={isDarkMode}
           >
+            {currentView === 'home' && (
+              <Home
+                labels={globalLabels}
+                onLabelsChange={setGlobalLabels}
+                activeTarget={activeTarget}
+                onNavigate={setCurrentView}
+                onOpenAttack={handleOpenAttack}
+              />
+            )}
             {currentView === 'chat' && (
               <ChatWindow
                 onNewAttack={handleNewAttack}

@@ -1,12 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import os
 from pathlib import Path
 from typing import Any, Optional, Union
 
-from pyrit.auth import get_azure_openai_auth
 from pyrit.common import apply_defaults
+from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
@@ -20,12 +19,13 @@ from pyrit.executor.attack.single_turn.skeleton_key import SkeletonKeyAttack
 from pyrit.models import SeedAttackGroup
 from pyrit.prompt_converter import TextJailbreakConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
-from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.score import (
     TrueFalseScorer,
 )
@@ -82,50 +82,20 @@ class Jailbreak(Scenario):
     VERSION: int = 1
 
     @classmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        """
-        Get the strategy enum class for this scenario.
-
-        Returns:
-            type[ScenarioStrategy]: The JailbreakStrategy enum class.
-        """
-        return JailbreakStrategy
-
-    @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        """
-        Get the default strategy used when no strategies are specified.
-
-        Returns:
-            ScenarioStrategy: JailbreakStrategy.PromptSending.
-        """
-        return JailbreakStrategy.SIMPLE
-
-    @classmethod
     def required_datasets(cls) -> list[str]:
         """Return a list of dataset names required by this scenario."""
         return ["airt_harms"]
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """
-        Return the default dataset configuration for this scenario.
-
-        Returns:
-            DatasetConfiguration: Configuration with airt_harms dataset.
-        """
-        return DatasetConfiguration(dataset_names=["airt_harms"], max_dataset_size=4)
 
     @apply_defaults
     def __init__(
         self,
         *,
         objective_scorer: Optional[TrueFalseScorer] = None,
-        include_baseline: bool = False,
         scenario_result_id: Optional[str] = None,
         num_templates: Optional[int] = None,
         num_attempts: int = 1,
         jailbreak_names: list[str] | None = None,
+        include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize the jailbreak scenario.
@@ -133,13 +103,13 @@ class Jailbreak(Scenario):
         Args:
             objective_scorer (Optional[TrueFalseScorer]): Scorer for detecting successful jailbreaks
                 (non-refusal). If not provided, defaults to an inverted refusal scorer.
-            include_baseline (bool): Whether to include a baseline atomic attack that sends all
-                objectives without modifications. Defaults to True.
             scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
             num_templates (Optional[int]): Choose num_templates random jailbreaks rather than using all of them.
             num_attempts (Optional[int]): Number of times to try each jailbreak.
             jailbreak_names (Optional[List[str]]): List of jailbreak names from the template list under datasets.
                 to use.
+            include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
+                ``include_baseline`` to ``initialize_async`` instead.
 
         Raises:
             ValueError: If both jailbreak_names and num_templates are provided, as random selection
@@ -162,7 +132,7 @@ class Jailbreak(Scenario):
 
         self._num_templates = num_templates
         self._num_attempts = num_attempts
-        self._adversarial_target: Optional[OpenAIChatTarget] = None
+        self._adversarial_target: Optional[PromptTarget] = None
 
         # Note that num_templates and jailbreak_names are mutually exclusive.
         # If self._num_templates is None, then this returns all discoverable jailbreak templates.
@@ -183,41 +153,37 @@ class Jailbreak(Scenario):
         super().__init__(
             version=self.VERSION,
             strategy_class=JailbreakStrategy,
+            default_strategy=JailbreakStrategy.SIMPLE,
+            default_dataset_config=DatasetConfiguration(dataset_names=["airt_harms"], max_dataset_size=4),
             objective_scorer=self._objective_scorer,
-            include_default_baseline=include_baseline,
             scenario_result_id=scenario_result_id,
         )
+
+        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along with
+        # the include_baseline kwarg above.
+        if include_baseline is not None:
+            print_deprecation_message(
+                old_item="Jailbreak(include_baseline=...)",
+                new_item="Jailbreak.initialize_async(include_baseline=...)",
+                removed_in="0.16.0",
+            )
+            self._legacy_include_baseline = include_baseline
 
         # Will be resolved in _get_atomic_attacks_async
         self._seed_groups: Optional[list[SeedAttackGroup]] = None
 
-    def _create_adversarial_target(self) -> OpenAIChatTarget:
-        """
-        Create a new adversarial target instance.
-
-        Returns:
-            OpenAIChatTarget: A fresh adversarial target using an unfiltered endpoint.
-        """
-        endpoint = os.getenv("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
-        return OpenAIChatTarget(
-            endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint or ""),
-            model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-            temperature=1.2,
-        )
-
-    def _get_or_create_adversarial_target(self) -> OpenAIChatTarget:
+    def _get_or_create_adversarial_target(self) -> PromptTarget:
         """
         Return the shared adversarial target, creating it on first access.
 
-        Reuses a single OpenAIChatTarget instance across all role-play attacks
+        Reuses a single PromptTarget instance across all role-play attacks
         to avoid repeated client and TLS setup.
 
         Returns:
-            OpenAIChatTarget: The shared adversarial target.
+            PromptTarget: The shared adversarial target.
         """
         if self._adversarial_target is None:
-            self._adversarial_target = self._create_adversarial_target()
+            self._adversarial_target = get_default_adversarial_target()
         return self._adversarial_target
 
     def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
@@ -324,5 +290,8 @@ class Jailbreak(Scenario):
                         strategy=strategy, jailbreak_template_name=template_name
                     )
                     atomic_attacks.append(atomic_attack)
+
+        if self._include_baseline:
+            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._seed_groups or []))
 
         return atomic_attacks

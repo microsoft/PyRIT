@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
-from typing import Literal, Optional, get_args
+from typing import Literal, get_args
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.message_normalizer import (
     ConversationContextNormalizer,
     MessageStringNormalizer,
@@ -34,16 +36,25 @@ class PrependedConversationConfig:
     # Must implement MessageStringNormalizer (e.g., TokenizerTemplateNormalizer or ConversationContextNormalizer).
     # When None and normalization is needed (e.g., for non-chat targets), a default
     # ConversationContextNormalizer is used that produces "Turn N: User/Assistant" format.
-    message_normalizer: Optional[MessageStringNormalizer] = None
+    message_normalizer: MessageStringNormalizer | None = None
 
-    # Behavior when the target is a PromptTarget but not a chat-capable PromptTarget:
-    # - "normalize_first_turn": Normalize the prepended conversation into a string and
-    #   store it in ConversationState.normalized_prepended_context. This context will be
-    #   prepended to the first message sent to the target. Uses objective_target_context_normalizer
-    #   if provided, otherwise falls back to ConversationContextNormalizer.
-    # - "raise": Raise a ValueError. Use this when prepended conversation history must be
-    #   maintained by the target (i.e., target must be a chat-capable PromptTarget).
-    non_chat_target_behavior: Literal["normalize_first_turn", "raise"] = "normalize_first_turn"
+    # Deprecated: this option will be removed in v0.16.0. Setting this field to any
+    # non-None value emits a DeprecationWarning. In this release, ``"raise"`` still
+    # raises ValueError on non-chat targets; ``"normalize_first_turn"`` and ``None``
+    # both normalize the prepended conversation into the first turn (via
+    # ``message_normalizer``; default: ConversationContextNormalizer). In v0.16.0
+    # non-chat targets will always normalize; there is no replacement for the
+    # ``"raise"`` behavior.
+    non_chat_target_behavior: Literal["normalize_first_turn", "raise"] | None = None
+
+    def __post_init__(self) -> None:
+        """Emit a DeprecationWarning when the deprecated ``non_chat_target_behavior`` field is set."""
+        if self.non_chat_target_behavior is not None:
+            print_deprecation_message(
+                old_item="PrependedConversationConfig(non_chat_target_behavior=...)",
+                new_item="PrependedConversationConfig() (non-chat targets always normalize the prepended conversation)",
+                removed_in="0.16.0",
+            )
 
     def get_message_normalizer(self) -> MessageStringNormalizer:
         """
@@ -58,30 +69,44 @@ class PrependedConversationConfig:
     @classmethod
     def default(cls) -> PrependedConversationConfig:
         """
-        Create a default configuration with converters applied to all roles.
+        Return a deprecated configuration with ``non_chat_target_behavior="raise"``.
+
+        .. deprecated::
+            ``default()`` is deprecated and will be removed in v0.16.0. Use
+            ``PrependedConversationConfig()`` instead. In this release the returned
+            configuration still raises on non-chat targets; in v0.16.0 the ``"raise"``
+            branch is removed and non-chat targets will always normalize the prepended
+            conversation into the first turn.
 
         Returns:
-            A configuration that applies converters to all prepended messages,
-            raising an error for non-chat targets.
+            A configuration equivalent to ``PrependedConversationConfig(non_chat_target_behavior="raise")``.
         """
-        return cls(
-            apply_converters_to_roles=list(get_args(ChatMessageRole)),
-            message_normalizer=None,
-            non_chat_target_behavior="raise",
+        print_deprecation_message(
+            old_item="PrependedConversationConfig.default()",
+            new_item="PrependedConversationConfig() (non-chat targets always normalize the prepended conversation)",
+            removed_in="0.16.0",
         )
+        # Suppress the __post_init__ deprecation warning so callers see exactly
+        # one warning (the one for default()) rather than two for a single deprecated call.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            return cls(non_chat_target_behavior="raise")
 
     @classmethod
     def for_non_chat_target(
         cls,
         *,
-        message_normalizer: Optional[MessageStringNormalizer] = None,
-        apply_converters_to_roles: Optional[list[ChatMessageRole]] = None,
+        message_normalizer: MessageStringNormalizer | None = None,
+        apply_converters_to_roles: list[ChatMessageRole] | None = None,
     ) -> PrependedConversationConfig:
         """
         Create a configuration for use with non-chat targets.
 
-        This configuration normalizes the prepended conversation into a text block
-        that will be prepended to the first message sent to the target.
+        .. deprecated::
+            ``for_non_chat_target()`` is deprecated and will be removed in v0.16.0.
+            Non-chat targets always normalize the prepended conversation into the
+            first turn, so this factory is equivalent to ``PrependedConversationConfig(...)``
+            with the same arguments. Use the default constructor instead.
 
         Args:
             message_normalizer: Normalizer for formatting the prepended conversation into a string.
@@ -92,10 +117,21 @@ class PrependedConversationConfig:
         Returns:
             A configuration that normalizes the prepended conversation for non-chat targets.
         """
-        return cls(
-            apply_converters_to_roles=(
-                apply_converters_to_roles if apply_converters_to_roles is not None else list(get_args(ChatMessageRole))
-            ),
-            message_normalizer=message_normalizer,
-            non_chat_target_behavior="normalize_first_turn",
+        print_deprecation_message(
+            old_item="PrependedConversationConfig.for_non_chat_target()",
+            new_item="PrependedConversationConfig() (non-chat targets always normalize the prepended conversation)",
+            removed_in="0.16.0",
         )
+        # Suppress the __post_init__ deprecation warning so callers see exactly one
+        # warning (the one for for_non_chat_target()) rather than two.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            return cls(
+                apply_converters_to_roles=(
+                    apply_converters_to_roles
+                    if apply_converters_to_roles is not None
+                    else list(get_args(ChatMessageRole))
+                ),
+                message_normalizer=message_normalizer,
+                non_chat_target_behavior="normalize_first_turn",
+            )

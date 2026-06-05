@@ -26,7 +26,6 @@ class PromptGeneratorStrategyContext(StrategyContext, ABC):
     """Base class for all prompt generator strategy contexts."""
 
 
-@dataclass
 class PromptGeneratorStrategyResult(StrategyResult, ABC):
     """Base class for all prompt generator strategy results."""
 
@@ -48,7 +47,7 @@ class _DefaultPromptGeneratorStrategyEventHandler(
         """
         self._logger = logger
 
-    async def on_event(
+    async def on_event_async(
         self, event_data: StrategyEventData[PromptGeneratorStrategyContextT, PromptGeneratorStrategyResultT]
     ) -> None:
         """

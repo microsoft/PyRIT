@@ -1,26 +1,22 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from __future__ import annotations
+"""
+Backward-compatibility shim.
 
-from abc import ABC
-from copy import deepcopy
-from dataclasses import dataclass
-from typing import TypeVar
+``StrategyResult`` now lives in ``pyrit.models.results``. Import from there (or
+from ``pyrit.models``) instead. This module re-exports the public names so
+existing ``from pyrit.models.strategy_result import ...`` imports keep working.
+"""
 
-StrategyResultT = TypeVar("StrategyResultT", bound="StrategyResult")
+from typing import Any
+
+from pyrit.models.results import strategy_result as _strategy_result
+from pyrit.models.results.strategy_result import StrategyResult, StrategyResultT
 
 
-@dataclass
-class StrategyResult(ABC):  # noqa: B024
-    """Base class for all strategy results."""
+def __getattr__(name: str) -> Any:
+    return getattr(_strategy_result, name)
 
-    def duplicate(self: StrategyResultT) -> StrategyResultT:
-        """
-        Create a deep copy of the result.
 
-        Returns:
-            StrategyResult: A deep copy of the result.
-
-        """
-        return deepcopy(self)
+__all__ = ["StrategyResult", "StrategyResultT"]

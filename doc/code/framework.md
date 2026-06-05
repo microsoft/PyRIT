@@ -50,6 +50,11 @@ Run standardized evaluation scenarios at scale across harm categories.
 Register and discover targets, scorers, and converters via class and instance registries.
 ::::
 
+::::{card} 🖨️ Output
+:link: ./output/0_output
+Render attack results, scenario results, conversations, and scores to terminal, files, or Jupyter.
+::::
+
 :::::
 
 ---
@@ -62,7 +67,7 @@ The main components of PyRIT are prompts, attacks, converters, targets, and scor
 
 ![alt text](../../assets/architecture_components.png)
 
-As much as possible, each component is a Lego-brick of functionality. Prompts from one attack can be used in another. An attack for one scenario can use multiple targets. And sometimes you completely skip components (e.g. almost every component can be a NoOp also, you can have a NoOp converter that doesn't convert, or a NoOp target that just prints the prompts).
+As much as possible, each component is a pluggable brick of functionality. Prompts from one attack can be used in another. An attack for one scenario can use multiple targets. And sometimes you completely skip components (e.g. almost every component can be a NoOp also, you can have a NoOp converter that doesn't convert, or a NoOp target that just prints the prompts).
 
 If you are contributing to PyRIT, that work will most likely land in one of these buckets and be as self-contained as possible. It isn't always this clean, but when an attack scenario doesn't quite fit (and that's okay!) it's good to brainstorm with the maintainers about how we can modify our architecture.
 
@@ -78,7 +83,7 @@ Ways to contribute: Check out our documentation on [seed datasets](./datasets/0_
 ## Attacks
 
 Attacks are responsible for putting all the other pieces together. They make use of all other components in PyRIT to execute an attack technique end-to-end.
-PyRIT supports single-turn (e.g. Many Shot Jailbreaks [@anthropic2024manyshot], Role Play, Skeleton Key [@microsoft2024skeletonkey]) and multi-turn attack strategies (e.g. Tree of Attacks [@mehrotra2023tap], Crescendo [@russinovich2024crescendo])
+PyRIT supports single-turn (e.g. Many Shot Jailbreaks [@anthropic2024manyshot], Role Play, Skeleton Key [@microsoft2024skeletonkey]) and multi-turn attack strategies (e.g. Tree of Attacks [@mehrotra2023tap], Crescendo [@russinovich2024crescendo]), and compound strategies (e.g. `SequentialAttack`) for chaining several techniques against a single objective.
 
 Ways to contribute: Check out our [attack docs](./executor/attack/0_attack.md). There are hundreds of attacks outlined in research papers. A lot of these can be captured within PyRIT. If you find an attack that doesn't fit the attack model please notify the team. Are there scenarios you can write attack modules for?
 
@@ -103,7 +108,7 @@ Ways to contribute: Check out our [target docs](./targets/0_prompt_targets.md). 
 
 The scoring engine is a component that gives feedback to the attack on what happened with the prompt. This could be as simple as "Was this prompt blocked?" or "Was our objective achieved?"
 
-Ways to contribute: Check out our [scoring docs](./scoring/0_scoring.md). Is there data you want to use to make decisions or analyze?
+Ways to contribute: Check out our [scoring docs](./scoring/0_scoring.ipynb). Is there data you want to use to make decisions or analyze?
 
 ## Memory
 

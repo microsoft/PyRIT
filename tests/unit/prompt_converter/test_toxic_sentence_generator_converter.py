@@ -8,12 +8,12 @@ from unit.mocks import get_mock_target_identifier
 
 from pyrit.models import MessagePiece, SeedPrompt
 from pyrit.prompt_converter import ToxicSentenceGeneratorConverter
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 
 
 @pytest.fixture
 def mock_target():
-    mock = MagicMock(spec=PromptChatTarget)
+    mock = MagicMock(spec=PromptTarget)
     # Create a Message response instead of PromptResponse
     response = MessagePiece(
         role="assistant",
@@ -72,7 +72,7 @@ async def test_toxic_sentence_generator_convert(mock_target, mock_template):
 async def test_toxic_sentence_generator_input_output_supported():
     """Test that the converter correctly identifies supported input/output types."""
     with patch("pyrit.prompt_converter.toxic_sentence_generator_converter.SeedPrompt.from_yaml_file"):
-        converter = ToxicSentenceGeneratorConverter(converter_target=MagicMock(spec=PromptChatTarget))
+        converter = ToxicSentenceGeneratorConverter(converter_target=MagicMock(spec=PromptTarget))
 
         assert converter.input_supported("text") is True
         assert converter.input_supported("image") is False

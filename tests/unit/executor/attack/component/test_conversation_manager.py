@@ -34,10 +34,9 @@ from pyrit.executor.attack.component.conversation_manager import (
 )
 from pyrit.executor.attack.core import AttackContext
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget, PromptTarget
+from pyrit.prompt_target import PromptTarget
 
 
 def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
@@ -78,16 +77,18 @@ def attack_identifier() -> ComponentIdentifier:
 def mock_prompt_normalizer() -> MagicMock:
     """Create a mock prompt normalizer for testing."""
     normalizer = MagicMock(spec=PromptNormalizer)
-    normalizer.convert_values = AsyncMock()
+    normalizer.convert_values_async = AsyncMock()
     return normalizer
 
 
 @pytest.fixture
 def mock_chat_target() -> MagicMock:
     """Create a mock chat target for testing."""
-    target = MagicMock(spec=PromptChatTarget)
+    target = MagicMock(spec=PromptTarget)
     target.set_system_prompt = MagicMock()
     target.get_identifier.return_value = _mock_target_id("MockChatTarget")
+    target.capabilities.supports_multi_turn = True
+    target.capabilities.supports_editable_history = True
     return target
 
 
@@ -102,6 +103,8 @@ def mock_prompt_target() -> MagicMock:
         capabilities=TargetCapabilities(supports_multi_turn=False, supports_system_prompt=False),
     )
     target.get_identifier.return_value = _mock_target_id("MockTarget")
+    target.capabilities.supports_multi_turn = False
+    target.capabilities.supports_editable_history = False
     return target
 
 
@@ -185,7 +188,7 @@ class TestMarkMessagesAsSimulated:
         result = mark_messages_as_simulated([message])
 
         assert len(result) == 1
-        assert result[0].message_pieces[0].get_role_for_storage() == "simulated_assistant"
+        assert result[0].message_pieces[0].role == "simulated_assistant"
         assert result[0].message_pieces[0].api_role == "assistant"
         assert result[0].message_pieces[0].is_simulated is True
 
@@ -197,7 +200,7 @@ class TestMarkMessagesAsSimulated:
         result = mark_messages_as_simulated([message])
 
         assert len(result) == 1
-        assert result[0].message_pieces[0].get_role_for_storage() == "user"
+        assert result[0].message_pieces[0].role == "user"
         assert result[0].message_pieces[0].is_simulated is False
 
     def test_leaves_system_unchanged(self) -> None:
@@ -208,7 +211,7 @@ class TestMarkMessagesAsSimulated:
         result = mark_messages_as_simulated([message])
 
         assert len(result) == 1
-        assert result[0].message_pieces[0].get_role_for_storage() == "system"
+        assert result[0].message_pieces[0].role == "system"
         assert result[0].message_pieces[0].is_simulated is False
 
     def test_mixed_conversation(self) -> None:
@@ -225,10 +228,10 @@ class TestMarkMessagesAsSimulated:
 
         assert len(result) == 2
         # User should be unchanged
-        assert result[0].message_pieces[0].get_role_for_storage() == "user"
+        assert result[0].message_pieces[0].role == "user"
         assert result[0].is_simulated is False
         # Assistant should be converted
-        assert result[1].message_pieces[0].get_role_for_storage() == "simulated_assistant"
+        assert result[1].message_pieces[0].role == "simulated_assistant"
         assert result[1].is_simulated is True
         assert result[1].api_role == "assistant"
 
@@ -793,7 +796,7 @@ class TestInitializeContext:
         stored = manager.get_conversation(conversation_id)
         assert len(stored) == 1
         # Should be stored as simulated_assistant but api_role is still assistant
-        assert stored[0].get_piece().get_role_for_storage() == "simulated_assistant"
+        assert stored[0].get_piece().role == "simulated_assistant"
         assert stored[0].get_piece().api_role == "assistant"
 
     async def test_normalizes_for_non_chat_target_by_default(
@@ -834,7 +837,7 @@ class TestInitializeContext:
         context.prepended_conversation = sample_conversation
         context.next_message = Message.from_prompt(prompt="Next message", role="user")
 
-        config = PrependedConversationConfig(non_chat_target_behavior="normalize_first_turn")
+        config = PrependedConversationConfig()
 
         await manager.initialize_context_async(
             context=context,
@@ -1084,10 +1087,13 @@ class TestPrependedConversationConfigSettings:
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
         context.prepended_conversation = sample_conversation
 
-        config = PrependedConversationConfig(non_chat_target_behavior="raise")
+        with pytest.warns(DeprecationWarning, match="non_chat_target_behavior"):
+            config = PrependedConversationConfig(non_chat_target_behavior="raise")
 
         with pytest.raises(
-            ValueError, match="prepended_conversation requires the objective target to be a chat-capable"
+            ValueError,
+            match="prepended_conversation requires the objective target to support multi-turn conversations"
+            " with editable history",
         ):
             await manager.initialize_context_async(
                 context=context,
@@ -1109,7 +1115,7 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
         context.next_message = None
 
-        config = PrependedConversationConfig(non_chat_target_behavior="normalize_first_turn")
+        config = PrependedConversationConfig()
 
         await manager.initialize_context_async(
             context=context,
@@ -1136,7 +1142,7 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
         context.next_message = Message.from_prompt(prompt="My question", role="user")
 
-        config = PrependedConversationConfig(non_chat_target_behavior="normalize_first_turn")
+        config = PrependedConversationConfig()
 
         await manager.initialize_context_async(
             context=context,
@@ -1164,7 +1170,7 @@ class TestPrependedConversationConfigSettings:
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
         context.prepended_conversation = sample_conversation
 
-        config = PrependedConversationConfig(non_chat_target_behavior="normalize_first_turn")
+        config = PrependedConversationConfig()
 
         state = await manager.initialize_context_async(
             context=context,
@@ -1189,7 +1195,7 @@ class TestPrependedConversationConfigSettings:
     ) -> None:
         """Test that converters are applied to all roles by default."""
         mock_normalizer = MagicMock(spec=PromptNormalizer)
-        mock_normalizer.convert_values = AsyncMock()
+        mock_normalizer.convert_values_async = AsyncMock()
         manager = ConversationManager(attack_identifier=attack_identifier, prompt_normalizer=mock_normalizer)
         conversation_id = str(uuid.uuid4())
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
@@ -1204,8 +1210,8 @@ class TestPrependedConversationConfigSettings:
             request_converters=converter_config,
         )
 
-        # convert_values should be called for each message (both user and assistant)
-        assert mock_normalizer.convert_values.call_count == 2
+        # convert_values_async should be called for each message (both user and assistant)
+        assert mock_normalizer.convert_values_async.call_count == 2
 
     async def test_apply_converters_to_roles_user_only(
         self,
@@ -1215,7 +1221,7 @@ class TestPrependedConversationConfigSettings:
     ) -> None:
         """Test that converters are applied only to user role when configured."""
         mock_normalizer = MagicMock(spec=PromptNormalizer)
-        mock_normalizer.convert_values = AsyncMock()
+        mock_normalizer.convert_values_async = AsyncMock()
         manager = ConversationManager(attack_identifier=attack_identifier, prompt_normalizer=mock_normalizer)
         conversation_id = str(uuid.uuid4())
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
@@ -1232,8 +1238,8 @@ class TestPrependedConversationConfigSettings:
             prepended_conversation_config=config,
         )
 
-        # convert_values should be called only for user message
-        assert mock_normalizer.convert_values.call_count == 1
+        # convert_values_async should be called only for user message
+        assert mock_normalizer.convert_values_async.call_count == 1
 
     async def test_apply_converters_to_roles_assistant_only(
         self,
@@ -1243,7 +1249,7 @@ class TestPrependedConversationConfigSettings:
     ) -> None:
         """Test that converters are applied only to assistant role when configured."""
         mock_normalizer = MagicMock(spec=PromptNormalizer)
-        mock_normalizer.convert_values = AsyncMock()
+        mock_normalizer.convert_values_async = AsyncMock()
         manager = ConversationManager(attack_identifier=attack_identifier, prompt_normalizer=mock_normalizer)
         conversation_id = str(uuid.uuid4())
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
@@ -1260,8 +1266,8 @@ class TestPrependedConversationConfigSettings:
             prepended_conversation_config=config,
         )
 
-        # convert_values should be called only for assistant message
-        assert mock_normalizer.convert_values.call_count == 1
+        # convert_values_async should be called only for assistant message
+        assert mock_normalizer.convert_values_async.call_count == 1
 
     async def test_apply_converters_to_roles_empty_list_skips_all(
         self,
@@ -1271,7 +1277,7 @@ class TestPrependedConversationConfigSettings:
     ) -> None:
         """Test that empty roles list means no converters applied to any role."""
         mock_normalizer = MagicMock(spec=PromptNormalizer)
-        mock_normalizer.convert_values = AsyncMock()
+        mock_normalizer.convert_values_async = AsyncMock()
         manager = ConversationManager(attack_identifier=attack_identifier, prompt_normalizer=mock_normalizer)
         conversation_id = str(uuid.uuid4())
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
@@ -1288,8 +1294,8 @@ class TestPrependedConversationConfigSettings:
             prepended_conversation_config=config,
         )
 
-        # convert_values should not be called since no roles are configured
-        mock_normalizer.convert_values.assert_not_called()
+        # convert_values_async should not be called since no roles are configured
+        mock_normalizer.convert_values_async.assert_not_called()
 
     # -------------------------------------------------------------------------
     # message_normalizer Tests
@@ -1308,7 +1314,7 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
         context.next_message = None
 
-        config = PrependedConversationConfig(non_chat_target_behavior="normalize_first_turn")
+        config = PrependedConversationConfig()
 
         await manager.initialize_context_async(
             context=context,
@@ -1342,7 +1348,6 @@ class TestPrependedConversationConfigSettings:
         context.next_message = None
 
         config = PrependedConversationConfig(
-            non_chat_target_behavior="normalize_first_turn",
             message_normalizer=mock_normalizer,
         )
 
@@ -1366,7 +1371,8 @@ class TestPrependedConversationConfigSettings:
 
     def test_default_factory_creates_raise_behavior(self) -> None:
         """Test that PrependedConversationConfig.default() creates raise behavior."""
-        config = PrependedConversationConfig.default()
+        with pytest.warns(DeprecationWarning, match="PrependedConversationConfig.default\\(\\) is deprecated"):
+            config = PrependedConversationConfig.default()
 
         assert config.non_chat_target_behavior == "raise"
         assert config.message_normalizer is None
@@ -1377,7 +1383,10 @@ class TestPrependedConversationConfigSettings:
 
     def test_for_non_chat_target_factory_creates_normalize_behavior(self) -> None:
         """Test that for_non_chat_target() creates normalize_first_turn behavior."""
-        config = PrependedConversationConfig.for_non_chat_target()
+        with pytest.warns(
+            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
+        ):
+            config = PrependedConversationConfig.for_non_chat_target()
 
         assert config.non_chat_target_behavior == "normalize_first_turn"
 
@@ -1386,14 +1395,20 @@ class TestPrependedConversationConfigSettings:
         from pyrit.message_normalizer import MessageStringNormalizer
 
         mock_normalizer = MagicMock(spec=MessageStringNormalizer)
-        config = PrependedConversationConfig.for_non_chat_target(message_normalizer=mock_normalizer)
+        with pytest.warns(
+            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
+        ):
+            config = PrependedConversationConfig.for_non_chat_target(message_normalizer=mock_normalizer)
 
         assert config.message_normalizer == mock_normalizer
         assert config.non_chat_target_behavior == "normalize_first_turn"
 
     def test_for_non_chat_target_with_custom_roles(self) -> None:
         """Test that for_non_chat_target() accepts custom apply_converters_to_roles."""
-        config = PrependedConversationConfig.for_non_chat_target(apply_converters_to_roles=["user"])
+        with pytest.warns(
+            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
+        ):
+            config = PrependedConversationConfig.for_non_chat_target(apply_converters_to_roles=["user"])
 
         assert config.apply_converters_to_roles == ["user"]
         assert config.non_chat_target_behavior == "normalize_first_turn"
@@ -1415,7 +1430,8 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
 
         # Even with raise behavior, chat targets should work
-        config = PrependedConversationConfig(non_chat_target_behavior="raise")
+        with pytest.warns(DeprecationWarning, match="non_chat_target_behavior"):
+            config = PrependedConversationConfig(non_chat_target_behavior="raise")
 
         state = await manager.initialize_context_async(
             context=context,
@@ -1634,8 +1650,8 @@ class TestAddPrependedConversationToMemory:
             request_converters=converter_config,
         )
 
-        # Verify convert_values was called
-        mock_prompt_normalizer.convert_values.assert_called()
+        # Verify convert_values_async was called
+        mock_prompt_normalizer.convert_values_async.assert_called()
 
     async def test_handles_none_messages_gracefully(
         self,

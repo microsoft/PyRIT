@@ -5,7 +5,8 @@
     "moduleResolution": "node",
     "allowImportingTsExtensions": false,
     "types": ["jest", "node", "@testing-library/jest-dom"],
-    "noEmit": true
+    "noEmit": true,
+    "ignoreDeprecations": "6.0"
   },
   "include": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/setupTests.ts", "jest.config.ts"]
 }

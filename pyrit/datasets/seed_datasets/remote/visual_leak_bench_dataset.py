@@ -6,11 +6,15 @@ import uuid
 from enum import Enum
 from typing import Literal, Optional
 
-from pyrit.common.net_utility import make_request_and_raise_if_error_async
+from typing_extensions import override
+
+from pyrit.datasets.seed_datasets.remote._image_cache import (
+    fetch_and_cache_image_async,
+)
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt, data_serializer_factory
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +51,9 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
     - **PII Leakage**: Social engineering attacks to extract sensitive personal information
       across 8 PII types (Email, DOB, Phone, Password, PIN, API Key, SSN, Credit Card)
 
-    Each example produces an image prompt (sequence=0) and a text prompt (sequence=1)
-    linked via a shared ``prompt_group_id``. The text prompt is the query sent to the model.
+    Each example produces an image prompt and a text prompt that share both a
+    ``prompt_group_id`` and ``sequence=0`` so they are delivered to the model as a single
+    multimodal user message.
 
     Note: The first call may be slow as images need to be downloaded from remote URLs.
     Subsequent calls will be faster since images are cached locally.
@@ -70,8 +75,8 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
     )
 
     tags: frozenset[str] = frozenset({"default", "safety", "privacy"})
-    size: str = "large"
-    modalities: tuple[str, ...] = ("image", "text")
+    size: str = "large"  # 2000 image-text PII / OCR-injection prompts
+    modalities: tuple[Modality, ...] = (Modality.IMAGE, Modality.TEXT)
     harm_categories: tuple[str, ...] = ("privacy", "pii_leakage", "ocr_injection")
 
     def __init__(
@@ -81,7 +86,6 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         source_type: Literal["public_url", "file"] = "public_url",
         categories: Optional[list[VisualLeakBenchCategory]] = None,
         pii_types: Optional[list[VisualLeakBenchPIIType]] = None,
-        max_examples: Optional[int] = None,
     ) -> None:
         """
         Initialize the VisualLeakBench dataset loader.
@@ -95,9 +99,6 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
                 VisualLeakBenchCategory.PII_LEAKAGE.
             pii_types: List of PII types to include (only relevant for PII_LEAKAGE category).
                 If None, all PII types are included.
-            max_examples: Maximum number of examples to fetch. Each example produces 2 prompts
-                (image + text). If None, fetches all examples. Useful for testing or quick
-                validations.
 
         Raises:
             ValueError: If any of the specified categories or pii_types are invalid.
@@ -106,7 +107,6 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         self.source_type: Literal["public_url", "file"] = source_type
         self.categories = categories
         self.pii_types = pii_types
-        self.max_examples = max_examples
 
         if categories is not None:
             self._validate_enums(categories, VisualLeakBenchCategory, "category")
@@ -115,17 +115,19 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             self._validate_enums(pii_types, VisualLeakBenchPIIType, "PII type")
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "visual_leak_bench"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    @override
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch VisualLeakBench examples and return as SeedDataset.
 
-        Each example produces a pair of prompts linked by a shared ``prompt_group_id``:
-        - sequence=0: image prompt (the adversarial image)
-        - sequence=1: text prompt (the query sent to the model)
+        Each example produces a pair of prompts that share both a ``prompt_group_id`` and
+        ``sequence=0`` so they are delivered to the model as a single multimodal user
+        message: the adversarial image and the text query.
 
         Args:
             cache: Whether to cache the fetched dataset. Defaults to True.
@@ -145,7 +147,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        prompts: list[SeedPrompt] = []
+        prompts: list[SeedUnion] = []
         failed_image_count = 0
 
         for example in examples:
@@ -166,9 +168,6 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
                 continue
 
             prompts.extend(pair)
-
-            if self.max_examples is not None and len(prompts) >= self.max_examples * 2:
-                break
 
         if failed_image_count > 0:
             logger.warning(f"[VisualLeakBench] Skipped {failed_image_count} image(s) due to fetch failures")
@@ -215,6 +214,12 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             Exception: If the image cannot be fetched.
         """
         authors = ["Youting Wang", "Yuan Tang", "Yitian Qian", "Chen Zhao"]
+        groups = [
+            "Northeastern University",
+            "Carnegie Mellon University",
+            "Boston University",
+            "New York University",
+        ]
         description = (
             "VisualLeakBench is a benchmark for evaluating Large Vision-Language Models against "
             "visual privacy attacks. It contains 1,000 adversarial images spanning OCR Injection "
@@ -244,6 +249,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             harm_categories=harm_categories,
             description=description,
             authors=authors,
+            groups=groups,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
             sequence=0,
@@ -263,9 +269,10 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             harm_categories=harm_categories,
             description=description,
             authors=authors,
+            groups=groups,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
-            sequence=1,
+            sequence=0,
             metadata={
                 "category": category_str,
                 "pii_type": pii_type_str,
@@ -320,23 +327,8 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         Returns:
             str: Local path to the saved image.
         """
-        filename = f"visual_leak_bench_{example_id}.png"
-        serializer = data_serializer_factory(category="seed-prompt-entries", data_type="image_path", extension="png")
-
-        # Return existing path if image already exists
-        results_path = (serializer._memory.results_path if serializer._memory is not None else None) or ""
-        serializer.value = str(results_path + serializer.data_sub_directory + f"/{filename}")
-        try:
-            if (
-                serializer._memory is not None
-                and serializer._memory.results_storage_io is not None
-                and await serializer._memory.results_storage_io.path_exists(serializer.value)
-            ):
-                return serializer.value
-        except Exception as e:
-            logger.warning(f"[VisualLeakBench] Failed to check if image {example_id} exists in cache: {e}")
-
-        response = await make_request_and_raise_if_error_async(endpoint_uri=image_url, method="GET")
-        await serializer.save_data(data=response.content, output_filename=filename.replace(".png", ""))
-
-        return str(serializer.value)
+        return await fetch_and_cache_image_async(
+            filename=f"visual_leak_bench_{example_id}.png",
+            image_url=image_url,
+            log_prefix="VisualLeakBench",
+        )

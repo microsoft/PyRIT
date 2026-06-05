@@ -28,12 +28,11 @@ def large_sample_image(tmp_path):
 def test_add_image_text_converter_initialization(image_text_converter_sample_image):
     converter = AddImageTextConverter(
         img_to_add=image_text_converter_sample_image,
-        font_name="helvetica.ttf",
         color=(255, 255, 255),
         font_size=20,
     )
     assert converter._img_to_add == image_text_converter_sample_image
-    assert converter._font_name == "helvetica.ttf"
+    assert converter._font_name is None
     assert converter._color == (255, 255, 255)
     assert converter._font_size_max == 20
     assert converter._font_size_min == 20
@@ -43,7 +42,7 @@ def test_add_image_text_converter_initialization(image_text_converter_sample_ima
 
 
 def test_add_image_text_converter_positional_arg_deprecation(image_text_converter_sample_image):
-    with pytest.warns(FutureWarning, match="Passing 'img_to_add' as a positional argument is deprecated"):
+    with pytest.warns(DeprecationWarning, match="Passing img_to_add as a positional argument to AddImageTextConverter"):
         converter = AddImageTextConverter(image_text_converter_sample_image)
     assert converter._img_to_add == image_text_converter_sample_image
 
@@ -59,12 +58,12 @@ def test_add_image_text_converter_too_many_positional_args_raises(image_text_con
 
 
 def test_add_image_text_converter_x_pos_y_pos_deprecation(image_text_converter_sample_image):
-    with pytest.warns(FutureWarning, match="x_pos and y_pos are deprecated"):
+    with pytest.warns(DeprecationWarning, match=r"AddImageTextConverter\(x_pos=\.\.\., y_pos=\.\.\.\)"):
         AddImageTextConverter(img_to_add=image_text_converter_sample_image, x_pos=50, y_pos=50)
 
 
 def test_add_image_text_converter_x_pos_y_pos_deprecation_default_value(image_text_converter_sample_image):
-    with pytest.warns(FutureWarning, match="x_pos and y_pos are deprecated"):
+    with pytest.warns(DeprecationWarning, match=r"AddImageTextConverter\(x_pos=\.\.\., y_pos=\.\.\.\)"):
         AddImageTextConverter(img_to_add=image_text_converter_sample_image, x_pos=10)
 
 
@@ -72,7 +71,7 @@ def test_add_image_text_converter_no_x_pos_y_pos_no_warning(image_text_converter
     import warnings
 
     with warnings.catch_warnings():
-        warnings.simplefilter("error", FutureWarning)
+        warnings.simplefilter("error", DeprecationWarning)
         AddImageTextConverter(img_to_add=image_text_converter_sample_image)
 
 
@@ -88,7 +87,7 @@ def test_add_image_text_converter_invalid_font(image_text_converter_sample_image
 
 def test_add_image_text_converter_null_img_to_add():
     with pytest.raises(ValueError):
-        AddImageTextConverter(img_to_add="", font_name="helvetica.ttf")
+        AddImageTextConverter(img_to_add="")
 
 
 def test_add_image_text_converter_fallback_to_default_font(image_text_converter_sample_image, caplog):
@@ -124,9 +123,7 @@ def test_add_image_text_converter_font_size_tuple_zero_min(image_text_converter_
 
 
 def test_image_text_converter_add_text_to_image(image_text_converter_sample_image):
-    converter = AddImageTextConverter(
-        img_to_add=image_text_converter_sample_image, font_name="helvetica.ttf", color=(255, 255, 255)
-    )
+    converter = AddImageTextConverter(img_to_add=image_text_converter_sample_image, color=(255, 255, 255))
     with Image.open(image_text_converter_sample_image) as image:
         pixels_before = list(image.get_flattened_data())
     updated_image = converter._add_text_to_image("Sample Text!")
@@ -142,10 +139,9 @@ async def test_add_image_text_converter_invalid_input_text(image_text_converter_
         assert await converter.convert_async(prompt="", input_type="text")  # type: ignore[arg-type]
 
 
-async def test_add_image_text_converter_invalid_file_path():
-    converter = AddImageTextConverter(img_to_add="nonexistent_image.png", font_name="helvetica.ttf")
+def test_add_image_text_converter_invalid_file_path():
     with pytest.raises(FileNotFoundError):
-        assert await converter.convert_async(prompt="Sample Text!", input_type="text")  # type: ignore[arg-type]
+        AddImageTextConverter(img_to_add="nonexistent_image.png")
 
 
 async def test_add_image_text_converter_convert_async(
@@ -163,6 +159,12 @@ def test_text_image_converter_input_supported(image_text_converter_sample_image)
     converter = AddImageTextConverter(img_to_add=image_text_converter_sample_image)
     assert converter.input_supported("image_path") is False
     assert converter.input_supported("text") is True
+
+
+def test_add_image_text_converter_supported_types(image_text_converter_sample_image):
+    converter = AddImageTextConverter(img_to_add=image_text_converter_sample_image)
+    assert sorted(converter.supported_input_types) == ["text"]
+    assert sorted(converter.supported_output_types) == ["image_path"]
 
 
 async def test_add_image_text_converter_equal_to_add_text_image(

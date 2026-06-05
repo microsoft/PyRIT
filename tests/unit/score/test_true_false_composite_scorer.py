@@ -6,9 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory.central_memory import CentralMemory
-from pyrit.models import MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score import (
     FloatScaleScorer,
     TrueFalseCompositeScorer,
@@ -32,7 +31,7 @@ class MockScorer(TrueFalseScorer):
         # Use the AND aggregator from the TrueFalseScoreAggregator class
         return TrueFalseScoreAggregator.AND(score_list)
 
-    def __init__(self, score_value: bool, score_rationale: str, aggregator=None):
+    def __init__(self, *, score_value: bool, score_rationale: str, aggregator=None):
         self._score_value = score_value
         self._score_rationale = score_rationale
         self.aggregator = aggregator
@@ -73,12 +72,12 @@ def mock_request(patch_central_database):
 
 @pytest.fixture
 def true_scorer(patch_central_database):
-    return MockScorer(True, "This is a true score")
+    return MockScorer(score_value=True, score_rationale="This is a true score")
 
 
 @pytest.fixture
 def false_scorer(patch_central_database):
-    return MockScorer(False, "This is a false score")
+    return MockScorer(score_value=False, score_rationale="This is a false score")
 
 
 async def test_composite_scorer_and_all_true(mock_request, true_scorer):
@@ -190,3 +189,30 @@ async def test_composite_scorer_raises_when_message_piece_id_is_none(true_scorer
 
     with pytest.raises(RuntimeError, match="Message piece must have an ID"):
         await scorer.score_async(message)
+
+
+def test_get_chat_target_returns_first_available(patch_central_database):
+    """get_chat_target returns the target from the first sub-scorer that has one."""
+    mock_target = MagicMock()
+
+    scorer_without = MockScorer(score_value=True, score_rationale="no target")
+    scorer_with = MockScorer(score_value=True, score_rationale="has target")
+    scorer_with.get_chat_target = MagicMock(return_value=mock_target)
+
+    composite = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[scorer_without, scorer_with],
+    )
+    assert composite.get_chat_target() is mock_target
+
+
+def test_get_chat_target_returns_none_when_no_sub_scorer_has_target(patch_central_database):
+    """get_chat_target returns None when no sub-scorer has a chat target."""
+    scorer1 = MockScorer(score_value=True, score_rationale="no target")
+    scorer2 = MockScorer(score_value=False, score_rationale="also no target")
+
+    composite = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.OR,
+        scorers=[scorer1, scorer2],
+    )
+    assert composite.get_chat_target() is None

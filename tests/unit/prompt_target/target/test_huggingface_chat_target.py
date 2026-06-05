@@ -99,15 +99,16 @@ def mock_create_task():
 
 
 @pytest.fixture(autouse=True)
-def mock_download_specific_files():
+def mock_download_specific_files_async():
     with patch(
-        "pyrit.prompt_target.hugging_face.hugging_face_chat_target.download_specific_files", new_callable=AsyncMock
+        "pyrit.prompt_target.hugging_face.hugging_face_chat_target.download_specific_files_async",
+        new_callable=AsyncMock,
     ) as mock:
         yield mock
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-def test_init_with_no_token_var_raises(monkeypatch):
+def test_init_with_no_token_var_raises(monkeypatch, patch_central_database):
     # Ensure the environment variable is unset
     monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
 
@@ -118,17 +119,32 @@ def test_init_with_no_token_var_raises(monkeypatch):
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-async def test_hf_initialization(patch_central_database, mock_download_specific_files):
+async def test_hf_initialization(patch_central_database, mock_download_specific_files_async):
     # Test the initialization without loading the actual models
     hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
     assert hf_chat.model_id == "test_model"
     assert not hf_chat.use_cuda
     assert hf_chat.device == "cpu"
 
-    await hf_chat.load_model_and_tokenizer()
+    await hf_chat.load_model_and_tokenizer_async()
     assert hf_chat.model is not None
     assert hf_chat.tokenizer is not None
-    mock_download_specific_files.assert_awaited_once()
+    mock_download_specific_files_async.assert_awaited_once()
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+async def test_hf_initialization_with_necessary_files(patch_central_database, mock_download_specific_files_async):
+    HuggingFaceChatTarget.disable_cache()
+    try:
+        hf_chat = HuggingFaceChatTarget(
+            model_id="test_model_necessary_files", use_cuda=False, necessary_files=["config.json", "tokenizer.json"]
+        )
+        await hf_chat.load_model_and_tokenizer_async()
+        mock_download_specific_files_async.assert_awaited_once()
+        args = mock_download_specific_files_async.await_args.args
+        assert args[1] == ["config.json", "tokenizer.json"]
+    finally:
+        HuggingFaceChatTarget.enable_cache()
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
@@ -153,7 +169,7 @@ async def test_is_model_id_valid_false():
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
 async def test_load_model_and_tokenizer():
     hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
-    await hf_chat.load_model_and_tokenizer()
+    await hf_chat.load_model_and_tokenizer_async()
     assert hf_chat.model is not None
     assert hf_chat.tokenizer is not None
 
@@ -162,7 +178,7 @@ async def test_load_model_and_tokenizer():
 @pytest.mark.usefixtures("patch_central_database")
 async def test_send_prompt_async():
     hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
-    await hf_chat.load_model_and_tokenizer()
+    await hf_chat.load_model_and_tokenizer_async()
 
     message_piece = MessagePiece(
         role="user",
@@ -184,7 +200,7 @@ async def test_send_prompt_async():
 @pytest.mark.usefixtures("patch_central_database")
 async def test_missing_chat_template_error():
     hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
-    await hf_chat.load_model_and_tokenizer()
+    await hf_chat.load_model_and_tokenizer_async()
     hf_chat.tokenizer.chat_template = None
 
     message_piece = MessagePiece(
@@ -234,7 +250,7 @@ async def test_invalid_prompt_request_validation():
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
 async def test_load_with_missing_files():
     hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False, necessary_files=["file1", "file2"])
-    await hf_chat.load_model_and_tokenizer()
+    await hf_chat.load_model_and_tokenizer_async()
 
     assert hf_chat.model is not None
     assert hf_chat.tokenizer is not None
@@ -259,7 +275,7 @@ async def test_load_model_with_model_path():
     """Test loading a model from a local directory (`model_path`)."""
     model_path = "./mock_local_model_path"
     hf_chat = HuggingFaceChatTarget(model_path=model_path, use_cuda=False, trust_remote_code=False)
-    await hf_chat.load_model_and_tokenizer()
+    await hf_chat.load_model_and_tokenizer_async()
     assert hf_chat.model is not None
     assert hf_chat.tokenizer is not None
 
@@ -269,7 +285,7 @@ async def test_load_model_with_trust_remote_code():
     """Test loading a remote model requiring `trust_remote_code=True`."""
     model_id = "mock_remote_model"
     hf_chat = HuggingFaceChatTarget(model_id=model_id, use_cuda=False, trust_remote_code=True)
-    await hf_chat.load_model_and_tokenizer()
+    await hf_chat.load_model_and_tokenizer_async()
     assert hf_chat.model is not None
     assert hf_chat.tokenizer is not None
 
@@ -301,7 +317,7 @@ async def test_optional_kwargs_args_passed_when_loading_model(mock_transformers)
         torch_dtype="float16",
         attn_implementation="flash_attention_2",
     )
-    await hf_chat.load_model_and_tokenizer()
+    await hf_chat.load_model_and_tokenizer_async()
     # Assert that from_pretrained was called with expected kwargs
     assert mock_model_from_pretrained.called
     call_args = mock_model_from_pretrained.call_args[1]  # Get the kwargs of the most recent call
@@ -371,7 +387,7 @@ async def test_generate_passes_new_params():
         do_sample=True,
         repetition_penalty=1.2,
     )
-    await target.load_model_and_tokenizer()
+    await target.load_model_and_tokenizer_async()
 
     message_piece = MessagePiece(
         role="user",
@@ -397,7 +413,7 @@ async def test_generate_omits_none_params():
         model_id="test_model",
         use_cuda=False,
     )
-    await target.load_model_and_tokenizer()
+    await target.load_model_and_tokenizer_async()
 
     message_piece = MessagePiece(
         role="user",
@@ -495,7 +511,7 @@ def test_default_params_no_warning():
 async def test_full_conversation_sent_to_chat_template():
     """Verify system and user messages from the full conversation are sent to the chat template."""
     target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
-    await target.load_model_and_tokenizer()
+    await target.load_model_and_tokenizer_async()
 
     system_piece = MessagePiece(
         role="system",
@@ -537,7 +553,7 @@ async def test_effective_generation_config_in_metadata():
         do_sample=True,
         random_seed=42,
     )
-    await target.load_model_and_tokenizer()
+    await target.load_model_and_tokenizer_async()
 
     # Mock generation_config on the model
     mock_gen_config = MagicMock()
@@ -562,3 +578,15 @@ async def test_effective_generation_config_in_metadata():
     assert effective_config["temperature"] == 1.0
     # Model defaults should also be present
     assert effective_config["eos_token_id"] == 2
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+async def test_load_model_and_tokenizer_emits_deprecation_warning_and_delegates():
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    # Await the background task to avoid warnings about pending coroutines
+    await target.load_model_and_tokenizer_task
+
+    with patch.object(target, "load_model_and_tokenizer_async", new=AsyncMock()) as mock_async:
+        with pytest.warns(DeprecationWarning, match="load_model_and_tokenizer_async"):
+            await target.load_model_and_tokenizer()
+    mock_async.assert_awaited_once()

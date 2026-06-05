@@ -26,9 +26,9 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TAPAttackScoringConfig,
     _TreeOfAttacksNode,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
     Message,
@@ -37,8 +37,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget, PromptTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, Scorer, TrueFalseScorer
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.score_utils import normalize_score_to_float
@@ -96,7 +95,7 @@ class MockNodeFactory:
         # Set up objective score
         if config.objective_score_value is not None:
             node.objective_score = MagicMock(
-                get_value=MagicMock(return_value=config.objective_score_value), score_metadata=None
+                spec=Score, get_value=MagicMock(return_value=config.objective_score_value), score_metadata=None
             )
         else:
             node.objective_score = None
@@ -152,14 +151,13 @@ class AttackBuilder:
 
     def __init__(self) -> None:
         self.objective_target: Optional[PromptTarget] = None
-        self.adversarial_chat: Optional[PromptChatTarget] = None
+        self.adversarial_chat: Optional[PromptTarget] = None
         self.objective_scorer: Optional[Scorer] = None
         self.auxiliary_scorers: list[Scorer] = []
         self.tree_params: dict[str, Any] = {}
         self.converters: Optional[AttackConverterConfig] = None
         self.successful_threshold: float = 0.8
         self.prompt_normalizer: Optional[PromptNormalizer] = None
-        self.error_score_map: dict[str, float] | None = None
         self._supports_multi_turn: bool = True
 
     def with_default_mocks(self) -> "AttackBuilder":
@@ -189,11 +187,6 @@ class AttackBuilder:
         normalizer = MagicMock(spec=PromptNormalizer)
         normalizer.send_prompt_async = AsyncMock(return_value=None)
         self.prompt_normalizer = cast("PromptNormalizer", normalizer)
-        return self
-
-    def with_error_score_map(self, error_score_map: dict[str, float] | None) -> "AttackBuilder":
-        """Set the error score mapping."""
-        self.error_score_map = error_score_map
         return self
 
     def with_supports_multi_turn(self, supports_multi_turn: bool) -> "AttackBuilder":
@@ -231,9 +224,6 @@ class AttackBuilder:
         if self.prompt_normalizer:
             kwargs["prompt_normalizer"] = self.prompt_normalizer
 
-        if self.error_score_map is not None:
-            kwargs["error_score_map"] = self.error_score_map
-
         return TreeOfAttacksWithPruningAttack(**kwargs)
 
     @staticmethod
@@ -246,22 +236,22 @@ class AttackBuilder:
         )
         target.capabilities.supports_multi_turn = supports_multi_turn
         target.capabilities.output_modalities = frozenset({frozenset(["text"])})
-        target.configuration.includes.side_effect = (
-            lambda capability: capability == CapabilityName.MULTI_TURN and supports_multi_turn
+        target.configuration.includes.side_effect = lambda capability: (
+            capability == CapabilityName.MULTI_TURN and supports_multi_turn
         )
         target.configuration.capabilities.output_modalities = frozenset({frozenset(["text"])})
         return cast("PromptTarget", target)
 
     @staticmethod
-    def _create_mock_chat() -> PromptChatTarget:
-        chat = MagicMock(spec=PromptChatTarget)
+    def _create_mock_chat() -> PromptTarget:
+        chat = MagicMock(spec=PromptTarget)
         chat.send_prompt_async = AsyncMock(return_value=None)
         chat.set_system_prompt = MagicMock()
         chat.get_identifier.return_value = ComponentIdentifier(
             class_name="MockChatTarget",
             class_module="test_module",
         )
-        return cast("PromptChatTarget", chat)
+        return cast("PromptTarget", chat)
 
     @staticmethod
     def _create_mock_scorer(name: str) -> TrueFalseScorer:
@@ -303,7 +293,6 @@ class TestHelpers:
     def create_score(value: float = 0.9) -> Score:
         """Create a mock Score object."""
         return Score(
-            id=None,
             score_type="float_scale",
             score_value=str(value),
             score_category=["test"],
@@ -342,7 +331,6 @@ class TestHelpers:
 
         # Create the float scale score that the mock scorer will return
         float_score = Score(
-            id=None,
             score_type="float_scale",
             score_value=str(original_float_value),
             score_category=["objective"],
@@ -852,12 +840,7 @@ class TestPruningLogic:
 
     def test_prune_blocked_nodes_with_score_zero(self, attack_builder, node_factory, helpers):
         """Test that nodes with 'blocked' score=0 are only pruned when width exceeded."""
-        attack = (
-            attack_builder.with_default_mocks()
-            .with_tree_params(tree_width=3)
-            .with_error_score_map({"blocked": 0.0})
-            .build()
-        )
+        attack = attack_builder.with_default_mocks().with_tree_params(tree_width=3).build()
 
         context = helpers.create_basic_context()
 
@@ -897,7 +880,6 @@ class TestPruningLogic:
 
     def test_no_pruning_when_below_width(self, basic_attack, node_factory, helpers):
         """Test that blocked nodes are not pruned when completed list is below tree_width."""
-        basic_attack._error_score_map = {"blocked": 0.0}
         basic_attack._tree_width = 5
 
         context = helpers.create_basic_context()
@@ -934,42 +916,22 @@ class TestPruningLogic:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestErrorScoreMap:
-    """Tests for error_score_map functionality in TAP attack."""
+class TestBlockedScoringDefaults:
+    """Tests verifying that TAP relies on the unified scorer defaults for blocked / error responses.
 
-    def test_default_error_score_map_maps_blocked(self, attack_builder):
-        """Test that default error_score_map (None) maps 'blocked' to 0.0."""
-        attack = attack_builder.with_default_mocks().build()
-        assert attack._error_score_map == {"blocked": 0.0}
-
-    def test_custom_error_score_map(self, attack_builder):
-        """Test that a custom error_score_map is used as-is."""
-        custom_map = {"blocked": 0.1, "unknown": 0.2}
-        attack = attack_builder.with_default_mocks().with_error_score_map(custom_map).build()
-        assert attack._error_score_map == custom_map
-
-    def test_empty_error_score_map_disables_mapping(self, attack_builder):
-        """Test that passing {} disables error score mapping entirely."""
-        attack = attack_builder.with_default_mocks().with_error_score_map({}).build()
-        assert attack._error_score_map == {}
-
-    def test_invalid_error_score_map_key_raises(self, attack_builder):
-        """Test that an invalid error type key raises ValueError."""
-        with pytest.raises(ValueError, match="not a valid PromptResponseError"):
-            attack_builder.with_default_mocks().with_error_score_map({"invalid_error": 0.0}).build()
-
-    def test_out_of_range_error_score_map_value_raises(self, attack_builder):
-        """Test that a score value outside [0, 1] raises ValueError."""
-        with pytest.raises(ValueError, match="must be between 0.0 and 1.0"):
-            attack_builder.with_default_mocks().with_error_score_map({"blocked": 1.5}).build()
+    After removing error_score_map, blocked responses produce 0.0 via the scorer's own
+    no-pieces fallback (FloatScaleScorer → Score(0.0); TrueFalseScorer → Score(False) → 0.0
+    when wrapped in FloatScaleThresholdScorer's threshold check). TAP no longer
+    short-circuits at all in `_score_response_async`.
+    """
 
     @pytest.mark.asyncio
-    async def test_score_response_assigns_score_for_mapped_error(self, attack_builder):
-        """Test that _score_response_async assigns a synthetic score for mapped errors."""
+    async def test_score_response_delegates_to_scorer_for_blocked(self, attack_builder):
+        """A blocked response goes straight through Scorer.score_response_async — no TAP-side
+        short-circuit. The scorer is responsible for producing 0.0 via its unified fallback."""
         builder = attack_builder.with_default_mocks()
         attack = builder.build()
 
-        # Create a real _TreeOfAttacksNode with error_score_map
         adversarial_chat_seed = MagicMock(spec=SeedPrompt)
         adversarial_chat_seed.render_template_value = MagicMock(return_value="seed")
         adversarial_chat_system = MagicMock(spec=SeedPrompt)
@@ -994,10 +956,8 @@ class TestErrorScoreMap:
             attack_strategy_name="TreeOfAttacksWithPruningAttack",
             desired_response_prefix="Sure, here is",
             prompt_normalizer=normalizer,
-            error_score_map={"blocked": 0.0},
         )
 
-        # Create a Message with a blocked error
         piece = MessagePiece(
             role="assistant",
             original_value="Content blocked",
@@ -1007,16 +967,32 @@ class TestErrorScoreMap:
         )
         response = Message(message_pieces=[piece])
 
-        await node._score_response_async(response=response, objective="test objective")
+        # Simulate the scorer returning 0.0 via its unified fallback
+        mock_score = Score(
+            score_value="0.0",
+            score_value_description="blocked",
+            score_type="float_scale",
+            score_rationale=(
+                "The request was blocked by the target "
+                "(score_blocked_content is False or no partial content available); returning 0.0."
+            ),
+            message_piece_id=str(piece.id),
+            scorer_class_identifier=builder.objective_scorer.get_identifier(),
+            objective="test objective",
+        )
+        with patch.object(
+            Scorer, "score_response_async", return_value={"objective_scores": [mock_score], "auxiliary_scores": []}
+        ) as mock_score_call:
+            await node._score_response_async(response=response, objective="test objective")
 
+        # No TAP-side interception — the scorer is always called.
+        mock_score_call.assert_called_once()
         assert node.objective_score is not None
         assert node.objective_score.get_value() == 0.0
-        assert node.objective_score.score_type == "float_scale"
-        assert "blocked" in node.objective_score.score_rationale
 
     @pytest.mark.asyncio
-    async def test_score_response_skips_unmapped_error(self, attack_builder):
-        """Test that unmapped errors still go through normal scoring path."""
+    async def test_score_response_delegates_to_scorer_for_unknown_error(self, attack_builder):
+        """Non-blocked errors (e.g. 'unknown') also flow through the scorer; no special-casing."""
         builder = attack_builder.with_default_mocks()
         attack = builder.build()
 
@@ -1029,7 +1005,6 @@ class TestErrorScoreMap:
         normalizer = MagicMock(spec=PromptNormalizer)
         normalizer.send_prompt_async = AsyncMock(return_value=None)
 
-        # error_score_map only maps "blocked", not "unknown"
         node = _TreeOfAttacksNode(
             objective_target=builder.objective_target,
             adversarial_chat=builder.adversarial_chat,
@@ -1045,10 +1020,8 @@ class TestErrorScoreMap:
             attack_strategy_name="TreeOfAttacksWithPruningAttack",
             desired_response_prefix="Sure, here is",
             prompt_normalizer=normalizer,
-            error_score_map={"blocked": 0.0},
         )
 
-        # Create a Message with "unknown" error (not in map)
         piece = MessagePiece(
             role="assistant",
             original_value="Unknown error",
@@ -1058,7 +1031,6 @@ class TestErrorScoreMap:
         )
         response = Message(message_pieces=[piece])
 
-        # Mock Scorer.score_response_async to return objective scores
         mock_score = Score(
             score_value="0.5",
             score_value_description="test",
@@ -1073,106 +1045,8 @@ class TestErrorScoreMap:
         ):
             await node._score_response_async(response=response, objective="test objective")
 
-        # Should have used the normal scorer, not the error map
         assert node.objective_score is not None
         assert node.objective_score.get_value() == 0.5
-
-    @pytest.mark.asyncio
-    async def test_score_response_empty_map_disables_interception(self, attack_builder):
-        """Test that empty error_score_map lets all errors through to normal scoring."""
-        builder = attack_builder.with_default_mocks()
-
-        adversarial_chat_seed = MagicMock(spec=SeedPrompt)
-        adversarial_chat_seed.render_template_value = MagicMock(return_value="seed")
-        adversarial_chat_system = MagicMock(spec=SeedPrompt)
-        adversarial_chat_system.render_template_value = MagicMock(return_value="system")
-        adversarial_chat_template = MagicMock(spec=SeedPrompt)
-        adversarial_chat_template.render_template_value = MagicMock(return_value="template")
-        normalizer = MagicMock(spec=PromptNormalizer)
-        normalizer.send_prompt_async = AsyncMock(return_value=None)
-
-        node = _TreeOfAttacksNode(
-            objective_target=builder.objective_target,
-            adversarial_chat=builder.adversarial_chat,
-            adversarial_chat_seed_prompt=adversarial_chat_seed,
-            adversarial_chat_system_seed_prompt=adversarial_chat_system,
-            adversarial_chat_prompt_template=adversarial_chat_template,
-            objective_scorer=builder.objective_scorer,
-            on_topic_scorer=None,
-            request_converters=[],
-            response_converters=[],
-            auxiliary_scorers=[],
-            attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
-            attack_strategy_name="TreeOfAttacksWithPruningAttack",
-            desired_response_prefix="Sure, here is",
-            prompt_normalizer=normalizer,
-            error_score_map={},
-        )
-
-        # Create a blocked response
-        piece = MessagePiece(
-            role="assistant",
-            original_value="Content blocked",
-            converted_value="Content blocked",
-            conversation_id=node.objective_target_conversation_id,
-            response_error="blocked",
-        )
-        response = Message(message_pieces=[piece])
-
-        mock_score = Score(
-            score_value="0.0",
-            score_value_description="test",
-            score_type="float_scale",
-            score_rationale="scorer handled it",
-            message_piece_id=str(piece.id),
-            scorer_class_identifier=builder.objective_scorer.get_identifier(),
-        )
-        with patch.object(
-            Scorer, "score_response_async", return_value={"objective_scores": [mock_score], "auxiliary_scores": []}
-        ) as mock_scorer:
-            await node._score_response_async(response=response, objective="test objective")
-
-        # Empty map → normal scoring path was called
-        mock_scorer.assert_called_once()
-
-    def test_duplicate_preserves_error_score_map(self, attack_builder):
-        """Test that duplicate() preserves the error_score_map on child nodes."""
-        builder = attack_builder.with_default_mocks()
-
-        adversarial_chat_seed = MagicMock(spec=SeedPrompt)
-        adversarial_chat_seed.render_template_value = MagicMock(return_value="seed")
-        adversarial_chat_system = MagicMock(spec=SeedPrompt)
-        adversarial_chat_system.render_template_value = MagicMock(return_value="system")
-        adversarial_chat_template = MagicMock(spec=SeedPrompt)
-        adversarial_chat_template.render_template_value = MagicMock(return_value="template")
-        normalizer = MagicMock(spec=PromptNormalizer)
-        normalizer.send_prompt_async = AsyncMock(return_value=None)
-
-        custom_map = {"blocked": 0.1, "unknown": 0.2}
-        parent = _TreeOfAttacksNode(
-            objective_target=builder.objective_target,
-            adversarial_chat=builder.adversarial_chat,
-            adversarial_chat_seed_prompt=adversarial_chat_seed,
-            adversarial_chat_system_seed_prompt=adversarial_chat_system,
-            adversarial_chat_prompt_template=adversarial_chat_template,
-            objective_scorer=builder.objective_scorer,
-            on_topic_scorer=None,
-            request_converters=[],
-            response_converters=[],
-            auxiliary_scorers=[],
-            attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
-            attack_strategy_name="TreeOfAttacksWithPruningAttack",
-            desired_response_prefix="Sure, here is",
-            prompt_normalizer=normalizer,
-            error_score_map=custom_map,
-        )
-
-        with patch.object(parent._memory, "duplicate_conversation", return_value="new_conv_id"):
-            child = parent.duplicate()
-
-        assert child._error_score_map == custom_map
-        # Verify it's a copy, not the same object
-        assert child._error_score_map is not parent._error_score_map
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -2248,9 +2122,9 @@ def test_tap_init_raises_when_objective_scorer_is_none():
     scoring_config = AttackScoringConfig(objective_scorer=None)
     with pytest.raises(ValueError, match="objective_scorer is required"):
         TreeOfAttacksWithPruningAttack(
-            objective_target=MagicMock(spec=PromptChatTarget),
+            objective_target=MagicMock(spec=PromptTarget),
             attack_adversarial_config=MagicMock(
-                target=MagicMock(spec=PromptChatTarget),
+                target=MagicMock(spec=PromptTarget),
                 system_prompt_path=None,
             ),
             attack_scoring_config=scoring_config,
@@ -2290,7 +2164,7 @@ def test_tap_attack_result_tree_visualization_getter_returns_none_when_missing()
 # Node behaviors per depth are lists (one entry per node in that depth).
 # Allowed behavior keys:
 #   score     – float objective score (node completes successfully)
-#   error     – response_error string triggering error_score_map (e.g. "blocked")
+#   error     – response_error string (e.g. "blocked"); mock assigns score 0.0
 #   fail      – True → node raises an exception (unexpected error)
 #   off_topic – True → node is off-topic after retries
 #   json_err  – True → node raises InvalidJsonException
@@ -2333,11 +2207,13 @@ def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _
         node.completed = True
         if b.error is not None:
             node.objective_score = MagicMock(
+                spec=Score,
                 get_value=MagicMock(return_value=0.0),
                 score_metadata=None,
             )
         elif b.score is not None:
             node.objective_score = MagicMock(
+                spec=Score,
                 get_value=MagicMock(return_value=b.score),
                 score_metadata=None,
             )
@@ -2362,7 +2238,7 @@ def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _
 
 
 # Scenario parameters: tree_width, tree_depth, branching_factor, threshold,
-# error_score_map, behaviors_per_depth, expected_outcome, expected_best_score, expected_max_depth
+# behaviors_per_depth, expected_outcome, expected_best_score, expected_max_depth
 
 _B = _ScenarioNodeBehavior  # shorthand
 
@@ -2373,7 +2249,6 @@ _SCENARIOS = [
         4,
         2,
         0.7,
-        {"blocked": 0.0},
         {1: [_B(score=0.9), _B(score=0.3)]},
         AttackOutcome.SUCCESS,
         0.9,
@@ -2386,7 +2261,6 @@ _SCENARIOS = [
         4,
         2,
         0.7,
-        {"blocked": 0.0},
         {
             1: [_B(error="blocked"), _B(error="blocked")],
             2: [_B(score=0.8), _B(score=0.5), _B(score=0.2), _B(score=0.1)],
@@ -2402,7 +2276,6 @@ _SCENARIOS = [
         4,
         2,
         0.7,
-        {"blocked": 0.0},
         {
             1: [_B(error="blocked"), _B(score=0.3)],
             2: [_B(score=0.75), _B(fail=True), _B(score=0.4), _B(off_topic=True)],
@@ -2418,7 +2291,6 @@ _SCENARIOS = [
         4,
         2,
         0.7,
-        {"blocked": 0.0},
         {
             1: [_B(fail=True), _B(json_err=True)],
             # No surviving nodes → all pruned after depth 1
@@ -2436,7 +2308,6 @@ _SCENARIOS = [
         3,
         2,
         0.7,
-        {"blocked": 0.0},
         {
             1: [_B(score=0.2), _B(score=0.3)],
             2: [_B(score=0.5), _B(score=0.4), _B(error="blocked"), _B(score=0.35)],
@@ -2453,7 +2324,6 @@ _SCENARIOS = [
         3,
         2,
         0.7,
-        {"blocked": 0.0},
         {
             1: [_B(score=0.2), _B(score=0.3)],
             2: [_B(score=0.4), _B(score=0.5), _B(score=0.45), _B(score=0.35)],
@@ -2465,20 +2335,19 @@ _SCENARIOS = [
         id="close_but_never_reaches_threshold",
     ),
     pytest.param(
-        # Scenario: error_score_map disabled (empty), blocked = immediate prune
+        # Scenario: all-blocked at depth 1 → scorer's unified 0.0 default → all under threshold → prune all
         2,
         4,
         2,
         0.7,
-        {},
         {
             1: [_B(error="blocked"), _B(error="blocked")],
-            # With empty error_score_map, blocked nodes don't get scores → pruned
+            # All blocked at 0.0 < threshold; no surviving children → FAILURE
         },
         AttackOutcome.FAILURE,
         0.0,
         2,
-        id="empty_error_map_blocked_prunes_all",
+        id="all_blocked_default_score_zero_prunes",
     ),
     pytest.param(
         # Scenario: off-topic nodes recovered by siblings
@@ -2486,7 +2355,6 @@ _SCENARIOS = [
         4,
         2,
         0.7,
-        {"blocked": 0.0},
         {
             1: [_B(off_topic=True), _B(score=0.4)],
             2: [_B(score=0.8), _B(score=0.5)],
@@ -2509,7 +2377,7 @@ class TestTAPScenarios:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("supports_multi_turn", [True, False], ids=["multi_turn", "single_turn"])
     @pytest.mark.parametrize(
-        "tree_width, tree_depth, branching_factor, threshold, error_score_map, "
+        "tree_width, tree_depth, branching_factor, threshold, "
         "behaviors_per_depth, expected_outcome, expected_best_score, expected_max_depth",
         _SCENARIOS,
     )
@@ -2522,7 +2390,6 @@ class TestTAPScenarios:
         tree_depth,
         branching_factor,
         threshold,
-        error_score_map,
         behaviors_per_depth,
         expected_outcome,
         expected_best_score,
@@ -2537,7 +2404,6 @@ class TestTAPScenarios:
                 branching_factor=branching_factor,
             )
             .with_threshold(threshold)
-            .with_error_score_map(error_score_map)
             .with_prompt_normalizer()
             .build()
         )

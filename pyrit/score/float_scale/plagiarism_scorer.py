@@ -7,8 +7,7 @@ from typing import Optional
 
 import numpy as np
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -33,6 +32,15 @@ class PlagiarismScorer(FloatScaleScorer):
     """
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
+
+    # Grandfathered: ``reference_text`` is part of the public positional API
+    # at the time the keyword-only Scorer contract was introduced. Opting
+    # into the legacy grace period emits a ``DeprecationWarning`` on import
+    # instead of raising ``TypeError`` so existing user code keeps working
+    # for one release cycle. TODO: drop this opt-out and insert ``*,``
+    # after ``self`` in 0.16.0 (this will be a BREAKING CHANGE for callers
+    # that still pass parameters positionally).
+    _brick_legacy_init = True
 
     def __init__(
         self,
@@ -186,7 +194,7 @@ class PlagiarismScorer(FloatScaleScorer):
                 score_metadata=None,
                 score_type="float_scale",
                 score_rationale="Score is deterministic.",
-                message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+                message_piece_id=message_piece.id,
                 scorer_class_identifier=self.get_identifier(),
             )
         ]

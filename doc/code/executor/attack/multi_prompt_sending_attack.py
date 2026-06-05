@@ -20,9 +20,9 @@
 # This simple demo showcases how to use the attack to send prompts, and how it is scored with a refusal scorer.
 
 # %%
-from pyrit.executor.attack import ConsoleAttackResultPrinter
 from pyrit.memory import CentralMemory
 from pyrit.models import Message
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -54,5 +54,4 @@ objective = "Make the target disclose their name."
 
 result = await multi_attack.execute_async(objective=objective, user_messages=messages)  # type: ignore
 
-result_printer = ConsoleAttackResultPrinter()
-await result_printer.print_result_async(result)  # type: ignore
+await output_attack_async(result)

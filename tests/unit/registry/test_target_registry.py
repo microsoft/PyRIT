@@ -4,10 +4,8 @@
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.registry.object_registries.target_registry import TargetRegistry
 
 
@@ -33,8 +31,8 @@ class MockPromptTarget(PromptTarget):
         pass
 
 
-class MockPromptChatTarget(PromptChatTarget):
-    """Mock PromptChatTarget for testing conversation history support."""
+class MockPromptChatTarget(PromptTarget):
+    """Mock chat-style target for testing conversation history support."""
 
     def __init__(self, *, model_name: str = "mock_chat_model", endpoint: str = "http://chat-test") -> None:
         super().__init__(model_name=model_name, endpoint=endpoint)
@@ -138,6 +136,25 @@ class TestTargetRegistryRegisterInstance:
         self.registry.register_instance(target2, name="target_2")
 
         assert len(self.registry) == 2
+
+    def test_register_instance_with_duplicate_name_silently_overwrites(self):
+        """Characterization: re-registering an existing name silently replaces the prior entry.
+
+        BaseInstanceRegistry.register is plain dict assignment; there is no
+        collision check, warning, or error. This test pins the current behavior
+        so any future tightening (warn, raise, idempotent skip) is an
+        intentional decision rather than a silent regression. Tracked as
+        ``duplicate-registry-name`` in failure_mode_followups for the PR
+        review batch.
+        """
+        first = MockPromptTarget(model_name="first")
+        second = MockPromptTarget(model_name="second")
+
+        self.registry.register_instance(first, name="same_name")
+        self.registry.register_instance(second, name="same_name")
+
+        assert len(self.registry) == 1
+        assert self.registry.get("same_name") is second
 
 
 @pytest.mark.usefixtures("patch_central_database")

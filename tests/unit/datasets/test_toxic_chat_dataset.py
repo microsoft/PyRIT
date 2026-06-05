@@ -41,8 +41,8 @@ class TestToxicChatDataset:
         """Test fetching ToxicChat dataset."""
         loader = _ToxicChatDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_toxic_chat_data)):
-            dataset = await loader.fetch_dataset()
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_toxic_chat_data)):
+            dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
             assert len(dataset.seeds) == 2
@@ -82,8 +82,8 @@ class TestToxicChatDataset:
         ]
         loader = _ToxicChatDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data_with_html)):
-            dataset = await loader.fetch_dataset()
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=data_with_html)):
+            dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 2
             assert dataset.seeds[0].value == "Normal question"
@@ -122,8 +122,8 @@ class TestToxicChatDataset:
         ]
         loader = _ToxicChatDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data_with_endraw)):
-            dataset = await loader.fetch_dataset()
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=data_with_endraw)):
+            dataset = await loader.fetch_dataset_async()
 
             # All entries are preserved — untrusted text is never passed through Jinja
             assert len(dataset.seeds) == 3
@@ -146,8 +146,8 @@ class TestToxicChatDataset:
         ]
         loader = _ToxicChatDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data_with_for)):
-            dataset = await loader.fetch_dataset()
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=data_with_for)):
+            dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 1
             assert dataset.seeds[0].value == "Use {% for x in items %}{{ x }}{% endfor %} in your code"
@@ -176,8 +176,8 @@ class TestToxicChatDataset:
         ]
         loader = _ToxicChatDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=data)):
-            dataset = await loader.fetch_dataset()
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=data)):
+            dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 1
             categories = dataset.seeds[0].harm_categories
@@ -201,9 +201,9 @@ class TestToxicChatDataset:
         )
 
         with patch.object(
-            loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_toxic_chat_data)
+            loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_toxic_chat_data)
         ) as mock_fetch:
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 2
             mock_fetch.assert_called_once()

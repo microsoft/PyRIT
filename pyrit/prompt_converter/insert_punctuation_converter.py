@@ -6,8 +6,7 @@ import re
 import string
 from typing import Optional
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType
+from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 
@@ -25,6 +24,11 @@ class InsertPunctuationConverter(PromptConverter):
 
     #: Common punctuation characters. Used if no punctuation list is provided.
     default_punctuation_list = [",", ".", "!", "?", ":", ";", "-"]
+
+    # Grandfathered: ``word_swap_ratio`` and ``between_words`` are part of the
+    # public positional API.
+    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
+    _brick_legacy_init = True
 
     def __init__(self, word_swap_ratio: float = 0.2, between_words: bool = True) -> None:
         """

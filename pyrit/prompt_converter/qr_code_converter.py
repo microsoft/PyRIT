@@ -5,8 +5,7 @@ from typing import Optional
 
 import segno
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType, data_serializer_factory
+from pyrit.models import ComponentIdentifier, PromptDataType, data_serializer_factory
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 
@@ -15,6 +14,10 @@ class QRCodeConverter(PromptConverter):
 
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("image_path",)
+
+    # Grandfathered: all parameters are part of the public positional API.
+    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
+    _brick_legacy_init = True
 
     def __init__(
         self,
@@ -96,7 +99,7 @@ class QRCodeConverter(PromptConverter):
         if prompt.strip() == "":
             raise ValueError("Please provide valid text value")
         # Generate random unique filename
-        img_serializer_file = str(await self._img_serializer.get_data_filename())
+        img_serializer_file = str(await self._img_serializer.get_data_filename_async())
 
         # Create QRCode object
         qr = segno.make_qr(prompt)

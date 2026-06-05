@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory.memory_exporter import MemoryExporter
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -38,6 +37,8 @@ from pyrit.models import (
     AttackResult,
     ConversationStats,
     DataTypeSerializer,
+    IdentifierFilter,
+    IdentifierType,
     Message,
     MessagePiece,
     ScenarioResult,
@@ -197,7 +198,7 @@ class MemoryInterface(abc.ABC):
                 and the condition should resolve if any element in that array matches the value.
                 Cannot be used with partial_match.
             value (str): The string value that must match the extracted JSON property value.
-            partial_match (bool): Whether to perform a substring match.
+            partial_match (bool): Whether to perform a substring match. Defaults to False.
             case_sensitive (bool): Whether the match should be case-sensitive. Defaults to False.
 
         Returns:
@@ -238,11 +239,16 @@ class MemoryInterface(abc.ABC):
         """
         Return a database-specific condition for matching a value at a given path within a JSON object.
 
+        Concrete subclasses translate this contract into their SQL dialect (e.g. SQLite's
+        ``json_extract``, Azure SQL's ``JSON_VALUE`` + ``ISJSON``). Implementations must honor
+        ``partial_match`` and ``case_sensitive`` identically so callers can rely on consistent
+        matching semantics across backends.
+
         Args:
             json_column (InstrumentedAttribute[Any]): The JSON-backed model field to query.
             property_path (str): The JSON path for the property to match.
             value (str): The string value that must match the extracted JSON property value.
-            partial_match (bool): Whether to perform a substring match.
+            partial_match (bool): Whether to perform a substring match. Defaults to False.
             case_sensitive (bool): Whether the match should be case-sensitive. Defaults to False.
 
         Returns:
@@ -261,6 +267,11 @@ class MemoryInterface(abc.ABC):
     ) -> Any:
         """
         Return a database-specific condition for matching an array at a given path within a JSON object.
+
+        Concrete subclasses translate this contract into their SQL dialect (e.g. SQLite's
+        ``json_each`` + ``json_extract``, Azure SQL's ``OPENJSON`` + ``JSON_QUERY``).
+        Implementations must honor ``match_mode`` and the empty-``array_to_match`` "absence"
+        semantics identically so callers can rely on consistent matching across backends.
 
         Args:
             json_column (InstrumentedAttribute[Any]): The JSON-backed SQLAlchemy field to query.
@@ -354,6 +365,8 @@ class MemoryInterface(abc.ABC):
         conditions: Optional[Any] = None,
         distinct: bool = False,
         join_scores: bool = False,
+        order_by: Optional[Any] = None,
+        limit: int | None = None,
     ) -> MutableSequence[Model]:
         """
         Fetch data from the specified table model with optional conditions.
@@ -363,6 +376,8 @@ class MemoryInterface(abc.ABC):
             conditions: SQLAlchemy filter conditions (Optional).
             distinct: Whether to return distinct rows only. Defaults to False.
             join_scores: Whether to join the scores table. Defaults to False.
+            order_by: SQLAlchemy order_by clause (Optional).
+            limit (int | None): Maximum number of rows to return. Defaults to None (no limit).
 
         Returns:
             List of model instances representing the rows fetched from the table.
@@ -378,6 +393,8 @@ class MemoryInterface(abc.ABC):
         distinct: bool = False,
         join_scores: bool = False,
         batch_size: int | None = None,
+        order_by: Optional[Any] = None,
+        limit: int | None = None,
     ) -> MutableSequence[Model]:
         """
         Execute queries in batches to avoid exceeding database bind variable limits.
@@ -394,6 +411,8 @@ class MemoryInterface(abc.ABC):
             join_scores: Whether to join the scores table.
             batch_size: Override for the number of values per batch.
                 Defaults to ``_MAX_BIND_VARS`` when not specified.
+            order_by: SQLAlchemy order_by clause (Optional).
+            limit (int | None): Maximum number of rows to return. Defaults to None (no limit).
 
         Returns:
             MutableSequence[Model]: Merged and deduplicated results from all batched queries.
@@ -411,6 +430,8 @@ class MemoryInterface(abc.ABC):
                 conditions=and_(*conditions) if conditions else None,
                 distinct=distinct,
                 join_scores=join_scores,
+                order_by=order_by,
+                limit=limit,
             )
 
         # Execute multiple separate queries and merge results
@@ -426,6 +447,7 @@ class MemoryInterface(abc.ABC):
                 conditions=and_(*conditions) if conditions else None,
                 distinct=distinct,
                 join_scores=join_scores,
+                order_by=order_by,
             )
 
             # Deduplicate by primary key (id)
@@ -662,6 +684,14 @@ class MemoryInterface(abc.ABC):
     def add_scores_to_memory(self, *, scores: Sequence[Score]) -> None:
         """
         Insert a list of scores into the memory storage.
+
+        Callers that produce scores for pieces flagged via
+        ``MessagePiece.not_in_memory = True`` should null out
+        ``message_piece_id`` on those scores before calling this method so the
+        score itself can still be persisted without a dangling piece linkage.
+        Persisting the score even without a piece is intentional: aggregate
+        analytics (e.g. refusal rate over a batch) still want the score row
+        even when the scored content was never a real conversation turn.
         """
         for score in scores:
             if score.message_piece_id:
@@ -672,7 +702,7 @@ class MemoryInterface(abc.ABC):
                     continue
                 # auto-link score to the original prompt id if the prompt is a duplicate
                 if pieces[0].original_prompt_id != pieces[0].id:
-                    score.message_piece_id = pieces[0].original_prompt_id
+                    score.message_piece_id = pieces[0].original_prompt_id  # type: ignore[ty:invalid-assignment]
         self._insert_entries(entries=[ScoreEntry(entry=score) for score in scores])
 
     def get_scores(
@@ -895,6 +925,9 @@ class MemoryInterface(abc.ABC):
             Exception: If there is an error retrieving the prompts,
                 an exception is logged and an empty list is returned.
         """
+        if prompt_ids is not None and len(prompt_ids) == 0:
+            return []
+
         try:
             conditions: list[Any] = []
             if attack_id:
@@ -976,7 +1009,7 @@ class MemoryInterface(abc.ABC):
 
         all_pieces: list[MessagePiece] = []
         for message in messages:
-            duplicated_message = message.duplicate_message()
+            duplicated_message = message.duplicate()
 
             for piece in duplicated_message.message_pieces:
                 piece.conversation_id = new_conversation_id
@@ -1147,9 +1180,12 @@ class MemoryInterface(abc.ABC):
             conversation_id=conversation_id, update_fields={"prompt_metadata": prompt_metadata}
         )
 
-    def _run_schema_migration(self) -> None:
+    def _run_schema_migration(self, *, silent: bool = False) -> None:
         """
         Run schema migrations to ensure the database schema is up to date.
+
+        Args:
+            silent (bool): If True, suppresses Alembic console output. Defaults to False.
 
         Raises:
             ValueError: If an invalid schema handling option is provided.
@@ -1161,8 +1197,8 @@ class MemoryInterface(abc.ABC):
         logger.info("Running schema migration.")
         if self.engine is None:
             raise RuntimeError("Engine must be initialized to run schema migrations.")
-        run_schema_migrations(engine=self.engine)
-        check_schema_migrations(engine=self.engine)
+        run_schema_migrations(engine=self.engine, silent=silent)
+        check_schema_migrations(engine=self.engine, silent=silent)
 
     def reset_database(self) -> None:
         """
@@ -1296,7 +1332,7 @@ class MemoryInterface(abc.ABC):
         if values:
             conditions.extend(field.contains(value) for value in values)
 
-    async def _serialize_seed_value(self, prompt: Seed) -> str:
+    async def _serialize_seed_value_async(self, prompt: Seed) -> str:
         """
         Serialize the value of a seed prompt based on its data type.
 
@@ -1318,13 +1354,13 @@ class MemoryInterface(abc.ABC):
         serialized_prompt_value = None
         if prompt.data_type == "image_path":
             # Read the image
-            original_img_bytes = await serializer.read_data_base64()
+            original_img_bytes = await serializer.read_data_base64_async()
             # Save the image
-            await serializer.save_b64_image(original_img_bytes)
+            await serializer.save_b64_image_async(original_img_bytes)
             serialized_prompt_value = str(serializer.value)
         elif prompt.data_type in ["audio_path", "video_path"]:
-            audio_bytes = await serializer.read_data()
-            await serializer.save_data(data=audio_bytes)
+            audio_bytes = await serializer.read_data_async()
+            await serializer.save_data_async(data=audio_bytes)
             serialized_prompt_value = str(serializer.value)
         return serialized_prompt_value or ""
 
@@ -1358,7 +1394,7 @@ class MemoryInterface(abc.ABC):
 
             # Handle serialization for image, audio & video SeedPrompts
             if prompt.data_type in ["image_path", "audio_path", "video_path"]:
-                serialized_prompt_value = await self._serialize_seed_value(prompt=prompt)
+                serialized_prompt_value = await self._serialize_seed_value_async(prompt=prompt)
                 prompt.value = serialized_prompt_value
 
             await prompt.set_sha256_value_async()
@@ -1567,6 +1603,11 @@ class MemoryInterface(abc.ABC):
         Returns:
             Path: The path to the exported file.
         """
+        print_deprecation_message(
+            old_item="MemoryInterface.export_conversations",
+            new_item="the pyrit.output module or direct serialization of get_message_pieces results",
+            removed_in="0.15.0",
+        )
         data = self.get_message_pieces(
             attack_id=attack_id,
             conversation_id=conversation_id,
@@ -1681,12 +1722,14 @@ class MemoryInterface(abc.ABC):
         outcome: Optional[str] = None,
         attack_class: Optional[str] = None,
         attack_classes: Optional[Sequence[str]] = None,
+        atomic_attack_eval_hashes: Optional[Sequence[str]] = None,
         converter_classes: Optional[Sequence[str]] = None,
         converter_classes_match: Literal["all", "any"] = "all",
         has_converters: Optional[bool] = None,
         targeted_harm_categories: Optional[Sequence[str]] = None,
         labels: Optional[dict[str, str | Sequence[str]]] = None,
         identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
+        scenario_result_id: Optional[str] = None,
     ) -> Sequence[AttackResult]:
         """
         Retrieve a list of AttackResult objects based on the specified filters.
@@ -1705,6 +1748,11 @@ class MemoryInterface(abc.ABC):
             attack_classes (Optional[Sequence[str]], optional): Filter by exact attack class_name in
                 attack_identifier. Returns attacks matching ANY of the listed class names (OR logic,
                 case-sensitive). An empty sequence applies no filter. Defaults to None.
+            atomic_attack_eval_hashes (Optional[Sequence[str]], optional): Filter by behavioral
+                equivalence hash on ``atomic_attack_identifier.eval_hash`` (auto-stamped on persistence
+                by ``AtomicAttackEvaluationIdentifier``). Returns results matching ANY of the listed
+                hashes (OR logic, case-sensitive). Designed for ASR aggregation by technique
+                configuration. An empty sequence applies no filter. Defaults to None.
             converter_classes (Optional[Sequence[str]], optional): Filter by converter class names.
                 Combination semantics for multiple entries are controlled by ``converter_classes_match``.
                 An empty sequence filters to attacks that used no converters; ``None`` applies no
@@ -1736,6 +1784,10 @@ class MemoryInterface(abc.ABC):
             identifier_filters (Optional[Sequence[IdentifierFilter]], optional):
                 A sequence of IdentifierFilter objects that allows filtering by various attack identifier
                 JSON properties. Defaults to None.
+            scenario_result_id (Optional[str], optional): Filter to attack results linked to a
+                specific scenario via the ``AttackResultEntry.attribution_parent_id`` foreign key.
+                Combined with ``outcome=AttackOutcome.ERROR`` this is the replacement for the
+                removed per-scenario error_attack_result_ids manifest. Defaults to None.
 
         Returns:
             Sequence[AttackResult]: A list of AttackResult objects that match the specified filters.
@@ -1769,6 +1821,8 @@ class MemoryInterface(abc.ABC):
             conditions.append(AttackResultEntry.objective.contains(objective))
         if outcome:
             conditions.append(AttackResultEntry.outcome == outcome)
+        if scenario_result_id:
+            conditions.append(AttackResultEntry.attribution_parent_id == uuid.UUID(scenario_result_id))
 
         if attack_classes:
             # Case-insensitive to mirror converter_classes; forgives casing drift in
@@ -1783,6 +1837,24 @@ class MemoryInterface(abc.ABC):
                             value=ac,
                         )
                         for ac in attack_classes
+                    ]
+                )
+            )
+
+        if atomic_attack_eval_hashes:
+            # Single JSON path query on the auto-stamped eval_hash. OR-combined across
+            # supplied hashes so callers can fetch history for multiple technique
+            # configurations in one round trip.
+            conditions.append(
+                or_(
+                    *[
+                        self._get_condition_json_property_match(
+                            json_column=AttackResultEntry.atomic_attack_identifier,
+                            property_path="$.eval_hash",
+                            value=h,
+                            case_sensitive=True,
+                        )
+                        for h in atomic_attack_eval_hashes
                     ]
                 )
             )
@@ -1944,107 +2016,77 @@ class MemoryInterface(abc.ABC):
             entries=[ScenarioResultEntry(entry=scenario_result) for scenario_result in scenario_results]
         )
 
-    def add_attack_results_to_scenario(
+    def update_scenario_run_state(
         self,
         *,
         scenario_result_id: str,
-        atomic_attack_name: str,
-        attack_results: Sequence[AttackResult],
-    ) -> bool:
-        """
-        Add attack results to an existing scenario result in memory.
-
-        This method efficiently updates a scenario result by appending new attack results
-        to a specific atomic attack name without requiring a full retrieve-modify-save cycle.
-
-        Args:
-            scenario_result_id (str): The ID of the scenario result to update.
-            atomic_attack_name (str): The name of the atomic attack to add results for.
-            attack_results (Sequence[AttackResult]): The attack results to add.
-
-        Returns:
-            bool: True if the update was successful, False otherwise.
-
-        Example:
-            >>> memory.add_attack_results_to_scenario(
-            ...     scenario_result_id="123e4567-e89b-12d3-a456-426614174000",
-            ...     atomic_attack_name="base64_attack",
-            ...     attack_results=[result1, result2]
-            ... )
-        """
-        try:
-            # Retrieve current scenario result
-            scenario_results = self.get_scenario_results(scenario_result_ids=[scenario_result_id])
-
-            if not scenario_results:
-                logger.error(f"Scenario result with ID {scenario_result_id} not found in memory")
-                return False
-
-            scenario_result = scenario_results[0]
-
-            # Update attack results for this atomic attack name
-            if atomic_attack_name not in scenario_result.attack_results:
-                scenario_result.attack_results[atomic_attack_name] = []
-
-            scenario_result.attack_results[atomic_attack_name].extend(list(attack_results))
-
-            # Save updated result back to memory using update
-            entry = ScenarioResultEntry(entry=scenario_result)
-            self._update_entry(entry)
-
-            logger.info(
-                f"Added {len(attack_results)} attack results to scenario {scenario_result_id} "
-                f"for atomic attack '{atomic_attack_name}'"
-            )
-            return True
-
-        except Exception as e:
-            logger.exception(f"Failed to add attack results to scenario {scenario_result_id}: {str(e)}")
-            raise
-
-    def update_scenario_run_state(self, *, scenario_result_id: str, scenario_run_state: str) -> bool:
+        scenario_run_state: str,
+        error_message: str | None = None,
+        error_type: str | None = None,
+    ) -> None:
         """
         Update the run state of an existing scenario result.
+
+        Performs a targeted UPDATE of only the state/error columns instead of
+        rebuilding the entire ``ScenarioResultEntry`` row. The full-row rebuild
+        used to read the stored row, mutate the ScenarioResult, and re-serialize
+        every column — including ``attack_results_json`` which is being phased
+        out and could be stale during the deprecation window. A targeted UPDATE
+        avoids clobbering manifest data and is also cheaper.
 
         Args:
             scenario_result_id (str): The ID of the scenario result to update.
             scenario_run_state (str): The new state for the scenario
                 (e.g., "CREATED", "IN_PROGRESS", "COMPLETED", "FAILED").
+            error_message (str | None): Optional scenario-level error message.
+            error_type (str | None): Optional exception class name.
 
-        Returns:
-            bool: True if the update was successful, False otherwise.
-
-        Example:
-            >>> memory.update_scenario_run_state(
-            ...     scenario_result_id="123e4567-e89b-12d3-a456-426614174000",
-            ...     scenario_run_state="COMPLETED"
-            ... )
+        Raises:
+            ValueError: If the scenario result is not found.
         """
-        try:
-            # Retrieve current scenario result
-            scenario_results = self.get_scenario_results(scenario_result_ids=[scenario_result_id])
+        with closing(self.get_session()) as session:
+            entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
 
-            if not scenario_results:
-                logger.error(f"Scenario result with ID {scenario_result_id} not found in memory")
-                return False
+            if not entry:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
 
-            scenario_result = scenario_results[0]
+            entry.scenario_run_state = scenario_run_state
+            if error_message is not None:
+                entry.error_message = error_message
+            if error_type is not None:
+                entry.error_type = error_type
 
-            # Update the scenario run state
-            scenario_result.scenario_run_state = scenario_run_state  # type: ignore[ty:invalid-assignment]
+            session.commit()
 
-            # Save updated result back to memory using update
-            entry = ScenarioResultEntry(entry=scenario_result)
-            self._update_entry(entry)
+        logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state}'")
 
-            logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state}'")
-            return True
+    def update_scenario_metadata(
+        self,
+        *,
+        scenario_result_id: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """
+        Replace the ``scenario_metadata`` JSON blob on an existing scenario result.
 
-        except Exception as e:
-            logger.exception(
-                f"Failed to update scenario {scenario_result_id} state to '{scenario_run_state}': {str(e)}"
-            )
-            raise
+        Used by the scenario layer to persist first-run state (e.g.
+        ``objective_hashes``) that resume needs to replay. Performs a
+        targeted UPDATE so it doesn't clobber other columns.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result to update.
+            metadata (dict[str, Any]): The full metadata dict to store. Pass the
+                merged dict, not just the new keys — this writes the whole value.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
+        with closing(self.get_session()) as session:
+            entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
+            if not entry:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
+            entry.scenario_metadata = metadata if metadata else None
+            session.commit()
 
     def get_scenario_results(
         self,
@@ -2059,9 +2101,12 @@ class MemoryInterface(abc.ABC):
         objective_target_endpoint: Optional[str] = None,
         objective_target_model_name: Optional[str] = None,
         identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
+        limit: int | None = None,
     ) -> Sequence[ScenarioResult]:
         """
         Retrieve a list of ScenarioResult objects based on the specified filters.
+
+        Results are always ordered by completion_time descending (most recent first).
 
         Args:
             scenario_result_ids (Optional[Sequence[str]], optional): A list of scenario result IDs.
@@ -2085,13 +2130,66 @@ class MemoryInterface(abc.ABC):
             identifier_filters (Optional[Sequence[IdentifierFilter]], optional):
                 A sequence of IdentifierFilter objects that allows filtering by identifier JSON properties.
                 Defaults to None.
+            limit (int | None): Maximum number of results to return. Defaults to None (no limit).
 
         Returns:
-            Sequence[ScenarioResult]: A list of ScenarioResult objects that match the specified filters.
+            Sequence[ScenarioResult]: A list of ScenarioResult objects that match the specified filters,
+                ordered by completion_time descending.
         """
         if scenario_result_ids is not None and len(scenario_result_ids) == 0:
             return []
 
+        conditions = self._build_scenario_result_query_conditions(
+            scenario_name=scenario_name,
+            scenario_version=scenario_version,
+            pyrit_version=pyrit_version,
+            added_after=added_after,
+            added_before=added_before,
+            labels=labels,
+            objective_target_endpoint=objective_target_endpoint,
+            objective_target_model_name=objective_target_model_name,
+            identifier_filters=identifier_filters,
+        )
+
+        try:
+            entries = self._query_scenario_result_entries(
+                scenario_result_ids=scenario_result_ids,
+                conditions=conditions,
+                limit=limit,
+            )
+
+            attack_results_by_scenario = self._get_attack_results_by_scenario(entries=entries)
+
+            scenario_results: list[ScenarioResult] = []
+            for entry in entries:
+                scenario_result = entry.get_scenario_result()
+                scenario_result.attack_results = attack_results_by_scenario.get(entry.id, {})
+                scenario_results.append(scenario_result)
+
+            return scenario_results
+        except Exception as e:
+            logger.exception(f"Failed to retrieve scenario results with error {e}")
+            raise
+
+    def _build_scenario_result_query_conditions(
+        self,
+        *,
+        scenario_name: str | None,
+        scenario_version: int | None,
+        pyrit_version: str | None,
+        added_after: datetime | None,
+        added_before: datetime | None,
+        labels: dict[str, str] | None,
+        objective_target_endpoint: str | None,
+        objective_target_model_name: str | None,
+        identifier_filters: Sequence[IdentifierFilter] | None,
+    ) -> "list[ColumnElement[bool]]":
+        """
+        Build the WHERE conditions for ``get_scenario_results``.
+
+        Returns:
+            list[ColumnElement[bool]]: SQLAlchemy WHERE clauses derived from the supplied filters.
+        """
         conditions: list[ColumnElement[bool]] = []
 
         if scenario_name:
@@ -2145,55 +2243,97 @@ class MemoryInterface(abc.ABC):
                 )
             )
 
-        try:
-            # Handle scenario_result_ids with batched queries if needed
-            if scenario_result_ids:
-                entries = self._execute_batched_query(
-                    ScenarioResultEntry,
-                    batch_column=ScenarioResultEntry.id,
-                    batch_values=list(scenario_result_ids),
-                    other_conditions=conditions,
+        return conditions
+
+    def _query_scenario_result_entries(
+        self,
+        *,
+        scenario_result_ids: Sequence[str] | None,
+        conditions: "list[ColumnElement[bool]]",
+        limit: int | None,
+    ) -> Sequence[ScenarioResultEntry]:
+        """
+        Run the (possibly batched) ScenarioResultEntry query.
+
+        Returns:
+            Sequence[ScenarioResultEntry]: The matching rows ordered by completion_time descending.
+        """
+        order_by_clause = ScenarioResultEntry.completion_time.desc()
+
+        if scenario_result_ids:
+            return self._execute_batched_query(
+                ScenarioResultEntry,
+                batch_column=ScenarioResultEntry.id,
+                batch_values=list(scenario_result_ids),
+                other_conditions=conditions,
+                order_by=order_by_clause,
+                limit=limit,
+            )
+
+        return self._query_entries(
+            ScenarioResultEntry,
+            conditions=and_(*conditions) if conditions else None,
+            order_by=order_by_clause,
+            limit=limit,
+        )
+
+    def _get_attack_results_by_scenario(
+        self,
+        *,
+        entries: Sequence[ScenarioResultEntry],
+    ) -> dict[uuid.UUID, dict[str, list[AttackResult]]]:
+        """
+        Fetch every ``AttackResult`` linked to the given scenarios via the
+        ``AttackResultEntry.attribution_parent_id`` foreign key in a single
+        batched query, then group by scenario + ``parent_collection`` (which
+        the scenario layer uses for the atomic attack name) and sort each
+        group by ``AttackResultEntry.timestamp``.
+
+        Foreign-key linkage is the sole source of truth — set at write-time by
+        the attack persistence path when an ``AttackResultAttribution`` is on
+        the context. Rows without a valid ``attribution_data`` payload are
+        skipped (and logged) rather than guessed at.
+
+        Returns:
+            dict[uuid.UUID, dict[str, list[AttackResult]]]: Mapping of
+            ``scenario_result_id`` → ``atomic_attack_name`` → ordered list of
+            ``AttackResult`` objects. Scenarios with no linked rows map to ``{}``.
+        """
+        if not entries:
+            return {}
+
+        scenario_ids = [entry.id for entry in entries]
+        attack_rows = self._execute_batched_query(
+            AttackResultEntry,
+            batch_column=AttackResultEntry.attribution_parent_id,
+            batch_values=scenario_ids,
+        )
+
+        grouped: dict[uuid.UUID, dict[str, list[tuple[datetime, AttackResult]]]] = {entry.id: {} for entry in entries}
+
+        for row in attack_rows:
+            scenario_id = row.attribution_parent_id
+            if scenario_id is None or scenario_id not in grouped:
+                continue
+
+            data = row.attribution_data or {}
+            name = data.get("parent_collection")
+            if not name:
+                logger.debug(
+                    f"Skipping AttackResultEntry {row.id} during scenario load: "
+                    "attribution_data missing parent_collection"
                 )
-            else:
-                entries = self._query_entries(ScenarioResultEntry, conditions=and_(*conditions) if conditions else None)
+                continue
 
-            # Convert entries to ScenarioResults and populate attack_results efficiently
-            scenario_results = []
-            for entry in entries:
-                scenario_result = entry.get_scenario_result()
+            sort_key = row.timestamp or datetime.min.replace(tzinfo=timezone.utc)
+            grouped[scenario_id].setdefault(name, []).append((sort_key, row.get_attack_result()))
 
-                # Get conversation IDs grouped by attack name
-                conversation_ids_by_attack = entry.get_conversation_ids_by_attack_name()
-
-                # Collect all conversation IDs to query in a single batch
-                all_conversation_ids = []
-                for conv_ids in conversation_ids_by_attack.values():
-                    all_conversation_ids.extend(conv_ids)
-
-                # Query all AttackResults using batched queries if needed
-                if all_conversation_ids:
-                    attack_entries = self._execute_batched_query(
-                        AttackResultEntry,
-                        batch_column=AttackResultEntry.conversation_id,
-                        batch_values=all_conversation_ids,
-                    )
-
-                    # Build a dict for quick lookup
-                    attack_results_dict = {entry.conversation_id: entry.get_attack_result() for entry in attack_entries}
-
-                    # Populate attack_results by attack name, preserving order
-                    scenario_result.attack_results = {}
-                    for attack_name, conv_ids in conversation_ids_by_attack.items():
-                        scenario_result.attack_results[attack_name] = [
-                            attack_results_dict[conv_id] for conv_id in conv_ids if conv_id in attack_results_dict
-                        ]
-
-                scenario_results.append(scenario_result)
-
-            return scenario_results
-        except Exception as e:
-            logger.exception(f"Failed to retrieve scenario results with error {e}")
-            raise
+        return {
+            scenario_id: {
+                name: [ar for _, ar in sorted(bucket, key=lambda kv: kv[0])] for name, bucket in name_buckets.items()
+            }
+            for scenario_id, name_buckets in grouped.items()
+        }
 
     def print_schema(self) -> None:
         """

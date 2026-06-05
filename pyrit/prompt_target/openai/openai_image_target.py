@@ -2,17 +2,17 @@
 # Licensed under the MIT license.
 import base64
 import logging
-import warnings
 from typing import Any, Literal, Optional
 
 import httpx
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     construct_response_from_request,
     data_serializer_factory,
@@ -53,6 +53,13 @@ class OpenAIImageTarget(OpenAITarget):
     # DALL-E-only quality values that are deprecated in favor of GPT image model values.
     _DEPRECATED_QUALITY_VALUES = {"standard", "hd"}
 
+    # Grandfathered: positional params predate the kwargs-only contract; the
+    # sandwiched ``*args``/``**kwargs`` shape forwards extras to ``OpenAITarget``.
+    # TODO: remove this opt-out and move ``*args`` up to immediately after
+    # ``self`` (or insert ``*,`` and drop ``*args`` entirely) in 0.16.0
+    # (this will be a BREAKING CHANGE for callers passing arguments positionally).
+    _brick_legacy_init = True
+
     def __init__(
         self,
         image_size: Literal[
@@ -70,7 +77,6 @@ class OpenAIImageTarget(OpenAITarget):
         style: Optional[Literal["natural", "vivid"]] = None,
         background: Optional[Literal["transparent", "opaque", "auto"]] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -113,8 +119,6 @@ class OpenAIImageTarget(OpenAITarget):
                 Default is to not specify, which will use "auto" behavior.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
             *args: Additional positional arguments to be passed to AzureOpenAITarget.
             **kwargs: Additional keyword arguments to be passed to AzureOpenAITarget.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the
@@ -127,29 +131,32 @@ class OpenAIImageTarget(OpenAITarget):
         """
         # Emit deprecation warnings for DALL-E-only parameters
         if style is not None:
-            warnings.warn(
-                "The 'style' parameter is deprecated and will be removed in v0.15.0. "
-                "It was only supported for DALL-E-3, which is being shut down on 2026-05-12.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="OpenAIImageTarget(style=...)",
+                new_item="OpenAIImageTarget(...) without style (DALL-E-3 is being shut down on 2026-05-12)",
+                removed_in="0.15.0",
             )
 
         if image_size in self._DEPRECATED_SIZES:
-            warnings.warn(
-                f"image_size='{image_size}' is a DALL-E-only value and is deprecated. "
-                f"It will be removed in v0.15.0. DALL-E models are being shut down on 2026-05-12. "
-                f"GPT image models support 'auto', '1024x1024', '1536x1024', and '1024x1536'.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item=f"OpenAIImageTarget(image_size='{image_size}')",
+                new_item=(
+                    "OpenAIImageTarget(image_size=...) with a GPT image model value "
+                    "('auto', '1024x1024', '1536x1024', or '1024x1536'); "
+                    "DALL-E models are being shut down on 2026-05-12"
+                ),
+                removed_in="0.15.0",
             )
 
         if quality is not None and quality in self._DEPRECATED_QUALITY_VALUES:
-            warnings.warn(
-                f"quality='{quality}' is a DALL-E-only value and is deprecated. "
-                f"It will be removed in v0.15.0. DALL-E models are being shut down on 2026-05-12. "
-                f"GPT image models support 'auto', 'low', 'medium', and 'high'.",
-                DeprecationWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item=f"OpenAIImageTarget(quality='{quality}')",
+                new_item=(
+                    "OpenAIImageTarget(quality=...) with a GPT image model value "
+                    "('auto', 'low', 'medium', or 'high'); "
+                    "DALL-E models are being shut down on 2026-05-12"
+                ),
+                removed_in="0.15.0",
             )
 
         if background == "transparent" and output_format == "jpeg":
@@ -164,9 +171,7 @@ class OpenAIImageTarget(OpenAITarget):
         self.image_size = image_size
         self.background = background
 
-        super().__init__(
-            *args, custom_configuration=custom_configuration, custom_capabilities=custom_capabilities, **kwargs
-        )
+        super().__init__(*args, custom_configuration=custom_configuration, **kwargs)
 
     def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_IMAGE_MODEL"
@@ -263,7 +268,7 @@ class OpenAIImageTarget(OpenAITarget):
             image_generation_args["background"] = self.background
 
         # Use unified error handler for consistent error handling
-        return await self._handle_openai_request(
+        return await self._handle_openai_request_async(
             api_call=lambda: self._client.images.generate(**image_generation_args),
             request=message,
         )
@@ -292,8 +297,8 @@ class OpenAIImageTarget(OpenAITarget):
                 category="prompt-memory-entries", value=image_path, data_type="image_path"
             )
 
-            image_name = str(await img_serializer.get_data_filename())
-            image_bytes = await img_serializer.read_data()
+            image_name = str(await img_serializer.get_data_filename_async())
+            image_bytes = await img_serializer.read_data_async()
             image_type = img_serializer.get_mime_type(image_path)
 
             image_files.append((image_name, image_bytes, image_type))
@@ -301,7 +306,9 @@ class OpenAIImageTarget(OpenAITarget):
         # Construct request parameters for image editing
         image_edit_args: dict[str, Any] = {
             "model": self._model_name,
-            "image": image_files,
+            # Single image sent as a tuple (mandatory for targets that support only one image input such as MAI,
+            # also supported by other targets such as OpenAI). Multiple images always sent as a list.
+            "image": image_files[0] if len(image_files) == 1 else image_files,
             "prompt": text_prompt,
             "size": self.image_size,
         }
@@ -315,12 +322,12 @@ class OpenAIImageTarget(OpenAITarget):
         if self.background:
             image_edit_args["background"] = self.background
 
-        return await self._handle_openai_request(
+        return await self._handle_openai_request_async(
             api_call=lambda: self._client.images.edit(**image_edit_args),
             request=message,
         )
 
-    async def _construct_message_from_response(self, response: Any, request: Any) -> Message:
+    async def _construct_message_from_response_async(self, response: Any, request: Any) -> Message:
         """
         Construct a Message from an ImagesResponse.
 
@@ -335,7 +342,7 @@ class OpenAIImageTarget(OpenAITarget):
             EmptyResponseException: If the image generation returned an empty response.
         """
         image_data = response.data[0]
-        image_bytes = await self._get_image_bytes(image_data)
+        image_bytes = await self._get_image_bytes_async(image_data)
 
         extension = self.output_format or "png"
         data = data_serializer_factory(
@@ -343,13 +350,13 @@ class OpenAIImageTarget(OpenAITarget):
             data_type="image_path",
             extension=extension,
         )
-        await data.save_data(data=image_bytes)
+        await data.save_data_async(data=image_bytes)
 
         return construct_response_from_request(
             request=request, response_text_pieces=[data.value], response_type="image_path"
         )
 
-    async def _get_image_bytes(self, image_data: Any) -> bytes:
+    async def _get_image_bytes_async(self, image_data: Any) -> bytes:
         """
         Extract image bytes from the API response.
 

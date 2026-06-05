@@ -9,6 +9,7 @@ import time
 from tenacity import RetryCallState
 
 from pyrit.exceptions.exception_context import get_execution_context
+from pyrit.exceptions.retry_collector import get_retry_collector
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ def log_exception(retry_state: RetryCallState) -> None:
     try:
         exec_context = get_execution_context()
         if exec_context:
-            # e.g. "objective scorer. TrueFalseScorer::_score_value_with_llm"
+            # e.g. "objective scorer. TrueFalseScorer::_score_value_with_llm_async"
             role_display = exec_context.component_role.value.replace("_", " ")
             if exec_context.component_name:
                 for_clause = f"{role_display}. {exec_context.component_name}::{fn_name}"
@@ -67,6 +68,9 @@ def log_exception(retry_state: RetryCallState) -> None:
         f"failed with exception: {exception}.{endpoint_clause} "
         f"Elapsed time: {elapsed_time} seconds. Total calls: {call_count}"
     )
+    collector = get_retry_collector()
+    if collector:
+        collector.record(retry_state=retry_state)
 
 
 def remove_start_md_json(response_msg: str) -> str:

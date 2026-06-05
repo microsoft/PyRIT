@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union, overload
 
 import numpy as np
 from colorama import Fore, Style
+from pydantic import Field
 
 from pyrit.common.utils import combine_dict, get_kwarg_param
 from pyrit.exceptions import MissingPromptPlaceholderException, pyrit_placeholder_retry
@@ -23,9 +24,10 @@ from pyrit.executor.promptgen.core.prompt_generator_strategy import (
     PromptGeneratorStrategyContext,
     PromptGeneratorStrategyResult,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    ComponentIdentifier,
+    Identifiable,
     Message,
     Score,
     SeedGroup,
@@ -36,7 +38,7 @@ from pyrit.score import FloatScaleThresholdScorer, Scorer, SelfAskScaleScorer
 
 if TYPE_CHECKING:
     from pyrit.executor.promptgen.fuzzer.fuzzer_converter_base import FuzzerConverter
-    from pyrit.prompt_target import PromptChatTarget, PromptTarget
+    from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +213,6 @@ class FuzzerContext(PromptGeneratorStrategyContext):
             )
 
 
-@dataclass
 class FuzzerResult(PromptGeneratorStrategyResult):
     """
     Result of the Fuzzer prompt generation strategy execution.
@@ -221,8 +222,8 @@ class FuzzerResult(PromptGeneratorStrategyResult):
     """
 
     # Concrete fields instead of metadata storage
-    successful_templates: list[str] = field(default_factory=list)
-    jailbreak_conversation_ids: list[Union[str, uuid.UUID]] = field(default_factory=list)
+    successful_templates: list[str] = Field(default_factory=list)
+    jailbreak_conversation_ids: list[Union[str, uuid.UUID]] = Field(default_factory=list)
     total_queries: int = 0
     templates_explored: int = 0
 
@@ -539,7 +540,7 @@ class FuzzerGenerator(
         *,
         objective_target: PromptTarget,
         template_converters: list[FuzzerConverter],
-        scoring_target: PromptChatTarget,
+        scoring_target: PromptTarget,
         converter_config: Optional[StrategyConverterConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
         frequency_weight: float = _DEFAULT_FREQUENCY_WEIGHT,
@@ -562,7 +563,7 @@ class FuzzerGenerator(
         Args:
             objective_target (PromptTarget): The target to send the prompts to.
             template_converters (List[FuzzerConverter]): The converters to apply on the selected jailbreak template.
-            scoring_target (PromptChatTarget): The chat target to use for scoring responses.
+            scoring_target (PromptTarget): The chat target to use for scoring responses.
             converter_config (Optional[StrategyConverterConfig]): Configuration for prompt converters.
             prompt_normalizer (Optional[PromptNormalizer]): The prompt normalizer to use.
             frequency_weight (float): Constant that balances between high reward and selection frequency.

@@ -33,8 +33,8 @@ class TestSaladBenchDataset:
         """Test fetching SALAD-Bench dataset."""
         loader = _SaladBenchDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_salad_bench_data)):
-            dataset = await loader.fetch_dataset()
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_salad_bench_data)):
+            dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
             assert len(dataset.seeds) == 2
@@ -66,9 +66,9 @@ class TestSaladBenchDataset:
         )
 
         with patch.object(
-            loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_salad_bench_data)
+            loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_salad_bench_data)
         ) as mock_fetch:
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 2
             mock_fetch.assert_called_once()

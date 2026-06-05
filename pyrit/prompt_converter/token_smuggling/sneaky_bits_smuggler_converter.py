@@ -4,7 +4,7 @@
 import logging
 from typing import Literal, Optional
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.prompt_converter.token_smuggling.base import SmugglerConverter
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,10 @@ class SneakyBitsSmugglerConverter(SmugglerConverter):
     Replicates functionality detailed in:
         - [@embracethered2025sneakybits]
     """
+
+    # Grandfathered: ``action`` is inherited from SmugglerConverter's public API.
+    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
+    _brick_legacy_init = True
 
     def __init__(
         self,

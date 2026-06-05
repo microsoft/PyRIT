@@ -3,15 +3,14 @@
 
 import abc
 import logging
-import warnings
 from typing import Any, Union, final
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Identifiable, Message, MessagePiece
+from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration, resolve_configuration_compat
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 logger = logging.getLogger(__name__)
 
@@ -43,24 +42,28 @@ class PromptTarget(Identifiable):
     # constructor parameter, which takes precedence over the class-level value.
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
+    def __init_subclass__(cls, **kwargs: object) -> None:
         """
-        Auto-promote the deprecated ``_DEFAULT_CAPABILITIES`` class attribute.
+        Validate that subclasses follow the keyword-only ``__init__`` contract.
 
-        If a subclass defines ``_DEFAULT_CAPABILITIES`` directly, this hook wraps it
-        in a ``TargetConfiguration`` and assigns it to ``_DEFAULT_CONFIGURATION``,
-        emitting a ``DeprecationWarning`` to guide migration.
+        Args:
+            **kwargs: Additional keyword arguments passed to the superclass.
+
+        Raises:
+            TypeError: If the subclass ``__init__`` accepts positional parameters
+                after ``self`` and is not grandfathered via ``_brick_legacy_init``.
         """
         super().__init_subclass__(**kwargs)
-        if "_DEFAULT_CAPABILITIES" in cls.__dict__:
-            warnings.warn(
-                f"{cls.__name__}._DEFAULT_CAPABILITIES is deprecated and will be removed in v0.14.0. "
-                "Use _DEFAULT_CONFIGURATION = TargetConfiguration(capabilities=...) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            cls._DEFAULT_CONFIGURATION = TargetConfiguration(capabilities=cls.__dict__["_DEFAULT_CAPABILITIES"])
+        # Local import to avoid a circular dependency at package init time.
+        from pyrit.common.brick_contract import enforce_keyword_only_init
 
+        enforce_keyword_only_init(cls, base_name="PromptTarget")
+
+    # TODO: ``PromptTarget.__init__`` itself accepts positional parameters, which
+    # violates the keyword-only contract enforced by ``__init_subclass__`` on
+    # subclasses. The hook only runs for subclasses, so the base class non-
+    # compliance is tolerated during the warn-first phase. Reshape this
+    # signature (insert ``*`` after ``self``) in 0.16.0 as a BREAKING CHANGE.
     def __init__(
         self,
         verbose: bool = False,
@@ -69,7 +72,6 @@ class PromptTarget(Identifiable):
         model_name: str = "",
         underlying_model: str | None = None,
         custom_configuration: TargetConfiguration | None = None,
-        custom_capabilities: TargetCapabilities | None = None,
     ) -> None:
         """
         Initialize the PromptTarget.
@@ -87,13 +89,7 @@ class PromptTarget(Identifiable):
                 for this target instance. Useful for targets whose capabilities depend on deployment
                 configuration (e.g., Playwright, HTTP). If None, uses the class-level
                 ``_DEFAULT_CONFIGURATION``. Defaults to None.
-            custom_capabilities (TargetCapabilities | None): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
         """
-        custom_configuration = resolve_configuration_compat(
-            custom_configuration=custom_configuration,
-            custom_capabilities=custom_capabilities,
-        )
         self._memory = CentralMemory.get_memory_instance()
         self._verbose = verbose
         self._max_requests_per_minute = max_requests_per_minute
@@ -119,11 +115,11 @@ class PromptTarget(Identifiable):
         1. Validates the message, fetches the conversation from memory, appends ``message``, and runs
            the normalization pipeline (system‑squash, history‑squash, etc.).
         2. Validates the normalized conversation against the target's capabilities.
-        3. Delegates to :meth:`_send_prompt_to_target_async` with the normalized
+        3. Delegates to ``_send_prompt_to_target_async`` with the normalized
            conversation.
 
         Subclasses MUST NOT override this method. Override
-        :meth:`_send_prompt_to_target_async` instead.
+        ``_send_prompt_to_target_async`` instead.
 
         Args:
             message (Message): The message to send.
@@ -146,7 +142,7 @@ class PromptTarget(Identifiable):
         """
         Target-specific send logic.
 
-        Called by :meth:`send_prompt_async` after validation and normalization.
+        Called by ``send_prompt_async`` after validation and normalization.
 
         Args:
             normalized_conversation (list[Message]): The full conversation
@@ -260,7 +256,7 @@ class PromptTarget(Identifiable):
         """
         source_piece = source.message_pieces[0]
         for piece in target_message.message_pieces:
-            piece.copy_lineage_from(source_piece)
+            piece.copy_lineage_from(source=source_piece)
 
     def set_model_name(self, *, model_name: str) -> None:
         """
@@ -288,7 +284,7 @@ class PromptTarget(Identifiable):
 
         If the target does not natively support system prompts, whether this
         call is ultimately honored depends on the target's
-        :class:`CapabilityHandlingPolicy`:
+        ``CapabilityHandlingPolicy``:
 
         * ``ADAPT`` — the normalization pipeline (e.g. system squash) will
           fold the system message into user content on the wire.
@@ -302,6 +298,7 @@ class PromptTarget(Identifiable):
             labels (dict[str, str] | None): Optional labels.
 
         Raises:
+            ValueError: If the target does not support multi-turn or editable history.
             RuntimeError: If the conversation already has messages.
         """
         if labels is not None:
@@ -309,6 +306,12 @@ class PromptTarget(Identifiable):
                 old_item="set_system_prompt(..., labels=...)",
                 new_item="set_system_prompt(...)",
                 removed_in="0.16.0",
+            )
+
+        if not self.capabilities.supports_multi_turn or not self.capabilities.supports_editable_history:
+            raise ValueError(
+                f"Target {type(self).__name__} does not support setting a system prompt. "
+                "It must support both multi-turn conversations and editable history."
             )
 
         messages = self._memory.get_conversation(conversation_id=conversation_id)
@@ -324,7 +327,7 @@ class PromptTarget(Identifiable):
                 converted_value=system_prompt,
                 prompt_target_identifier=self.get_identifier(),
                 attack_identifier=attack_identifier,
-                labels=labels,
+                labels=labels or {},
             ).to_message()
         )
 
@@ -398,6 +401,29 @@ class PromptTarget(Identifiable):
         """
         return self._configuration.capabilities
 
+    def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:
+        """
+        Replace this target's capabilities, preserving the existing handling policy.
+        The normalization pipeline is rebuilt from the input capabilities and the
+        current policy.
+
+        Policy is preserved because it expresses user intent (ADAPT vs RAISE),
+        independent of what the probe found. To change policy or normalizer
+        overrides, build a new ``TargetConfiguration`` and pass it via
+        ``custom_configuration`` at construction time instead.
+
+        Note:
+            This mutates the target's identifier (derived from the configuration).
+
+        Args:
+            capabilities (TargetCapabilities): The capabilities to install on
+                this instance.
+        """
+        self._configuration = TargetConfiguration(
+            capabilities=capabilities,
+            policy=self._configuration.policy,
+        )
+
     @classmethod
     def get_default_configuration(cls, underlying_model: str | None = None) -> TargetConfiguration:
         """
@@ -423,25 +449,6 @@ class PromptTarget(Identifiable):
             )
         return cls._DEFAULT_CONFIGURATION
 
-    @classmethod
-    def get_default_capabilities(cls, underlying_model: str | None = None) -> TargetCapabilities:
-        """
-        Return the default capabilities for the given model.
-
-        **Deprecated.** Use :meth:`get_default_configuration` instead.
-        Will be removed in v0.14.0.
-
-        Returns:
-            TargetCapabilities: The capabilities for the given model or class default.
-        """
-        warnings.warn(
-            "get_default_capabilities() is deprecated and will be removed in v0.14.0. "
-            "Use get_default_configuration() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return cls.get_default_configuration(underlying_model).capabilities
-
     def _build_identifier(self) -> ComponentIdentifier:
         """
         Build the identifier for this target.
@@ -456,3 +463,42 @@ class PromptTarget(Identifiable):
             ComponentIdentifier: The identifier for this prompt target.
         """
         return self._create_identifier()
+
+    def is_response_format_json(self, message_piece: MessagePiece) -> bool:
+        """
+        Check if the response format is JSON and ensure the target supports it.
+
+        Args:
+            message_piece: A MessagePiece object with a `prompt_metadata` dictionary that may
+                include a "response_format" key.
+
+        Returns:
+            bool: True if the response format is JSON, False otherwise.
+
+        Raises:
+            ValueError: If "json" response format is requested but unsupported.
+        """
+        config = self._get_json_response_config(message_piece=message_piece)
+        return config.enabled
+
+    def _get_json_response_config(self, *, message_piece: MessagePiece) -> _JsonResponseConfig:
+        """
+        Get the JSON response configuration from the message piece metadata.
+
+        Args:
+            message_piece: A MessagePiece object with a `prompt_metadata` dictionary that may
+                include JSON response configuration.
+
+        Returns:
+            _JsonResponseConfig: The JSON response configuration.
+
+        Raises:
+            ValueError: If JSON response format is requested but unsupported.
+        """
+        config = _JsonResponseConfig.from_metadata(metadata=message_piece.prompt_metadata)
+
+        if config.enabled and not self.capabilities.supports_json_output:
+            target_name = self.get_identifier().class_name
+            raise ValueError(f"This target {target_name} does not support JSON response format.")
+
+        return config

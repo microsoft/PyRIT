@@ -12,16 +12,14 @@ from pyrit.common.utils import combine_dict
 from pyrit.executor.attack.component.prepended_conversation_config import (
     PrependedConversationConfig,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
-from pyrit.models import ChatMessageRole, Message, MessagePiece, Score
+from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
 )
 from pyrit.prompt_normalizer.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target import CapabilityName, PromptTarget
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core import AttackContext
@@ -47,8 +45,8 @@ def mark_messages_as_simulated(messages: Sequence[Message]) -> list[Message]:
     result = list(messages)
     for message in result:
         for piece in message.message_pieces:
-            if piece._role == "assistant":
-                piece._role = "simulated_assistant"
+            if piece.role == "assistant":
+                piece.role = "simulated_assistant"
     return result
 
 
@@ -118,7 +116,7 @@ def get_adversarial_chat_messages(
                 conversation_id=adversarial_chat_conversation_id,
                 attack_identifier=attack_identifier,
                 prompt_target_identifier=adversarial_chat_target_identifier,
-                labels=labels,  # deprecated
+                labels=labels or {},  # deprecated
             )
 
             result.append(adversarial_piece.to_message())
@@ -309,9 +307,10 @@ class ConversationManager:
             - All messages get new UUIDs
 
         For non-chat PromptTarget:
-            - If `config.non_chat_target_behavior="normalize_first_turn"`: normalizes
-              conversation to string and prepends to context.next_message
-            - If `config.non_chat_target_behavior="raise"`: raises ValueError
+            - Normalizes the prepended conversation to a string and prepends it to
+              ``context.next_message`` (using ``config.message_normalizer`` when provided).
+            - If the deprecated ``config.non_chat_target_behavior="raise"`` is set,
+              raises ValueError instead. This option is deprecated and will be removed in v0.16.0.
 
         Args:
             context: The attack context to initialize.
@@ -390,12 +389,12 @@ class ConversationManager:
 
         if config.non_chat_target_behavior == "raise":
             raise ValueError(
-                "prepended_conversation requires the objective target to be a chat-capable "
-                "PromptTarget. Non-chat objective targets do not support conversation history. "
-                "Use PrependedConversationConfig with non_chat_target_behavior='normalize_first_turn' "
-                "to normalize the conversation into the first message instead."
+                "prepended_conversation requires the objective target to support multi-turn "
+                "conversations with editable history. The current target does not. Note that "
+                "the non_chat_target_behavior parameter is deprecated and will be removed in "
+                "v0.16.0; non-chat targets will then always normalize the prepended conversation "
+                "into the first turn."
             )
-
         # Normalize conversation to string
         normalizer = config.get_message_normalizer()
         normalized_context = await normalizer.normalize_string_async(prepended_conversation)
@@ -482,7 +481,7 @@ class ConversationManager:
         turn_count = 0
 
         for i, message in enumerate(valid_messages):
-            message_copy = message.duplicate_message()
+            message_copy = message.duplicate()
 
             message_copy.set_simulated_role()
 
@@ -605,7 +604,7 @@ class ConversationManager:
                 continue
 
             temp_message = Message(message_pieces=[piece])
-            await self._prompt_normalizer.convert_values(
+            await self._prompt_normalizer.convert_values_async(
                 message=temp_message,
                 converter_configurations=request_converters,
             )

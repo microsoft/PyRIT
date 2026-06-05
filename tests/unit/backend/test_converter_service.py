@@ -14,13 +14,20 @@ from pyrit.backend.models.converters import (
     ConverterPreviewRequest,
     CreateConverterRequest,
 )
-from pyrit.backend.services.converter_service import ConverterService, get_converter_service
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.backend.services.converter_service import ConverterService, _is_llm_based, get_converter_service
+from pyrit.models import ComponentIdentifier
 from pyrit.prompt_converter import (
     Base64Converter,
     CaesarConverter,
+    LLMGenericTextConverter,
+    NoiseConverter,
+    PersuasionConverter,
     RepeatTokenConverter,
     SuffixAppendConverter,
+    TenseConverter,
+    ToneConverter,
+    TranslationConverter,
+    VariationConverter,
 )
 from pyrit.prompt_converter.prompt_converter import get_converter_modalities
 from pyrit.registry.object_registries import ConverterRegistry
@@ -385,7 +392,7 @@ def _try_instantiate_converter(converter_name: str):
     """
     Try to instantiate a converter with minimal representative arguments.
 
-    Uses mock objects for complex dependencies (PromptChatTarget, PromptConverter)
+    Uses mock objects for complex dependencies (PromptTarget, PromptConverter)
     and provides minimal valid values for simple required parameters so that the
     identifier extraction test covers ALL converters without skipping.
 
@@ -400,12 +407,12 @@ def _try_instantiate_converter(converter_name: str):
     from unittest.mock import MagicMock
 
     from pyrit.common.apply_defaults import _RequiredValueSentinel
-    from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
-    from pyrit.prompt_target.common.prompt_target import PromptTarget
+    from pyrit.prompt_target import PromptTarget
 
     # Converters requiring external credentials or resources that can't be mocked
     # at the constructor level — these validate env vars / files in __init__ body
     skip_converters = {
+        "AddImageTextConverter",  # requires a real image file on disk (loaded eagerly in __init__)
         "AzureSpeechAudioToTextConverter",  # requires AZURE_SPEECH_REGION env var
         "AzureSpeechTextToAudioConverter",  # requires AZURE_SPEECH_REGION env var
         "TransparencyAttackConverter",  # requires a real JPEG image file on disk
@@ -413,11 +420,11 @@ def _try_instantiate_converter(converter_name: str):
 
     # Converter-specific overrides for params with validation
     overrides: dict = {
-        "AddImageTextConverter": {"img_to_add": "test_image.png"},
         "AddTextImageConverter": {"text_to_add": "test text"},
         "CodeChameleonConverter": {"encrypt_type": "reverse"},
         "SearchReplaceConverter": {"pattern": "foo", "replace": "bar"},
         "PersuasionConverter": {"persuasion_technique": "logical_appeal"},
+        "ImagePromptStyleConverter": {"filter_name": "gritty_documentary"},
     }
 
     converter_cls = getattr(prompt_converter, converter_name, None)
@@ -450,18 +457,11 @@ def _try_instantiate_converter(converter_name: str):
         ann = param.annotation
         ann_str = str(ann) if ann is not inspect.Parameter.empty else ""
 
-        # PromptChatTarget / PromptTarget — mock it with a proper identifier
+        # PromptTarget — mock it with a proper identifier
         if ann is not inspect.Parameter.empty and (
-            (isinstance(ann, type) and issubclass(ann, PromptTarget))
-            or "PromptChatTarget" in ann_str
-            or "PromptTarget" in ann_str
+            (isinstance(ann, type) and issubclass(ann, PromptTarget)) or "PromptTarget" in ann_str
         ):
-            spec_cls = (
-                PromptChatTarget
-                if (isinstance(ann, type) and issubclass(ann, PromptChatTarget)) or "PromptChatTarget" in ann_str
-                else PromptTarget
-            )
-            mock_target = MagicMock(spec=spec_cls)
+            mock_target = MagicMock(spec=PromptTarget)
             mock_target.__class__.__name__ = "MockChatTarget"
             # Configure get_identifier() to return a proper identifier-like object
             # so that _create_identifier can extract class_name, model_name, etc.
@@ -534,7 +534,7 @@ class TestBuildInstanceFromObjectWithRealConverters:
         Test that _build_instance_from_object works with each converter.
 
         Instantiates every converter with minimal representative arguments
-        (using mocks for complex dependencies like PromptChatTarget) and verifies:
+        (using mocks for complex dependencies like PromptTarget) and verifies:
         - converter_id is set correctly
         - converter_type matches the class name
         - supported_input_types and supported_output_types are lists
@@ -607,3 +607,25 @@ class TestConverterParamsExtraction:
         # Verify type info is populated from identifier
         assert isinstance(result.supported_input_types, list)
         assert isinstance(result.supported_output_types, list)
+
+
+class TestIsLlmBased:
+    """Tests for the _is_llm_based introspection helper"""
+
+    def test_detects_llm_text_converter(self) -> None:
+        # Test that _is_llm_based correctly identifies converters that use LLMS as LLM-based.
+        for cls in (
+            LLMGenericTextConverter,
+            NoiseConverter,
+            PersuasionConverter,
+            ToneConverter,
+            TenseConverter,
+            TranslationConverter,
+            VariationConverter,
+        ):
+            assert _is_llm_based(cls) is True, f"{cls.__name__} should be detected as LLM-based"
+
+    def test_does_not_flag_non_target_converters(self) -> None:
+        # Test that _is_llm_based does not incorrectly flag non-LLM converters.
+        assert _is_llm_based(Base64Converter) is False
+        assert _is_llm_based(CaesarConverter) is False

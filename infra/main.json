@@ -88,6 +88,13 @@
         "description": "Key Vault secret name containing the .env file contents (all endpoints, models, and API keys). The secret is mounted as an env var and PyRIT parses it at startup."
       }
     },
+    "envFileContents": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional raw .env file contents. If provided, this is used directly instead of reading from Key Vault."
+      }
+    },
     "cpuCores": {
       "type": "string",
       "defaultValue": "1.0",
@@ -217,6 +224,7 @@
     "createLogAnalytics": "[equals(parameters('logAnalyticsWorkspaceId'), '')]",
     "createVnet": "[and(parameters('enablePrivateEndpoint'), equals(parameters('infrastructureSubnetId'), ''))]",
     "createAcr": "[and(equals(parameters('acrResourceId'), ''), equals(parameters('acrName'), ''))]",
+    "useInlineEnvFile": "[not(equals(parameters('envFileContents'), ''))]",
     "effectiveAcrName": "[if(variables('createAcr'), format('{0}acr', replace(parameters('appName'), '-', '')), if(not(equals(parameters('acrName'), '')), parameters('acrName'), last(split(parameters('acrResourceId'), '/'))))]",
     "effectiveAcrServer": "[format('{0}.azurecr.io', variables('effectiveAcrName'))]",
     "keyVaultName": "[last(split(parameters('keyVaultResourceId'), '/'))]"
@@ -427,11 +435,7 @@
             }
           ],
           "secrets": [
-            {
-              "name": "env-file",
-              "keyVaultUrl": "[format('https://{0}{1}/secrets/{2}', variables('keyVaultName'), environment().suffixes.keyvaultDns, parameters('envSecretName'))]",
-              "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName')))]"
-            }
+            "[if(variables('useInlineEnvFile'), createObject('name', 'env-file', 'value', parameters('envFileContents')), createObject('name', 'env-file', 'keyVaultUrl', format('https://{0}{1}/secrets/{2}', variables('keyVaultName'), environment().suffixes.keyvaultDns, parameters('envSecretName')), 'identity', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-identity', parameters('appName')))))]"
           ]
         },
         "template": {

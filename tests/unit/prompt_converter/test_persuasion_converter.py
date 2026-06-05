@@ -7,8 +7,7 @@ import pytest
 from unit.mocks import MockPromptTarget
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.prompt_converter import PersuasionConverter
 
 
@@ -81,10 +80,58 @@ async def test_persuasion_converter_send_prompt_async_bad_json_exception_retries
         )
         mock_create.return_value = [message]
 
-        with pytest.raises(InvalidJsonException):
-            await prompt_persuasion.convert_async(prompt="testing", input_type="text")
-            # RETRY_MAX_NUM_ATTEMPTS is set to 2 in conftest.py
-            assert mock_create.call_count == 2
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            with pytest.raises(InvalidJsonException):
+                await prompt_persuasion.convert_async(prompt="testing", input_type="text")
+
+        # RETRY_MAX_NUM_ATTEMPTS is set to 2 in conftest.py
+        assert mock_create.call_count == 2
+
+
+async def test_persuasion_converter_extracts_mutated_text(sqlite_instance):
+    prompt_target = MockPromptTarget()
+    prompt_persuasion = PersuasionConverter(
+        converter_target=prompt_target, persuasion_technique="authority_endorsement"
+    )
+
+    response = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                conversation_id="test-id",
+                original_value='{"mutated_text": "rephrased prompt"}',
+                original_value_data_type="text",
+                prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
+                sequence=1,
+            )
+        ]
+    )
+    with patch.object(prompt_target, "send_prompt_async", new=AsyncMock(return_value=[response])):
+        result = await prompt_persuasion.convert_async(prompt="testing")
+    assert result.output_text == "rephrased prompt"
+
+
+async def test_persuasion_converter_missing_mutated_text_raises_invalid_json(sqlite_instance):
+    prompt_target = MockPromptTarget()
+    prompt_persuasion = PersuasionConverter(
+        converter_target=prompt_target, persuasion_technique="authority_endorsement"
+    )
+    response = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                conversation_id="test-id",
+                original_value='{"other_key": "value"}',
+                original_value_data_type="text",
+                prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
+                sequence=1,
+            )
+        ]
+    )
+    with patch.object(prompt_target, "send_prompt_async", new=AsyncMock(return_value=[response])):
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            with pytest.raises(InvalidJsonException, match="missing 'mutated_text' key"):
+                await prompt_persuasion.convert_async(prompt="testing")
 
 
 def test_persuasion_converter_input_supported():
@@ -94,3 +141,39 @@ def test_persuasion_converter_input_supported():
     )
     assert prompt_persuasion.input_supported("text") is True
     assert prompt_persuasion.input_supported("image_path") is False
+
+
+def test_persuasion_converter_identifier_includes_technique(sqlite_instance):
+    prompt_target = MockPromptTarget()
+    prompt_persuasion = PersuasionConverter(converter_target=prompt_target, persuasion_technique="logical_appeal")
+    identifier = prompt_persuasion.get_identifier()
+    assert identifier.params["persuasion_technique"] == "logical_appeal"
+
+
+async def test_send_persuasion_prompt_async_emits_deprecation_warning_and_delegates(sqlite_instance):
+    """``send_persuasion_prompt_async`` is a deprecated shim that warns and delegates to the retry helper."""
+    prompt_target = MockPromptTarget()
+    prompt_persuasion = PersuasionConverter(
+        converter_target=prompt_target, persuasion_technique="authority_endorsement"
+    )
+
+    request = Message(
+        message_pieces=[
+            MessagePiece(
+                role="user",
+                conversation_id="conv-1",
+                original_value="test input",
+                original_value_data_type="text",
+                prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
+            )
+        ]
+    )
+
+    with patch.object(
+        prompt_persuasion, "_send_with_retries_async", new=AsyncMock(return_value="shim response")
+    ) as mock_send:
+        with pytest.warns(DeprecationWarning, match="send_persuasion_prompt_async"):
+            result = await prompt_persuasion.send_persuasion_prompt_async(request)
+
+    assert result == "shim response"
+    mock_send.assert_awaited_once_with(request)

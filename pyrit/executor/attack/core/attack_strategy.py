@@ -6,11 +6,16 @@ from __future__ import annotations
 import dataclasses
 import logging  # noqa: TC003
 import time
+import traceback
+import uuid
 from abc import ABC
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Optional, TypeVar, Union, overload
 
 from pyrit.common.logger import logger
+from pyrit.exceptions.retry_collector import (
+    get_retry_collector,
+)
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
 from pyrit.executor.core import (
     Strategy,
@@ -19,18 +24,20 @@ from pyrit.executor.core import (
     StrategyEventData,
     StrategyEventHandler,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationReference,
+    Identifiable,
     Message,
 )
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+    from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
     from pyrit.prompt_target import PromptTarget
 
 AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
@@ -64,6 +71,13 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     _next_message_override: Optional[Message] = None
     _prepended_conversation_override: Optional[list[Message]] = None
     _memory_labels_override: Optional[dict[str, str]] = None
+
+    # Optional attribution from an upstream orchestrator (e.g. Scenario). When
+    # set, the persistence path stamps attribution_parent_id + attribution_data
+    # onto the resulting AttackResult so it can be located later for hydration
+    # and resume. Set by AttackExecutor per-task before scheduling. Stays None
+    # for ad-hoc/direct attack execution outside any orchestrator.
+    _attribution: Optional[AttackResultAttribution] = None
 
     # Convenience properties that delegate to params or overrides
     @property
@@ -132,12 +146,15 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         """
         self._logger = logger
         self._events = {
-            StrategyEvent.ON_PRE_EXECUTE: self._on_pre_execute,
-            StrategyEvent.ON_POST_EXECUTE: self._on_post_execute,
+            StrategyEvent.ON_PRE_EXECUTE: self._on_pre_execute_async,
+            StrategyEvent.ON_POST_EXECUTE: self._on_post_execute_async,
+            StrategyEvent.ON_ERROR: self._on_error_async,
         }
         self._memory = CentralMemory.get_memory_instance()
 
-    async def on_event(self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]) -> None:
+    async def on_event_async(
+        self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]
+    ) -> None:
         """
         Handle an event during the attack strategy execution.
 
@@ -149,9 +166,9 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             handler = self._events[event_data.event]
             await handler(event_data)
         else:
-            await self._on(event_data)
+            await self._on_async(event_data)
 
-    async def _on(self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]) -> None:
+    async def _on_async(self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]) -> None:
         """
         Handle specific events during the attack strategy execution.
 
@@ -161,11 +178,14 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         """
         self._logger.debug(f"Attack is in '{event_data.event.value}' stage for {self.__class__.__name__}")
 
-    async def _on_pre_execute(
+    async def _on_pre_execute_async(
         self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]
     ) -> None:
         """
         Handle pre-execution logic before the attack strategy runs.
+
+        Sets up execution timing and starts a RetryCollector to capture
+        retry events during execution.
 
         Args:
             event_data (StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]): The event data containing
@@ -183,11 +203,13 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         # Log the start of the attack
         self._logger.info(f"Starting attack: {event_data.context.objective}")
 
-    async def _on_post_execute(
+    async def _on_post_execute_async(
         self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]
     ) -> None:
         """
         Handle post-execution logic after the attack strategy has run.
+
+        Attaches retry events to the result and persists it to memory.
 
         Args:
             event_data (StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]): The event data containing
@@ -203,10 +225,51 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         execution_time_ms = int((end_time - event_data.context.start_time) * 1000)
         event_data.result.execution_time_ms = execution_time_ms
 
+        # Attach collected retry events to the result
+        collector = get_retry_collector()
+        if collector and collector.events:
+            event_data.result.retry_events = collector.events
+            event_data.result.total_retries = len(collector.events)
+
+        # Stamp attribution onto the result before persistence so the
+        # AttackResultEntry row records its lineage. Outside an orchestrator
+        # _attribution is None and both attribution fields stay None.
+        self._apply_attribution(context=event_data.context, result=event_data.result)
+
         self._logger.debug(f"Attack execution completed in {execution_time_ms}ms")
 
         self._log_attack_outcome(event_data.result)
         self._memory.add_attack_results_to_memory(attack_results=[event_data.result])
+
+    @staticmethod
+    def _apply_attribution(
+        *,
+        context: AttackStrategyContextT,
+        result: AttackResult,
+    ) -> None:
+        """
+        Copy attribution from the AttackContext onto the AttackResult.
+
+        Reads ``context._attribution`` (an ``AttackResultAttribution`` set by
+        the AttackExecutor when an upstream orchestrator supplied a factory).
+        When present, writes ``attribution_parent_id`` and a fixed-schema
+        ``attribution_data`` dict onto the result so they round-trip into
+        ``AttackResultEntry``.
+
+        Args:
+            context: The per-task AttackContext.
+            result: The AttackResult that is about to be persisted.
+        """
+        attribution = context._attribution
+        if attribution is None:
+            return
+        result.attribution_parent_id = attribution.parent_id
+        attribution_data: dict[str, Any] = {
+            "parent_collection": attribution.parent_collection,
+        }
+        if attribution.parent_eval_hash is not None:
+            attribution_data["parent_eval_hash"] = attribution.parent_eval_hash
+        result.attribution_data = attribution_data
 
     def _log_attack_outcome(self, result: AttackResult) -> None:
         """
@@ -222,21 +285,91 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             message = f"{attack_name} achieved the objective. {reason}"
         elif result.outcome == AttackOutcome.UNDETERMINED:
             message = f"{attack_name} outcome is undetermined. {reason}"
+        elif result.outcome == AttackOutcome.ERROR:
+            message = f"{attack_name} failed with an error. {reason}"
         else:
             message = f"{attack_name} did not achieve the objective. {reason}"
 
         self._logger.info(message)
+
+    async def _on_error_async(
+        self, event_data: StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]
+    ) -> None:
+        """
+        Handle error during attack execution.
+
+        Creates an error AttackResult with error details and any retry events
+        collected during execution, then persists it to memory.
+
+        Args:
+            event_data (StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]): The event data containing
+                context, result, and error.
+        """
+        error = event_data.error
+        context = event_data.context
+        if not error or not context:
+            return
+
+        # Collect retry events (visible via inherited ContextVar copy)
+        collector = get_retry_collector()
+        retry_events = collector.events if collector else []
+
+        # Build a conversation_id — use context's if available, otherwise generate one
+        conversation_id = getattr(context, "conversation_id", None) or str(uuid.uuid4())
+
+        error_result = AttackResult(
+            conversation_id=conversation_id,
+            objective=context.objective,
+            outcome=AttackOutcome.ERROR,
+            outcome_reason=f"Exception: {type(error).__name__}: {str(error)}",
+            labels=context.memory_labels,
+            related_conversations=context.related_conversations,
+            error_message=str(error),
+            error_type=type(error).__name__,
+            error_traceback="".join(traceback.format_exception(type(error), error, error.__traceback__)),
+            retry_events=retry_events,
+            total_retries=len(retry_events),
+        )
+
+        end_time = time.perf_counter()
+        if context.start_time:
+            error_result.execution_time_ms = int((end_time - context.start_time) * 1000)
+
+        # Stamp attribution onto the error result so it is locatable via the
+        # attribution_parent_id foreign key on resume.
+        self._apply_attribution(context=context, result=error_result)
+
+        self._memory.add_attack_results_to_memory(attack_results=[error_result])
+
+        self._logger.error(f"Attack failed with {type(error).__name__}: {error}")
 
 
 class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Identifiable, ABC):
     """
     Abstract base class for attack strategies.
     Defines the interface for executing attacks and handling results.
+
+    Subclasses must use the keyword-only constructor shape
+    (``def __init__(self, *, ...)``); the contract is enforced at class
+    definition time via ``enforce_keyword_only_init``. See
+    ``.github/instructions/attacks.instructions.md`` for the full contract.
     """
 
     #: Capability requirements placed on ``objective_target``. Subclasses
     #: override to declare what the attack needs. Validated in ``__init__``.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Enforce the keyword-only constructor contract on subclasses.
+
+        See ``.github/instructions/attacks.instructions.md`` for the contract.
+        """
+        super().__init_subclass__(**kwargs)
+        # Local import to avoid a circular dependency at package init time.
+        from pyrit.common.brick_contract import enforce_keyword_only_init
+
+        enforce_keyword_only_init(cls, base_name="AttackStrategy")
 
     def __init__(
         self,

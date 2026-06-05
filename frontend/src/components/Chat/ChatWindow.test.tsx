@@ -2,9 +2,23 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ChatWindow from "./ChatWindow";
-import { Message, TargetInfo, TargetInstance } from "../../types";
+import { Message, TargetCapabilitiesInfo, TargetInfo, TargetInstance } from "../../types";
 import { attacksApi, convertersApi } from "../../services/api";
 import * as messageMapper from "../../utils/messageMapper";
+
+const buildCapabilities = (
+  overrides: Partial<TargetCapabilitiesInfo> = {}
+): TargetCapabilitiesInfo => ({
+  supports_multi_turn: true,
+  supports_multi_message_pieces: false,
+  supports_json_schema: false,
+  supports_json_output: false,
+  supports_editable_history: false,
+  supports_system_prompt: false,
+  supported_input_modalities: [],
+  supported_output_modalities: [],
+  ...overrides,
+});
 
 // Fluent UI Combobox portal interactions are slow in JSDOM under full test load
 jest.setTimeout(60000);
@@ -274,8 +288,11 @@ describe("ChatWindow Integration", () => {
       </TestWrapper>
     );
 
-    expect(screen.getByText("PyRIT Attack")).toBeInTheDocument();
-    expect(screen.getByText("New Attack")).toBeInTheDocument();
+    // The ribbon no longer shows the "PyRIT Attack" prefix; the target
+    // badge stands on its own as the leftmost element.
+    expect(screen.queryByText("PyRIT Attack")).not.toBeInTheDocument();
+    expect(screen.getByTestId("target-badge")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /new attack/i })).toBeInTheDocument();
     expect(screen.getByRole("textbox")).toBeInTheDocument();
   });
 
@@ -307,8 +324,13 @@ describe("ChatWindow Integration", () => {
       </TestWrapper>
     );
 
-    expect(screen.getByText(/OpenAIChatTarget/)).toBeInTheDocument();
-    expect(screen.getByText(/gpt-4/)).toBeInTheDocument();
+    // The target badge is the leftmost element. Its visible label
+    // includes the type and model. The same strings also appear in the
+    // tooltip body, so we query the badge specifically.
+    const badge = screen.getByTestId("target-badge");
+    expect(badge).toHaveTextContent(/OpenAIChatTarget/);
+    expect(badge).toHaveTextContent(/gpt-4/);
+    expect(badge).toHaveAttribute("aria-label", expect.stringContaining(mockTarget.target_registry_name));
   });
 
   it("should show no-target message when target is null", () => {
@@ -375,8 +397,9 @@ describe("ChatWindow Integration", () => {
       </TestWrapper>
     );
 
-    expect(screen.getByText(/OpenAIChatTarget/)).toBeInTheDocument();
-    expect(screen.queryByText(/gpt/)).not.toBeInTheDocument();
+    const badge = screen.getByTestId("target-badge");
+    expect(badge).toHaveTextContent(/OpenAIChatTarget/);
+    expect(badge).not.toHaveTextContent(/gpt/);
   });
 
   // -----------------------------------------------------------------------
@@ -1227,7 +1250,7 @@ describe("ChatWindow Integration", () => {
     const singleTurnTarget: TargetInstance = {
       target_registry_name: "openai_image_1",
       target_type: "OpenAIImageTarget",
-      supports_multi_turn: false,
+      capabilities: buildCapabilities({ supports_multi_turn: false }),
     };
 
     const messagesWithUser: Message[] = [
@@ -1261,7 +1284,7 @@ describe("ChatWindow Integration", () => {
     const singleTurnTarget: TargetInstance = {
       target_registry_name: "openai_image_1",
       target_type: "OpenAIImageTarget",
-      supports_multi_turn: false,
+      capabilities: buildCapabilities({ supports_multi_turn: false }),
     };
 
     render(
@@ -1310,7 +1333,7 @@ describe("ChatWindow Integration", () => {
     const singleTurnTarget: TargetInstance = {
       target_registry_name: "openai_tts_1",
       target_type: "OpenAITTSTarget",
-      supports_multi_turn: false,
+      capabilities: buildCapabilities({ supports_multi_turn: false }),
     };
 
     const messagesWithUser: Message[] = [
@@ -1523,7 +1546,7 @@ describe("ChatWindow Integration", () => {
     const singleTurnTarget: TargetInstance = {
       target_registry_name: "openai_image_1",
       target_type: "OpenAIImageTarget",
-      supports_multi_turn: false,
+      capabilities: buildCapabilities({ supports_multi_turn: false }),
     };
 
     const messagesWithUser: Message[] = [
@@ -2116,6 +2139,26 @@ describe("ChatWindow Integration", () => {
     });
   });
 
+  it("should expose the conversations panel toggle via aria-label", () => {
+    // Regression guard: the toggle button is icon-only and previously relied
+    // on aria-label without a visible tooltip; assert both are wired up so
+    // the button is reachable by accessible name (catches regression to
+    // missing aria-label).
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-aria-toggle"
+          conversationId="conv-aria-toggle"
+          activeConversationId="conv-aria-toggle"
+        />
+      </TestWrapper>
+    );
+
+    const toggleBtn = screen.getByRole("button", { name: /toggle conversations panel/i });
+    expect(toggleBtn).toBe(screen.getByTestId("toggle-panel-btn"));
+  });
+
   it("should toggle converter panel when convert button is clicked", async () => {
     render(
       <TestWrapper>
@@ -2543,6 +2586,160 @@ describe("ChatWindow Integration", () => {
     await userEvent.click(screen.getByTestId("toggle-converter-panel-btn"));
     await waitFor(() => {
       expect(screen.getByTestId("converter-panel")).toBeInTheDocument();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Text → File converter flow (e.g. PDFConverter)
+  // -----------------------------------------------------------------------
+
+  it("should render converted-file chip and synthesize file attachment when a text→file converter is used", async () => {
+    mockedConvertersApi.listConverterCatalog.mockResolvedValue({
+      items: [
+        {
+          converter_type: "PDFConverter",
+          supported_input_types: ["text"],
+          supported_output_types: ["binary_path"],
+          parameters: [],
+        },
+      ],
+    });
+    mockedConvertersApi.createConverter.mockResolvedValue({
+      converter_id: "conv-pdf",
+      converter_type: "PDFConverter",
+    });
+    mockedConvertersApi.previewConversion.mockResolvedValue({
+      converted_value: "/tmp/results/report.pdf",
+      converted_value_data_type: "binary_path",
+    });
+    mockedAttacksApi.createAttack.mockResolvedValue({
+      attack_result_id: "ar-pdf",
+      conversation_id: "conv-pdf-flow",
+      created_at: "2026-01-01T00:00:00Z",
+    } as never);
+    // Keep addMessage pending so the optimistic user message (with the
+    // synthesized file attachment) remains in the DOM for assertion.
+    mockedAttacksApi.addMessage.mockImplementation(
+      () => new Promise(() => {}) as never
+    );
+    mockedMapper.buildMessagePieces.mockResolvedValue([
+      { piece_type: "text", original_value: "make a pdf" } as never,
+    ]);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+
+    render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} conversationId={null} />
+      </TestWrapper>
+    );
+
+    // 1. Type input
+    const chatInput = screen.getByTestId("chat-input");
+    await userEvent.type(chatInput, "make a pdf");
+
+    // 2. Open converter panel and select PDFConverter
+    await userEvent.click(screen.getByTestId("toggle-converter-panel-btn"));
+    const combobox = screen.getByRole("combobox");
+    await userEvent.click(combobox);
+    const option = await screen.findByRole("option", { name: /PDFConverter/ });
+    await userEvent.click(option);
+
+    // 3. text→file converters do not auto-preview; click Preview explicitly
+    await waitFor(() => {
+      expect(screen.getByTestId("converter-preview-btn")).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByTestId("converter-preview-btn"));
+    await waitFor(() => {
+      expect(screen.getByTestId("converter-preview-result")).toBeInTheDocument();
+    });
+
+    // 4. Use the converted value — populates pieceConversions['text'] with binary_path output
+    await userEvent.click(screen.getByTestId("use-converted-btn"));
+
+    // 5. The file chip should appear in the input area (covers convertedFileChip IIFE)
+    const chip = await screen.findByTestId("converted-file-chip");
+    expect(chip).toHaveTextContent("report.pdf");
+    const openLink = screen.getByTestId("converted-file-open");
+    expect(openLink).toHaveAttribute(
+      "href",
+      expect.stringContaining(encodeURIComponent("/tmp/results/report.pdf"))
+    );
+
+    // 6. Send — covers handleSend's text→file branch (buildMediaUrl /
+    //    dataTypeToAttachmentKind / basenameFromValue) which synthesizes a
+    //    file attachment on the optimistic user message.
+    const sendBtn = screen.getByTestId("send-message-btn");
+    await waitFor(() => expect(sendBtn).toBeEnabled());
+    await userEvent.click(sendBtn);
+
+    await waitFor(() => {
+      expect(mockedAttacksApi.createAttack).toHaveBeenCalled();
+    });
+
+    // The optimistic user bubble carries the synthesized file attachment.
+    // MessageList renders the file attachment with a unique testid we can target.
+    const attachmentOpen = await screen.findByTestId("attachment-open-0-0");
+    expect(attachmentOpen).toHaveAttribute(
+      "href",
+      expect.stringContaining(encodeURIComponent("/tmp/results/report.pdf"))
+    );
+  });
+
+  it("should auto-clear a stale text→text conversion when the typed text diverges from the original", async () => {
+    mockedConvertersApi.listConverterCatalog.mockResolvedValue({
+      items: [
+        {
+          converter_type: "Base64Converter",
+          supported_input_types: ["text"],
+          supported_output_types: ["text"],
+          parameters: [],
+        },
+      ],
+    });
+    mockedConvertersApi.createConverter.mockResolvedValue({
+      converter_id: "conv-b64-stale",
+      converter_type: "Base64Converter",
+    });
+    mockedConvertersApi.previewConversion.mockResolvedValue({
+      converted_value: "aGVsbG8=",
+      converted_value_data_type: "text",
+    });
+
+    render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} conversationId={null} />
+      </TestWrapper>
+    );
+
+    const chatInput = screen.getByTestId("chat-input");
+    await userEvent.type(chatInput, "hello");
+
+    await userEvent.click(screen.getByTestId("toggle-converter-panel-btn"));
+    const combobox = screen.getByRole("combobox");
+    await userEvent.click(combobox);
+    const option = await screen.findByRole("option", { name: /Base64Converter/ });
+    await userEvent.click(option);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("converter-preview-btn")).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByTestId("converter-preview-btn"));
+    await waitFor(() => {
+      expect(screen.getByTestId("converter-preview-result")).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByTestId("use-converted-btn"));
+
+    // The converted text row now exists (originalValue captured = "hello")
+    await waitFor(() => {
+      expect(screen.getByTestId("converted-value-input")).toBeInTheDocument();
+    });
+
+    // Type more — originalValue no longer matches chatInputText, so the
+    // auto-clear effect must drop pieceConversions['text'].
+    await userEvent.type(chatInput, " world");
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("converted-value-input")).not.toBeInTheDocument();
     });
   });
 });

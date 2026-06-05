@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from pyrit.common.path import DEFAULT_CONFIG_PATH
 from pyrit.common.yaml_loadable import YamlLoadable
-from pyrit.identifiers.class_name_utils import class_name_to_snake_case
+from pyrit.models import class_name_to_snake_case
 from pyrit.setup.initialization import (
     AZURE_SQL,
     IN_MEMORY,
@@ -52,6 +52,47 @@ class InitializerConfig:
 
     name: str
     args: Optional[dict[str, YamlValue]] = None
+
+
+@dataclass
+class ServerConfig:
+    """
+    Configuration for connecting to (or launching) a PyRIT backend server.
+
+    Attributes:
+        url: Base URL of the backend (e.g. ``http://localhost:8000``).
+    """
+
+    url: str = "http://localhost:8000"
+
+
+@dataclass
+class ScenarioConfig:
+    """
+    Configuration for a scenario referenced by a config file.
+
+    Attributes:
+        name: Scenario name (registered in ScenarioRegistry; normalized to snake_case).
+        args: Optional map of scenario-declared parameter values.
+    """
+
+    name: str
+    args: Optional[dict[str, YamlValue]] = None
+
+
+def _scenario_config_to_dict(config: ScenarioConfig) -> dict[str, Any]:
+    """
+    Serialize a ``ScenarioConfig`` back to the YAML-style dict shape.
+
+    Args:
+        config (ScenarioConfig): The config to serialize.
+
+    Returns:
+        dict[str, Any]: ``{"name": ..., "args": ...}`` (args omitted when empty).
+    """
+    if config.args:
+        return {"name": config.name, "args": config.args}
+    return {"name": config.name}
 
 
 @dataclass
@@ -102,11 +143,18 @@ class ConfigurationLoader(YamlLoadable):
     silent: bool = False
     operator: Optional[str] = None
     operation: Optional[str] = None
+    scenario: Optional[Union[str, dict[str, Any]]] = None
+    max_concurrent_scenario_runs: int = 3
+    allow_custom_initializers: bool = False
+    server: Optional[dict[str, Any]] = None
+    extensions: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Validate and normalize the configuration after loading."""
         self._normalize_memory_db_type()
         self._normalize_initializers()
+        self._normalize_scenario()
+        self._normalize_server()
 
     def _normalize_memory_db_type(self) -> None:
         """
@@ -166,6 +214,77 @@ class ConfigurationLoader(YamlLoadable):
                 raise ValueError(f"Initializer entry must be a string or dict, got: {type(entry).__name__}")
         self._initializer_configs = normalized
 
+    def _normalize_scenario(self) -> None:
+        """
+        Normalize the optional ``scenario`` block to a ``ScenarioConfig``.
+
+        Accepts:
+        - ``None``: no scenario configured at the config-file layer.
+        - ``"name"``: shorthand for ``ScenarioConfig(name="name", args=None)``.
+        - ``{"name": "name", "args": {...}}``: full form. ``args`` is optional.
+
+        The name is normalized to snake_case (matching initializer naming).
+
+        Raises:
+            ValueError: For any other shape.
+        """
+        if self.scenario is None:
+            self._scenario_config: Optional[ScenarioConfig] = None
+            return
+
+        if isinstance(self.scenario, str):
+            self._scenario_config = ScenarioConfig(name=class_name_to_snake_case(self.scenario, suffix="Scenario"))
+            return
+
+        if isinstance(self.scenario, dict):
+            if "name" not in self.scenario:
+                raise ValueError(f"Scenario configuration must have a 'name' field. Got: {self.scenario}")
+            name = self.scenario["name"]
+            if not isinstance(name, str):
+                raise ValueError(f"Scenario 'name' must be a string. Got: {type(name).__name__}")
+            args = self.scenario.get("args")
+            if args is not None and not isinstance(args, dict):
+                raise ValueError(f"Scenario 'args' must be a dict or omitted. Got: {type(args).__name__}")
+            self._scenario_config = ScenarioConfig(
+                name=class_name_to_snake_case(name, suffix="Scenario"),
+                args=args,
+            )
+            return
+
+        raise ValueError(f"Scenario entry must be a string or dict, got: {type(self.scenario).__name__}")
+
+    def _normalize_server(self) -> None:
+        """
+        Normalize the optional ``server`` block to a ``ServerConfig``.
+
+        Accepts ``None`` (no server configured) or ``{"url": "..."}`` form.
+
+        Raises:
+            ValueError: If ``server`` is not ``None`` or a dict, or if ``url`` is not a string.
+        """
+        if self.server is None:
+            self._server_config: Optional[ServerConfig] = None
+            return
+
+        if isinstance(self.server, dict):
+            url = self.server.get("url", "http://localhost:8000")
+            if not isinstance(url, str):
+                raise ValueError(f"Server 'url' must be a string. Got: {type(url).__name__}")
+            self._server_config = ServerConfig(url=url.rstrip("/"))
+            return
+
+        raise ValueError(f"Server entry must be a dict, got: {type(self.server).__name__}")
+
+    @property
+    def server_config(self) -> Optional[ServerConfig]:
+        """The normalized ``server:`` block, or ``None`` when not configured."""
+        return self._server_config
+
+    @property
+    def scenario_config(self) -> Optional[ScenarioConfig]:
+        """The normalized ``scenario:`` block, or ``None`` when not configured."""
+        return self._scenario_config
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ConfigurationLoader":
         """
@@ -176,10 +295,21 @@ class ConfigurationLoader(YamlLoadable):
 
         Returns:
             A new ConfigurationLoader instance.
+
+        Raises:
+            ValueError: If ``extensions`` is present but not a dict.
         """
         # Filter out None values only - empty lists are meaningful ("load nothing")
         filtered_data = {k: v for k, v in data.items() if v is not None}
-        return cls(**filtered_data)
+        known_fields = set(cls.__dataclass_fields__.keys())
+        known_data = {k: v for k, v in filtered_data.items() if k in known_fields and k != "extensions"}
+        extra_data = {k: v for k, v in filtered_data.items() if k not in known_fields}
+        if "extensions" in filtered_data:
+            extensions = filtered_data["extensions"]
+            if not isinstance(extensions, dict):
+                raise ValueError(f"ConfigurationLoader.extensions must be a dict. Got: {type(extensions).__name__}")
+            extra_data = {**extra_data, **extensions}
+        return cls(**known_data, extensions=extra_data)
 
     @staticmethod
     def load_with_overrides(
@@ -249,6 +379,8 @@ class ConfigurationLoader(YamlLoadable):
                     config_data["operator"] = default_config.operator
                 if default_config.operation:
                     config_data["operation"] = default_config.operation
+                if default_config._scenario_config is not None:
+                    config_data["scenario"] = _scenario_config_to_dict(default_config._scenario_config)
             except Exception as e:
                 logger.warning(f"Failed to load default config file {default_config_path}: {e}")
 
@@ -272,6 +404,12 @@ class ConfigurationLoader(YamlLoadable):
                 config_data["operator"] = explicit_config.operator
             if explicit_config.operation:
                 config_data["operation"] = explicit_config.operation
+            # Explicit config wins over default config for scenario block too.
+            config_data["scenario"] = (
+                _scenario_config_to_dict(explicit_config._scenario_config)
+                if explicit_config._scenario_config is not None
+                else None
+            )
 
         # 3. Apply overrides (non-None values take precedence)
         # Convert Sequence to list to match dataclass field types
@@ -305,7 +443,7 @@ class ConfigurationLoader(YamlLoadable):
         """
         return DEFAULT_CONFIG_PATH
 
-    def _resolve_initializers(self) -> Sequence["PyRITInitializer"]:
+    def resolve_initializers(self) -> Sequence["PyRITInitializer"]:
         """
         Resolve initializer names to PyRITInitializer instances.
 
@@ -318,6 +456,8 @@ class ConfigurationLoader(YamlLoadable):
         Raises:
             ValueError: If an initializer name is not found in the registry.
         """
+        import logging
+
         from pyrit.registry import InitializerRegistry
 
         if not self._initializer_configs:
@@ -325,6 +465,8 @@ class ConfigurationLoader(YamlLoadable):
 
         registry = InitializerRegistry()
         resolved: list[PyRITInitializer] = []
+
+        logging.getLogger(__name__).info("Running %d initializer(s)...", len(self._initializer_configs))
 
         for config in self._initializer_configs:
             initializer_class = registry.get_class(config.name)
@@ -345,7 +487,7 @@ class ConfigurationLoader(YamlLoadable):
 
         return resolved
 
-    def _resolve_initialization_scripts(self) -> Optional[Sequence[pathlib.Path]]:
+    def resolve_initialization_scripts(self) -> Optional[Sequence[pathlib.Path]]:
         """
         Resolve initialization script paths.
 
@@ -370,7 +512,7 @@ class ConfigurationLoader(YamlLoadable):
 
         return resolved
 
-    def _resolve_env_files(self) -> Optional[Sequence[pathlib.Path]]:
+    def resolve_env_files(self) -> Optional[Sequence[pathlib.Path]]:
         """
         Resolve environment file paths.
 
@@ -405,9 +547,9 @@ class ConfigurationLoader(YamlLoadable):
         Raises:
             ValueError: If configuration is invalid or initializers cannot be resolved.
         """
-        resolved_initializers = self._resolve_initializers()
-        resolved_scripts = self._resolve_initialization_scripts()
-        resolved_env_files = self._resolve_env_files()
+        resolved_initializers = self.resolve_initializers()
+        resolved_scripts = self.resolve_initialization_scripts()
+        resolved_env_files = self.resolve_env_files()
 
         # Map snake_case memory_db_type to internal constant
         internal_memory_db_type = _MEMORY_DB_TYPE_MAP[self.memory_db_type]

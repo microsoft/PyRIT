@@ -39,8 +39,8 @@ def mock_pku_data():
 async def test_fetch_dataset_includes_all_prompts(mock_pku_data):
     loader = _PKUSafeRLHFDataset(include_safe_prompts=True)
 
-    with patch.object(loader, "_fetch_from_huggingface", new_callable=AsyncMock, return_value=mock_pku_data):
-        dataset = await loader.fetch_dataset()
+    with patch.object(loader, "_fetch_from_huggingface_async", new_callable=AsyncMock, return_value=mock_pku_data):
+        dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)
     assert len(dataset.seeds) == 3
@@ -50,8 +50,8 @@ async def test_fetch_dataset_includes_all_prompts(mock_pku_data):
 async def test_fetch_dataset_excludes_safe_prompts(mock_pku_data):
     loader = _PKUSafeRLHFDataset(include_safe_prompts=False)
 
-    with patch.object(loader, "_fetch_from_huggingface", new_callable=AsyncMock, return_value=mock_pku_data):
-        dataset = await loader.fetch_dataset()
+    with patch.object(loader, "_fetch_from_huggingface_async", new_callable=AsyncMock, return_value=mock_pku_data):
+        dataset = await loader.fetch_dataset_async()
 
     assert len(dataset.seeds) == 2
     values = [s.value for s in dataset.seeds]
@@ -61,8 +61,8 @@ async def test_fetch_dataset_excludes_safe_prompts(mock_pku_data):
 async def test_fetch_dataset_filters_by_harm_category(mock_pku_data):
     loader = _PKUSafeRLHFDataset(include_safe_prompts=True, filter_harm_categories=["Cybercrime"])
 
-    with patch.object(loader, "_fetch_from_huggingface", new_callable=AsyncMock, return_value=mock_pku_data):
-        dataset = await loader.fetch_dataset()
+    with patch.object(loader, "_fetch_from_huggingface_async", new_callable=AsyncMock, return_value=mock_pku_data):
+        dataset = await loader.fetch_dataset_async()
 
     # Only the first item has Cybercrime=True; safe item has no harm categories so it's excluded
     assert len(dataset.seeds) == 1

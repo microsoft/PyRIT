@@ -38,6 +38,24 @@ def test_add_text_image_converter_invalid_font():
         AddTextImageConverter(text_to_add="Sample text", font_name="helvetica.otf")  # Invalid font extension
 
 
+def test_add_text_image_converter_positional_arg_deprecation():
+    with pytest.warns(
+        DeprecationWarning, match="Passing text_to_add as a positional argument to AddTextImageConverter"
+    ):
+        converter = AddTextImageConverter("Sample text")
+    assert converter._text_to_add == "Sample text"
+
+
+def test_add_text_image_converter_positional_and_keyword_raises():
+    with pytest.raises(TypeError, match="Cannot pass text_to_add as both positional and keyword"):
+        AddTextImageConverter("Sample text", text_to_add="Sample text")
+
+
+def test_add_text_image_converter_too_many_positional_args_raises():
+    with pytest.raises(TypeError, match="takes at most 1 positional argument"):
+        AddTextImageConverter("Sample text", "extra")
+
+
 def test_add_text_image_converter_invalid_text_to_add():
     with pytest.raises(ValueError):
         AddTextImageConverter(text_to_add="", font_name="helvetica.ttf")
@@ -85,18 +103,18 @@ async def test_add_text_image_converter_invalid_input_image() -> None:
         assert await converter.convert_async(prompt="mock_image.png", input_type="image_path")  # type: ignore[arg-type]
 
 
-async def test_add_text_image_converter_convert_async(sqlite_instance) -> None:
+async def test_add_text_image_converter_convert_async(tmp_path, sqlite_instance) -> None:
     converter = AddTextImageConverter(text_to_add="test")
     mock_image = Image.new("RGB", (400, 300), (255, 255, 255))
-    mock_image.save("test.png")
+    image_path = str(tmp_path / "test.png")
+    mock_image.save(image_path)
 
-    converted_image = await converter.convert_async(prompt="test.png", input_type="image_path")
+    converted_image = await converter.convert_async(prompt=image_path, input_type="image_path")
     assert converted_image
     assert converted_image.output_text
     assert converted_image.output_type == "image_path"
     assert os.path.exists(converted_image.output_text)
     os.remove(converted_image.output_text)
-    os.remove("test.png")
 
 
 def test_text_image_converter_input_supported():

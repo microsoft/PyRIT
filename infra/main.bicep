@@ -74,6 +74,10 @@ param pyritInitializer string = 'target airt'
 @description('Key Vault secret name containing the .env file contents (all endpoints, models, and API keys). The secret is mounted as an env var and PyRIT parses it at startup.')
 param envSecretName string = 'env-global'
 
+@secure()
+@description('Optional raw .env file contents. If provided, this is used directly instead of reading from Key Vault.')
+param envFileContents string = ''
+
 @description('Container CPU cores')
 param cpuCores string = '1.0'
 
@@ -138,6 +142,7 @@ var imageUsesLatest = endsWith(containerImage, ':latest')
 var createLogAnalytics = logAnalyticsWorkspaceId == ''
 var createVnet = enablePrivateEndpoint && infrastructureSubnetId == ''
 var createAcr = acrResourceId == '' && acrName == ''
+var useInlineEnvFile = !empty(envFileContents)
 
 // ============================================================================
 // VNet + Subnet (created only if infrastructureSubnetId is not provided)
@@ -406,11 +411,16 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 
       // Key Vault secret reference for the .env file contents
       secrets: [
-        {
-          name: 'env-file'
-          keyVaultUrl: 'https://${keyVaultName}${environment().suffixes.keyvaultDns}/secrets/${envSecretName}'
-          identity: managedIdentity.id
-        }
+        useInlineEnvFile
+          ? {
+              name: 'env-file'
+              value: envFileContents
+            }
+          : {
+              name: 'env-file'
+              keyVaultUrl: 'https://${keyVaultName}${environment().suffixes.keyvaultDns}/secrets/${envSecretName}'
+              identity: managedIdentity.id
+            }
       ]
     }
 

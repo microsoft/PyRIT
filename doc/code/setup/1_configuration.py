@@ -1,3 +1,5 @@
+from pyrit.output import output_attack_async
+
 # ---
 # jupyter:
 #   jupytext:
@@ -7,7 +9,6 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 # ---
-
 # %% [markdown]
 # # 1. Configuration
 #
@@ -20,11 +21,9 @@
 # 3. Set initialization scripts and defaults (recommended)
 #
 # Alternatively, you can write a config file (`~/.pyrit/.pyrit_conf`) to parameterize this for you.
-
 # %% [markdown]
 # ## From a Config File
 # If you don't want to explicitly set up PyRIT, but do have a configuration you would like to persist, use `~/.pyrit/.pyrit_conf`. See the [PyRIT Configuration Guide](../../getting_started/pyrit_conf.md) for more details. Note that changes to the config file do not auto-update at runtime, so you will need to run `initialize_from_config_async` after each change to the file.
-
 # %%
 # You can specify your own path for the config file using config_path
 from pyrit.setup.configuration_loader import initialize_from_config_async
@@ -128,7 +127,7 @@ target3 = OpenAIChatTarget(
 #
 # You can pass these in as arguments to every class initialization, but it can be a huge pain to set these every time. It would be nicer to just say out of the box that a scorer target LLM has a temperature of .5 by default, and a converter target LLM has a temperature of 1.1 by default. And it turns out you can!
 #
-# The following example shows how to use PyRIT initializers. This tackles a similar scenario to [Scenario Parameters](../scenarios/1_scenario_parameters.ipynb) but is much easier because defaults are set.
+# The following example shows how to use PyRIT initializers. This tackles a similar scenario to [Common Scenario Parameters](../scenarios/1_common_scenario_parameters.ipynb) but is much easier because defaults are set.
 
 # %%
 import os
@@ -138,7 +137,6 @@ from pyrit.common.path import PYRIT_PATH
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackExecutor,
-    ConsoleAttackResultPrinter,
     PromptSendingAttack,
 )
 from pyrit.prompt_converter import TenseConverter
@@ -192,7 +190,7 @@ attack = PromptSendingAttack(
 results = await AttackExecutor().execute_attack_async(attack=attack, objectives=objectives)  # type: ignore
 
 for result in results:
-    await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+    await output_attack_async(result)
 
 # %% [markdown]
 # ### Using your own Initializers

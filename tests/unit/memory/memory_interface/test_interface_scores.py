@@ -11,10 +11,11 @@ import pytest
 from unit.mocks import get_mock_target
 
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
+    ComponentIdentifier,
+    IdentifierFilter,
+    IdentifierType,
     MessagePiece,
     Score,
     SeedPrompt,
@@ -130,6 +131,31 @@ def test_add_score_get_score(
     # scorer_class_identifier is now a ComponentIdentifier object, check the class_name
     assert db_score[0].scorer_class_identifier.class_name == "TestScorer"
     assert db_score[0].message_piece_id == prompt_id
+
+
+def test_get_prompt_scores_empty_prompt_ids_returns_empty(sqlite_instance: MemoryInterface):
+    prompt_id = uuid4()
+    piece = MessagePiece(
+        id=prompt_id,
+        role="user",
+        original_value="original prompt text",
+        converted_value="Hello, how are you?",
+    )
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
+
+    score = Score(
+        score_value=str(0.8),
+        score_value_description="High score",
+        score_type="float_scale",
+        score_category=["test"],
+        score_rationale="Test score",
+        score_metadata={"test": "metadata"},
+        scorer_class_identifier=_test_scorer_id("TestScorer"),
+        message_piece_id=prompt_id,
+    )
+    sqlite_instance.add_scores_to_memory(scores=[score])
+
+    assert sqlite_instance.get_prompt_scores(prompt_ids=[]) == []
 
 
 def test_add_score_duplicate_prompt(sqlite_instance: MemoryInterface):

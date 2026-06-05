@@ -8,7 +8,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, cast, get_args, overload
+from typing import TYPE_CHECKING, Any, Optional, cast, overload
 
 from treelib.tree import Tree
 
@@ -38,22 +38,21 @@ from pyrit.executor.attack.core.attack_config import (
 )
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
-from pyrit.identifiers import ComponentIdentifier, build_atomic_attack_identifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
     Message,
     MessagePiece,
     Score,
     SeedPrompt,
+    build_atomic_attack_identifier,
 )
-from pyrit.models.literals import PromptDataType, PromptResponseError
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget, PromptTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
@@ -67,36 +66,10 @@ from pyrit.score.score_utils import normalize_score_to_float
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
+if TYPE_CHECKING:
+    from pyrit.models.literals import PromptDataType
+
 logger = logging.getLogger(__name__)
-
-_DEFAULT_ERROR_SCORE_MAP: dict[str, float] = {"blocked": 0.0}
-
-
-def _validate_error_score_map(error_score_map: dict[str, float] | None) -> dict[str, float]:
-    """
-    Validate and return a copy of the error score map.
-
-    Args:
-        error_score_map (dict[str, float] | None): The error score map to validate.
-            None uses the default mapping. An empty dict disables error mapping.
-
-    Returns:
-        dict[str, float]: A validated copy of the error score map.
-
-    Raises:
-        ValueError: If a key is not a valid PromptResponseError or a value is outside [0, 1].
-    """
-    if error_score_map is None:
-        return dict(_DEFAULT_ERROR_SCORE_MAP)
-    valid_errors = get_args(PromptResponseError)
-    for key, value in error_score_map.items():
-        if key not in valid_errors:
-            raise ValueError(
-                f"error_score_map key '{key}' is not a valid PromptResponseError. Valid values: {valid_errors}"
-            )
-        if not (0.0 <= value <= 1.0):
-            raise ValueError(f"error_score_map value for '{key}' must be between 0.0 and 1.0, got {value}")
-    return dict(error_score_map)
 
 
 class TAPSystemPromptPaths(enum.Enum):
@@ -203,7 +176,6 @@ class TAPAttackContext(MultiTurnAttackContext[Any]):
     best_adversarial_conversation_id: Optional[str] = None
 
 
-@dataclass
 class TAPAttackResult(AttackResult):
     """
     Result of the Tree of Attacks with Pruning (TAP) attack strategy execution.
@@ -307,7 +279,7 @@ class _TreeOfAttacksNode:
         self,
         *,
         objective_target: PromptTarget,
-        adversarial_chat: PromptChatTarget,
+        adversarial_chat: PromptTarget,
         adversarial_chat_seed_prompt: SeedPrompt,
         adversarial_chat_prompt_template: SeedPrompt,
         adversarial_chat_system_seed_prompt: SeedPrompt,
@@ -323,14 +295,13 @@ class _TreeOfAttacksNode:
         parent_id: Optional[str] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
         initial_prompt: Optional[Message] = None,
-        error_score_map: dict[str, float] | None = None,
     ) -> None:
         """
         Initialize a tree node.
 
         Args:
             objective_target (PromptTarget): The target to attack.
-            adversarial_chat (PromptChatTarget): The chat target for generating adversarial prompts.
+            adversarial_chat (PromptTarget): The chat target for generating adversarial prompts.
             adversarial_chat_seed_prompt (SeedPrompt): The seed prompt for the first turn.
             adversarial_chat_prompt_template (SeedPrompt): The template for subsequent turns.
             adversarial_chat_system_seed_prompt (SeedPrompt): The system prompt for the adversarial chat
@@ -347,11 +318,6 @@ class _TreeOfAttacksNode:
             prompt_normalizer (Optional[PromptNormalizer]): Normalizer for handling prompts and responses.
             initial_prompt (Optional[Message]): Initial message to send for the first turn,
                 bypassing adversarial chat generation. Supports multimodal messages.
-            error_score_map (dict[str, float] | None): Mapping of response error types to fixed
-                scores. When a target response has an error matching a key in this map, the
-                corresponding score is assigned instead of invoking the scorer. This prevents
-                premature branch pruning when targets return blocked/filtered responses.
-                Defaults to {"blocked": 0.0}. Pass an empty dict to disable.
         """
         # Store configuration
         self._objective_target = objective_target
@@ -368,7 +334,6 @@ class _TreeOfAttacksNode:
         self._attack_id = attack_id
         self._attack_strategy_name = attack_strategy_name
         self._memory_labels = memory_labels or {}
-        self._error_score_map = _validate_error_score_map(error_score_map)
 
         # Initialize utilities
         self._memory = CentralMemory.get_memory_instance()
@@ -642,7 +607,7 @@ class _TreeOfAttacksNode:
             self.objective_target_conversation_id = str(uuid.uuid4())
 
         # Duplicate to ensure fresh IDs (avoids conflicts if message was already in memory)
-        message = self._initial_prompt.duplicate_message()
+        message = self._initial_prompt.duplicate()
         self._initial_prompt = None  # Clear for future turns
 
         # Store the prompt text for reference
@@ -684,9 +649,12 @@ class _TreeOfAttacksNode:
         and any auxiliary scorers (which provide additional metrics). The scoring results are
         used by the TAP algorithm to decide which branches to explore further.
 
-        The method leverages the Scorer utility to handle all scoring logic, including error
-        handling and parallel execution of multiple scorers. Responses with errors are skipped
-        to avoid scoring failures from blocking the attack progress.
+        Blocked or errored responses are scored via the scorer's unified default behavior:
+        ``TrueFalseScorer`` returns
+        ``Score(False)`` and ``FloatScaleScorer``
+        returns ``Score(0.0)`` whenever no supported pieces remain after validator filtering
+        (the normal outcome for a blocked piece). This keeps blocked branches at the bottom
+        of the priority queue without needing attack-level error mapping.
 
         Args:
             response (Message): The response from the objective target to evaluate.
@@ -703,34 +671,6 @@ class _TreeOfAttacksNode:
             Higher scores indicate more successful attacks and influence which branches
             the TAP algorithm explores in subsequent iterations.
         """
-        # Check if the response has a mapped error before attempting normal scoring.
-        # This prevents scorer failures when the target returns a blocked/filtered response
-        # (e.g., content policy violations from image generation targets).
-        if self._error_score_map and response.is_error():
-            for response_piece in response.message_pieces:
-                error_type = response_piece.response_error
-                if error_type in self._error_score_map:
-                    assigned_score = self._error_score_map[error_type]
-                    logger.debug(
-                        f"Node {self.node_id}: Response has mapped error '{error_type}', "
-                        f"assigning score {assigned_score}"
-                    )
-                    self.objective_score = Score(
-                        score_value=str(assigned_score),
-                        score_value_description=(f"Assigned score {assigned_score} for '{error_type}' response error"),
-                        score_type="float_scale",
-                        score_category=["error_handling"],
-                        score_rationale=(
-                            f"Response had '{error_type}' error. Assigned fixed score {assigned_score} "
-                            f"via error_score_map to prevent premature branch pruning."
-                        ),
-                        message_piece_id=str(response_piece.id),
-                        scorer_class_identifier=self._objective_scorer.get_identifier(),
-                        objective=objective,
-                    )
-                    self._memory.add_scores_to_memory(scores=[self.objective_score])
-                    return
-
         # Use the Scorer utility method to handle all scoring
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_SCORER,
@@ -758,7 +698,8 @@ class _TreeOfAttacksNode:
         # Extract auxiliary scores
         auxiliary_scores = scoring_results["auxiliary_scores"]
         for score in auxiliary_scores:
-            scorer_name = score.scorer_class_identifier.class_name
+            scorer_identifier = score.scorer_class_identifier
+            scorer_name = scorer_identifier.class_name if scorer_identifier else "unknown"
             self.auxiliary_scores[scorer_name] = score
             logger.debug(f"Node {self.node_id}: {scorer_name} score: {score.get_value()}")
 
@@ -870,7 +811,6 @@ class _TreeOfAttacksNode:
             desired_response_prefix=self._desired_response_prefix,
             parent_id=self.node_id,
             prompt_normalizer=self._prompt_normalizer,
-            error_score_map=self._error_score_map,
         )
 
         # Duplicate the conversations to preserve history
@@ -964,7 +904,7 @@ class _TreeOfAttacksNode:
             # Generate feedback prompt and get a new response
             feedback_prompt = self._generate_off_topic_feedback_prompt(
                 original_prompt=prompt,
-                off_topic_rationale=on_topic_score.score_rationale,
+                off_topic_rationale=on_topic_score.score_rationale or "",
                 objective=objective,
             )
 
@@ -1354,19 +1294,18 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
     def __init__(
         self,
         *,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-assignment, ty:invalid-parameter-default]
+        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: TAPAttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         tree_width: int = 3,
         tree_depth: int = 5,
         branching_factor: int = 2,
         on_topic_checking_enabled: bool = True,
         desired_response_prefix: str = "Sure, here is",
         batch_size: int = 10,
-        prepended_conversation_config: Optional[PrependedConversationConfig] = None,
-        error_score_map: dict[str, float] | None = None,
+        prepended_conversation_config: PrependedConversationConfig | None = None,
     ) -> None:
         """
         Initialize the Tree of Attacks with Pruning attack strategy.
@@ -1374,34 +1313,37 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         Args:
             objective_target (PromptTarget): The target system to attack.
             attack_adversarial_config (AttackAdversarialConfig): Configuration for the adversarial chat component.
-            attack_converter_config (Optional[AttackConverterConfig]): Configuration for attack converters.
+            attack_converter_config (AttackConverterConfig | None): Configuration for attack converters.
                 Defaults to None.
-            attack_scoring_config (Optional[AttackScoringConfig]): Scoring configuration for TAP.
+            attack_scoring_config (TAPAttackScoringConfig | None): Scoring configuration for TAP.
                 The objective_scorer must be a FloatScaleThresholdScorer, which provides both
                 granular float scores for node comparison and a threshold for determining success.
                 Can be either AttackScoringConfig or TAPAttackScoringConfig. If not provided,
                 a default configuration with SelfAskScaleScorer and threshold 0.7 is created.
-            prompt_normalizer (Optional[PromptNormalizer]): The prompt normalizer to use. Defaults to None.
+            prompt_normalizer (PromptNormalizer | None): The prompt normalizer to use. Defaults to None.
             tree_width (int): Number of branches to explore in parallel at each level. Defaults to 3.
             tree_depth (int): Maximum number of iterations to perform. Defaults to 5.
             branching_factor (int): Number of child branches to create from each parent. Defaults to 2.
             on_topic_checking_enabled (bool): Whether to check if prompts are on-topic. Defaults to True.
             desired_response_prefix (str): Expected prefix for successful responses. Defaults to "Sure, here is".
             batch_size (int): Number of nodes to process in parallel per batch. Defaults to 10.
-            prepended_conversation_config (Optional[PrependedConversationConfiguration]):
+            prepended_conversation_config (PrependedConversationConfig | None):
                 Configuration for how to process prepended conversations. Controls converter
                 application by role, message normalization, and non-chat target behavior.
-            error_score_map (dict[str, float] | None): Mapping of response error types to fixed
-                scores. When a target response has an error matching a key in this map, the
-                corresponding score is assigned instead of invoking the scorer. This prevents
-                premature branch pruning when targets return blocked/filtered responses (e.g.,
-                content policy violations from image generation targets). Defaults to
-                {"blocked": 0.0}. Pass an empty dict to disable.
 
         Raises:
             ValueError: If attack_scoring_config uses a non-FloatScaleThresholdScorer objective scorer,
                 if the adversarial target does not natively support the capabilities TAP needs,
                 or if parameters are invalid.
+
+        Note:
+            Blocked or errored target responses (e.g. content filter triggers from image
+            generation targets) are scored ``0.0`` via the unified
+            ``FloatScaleScorer`` default,
+            which prevents premature pruning without any attack-level error mapping. To
+            score partial content from blocked responses, set
+            ``score_blocked_content=True`` on the objective scorer (requires
+            ``prompt_metadata["partial_content"]`` on the blocked piece).
         """
         # Validate tree parameters
         if tree_depth < 1:
@@ -1428,10 +1370,10 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self._on_topic_checking_enabled = on_topic_checking_enabled
         self._desired_response_prefix = desired_response_prefix
         self._batch_size = batch_size
-        self._error_score_map = _validate_error_score_map(error_score_map)
 
         # Initialize adversarial configuration
         self._adversarial_chat = attack_adversarial_config.target
+
         # TAP sets a system prompt on the adversarial target and drives a
         # multi-turn dialogue through it; both capabilities must be native.
         # (The class-level ``TARGET_REQUIREMENTS`` inherited from ``AttackStrategy``
@@ -1542,7 +1484,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             TreeOfAttacksWithPruningAttack.DEFAULT_ADVERSARIAL_SEED_PROMPT_PATH
         )
 
-    def get_attack_scoring_config(self) -> Optional[AttackScoringConfig]:
+    def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
         Get the attack scoring configuration used by this strategy.
 
@@ -2022,7 +1964,6 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             parent_id=parent_id,
             prompt_normalizer=self._prompt_normalizer,
             initial_prompt=initial_prompt,
-            error_score_map=self._error_score_map,
         )
 
         # Add the adversarial chat conversation ID to the context's tracking (ensuring uniqueness)

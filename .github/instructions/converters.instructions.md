@@ -58,14 +58,13 @@ Exclude: retry counts, logging config, timeouts.
 ## Standard Imports
 
 ```python
-from pyrit.models import PromptDataType
-from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier, PromptDataType
+from pyrit.prompt_converter import ConverterResult, PromptConverter
 ```
 
 For LLM-based converters, also import:
 ```python
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import PromptTarget
 ```
 
 ## Constructor Pattern
@@ -77,9 +76,45 @@ from pyrit.common.apply_defaults import apply_defaults
 
 class MyConverter(PromptConverter):
     @apply_defaults
-    def __init__(self, *, target: PromptChatTarget, template: str = "default") -> None:
+    def __init__(self, *, target: PromptTarget, template: str = "default") -> None:
         ...
 ```
+
+### Keyword-only ``__init__`` is enforced
+
+Every ``PromptConverter`` subclass MUST make all ``__init__`` parameters
+keyword-only (i.e., place ``*`` as the first parameter after ``self``).
+``PromptConverter.__init_subclass__`` validates this at class-definition
+time via ``enforce_keyword_only_init`` and raises ``TypeError`` on
+violations.
+
+The check is satisfied by either of:
+
+```python
+def __init__(self, *, foo: str, bar: int = 0) -> None: ...
+
+def __init__(self, *args: str, foo: str = "") -> None: ...  # *args after self
+```
+
+It rejects:
+
+```python
+def __init__(self, foo: str, bar: int = 0) -> None: ...    # missing *
+```
+
+### Temporary opt-out: ``_brick_legacy_init``
+
+A handful of legacy converters whose positional ``__init__`` is part of the
+public API are grandfathered with ``_brick_legacy_init = True``. They
+emit a ``DeprecationWarning`` at import time and the opt-out is scheduled
+for removal in **0.16.0**. Do not set this flag on new converters; new
+converters MUST follow the keyword-only contract.
+
+Currently grandfathered (slated for cleanup in 0.16.0):
+``AddImageVideoConverter``, ``AnsiAttackConverter``, ``AsciiArtConverter``,
+``AskToDecodeConverter``, ``DiacriticConverter``, ``InsertPunctuationConverter``,
+``PDFConverter``, ``QRCodeConverter``, ``RandomCapitalLettersConverter``,
+``SearchReplaceConverter``, ``SmugglerConverter`` (and its three subclasses).
 
 ## Exports and External Updates
 

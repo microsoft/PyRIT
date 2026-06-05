@@ -7,7 +7,12 @@ export interface MessageAttachment {
   name: string
   url: string
   mimeType: string
-  size: number
+  /**
+   * Decoded byte count when known. Omitted for path / URL / scheme-prefixed
+   * values (e.g. `/api/media?path=...`) where the value is a reference, not
+   * the payload, so its string length would be meaningless.
+   */
+  size?: number
   file?: File
   /** Backend piece ID — preserved so remix/copy can trace back to the original piece */
   pieceId?: string
@@ -53,6 +58,17 @@ export interface PaginationInfo {
 
 // --- Targets ---
 
+export interface TargetCapabilitiesInfo {
+  supports_multi_turn: boolean
+  supports_multi_message_pieces: boolean
+  supports_json_schema: boolean
+  supports_json_output: boolean
+  supports_editable_history: boolean
+  supports_system_prompt: boolean
+  supported_input_modalities: string[]
+  supported_output_modalities: string[]
+}
+
 export interface TargetInstance {
   target_registry_name: string
   target_type: string
@@ -62,7 +78,7 @@ export interface TargetInstance {
   temperature?: number | null
   top_p?: number | null
   max_requests_per_minute?: number | null
-  supports_multi_turn?: boolean
+  capabilities?: TargetCapabilitiesInfo | null
   target_specific_params?: Record<string, unknown> | null
 }
 
@@ -74,6 +90,7 @@ export interface TargetListResponse {
 export interface CreateTargetRequest {
   type: string
   params: Record<string, unknown>
+  auth_mode?: 'api_key' | 'entra'
 }
 
 // --- Converters ---
@@ -129,7 +146,7 @@ export interface AttackSummary {
   attack_specific_params?: Record<string, unknown> | null
   target?: TargetInfo | null
   converters: string[]
-  outcome?: 'undetermined' | 'success' | 'failure' | null
+  outcome?: 'undetermined' | 'success' | 'failure' | 'error' | null
   last_message_preview?: string | null
   message_count: number
   related_conversation_ids: string[]

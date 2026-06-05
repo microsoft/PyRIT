@@ -244,7 +244,7 @@ class TestAzureSpeechAudioToTextConverter:
     async def test_convert_async_happy_path(self, mock_required, mock_factory, mock_get_config):
         """Test convert_async exercises the get_speech_config_async + _recognize_audio path."""
         mock_serializer = AsyncMock()
-        mock_serializer.read_data.return_value = b"fake audio bytes"
+        mock_serializer.read_data_async.return_value = b"fake audio bytes"
         mock_factory.return_value = mock_serializer
 
         mock_speech_config = MagicMock()
@@ -305,7 +305,4 @@ class TestAzureSpeechAudioToTextConverter:
             converter.recognize_audio(audio_bytes=b"fake audio")
 
         deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert any(
-            "recognize_audio() does not support callable token providers" in str(x.message)
-            for x in deprecation_warnings
-        )
+        assert any("recognize_audio" in str(x.message) and "deprecated" in str(x.message) for x in deprecation_warnings)

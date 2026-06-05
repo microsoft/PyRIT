@@ -5,13 +5,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from pyrit.prompt_target import CHAT_CONSUMER_REQUIREMENTS
+from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
-    from pyrit.identifiers import ComponentIdentifier
-    from pyrit.models import MessagePiece, Score, UnvalidatedScore
+    from pyrit.models import ComponentIdentifier, MessagePiece, Score, UnvalidatedScore
     from pyrit.prompt_target import PromptTarget
 
 
@@ -25,7 +24,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
         supported_data_types=["text"],
         is_objective_required=True,
     )
-    TARGET_REQUIREMENTS = CHAT_CONSUMER_REQUIREMENTS
+    TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
     def __init__(
         self,
@@ -55,7 +54,7 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
 
         Args:
             chat_target (PromptTarget): The chat target used to score. Must satisfy
-                CHAT_CONSUMER_REQUIREMENTS (multi-turn + editable history capabilities,
+                CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
                 possibly via normalization-pipeline adaptation).
             system_prompt_format_string (str): System prompt template with placeholders for
                 objective, prompt, and message_piece.
@@ -141,12 +140,12 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
                 message_piece=message_piece,
             )
 
-        unvalidated: UnvalidatedScore = await self._score_value_with_llm(
+        unvalidated: UnvalidatedScore = await self._score_value_with_llm_async(
             prompt_target=self._prompt_target,
             system_prompt=system_prompt,
             message_value=user_prompt,
             message_data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+            scored_prompt_id=message_piece.id,
             category=self._score_category,
             objective=objective,
             attack_identifier=message_piece.attack_identifier,

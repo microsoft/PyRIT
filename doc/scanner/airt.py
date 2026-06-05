@@ -19,9 +19,9 @@
 # ## Setup
 
 # %%
+from pyrit.output import output_scenario_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario import DatasetConfiguration
-from pyrit.scenario.printer.console_printer import ConsoleScenarioResultPrinter
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import LoadDefaultDatasets, ScorerInitializer, TargetInitializer
 
@@ -31,8 +31,6 @@ await initialize_pyrit_async(  # type: ignore
 )
 
 objective_target = OpenAIChatTarget()
-printer = ConsoleScenarioResultPrinter()
-
 # %% [markdown]
 # ## Rapid Response
 #
@@ -44,12 +42,12 @@ printer = ConsoleScenarioResultPrinter()
 # pyrit_scan airt.rapid_response \
 #   --initializers target load_default_datasets \
 #   --target openai_chat \
-#   --strategies prompt_sending \
+#   --strategies role_play \
 #   --dataset-names airt_hate \
 #   --max-dataset-size 1
 # ```
 #
-# **Available strategies:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, prompt_sending, role_play, many_shot, tap
+# **Available strategies:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, role_play, many_shot, tap
 
 # %%
 from pyrit.scenario.scenarios.airt import RapidResponse, RapidResponseStrategy
@@ -59,14 +57,14 @@ dataset_config = DatasetConfiguration(dataset_names=["airt_hate"], max_dataset_s
 scenario = RapidResponse()
 await scenario.initialize_async(  # type: ignore
     objective_target=objective_target,
-    scenario_strategies=[RapidResponseStrategy.prompt_sending],
+    scenario_strategies=[RapidResponseStrategy.role_play],
     dataset_config=dataset_config,
 )
 
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await printer.print_summary_async(scenario_result)  # type: ignore
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # ## Psychosocial
@@ -115,7 +113,7 @@ await scenario.initialize_async(  # type: ignore
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await printer.print_summary_async(scenario_result)  # type: ignore
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # ## Cyber
@@ -127,11 +125,11 @@ await printer.print_summary_async(scenario_result)  # type: ignore
 # pyrit_scan airt.cyber \
 #   --initializers target load_default_datasets \
 #   --target openai_chat \
-#   --strategies single_turn \
+#   --strategies multi_turn \
 #   --max-dataset-size 1
 # ```
 #
-# **Available strategies:** ALL, SINGLE_TURN, MULTI_TURN
+# **Available strategies:** ALL, MULTI_TURN, red_teaming
 
 # %%
 from pyrit.scenario.scenarios.airt import Cyber, CyberStrategy
@@ -141,14 +139,14 @@ dataset_config = DatasetConfiguration(dataset_names=["airt_malware"], max_datase
 scenario = Cyber()
 await scenario.initialize_async(  # type: ignore
     objective_target=objective_target,
-    scenario_strategies=[CyberStrategy.SINGLE_TURN],
+    scenario_strategies=[CyberStrategy.MULTI_TURN],
     dataset_config=dataset_config,
 )
 
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await printer.print_summary_async(scenario_result)  # type: ignore
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # ## Jailbreak
@@ -181,7 +179,7 @@ await scenario.initialize_async(  # type: ignore
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await printer.print_summary_async(scenario_result)  # type: ignore
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # ## Leakage
@@ -222,14 +220,14 @@ dataset_config = DatasetConfiguration(dataset_names=["airt_leakage"], max_datase
 scenario = Leakage()
 await scenario.initialize_async(  # type: ignore
     objective_target=objective_target,
-    scenario_strategies=[LeakageStrategy.FirstLetter],
+    scenario_strategies=[LeakageStrategy.first_letter],
     dataset_config=dataset_config,
 )
 
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await printer.print_summary_async(scenario_result)  # type: ignore
+await output_scenario_async(scenario_result)
 
 # %% [markdown]
 # ## Scam
@@ -261,4 +259,4 @@ await scenario.initialize_async(  # type: ignore
 scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
-await printer.print_summary_async(scenario_result)  # type: ignore
+await output_scenario_async(scenario_result)

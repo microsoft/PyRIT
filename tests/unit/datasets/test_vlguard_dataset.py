@@ -107,7 +107,7 @@ class TestVLGuardDataset:
             "_download_dataset_files_async",
             new=AsyncMock(return_value=(mock_vlguard_metadata, image_dir)),
         ):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
             # 2 unsafe examples × 2 prompts each = 4 prompts
@@ -133,7 +133,7 @@ class TestVLGuardDataset:
             "_download_dataset_files_async",
             new=AsyncMock(return_value=(mock_vlguard_metadata, image_dir)),
         ):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 2  # 1 example × 2 prompts
             text_prompts = [p for p in dataset.seeds if p.data_type == "text"]
@@ -153,7 +153,7 @@ class TestVLGuardDataset:
             "_download_dataset_files_async",
             new=AsyncMock(return_value=(mock_vlguard_metadata, image_dir)),
         ):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 2  # 1 example × 2 prompts
             text_prompts = [p for p in dataset.seeds if p.data_type == "text"]
@@ -175,30 +175,11 @@ class TestVLGuardDataset:
             "_download_dataset_files_async",
             new=AsyncMock(return_value=(mock_vlguard_metadata, image_dir)),
         ):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 2  # Only the Privacy example
             text_prompts = [p for p in dataset.seeds if p.data_type == "text"]
             assert text_prompts[0].harm_categories == ["privacy"]
-
-    async def test_max_examples(self, mock_vlguard_metadata, tmp_path):
-        """Test that max_examples limits the number of returned examples."""
-        image_dir = tmp_path / "test"
-        image_dir.mkdir()
-        (image_dir / "unsafe_001.jpg").write_bytes(b"fake image")
-        (image_dir / "unsafe_002.jpg").write_bytes(b"fake image")
-
-        loader = _VLGuardDataset(subset=VLGuardSubset.UNSAFES, max_examples=1)
-
-        with patch.object(
-            loader,
-            "_download_dataset_files_async",
-            new=AsyncMock(return_value=(mock_vlguard_metadata, image_dir)),
-        ):
-            dataset = await loader.fetch_dataset()
-
-            # max_examples=1 → 1 example × 2 prompts = 2 prompts
-            assert len(dataset.seeds) == 2
 
     async def test_prompt_group_id_links_text_and_image(self, mock_vlguard_metadata, tmp_path):
         """Test that text and image prompts share the same prompt_group_id."""
@@ -214,7 +195,7 @@ class TestVLGuardDataset:
             "_download_dataset_files_async",
             new=AsyncMock(return_value=(mock_vlguard_metadata, image_dir)),
         ):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             # Each pair should share a group_id
             text_prompt = dataset.seeds[0]
@@ -223,7 +204,7 @@ class TestVLGuardDataset:
             assert text_prompt.data_type == "text"
             assert image_prompt.data_type == "image_path"
             assert text_prompt.sequence == 0
-            assert image_prompt.sequence == 1
+            assert image_prompt.sequence == 0
 
     async def test_missing_image_skipped(self, mock_vlguard_metadata, tmp_path):
         """Test that examples with missing images are skipped."""
@@ -239,7 +220,7 @@ class TestVLGuardDataset:
             "_download_dataset_files_async",
             new=AsyncMock(return_value=(mock_vlguard_metadata, image_dir)),
         ):
-            dataset = await loader.fetch_dataset()
+            dataset = await loader.fetch_dataset_async()
 
             # Only 1 example should be included (the one with the existing image)
             assert len(dataset.seeds) == 2
@@ -297,7 +278,7 @@ class TestVLGuardDataset:
             new=AsyncMock(return_value=(metadata, image_dir)),
         ):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
-                await loader.fetch_dataset()
+                await loader.fetch_dataset_async()
 
     async def test_examples_with_missing_image_field_skipped(self, tmp_path):
         """Test that examples with no image field are skipped."""
@@ -319,7 +300,7 @@ class TestVLGuardDataset:
             new=AsyncMock(return_value=(metadata, image_dir)),
         ):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
-                await loader.fetch_dataset()
+                await loader.fetch_dataset_async()
 
     async def test_examples_with_no_extractable_instruction_skipped(self, tmp_path):
         """Test that examples where _extract_instruction returns None are skipped."""
@@ -343,7 +324,7 @@ class TestVLGuardDataset:
             new=AsyncMock(return_value=(metadata, image_dir)),
         ):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
-                await loader.fetch_dataset()
+                await loader.fetch_dataset_async()
 
     async def test_download_dataset_files_uses_cache(self, tmp_path):
         """Test that _download_dataset_files_async returns cached data when available."""
@@ -399,3 +380,27 @@ class TestVLGuardDataset:
 
         assert metadata == test_metadata
         assert result_dir == cache_dir / "test"
+
+
+class TestVLGuardTokenResolution:
+    """Tests for HuggingFace token resolution on _VLGuardDataset."""
+
+    def test_explicit_token_kwarg_used(self):
+        with patch.dict("os.environ", {}, clear=True):
+            loader = _VLGuardDataset(token="kwarg_token")
+            assert loader.token == "kwarg_token"
+
+    def test_falls_back_to_huggingface_token_env(self):
+        with patch.dict("os.environ", {"HUGGINGFACE_TOKEN": "env_token"}):
+            loader = _VLGuardDataset()
+            assert loader.token == "env_token"
+
+    def test_explicit_kwarg_overrides_env(self):
+        with patch.dict("os.environ", {"HUGGINGFACE_TOKEN": "env_token"}):
+            loader = _VLGuardDataset(token="kwarg_token")
+            assert loader.token == "kwarg_token"
+
+    def test_token_is_none_when_neither_set(self):
+        with patch.dict("os.environ", {}, clear=True):
+            loader = _VLGuardDataset()
+            assert loader.token is None

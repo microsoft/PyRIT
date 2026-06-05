@@ -10,6 +10,8 @@ import pytest
 from pyrit.setup.configuration_loader import (
     ConfigurationLoader,
     InitializerConfig,
+    ScenarioConfig,
+    ServerConfig,
     initialize_from_config_async,
 )
 
@@ -164,6 +166,43 @@ class TestConfigurationLoader:
         assert config.memory_db_type == "sqlite"  # Normalized to snake_case
         assert config.initializers == []  # Uses default, not None
 
+    def test_from_dict_preserves_unknown_top_level_keys_in_extensions(self):
+        """Unknown top-level keys should be preserved for downstream tooling."""
+        data = {
+            "memory_db_type": "in_memory",
+            "targets": [{"name": "x"}],
+            "scan_modes": {"default": {"threshold": 0.8}},
+        }
+        config = ConfigurationLoader.from_dict(data)
+        assert config.memory_db_type == "in_memory"
+        assert config.extensions == {
+            "targets": [{"name": "x"}],
+            "scan_modes": {"default": {"threshold": 0.8}},
+        }
+
+    def test_from_dict_merges_explicit_extensions_with_unknown_keys(self):
+        data = {
+            "memory_db_type": "sqlite",
+            "extensions": {"team": "red"},
+            "targets": [{"name": "x"}],
+        }
+        config = ConfigurationLoader.from_dict(data)
+        assert config.extensions == {"team": "red", "targets": [{"name": "x"}]}
+
+    def test_from_dict_explicit_extensions_wins_on_collision(self):
+        """When a key appears both as unknown top-level and inside extensions, extensions wins."""
+        data = {
+            "memory_db_type": "sqlite",
+            "extensions": {"targets": "from_extensions"},
+            "targets": "top_level_value",
+        }
+        config = ConfigurationLoader.from_dict(data)
+        assert config.extensions["targets"] == "from_extensions"
+
+    def test_from_dict_rejects_non_dict_extensions(self):
+        with pytest.raises(ValueError, match="extensions must be a dict"):
+            ConfigurationLoader.from_dict({"extensions": ["not", "a", "dict"]})
+
     def test_from_yaml_file(self):
         """Test loading configuration from a YAML file."""
         yaml_content = """
@@ -208,53 +247,53 @@ silent: true
 class TestConfigurationLoaderResolvers:
     """Tests for ConfigurationLoader path resolution methods."""
 
-    def test_resolve_initialization_scripts_none_returns_none(self):
+    def testresolve_initialization_scripts_none_returns_none(self):
         """Test that None (default) returns None to signal 'use defaults'."""
         config = ConfigurationLoader()
-        assert config._resolve_initialization_scripts() is None
+        assert config.resolve_initialization_scripts() is None
 
-    def test_resolve_initialization_scripts_empty_list_returns_empty_list(self):
+    def testresolve_initialization_scripts_empty_list_returns_empty_list(self):
         """Test that explicit empty list [] returns empty list to signal 'load nothing'."""
         config = ConfigurationLoader(initialization_scripts=[])
-        resolved = config._resolve_initialization_scripts()
+        resolved = config.resolve_initialization_scripts()
         assert resolved is not None
         assert resolved == []
 
-    def test_resolve_initialization_scripts_absolute_path(self):
+    def testresolve_initialization_scripts_absolute_path(self):
         """Test resolving absolute script paths."""
         config = ConfigurationLoader(initialization_scripts=["/absolute/path/script.py"])
-        resolved = config._resolve_initialization_scripts()
+        resolved = config.resolve_initialization_scripts()
         assert resolved is not None
         assert len(resolved) == 1
         # Check path ends with expected components (Windows adds drive letter to Unix-style paths)
         assert resolved[0].parts[-3:] == ("absolute", "path", "script.py")
 
-    def test_resolve_initialization_scripts_relative_path(self):
+    def testresolve_initialization_scripts_relative_path(self):
         """Test resolving relative script paths (converted to absolute)."""
         config = ConfigurationLoader(initialization_scripts=["relative/script.py"])
-        resolved = config._resolve_initialization_scripts()
+        resolved = config.resolve_initialization_scripts()
         assert resolved is not None
         assert len(resolved) == 1
         assert resolved[0].is_absolute()
         # Check path ends with expected components (works on both Unix and Windows)
         assert resolved[0].parts[-2:] == ("relative", "script.py")
 
-    def test_resolve_env_files_none_returns_none(self):
+    def testresolve_env_files_none_returns_none(self):
         """Test that None (default) returns None to signal 'use defaults'."""
         config = ConfigurationLoader()
-        assert config._resolve_env_files() is None
+        assert config.resolve_env_files() is None
 
-    def test_resolve_env_files_empty_list_returns_empty_list(self):
+    def testresolve_env_files_empty_list_returns_empty_list(self):
         """Test that explicit empty list [] returns empty list to signal 'load nothing'."""
         config = ConfigurationLoader(env_files=[])
-        resolved = config._resolve_env_files()
+        resolved = config.resolve_env_files()
         assert resolved is not None
         assert resolved == []
 
-    def test_resolve_env_files_absolute_path(self):
+    def testresolve_env_files_absolute_path(self):
         """Test resolving absolute env file paths."""
         config = ConfigurationLoader(env_files=["/path/to/.env"])
-        resolved = config._resolve_env_files()
+        resolved = config.resolve_env_files()
         assert resolved is not None
         assert len(resolved) == 1
         # Check path ends with expected components (Windows adds drive letter to Unix-style paths)
@@ -525,3 +564,87 @@ silent: true
             assert config.silent is True
         finally:
             config_path.unlink()
+
+
+class TestScenarioConfig:
+    """Tests for the scenario YAML block normalization."""
+
+    def test_no_scenario_block(self):
+        loader = ConfigurationLoader()
+        assert loader._scenario_config is None
+
+    def test_string_form_normalized_to_snake_case(self):
+        loader = ConfigurationLoader.from_dict({"scenario": "ScamScenario"})
+        assert loader._scenario_config == ScenarioConfig(name="scam")
+
+    def test_string_form_already_snake_case(self):
+        loader = ConfigurationLoader.from_dict({"scenario": "scam"})
+        assert loader._scenario_config == ScenarioConfig(name="scam")
+
+    def test_dict_form_with_args(self):
+        loader = ConfigurationLoader.from_dict({"scenario": {"name": "scam", "args": {"max_turns": 10}}})
+        assert loader._scenario_config == ScenarioConfig(name="scam", args={"max_turns": 10})
+
+    def test_dict_form_without_args(self):
+        loader = ConfigurationLoader.from_dict({"scenario": {"name": "scam"}})
+        assert loader._scenario_config == ScenarioConfig(name="scam", args=None)
+
+    def test_dict_form_missing_name_raises(self):
+        with pytest.raises(ValueError, match="must have a 'name' field"):
+            ConfigurationLoader.from_dict({"scenario": {"args": {"max_turns": 10}}})
+
+    def test_dict_form_non_string_name_raises(self):
+        with pytest.raises(ValueError, match="'name' must be a string"):
+            ConfigurationLoader.from_dict({"scenario": {"name": 123}})
+
+    def test_dict_form_non_dict_args_raises(self):
+        with pytest.raises(ValueError, match="'args' must be a dict"):
+            ConfigurationLoader.from_dict({"scenario": {"name": "scam", "args": [1, 2]}})
+
+    def test_invalid_top_level_type_raises(self):
+        with pytest.raises(ValueError, match="must be a string or dict"):
+            ConfigurationLoader.from_dict({"scenario": 123})
+
+    def test_scenario_config_property_returns_normalized_block(self):
+        """The public ``scenario_config`` property mirrors the private attribute."""
+        loader = ConfigurationLoader.from_dict({"scenario": {"name": "scam", "args": {"max_turns": 10}}})
+        assert loader.scenario_config == ScenarioConfig(name="scam", args={"max_turns": 10})
+
+    def test_scenario_config_property_none_when_unset(self):
+        loader = ConfigurationLoader()
+        assert loader.scenario_config is None
+
+    def test_load_with_overrides_passes_scenario_through_explicit_config(self):
+        yaml_content = "scenario:\n  name: scam\n  args:\n    max_turns: 10\n"
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            config_path = pathlib.Path(f.name)
+        try:
+            config = ConfigurationLoader.load_with_overrides(config_file=config_path)
+            assert config._scenario_config == ScenarioConfig(name="scam", args={"max_turns": 10})
+        finally:
+            config_path.unlink()
+
+
+class TestNormalizeServer:
+    """Tests for ConfigurationLoader._normalize_server."""
+
+    def test_server_none_yields_no_server_config(self):
+        config = ConfigurationLoader(server=None)
+        assert config.server_config is None
+
+    def test_server_dict_with_url_normalizes(self):
+        config = ConfigurationLoader(server={"url": "http://remote:9000/"})
+        assert config.server_config == ServerConfig(url="http://remote:9000")
+
+    def test_server_dict_without_url_uses_default(self):
+        config = ConfigurationLoader(server={})
+        assert config.server_config == ServerConfig(url="http://localhost:8000")
+
+    def test_server_url_non_string_raises(self):
+        with pytest.raises(ValueError, match="Server 'url' must be a string"):
+            ConfigurationLoader(server={"url": 12345})
+
+    def test_server_non_dict_raises(self):
+        with pytest.raises(ValueError, match="Server entry must be a dict"):
+            ConfigurationLoader(server="http://oops:8000")  # type: ignore[arg-type]

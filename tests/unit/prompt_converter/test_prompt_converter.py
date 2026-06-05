@@ -11,7 +11,6 @@ from pyrit.executor.promptgen.fuzzer import FuzzerConverter
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.models import PromptDataType, SeedPrompt
 from pyrit.prompt_converter import (
-    AddImageTextConverter,
     AddTextImageConverter,
     AnsiAttackConverter,
     AsciiArtConverter,
@@ -181,7 +180,7 @@ async def test_str_join_converter_none_raises() -> None:
 async def test_str_join_converter_invalid_type_raises() -> None:
     converter = StringJoinConverter()
     with pytest.raises(ValueError):
-        assert await converter.convert_async(prompt="test", input_type="invalid")  # type: ignore[arg-type] # noqa: PGH003
+        assert await converter.convert_async(prompt="test", input_type="invalid")  # type: ignore[arg-type]
 
 
 async def test_str_join_converter_unsupported_type_raises() -> None:
@@ -472,7 +471,6 @@ def is_speechsdk_installed():
 @pytest.mark.parametrize(
     "converter, expected_input_types, expected_output_types",
     [
-        (AddImageTextConverter(img_to_add="test.jpg"), ["text"], ["image_path"]),
         (AddTextImageConverter(text_to_add="test"), ["image_path"], ["image_path"]),
         (AnsiAttackConverter(), ["text"], ["text"]),
         (AsciiArtConverter(), ["text"], ["text"]),

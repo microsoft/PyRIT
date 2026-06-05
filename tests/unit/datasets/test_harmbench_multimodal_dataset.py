@@ -41,7 +41,7 @@ async def test_fetch_dataset(mock_harmbench_mm_data):
         patch.object(loader, "_fetch_from_url", return_value=mock_harmbench_mm_data),
         patch.object(loader, "_fetch_and_save_image_async", new=AsyncMock(return_value="/path/to/image.png")),
     ):
-        dataset = await loader.fetch_dataset()
+        dataset = await loader.fetch_dataset_async()
 
     assert isinstance(dataset, SeedDataset)
     # Only multimodal entry => 2 prompts (image + text)
@@ -80,7 +80,7 @@ async def test_fetch_dataset_skips_failed_images():
             new=AsyncMock(side_effect=[Exception("download failed"), "/path/to/image.png"]),
         ),
     ):
-        dataset = await loader.fetch_dataset()
+        dataset = await loader.fetch_dataset_async()
 
     # First image failed, second succeeded => 2 prompts (image + text for second)
     assert len(dataset.seeds) == 2
@@ -109,7 +109,7 @@ async def test_fetch_dataset_filters_by_category():
         patch.object(loader, "_fetch_from_url", return_value=data),
         patch.object(loader, "_fetch_and_save_image_async", new=AsyncMock(return_value="/path/to/image.png")),
     ):
-        dataset = await loader.fetch_dataset()
+        dataset = await loader.fetch_dataset_async()
 
     # Only "illegal" category matched => 2 prompts (image + text)
     assert len(dataset.seeds) == 2
@@ -122,7 +122,7 @@ async def test_fetch_dataset_missing_keys_raises():
 
     with patch.object(loader, "_fetch_from_url", return_value=bad_data):
         with pytest.raises(ValueError, match="Missing keys"):
-            await loader.fetch_dataset()
+            await loader.fetch_dataset_async()
 
 
 def test_dataset_name():
@@ -153,7 +153,7 @@ async def test_fetch_and_save_image_raises_when_memory_not_configured():
     mock_serializer._memory = mock_memory
 
     with patch(
-        "pyrit.datasets.seed_datasets.remote.harmbench_multimodal_dataset.data_serializer_factory",
+        "pyrit.datasets.seed_datasets.remote._image_cache.data_serializer_factory",
         return_value=mock_serializer,
     ):
         loader = _HarmBenchMultimodalDataset()
@@ -163,19 +163,20 @@ async def test_fetch_and_save_image_raises_when_memory_not_configured():
 
 async def test_fetch_and_save_image_returns_cached_path():
     """Test that _fetch_and_save_image_async returns cached path when image already exists."""
+    from pathlib import Path
     from unittest.mock import MagicMock
 
     mock_serializer = MagicMock()
     mock_memory = MagicMock()
     mock_memory.results_path = "/results"
     mock_storage_io = AsyncMock()
-    mock_storage_io.path_exists = AsyncMock(return_value=True)
+    mock_storage_io.path_exists_async = AsyncMock(return_value=True)
     mock_memory.results_storage_io = mock_storage_io
     mock_serializer._memory = mock_memory
     mock_serializer.data_sub_directory = "/images"
 
     with patch(
-        "pyrit.datasets.seed_datasets.remote.harmbench_multimodal_dataset.data_serializer_factory",
+        "pyrit.datasets.seed_datasets.remote._image_cache.data_serializer_factory",
         return_value=mock_serializer,
     ):
         loader = _HarmBenchMultimodalDataset()
@@ -183,6 +184,6 @@ async def test_fetch_and_save_image_returns_cached_path():
             behavior_id="test_id", image_url="https://example.com/img.png"
         )
 
-    expected_path = "/results/images/harmbench_test_id.png"
+    expected_path = str(Path("/results") / "images" / "harmbench_test_id.png")
     assert result == expected_path
     assert mock_serializer.value == expected_path

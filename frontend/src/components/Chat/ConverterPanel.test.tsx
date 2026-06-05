@@ -416,6 +416,7 @@ describe('ConverterPanel use converted value', () => {
       converterInstanceId: 'conv-1',
       convertedValue: 'aGVsbG8=',
       originalValue: 'hello',
+      convertedDataType: 'text',
     })
   })
 })
@@ -493,9 +494,9 @@ describe('ConverterPanel grouped converters', () => {
 // ─── Preview output types (image, audio, video) ─────────────────
 
 describe('ConverterPanel output rendering', () => {
-  async function previewWithOutput(output: string) {
+  async function previewWithOutput(output: string, outputType: string = 'text') {
     mockedConvertersApi.createConverter.mockResolvedValue({ converter_id: 'conv-1', converter_type: 'Base64Converter' })
-    mockedConvertersApi.previewConversion.mockResolvedValue({ converted_value: output })
+    mockedConvertersApi.previewConversion.mockResolvedValue({ converted_value: output, converted_value_data_type: outputType })
 
     renderPanel({ previewText: 'hello' })
     await waitForList()
@@ -505,24 +506,32 @@ describe('ConverterPanel output rendering', () => {
     await waitFor(() => expect(screen.getByTestId('converter-preview-result')).toBeInTheDocument())
   }
 
-  it('renders image output for image file paths', async () => {
-    await previewWithOutput('/output/result.png')
+  it('renders image output for image_path data type', async () => {
+    await previewWithOutput('/output/result.png', 'image_path')
     expect((screen.getByTestId('converter-preview-result') as HTMLElement).tagName).toBe('IMG')
   })
 
-  it('renders audio output for audio file paths', async () => {
-    await previewWithOutput('/output/result.wav')
+  it('renders audio output for audio_path data type', async () => {
+    await previewWithOutput('/output/result.wav', 'audio_path')
     expect((screen.getByTestId('converter-preview-result') as HTMLElement).tagName).toBe('AUDIO')
   })
 
-  it('renders video output for video file paths', async () => {
-    await previewWithOutput('/output/result.mp4')
+  it('renders video output for video_path data type', async () => {
+    await previewWithOutput('/output/result.mp4', 'video_path')
     expect((screen.getByTestId('converter-preview-result') as HTMLElement).tagName).toBe('VIDEO')
   })
 
   it('renders text output for plain text', async () => {
-    await previewWithOutput('plain text output')
+    await previewWithOutput('plain text output', 'text')
     expect((screen.getByTestId('converter-preview-result') as HTMLElement).tagName).toBe('PRE')
+  })
+
+  it('renders binary file output as a chip with Open link for binary_path data type', async () => {
+    await previewWithOutput('/tmp/out.pdf', 'binary_path')
+    const result = screen.getByTestId('converter-preview-result') as HTMLElement
+    expect(result.tagName).toBe('DIV')
+    expect(result).toHaveTextContent('out.pdf')
+    expect(screen.getByTestId('converter-preview-open')).toHaveAttribute('href', '/api/media?path=%2Ftmp%2Fout.pdf')
   })
 })
 
@@ -822,26 +831,5 @@ describe('ConverterPanel edge cases', () => {
     await openComboboxAndSelect('Base64Converter')
     // No params section should be shown
     expect(screen.queryByTestId('converter-params')).not.toBeInTheDocument()
-  })
-
-  it('handles converter with empty supported types', async () => {
-    const catalogEmptyTypes = {
-      items: [
-        {
-          converter_type: 'EmptyTypesConverter',
-          supported_input_types: [],
-          supported_output_types: [],
-          parameters: [],
-          is_llm_based: false,
-          description: 'No type restrictions.',
-        },
-      ],
-    }
-    mockedConvertersApi.listConverterCatalog.mockResolvedValueOnce(catalogEmptyTypes as ConverterCatalogResponse)
-
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
-    await openComboboxAndSelect('EmptyTypesConverter')
-    expect(screen.getByTestId('converter-item-EmptyTypesConverter')).toBeInTheDocument()
   })
 })

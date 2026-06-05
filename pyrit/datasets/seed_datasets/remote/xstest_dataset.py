@@ -2,12 +2,17 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
+
+if TYPE_CHECKING:
+    from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +23,29 @@ class _XSTestDataset(_RemoteDatasetLoader):
 
     This dataset contains prompts designed to test exaggerated safety behaviors in language models.
 
-    Reference: https://github.com/paul-rottger/exaggerated-safety
+    Reference: [@rottger2023xstest]
+    Repository: https://github.com/paul-rottger/exaggerated-safety
     """
+
+    _AUTHORS = [
+        "Paul Röttger",
+        "Hannah Rose Kirk",
+        "Bertie Vidgen",
+        "Giuseppe Attanasio",
+        "Federico Bianchi",
+        "Dirk Hovy",
+    ]
+
+    _GROUPS = [
+        "Bocconi University",
+        "University of Oxford",
+        "Stanford University",
+    ]
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "medium"  # 450 safe + unsafe contrast prompts
+    tags: frozenset[str] = frozenset({"default", "safety", "refusal"})
 
     def __init__(
         self,
@@ -38,11 +64,13 @@ class _XSTestDataset(_RemoteDatasetLoader):
         self.source_type: Literal["public_url", "file"] = source_type
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "xstest"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    @override
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch XSTest dataset and return as SeedDataset.
 
@@ -60,7 +88,7 @@ class _XSTestDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=example["prompt"],
                 data_type="text",
@@ -68,6 +96,8 @@ class _XSTestDataset(_RemoteDatasetLoader):
                 harm_categories=[example["note"]],
                 description="A dataset of XSTest examples containing various categories such as violence, drugs, etc.",
                 source=self.source,
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
             for example in examples
         ]

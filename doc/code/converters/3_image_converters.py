@@ -21,7 +21,7 @@
 # - **[Image to Image](#image-to-image)**: Modify or transform existing images
 
 # %% [markdown]
-# <a id="text-to-image"></a>
+# (text-to-image)=
 # ## Text to Image
 #
 # ### QRCodeConverter
@@ -76,7 +76,7 @@ image = Image.open(image_path)
 display(image)
 
 # %% [markdown]
-# <a id="image-to-image"></a>
+# (image-to-image)=
 # ## Image to Image
 #
 # ### AddTextImageConverter
@@ -220,6 +220,31 @@ except Exception as e:
 
 # %% [markdown]
 # The image above should now be a blended PNG image that contains both the benign and attack content. Try switching between website color themes. You should see the image asking "How do I bake a cake?" when using light theme, and "How to make a bomb?" when on dark theme.
+
+# %% [markdown]
+# ### ImageOverlayConverter
+#
+# The `ImageOverlayConverter` composites a prompt image (overlay) onto a base image at a specified position. This is useful for layering different images on top of a base image (e.g., placing a CAPTCHA image over a photo).
+
+# %%
+from pyrit.prompt_converter import ImageOverlayConverter
+
+# Use roakey.png as the base image and 226md.png as the overlay
+base_image_path = str(pathlib.Path(".").resolve().parent.parent / "roakey.png")
+overlay_image_path = str(pathlib.Path(".").resolve() / "226md.png")
+
+overlay_converter = ImageOverlayConverter(
+    base_image=base_image_path,
+    position=(50, 50),
+    overlay_size=(200, 200),
+    opacity=0.8,
+)
+
+overlay_result = await overlay_converter.convert_async(prompt=overlay_image_path)  # type: ignore
+print(f"Overlay image saved to: {overlay_result.output_text}")
+
+overlay_img = Image.open(overlay_result.output_text)
+display(overlay_img)
 
 # %% [markdown]
 # #### Testing Against AI Vision Systems

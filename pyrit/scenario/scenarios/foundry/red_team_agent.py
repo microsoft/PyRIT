@@ -10,14 +10,13 @@ available attacks against specified datasets.
 """
 
 import logging
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from inspect import signature
 from typing import TYPE_CHECKING, Any, Optional, TypeVar, cast
 
-from pyrit.auth import get_azure_openai_auth
 from pyrit.common import REQUIRED_VALUE, apply_defaults
+from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack import (
     CrescendoAttack,
@@ -61,13 +60,12 @@ from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
-from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
+from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_strategy import AttackStrategy
@@ -217,60 +215,33 @@ class RedTeamAgent(Scenario):
 
     VERSION: int = 1
 
-    @classmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        """
-        Get the strategy enum class for this scenario.
-
-        Returns:
-            Type[ScenarioStrategy]: The FoundryStrategy enum class.
-        """
-        return FoundryStrategy
-
-    @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        """
-        Get the default strategy used when no strategies are specified.
-
-        Returns:
-            ScenarioStrategy: FoundryStrategy.EASY (easy difficulty strategies).
-        """
-        return FoundryStrategy.EASY
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """Return the default dataset configuration for this scenario."""
-        return DatasetConfiguration(dataset_names=["harmbench"], max_dataset_size=4)
-
     @apply_defaults
     def __init__(
         self,
         *,
-        adversarial_chat: Optional[PromptChatTarget] = None,
+        adversarial_chat: Optional[PromptTarget] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
-        include_baseline: bool = True,
         scenario_result_id: Optional[str] = None,
+        include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize a Foundry Scenario with the specified attack strategies.
 
         Args:
-            adversarial_chat (Optional[PromptChatTarget]): Target for multi-turn attacks
+            adversarial_chat (Optional[PromptTarget]): Target for multi-turn attacks
                 like Crescendo and RedTeaming. Additionally used for scoring defaults.
                 If not provided, a default OpenAI target will be created using environment variables.
             attack_scoring_config (Optional[AttackScoringConfig]): Configuration for attack scoring,
                 including the objective scorer and auxiliary scorers. If not provided, creates a default
                 configuration with a composite scorer using Azure Content Filter and SelfAsk Refusal scorers.
-            include_baseline (bool): Whether to include a baseline atomic attack that sends all objectives
-                without modifications. Defaults to True. When True, a "baseline" attack is automatically
-                added as the first atomic attack, allowing comparison between unmodified prompts and
-                attack-modified prompts.
             scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
+            include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
+                ``include_baseline`` to ``initialize_async`` instead.
 
         Raises:
             ValueError: If attack_strategies is empty or contains unsupported strategies.
         """
-        self._adversarial_chat = adversarial_chat if adversarial_chat else self._get_default_adversarial_target()
+        self._adversarial_chat = adversarial_chat if adversarial_chat else get_default_adversarial_target()
         if not attack_scoring_config:
             attack_scoring_config = AttackScoringConfig(objective_scorer=self._get_default_objective_scorer())
         self._attack_scoring_config = attack_scoring_config
@@ -286,10 +257,22 @@ class RedTeamAgent(Scenario):
         super().__init__(
             version=self.VERSION,
             strategy_class=FoundryStrategy,
+            default_strategy=FoundryStrategy.EASY,
+            default_dataset_config=DatasetConfiguration(dataset_names=["harmbench"], max_dataset_size=4),
             objective_scorer=objective_scorer,
-            include_default_baseline=include_baseline,
             scenario_result_id=scenario_result_id,
         )
+
+        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along with
+        # the include_baseline kwarg above.
+        if include_baseline is not None:
+            print_deprecation_message(
+                old_item="RedTeamAgent(include_baseline=...)",
+                new_item="RedTeamAgent.initialize_async(include_baseline=...)",
+                removed_in="0.16.0",
+            )
+            self._legacy_include_baseline = include_baseline
+
         self._scenario_composites: list[FoundryComposite] = []
 
     @apply_defaults
@@ -301,9 +284,10 @@ class RedTeamAgent(Scenario):
             Sequence["FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy"]
         ] = None,
         dataset_config: Optional[DatasetConfiguration] = None,
-        max_concurrency: int = 10,
+        max_concurrency: int = 4,
         max_retries: int = 0,
         memory_labels: Optional[dict[str, str]] = None,
+        include_baseline: bool | None = None,
     ) -> None:
         """
         Initialize the scenario.
@@ -316,9 +300,10 @@ class RedTeamAgent(Scenario):
                 ScenarioCompositeStrategy is deprecated — use FoundryComposite instead.
                 If None, uses the default aggregate (EASY).
             dataset_config (Optional[DatasetConfiguration]): Configuration for the dataset source.
-            max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 10.
+            max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 4.
             max_retries (int): Maximum number of retries on failure. Defaults to 0.
             memory_labels (Optional[dict[str, str]]): Labels to attach to all memory entries.
+            include_baseline (bool | None): See ``Scenario.initialize_async``.
         """
         # This override exists purely for type-widening: FoundryComposite is a dataclass,
         # not a ScenarioStrategy enum member, so the base class signature would reject it.
@@ -330,6 +315,7 @@ class RedTeamAgent(Scenario):
             max_concurrency=max_concurrency,
             max_retries=max_retries,
             memory_labels=memory_labels,
+            include_baseline=include_baseline,
         )
 
     def _prepare_strategies(  # type: ignore[ty:invalid-method-override]
@@ -350,7 +336,7 @@ class RedTeamAgent(Scenario):
             list[ScenarioStrategy]: Flat list of constituent strategies for base-class tracking.
         """
         if not strategies:
-            resolved = FoundryStrategy.resolve(None, default=cast("FoundryStrategy", self.get_default_strategy()))
+            resolved = FoundryStrategy.resolve(None, default=cast("FoundryStrategy", self._default_strategy))
             self._scenario_composites = [self._strategy_to_composite(s) for s in resolved]
             return list(resolved)
 
@@ -378,7 +364,7 @@ class RedTeamAgent(Scenario):
                     flat.append(item.attack)
                 flat.extend(item.converters)
             else:
-                for s in FoundryStrategy.resolve([item], default=cast("FoundryStrategy", self.get_default_strategy())):
+                for s in FoundryStrategy.resolve([item], default=cast("FoundryStrategy", self._default_strategy)):
                     if s not in seen:
                         seen.add(s)
                         composites.append(self._strategy_to_composite(s))
@@ -424,16 +410,12 @@ class RedTeamAgent(Scenario):
         # Resolve seed groups now that initialize_async has been called
         self._seed_groups = self._resolve_seed_groups()
 
-        return [self._get_attack_from_strategy(composition) for composition in self._scenario_composites]
+        atomic_attacks = [self._get_attack_from_strategy(composition) for composition in self._scenario_composites]
 
-    def _get_default_adversarial_target(self) -> OpenAIChatTarget:
-        endpoint = os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT")
-        return OpenAIChatTarget(
-            endpoint=endpoint,
-            api_key=get_azure_openai_auth(endpoint or ""),
-            model_name=os.environ.get("AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL"),
-            temperature=1.2,
-        )
+        if self._include_baseline:
+            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._seed_groups))
+
+        return atomic_attacks
 
     def _get_attack_from_strategy(self, composite: FoundryComposite) -> AtomicAttack:
         """

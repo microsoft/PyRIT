@@ -4,7 +4,6 @@
 import asyncio
 import json
 import logging
-import os
 import warnings
 from pathlib import Path
 from typing import Any, cast
@@ -17,11 +16,11 @@ from transformers import (
 )
 
 from pyrit.common import default_values
-from pyrit.common.download_hf_model import download_specific_files
+from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common.download_hf_model import download_specific_files_async
 from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, construct_response_from_request
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
+from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
@@ -29,7 +28,7 @@ from pyrit.prompt_target.common.utils import limit_requests_per_minute
 logger = logging.getLogger(__name__)
 
 
-class HuggingFaceChatTarget(PromptChatTarget):
+class HuggingFaceChatTarget(PromptTarget):
     """
     The HuggingFaceChatTarget interacts with HuggingFace models, specifically for conducting red teaming activities.
     Inherits from PromptTarget to comply with the current design standards.
@@ -77,7 +76,6 @@ class HuggingFaceChatTarget(PromptChatTarget):
         attn_implementation: str | None = None,
         max_requests_per_minute: int | None = None,
         custom_configuration: TargetConfiguration | None = None,
-        custom_capabilities: TargetCapabilities | None = None,
     ) -> None:
         """
         Initialize the HuggingFaceChatTarget.
@@ -109,8 +107,6 @@ class HuggingFaceChatTarget(PromptChatTarget):
             max_requests_per_minute (int | None): The maximum number of requests per minute. Defaults to None.
             custom_configuration (TargetConfiguration | None): Override the default configuration for this target
                 instance. Defaults to None.
-            custom_capabilities (TargetCapabilities | None): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
 
         Raises:
             ValueError: If neither or both of `model_id` and `model_path` are provided.
@@ -122,7 +118,6 @@ class HuggingFaceChatTarget(PromptChatTarget):
             max_requests_per_minute=max_requests_per_minute,
             model_name=model_name,
             custom_configuration=custom_configuration,
-            custom_capabilities=custom_capabilities,
         )
 
         if not model_id and not model_path:
@@ -177,7 +172,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
         if self.use_cuda and not torch.cuda.is_available():
             raise RuntimeError("CUDA requested but not available.")
 
-        self.load_model_and_tokenizer_task = asyncio.create_task(self.load_model_and_tokenizer())
+        self.load_model_and_tokenizer_task = asyncio.create_task(self.load_model_and_tokenizer_async())
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -232,7 +227,7 @@ class HuggingFaceChatTarget(PromptChatTarget):
             logger.error(f"Invalid HuggingFace model ID {self.model_id}: {e}")
             return False
 
-    async def load_model_and_tokenizer(self) -> None:
+    async def load_model_and_tokenizer_async(self) -> None:
         """
         Load the model and tokenizer, download if necessary.
 
@@ -269,22 +264,27 @@ class HuggingFaceChatTarget(PromptChatTarget):
                 self._load_from_path(self.model_path, **optional_model_kwargs)
             else:
                 # Define the default Hugging Face cache directory
-                cache_dir = os.path.join(
-                    os.path.expanduser("~"),
-                    ".cache",
-                    "huggingface",
-                    "hub",
-                    f"models--{(self.model_id or '').replace('/', '--')}",
+                cache_dir = (
+                    Path.home()
+                    / ".cache"
+                    / "huggingface"
+                    / "hub"
+                    / f"models--{(self.model_id or '').replace('/', '--')}"
                 )
 
                 if self.necessary_files is None:
                     # Download all files if no specific files are provided
                     logger.info(f"Downloading all files for {self.model_id}...")
-                    await download_specific_files(self.model_id or "", None, self.huggingface_token, Path(cache_dir))  # type: ignore[ty:invalid-argument-type]
+                    await download_specific_files_async(
+                        self.model_id or "",
+                        None,
+                        self.huggingface_token,  # type: ignore[ty:invalid-argument-type]
+                        cache_dir,
+                    )
                 else:
                     # Download only the necessary files
                     logger.info(f"Downloading specific files for {self.model_id}...")
-                    await download_specific_files(
+                    await download_specific_files_async(
                         self.model_id or "",
                         self.necessary_files,
                         self.huggingface_token,  # type: ignore[ty:invalid-argument-type]
@@ -321,6 +321,15 @@ class HuggingFaceChatTarget(PromptChatTarget):
         except Exception as e:
             logger.error(f"Error loading model {self.model_id}: {e}")
             raise
+
+    async def load_model_and_tokenizer(self) -> None:  # pyrit-async-suffix-exempt
+        """Use ``load_model_and_tokenizer_async`` instead; this is a deprecated alias."""
+        print_deprecation_message(
+            old_item="pyrit.prompt_target.HuggingFaceChatTarget.load_model_and_tokenizer",
+            new_item="pyrit.prompt_target.HuggingFaceChatTarget.load_model_and_tokenizer_async",
+            removed_in="0.16.0",
+        )
+        await self.load_model_and_tokenizer_async()
 
     @limit_requests_per_minute
     @pyrit_target_retry

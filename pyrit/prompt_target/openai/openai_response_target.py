@@ -14,21 +14,20 @@ from typing import (
 
 from openai.types.shared import ReasoningEffort
 
-from pyrit.common.data_url_converter import convert_local_image_to_data_url
+from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     MessagePiece,
     PromptDataType,
     PromptResponseError,
 )
 from pyrit.models.json_response_config import _JsonResponseConfig
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
@@ -59,7 +58,7 @@ class MessagePieceType(str, Enum):
     MCP_APPROVAL_REQUEST = "mcp_approval_request"
 
 
-class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
+class OpenAIResponseTarget(OpenAITarget):
     """
     Enables communication with endpoints that support the OpenAI Response API.
 
@@ -72,6 +71,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
+            supports_editable_history=True,
             supports_json_output=True,
             supports_multi_message_pieces=True,
             supports_system_prompt=True,
@@ -100,7 +100,6 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
         extra_body_parameters: Optional[dict[str, Any]] = None,
         fail_on_missing_function: bool = False,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -131,10 +130,6 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
             reasoning_summary (Literal["auto", "concise", "detailed"], Optional): Controls
                 whether a summary of the model's reasoning is included in the response.
                 Defaults to None (no summary).
-            is_json_supported (bool, Optional): If True, the target will support formatting responses as JSON by
-                setting the response_format header. Official OpenAI models all support this, but if you are using
-                this target with different models, is_json_supported should be set correctly to avoid issues when
-                using adversarial infrastructure (e.g. Crescendo scorers will set this flag).
             extra_body_parameters (dict, Optional): Additional parameters to be included in the request body.
             fail_on_missing_function: if True, raise when a function_call references
                 an unknown function or does not output a function; if False, return a structured error so we can
@@ -142,8 +137,6 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
                 (e.g., pick another tool or ask for clarification).
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
              httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
@@ -153,13 +146,12 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
             PyritException: If the temperature or top_p values are out of bounds.
             ValueError: If the temperature is not between 0 and 2 (inclusive).
             ValueError: If the top_p is not between 0 and 1 (inclusive).
-            ValueError: If both `max_output_tokens` and `max_tokens` are provided.
             RateLimitException: If the target is rate-limited.
             httpx.HTTPStatusError: If the request fails with a 400 Bad Request or 429 Too Many Requests error.
             json.JSONDecodeError: If the response from the target is not valid JSON.
             Exception: If the request fails for any other reason.
         """
-        super().__init__(custom_configuration=custom_configuration, custom_capabilities=custom_capabilities, **kwargs)
+        super().__init__(custom_configuration=custom_configuration, **kwargs)
 
         # Validate temperature and top_p
         validate_temperature(temperature)
@@ -226,7 +218,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
             "api.openai.com": "https://api.openai.com/v1",
         }
 
-    async def _construct_input_item_from_piece(self, piece: MessagePiece) -> dict[str, Any]:
+    async def _construct_input_item_from_piece_async(self, piece: MessagePiece) -> dict[str, Any]:
         """
         Convert a single inline piece into a Responses API content item.
 
@@ -246,7 +238,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
                 "text": piece.converted_value,
             }
         if piece.converted_value_data_type == "image_path":
-            data_url = await convert_local_image_to_data_url(piece.converted_value)
+            data_url = await convert_local_image_to_data_url_async(piece.converted_value)
             return {"type": "input_image", "image_url": {"url": data_url}}
         raise ValueError(f"Unsupported piece type for inline content: {piece.converted_value_data_type}")
 
@@ -301,7 +293,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
 
                 # Inline content (text/images) - accumulate in content list
                 if dtype in {"text", "image_path"}:
-                    content.append(await self._construct_input_item_from_piece(piece))
+                    content.append(await self._construct_input_item_from_piece_async(piece))
                     continue
 
                 # Top-level artifacts - emit as standalone items
@@ -366,7 +358,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
 
         return input_items
 
-    async def _construct_request_body(
+    async def _construct_request_body_async(
         self, *, conversation: MutableSequence[Message], json_config: _JsonResponseConfig
     ) -> dict[str, Any]:
         """
@@ -425,12 +417,12 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
         if not json_config.enabled:
             return None
 
-        if json_config.schema:
+        if json_config.json_schema:
             return {
                 "format": {
                     "type": "json_schema",
                     "name": json_config.schema_name,
-                    "schema": json_config.schema,
+                    "schema": json_config.json_schema,
                     "strict": json_config.strict,
                 }
             }
@@ -442,17 +434,64 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
         """
         Check if a Response API response has a content filter error.
 
+        The Responses API signals content filtering in two ways:
+        1. Via ``response.error`` with a content_filter code (older/alternative path)
+        2. Via ``response.status == "incomplete"`` with
+           ``response.incomplete_details.reason == "content_filter"``
+
         Args:
             response: A Response object from the OpenAI SDK.
 
         Returns:
             True if content was filtered, False otherwise.
         """
+        # Path 1: error-based detection (e.g., error.code == "content_filter")
         if hasattr(response, "error") and response.error is not None:
-            # Convert response to dict and use common filter detection
             response_dict = response.model_dump()
-            return _is_content_filter_error(response_dict)
+            if _is_content_filter_error(response_dict):
+                return True
+
+        # Path 2: incomplete status with content_filter reason
+        if getattr(response, "status", None) == "incomplete":
+            incomplete_details = getattr(response, "incomplete_details", None)
+            if incomplete_details and getattr(incomplete_details, "reason", None) == "content_filter":
+                return True
+
         return False
+
+    def _extract_partial_content(self, response: Any) -> Optional[str]:
+        """
+        Extract partial content from a Response API response that was content-filtered.
+
+        When the Responses API triggers a content filter, the response may contain partial
+        output in ``response.output`` message sections with ``status='completed'``. Messages
+        with ``status='incomplete'`` typically contain refusal text and are excluded.
+
+        Args:
+            response: A Response object from the OpenAI SDK.
+
+        Returns:
+            The partial text content from completed output messages, or None if no
+            partial content was generated.
+        """
+        try:
+            if not hasattr(response, "output") or not response.output:
+                return None
+            parts: list[str] = []
+            for section in response.output:
+                if getattr(section, "type", None) != MessagePieceType.MESSAGE:
+                    continue
+                # Only include completed messages — incomplete messages contain refusal text
+                if getattr(section, "status", None) != "completed":
+                    continue
+                content = getattr(section, "content", None)
+                if content and len(content) > 0:
+                    text = getattr(content[0], "text", None)
+                    if text:
+                        parts.append(text)
+            return "\n".join(parts) if parts else None
+        except (AttributeError, IndexError, TypeError):
+            return None
 
     def _validate_response(self, response: Any, request: MessagePiece) -> Optional[Message]:
         """
@@ -490,7 +529,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
 
         return None
 
-    async def _construct_message_from_response(self, response: Any, request: MessagePiece) -> Message:
+    async def _construct_message_from_response_async(self, response: Any, request: MessagePiece) -> Message:
         """
         Construct a Message from a Response API response.
 
@@ -550,10 +589,10 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
         while True:
             logger.info(f"Sending conversation with {len(working_conversation)} messages to the prompt target")
 
-            body = await self._construct_request_body(conversation=working_conversation, json_config=json_config)
+            body = await self._construct_request_body_async(conversation=working_conversation, json_config=json_config)
 
             # Use unified error handling - automatically detects Response and validates
-            result = await self._handle_openai_request(
+            result = await self._handle_openai_request_async(
                 api_call=lambda body=body: self._client.responses.create(**body),
                 request=message,
             )
@@ -570,11 +609,11 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
                 break
 
             # Execute the tool/function
-            tool_output = await self._execute_call_section(tool_call_section)
+            tool_output = await self._execute_call_section_async(tool_call_section)
 
             # Create a new message with the tool output
             tool_piece = self._make_tool_piece(tool_output, tool_call_section["call_id"], reference_piece=message_piece)
-            tool_message = Message(message_pieces=[tool_piece], skip_validation=True)
+            tool_message = Message(message_pieces=[tool_piece])
 
             # Add tool output message to conversation and responses list
             working_conversation.append(tool_message)
@@ -710,7 +749,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
                     return cast("dict[str, Any]", section)
         return None
 
-    async def _execute_call_section(self, tool_call_section: dict[str, Any]) -> dict[str, Any]:
+    async def _execute_call_section_async(self, tool_call_section: dict[str, Any]) -> dict[str, Any]:
         """
         Execute a function_call from the custom_functions registry.
 

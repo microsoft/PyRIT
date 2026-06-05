@@ -8,11 +8,12 @@ from enum import Enum
 from typing import Any, Optional
 
 import requests
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,11 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
     Use responsibly and consult your legal department before using for testing.
     """
 
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "medium"  # indicator count varies with registry contents; gated by API key
+    tags: frozenset[str] = frozenset({"safety", "jailbreak", "cybersecurity"})
+
     API_BASE_URL = "https://api.promptintel.novahunting.ai/api/v1"
     PROMPT_WEB_URL = "https://promptintel.novahunting.ai/prompt"
     MAX_PAGE_LIMIT = 100
@@ -75,7 +81,6 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
         severity: Optional[PromptIntelSeverity] = None,
         categories: Optional[list[PromptIntelCategory]] = None,
         search: Optional[str] = None,
-        max_prompts: Optional[int] = None,
     ) -> None:
         """
         Initialize the PromptIntel dataset loader.
@@ -87,7 +92,6 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
                 When multiple categories are specified, separate API requests are made for each
                 category and results are merged with deduplication.
             search: Search term to filter prompts by title and content. Defaults to None.
-            max_prompts: Maximum number of prompts to fetch. Defaults to None (all available).
 
         Raises:
             ValueError: If an invalid severity or category is provided.
@@ -103,10 +107,10 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
         self._severity = severity
         self._categories = categories
         self._search = search
-        self._max_prompts = max_prompts
         self.source = "https://promptintel.novahunting.ai"
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "promptintel"
@@ -177,20 +181,11 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
                         seen_ids.add(record_id)
                         all_prompts.append(record)
 
-                # Check if we've reached the max_prompts limit
-                if self._max_prompts and len(all_prompts) >= self._max_prompts:
-                    all_prompts = all_prompts[: self._max_prompts]
-                    break
-
                 # Check if there are more pages
                 total_pages = pagination.get("pages", 1)
                 if page >= total_pages:
                     break
                 page += 1
-
-            # Also break the outer loop if max_prompts reached
-            if self._max_prompts and len(all_prompts) >= self._max_prompts:
-                break
 
         return all_prompts
 
@@ -300,12 +295,14 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
             harm_categories=harm_categories,
             description=impact_description if impact_description else None,
             authors=authors,
+            groups=["Cisco Talos Intelligence"],
             source=source_url,
             date_added=date_added,
             metadata=metadata,
         )
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    @override
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch prompts from the PromptIntel API and return as a SeedDataset.
 
@@ -322,7 +319,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
 
         records = self._fetch_all_prompts()
 
-        all_seeds = []
+        all_seeds: list[SeedUnion] = []
         for record in records:
             seed = self._convert_record_to_seed_prompt(record)
             if seed:

@@ -141,19 +141,6 @@ class MyCustomStrategy(ScenarioStrategy):
 class MyCustomScenario(Scenario):
     """My custom scenario that does XYZ."""
 
-    @classmethod
-    def get_strategy_class(cls):
-        return MyCustomStrategy
-
-    @classmethod
-    def get_default_strategy(cls):
-        return MyCustomStrategy.ALL
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        # Return default dataset configuration for this scenario
-        return DatasetConfiguration(dataset_names=["harmbench"])
-
     @apply_defaults
     def __init__(self, *, scenario_result_id=None, **kwargs):
         # Scenario-specific configuration only - no runtime parameters
@@ -162,6 +149,8 @@ class MyCustomScenario(Scenario):
             version=1,
             objective_scorer=TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget())),
             strategy_class=MyCustomStrategy,
+            default_strategy=MyCustomStrategy.ALL,
+            default_dataset_config=DatasetConfiguration(dataset_names=["harmbench"]),
             scenario_result_id=scenario_result_id,
         )
         # ... your scenario-specific initialization code

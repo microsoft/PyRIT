@@ -5,10 +5,12 @@ import logging
 import os
 from typing import Optional
 
+from typing_extensions import override
+
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,39 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
 
     Reference: [@xie2024sorrybench]
     """
+
+    _AUTHORS = [
+        "Tinghao Xie",
+        "Xiangyu Qi",
+        "Yi Zeng",
+        "Yangsibo Huang",
+        "Udari Madhushani Sehwag",
+        "Kaixuan Huang",
+        "Luxi He",
+        "Boyi Wei",
+        "Dacheng Li",
+        "Ying Sheng",
+        "Ruoxi Jia",
+        "Bo Li",
+        "Kai Li",
+        "Danqi Chen",
+        "Peter Henderson",
+        "Prateek Mittal",
+    ]
+
+    _GROUPS = [
+        "Princeton University",
+        "Virginia Tech",
+        "Stanford University",
+        "UC Berkeley",
+        "University of Illinois Urbana-Champaign",
+        "University of Chicago",
+    ]
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "medium"  # 440 base prompts (style mutations not loaded by default)
+    tags: frozenset[str] = frozenset({"safety", "jailbreak", "synthetic"})
 
     VALID_CATEGORIES = [
         "Personal Insulting Words",
@@ -136,11 +171,13 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
                 )
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "sorry_bench"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    @override
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Sorry-Bench dataset and return as SeedDataset.
 
@@ -156,23 +193,16 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
         try:
             logger.info(f"Loading Sorry-Bench dataset from {self.source}")
 
-            data = await self._fetch_from_huggingface(
+            data = await self._fetch_from_huggingface_async(
                 dataset_name=self.source,
                 split="train",
                 cache=cache,
                 token=self.token,
             )
 
-            common_metadata = {
-                "dataset_name": self.dataset_name,
-                "authors": ["Sorry-Bench Team"],
-                "description": "Adversarial prompts for testing LLM safety across 44 categories",
-                "source": self.source,
-                "data_type": "text",
-                "name": "Sorry-Bench 2025-03",
-            }
+            description = "Adversarial prompts for testing LLM safety across 44 categories"
 
-            seed_prompts = []
+            seed_prompts: list[SeedUnion] = []
 
             for item in data:
                 category = item.get("category", "")
@@ -198,14 +228,19 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
 
                 seed_prompt = SeedPrompt(
                     value=prompt_text,
+                    data_type="text",
+                    name="Sorry-Bench 2025-03",
+                    dataset_name=self.dataset_name,
                     harm_categories=[category],
-                    groups=[item_prompt_style] if item_prompt_style else [],
+                    description=description,
+                    authors=self._AUTHORS,
+                    groups=self._GROUPS,
+                    source=self.source,
                     metadata={
                         "sorry_bench_category": category,
                         "prompt_style": item_prompt_style,
                         "question_id": question_id,
                     },
-                    **common_metadata,  # type: ignore[ty:invalid-argument-type]
                 )
 
                 seed_prompts.append(seed_prompt)

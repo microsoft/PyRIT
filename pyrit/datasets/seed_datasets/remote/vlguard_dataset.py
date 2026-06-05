@@ -4,18 +4,24 @@
 import asyncio
 import json
 import logging
+import os
 import uuid
 import zipfile
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from huggingface_hub import hf_hub_download
+from typing_extensions import override
 
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
+
+if TYPE_CHECKING:
+    from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -89,16 +95,30 @@ class _VLGuardDataset(_RemoteDatasetLoader):
     https://huggingface.co/datasets/ys-zong/VLGuard before use, and provide
     a HuggingFace token.
 
-    Reference: https://arxiv.org/abs/2402.02207
+    Reference: [@zong2024vlguard]
     Paper: Safety Fine-Tuning at (Almost) No Cost: A Baseline for Vision Large Language Models (ICML 2024)
     """
+
+    _AUTHORS = [
+        "Yongshuo Zong",
+        "Ondrej Bohdal",
+        "Tingyang Yu",
+        "Yongxin Yang",
+        "Timothy Hospedales",
+    ]
+
+    _GROUPS = ["University of Edinburgh", "EPFL"]
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT, Modality.IMAGE)
+    size: str = "large"  # 884 image-instruction pairs across 4 categories
+    tags: frozenset[str] = frozenset({"safety", "multimodal"})
 
     def __init__(
         self,
         *,
         subset: VLGuardSubset = VLGuardSubset.UNSAFES,
         categories: list[VLGuardCategory] | None = None,
-        max_examples: int | None = None,
         token: str | None = None,
     ) -> None:
         """
@@ -108,18 +128,15 @@ class _VLGuardDataset(_RemoteDatasetLoader):
             subset (VLGuardSubset): Which evaluation subset to load. Defaults to UNSAFES.
             categories (list[VLGuardCategory] | None): List of VLGuard categories to filter by.
                 If None, all categories are included.
-            max_examples (int | None): Maximum number of multimodal examples to fetch. Each example
-                produces 2 prompts (text + image). If None, fetches all examples.
             token (str | None): HuggingFace authentication token for accessing the gated dataset.
-                If None, uses the default token from the environment or HuggingFace CLI login.
+                If not provided, reads from the ``HUGGINGFACE_TOKEN`` environment variable.
 
         Raises:
             ValueError: If any of the specified categories are invalid.
         """
         self.subset = subset
         self.categories = categories
-        self.max_examples = max_examples
-        self.token = token
+        self.token = token if token is not None else os.environ.get("HUGGINGFACE_TOKEN")
         self.source = f"https://huggingface.co/datasets/{_HF_REPO_ID}"
 
         if categories is not None:
@@ -131,16 +148,18 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 raise ValueError(f"Invalid VLGuard categories: {', '.join(invalid_categories)}")
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "vlguard"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    @override
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch VLGuard multimodal examples and return as SeedDataset.
 
         Downloads the test split metadata and images from HuggingFace, then creates
-        multimodal prompts (text + image pairs linked by prompt_group_id) based on
+        multimodal prompts (text + image pairs linked by prompt_group_id and sequence=0) based on
         the selected subset.
 
         Args:
@@ -153,7 +172,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
 
         metadata, image_dir = await self._download_dataset_files_async(cache=cache)
 
-        prompts: list[SeedPrompt] = []
+        prompts: list[SeedUnion] = []
 
         for example in metadata:
             image_filename = example.get("image")
@@ -207,6 +226,8 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                     "subset": self.subset.value,
                     "safe_image": is_safe,
                 },
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
 
             image_prompt = SeedPrompt(
@@ -218,7 +239,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 description=f"Image component of VLGuard multimodal prompt ({self.subset.value}).",
                 source=self.source,
                 prompt_group_id=group_id,
-                sequence=1,
+                sequence=0,
                 metadata={
                     "category": category,
                     "subcategory": subcategory,
@@ -226,14 +247,12 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                     "safe_image": is_safe,
                     "original_filename": image_filename,
                 },
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
 
             prompts.append(text_prompt)
             prompts.append(image_prompt)
-
-            # len(prompts) is divided by two since each example produces one image and one text prompt.
-            if self.max_examples is not None and len(prompts) >= self.max_examples * 2:
-                break
 
         logger.info(f"Successfully loaded {len(prompts)} prompts from VLGuard dataset ({self.subset.value})")
 

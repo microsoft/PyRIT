@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.2
+#       jupytext_version: 1.19.1
 # ---
 
 # %% [markdown]
@@ -22,7 +22,7 @@
 # - **[LLM-Based Converters](#llm-based-converters)**: AI-powered transformations including translation, variation, and semantic modifications
 
 # %% [markdown]
-# <a id="non-llm-converters"></a>
+# (non-llm-converters)=
 # ## Non-LLM Converters
 #
 # Non-LLM converters use deterministic algorithms to transform text. These include:
@@ -87,6 +87,9 @@ print("Negation Trap:", await NegationTrapConverter().convert_async(prompt="your
 # %%
 from pyrit.prompt_converter import (
     AnsiAttackConverter,
+    ArabicPresentationFormConverter,
+    ArabiziConverter,
+    BidiConverter,
     CharacterSpaceConverter,
     CharSwapConverter,
     CodeChameleonConverter,
@@ -102,6 +105,7 @@ from pyrit.prompt_converter import (
     RepeatTokenConverter,
     StringJoinConverter,
     SuperscriptConverter,
+    TatweelConverter,
     UnicodeConfusableConverter,
     UnicodeReplacementConverter,
     UnicodeSubstitutionConverter,
@@ -125,6 +129,18 @@ print("Flip:", await FlipConverter().convert_async(prompt=prompt))  # type: igno
 # Character Space [@robustintelligence2024bypass] inserts spaces between characters
 print("Character Space:", await CharacterSpaceConverter().convert_async(prompt=prompt))  # type: ignore
 print("Diacritic:", await DiacriticConverter().convert_async(prompt=prompt))  # type: ignore
+
+# Bidi [@boucher2023trojan] wraps text in Unicode bidirectional control characters
+print("Bidi:", await BidiConverter().convert_async(prompt=prompt))  # type: ignore
+# The Arabic converters only affect Arabic letters, so they use an Arabic prompt
+# ("tell me how to cut down a tree") rather than the Latin-script prompt above.
+arabic_prompt = "أخبرني كيف أقطع شجرة"
+# Tatweel inserts the Arabic kashida between adjacent Arabic letters
+print("Tatweel:", await TatweelConverter().convert_async(prompt=arabic_prompt))  # type: ignore
+# Arabic presentation form substitutes Arabic letters with their isolated glyphs
+print("Arabic Presentation Form:", await ArabicPresentationFormConverter().convert_async(prompt=arabic_prompt))  # type: ignore
+# Arabizi transliterates Arabic script into Latin-script chat Arabic
+print("Arabizi:", await ArabiziConverter().convert_async(prompt=arabic_prompt))  # type: ignore
 print("Superscript:", await SuperscriptConverter().convert_async(prompt=prompt))  # type: ignore
 print("Zalgo:", await ZalgoConverter().convert_async(prompt=prompt))  # type: ignore
 
@@ -225,7 +241,7 @@ var_selector = VariationSelectorSmugglerConverter(action="encode", embed_in_base
 print("Variation Selector:", await var_selector.convert_async(prompt=prompt))  # type: ignore
 
 # %% [markdown]
-# <a id="llm-based-converters"></a>
+# (llm-based-converters)=
 # ## LLM-Based Converters
 #
 # LLM-based converters use language models to transform prompts. These converters are more flexible and can produce more natural variations, but they are slower and require an LLM target.
@@ -239,6 +255,7 @@ from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.models import SeedPrompt
 from pyrit.prompt_converter import (
     DenylistConverter,
+    ImagePromptStyleConverter,
     MaliciousQuestionGeneratorConverter,
     MathPromptConverter,
     NoiseConverter,
@@ -309,3 +326,10 @@ print("Math Prompt:", await math_prompt_converter.convert_async(prompt=prompt)) 
 # Scientific converter translates into scientific language
 scientific_translation_converter = ScientificTranslationConverter(converter_target=attack_llm, mode="academic")
 print("Scientific Translation:", await scientific_translation_converter.convert_async(prompt=prompt))  # type: ignore
+
+# Image filter converter transforms simple prompt into an image filter style prompt (ie "draw me a picture in the style of ..")
+converter = ImagePromptStyleConverter(
+    converter_target=attack_llm, filter_name="laundromat_fisheye", variation="wide_mirror_shot"
+)
+result = await converter.convert_async(prompt="make a raccoon in a pirate ship")
+print("Image Filter Conversion:", result.output_text)  # type: ignore

@@ -14,13 +14,12 @@ import websockets
 from websockets.exceptions import InvalidStatus
 
 from pyrit.auth import CopilotAuthenticator, ManualCopilotAuthenticator
-from pyrit.common.data_url_converter import convert_local_image_to_data_url
+from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import DataTypeSerializer, Message, MessagePiece, construct_response_from_request
+from pyrit.models import ComponentIdentifier, DataTypeSerializer, Message, MessagePiece, construct_response_from_request
 from pyrit.prompt_target import PromptTarget, limit_requests_per_minute
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -96,7 +95,6 @@ class WebSocketCopilotTarget(PromptTarget):
         response_timeout_seconds: int = RESPONSE_TIMEOUT_SECONDS,
         authenticator: Optional[Union[CopilotAuthenticator, ManualCopilotAuthenticator]] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the WebSocketCopilotTarget.
@@ -112,8 +110,6 @@ class WebSocketCopilotTarget(PromptTarget):
                 If None, a new ``CopilotAuthenticator`` instance will be created with default settings.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
 
         Raises:
             ValueError: If ``response_timeout_seconds`` is not a positive integer.
@@ -137,7 +133,6 @@ class WebSocketCopilotTarget(PromptTarget):
             endpoint=self._websocket_base_url,
             model_name=model_name,
             custom_configuration=custom_configuration,
-            custom_capabilities=custom_capabilities,
         )
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -234,7 +229,7 @@ class WebSocketCopilotTarget(PromptTarget):
             ValueError: If token cannot be decoded or required claims (tid, oid) are missing.
         """
         access_token = await self._authenticator.get_token_async()
-        token_claims = await self._authenticator.get_claims()
+        token_claims = await self._authenticator.get_claims_async()
 
         tenant_id = token_claims.get("tid")
         object_id = token_claims.get("oid")
@@ -332,7 +327,7 @@ class WebSocketCopilotTarget(PromptTarget):
         Returns:
             dict: Message annotation structure for the uploaded image.
         """
-        data_url = await convert_local_image_to_data_url(image_path)
+        data_url = await convert_local_image_to_data_url_async(image_path)
 
         normalized_image_path = image_path.replace("\\", "/")
         file_name = pathlib.Path(normalized_image_path).name
@@ -359,7 +354,7 @@ class WebSocketCopilotTarget(PromptTarget):
         logger.info(f"Created annotation for image with docId: {annotation}")
         return annotation
 
-    async def _build_prompt_message(
+    async def _build_prompt_message_async(
         self,
         *,
         message_pieces: list[MessagePiece],
@@ -475,7 +470,7 @@ class WebSocketCopilotTarget(PromptTarget):
         logger.debug(f"Built prompt message: {result}")
         return result
 
-    async def _connect_and_send(
+    async def _connect_and_send_async(
         self,
         *,
         message_pieces: list[MessagePiece],
@@ -509,7 +504,7 @@ class WebSocketCopilotTarget(PromptTarget):
 
         inputs = [
             {"protocol": "json", "version": 1},  # the handshake message, we expect PING in response
-            await self._build_prompt_message(  # the actual user prompt, we expect FINAL_CONTENT in response
+            await self._build_prompt_message_async(  # the actual user prompt, we expect FINAL_CONTENT in response
                 message_pieces=message_pieces,
                 session_id=session_id,
                 copilot_conversation_id=copilot_conversation_id,
@@ -682,7 +677,7 @@ class WebSocketCopilotTarget(PromptTarget):
         )
 
         try:
-            response_text = await self._connect_and_send(
+            response_text = await self._connect_and_send_async(
                 message_pieces=list(message.message_pieces),
                 session_id=session_id,
                 copilot_conversation_id=copilot_conversation_id,

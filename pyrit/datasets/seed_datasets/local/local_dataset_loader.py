@@ -53,7 +53,7 @@ class _LocalDatasetLoader(SeedDatasetProvider):
         """Return the dataset name."""
         return self._dataset_name
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Load the dataset from the local YAML file.
 
@@ -76,7 +76,7 @@ class _LocalDatasetLoader(SeedDatasetProvider):
             logger.error(f"Failed to load local dataset from {self.file_path}: {e}")
             raise
 
-    async def _parse_metadata(self) -> Optional[SeedDatasetMetadata]:
+    async def _parse_metadata_async(self) -> Optional[SeedDatasetMetadata]:
         """
         Extract metadata from a local YAML file and coerce raw values into typed schema fields.
 

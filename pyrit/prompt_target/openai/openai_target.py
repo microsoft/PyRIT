@@ -86,7 +86,6 @@ class OpenAITarget(PromptTarget):
         httpx_client_kwargs: Optional[dict[str, Any]] = None,
         underlying_model: Optional[str] = None,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize an instance of OpenAITarget.
@@ -115,8 +114,6 @@ class OpenAITarget(PromptTarget):
                 Defaults to None.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. If None, uses the class-level defaults. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
 
         Raises:
             ValueError: If no API key is provided and the endpoint is not an Azure endpoint.
@@ -148,7 +145,6 @@ class OpenAITarget(PromptTarget):
             model_name=self._model_name,
             underlying_model=underlying_model,
             custom_configuration=custom_configuration,
-            custom_capabilities=custom_capabilities,
         )
 
         # API key: use passed value, env var, or fall back to Entra ID for Azure endpoints
@@ -398,7 +394,7 @@ class OpenAITarget(PromptTarget):
             **httpx_kwargs,
         )
 
-    async def _handle_openai_request(
+    async def _handle_openai_request_async(
         self,
         *,
         api_call: Callable[..., Any],
@@ -452,7 +448,7 @@ class OpenAITarget(PromptTarget):
                 return error_message
 
             # Construct and return Message from validated response
-            return await self._construct_message_from_response(response, request_piece)
+            return await self._construct_message_from_response_async(response, request_piece)
 
         except ContentFilterFinishReasonError as e:
             # Content filter error raised by SDK during parse/structured output flows
@@ -524,7 +520,7 @@ class OpenAITarget(PromptTarget):
             raise
 
     @abstractmethod
-    async def _construct_message_from_response(self, response: Any, request: MessagePiece) -> Message:
+    async def _construct_message_from_response_async(self, response: Any, request: MessagePiece) -> Message:
         """
         Construct a Message from the OpenAI SDK response.
 
@@ -559,6 +555,10 @@ class OpenAITarget(PromptTarget):
         """
         Handle content filter errors by creating a proper error Message.
 
+        If the subclass provides partial content via ``_extract_partial_content``,
+        it is attached to each response piece as ``prompt_metadata["partial_content"]``
+        so that scorers with ``score_blocked_content=True`` can evaluate it.
+
         Args:
             response: The response object from OpenAI SDK.
             request: The original request message piece.
@@ -567,12 +567,36 @@ class OpenAITarget(PromptTarget):
             Message object with error type indicating content was filtered.
         """
         logger.warning("Output content filtered by content policy.")
-        return handle_bad_request_exception(
+
+        partial_content = self._extract_partial_content(response)
+
+        error_message = handle_bad_request_exception(
             response_text=response.model_dump_json(),
             request=request,
             error_code=200,
             is_content_filter=True,
         )
+
+        if partial_content:
+            for piece in error_message.message_pieces:
+                piece.prompt_metadata["partial_content"] = partial_content
+
+        return error_message
+
+    def _extract_partial_content(self, response: Any) -> Optional[str]:
+        """
+        Extract any partial content the model generated before the content filter triggered.
+
+        Override this in subclasses to extract partial content from API-specific response
+        structures. The base implementation returns None (no partial content).
+
+        Args:
+            response: The response object from OpenAI SDK.
+
+        Returns:
+            The partial text content, or None if no content was generated.
+        """
+        return None
 
     def _validate_response(self, response: Any, request: MessagePiece) -> Optional[Message]:
         """

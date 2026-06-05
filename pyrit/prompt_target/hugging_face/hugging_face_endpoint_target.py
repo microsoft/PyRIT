@@ -6,10 +6,8 @@ import warnings
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, construct_response_from_request
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
 
@@ -41,7 +39,6 @@ class HuggingFaceEndpointTarget(PromptTarget):
         max_requests_per_minute: int | None = None,
         verbose: bool = False,
         custom_configuration: TargetConfiguration | None = None,
-        custom_capabilities: TargetCapabilities | None = None,
     ) -> None:
         """
         Initialize the HuggingFaceEndpointTarget with API credentials and model parameters.
@@ -62,13 +59,11 @@ class HuggingFaceEndpointTarget(PromptTarget):
             max_requests_per_minute (int | None): The maximum number of requests per minute. Defaults to None.
             verbose (bool): Flag to enable verbose logging. Defaults to False.
             custom_configuration (TargetConfiguration | None): Custom configuration for this target instance.
-            custom_capabilities (TargetCapabilities | None): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
         """
         print_deprecation_message(
             old_item=HuggingFaceEndpointTarget,
             new_item="OpenAIChatTarget with endpoint='https://router.huggingface.co/v1'",
-            removed_in="v0.15.0",
+            removed_in="0.15.0",
         )
 
         super().__init__(
@@ -77,7 +72,6 @@ class HuggingFaceEndpointTarget(PromptTarget):
             endpoint=endpoint,
             model_name=model_id,
             custom_configuration=custom_configuration,
-            custom_capabilities=custom_capabilities,
         )
 
         validate_temperature(temperature)

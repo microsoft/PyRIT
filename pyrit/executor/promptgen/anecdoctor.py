@@ -19,14 +19,15 @@ from pyrit.executor.promptgen.core import (
     PromptGeneratorStrategyContext,
     PromptGeneratorStrategyResult,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable
 from pyrit.models import (
+    ComponentIdentifier,
+    Identifiable,
     Message,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 
 if TYPE_CHECKING:
-    from pyrit.prompt_target import PromptChatTarget
+    from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,6 @@ class AnecdoctorContext(PromptGeneratorStrategyContext):
     memory_labels: dict[str, str] = field(default_factory=dict)
 
 
-@dataclass
 class AnecdoctorResult(PromptGeneratorStrategyResult):
     """
     Result of Anecdoctor prompt generation.
@@ -102,8 +102,8 @@ class AnecdoctorGenerator(
     def __init__(
         self,
         *,
-        objective_target: PromptChatTarget,
-        processing_model: Optional[PromptChatTarget] = None,
+        objective_target: PromptTarget,
+        processing_model: Optional[PromptTarget] = None,
         converter_config: Optional[StrategyConverterConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
     ) -> None:
@@ -111,8 +111,8 @@ class AnecdoctorGenerator(
         Initialize the Anecdoctor prompt generation strategy.
 
         Args:
-            objective_target (PromptChatTarget): The chat model to be used for prompt generation.
-            processing_model (Optional[PromptChatTarget]): The model used for knowledge graph extraction.
+            objective_target (PromptTarget): The chat model to be used for prompt generation.
+            processing_model (Optional[PromptTarget]): The model used for knowledge graph extraction.
                 If provided, the generator will extract a knowledge graph from the examples before generation.
                 If None, the generator will use few-shot examples directly.
             converter_config (Optional[StrategyConverterConfig]): Configuration for prompt converters.
@@ -134,8 +134,14 @@ class AnecdoctorGenerator(
         # Prepare the system prompt template based on whether we're using knowledge graph
         if self._processing_model:
             self._system_prompt_template = self._load_prompt_from_yaml(yaml_filename=self._ANECDOCTOR_USE_KG_YAML)
+            # Also preload the KG extraction prompt so `_extract_knowledge_graph_async` doesn't
+            # repeat the file read + YAML parse on each invocation.
+            self._kg_prompt_template: Optional[str] = self._load_prompt_from_yaml(
+                yaml_filename=self._ANECDOCTOR_BUILD_KG_YAML
+            )
         else:
             self._system_prompt_template = self._load_prompt_from_yaml(yaml_filename=self._ANECDOCTOR_USE_FEWSHOT_YAML)
+            self._kg_prompt_template = None
 
     def _create_identifier(
         self,
@@ -364,9 +370,9 @@ class AnecdoctorGenerator(
 
         self._logger.debug("Extracting knowledge graph from evaluation data")
 
-        # Load and format the KG extraction prompt
-        kg_prompt_template = self._load_prompt_from_yaml(yaml_filename=self._ANECDOCTOR_BUILD_KG_YAML)
-        kg_system_prompt = kg_prompt_template.format(language=context.language)
+        # Format the cached KG extraction prompt. _kg_prompt_template is set in __init__
+        # whenever _processing_model is set, so the guard above already implies it is non-None here.
+        kg_system_prompt = self._kg_prompt_template.format(language=context.language)  # type: ignore[ty:unresolved-attribute]
 
         # Create a separate conversation ID for KG extraction
         kg_conversation_id = str(uuid.uuid4())

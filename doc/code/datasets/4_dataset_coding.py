@@ -64,11 +64,11 @@ class SimpleDarkBench(_RemoteDatasetLoader):
     def dataset_name(self) -> str:
         return "dark_bench"
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         # Fetch from HuggingFace
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name="apart/darkbench",
-            config="default ",
+            config="default",
             split="train",
             cache=cache,
             data_files="darkbench.tsv",

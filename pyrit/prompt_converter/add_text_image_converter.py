@@ -4,15 +4,14 @@
 import base64
 import hashlib
 import logging
-import warnings
 from io import BytesIO
 from typing import cast
 
 from PIL import Image, ImageFont
 from PIL.ImageFont import FreeTypeFont
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType, data_serializer_factory
+from pyrit.common.deprecation import print_deprecation_message
+from pyrit.models import ComponentIdentifier, PromptDataType, data_serializer_factory
 from pyrit.prompt_converter.base_image_text_converter import _BaseImageTextConverter
 from pyrit.prompt_converter.prompt_converter import ConverterResult
 
@@ -23,7 +22,7 @@ class AddTextImageConverter(_BaseImageTextConverter):
     """
     Adds a string to an image and wraps the text into multiple lines if necessary.
 
-    This class is similar to :class:`AddImageTextConverter` except
+    This class is similar to ``AddImageTextConverter`` except
     we pass in text as an argument to the constructor as opposed to an image file path.
     """
 
@@ -63,12 +62,10 @@ class AddTextImageConverter(_BaseImageTextConverter):
                 raise TypeError(f"AddTextImageConverter takes at most 1 positional argument, got {len(args)}")
             if text_to_add:
                 raise TypeError("Cannot pass text_to_add as both positional and keyword argument")
-            warnings.warn(
-                "Passing 'text_to_add' as a positional argument is deprecated. "
-                "Use text_to_add=... as a keyword argument. "
-                "It will be keyword-only starting in version 0.15.0.",
-                FutureWarning,
-                stacklevel=2,
+            print_deprecation_message(
+                old_item="Passing text_to_add as a positional argument to AddTextImageConverter",
+                new_item="AddTextImageConverter(text_to_add=...) keyword argument",
+                removed_in="0.15.0",
             )
             text_to_add = args[0]
         if text_to_add.strip() == "":
@@ -156,7 +153,7 @@ class AddTextImageConverter(_BaseImageTextConverter):
         img_serializer = data_serializer_factory(category="prompt-memory-entries", value=prompt, data_type="image_path")
 
         # Open the image
-        original_img_bytes = await img_serializer.read_data()
+        original_img_bytes = await img_serializer.read_data_async()
         original_img = Image.open(BytesIO(original_img_bytes))
 
         # Add text to the image
@@ -168,5 +165,5 @@ class AddTextImageConverter(_BaseImageTextConverter):
         updated_img.save(image_bytes, format=image_type)
         image_str = base64.b64encode(image_bytes.getvalue()).decode("utf-8")
         # Save image as generated UUID filename
-        await img_serializer.save_b64_image(data=image_str)
+        await img_serializer.save_b64_image_async(data=image_str)
         return ConverterResult(output_text=str(img_serializer.value), output_type="image_path")

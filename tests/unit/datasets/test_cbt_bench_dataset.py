@@ -68,8 +68,8 @@ class TestCBTBenchDataset:
         """Test fetching CBT-Bench dataset with mocked data."""
         loader = _CBTBenchDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data):
-            dataset = await loader.fetch_dataset()
+        with patch.object(loader, "_fetch_from_huggingface_async", return_value=mock_cbt_bench_data):
+            dataset = await loader.fetch_dataset_async()
 
             assert isinstance(dataset, SeedDataset)
             assert len(dataset.seeds) == 2
@@ -87,30 +87,34 @@ class TestCBTBenchDataset:
             assert first_prompt.metadata["core_belief_fine_grained"] == ["I am unlovable", "I am immoral"]
 
     async def test_fetch_dataset_with_custom_config(self, mock_cbt_bench_data):
-        """Test fetching with custom HuggingFace config and split."""
+        """Test fetching with custom HuggingFace config."""
         loader = _CBTBenchDataset(
             source="custom/cbt-bench",
             config="core_major_seed",
-            split="test",
         )
 
-        with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data) as mock_fetch:
-            dataset = await loader.fetch_dataset(cache=False)
+        with patch.object(loader, "_fetch_from_huggingface_async", return_value=mock_cbt_bench_data) as mock_fetch:
+            dataset = await loader.fetch_dataset_async(cache=False)
 
             assert len(dataset.seeds) == 2
             mock_fetch.assert_called_once()
             call_kwargs = mock_fetch.call_args.kwargs
             assert call_kwargs["dataset_name"] == "custom/cbt-bench"
             assert call_kwargs["config"] == "core_major_seed"
-            assert call_kwargs["split"] == "test"
+            assert call_kwargs["split"] == "train"
             assert call_kwargs["cache"] is False
+
+    def test_split_kwarg_emits_deprecation_warning(self):
+        """Passing the deprecated ``split`` kwarg emits a DeprecationWarning."""
+        with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
+            _CBTBenchDataset(split="train")
 
     async def test_fetch_dataset_situation_only(self, mock_cbt_bench_data_missing_thoughts):
         """Test that items with only situation (no thoughts) still work."""
         loader = _CBTBenchDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data_missing_thoughts):
-            dataset = await loader.fetch_dataset()
+        with patch.object(loader, "_fetch_from_huggingface_async", return_value=mock_cbt_bench_data_missing_thoughts):
+            dataset = await loader.fetch_dataset_async()
 
             assert len(dataset.seeds) == 1
             assert dataset.seeds[0].value == "A situation without thoughts."
@@ -119,16 +123,16 @@ class TestCBTBenchDataset:
         """Test that an empty dataset raises ValueError."""
         loader = _CBTBenchDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data_empty):
+        with patch.object(loader, "_fetch_from_huggingface_async", return_value=mock_cbt_bench_data_empty):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
-                await loader.fetch_dataset()
+                await loader.fetch_dataset_async()
 
     async def test_fetch_dataset_metadata_includes_config(self, mock_cbt_bench_data):
         """Test that metadata includes the config name."""
         loader = _CBTBenchDataset(config="distortions_seed")
 
-        with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data):
-            dataset = await loader.fetch_dataset()
+        with patch.object(loader, "_fetch_from_huggingface_async", return_value=mock_cbt_bench_data):
+            dataset = await loader.fetch_dataset_async()
 
             for seed in dataset.seeds:
                 assert seed.metadata["config"] == "distortions_seed"
@@ -137,8 +141,8 @@ class TestCBTBenchDataset:
         """Test that source URL is correctly set."""
         loader = _CBTBenchDataset()
 
-        with patch.object(loader, "_fetch_from_huggingface", return_value=mock_cbt_bench_data):
-            dataset = await loader.fetch_dataset()
+        with patch.object(loader, "_fetch_from_huggingface_async", return_value=mock_cbt_bench_data):
+            dataset = await loader.fetch_dataset_async()
 
             for seed in dataset.seeds:
                 assert seed.source == "https://huggingface.co/datasets/Psychotherapy-LLM/CBT-Bench"

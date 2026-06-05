@@ -12,10 +12,11 @@ import pytest
 from unit.mocks import get_mock_target
 
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
+    ComponentIdentifier,
+    IdentifierFilter,
+    IdentifierType,
     Message,
     MessagePiece,
     Score,
@@ -50,7 +51,7 @@ def test_add_message_pieces_to_memory(
 ):
     for c in sample_conversations[:num_conversations]:
         c.conversation_id = sample_conversations[0].conversation_id
-        c._role = sample_conversations[0]._role
+        c.role = sample_conversations[0].role
         c.sequence = 0
 
     message = Message(message_pieces=sample_conversations[:num_conversations])
@@ -107,6 +108,18 @@ def test_get_message_pieces_uuid_and_string_ids(sqlite_instance: MemoryInterface
     single_str_result = sqlite_instance.get_message_pieces(prompt_ids=[str(uuid3)])
     assert len(single_str_result) == 1
     assert str(single_str_result[0].id) == str(uuid3)
+
+
+def test_get_message_pieces_empty_prompt_ids_returns_empty(sqlite_instance: MemoryInterface):
+    piece = MessagePiece(
+        id=uuid.uuid4(),
+        role="user",
+        original_value="Test prompt",
+        converted_value="Test prompt",
+    )
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
+
+    assert sqlite_instance.get_message_pieces(prompt_ids=[]) == []
 
 
 def test_duplicate_memory(sqlite_instance: MemoryInterface):
@@ -630,7 +643,7 @@ def test_add_message_pieces_to_memory_updates_sequence(
 ):
     for conversation in sample_conversations:
         conversation.conversation_id = sample_conversations[0].conversation_id
-        conversation._role = sample_conversations[0]._role
+        conversation.role = sample_conversations[0].role
         conversation.sequence = 17
 
     with patch("pyrit.memory.sqlite_memory.SQLiteMemory.add_message_pieces_to_memory") as mock_add:
@@ -648,7 +661,7 @@ def test_add_message_pieces_to_memory_updates_sequence_with_prev_conversation(
 ):
     for conversation in sample_conversations:
         conversation.conversation_id = sample_conversations[0].conversation_id
-        conversation._role = sample_conversations[0]._role
+        conversation.role = sample_conversations[0].role
         conversation.sequence = 17
 
     # insert one of these into memory

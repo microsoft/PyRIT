@@ -32,6 +32,9 @@
     "envSecretName": {
       "value": "env-global"
     },
+    "envFileContents": {
+      "value": ""
+    },
     "logRetentionDays": {
       "value": 90
     },

@@ -18,6 +18,8 @@
 #
 # Note that this attack is more likely to succeed if the adversarial LLM provided does not have content moderation or other safety mechanisms. Even then, success may depend on the model and may not be guaranteed every time.
 #
+# > **Tip:** Crescendo is often the strongest first step in an adaptive fallback chain. See the [Sequential Attack notebook](4_sequential_attack.ipynb) for an example that runs Crescendo first and falls back to `PromptSendingAttack` if it doesn't succeed.
+#
 #
 # The results and intermediate interactions will be saved to memory according to the environment settings. For details, see the [Memory Configuration Guide](../../memory/0_memory.md).
 
@@ -28,9 +30,9 @@ from pyrit.auth import get_azure_openai_auth
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackConverterConfig,
-    ConsoleAttackResultPrinter,
     CrescendoAttack,
 )
+from pyrit.output import output_attack_async
 from pyrit.prompt_converter import EmojiConverter
 from pyrit.prompt_normalizer import PromptConverterConfiguration
 from pyrit.prompt_target import OpenAIChatTarget
@@ -76,6 +78,6 @@ attack = CrescendoAttack(
 result = await attack.execute_async(objective=conversation_objective)  # type: ignore
 
 # For seven turns this can take a few minutes depending on LLM latency
-await ConsoleAttackResultPrinter().print_result_async(  # type: ignore
-    result=result, include_pruned_conversations=True, include_adversarial_conversation=True
+await output_attack_async(  # type: ignore
+    result, include_pruned_conversations=True, include_adversarial_conversation=True
 )

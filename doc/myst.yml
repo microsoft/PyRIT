@@ -11,6 +11,32 @@ project:
     - format: pdf
       template: plain_latex_book
       output: exports/book.pdf
+  # See https://mystmd.org/guide for error_rules schema.
+  # Rule IDs come from https://github.com/jupyter-book/mystmd
+  # (packages/myst-common/src/ruleids.ts).
+  error_rules:
+    # mystmd v2.x has no LaTeX renderer for the MyST layout directives we use
+    # extensively in the HTML site (grid, tabSet, details, mermaid). They
+    # render fine in HTML; PDF export emits "Unhandled LaTeX conversion for
+    # node of X" errors per node. Track upstream support and remove this
+    # suppression when those renderers land.
+    - rule: tex-renders
+      severity: ignore
+
+    # External APIs that require auth — always return 401/403 from CI workers
+    # and public link checkers. The URLs themselves are correct; they just
+    # can't be verified without credentials. Every other broken URL in the
+    # tree has been fixed (see PR #1745); only add to this list when a URL
+    # is genuinely unverifiable, not just inconvenient to update.
+    - rule: link-resolves
+      severity: ignore
+      keys:
+        - "https://platform.openai.com/**"
+        - "https://api.openai.com/**"
+        - "http://api.openai.com"
+        - "http://api.openai.com/**"
+        - "https://cognitiveservices.azure.com/**"
+        - "https://www.youtube.com/watch?v=jq9DcEL3cHE"
   toc:
     - file: index.md
     - file: getting_started/README.md
@@ -60,6 +86,7 @@ project:
         - file: scanner/1_pyrit_scan.ipynb
         - file: scanner/2_pyrit_shell.md
         - file: scanner/airt.ipynb
+        - file: scanner/benchmark.ipynb
         - file: scanner/foundry.ipynb
         - file: scanner/garak.ipynb
     - file: code/framework.md
@@ -78,6 +105,7 @@ project:
                 - file: code/executor/attack/1_prompt_sending_attack.ipynb
                 - file: code/executor/attack/2_red_teaming_attack.ipynb
                 - file: code/executor/attack/3_crescendo_attack.ipynb
+                - file: code/executor/attack/4_sequential_attack.ipynb
                 - file: code/executor/attack/chunked_request_attack.ipynb
                 - file: code/executor/attack/context_compliance_attack.ipynb
                 - file: code/executor/attack/flip_attack.ipynb
@@ -86,6 +114,7 @@ project:
                 - file: code/executor/attack/role_play_attack.ipynb
                 - file: code/executor/attack/skeleton_key_attack.ipynb
                 - file: code/executor/attack/tap_attack.ipynb
+                - file: code/executor/attack/barge_in_attack.ipynb
                 - file: code/executor/attack/violent_durian_attack.ipynb
             - file: code/executor/workflow/0_workflow.md
               children:
@@ -107,6 +136,7 @@ project:
             - file: code/targets/4_openai_video_target.ipynb
             - file: code/targets/5_openai_tts_target.ipynb
             - file: code/targets/6_custom_targets.ipynb
+            - file: code/targets/6_1_target_capabilities.ipynb
             - file: code/targets/7_non_open_ai_chat_targets.ipynb
             - file: code/targets/8_non_llm_targets.ipynb
             - file: code/targets/9_rate_limiting.ipynb
@@ -119,6 +149,7 @@ project:
             - file: code/targets/prompt_shield_target.ipynb
             - file: code/targets/realtime_target.ipynb
             - file: code/targets/use_huggingface_chat_target.ipynb
+            - file: code/targets/round_robin_target.ipynb
         - file: code/converters/0_converters.ipynb
           children:
             - file: code/converters/1_text_to_text_converters.ipynb
@@ -127,19 +158,12 @@ project:
             - file: code/converters/4_video_converters.ipynb
             - file: code/converters/5_file_converters.ipynb
             - file: code/converters/6_selectively_converting.ipynb
-        - file: code/scoring/0_scoring.md
+        - file: code/scoring/0_scoring.ipynb
           children:
-            - file: code/scoring/1_azure_content_safety_scorers.ipynb
-            - file: code/scoring/2_true_false_scorers.ipynb
-            - file: code/scoring/3_classification_scorers.ipynb
-            - file: code/scoring/4_likert_scorers.ipynb
-            - file: code/scoring/5_refusal_scorer.ipynb
-            - file: code/scoring/6_batch_scorer.ipynb
-            - file: code/scoring/7_scorer_metrics.ipynb
-            - file: code/scoring/insecure_code_scorer.ipynb
-            - file: code/scoring/persuasion_full_conversation_scorer.ipynb
-            - file: code/scoring/prompt_shield_scorer.ipynb
-            - file: code/scoring/generic_scorers.ipynb
+            - file: code/scoring/1_true_false_scorers.ipynb
+            - file: code/scoring/2_float_scale_scorers.ipynb
+            - file: code/scoring/3_combining_scorers.ipynb
+            - file: code/scoring/4_scorer_metrics.ipynb
         - file: code/memory/0_memory.md
           children:
             - file: code/memory/1_sqlite_memory.ipynb
@@ -164,17 +188,20 @@ project:
             - file: code/auxiliary_attacks/1_gcg_azure_ml.ipynb
         - file: code/scenarios/0_scenarios.ipynb
           children:
-            - file: code/scenarios/1_scenario_parameters.ipynb
+            - file: code/scenarios/1_common_scenario_parameters.ipynb
+            - file: code/scenarios/2_custom_scenario_parameters.ipynb
+            - file: code/scenarios/3_adaptive_scenarios.ipynb
         - file: code/registry/0_registry.md
           children:
             - file: code/registry/1_class_registry.ipynb
             - file: code/registry/2_instance_registry.ipynb
+        - file: code/output/0_output.ipynb
     - file: api/index.md
       children:
         - file: api/pyrit_analytics.md
         - file: api/pyrit_auth.md
-        - file: api/pyrit_cli_frontend_core.md
-        - file: api/pyrit_cli_pyrit_backend.md
+        - file: api/pyrit_auxiliary_attacks.md
+        - file: api/pyrit_cli_api_client.md
         - file: api/pyrit_cli_pyrit_scan.md
         - file: api/pyrit_cli_pyrit_shell.md
         - file: api/pyrit_common.md
@@ -190,6 +217,7 @@ project:
         - file: api/pyrit_memory.md
         - file: api/pyrit_message_normalizer.md
         - file: api/pyrit_models.md
+        - file: api/pyrit_output.md
         - file: api/pyrit_prompt_converter.md
         - file: api/pyrit_prompt_normalizer.md
         - file: api/pyrit_prompt_target.md
@@ -197,10 +225,7 @@ project:
         - file: api/pyrit_scenario.md
         - file: api/pyrit_score.md
         - file: api/pyrit_setup.md
-          children:
-            - file: api/pyrit_setup_initializers.md
         - file: api/pyrit_show_versions.md
-        - file: api/pyrit_ui.md
     - file: blog/README.md
       children:
         - file: blog/2026_04_14_scoring_scorers.md

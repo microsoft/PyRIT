@@ -7,9 +7,9 @@ import sys
 from pathlib import Path
 from typing import IO, Optional
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
@@ -27,7 +27,6 @@ class TextTarget(PromptTarget):
         *,
         text_stream: IO[str] = sys.stdout,
         custom_configuration: Optional[TargetConfiguration] = None,
-        custom_capabilities: Optional[TargetCapabilities] = None,
     ) -> None:
         """
         Initialize the TextTarget.
@@ -36,10 +35,8 @@ class TextTarget(PromptTarget):
             text_stream (IO[str]): The text stream to write prompts to. Defaults to sys.stdout.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
-            custom_capabilities (TargetCapabilities, Optional): **Deprecated.** Use
-                ``custom_configuration`` instead. Will be removed in v0.14.0.
         """
-        super().__init__(custom_configuration=custom_configuration, custom_capabilities=custom_capabilities)
+        super().__init__(custom_configuration=custom_configuration)
         self._text_stream = text_stream
 
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
@@ -82,13 +79,13 @@ class TextTarget(PromptTarget):
                 labels = json.loads(labels_str) if labels_str else None
 
                 message_piece = MessagePiece(
-                    role=row["role"],  # type: ignore[ty:invalid-argument-type]
+                    role=row["role"],
                     original_value=row["value"],
-                    original_value_data_type=row.get("data_type", None),  # type: ignore[ty:invalid-argument-type]
+                    original_value_data_type=row.get("data_type", None),
                     conversation_id=row.get("conversation_id", None),
                     sequence=int(sequence_str) if sequence_str else 0,
                     labels=labels,  # deprecated
-                    response_error=row.get("response_error", None),  # type: ignore[ty:invalid-argument-type]
+                    response_error=row.get("response_error", None),
                     prompt_target_identifier=self.get_identifier(),
                 )
                 message_pieces.append(message_piece)
@@ -100,5 +97,14 @@ class TextTarget(PromptTarget):
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         pass
 
-    async def cleanup_target(self) -> None:
+    async def cleanup_target_async(self) -> None:
         """Target does not require cleanup."""
+
+    async def cleanup_target(self) -> None:  # pyrit-async-suffix-exempt
+        """Use ``cleanup_target_async`` instead; this is a deprecated alias."""
+        print_deprecation_message(
+            old_item="pyrit.prompt_target.TextTarget.cleanup_target",
+            new_item="pyrit.prompt_target.TextTarget.cleanup_target_async",
+            removed_in="0.16.0",
+        )
+        await self.cleanup_target_async()

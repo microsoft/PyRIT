@@ -47,7 +47,7 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
 
         Args:
             chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
-                CHAT_CONSUMER_REQUIREMENTS (multi-turn + editable history capabilities,
+                CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
                 possibly via normalization-pipeline adaptation).
             true_false_question_path (Optional[pathlib.Path]): The path to the true/false question file.
                 Defaults to None, which uses the default question_answering.yaml file.
@@ -84,7 +84,7 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
             f"Evaluate if the response is correct:\n{message_piece.converted_value}"
         )
 
-        unvalidated_score: UnvalidatedScore = await self._score_value_with_llm(
+        unvalidated_score: UnvalidatedScore = await self._score_value_with_llm_async(
             prompt_target=self._prompt_target,
             system_prompt=self._system_prompt,
             message_value=prompt,

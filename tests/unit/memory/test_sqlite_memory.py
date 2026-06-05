@@ -17,7 +17,8 @@ from sqlalchemy.dialects.sqlite import CHAR, JSON
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.sqltypes import NullType
 
-from pyrit.memory.memory_models import Base, EmbeddingDataEntry, PromptMemoryEntry
+from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import INITIAL_METADATA
+from pyrit.memory.memory_models import EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.memory.migration import run_schema_migrations
 from pyrit.models import MessagePiece
 from pyrit.prompt_converter.base64_converter import Base64Converter
@@ -163,7 +164,8 @@ def test_run_schema_migrations_stamps_matching_unversioned_legacy_database():
         db_path = os.path.join(temp_dir, "legacy-memory.db")
         engine = create_engine(f"sqlite:///{db_path}")
         try:
-            Base.metadata.create_all(engine, checkfirst=True)
+            initial_metadata = INITIAL_METADATA
+            initial_metadata.create_all(engine)
 
             run_schema_migrations(engine=engine)
 
@@ -183,7 +185,8 @@ def test_run_schema_migrations_stamps_unversioned_legacy_database_with_extra_tab
         db_path = os.path.join(temp_dir, "legacy-memory.db")
         engine = create_engine(f"sqlite:///{db_path}")
         try:
-            Base.metadata.create_all(engine, checkfirst=True)
+            initial_metadata = INITIAL_METADATA
+            initial_metadata.create_all(engine)
             with engine.begin() as connection:
                 connection.execute(
                     text(
@@ -215,7 +218,8 @@ def test_run_schema_migrations_fails_synthetic_unversioned_schema_with_drift():
         db_path = os.path.join(temp_dir, "legacy-memory.db")
         engine = create_engine(f"sqlite:///{db_path}")
         try:
-            Base.metadata.create_all(engine, checkfirst=True)
+            initial_metadata = INITIAL_METADATA
+            initial_metadata.create_all(engine)
             with engine.begin() as connection:
                 connection.execute(text('DROP TABLE "ScoreEntries"'))
 
@@ -281,7 +285,8 @@ def test_run_schema_migrations_isolates_foreign_alembic_version_table():
         db_path = os.path.join(temp_dir, "legacy-memory.db")
         engine = create_engine(f"sqlite:///{db_path}")
         try:
-            Base.metadata.create_all(engine, checkfirst=True)
+            initial_metadata = INITIAL_METADATA
+            initial_metadata.create_all(engine)
             with engine.begin() as connection:
                 connection.execute(text('CREATE TABLE "alembic_version" (version_num VARCHAR(32) NOT NULL)'))
 
@@ -788,19 +793,24 @@ def test_get_conversation_stats_returns_labels(sqlite_instance):
     assert result[conv_id].labels == {"env": "prod", "source": "gui"}
 
 
-def test_get_conversation_stats_preview_truncates(sqlite_instance):
-    """Test that last_message_preview is truncated to 100 chars + ellipsis."""
+def test_get_conversation_stats_preview_caps_raw_value_at_fetch_limit(sqlite_instance):
+    """Memory caps the raw last_message_preview at PREVIEW_FETCH_MAX_LEN.
+
+    Display-level truncation to PREVIEW_MAX_LEN happens later in the backend
+    mapper. This test verifies the storage-fetch contract: very long values
+    are bounded so a multi-MB text response doesn't bloat ``ConversationStats``.
+    """
     import uuid
 
-    from pyrit.models import MessagePiece
+    from pyrit.models import ConversationStats, MessagePiece
 
     conv_id = str(uuid.uuid4())
-    long_text = "x" * 200
+    huge_text = "x" * (ConversationStats.PREVIEW_FETCH_MAX_LEN * 3)
     piece = MessagePiece(
         role="assistant",
-        original_value=long_text,
+        original_value=huge_text,
         original_value_data_type="text",
-        converted_value=long_text,
+        converted_value=huge_text,
         converted_value_data_type="text",
         conversation_id=conv_id,
         sequence=0,
@@ -812,8 +822,9 @@ def test_get_conversation_stats_preview_truncates(sqlite_instance):
     assert conv_id in result
     preview = result[conv_id].last_message_preview
     assert preview is not None
-    assert len(preview) == 103  # 100 chars + "..."
-    assert preview.endswith("...")
+    assert len(preview) == ConversationStats.PREVIEW_FETCH_MAX_LEN
+    assert preview == "x" * ConversationStats.PREVIEW_FETCH_MAX_LEN
+    assert result[conv_id].last_message_data_type == "text"
 
 
 def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
@@ -845,6 +856,76 @@ def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
     assert result[conv_ids[0]].message_count == 1
     assert result[conv_ids[1]].message_count == 2
     assert result[conv_ids[2]].message_count == 3
+
+
+@pytest.mark.parametrize(
+    "data_type",
+    ["image_path", "audio_path", "video_path", "binary_path"],
+)
+def test_get_conversation_stats_returns_media_data_type(sqlite_instance, data_type):
+    """Memory exposes the raw value + data type for the last piece — the
+    backend mapper handles display formatting. Verifies the data type is
+    propagated so downstream consumers can render media previews safely."""
+    import uuid
+
+    from pyrit.models import MessagePiece
+
+    conv_id = str(uuid.uuid4())
+    path = r"C:\Users\someone\git\PyRIT\dbdata\prompt-memory-entries\media\1780010098266691.bin"
+    piece = MessagePiece(
+        role="assistant",
+        original_value=path,
+        original_value_data_type=data_type,
+        converted_value=path,
+        converted_value_data_type=data_type,
+        conversation_id=conv_id,
+        sequence=0,
+    )
+    sqlite_instance._insert_entry(PromptMemoryEntry(entry=piece))
+
+    result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
+    stats = result[conv_id]
+
+    assert stats.last_message_data_type == data_type
+    # Memory returns the raw value (truncated up to PREVIEW_FETCH_MAX_LEN);
+    # formatting/labeling is the backend mapper's responsibility.
+    assert stats.last_message_preview == path
+
+
+def test_get_conversation_stats_uses_last_piece_data_type(sqlite_instance):
+    """Stats reflect the data type of the most recent message, not the
+    first one, so the backend mapper picks the right rendering."""
+    import uuid
+
+    from pyrit.models import MessagePiece
+
+    conv_id = str(uuid.uuid4())
+    text_piece = MessagePiece(
+        role="user",
+        original_value="hi there",
+        original_value_data_type="text",
+        converted_value="hi there",
+        converted_value_data_type="text",
+        conversation_id=conv_id,
+        sequence=0,
+    )
+    audio_path = r"C:\dbdata\prompt-memory-entries\audio\response.mp3"
+    media_piece = MessagePiece(
+        role="assistant",
+        original_value=audio_path,
+        original_value_data_type="audio_path",
+        converted_value=audio_path,
+        converted_value_data_type="audio_path",
+        conversation_id=conv_id,
+        sequence=1,
+    )
+    sqlite_instance._insert_entries(entries=[PromptMemoryEntry(entry=text_piece), PromptMemoryEntry(entry=media_piece)])
+
+    result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
+    stats = result[conv_id]
+
+    assert stats.last_message_data_type == "audio_path"
+    assert stats.last_message_preview == audio_path
 
 
 def test_dispose_engine_tolerates_closed_log_stream(sqlite_instance, capsys):
@@ -885,8 +966,7 @@ def test_run_schema_migrations_early_return_with_existing_version_table():
         db_path = os.path.join(temp_dir, "versioned-memory.db")
         engine = create_engine(f"sqlite:///{db_path}")
         try:
-            Base.metadata.create_all(engine, checkfirst=True)
-
+            # First call on a fresh DB creates schema and stamps version
             run_schema_migrations(engine=engine)
 
             table_names = set(inspect(engine).get_table_names())

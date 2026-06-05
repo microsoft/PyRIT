@@ -11,26 +11,33 @@ Scenarios orchestrate multi-attack security testing campaigns. Each scenario gro
 All scenarios inherit from `Scenario` (ABC) and must:
 
 1. **Define `VERSION`** as a class constant (increment on breaking changes)
-2. **Implement three abstract methods:**
+2. **Optionally declare `BASELINE_ATTACK_POLICY`** (defaults to `BaselineAttackPolicy.Enabled` — a baseline `PromptSendingAttack` is prepended and callers can opt out per run via `initialize_async(include_baseline=False)`):
+   - `BaselineAttackPolicy.Disabled` — baseline supported but off by default (e.g. `Jailbreak`, where templates dominate the run).
+   - `BaselineAttackPolicy.Forbidden` — baseline is meaningless for this scenario's comparison axis (e.g. `AdversarialBenchmark`, which compares against gold-standard answers). Explicit `include_baseline=True` raises `ValueError`.
+3. **Pass `strategy_class`, `default_strategy`, and `default_dataset_config` to `super().__init__()`:**
 
 ```python
 class MyScenario(Scenario):
     VERSION: int = 1
+    BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
 
-    @classmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        return MyStrategy
-
-    @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        return MyStrategy.ALL
-
-    @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        return DatasetConfiguration(dataset_names=["my_dataset"])
+    @apply_defaults
+    def __init__(self, *, objective_scorer=None, scenario_result_id=None) -> None:
+        super().__init__(
+            version=self.VERSION,
+            strategy_class=MyStrategy,
+            default_strategy=MyStrategy.ALL,
+            default_dataset_config=DatasetConfiguration(dataset_names=["my_dataset"]),
+            objective_scorer=objective_scorer or self._get_default_objective_scorer(),
+            scenario_result_id=scenario_result_id,
+        )
 ```
 
-3. **Optionally override `_get_atomic_attacks_async()`** — the base class provides a default
+For scenarios whose strategy enum is built dynamically (RapidResponse pattern), build the
+strategy class in a module-level `@cache`-decorated function and pass the result through
+the constructor — no classmethod indirection required.
+
+4. **Optionally override `_get_atomic_attacks_async()`** — the base class provides a default
    that uses the factory/registry pattern (see "AtomicAttack Construction" below).
    Only override if your scenario needs custom attack construction logic.
 
@@ -41,7 +48,7 @@ class MyScenario(Scenario):
 def __init__(
     self,
     *,
-    adversarial_chat: PromptChatTarget | None = None,
+    adversarial_chat: PromptTarget | None = None,
     objective_scorer: TrueFalseScorer | None = None,
     scenario_result_id: str | None = None,
 ) -> None:
@@ -56,14 +63,23 @@ def __init__(
     super().__init__(
         version=self.VERSION,
         strategy_class=MyStrategy,
+        default_strategy=MyStrategy.ALL,
+        default_dataset_config=DatasetConfiguration(dataset_names=["my_dataset"]),
         objective_scorer=objective_scorer,
     )
 ```
 
 Requirements:
 - `@apply_defaults` decorator on `__init__`
-- All parameters keyword-only via `*`
-- `super().__init__()` called with `version`, `strategy_class`, `objective_scorer`
+- All parameters keyword-only via `*` — **enforced at class-definition time** by
+  `Scenario.__init_subclass__` calling `enforce_keyword_only_init` (see
+  `pyrit/common/brick_contract.py`). Violators raise `TypeError` at
+  import time. Existing classes that cannot adopt the contract immediately
+  may opt into a one-release grace period via the class attribute
+  `_brick_legacy_init = True`, which downgrades the error to a
+  `DeprecationWarning(removed_in="0.16.0")`. The opt-out is removed in 0.16.0.
+- **All constructor parameters must be optional** (default to `None`) so the registry can instantiate the scenario with no arguments for metadata introspection. Defer required-input validation to `initialize_async()` or `_get_atomic_attacks_async()`. `ScenarioRegistry._build_metadata` raises `TypeError` if `scenario_class()` cannot be called with no arguments.
+- `super().__init__()` called with `version`, `strategy_class`, `default_strategy`, `default_dataset_config`, `objective_scorer`
 - complex objects like `adversarial_chat` or `objective_scorer` should be passed into the constructor.
 
 ## Dataset Loading
@@ -141,10 +157,57 @@ get atomic-attack construction **for free** — no override needed.
 
 The default implementation:
 1. Calls `self._get_attack_technique_factories()` to get name→factory mapping
+   (defaults to reading every `AttackTechniqueFactory` registered in the
+   `AttackTechniqueRegistry` singleton)
 2. Iterates over every (technique × dataset) pair from `self._dataset_config`
 3. Calls `factory.create()` with `objective_target` and conditional scorer override
 4. Uses `self._build_display_group()` for user-facing grouping
 5. Builds `AtomicAttack` with unique `atomic_attack_name` = `"{technique}_{dataset}"`
+
+### AttackTechniqueFactory
+
+Techniques are described by `AttackTechniqueFactory` instances rather than a separate spec
+dataclass.  The canonical catalog lives in
+`pyrit.setup.initializers.components.scenario_techniques` (`build_scenario_technique_factories()`)
+and is loaded into the registry by `ScenarioTechniqueInitializer`.
+
+```python
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+
+AttackTechniqueFactory(
+    name="prompt_sending",                  # REQUIRED — must match the strategy enum value
+    attack_class=PromptSendingAttack,
+    strategy_tags=["core", "single_turn", "default"],
+    attack_kwargs={"max_turns": 5},
+    adversarial_config=None,
+    seed_technique=None,
+    uses_adversarial=None,                  # None = auto-derive from attack signature/seeds
+    scorer_override_policy=ScorerOverridePolicy.WARN,
+)
+```
+
+Key points:
+- `name` is required and must match the strategy enum value the scenario looks up.
+- `strategy_tags` on the factory drives `TagQuery` filters used by
+  `AttackTechniqueRegistry.build_strategy_class_from_factories(...)`. This is **distinct**
+  from the per-entry `tags` argument passed to `registry.register_technique(...)`.
+- `uses_adversarial` is auto-derived from the attack class signature (presence of
+  `attack_adversarial_config`) and seed shape; pass `False` explicitly to opt out, or
+  `True` to force opt-in.
+- `kwargs` are validated against the attack class constructor signature at
+  factory-construction time, so typos fail loudly and early.
+
+### Registering factories
+
+```python
+registry = AttackTechniqueRegistry.get_registry_singleton()
+registry.register_from_factories(build_scenario_technique_factories())
+```
+
+`register_from_factories` reads `factory.strategy_tags` to populate the per-entry tags used
+by the registry. Tests that exercise scenarios should reset both `AttackTechniqueRegistry`
+and `TargetRegistry` and re-register a mock `adversarial_chat` so the catalog builder
+resolves without falling back to `OpenAIChatTarget`.
 
 ### Customization hooks (no need to override `_get_atomic_attacks_async`):
 - **`_get_attack_technique_factories()`** — override to add/remove/replace factories
@@ -153,6 +216,8 @@ The default implementation:
 ### When to override `_get_atomic_attacks_async`:
 Only override when the scenario **cannot** use the factory/registry pattern — e.g., scenarios
 with custom composite logic, per-strategy converter stacks, or non-standard attack construction.
+
+Overrides that want baseline support must emit it themselves by calling `self._build_baseline_atomic_attack(seed_groups=...)` with the same seeds used for the strategy attacks and prepending the result. The base implementation emits baseline automatically; passing freshly resolved seeds reintroduces ADO 9012 (baseline-vs-strategy population divergence under `max_dataset_size`).
 
 ### Manual AtomicAttack construction (for overrides):
 

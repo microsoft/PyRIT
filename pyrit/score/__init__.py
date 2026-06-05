@@ -9,6 +9,8 @@ including harm detection, objective completion, and content classification.
 import importlib
 from typing import TYPE_CHECKING
 
+from pyrit.output.scorer.base import ScorerPrinterBase as ScorerPrinter
+from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter as ConsoleScorerPrinter
 from pyrit.score.batch_scorer import BatchScorer
 from pyrit.score.conversation_scorer import ConversationScorer, create_conversation_scorer
 from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
@@ -23,7 +25,6 @@ from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, Plagiari
 from pyrit.score.float_scale.self_ask_general_float_scale_scorer import SelfAskGeneralFloatScaleScorer
 from pyrit.score.float_scale.self_ask_likert_scorer import LikertScaleEvalFiles, LikertScalePaths, SelfAskLikertScorer
 from pyrit.score.float_scale.self_ask_scale_scorer import SelfAskScaleScorer
-from pyrit.score.printer import ConsoleScorerPrinter, ScorerPrinter
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_evaluation.metrics_type import MetricsType, RegistryUpdateBehavior
 from pyrit.score.scorer_evaluation.scorer_metrics import (
@@ -37,13 +38,24 @@ from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     get_all_harm_metrics,
     get_all_objective_metrics,
 )
+from pyrit.score.scorer_info import get_scorer_info
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+from pyrit.score.true_false.anthrax_keyword_scorer import AnthraxKeywordScorer
 from pyrit.score.true_false.decoding_scorer import DecodingScorer
+from pyrit.score.true_false.fentanyl_keyword_scorer import FentanylKeywordScorer
 from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
 from pyrit.score.true_false.gandalf_scorer import GandalfScorer
 from pyrit.score.true_false.markdown_injection import MarkdownInjectionScorer
+from pyrit.score.true_false.meth_keyword_scorer import MethKeywordScorer
+from pyrit.score.true_false.nerve_agent_keyword_scorer import NerveAgentKeywordScorer
 from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
 from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
+from pyrit.score.true_false.regex.credential_leak_scorer import CredentialLeakScorer
+from pyrit.score.true_false.regex.path_traversal_output_scorer import PathTraversalOutputScorer
+from pyrit.score.true_false.regex.regex_scorer import RegexScorer
+from pyrit.score.true_false.regex.shell_command_output_scorer import ShellCommandOutputScorer
+from pyrit.score.true_false.regex.sql_injection_output_scorer import SQLInjectionOutputScorer
+from pyrit.score.true_false.regex.xss_output_scorer import XSSOutputScorer
 from pyrit.score.true_false.self_ask_category_scorer import ContentClassifierPaths, SelfAskCategoryScorer
 from pyrit.score.true_false.self_ask_general_true_false_scorer import SelfAskGeneralTrueFalseScorer
 from pyrit.score.true_false.self_ask_question_answer_scorer import SelfAskQuestionAnswerScorer
@@ -53,6 +65,7 @@ from pyrit.score.true_false.self_ask_true_false_scorer import (
     TrueFalseQuestion,
     TrueFalseQuestionPaths,
 )
+from pyrit.score.true_false.static_prompt_injection_scorer import StaticPromptInjectionScorer
 from pyrit.score.true_false.substring_scorer import SubStringScorer
 from pyrit.score.true_false.true_false_composite_scorer import TrueFalseCompositeScorer
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
@@ -106,6 +119,7 @@ def __getattr__(name: str) -> object:
 
 
 __all__ = [
+    "AnthraxKeywordScorer",
     "AudioFloatScaleScorer",
     "AudioTrueFalseScorer",
     "AzureContentFilterScorer",
@@ -113,7 +127,9 @@ __all__ = [
     "ContentClassifierPaths",
     "ConsoleScorerPrinter",
     "ConversationScorer",
+    "CredentialLeakScorer",
     "DecodingScorer",
+    "FentanylKeywordScorer",
     "create_conversation_scorer",
     "FloatScaleScoreAggregator",
     "FloatScaleScorerAllCategories",
@@ -130,14 +146,18 @@ __all__ = [
     "LikertScaleEvalFiles",
     "LikertScalePaths",
     "MarkdownInjectionScorer",
+    "MethKeywordScorer",
     "MetricsType",
+    "NerveAgentKeywordScorer",
     "ObjectiveHumanLabeledEntry",
     "ObjectiveScorerEvaluator",
     "ObjectiveScorerMetrics",
+    "PathTraversalOutputScorer",
     "PlagiarismMetric",
     "PlagiarismScorer",
     "PromptShieldScorer",
     "QuestionAnswerScorer",
+    "RegexScorer",
     "RegistryUpdateBehavior",
     "Scorer",
     "ScorerEvalDatasetFiles",
@@ -146,6 +166,7 @@ __all__ = [
     "ScorerMetricsWithIdentity",
     "get_all_harm_metrics",
     "get_all_objective_metrics",
+    "get_scorer_info",
     "find_objective_metrics_by_eval_hash",
     "ScorerPromptValidator",
     "SelfAskCategoryScorer",
@@ -158,6 +179,9 @@ __all__ = [
     "SelfAskScaleScorer",
     "SelfAskTrueFalseScorer",
     "ScorerPrinter",
+    "ShellCommandOutputScorer",
+    "SQLInjectionOutputScorer",
+    "StaticPromptInjectionScorer",
     "SubStringScorer",
     "TrueFalseCompositeScorer",
     "TrueFalseInverterScorer",
@@ -168,4 +192,5 @@ __all__ = [
     "TrueFalseScorer",
     "VideoFloatScaleScorer",
     "VideoTrueFalseScorer",
+    "XSSOutputScorer",
 ]

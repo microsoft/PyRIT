@@ -10,10 +10,9 @@ from contextlib import AbstractAsyncContextManager
 from typing import Optional
 from unittest.mock import MagicMock, patch
 
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import AzureSQLMemory, CentralMemory, PromptMemoryEntry
-from pyrit.models import Message, MessagePiece
-from pyrit.prompt_target import PromptChatTarget, PromptTarget, limit_requests_per_minute
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, limit_requests_per_minute
 
 
 def get_mock_scorer_identifier() -> ComponentIdentifier:
@@ -66,7 +65,7 @@ def get_mock_attack_identifier(name: str = "MockAttack", module: str = "tests.un
 def get_mock_target(name: str = "MockTarget") -> MagicMock:
     """
     Returns a MagicMock target whose ``get_identifier()`` returns a real
-    :class:`ComponentIdentifier`. Use this wherever a ``MagicMock(spec=PromptTarget)``
+    ``ComponentIdentifier``. Use this wherever a ``MagicMock(spec=PromptTarget)``
     is needed as an ``objective_target``.
 
     Args:
@@ -119,10 +118,19 @@ class MockHttpPostSync:
             raise Exception(f"HTTP Error {self.status}")
 
 
-class MockPromptTarget(PromptChatTarget):
+class MockPromptTarget(PromptTarget):
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_multi_message_pieces=True,
+            supports_system_prompt=True,
+            supports_editable_history=True,
+        )
+    )
+
     prompt_sent: list[str]
 
-    def __init__(self, id=None, rpm=None) -> None:  # noqa: A002
+    def __init__(self, *, id=None, rpm=None) -> None:  # noqa: A002
         super().__init__(max_requests_per_minute=rpm)
         self.id = id
         self.prompt_sent = []
@@ -144,7 +152,7 @@ class MockPromptTarget(PromptChatTarget):
                     converted_value=system_prompt,
                     conversation_id=conversation_id,
                     attack_identifier=attack_identifier,
-                    labels=labels,
+                    labels=labels or {},
                 ).to_message()
             )
 

@@ -26,7 +26,7 @@ from pyrit.models import Message, SeedPrompt, SeedSimulatedConversation
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from pyrit.prompt_target import PromptChatTarget
+    from pyrit.prompt_target import PromptTarget
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 async def generate_simulated_conversation_async(
     *,
     objective: str,
-    adversarial_chat: PromptChatTarget,
+    adversarial_chat: PromptTarget,
     objective_scorer: TrueFalseScorer,
     num_turns: int = 3,
     starting_sequence: int = 0,
@@ -170,7 +170,7 @@ async def _generate_next_message_async(
     *,
     objective: str,
     conversation_messages: list[Message],
-    adversarial_chat: PromptChatTarget,
+    adversarial_chat: PromptTarget,
     next_message_system_prompt_path: Union[str, Path],
 ) -> Message:
     """
@@ -228,6 +228,6 @@ async def _generate_next_message_async(
     # Change the role from assistant to user since this is a user message to be sent to the target
     response = responses[0]
     for piece in response.message_pieces:
-        piece._role = "user"
+        piece.role = "user"
 
     return response

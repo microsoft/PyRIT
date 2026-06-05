@@ -28,9 +28,7 @@ def test_is_response_format_json_false_when_no_metadata():
     target = MockPromptTarget()
     piece = MagicMock(spec=MessagePiece)
     piece.prompt_metadata = None
-    # MockPromptTarget doesn't have is_response_format_json, use the base class method
-    result = PromptChatTarget.is_response_format_json(target, message_piece=piece)
-    assert result is False
+    assert target.is_response_format_json(message_piece=piece) is False
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -38,9 +36,9 @@ def test_is_response_format_json_true_when_json_format():
     target = MockPromptTarget()
     piece = MagicMock(spec=MessagePiece)
     piece.prompt_metadata = {"response_format": "json"}
-    # PromptChatTarget default capabilities don't support json_output, so this should raise
+    # Default MockPromptTarget capabilities don't support json_output, so this should raise
     with pytest.raises(ValueError, match="does not support JSON response format"):
-        PromptChatTarget.is_response_format_json(target, message_piece=piece)
+        target.is_response_format_json(message_piece=piece)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -50,14 +48,7 @@ def test_is_response_format_json_true_with_json_capable_target():
     target._configuration = custom_conf
     piece = MagicMock(spec=MessagePiece)
     piece.prompt_metadata = {"response_format": "json"}
-    result = PromptChatTarget.is_response_format_json(target, message_piece=piece)
-    assert result is True
-
-
-@pytest.mark.usefixtures("patch_central_database")
-def test_default_configuration_class_attribute():
-    assert PromptChatTarget._DEFAULT_CONFIGURATION.capabilities.supports_multi_turn is True
-    assert PromptChatTarget._DEFAULT_CONFIGURATION.capabilities.supports_system_prompt is True
+    assert target.is_response_format_json(message_piece=piece) is True
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -69,31 +60,124 @@ def test_configuration_property_returns_configuration():
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_init_subclass_promotes_default_capabilities_with_warning():
+def test_subclassing_prompt_chat_target_emits_deprecation_warning():
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
 
-        class _LegacyTarget(PromptTarget):
-            _DEFAULT_CAPABILITIES = TargetCapabilities(supports_multi_turn=True)
-
+        class _LegacyChatSubclass(PromptChatTarget):
             async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
                 return []
 
-    deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert len(deprecation_warnings) == 1
-    assert "_DEFAULT_CAPABILITIES is deprecated" in str(deprecation_warnings[0].message)
-    assert isinstance(_LegacyTarget._DEFAULT_CONFIGURATION, TargetConfiguration)
-    assert _LegacyTarget._DEFAULT_CONFIGURATION.capabilities.supports_multi_turn is True
+    deprecation_warnings = [
+        w
+        for w in caught
+        if issubclass(w.category, DeprecationWarning)
+        and "PromptChatTarget" in str(w.message)
+        and "deprecated" in str(w.message)
+    ]
+    assert len(deprecation_warnings) >= 1
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_get_default_capabilities_emits_deprecation_warning():
+def test_instantiating_prompt_chat_target_subclass_emits_deprecation_warning():
+    """``PromptChatTarget.__init__`` is deprecated and must emit a warning when called."""
+
+    class _LegacyChatSubclassForInit(PromptChatTarget):
+        async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+            return []
+
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        result = PromptChatTarget.get_default_capabilities(None)
+        _LegacyChatSubclassForInit()
 
-    deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert len(deprecation_warnings) == 1
-    assert "get_default_capabilities() is deprecated" in str(deprecation_warnings[0].message)
-    assert isinstance(result, TargetCapabilities)
-    assert result.supports_multi_turn is True
+    deprecation_warnings = [
+        w
+        for w in caught
+        if issubclass(w.category, DeprecationWarning)
+        and "PromptChatTarget" in str(w.message)
+        and "0.16.0" in str(w.message)
+    ]
+    assert len(deprecation_warnings) >= 1
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_set_system_prompt_available_on_prompt_target():
+    """The set_system_prompt API now lives on PromptTarget directly."""
+    assert hasattr(PromptTarget, "set_system_prompt")
+    assert hasattr(PromptTarget, "is_response_format_json")
+
+
+class _BarePromptTarget(PromptTarget):
+    """Minimal PromptTarget subclass that does not override set_system_prompt."""
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        return []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "supports_multi_turn,supports_editable_history",
+    [
+        (False, True),
+        (True, False),
+        (False, False),
+    ],
+)
+def test_set_system_prompt_raises_when_capabilities_missing(supports_multi_turn: bool, supports_editable_history: bool):
+    """set_system_prompt must require both multi-turn and editable-history capabilities."""
+    config = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=supports_multi_turn,
+            supports_editable_history=supports_editable_history,
+        )
+    )
+    target = _BarePromptTarget(custom_configuration=config)
+
+    with pytest.raises(ValueError, match="does not support setting a system prompt"):
+        target.set_system_prompt(
+            system_prompt="you are a helpful assistant",
+            conversation_id="conv-1",
+        )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_set_system_prompt_writes_system_message_when_capabilities_present():
+    """set_system_prompt writes a system-role message to memory on a capable target."""
+    config = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_editable_history=True,
+        )
+    )
+    target = _BarePromptTarget(custom_configuration=config)
+    conversation_id = "conv-success"
+
+    target.set_system_prompt(
+        system_prompt="you are a helpful assistant",
+        conversation_id=conversation_id,
+    )
+
+    messages = target._memory.get_conversation(conversation_id=conversation_id)
+    assert len(messages) == 1
+    pieces = messages[0].message_pieces
+    assert len(pieces) == 1
+    assert pieces[0].role == "system"
+    assert pieces[0].original_value == "you are a helpful assistant"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_set_system_prompt_raises_when_conversation_already_exists():
+    """set_system_prompt must refuse to overwrite an existing conversation."""
+    config = TargetConfiguration(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_editable_history=True,
+        )
+    )
+    target = _BarePromptTarget(custom_configuration=config)
+    conversation_id = "conv-existing"
+
+    target.set_system_prompt(system_prompt="first", conversation_id=conversation_id)
+
+    with pytest.raises(RuntimeError, match="Conversation already exists"):
+        target.set_system_prompt(system_prompt="second", conversation_id=conversation_id)

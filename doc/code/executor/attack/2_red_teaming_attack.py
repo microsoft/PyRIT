@@ -7,7 +7,6 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 # ---
-
 # %% [markdown]
 # # 2. Red Teaming Attack (Multi-Turn)
 #
@@ -58,15 +57,16 @@
 #
 # Note that for this to succeed, the `AttackAdversarialConfig` requires an LLM endpoint without serious content moderation or other kinds of safety filtering mechanisms. Success depends on the model and may not be achieved every time.
 #
+# %%
 import logging
 
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackScoringConfig,
-    ConsoleAttackResultPrinter,
     RedTeamingAttack,
     RTASystemPromptPaths,
 )
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import AzureMLChatTarget, OpenAIChatTarget
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -101,7 +101,7 @@ red_teaming_attack = RedTeamingAttack(
 
 # passed-in memory labels are combined with global memory labels
 result = await red_teaming_attack.execute_async(objective=objective, memory_labels={"harm_category": "illegal"})  # type: ignore
-await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
+await output_attack_async(result)
 
 # %% [markdown]
 # ## Setting System Prompt of Objective Target
@@ -120,6 +120,7 @@ import os
 from pyrit.auth import get_azure_openai_auth
 from pyrit.datasets import TextJailBreak
 from pyrit.models import Message, MessagePiece
+from pyrit.prompt_target import OpenAIChatTarget
 
 jailbreak = TextJailBreak(template_file_name="dan_1.yaml")
 
@@ -180,7 +181,7 @@ result = await red_teaming_attack.execute_async(  # type: ignore
     prepended_conversation=prepended_conversation,
 )
 
-await ConsoleAttackResultPrinter().print_conversation_async(result=result)  # type: ignore
+await output_attack_async(result)
 
 # %% [markdown]
 # ## Parallel Example using Converters
@@ -227,7 +228,7 @@ for objective in objectives:
         memory_labels={"harm_category": "illegal"},
     )
 
-    await ConsoleAttackResultPrinter().print_result_async(result=result)  # type: ignore
+    await output_attack_async(result)
 
 # How to call AttackExecutor's method if not changing the attack configuration for each objective
 """
@@ -258,7 +259,6 @@ import logging
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackScoringConfig,
-    ConsoleAttackResultPrinter,
     RedTeamingAttack,
 )
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIImageTarget
@@ -294,24 +294,22 @@ red_teaming_attack = RedTeamingAttack(
 )
 
 result = await red_teaming_attack.execute_async(objective=objective, memory_labels={"harm_category": "illegal"})  # type: ignore
-await ConsoleAttackResultPrinter().print_result_async(  # type: ignore
-    result=result, include_adversarial_conversation=True
-)
+await output_attack_async(result, include_adversarial_conversation=True)
 
 # %% [markdown]
 # ## Displaying Results with Better Formatting
 #
-# While `ConsoleAttackResultPrinter` works well for console output, Jupyter notebooks can display rich content more effectively.
-# The `MarkdownAttackResultPrinter` provides enhanced formatting capabilities, including proper inline display of generated images
-# and better visual organization of attack results. Note that for documentation builds, `ConsoleAttackResultPrinter` is preferred
+# While `output_attack_async` works well for console output, Jupyter notebooks can display rich content more effectively.
+# The `output_attack_async (format="markdown")` provides enhanced formatting capabilities, including proper inline display of generated images
+# and better visual organization of attack results. Note that for documentation builds, `output_attack_async` is preferred
 # to avoid broken image references when notebook outputs are committed.
 
 # %%
-# Note: MarkdownAttackResultPrinter displays images inline using markdown, which looks great in notebooks.
-# However, for documentation builds, use ConsoleAttackResultPrinter to avoid broken image references.
-await ConsoleAttackResultPrinter().print_result_async(result=result, include_auxiliary_scores=True)  # type: ignore
+# Note: output_attack_async (format="markdown") displays images inline using markdown, which looks great in notebooks.
+# However, for documentation builds, use output_attack_async to avoid broken image references.
+await output_attack_async(result, include_auxiliary_scores=True)
 
 # %% [markdown]
 # ## Other Multi-Turn Attacks
 #
-# The above examples should work using other multi-turn attacks with minimal modification. Check out attacks under `pyrit.executor.attack.multi_turn` for other examples, like Crescendo and Tree of Attacks. These algorithms are always more effective than `RedTeamingAttack`, which is a simple algorithm. However, `RedTeamingAttack` by its nature supports more targets - because it doesn't modify conversation history it can support any `PromptTarget` and not only `PromptChatTargets`.
+# The above examples should work using other multi-turn attacks with minimal modification. Check out attacks under `pyrit.executor.attack.multi_turn` for other examples, like Crescendo and Tree of Attacks. These algorithms are always more effective than `RedTeamingAttack`, which is a simple algorithm. However, `RedTeamingAttack` by its nature supports more targets - because it doesn't modify conversation history it can support any `PromptTarget`, not only chat-style targets that declare `supports_multi_turn=True` and `supports_editable_history=True`.

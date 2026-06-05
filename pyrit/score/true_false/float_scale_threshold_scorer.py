@@ -2,10 +2,12 @@
 # Licensed under the MIT license.
 
 import uuid
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import ChatMessageRole, Message, MessagePiece, Score
+if TYPE_CHECKING:
+    from pyrit.prompt_target import PromptTarget
+
+from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleAggregatorFunc,
     FloatScaleScoreAggregator,
@@ -72,6 +74,15 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
                 "sub_scorers": [self._scorer.get_identifier()],
             },
         )
+
+    def get_chat_target(self) -> Optional["PromptTarget"]:
+        """
+        Delegate to the wrapped scorer.
+
+        Returns:
+            Optional[PromptTarget]: The chat target from the wrapped scorer.
+        """
+        return self._scorer.get_chat_target()
 
     async def _score_async(
         self,

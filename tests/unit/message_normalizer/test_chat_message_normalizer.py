@@ -131,7 +131,7 @@ class TestChatMessageNormalizerNormalizeAsync:
         normalizer = ChatMessageNormalizer()
 
         with patch(
-            "pyrit.message_normalizer.chat_message_normalizer.convert_local_image_to_data_url",
+            "pyrit.message_normalizer.chat_message_normalizer.convert_local_image_to_data_url_async",
             new_callable=AsyncMock,
         ) as mock_convert:
             mock_convert.return_value = "data:image/png;base64,abc123"
@@ -175,7 +175,7 @@ class TestChatMessageNormalizerNormalizeAsync:
 
     async def test_unsupported_data_type_raises(self):
         """Test that unsupported data type raises ValueError at MessagePiece creation."""
-        with pytest.raises(ValueError, match="is not a valid data type"):
+        with pytest.raises(ValueError, match="Input should be"):
             MessagePiece(
                 role="user",
                 original_value="some data",
