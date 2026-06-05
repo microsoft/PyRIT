@@ -16,8 +16,7 @@ from pyrit.message_normalizer.message_normalizer import (
     SystemMessageBehavior,
     apply_system_message_behavior_async,
 )
-from pyrit.models import ChatMessage, Message
-from pyrit.models.messages.message_piece import MessagePiece
+from pyrit.models import ChatMessage, Message, MessagePiece
 
 if TYPE_CHECKING:
     from pyrit.models.literals import ChatMessageRole
