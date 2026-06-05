@@ -50,20 +50,39 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
             # Preserve the instruction content without rewriting non-user messages.
             return [Message.from_prompt(prompt=first_piece.converted_value, role="user")] + list(messages[1:])
 
-        # Combine system with the first user message
+        # Combine system with the first user message, preserving non-text pieces (e.g. images) and their order.
         system_content = first_piece.converted_value
-        user_piece = messages[user_message_index].get_piece()
-        user_content = user_piece.converted_value
-
-        combined_content = f"### Instructions ###\n\n{system_content}\n\n######\n\n{user_content}"
-        combined_piece = MessagePiece(
-            role="user",
-            original_value=combined_content,
-            conversation_id=user_piece.conversation_id,
-            sequence=user_piece.sequence,
+        user_message = messages[user_message_index]
+        text_piece_index = next(
+            (i for i, piece in enumerate(user_message.message_pieces) if piece.converted_value_data_type == "text"),
+            -1,
         )
-        remaining_pieces = list(messages[user_message_index].message_pieces[1:])
-        squashed_message = Message(message_pieces=[combined_piece] + remaining_pieces)
+
+        if text_piece_index == -1:
+            # No text piece to merge into; prepend an instruction-only text piece so non-text pieces are preserved.
+            template_piece = user_message.get_piece()
+            instruction_piece = MessagePiece(
+                role="user",
+                original_value=f"### Instructions ###\n\n{system_content}\n\n######",
+                conversation_id=template_piece.conversation_id,
+                sequence=template_piece.sequence,
+            )
+            squashed_pieces = [instruction_piece] + list(user_message.message_pieces)
+        else:
+            text_piece = user_message.message_pieces[text_piece_index]
+            combined_piece = MessagePiece(
+                role="user",
+                original_value=f"### Instructions ###\n\n{system_content}\n\n######\n\n{text_piece.converted_value}",
+                conversation_id=text_piece.conversation_id,
+                sequence=text_piece.sequence,
+            )
+            squashed_pieces = (
+                list(user_message.message_pieces[:text_piece_index])
+                + [combined_piece]
+                + list(user_message.message_pieces[text_piece_index + 1 :])
+            )
+
+        squashed_message = Message(message_pieces=squashed_pieces)
 
         # Remove system (index 0), replace the first user message with the squashed version, preserve all others
         return list(messages[1:user_message_index]) + [squashed_message] + list(messages[user_message_index + 1 :])
