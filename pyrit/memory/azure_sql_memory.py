@@ -7,7 +7,7 @@ import struct
 from collections.abc import MutableSequence, Sequence
 from contextlib import closing, suppress
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from sqlalchemy import and_, create_engine, event, exists, or_, text
 from sqlalchemy.engine.base import Engine
@@ -64,9 +64,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     def __init__(
         self,
         *,
-        connection_string: Optional[str] = None,
-        results_container_url: Optional[str] = None,
-        results_sas_token: Optional[str] = None,
+        connection_string: str | None = None,
+        results_container_url: str | None = None,
+        results_sas_token: str | None = None,
         verbose: bool = False,
         skip_schema_migration: bool = False,
         silent: bool = False,
@@ -75,11 +75,11 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Initialize an Azure SQL Memory backend.
 
         Args:
-            connection_string (Optional[str]): The connection string for the Azure Sql Database. If not provided,
+            connection_string (str | None): The connection string for the Azure Sql Database. If not provided,
                 it falls back to the 'AZURE_SQL_DB_CONNECTION_STRING' environment variable.
-            results_container_url (Optional[str]): The URL to an Azure Storage Container. If not provided,
+            results_container_url (str | None): The URL to an Azure Storage Container. If not provided,
                 it falls back to the 'AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL' environment variable.
-            results_sas_token (Optional[str]): The Shared Access Signature (SAS) token for the storage container.
+            results_sas_token (str | None): The Shared Access Signature (SAS) token for the storage container.
                 If not provided, falls back to the 'AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN' environment variable.
             verbose (bool): Whether to enable verbose logging for the database engine. Defaults to False.
             skip_schema_migration (bool): Whether to skip schema migration. Defaults to False.
@@ -93,12 +93,12 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             env_var_name=self.AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL, passed_value=results_container_url
         )
 
-        self._results_container_sas_token: Optional[str] = self._resolve_sas_token(
+        self._results_container_sas_token: str | None = self._resolve_sas_token(
             self.AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN, results_sas_token
         )
 
-        self._auth_token: Optional[AccessToken] = None
-        self._auth_token_expiry: Optional[int] = None
+        self._auth_token: AccessToken | None = None
+        self._auth_token_expiry: int | None = None
 
         self.results_path = self._results_container_url
 
@@ -116,16 +116,16 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         super().__init__()
 
     @staticmethod
-    def _resolve_sas_token(env_var_name: str, passed_value: Optional[str] = None) -> Optional[str]:
+    def _resolve_sas_token(env_var_name: str, passed_value: str | None = None) -> str | None:
         """
         Resolve the SAS token value, allowing a fallback to None for delegation SAS.
 
         Args:
             env_var_name (str): The environment variable name to look up.
-            passed_value (Optional[str]): A passed-in value for the SAS token.
+            passed_value (str | None): A passed-in value for the SAS token.
 
         Returns:
-            Optional[str]: Resolved SAS token or None if not provided.
+            str | None: Resolved SAS token or None if not provided.
         """
         try:
             return default_values.get_required_value(env_var_name=env_var_name, passed_value=passed_value)
@@ -285,14 +285,14 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         return [or_(pme_match, are_match)]
 
-    def _get_metadata_conditions(self, *, prompt_metadata: dict[str, Union[str, int]]) -> list[TextClause]:
+    def _get_metadata_conditions(self, *, prompt_metadata: dict[str, str | int]) -> list[TextClause]:
         """
         Generate SQL conditions for filtering by prompt metadata.
 
         Uses JSON_VALUE() function specific to SQL Azure to query metadata fields in JSON format.
 
         Args:
-            prompt_metadata (dict[str, Union[str, int]]): Dictionary of metadata key-value pairs to filter by.
+            prompt_metadata (dict[str, str | int]): Dictionary of metadata key-value pairs to filter by.
 
         Returns:
             list: List containing a single SQLAlchemy text condition with bound parameters.
@@ -310,7 +310,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         return [condition]
 
     def _get_message_pieces_prompt_metadata_conditions(
-        self, *, prompt_metadata: dict[str, Union[str, int]]
+        self, *, prompt_metadata: dict[str, str | int]
     ) -> list[TextClause]:
         """
         Generate SQL conditions for filtering message pieces by prompt metadata.
@@ -318,14 +318,14 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         This is a convenience wrapper around _get_metadata_conditions.
 
         Args:
-            prompt_metadata (dict[str, Union[str, int]]): Dictionary of metadata key-value pairs to filter by.
+            prompt_metadata (dict[str, str | int]): Dictionary of metadata key-value pairs to filter by.
 
         Returns:
             list: List containing SQLAlchemy text conditions with bound parameters.
         """
         return self._get_metadata_conditions(prompt_metadata=prompt_metadata)
 
-    def _get_seed_metadata_conditions(self, *, metadata: dict[str, Union[str, int]]) -> TextClause:
+    def _get_seed_metadata_conditions(self, *, metadata: dict[str, str | int]) -> TextClause:
         """
         Generate SQL condition for filtering seed prompts by metadata.
 
@@ -333,7 +333,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         the first (and only) condition.
 
         Args:
-            metadata (dict[str, Union[str, int]]): Dictionary of metadata key-value pairs to filter by.
+            metadata (dict[str, str | int]): Dictionary of metadata key-value pairs to filter by.
 
         Returns:
             Any: SQLAlchemy text condition with bound parameters.
@@ -403,7 +403,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Args:
             json_column (InstrumentedAttribute[Any]): The JSON-backed SQLAlchemy field to query.
             property_path (str): The JSON path for the target array.
-            array_element_path (Optional[str]): An optional JSON path applied to each array item before matching.
+            array_element_path (str | None): An optional JSON path applied to each array item before matching.
             array_to_match (Sequence[str]): The array that must match the extracted JSON array values.
                 Combination semantics for multiple entries are controlled by ``match_mode``.
                 If ``array_to_match`` is empty, the condition matches only if the target is also an
@@ -800,10 +800,10 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         self,
         model_class: type[Model],
         *,
-        conditions: Optional[Any] = None,
+        conditions: Any | None = None,
         distinct: bool = False,
         join_scores: bool = False,
-        order_by: Optional[Any] = None,
+        order_by: Any | None = None,
         limit: int | None = None,
     ) -> MutableSequence[Model]:
         """

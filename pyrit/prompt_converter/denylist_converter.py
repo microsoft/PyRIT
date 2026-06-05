@@ -3,7 +3,6 @@
 
 import logging
 import pathlib
-from typing import Optional
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
@@ -27,7 +26,7 @@ class DenylistConverter(LLMGenericTextConverter):
         self,
         *,
         converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        system_prompt_template: Optional[SeedPrompt] = None,
+        system_prompt_template: SeedPrompt | None = None,
         denylist: list[str] | None = None,
     ) -> None:
         """
@@ -36,7 +35,7 @@ class DenylistConverter(LLMGenericTextConverter):
         Args:
             converter_target (PromptTarget): The target for the prompt conversion.
                 Can be omitted if a default has been configured via PyRIT initialization.
-            system_prompt_template (Optional[SeedPrompt]): The system prompt template to use for the conversion.
+            system_prompt_template (SeedPrompt | None): The system prompt template to use for the conversion.
                 If not provided, a default template will be used.
             denylist (list[str]): A list of words or phrases that should be replaced in the prompt.
         """

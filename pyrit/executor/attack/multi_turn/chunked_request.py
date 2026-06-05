@@ -5,7 +5,7 @@ import logging
 import textwrap
 from dataclasses import dataclass, field
 from string import Formatter
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.exceptions import ComponentRole, execution_context
@@ -102,9 +102,9 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         total_length: int = 200,
         chunk_type: str = "characters",
         request_template: str = DEFAULT_TEMPLATE,
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
     ) -> None:
         """
         Initialize the chunked request attack strategy.
@@ -116,9 +116,9 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             chunk_type (str): Type of chunk to request (e.g., "characters", "bytes", "words").
             request_template (str): Template for generating chunk requests
                 (default: "Give me {chunk_type} {start}-{end} of '{objective}'").
-            attack_converter_config (Optional[AttackConverterConfig]): Configuration for prompt converters.
-            attack_scoring_config (Optional[AttackScoringConfig]): Configuration for scoring components.
-            prompt_normalizer (Optional[PromptNormalizer]): Normalizer for handling prompts.
+            attack_converter_config (AttackConverterConfig | None): Configuration for prompt converters.
+            attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
+            prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
 
         Raises:
             ValueError: If chunk_size or total_length are invalid.
@@ -167,7 +167,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         attack_scoring_config = attack_scoring_config or AttackScoringConfig()
 
         self._auxiliary_scorers = attack_scoring_config.auxiliary_scorers
-        self._objective_scorer: Optional[TrueFalseScorer] = attack_scoring_config.objective_scorer
+        self._objective_scorer: TrueFalseScorer | None = attack_scoring_config.objective_scorer
 
         # Initialize prompt normalizer and conversation manager
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
@@ -176,12 +176,12 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             prompt_normalizer=self._prompt_normalizer,
         )
 
-    def get_attack_scoring_config(self) -> Optional[AttackScoringConfig]:
+    def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
         Get the attack scoring configuration used by this strategy.
 
         Returns:
-            Optional[AttackScoringConfig]: The scoring configuration with objective and auxiliary scorers.
+            AttackScoringConfig | None: The scoring configuration with objective and auxiliary scorers.
         """
         return AttackScoringConfig(
             objective_scorer=self._objective_scorer,
@@ -209,7 +209,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             context (ChunkedRequestAttackContext): The attack context.
 
         Returns:
-            List[str]: List of chunk request prompts.
+            list[str]: List of chunk request prompts.
         """
         prompts = []
         start = 1
@@ -333,16 +333,16 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
     def _determine_attack_outcome(
         self,
         *,
-        score: Optional[Score],
-    ) -> tuple[AttackOutcome, Optional[str]]:
+        score: Score | None,
+    ) -> tuple[AttackOutcome, str | None]:
         """
         Determine the outcome of the attack based on the score.
 
         Args:
-            score (Optional[Score]): The objective score (if any).
+            score (Score | None): The objective score (if any).
 
         Returns:
-            tuple[AttackOutcome, Optional[str]]: A tuple of (outcome, outcome_reason).
+            tuple[AttackOutcome, str | None]: A tuple of (outcome, outcome_reason).
         """
         if not self._objective_scorer:
             return AttackOutcome.UNDETERMINED, "No objective scorer configured"
@@ -359,7 +359,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         *,
         combined_value: str,
         objective: str,
-    ) -> Optional[Score]:
+    ) -> Score | None:
         """
         Score the combined chunk responses against the objective.
 
@@ -368,7 +368,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             objective (str): The natural-language description of the attack's objective.
 
         Returns:
-            Optional[Score]: The score from the objective scorer if configured, or None if
+            Score | None: The score from the objective scorer if configured, or None if
                 no objective scorer is set.
         """
         if not self._objective_scorer:

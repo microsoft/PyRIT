@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pyrit.exceptions import (
     pyrit_target_retry,
@@ -40,8 +40,8 @@ class OpenAITTSTarget(OpenAITarget):
         voice: TTSVoice = "alloy",
         response_format: TTSResponseFormat = "mp3",
         language: str = "en",
-        speed: Optional[float] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        speed: float | None = None,
+        custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """

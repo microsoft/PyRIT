@@ -11,7 +11,7 @@ from collections.abc import MutableSequence, Sequence
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from sqlalchemy import MetaData, and_, not_, or_
 from sqlalchemy.engine.base import Engine
@@ -93,7 +93,7 @@ class MemoryInterface(abc.ABC):
         """Return a short unique suffix for bind-param deduplication."""
         return uuid.uuid4().hex[:8]
 
-    def __init__(self, embedding_model: Optional[Any] = None) -> None:
+    def __init__(self, embedding_model: Any | None = None) -> None:
         """
         Initialize the MemoryInterface.
 
@@ -110,7 +110,7 @@ class MemoryInterface(abc.ABC):
         # Ensure cleanup at process exit
         self.cleanup()
 
-    def enable_embedding(self, embedding_model: Optional[Any] = None) -> None:
+    def enable_embedding(self, embedding_model: Any | None = None) -> None:
         """
         Enable embedding functionality for the memory interface.
 
@@ -276,7 +276,7 @@ class MemoryInterface(abc.ABC):
         Args:
             json_column (InstrumentedAttribute[Any]): The JSON-backed SQLAlchemy field to query.
             property_path (str): The JSON path for the target array.
-            array_element_path (Optional[str]): An optional JSON path applied to each array item before matching.
+            array_element_path (str | None): An optional JSON path applied to each array item before matching.
             array_to_match (Sequence[str]): The array that must match the extracted JSON array values.
                 Combination semantics for multiple entries are controlled by ``match_mode``.
                 If ``array_to_match`` is empty, the condition matches only if the target is also an
@@ -318,9 +318,7 @@ class MemoryInterface(abc.ABC):
         """
 
     @abc.abstractmethod
-    def _get_message_pieces_prompt_metadata_conditions(
-        self, *, prompt_metadata: dict[str, Union[str, int]]
-    ) -> list[Any]:
+    def _get_message_pieces_prompt_metadata_conditions(self, *, prompt_metadata: dict[str, str | int]) -> list[Any]:
         """
         Return a list of conditions for filtering memory entries based on prompt metadata.
 
@@ -333,7 +331,7 @@ class MemoryInterface(abc.ABC):
         """
 
     @abc.abstractmethod
-    def _get_seed_metadata_conditions(self, *, metadata: dict[str, Union[str, int]]) -> Any:
+    def _get_seed_metadata_conditions(self, *, metadata: dict[str, str | int]) -> Any:
         """
         Return a condition for filtering seed prompt entries based on prompt metadata.
 
@@ -362,10 +360,10 @@ class MemoryInterface(abc.ABC):
         self,
         model_class: type[Model],
         *,
-        conditions: Optional[Any] = None,
+        conditions: Any | None = None,
         distinct: bool = False,
         join_scores: bool = False,
-        order_by: Optional[Any] = None,
+        order_by: Any | None = None,
         limit: int | None = None,
     ) -> MutableSequence[Model]:
         """
@@ -393,7 +391,7 @@ class MemoryInterface(abc.ABC):
         distinct: bool = False,
         join_scores: bool = False,
         batch_size: int | None = None,
-        order_by: Optional[Any] = None,
+        order_by: Any | None = None,
         limit: int | None = None,
     ) -> MutableSequence[Model]:
         """
@@ -708,23 +706,23 @@ class MemoryInterface(abc.ABC):
     def get_scores(
         self,
         *,
-        score_ids: Optional[Sequence[str]] = None,
-        score_type: Optional[str] = None,
-        score_category: Optional[str] = None,
-        sent_after: Optional[datetime] = None,
-        sent_before: Optional[datetime] = None,
-        identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
+        score_ids: Sequence[str] | None = None,
+        score_type: str | None = None,
+        score_category: str | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        identifier_filters: Sequence[IdentifierFilter] | None = None,
     ) -> Sequence[Score]:
         """
         Retrieve a list of Score objects based on the specified filters.
 
         Args:
-            score_ids (Optional[Sequence[str]]): A list of score IDs to filter by.
-            score_type (Optional[str]): The type of the score to filter by.
-            score_category (Optional[str]): The category of the score to filter by.
-            sent_after (Optional[datetime]): Filter for scores sent after this datetime.
-            sent_before (Optional[datetime]): Filter for scores sent before this datetime.
-            identifier_filters (Optional[Sequence[IdentifierFilter]]): A sequence of IdentifierFilter objects that
+            score_ids (Sequence[str] | None): A list of score IDs to filter by.
+            score_type (str | None): The type of the score to filter by.
+            score_category (str | None): The category of the score to filter by.
+            sent_after (datetime | None): Filter for scores sent after this datetime.
+            sent_before (datetime | None): Filter for scores sent before this datetime.
+            identifier_filters (Sequence[IdentifierFilter] | None): A sequence of IdentifierFilter objects that
                 allows filtering by various scorer identifier JSON properties. Defaults to None.
 
         Returns:
@@ -772,39 +770,39 @@ class MemoryInterface(abc.ABC):
     def get_prompt_scores(
         self,
         *,
-        attack_id: Optional[str | uuid.UUID] = None,
-        role: Optional[str] = None,
-        conversation_id: Optional[str | uuid.UUID] = None,
-        prompt_ids: Optional[Sequence[str | uuid.UUID]] = None,
-        labels: Optional[dict[str, str]] = None,
-        prompt_metadata: Optional[dict[str, Union[str, int]]] = None,
-        sent_after: Optional[datetime] = None,
-        sent_before: Optional[datetime] = None,
-        original_values: Optional[Sequence[str]] = None,
-        converted_values: Optional[Sequence[str]] = None,
-        data_type: Optional[str] = None,
-        not_data_type: Optional[str] = None,
-        converted_value_sha256: Optional[Sequence[str]] = None,
+        attack_id: str | uuid.UUID | None = None,
+        role: str | None = None,
+        conversation_id: str | uuid.UUID | None = None,
+        prompt_ids: Sequence[str | uuid.UUID] | None = None,
+        labels: dict[str, str] | None = None,
+        prompt_metadata: dict[str, str | int] | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        original_values: Sequence[str] | None = None,
+        converted_values: Sequence[str] | None = None,
+        data_type: str | None = None,
+        not_data_type: str | None = None,
+        converted_value_sha256: Sequence[str] | None = None,
     ) -> Sequence[Score]:
         """
         Retrieve scores attached to message pieces based on the specified filters.
 
         Args:
-            attack_id (Optional[str | uuid.UUID], optional): The ID of the attack. Defaults to None.
-            role (Optional[str], optional): The role of the prompt. Defaults to None.
-            conversation_id (Optional[str | uuid.UUID], optional): The ID of the conversation. Defaults to None.
-            prompt_ids (Optional[Sequence[str] | Sequence[uuid.UUID]], optional): A list of prompt IDs.
+            attack_id (str | uuid.UUID | None, optional): The ID of the attack. Defaults to None.
+            role (str | None, optional): The role of the prompt. Defaults to None.
+            conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
+            prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
                 Defaults to None.
-            labels (Optional[dict[str, str]], optional): A dictionary of labels. Defaults to None.
-            prompt_metadata (Optional[dict[str, Union[str, int]]], optional): The metadata associated with the prompt.
+            labels (dict[str, str] | None, optional): A dictionary of labels. Defaults to None.
+            prompt_metadata (dict[str, str | int] | None, optional): The metadata associated with the prompt.
                 Defaults to None.
-            sent_after (Optional[datetime], optional): Filter for prompts sent after this datetime. Defaults to None.
-            sent_before (Optional[datetime], optional): Filter for prompts sent before this datetime. Defaults to None.
-            original_values (Optional[Sequence[str]], optional): A list of original values. Defaults to None.
-            converted_values (Optional[Sequence[str]], optional): A list of converted values. Defaults to None.
-            data_type (Optional[str], optional): The data type to filter by. Defaults to None.
-            not_data_type (Optional[str], optional): The data type to exclude. Defaults to None.
-            converted_value_sha256 (Optional[Sequence[str]], optional): A list of SHA256 hashes of converted values.
+            sent_after (datetime | None, optional): Filter for prompts sent after this datetime. Defaults to None.
+            sent_before (datetime | None, optional): Filter for prompts sent before this datetime. Defaults to None.
+            original_values (Sequence[str] | None, optional): A list of original values. Defaults to None.
+            converted_values (Sequence[str] | None, optional): A list of converted values. Defaults to None.
+            data_type (str | None, optional): The data type to filter by. Defaults to None.
+            not_data_type (str | None, optional): The data type to exclude. Defaults to None.
+            converted_value_sha256 (Sequence[str] | None, optional): A list of SHA256 hashes of converted values.
                 Defaults to None.
 
         Returns:
@@ -879,42 +877,42 @@ class MemoryInterface(abc.ABC):
     def get_message_pieces(
         self,
         *,
-        attack_id: Optional[str | uuid.UUID] = None,
-        role: Optional[str] = None,
-        conversation_id: Optional[str | uuid.UUID] = None,
-        prompt_ids: Optional[Sequence[str | uuid.UUID]] = None,
-        labels: Optional[dict[str, str]] = None,
-        prompt_metadata: Optional[dict[str, Union[str, int]]] = None,
-        sent_after: Optional[datetime] = None,
-        sent_before: Optional[datetime] = None,
-        original_values: Optional[Sequence[str]] = None,
-        converted_values: Optional[Sequence[str]] = None,
-        data_type: Optional[str] = None,
-        not_data_type: Optional[str] = None,
-        converted_value_sha256: Optional[Sequence[str]] = None,
-        identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
+        attack_id: str | uuid.UUID | None = None,
+        role: str | None = None,
+        conversation_id: str | uuid.UUID | None = None,
+        prompt_ids: Sequence[str | uuid.UUID] | None = None,
+        labels: dict[str, str] | None = None,
+        prompt_metadata: dict[str, str | int] | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        original_values: Sequence[str] | None = None,
+        converted_values: Sequence[str] | None = None,
+        data_type: str | None = None,
+        not_data_type: str | None = None,
+        converted_value_sha256: Sequence[str] | None = None,
+        identifier_filters: Sequence[IdentifierFilter] | None = None,
     ) -> Sequence[MessagePiece]:
         """
         Retrieve a list of MessagePiece objects based on the specified filters.
 
         Args:
-            attack_id (Optional[str | uuid.UUID], optional): The ID of the attack. Defaults to None.
-            role (Optional[str], optional): The role of the prompt. Defaults to None.
-            conversation_id (Optional[str | uuid.UUID], optional): The ID of the conversation. Defaults to None.
-            prompt_ids (Optional[Sequence[str] | Sequence[uuid.UUID]], optional): A list of prompt IDs.
+            attack_id (str | uuid.UUID | None, optional): The ID of the attack. Defaults to None.
+            role (str | None, optional): The role of the prompt. Defaults to None.
+            conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
+            prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
                 Defaults to None.
-            labels (Optional[dict[str, str]], optional): A dictionary of labels. Defaults to None.
-            prompt_metadata (Optional[dict[str, Union[str, int]]], optional): The metadata associated with the prompt.
+            labels (dict[str, str] | None, optional): A dictionary of labels. Defaults to None.
+            prompt_metadata (dict[str, str | int] | None, optional): The metadata associated with the prompt.
                 Defaults to None.
-            sent_after (Optional[datetime], optional): Filter for prompts sent after this datetime. Defaults to None.
-            sent_before (Optional[datetime], optional): Filter for prompts sent before this datetime. Defaults to None.
-            original_values (Optional[Sequence[str]], optional): A list of original values. Defaults to None.
-            converted_values (Optional[Sequence[str]], optional): A list of converted values. Defaults to None.
-            data_type (Optional[str], optional): The data type to filter by. Defaults to None.
-            not_data_type (Optional[str], optional): The data type to exclude. Defaults to None.
-            converted_value_sha256 (Optional[Sequence[str]], optional): A list of SHA256 hashes of converted values.
+            sent_after (datetime | None, optional): Filter for prompts sent after this datetime. Defaults to None.
+            sent_before (datetime | None, optional): Filter for prompts sent before this datetime. Defaults to None.
+            original_values (Sequence[str] | None, optional): A list of original values. Defaults to None.
+            converted_values (Sequence[str] | None, optional): A list of converted values. Defaults to None.
+            data_type (str | None, optional): The data type to filter by. Defaults to None.
+            not_data_type (str | None, optional): The data type to exclude. Defaults to None.
+            converted_value_sha256 (Sequence[str] | None, optional): A list of SHA256 hashes of converted values.
                 Defaults to None.
-            identifier_filters (Optional[Sequence[IdentifierFilter]], optional):
+            identifier_filters (Sequence[IdentifierFilter] | None, optional):
                 A sequence of IdentifierFilter objects that
                 allow filtering by various identifier JSON properties. Defaults to None.
 
@@ -1164,7 +1162,7 @@ class MemoryInterface(abc.ABC):
         )
 
     def update_prompt_metadata_by_conversation_id(
-        self, *, conversation_id: str, prompt_metadata: dict[str, Union[str, int]]
+        self, *, conversation_id: str, prompt_metadata: dict[str, str | int]
     ) -> bool:
         """
         Update the metadata of prompt entries in memory for a given conversation ID.
@@ -1232,20 +1230,20 @@ class MemoryInterface(abc.ABC):
     def get_seeds(
         self,
         *,
-        value: Optional[str] = None,
-        value_sha256: Optional[Sequence[str]] = None,
-        dataset_name: Optional[str] = None,
-        dataset_name_pattern: Optional[str] = None,
-        data_types: Optional[Sequence[str]] = None,
-        harm_categories: Optional[Sequence[str]] = None,
-        added_by: Optional[str] = None,
-        authors: Optional[Sequence[str]] = None,
-        groups: Optional[Sequence[str]] = None,
-        source: Optional[str] = None,
-        seed_type: Optional[SeedType] = None,
-        parameters: Optional[Sequence[str]] = None,
-        metadata: Optional[dict[str, Union[str, int]]] = None,
-        prompt_group_ids: Optional[Sequence[uuid.UUID]] = None,
+        value: str | None = None,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
     ) -> Sequence[Seed]:
         """
         Retrieve a list of seed prompts based on the specified filters.
@@ -1258,7 +1256,7 @@ class MemoryInterface(abc.ABC):
                 Supports wildcards: % (any characters) and _ (single character).
                 Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
                 If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
-            data_types (Optional[Sequence[str], Optional): List of data types to filter seed prompts by
+            data_types (Sequence[str] | None): List of data types to filter seed prompts by
                 (e.g., text, image_path).
             harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
             all harm categories are considered.
@@ -1327,7 +1325,7 @@ class MemoryInterface(abc.ABC):
             raise
 
     def _add_list_conditions(
-        self, field: InstrumentedAttribute[Any], conditions: list[Any], values: Optional[Sequence[str]] = None
+        self, field: InstrumentedAttribute[Any], conditions: list[Any], values: Sequence[str] | None = None
     ) -> None:
         if values:
             conditions.extend(field.contains(value) for value in values)
@@ -1364,7 +1362,7 @@ class MemoryInterface(abc.ABC):
             serialized_prompt_value = str(serializer.value)
         return serialized_prompt_value or ""
 
-    async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed], added_by: Optional[str] = None) -> None:
+    async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed], added_by: str | None = None) -> None:
         """
         Insert a list of seeds into the memory storage.
 
@@ -1441,7 +1439,7 @@ class MemoryInterface(abc.ABC):
             raise
 
     async def add_seed_groups_to_memory_async(
-        self, *, prompt_groups: Sequence[SeedGroup], added_by: Optional[str] = None
+        self, *, prompt_groups: Sequence[SeedGroup], added_by: str | None = None
     ) -> None:
         """
         Insert a list of seed groups into the memory storage.
@@ -1481,47 +1479,47 @@ class MemoryInterface(abc.ABC):
     def get_seed_groups(
         self,
         *,
-        value: Optional[str] = None,
-        value_sha256: Optional[Sequence[str]] = None,
-        dataset_name: Optional[str] = None,
-        dataset_name_pattern: Optional[str] = None,
-        data_types: Optional[Sequence[str]] = None,
-        harm_categories: Optional[Sequence[str]] = None,
-        added_by: Optional[str] = None,
-        authors: Optional[Sequence[str]] = None,
-        groups: Optional[Sequence[str]] = None,
-        source: Optional[str] = None,
-        seed_type: Optional[SeedType] = None,
-        parameters: Optional[Sequence[str]] = None,
-        metadata: Optional[dict[str, Union[str, int]]] = None,
-        prompt_group_ids: Optional[Sequence[uuid.UUID]] = None,
-        group_length: Optional[Sequence[int]] = None,
+        value: str | None = None,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
+        group_length: Sequence[int] | None = None,
     ) -> Sequence[SeedGroup]:
         """
         Retrieve groups of seed prompts based on the provided filtering criteria.
 
         Args:
-            value (Optional[str], Optional): The value to match by substring.
-            value_sha256 (Optional[Sequence[str]], Optional): SHA256 hash of value to filter seed groups by.
-            dataset_name (Optional[str], Optional): Name of the dataset to match exactly.
-            dataset_name_pattern (Optional[str], Optional): A pattern to match dataset names using SQL LIKE syntax.
+            value (str | None, Optional): The value to match by substring.
+            value_sha256 (Sequence[str] | None, Optional): SHA256 hash of value to filter seed groups by.
+            dataset_name (str | None, Optional): Name of the dataset to match exactly.
+            dataset_name_pattern (str | None, Optional): A pattern to match dataset names using SQL LIKE syntax.
                 Supports wildcards: % (any characters) and _ (single character).
                 Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
                 If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
-            data_types (Optional[Sequence[str]], Optional): List of data types to filter seed prompts by
+            data_types (Sequence[str] | None, Optional): List of data types to filter seed prompts by
             (e.g., text, image_path).
-            harm_categories (Optional[Sequence[str]], Optional): List of harm categories to filter seed prompts by.
-            added_by (Optional[str], Optional): The user who added the seed groups to filter by.
-            authors (Optional[Sequence[str]], Optional): List of authors to filter seed groups by.
-            groups (Optional[Sequence[str]], Optional): List of groups to filter seed groups by.
-            source (Optional[str], Optional): The source from which the seed prompts originated.
-            seed_type (Optional[SeedType], Optional): The type of seed to filter by ("prompt", "objective", or
+            harm_categories (Sequence[str] | None, Optional): List of harm categories to filter seed prompts by.
+            added_by (str | None, Optional): The user who added the seed groups to filter by.
+            authors (Sequence[str] | None, Optional): List of authors to filter seed groups by.
+            groups (Sequence[str] | None, Optional): List of groups to filter seed groups by.
+            source (str | None, Optional): The source from which the seed prompts originated.
+            seed_type (SeedType | None, Optional): The type of seed to filter by ("prompt", "objective", or
                 "simulated_conversation").
-            parameters (Optional[Sequence[str]], Optional): List of parameters to filter by.
-            metadata (Optional[dict[str, Union[str, int]]], Optional): A free-form dictionary for tagging
+            parameters (Sequence[str] | None, Optional): List of parameters to filter by.
+            metadata (dict[str, str | int] | None, Optional): A free-form dictionary for tagging
                 prompts with custom metadata.
-            prompt_group_ids (Optional[Sequence[uuid.UUID]], Optional): List of prompt group IDs to filter by.
-            group_length (Optional[Sequence[int]], Optional): The number of seeds in the group to filter by.
+            prompt_group_ids (Sequence[uuid.UUID] | None, Optional): List of prompt group IDs to filter by.
+            group_length (Sequence[int] | None, Optional): The number of seeds in the group to filter by.
 
         Returns:
             Sequence[SeedGroup]: A list of `SeedGroup` objects that match the filtering criteria.
@@ -1564,18 +1562,18 @@ class MemoryInterface(abc.ABC):
     def export_conversations(
         self,
         *,
-        attack_id: Optional[str | uuid.UUID] = None,
-        conversation_id: Optional[str | uuid.UUID] = None,
-        prompt_ids: Optional[Sequence[str] | Sequence[uuid.UUID]] = None,
-        labels: Optional[dict[str, str]] = None,
-        sent_after: Optional[datetime] = None,
-        sent_before: Optional[datetime] = None,
-        original_values: Optional[Sequence[str]] = None,
-        converted_values: Optional[Sequence[str]] = None,
-        data_type: Optional[str] = None,
-        not_data_type: Optional[str] = None,
-        converted_value_sha256: Optional[Sequence[str]] = None,
-        file_path: Optional[Path] = None,
+        attack_id: str | uuid.UUID | None = None,
+        conversation_id: str | uuid.UUID | None = None,
+        prompt_ids: Sequence[str] | Sequence[uuid.UUID] | None = None,
+        labels: dict[str, str] | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        original_values: Sequence[str] | None = None,
+        converted_values: Sequence[str] | None = None,
+        data_type: str | None = None,
+        not_data_type: str | None = None,
+        converted_value_sha256: Sequence[str] | None = None,
+        file_path: Path | None = None,
         export_type: str = "json",
     ) -> Path:
         """
@@ -1583,20 +1581,20 @@ class MemoryInterface(abc.ABC):
             Defaults to all conversations if no filters are provided.
 
         Args:
-            attack_id (Optional[str | uuid.UUID], optional): The ID of the attack. Defaults to None.
-            conversation_id (Optional[str | uuid.UUID], optional): The ID of the conversation. Defaults to None.
-            prompt_ids (Optional[Sequence[str] | Sequence[uuid.UUID]], optional): A list of prompt IDs.
+            attack_id (str | uuid.UUID | None, optional): The ID of the attack. Defaults to None.
+            conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
+            prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
                 Defaults to None.
-            labels (Optional[dict[str, str]], optional): A dictionary of labels. Defaults to None.
-            sent_after (Optional[datetime], optional): Filter for prompts sent after this datetime. Defaults to None.
-            sent_before (Optional[datetime], optional): Filter for prompts sent before this datetime. Defaults to None.
-            original_values (Optional[Sequence[str]], optional): A list of original values. Defaults to None.
-            converted_values (Optional[Sequence[str]], optional): A list of converted values. Defaults to None.
-            data_type (Optional[str], optional): The data type to filter by. Defaults to None.
-            not_data_type (Optional[str], optional): The data type to exclude. Defaults to None.
-            converted_value_sha256 (Optional[Sequence[str]], optional): A list of SHA256 hashes of converted values.
+            labels (dict[str, str] | None, optional): A dictionary of labels. Defaults to None.
+            sent_after (datetime | None, optional): Filter for prompts sent after this datetime. Defaults to None.
+            sent_before (datetime | None, optional): Filter for prompts sent before this datetime. Defaults to None.
+            original_values (Sequence[str] | None, optional): A list of original values. Defaults to None.
+            converted_values (Sequence[str] | None, optional): A list of converted values. Defaults to None.
+            data_type (str | None, optional): The data type to filter by. Defaults to None.
+            not_data_type (str | None, optional): The data type to exclude. Defaults to None.
+            converted_value_sha256 (Sequence[str] | None, optional): A list of SHA256 hashes of converted values.
                 Defaults to None.
-            file_path (Optional[Path], optional): The path to the file where the data will be exported.
+            file_path (Path | None, optional): The path to the file where the data will be exported.
                 Defaults to None.
             export_type (str, optional): The format of the export. Defaults to "json".
 
@@ -1715,45 +1713,45 @@ class MemoryInterface(abc.ABC):
     def get_attack_results(
         self,
         *,
-        attack_result_ids: Optional[Sequence[str]] = None,
-        conversation_id: Optional[str] = None,
-        objective: Optional[str] = None,
-        objective_sha256: Optional[Sequence[str]] = None,
-        outcome: Optional[str] = None,
-        attack_class: Optional[str] = None,
-        attack_classes: Optional[Sequence[str]] = None,
-        atomic_attack_eval_hashes: Optional[Sequence[str]] = None,
-        converter_classes: Optional[Sequence[str]] = None,
+        attack_result_ids: Sequence[str] | None = None,
+        conversation_id: str | None = None,
+        objective: str | None = None,
+        objective_sha256: Sequence[str] | None = None,
+        outcome: str | None = None,
+        attack_class: str | None = None,
+        attack_classes: Sequence[str] | None = None,
+        atomic_attack_eval_hashes: Sequence[str] | None = None,
+        converter_classes: Sequence[str] | None = None,
         converter_classes_match: Literal["all", "any"] = "all",
-        has_converters: Optional[bool] = None,
-        targeted_harm_categories: Optional[Sequence[str]] = None,
-        labels: Optional[dict[str, str | Sequence[str]]] = None,
-        identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
-        scenario_result_id: Optional[str] = None,
+        has_converters: bool | None = None,
+        targeted_harm_categories: Sequence[str] | None = None,
+        labels: dict[str, str | Sequence[str]] | None = None,
+        identifier_filters: Sequence[IdentifierFilter] | None = None,
+        scenario_result_id: str | None = None,
     ) -> Sequence[AttackResult]:
         """
         Retrieve a list of AttackResult objects based on the specified filters.
 
         Args:
-            attack_result_ids (Optional[Sequence[str]], optional): A list of attack result IDs. Defaults to None.
-            conversation_id (Optional[str], optional): The conversation ID to filter by. Defaults to None.
-            objective (Optional[str], optional): The objective to filter by (substring match). Defaults to None.
-            objective_sha256 (Optional[Sequence[str]], optional): A list of objective SHA256 hashes to filter by.
+            attack_result_ids (Sequence[str] | None, optional): A list of attack result IDs. Defaults to None.
+            conversation_id (str | None, optional): The conversation ID to filter by. Defaults to None.
+            objective (str | None, optional): The objective to filter by (substring match). Defaults to None.
+            objective_sha256 (Sequence[str] | None, optional): A list of objective SHA256 hashes to filter by.
                 Defaults to None.
-            outcome (Optional[str], optional): The outcome to filter by (success, failure, undetermined).
+            outcome (str | None, optional): The outcome to filter by (success, failure, undetermined).
                 Defaults to None.
-            attack_class (Optional[str], optional): Deprecated. Filter by a single exact attack
+            attack_class (str | None, optional): Deprecated. Filter by a single exact attack
                 class_name in attack_identifier. Equivalent to passing ``attack_classes=[attack_class]``.
                 Cannot be combined with ``attack_classes``. Defaults to None.
-            attack_classes (Optional[Sequence[str]], optional): Filter by exact attack class_name in
+            attack_classes (Sequence[str] | None, optional): Filter by exact attack class_name in
                 attack_identifier. Returns attacks matching ANY of the listed class names (OR logic,
                 case-sensitive). An empty sequence applies no filter. Defaults to None.
-            atomic_attack_eval_hashes (Optional[Sequence[str]], optional): Filter by behavioral
+            atomic_attack_eval_hashes (Sequence[str] | None, optional): Filter by behavioral
                 equivalence hash on ``atomic_attack_identifier.eval_hash`` (auto-stamped on persistence
                 by ``AtomicAttackEvaluationIdentifier``). Returns results matching ANY of the listed
                 hashes (OR logic, case-sensitive). Designed for ASR aggregation by technique
                 configuration. An empty sequence applies no filter. Defaults to None.
-            converter_classes (Optional[Sequence[str]], optional): Filter by converter class names.
+            converter_classes (Sequence[str] | None, optional): Filter by converter class names.
                 Combination semantics for multiple entries are controlled by ``converter_classes_match``.
                 An empty sequence filters to attacks that used no converters; ``None`` applies no
                 filter. To filter by presence/absence of any converter explicitly, use the
@@ -1763,17 +1761,17 @@ class MemoryInterface(abc.ABC):
                 converter (AND, case-insensitive). ``"any"`` matches attacks that used at least one
                 listed converter (OR, case-insensitive). Ignored when ``converter_classes`` has
                 fewer than 2 entries or is empty.
-            has_converters (Optional[bool], optional): Filter by converter presence.
+            has_converters (bool | None, optional): Filter by converter presence.
                 ``True`` returns only attacks that used at least one converter. ``False`` returns
                 only attacks that used no converters. ``None`` applies no filter. Defaults to None.
-            targeted_harm_categories (Optional[Sequence[str]], optional):
+            targeted_harm_categories (Sequence[str] | None, optional):
                 A list of targeted harm categories to filter results by.
                 These targeted harm categories are associated with the prompts themselves,
                 meaning they are harm(s) we're trying to elicit with the prompt,
                 not necessarily one(s) that were found in the response.
                 By providing a list, this means ALL categories in the list must be present.
                 Defaults to None.
-            labels (Optional[dict[str, str | Sequence[str]]], optional): Filter results
+            labels (dict[str, str | Sequence[str]] | None, optional): Filter results
                 by attack labels. Entries are AND-combined across label names; within a
                 single entry, a string value is an equality match and a sequence value is
                 an OR match over the listed values. An empty sequence applies no filter
@@ -1781,10 +1779,10 @@ class MemoryInterface(abc.ABC):
                 ["roakey_op_a", "roakey_op_b"]}`` matches attacks where ``operator ==
                 "roakey"`` AND (``operation == "roakey_op_a"`` OR ``operation ==
                 "roakey_op_b"``). Defaults to None.
-            identifier_filters (Optional[Sequence[IdentifierFilter]], optional):
+            identifier_filters (Sequence[IdentifierFilter] | None, optional):
                 A sequence of IdentifierFilter objects that allows filtering by various attack identifier
                 JSON properties. Defaults to None.
-            scenario_result_id (Optional[str], optional): Filter to attack results linked to a
+            scenario_result_id (str | None, optional): Filter to attack results linked to a
                 specific scenario via the ``AttackResultEntry.attribution_parent_id`` foreign key.
                 Combined with ``outcome=AttackOutcome.ERROR`` this is the replacement for the
                 removed per-scenario error_attack_result_ids manifest. Defaults to None.
@@ -2091,16 +2089,16 @@ class MemoryInterface(abc.ABC):
     def get_scenario_results(
         self,
         *,
-        scenario_result_ids: Optional[Sequence[str]] = None,
-        scenario_name: Optional[str] = None,
-        scenario_version: Optional[int] = None,
-        pyrit_version: Optional[str] = None,
-        added_after: Optional[datetime] = None,
-        added_before: Optional[datetime] = None,
-        labels: Optional[dict[str, str]] = None,
-        objective_target_endpoint: Optional[str] = None,
-        objective_target_model_name: Optional[str] = None,
-        identifier_filters: Optional[Sequence[IdentifierFilter]] = None,
+        scenario_result_ids: Sequence[str] | None = None,
+        scenario_name: str | None = None,
+        scenario_version: int | None = None,
+        pyrit_version: str | None = None,
+        added_after: datetime | None = None,
+        added_before: datetime | None = None,
+        labels: dict[str, str] | None = None,
+        objective_target_endpoint: str | None = None,
+        objective_target_model_name: str | None = None,
+        identifier_filters: Sequence[IdentifierFilter] | None = None,
         limit: int | None = None,
     ) -> Sequence[ScenarioResult]:
         """
@@ -2109,25 +2107,25 @@ class MemoryInterface(abc.ABC):
         Results are always ordered by completion_time descending (most recent first).
 
         Args:
-            scenario_result_ids (Optional[Sequence[str]], optional): A list of scenario result IDs.
+            scenario_result_ids (Sequence[str] | None, optional): A list of scenario result IDs.
                 Defaults to None.
-            scenario_name (Optional[str], optional): The scenario name to filter by (substring match).
+            scenario_name (str | None, optional): The scenario name to filter by (substring match).
                 Defaults to None.
-            scenario_version (Optional[int], optional): The scenario version to filter by. Defaults to None.
-            pyrit_version (Optional[str], optional): The PyRIT version to filter by. Defaults to None.
-            added_after (Optional[datetime], optional): Filter for scenarios completed after this datetime.
+            scenario_version (int | None, optional): The scenario version to filter by. Defaults to None.
+            pyrit_version (str | None, optional): The PyRIT version to filter by. Defaults to None.
+            added_after (datetime | None, optional): Filter for scenarios completed after this datetime.
                 Defaults to None.
-            added_before (Optional[datetime], optional): Filter for scenarios completed before this datetime.
+            added_before (datetime | None, optional): Filter for scenarios completed before this datetime.
                 Defaults to None.
-            labels (Optional[dict[str, str]], optional): A dictionary of memory labels to filter by.
+            labels (dict[str, str] | None, optional): A dictionary of memory labels to filter by.
                 Defaults to None.
-            objective_target_endpoint (Optional[str], optional): Filter for scenarios where the
+            objective_target_endpoint (str | None, optional): Filter for scenarios where the
                 objective_target_identifier has an endpoint attribute containing this value (case-insensitive).
                 Defaults to None.
-            objective_target_model_name (Optional[str], optional): Filter for scenarios where the
+            objective_target_model_name (str | None, optional): Filter for scenarios where the
                 objective_target_identifier has a model_name attribute containing this value (case-insensitive).
                 Defaults to None.
-            identifier_filters (Optional[Sequence[IdentifierFilter]], optional):
+            identifier_filters (Sequence[IdentifierFilter] | None, optional):
                 A sequence of IdentifierFilter objects that allows filtering by identifier JSON properties.
                 Defaults to None.
             limit (int | None): Maximum number of results to return. Defaults to None (no limit).

@@ -9,7 +9,7 @@ import tempfile
 import traceback
 import wave
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 from pyrit.common.deprecation import print_deprecation_message
@@ -68,11 +68,11 @@ class PromptNormalizer:
         *,
         message: Message,
         target: PromptTarget,
-        conversation_id: Optional[str] = None,
+        conversation_id: str | None = None,
         request_converter_configurations: list[PromptConverterConfiguration] | None = None,
         response_converter_configurations: list[PromptConverterConfiguration] | None = None,
-        labels: Optional[dict[str, str]] = None,
-        attack_identifier: Optional[ComponentIdentifier] = None,
+        labels: dict[str, str] | None = None,
+        attack_identifier: ComponentIdentifier | None = None,
     ) -> Message:
         """
         Send a single request to a target.
@@ -85,9 +85,9 @@ class PromptNormalizer:
                 converting the request. Defaults to an empty list.
             response_converter_configurations (list[PromptConverterConfiguration], optional): Configurations for
                 converting the response. Defaults to an empty list.
-            labels (Optional[dict[str, str]], optional): Labels associated with the request. Defaults to None.
+            labels (dict[str, str] | None, optional): Labels associated with the request. Defaults to None.
                 Deprecated: This parameter will be removed in a release 0.16.0.
-            attack_identifier (Optional[ComponentIdentifier], optional): Identifier for the attack. Defaults to
+            attack_identifier (ComponentIdentifier | None, optional): Identifier for the attack. Defaults to
                 None.
 
         Returns:
@@ -196,8 +196,8 @@ class PromptNormalizer:
         *,
         requests: list[NormalizerRequest],
         target: PromptTarget,
-        labels: Optional[dict[str, str]] = None,
-        attack_identifier: Optional[ComponentIdentifier] = None,
+        labels: dict[str, str] | None = None,
+        attack_identifier: ComponentIdentifier | None = None,
         batch_size: int = 10,
     ) -> list[Message]:
         """
@@ -206,9 +206,9 @@ class PromptNormalizer:
         Args:
             requests (list[NormalizerRequest]): A list of NormalizerRequest objects to be sent.
             target (PromptTarget): The target to which the prompts are sent.
-            labels (Optional[dict[str, str]], optional): A dictionary of labels to be included with the request.
+            labels (dict[str, str] | None, optional): A dictionary of labels to be included with the request.
                 Defaults to None.
-            attack_identifier (Optional[ComponentIdentifier], optional): The attack identifier.
+            attack_identifier (ComponentIdentifier | None, optional): The attack identifier.
                 Defaults to None.
             batch_size (int, optional): The number of prompts to include in each batch. Defaults to 10.
 
@@ -397,23 +397,23 @@ class PromptNormalizer:
         self,
         conversation_id: str,
         should_convert: bool = True,
-        converter_configurations: Optional[list[PromptConverterConfiguration]] = None,
-        attack_identifier: Optional[ComponentIdentifier] = None,
-        prepended_conversation: Optional[list[Message]] = None,
-    ) -> Optional[list[Message]]:
+        converter_configurations: list[PromptConverterConfiguration] | None = None,
+        attack_identifier: ComponentIdentifier | None = None,
+        prepended_conversation: list[Message] | None = None,
+    ) -> list[Message] | None:
         """
         Process the prepended conversation by converting it if needed and adding it to memory.
 
         Args:
             conversation_id (str): The conversation ID to use for the message pieces
             should_convert (bool): Whether to convert the prepended conversation
-            converter_configurations (Optional[list[PromptConverterConfiguration]]): Configurations for converting the
+            converter_configurations (list[PromptConverterConfiguration] | None): Configurations for converting the
                 request
-            attack_identifier (Optional[ComponentIdentifier]): Identifier for the attack
-            prepended_conversation (Optional[list[Message]]): The conversation to prepend
+            attack_identifier (ComponentIdentifier | None): Identifier for the attack
+            prepended_conversation (list[Message] | None): The conversation to prepend
 
         Returns:
-            Optional[list[Message]]: The processed prepended conversation
+            list[Message] | None: The processed prepended conversation
         """
         if not prepended_conversation:
             return None
@@ -454,15 +454,15 @@ class PromptNormalizer:
         self,
         conversation_id: str,
         should_convert: bool = True,
-        converter_configurations: Optional[list[PromptConverterConfiguration]] = None,
-        attack_identifier: Optional[ComponentIdentifier] = None,
-        prepended_conversation: Optional[list[Message]] = None,
-    ) -> Optional[list[Message]]:
+        converter_configurations: list[PromptConverterConfiguration] | None = None,
+        attack_identifier: ComponentIdentifier | None = None,
+        prepended_conversation: list[Message] | None = None,
+    ) -> list[Message] | None:
         """
         Use ``add_prepended_conversation_to_memory_async`` instead; this is a deprecated alias.
 
         Returns:
-            Optional[list[Message]]: Same as ``add_prepended_conversation_to_memory_async``.
+            list[Message] | None: Same as ``add_prepended_conversation_to_memory_async``.
         """
         print_deprecation_message(
             old_item="pyrit.prompt_normalizer.PromptNormalizer.add_prepended_conversation_to_memory",

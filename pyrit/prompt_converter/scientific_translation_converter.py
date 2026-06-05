@@ -3,7 +3,7 @@
 
 import logging
 import pathlib
-from typing import Literal, Optional, get_args
+from typing import Literal, get_args
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
@@ -46,7 +46,7 @@ class ScientificTranslationConverter(LLMGenericTextConverter):
         *,
         converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         mode: str = "combined",
-        prompt_template: Optional[SeedPrompt] = None,
+        prompt_template: SeedPrompt | None = None,
     ) -> None:
         """
         Initialize the scientific translation converter.

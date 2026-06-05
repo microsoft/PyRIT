@@ -16,7 +16,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import quote, urlparse
 
 from azure.identity.aio import DefaultAzureCredential
@@ -148,7 +148,7 @@ async def _sign_blob_url_async(*, blob_url: str) -> str:
         return blob_url
 
 
-def _resolve_media_url(*, value: Optional[str], data_type: str) -> Optional[str]:
+def _resolve_media_url(*, value: str | None, data_type: str) -> str | None:
     """
     Resolve a media value to a client-fetchable URL.
 
@@ -241,7 +241,7 @@ def _resolve_summary_timestamps(ar: AttackResult) -> tuple[datetime, datetime]:
     return created_at, updated_at
 
 
-def _summary_last_response(piece: Optional[MessagePiece]) -> Optional[MessagePieceView]:
+def _summary_last_response(piece: MessagePiece | None) -> MessagePieceView | None:
     """
     Build a ``MessagePieceView`` for a summary's last response (sync media resolution, no SAS).
 
@@ -261,7 +261,7 @@ def _summary_last_response(piece: Optional[MessagePiece]) -> Optional[MessagePie
     )
 
 
-async def _resolve_and_sign_media_async(*, value: Optional[str], data_type: str) -> Optional[str]:
+async def _resolve_and_sign_media_async(*, value: str | None, data_type: str) -> str | None:
     """
     Resolve a media value to a fetchable URL, signing Azure Blob URLs when present.
 
@@ -318,7 +318,7 @@ def request_piece_to_pyrit_message_piece(
     role: ChatMessageRole,
     conversation_id: str,
     sequence: int,
-    labels: Optional[dict[str, str]] = None,  # deprecated
+    labels: dict[str, str] | None = None,  # deprecated
 ) -> MessagePiece:
     """
     Convert a single request piece DTO to a PyRIT MessagePiece domain object.
@@ -365,7 +365,7 @@ def request_to_pyrit_message(
     request: AddMessageRequest,
     conversation_id: str,
     sequence: int,
-    labels: Optional[dict[str, str]] = None,  # deprecated
+    labels: dict[str, str] | None = None,  # deprecated
 ) -> Message:
     """
     Build a PyRIT Message from an AddMessageRequest DTO.

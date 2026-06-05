@@ -5,7 +5,7 @@ import base64
 import json
 import logging
 from collections.abc import MutableSequence
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.exceptions import (
@@ -80,17 +80,17 @@ class OpenAIChatTarget(OpenAITarget):
     def __init__(
         self,
         *,
-        max_completion_tokens: Optional[int] = None,
-        max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        frequency_penalty: Optional[float] = None,
-        presence_penalty: Optional[float] = None,
-        seed: Optional[int] = None,
-        n: Optional[int] = None,
-        audio_response_config: Optional[OpenAIChatAudioConfig] = None,
-        extra_body_parameters: Optional[dict[str, Any]] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        max_completion_tokens: int | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        seed: int | None = None,
+        n: int | None = None,
+        audio_response_config: OpenAIChatAudioConfig | None = None,
+        extra_body_parameters: dict[str, Any] | None = None,
+        custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -259,7 +259,7 @@ class OpenAIChatTarget(OpenAITarget):
             pass
         return False
 
-    def _extract_partial_content(self, response: Any) -> Optional[str]:
+    def _extract_partial_content(self, response: Any) -> str | None:
         """
         Extract partial content from a Chat Completions response with finish_reason=content_filter.
 
@@ -279,7 +279,7 @@ class OpenAIChatTarget(OpenAITarget):
             pass
         return None
 
-    def _validate_response(self, response: Any, request: MessagePiece) -> Optional[Message]:
+    def _validate_response(self, response: Any, request: MessagePiece) -> Message | None:
         """
         Validate a Chat Completions API response for errors.
 
@@ -415,7 +415,7 @@ class OpenAIChatTarget(OpenAITarget):
             audio_response = message.audio
 
             # Add transcript as text piece with metadata
-            audio_transcript: Optional[str] = getattr(audio_response, "transcript", None)
+            audio_transcript: str | None = getattr(audio_response, "transcript", None)
             if audio_transcript:
                 transcript_piece = construct_response_from_request(
                     request=request,
@@ -426,7 +426,7 @@ class OpenAIChatTarget(OpenAITarget):
                 pieces.append(transcript_piece)
 
             # Save audio data and add as audio_path piece
-            audio_data: Optional[str] = getattr(audio_response, "data", None)
+            audio_data: str | None = getattr(audio_response, "data", None)
             if audio_data:
                 audio_path = await self._save_audio_response_async(audio_data_base64=audio_data)
                 audio_piece = construct_response_from_request(
@@ -676,7 +676,7 @@ class OpenAIChatTarget(OpenAITarget):
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}
 
-    def _build_response_format(self, json_config: _JsonResponseConfig) -> Optional[dict[str, Any]]:
+    def _build_response_format(self, json_config: _JsonResponseConfig) -> dict[str, Any] | None:
         if not json_config.enabled:
             return None
 

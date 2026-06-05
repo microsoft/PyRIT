@@ -5,7 +5,7 @@ import csv
 import json
 import sys
 from pathlib import Path
-from typing import IO, Optional
+from typing import IO
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import Message, MessagePiece
@@ -26,7 +26,7 @@ class TextTarget(PromptTarget):
         self,
         *,
         text_stream: IO[str] = sys.stdout,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_configuration: TargetConfiguration | None = None,
     ) -> None:
         """
         Initialize the TextTarget.

@@ -5,10 +5,10 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    import azure.cognitiveservices.speech as speechsdk  # noqa: F401
+    import azure.cognitiveservices.speech as speechsdk
 
 from pyrit.auth.azure_auth import get_speech_config, get_speech_config_async
 from pyrit.common import default_values
@@ -47,10 +47,10 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
     def __init__(
         self,
         *,
-        azure_speech_region: Optional[str] = None,
-        azure_speech_key: Optional[str | Callable[[], str | Awaitable[str]]] = None,
-        azure_speech_resource_id: Optional[str] = None,
-        use_entra_auth: Optional[bool] = None,
+        azure_speech_region: str | None = None,
+        azure_speech_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        azure_speech_resource_id: str | None = None,
+        use_entra_auth: bool | None = None,
         recognition_language: str = "en-US",
     ) -> None:
         """
@@ -285,7 +285,8 @@ class AzureSpeechAudioToTextConverter(PromptConverter):
             ModuleNotFoundError: If the azure.cognitiveservices.speech module is not installed.
         """
         try:
-            import azure.cognitiveservices.speech as speechsdk  # noqa: F811
+            # Runtime import; the TYPE_CHECKING binding at module top is for type annotations only.
+            import azure.cognitiveservices.speech as speechsdk
         except ModuleNotFoundError as e:
             logger.error(
                 "Could not import azure.cognitiveservices.speech. "

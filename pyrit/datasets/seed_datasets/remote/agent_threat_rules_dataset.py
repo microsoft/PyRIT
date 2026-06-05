@@ -3,12 +3,14 @@
 
 import logging
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -134,10 +136,10 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
             "db793f9/data/autoresearch/adversarial-samples.json"
         ),
         source_type: Literal["public_url", "file"] = "public_url",
-        categories: Optional[list[ATRCategory]] = None,
-        techniques: Optional[list[str]] = None,
-        detection_fields: Optional[list[ATRDetectionField]] = None,
-        variation_types: Optional[list[ATRVariationType]] = None,
+        categories: list[ATRCategory] | None = None,
+        techniques: list[str] | None = None,
+        detection_fields: list[ATRDetectionField] | None = None,
+        variation_types: list[ATRVariationType] | None = None,
     ) -> None:
         """
         Initialize the ATR dataset loader.
@@ -200,10 +202,12 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
         self._variation_types = {v.value for v in variation_types} if variation_types else None
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "agent_threat_rules"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the ATR adversarial payload corpus and return as SeedDataset.
@@ -234,9 +238,10 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
         )
 
         authors = ["Kuan-Hsin Lin", "ATR Community"]
+        groups = ["ATR Project"]
         source_url = "https://github.com/Agent-Threat-Rule/agent-threat-rules"
 
-        seeds: list[SeedPrompt] = []
+        seeds: list[SeedUnion] = []
         skipped_unknown_rule = 0
 
         for example in examples:
@@ -289,6 +294,7 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
                     harm_categories=[category_value],
                     description=description,
                     authors=authors,
+                    groups=groups,
                     source=source_url,
                     metadata=metadata,
                 )

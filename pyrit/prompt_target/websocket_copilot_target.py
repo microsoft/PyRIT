@@ -7,7 +7,7 @@ import logging
 import pathlib
 import uuid
 from enum import IntEnum
-from typing import Any, Optional, Union
+from typing import Any
 
 import httpx
 import websockets
@@ -90,11 +90,11 @@ class WebSocketCopilotTarget(PromptTarget):
         self,
         *,
         websocket_base_url: str = "wss://substrate.office.com/m365Copilot/Chathub",
-        max_requests_per_minute: Optional[int] = None,
+        max_requests_per_minute: int | None = None,
         model_name: str = "copilot",
         response_timeout_seconds: int = RESPONSE_TIMEOUT_SECONDS,
-        authenticator: Optional[Union[CopilotAuthenticator, ManualCopilotAuthenticator]] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        authenticator: CopilotAuthenticator | ManualCopilotAuthenticator | None = None,
+        custom_configuration: TargetConfiguration | None = None,
     ) -> None:
         """
         Initialize the WebSocketCopilotTarget.
@@ -102,10 +102,10 @@ class WebSocketCopilotTarget(PromptTarget):
         Args:
             websocket_base_url (str): Base URL for the Copilot WebSocket endpoint.
                 Defaults to ``wss://substrate.office.com/m365Copilot/Chathub``.
-            max_requests_per_minute (Optional[int]): Maximum number of requests per minute.
+            max_requests_per_minute (int | None): Maximum number of requests per minute.
             model_name (str): The model name. Defaults to "copilot".
             response_timeout_seconds (int): Timeout for receiving responses in seconds. Defaults to 60s.
-            authenticator (Optional[Union[CopilotAuthenticator, ManualCopilotAuthenticator]]): Authenticator
+            authenticator (CopilotAuthenticator | ManualCopilotAuthenticator | None): Authenticator
                 instance. Supports both ``CopilotAuthenticator`` and ``ManualCopilotAuthenticator``.
                 If None, a new ``CopilotAuthenticator`` instance will be created with default settings.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for

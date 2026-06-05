@@ -415,7 +415,7 @@ class AttackService:
         for conv_id in active_conv_ids:
             stats = stats_map.get(conv_id)
             created_at = stats.created_at if stats else None
-            # SQLite returns naive datetimes — normalize to UTC (same pattern as _ensure_utc)
+            # SQLite returns naive datetimes — normalize to UTC (same pattern as the UTCDateTime column type)
             if created_at is not None and created_at.tzinfo is None:
                 created_at = created_at.replace(tzinfo=timezone.utc)
             conversations.append(

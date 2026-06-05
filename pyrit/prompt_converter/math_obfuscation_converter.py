@@ -3,7 +3,6 @@
 
 import logging
 import random
-from typing import Optional
 
 from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
@@ -44,9 +43,9 @@ class MathObfuscationConverter(PromptConverter):
         *,
         min_n: int = 2,
         max_n: int = 9,
-        hint: Optional[str] = None,
-        suffix: Optional[str] = None,
-        rng: Optional[random.Random] = None,
+        hint: str | None = None,
+        suffix: str | None = None,
+        rng: random.Random | None = None,
     ) -> None:
         """
         Initialize a MathObfuscationConverter instance.
@@ -58,15 +57,15 @@ class MathObfuscationConverter(PromptConverter):
             max_n (int):
                 Maximum integer value used for `n`. Must be greater than
                 or equal to `min_n`.
-            hint (Optional[str]):
+            hint (str | None):
                 Inline hint appended to the first equation line. If None,
                 uses the default hint explaining the variable encoding.
                 Set to empty string "" to disable hint entirely.
-            suffix (Optional[str]):
+            suffix (str | None):
                 Custom suffix to append after the obfuscated text. If None,
                 uses the default suffix prompting the model to decode.
                 Set to empty string "" to disable suffix entirely.
-            rng (Optional[random.Random]):
+            rng (random.Random | None):
                 Optional random number generator instance used to produce
                 reproducible obfuscation results. If omitted, a new
                 instance of `random.Random()` is created.

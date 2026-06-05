@@ -12,7 +12,6 @@ import os
 import tempfile
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -108,7 +107,7 @@ def _make_score(
     *,
     score_value: str = "1.0",
     score_type: str = "float_scale",
-    score_category: Optional[list[str]] = None,
+    score_category: list[str] | None = None,
     scorer_name: str = "TrueFalseScorer",
 ) -> Score:
     """Create a real domain score for mapper tests."""

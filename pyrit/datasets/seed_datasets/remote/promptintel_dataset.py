@@ -5,14 +5,15 @@ import logging
 import os
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 import requests
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -76,10 +77,10 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
-        severity: Optional[PromptIntelSeverity] = None,
-        categories: Optional[list[PromptIntelCategory]] = None,
-        search: Optional[str] = None,
+        api_key: str | None = None,
+        severity: PromptIntelSeverity | None = None,
+        categories: list[PromptIntelCategory] | None = None,
+        search: str | None = None,
     ) -> None:
         """
         Initialize the PromptIntel dataset loader.
@@ -109,6 +110,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
         self.source = "https://promptintel.novahunting.ai"
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "promptintel"
@@ -121,7 +123,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
         category and results are merged with deduplication by prompt ID.
 
         Returns:
-            List[Dict[str, Any]]: All fetched prompt records.
+            list[dict[str, Any]]: All fetched prompt records.
 
         Raises:
             ValueError: If no API key is provided and PROMPTINTEL_API_KEY is not set.
@@ -139,7 +141,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
         }
 
         # Build list of category values to fetch; [None] means fetch all categories
-        categories_to_fetch: list[Optional[str]] = [c.value for c in self._categories] if self._categories else [None]
+        categories_to_fetch: list[str | None] = [c.value for c in self._categories] if self._categories else [None]
 
         all_prompts: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
@@ -187,7 +189,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
 
         return all_prompts
 
-    def _parse_datetime(self, date_str: Optional[str]) -> Optional[datetime]:
+    def _parse_datetime(self, date_str: str | None) -> datetime | None:
         """
         Parse an ISO 8601 datetime string from the API.
 
@@ -212,7 +214,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
             record: A single prompt record from the API.
 
         Returns:
-            Dict[str, str | int]: Metadata dictionary with string or integer values.
+            dict[str, str | int]: Metadata dictionary with string or integer values.
         """
         metadata: dict[str, str | int] = {}
 
@@ -252,7 +254,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
 
         return metadata
 
-    def _convert_record_to_seed_prompt(self, record: dict[str, Any]) -> Optional[SeedPrompt]:
+    def _convert_record_to_seed_prompt(self, record: dict[str, Any]) -> SeedPrompt | None:
         """
         Convert a single PromptIntel record into a SeedPrompt.
 
@@ -293,11 +295,13 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
             harm_categories=harm_categories,
             description=impact_description if impact_description else None,
             authors=authors,
+            groups=["Cisco Talos Intelligence"],
             source=source_url,
             date_added=date_added,
             metadata=metadata,
         )
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch prompts from the PromptIntel API and return as a SeedDataset.
@@ -315,7 +319,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
 
         records = self._fetch_all_prompts()
 
-        all_seeds = []
+        all_seeds: list[SeedUnion] = []
         for record in records:
             seed = self._convert_record_to_seed_prompt(record)
             if seed:

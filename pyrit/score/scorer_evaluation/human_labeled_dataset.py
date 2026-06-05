@@ -5,7 +5,7 @@
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 import pandas as pd
 
@@ -35,7 +35,7 @@ class HumanLabeledEntry:
     (representing degree of severity) for harm datasets, and booleans for objective datasets.
 
     Parameters:
-        conversation (List[Message]): A list of Message objects representing the
+        conversation (list[Message]): A list of Message objects representing the
             conversation to be scored. This can contain one Message object if you are just
             scoring individual assistant responses.
         human_scores (List): A list of human-assigned scores for the responses. Each entry in the list corresponds to
@@ -126,8 +126,8 @@ class HumanLabeledDataset:
         entries: list[HumanLabeledEntry],
         metrics_type: MetricsType,
         version: str,
-        harm_definition: Optional[str] = None,
-        harm_definition_version: Optional[str] = None,
+        harm_definition: str | None = None,
+        harm_definition_version: str | None = None,
     ) -> None:
         """
         Initialize the HumanLabeledDataset.
@@ -136,7 +136,7 @@ class HumanLabeledDataset:
             name (str): The name of the human-labeled dataset. For datasets of uniform type, this is often the harm
                 category (e.g. hate_speech) or objective. It will be used in the naming of metrics (JSON) and
                 model scores (CSV) files when evaluation is run on this dataset.
-            entries (List[HumanLabeledEntry]): A list of entries in the dataset.
+            entries (list[HumanLabeledEntry]): A list of entries in the dataset.
             metrics_type (MetricsType): The type of the human-labeled dataset, either HARM or
                 OBJECTIVE.
             version (str): The version of the human-labeled dataset.
@@ -156,7 +156,7 @@ class HumanLabeledDataset:
         self.version = version
         self.harm_definition = harm_definition
         self.harm_definition_version = harm_definition_version
-        self._harm_definition_obj: Optional[HarmDefinition] = None
+        self._harm_definition_obj: HarmDefinition | None = None
 
     def get_harm_definition(self) -> Optional["HarmDefinition"]:
         """
@@ -188,12 +188,12 @@ class HumanLabeledDataset:
     def from_csv(
         cls,
         *,
-        csv_path: Union[str, Path],
+        csv_path: str | Path,
         metrics_type: MetricsType,
-        dataset_name: Optional[str] = None,
-        version: Optional[str] = None,
-        harm_definition: Optional[str] = None,
-        harm_definition_version: Optional[str] = None,
+        dataset_name: str | None = None,
+        version: str | None = None,
+        harm_definition: str | None = None,
+        harm_definition_version: str | None = None,
     ) -> "HumanLabeledDataset":
         """
         Load a human-labeled dataset from a CSV file with standard column names.
@@ -210,7 +210,7 @@ class HumanLabeledDataset:
         - For objective datasets: # dataset_version=x.y
 
         Args:
-            csv_path (Union[str, Path]): The path to the CSV file.
+            csv_path (str | Path): The path to the CSV file.
             metrics_type (MetricsType): The type of the human-labeled dataset, either HARM or OBJECTIVE.
             dataset_name (str, Optional): The name of the dataset. If not provided, it will be inferred
                 from the CSV file name.

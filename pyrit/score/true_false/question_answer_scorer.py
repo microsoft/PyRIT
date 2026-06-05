@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pyrit.models import MessagePiece, Score
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -32,8 +32,8 @@ class QuestionAnswerScorer(TrueFalseScorer):
         self,
         *,
         correct_answer_matching_patterns: list[str] = CORRECT_ANSWER_MATCHING_PATTERNS,
-        category: Optional[list[str]] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        category: list[str] | None = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
     ) -> None:
         """
@@ -43,8 +43,8 @@ class QuestionAnswerScorer(TrueFalseScorer):
             correct_answer_matching_patterns (list[str]): A list of patterns to check for in the response. If any
                 pattern is found in the response, the score will be True. These patterns should be format strings
                 that will be formatted with the correct answer metadata. Defaults to CORRECT_ANSWER_MATCHING_PATTERNS.
-            category (Optional[list[str]]): Optional list of categories for the score. Defaults to None.
-            validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
+            category (list[str] | None): Optional list of categories for the score. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
         """
@@ -67,14 +67,14 @@ class QuestionAnswerScorer(TrueFalseScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score the message piece using question answering evaluation.
 
         Args:
             message_piece (MessagePiece): The answer given by the target, which must contain
                 'correct_answer_index' and 'correct_answer' in prompt_metadata.
-            objective (Optional[str]): The objective to evaluate against. Defaults to None.
+            objective (str | None): The objective to evaluate against. Defaults to None.
                 Currently not used for this scorer.
 
         Returns:

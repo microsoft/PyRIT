@@ -47,8 +47,7 @@
 # would wire up memory and scorers):
 
 # %%
-
-from pyrit.scenario.scenarios.airt.scam import Scam
+from pyrit.scenario.airt.scam import Scam
 from pyrit.setup import initialize_pyrit_async
 from pyrit.setup.initializers.components import ScenarioTechniqueInitializer
 

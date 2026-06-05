@@ -9,7 +9,7 @@ This is the attack-centric API design where every user interaction targets a mod
 """
 
 from datetime import datetime, timezone
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, computed_field, field_serializer
 
@@ -29,8 +29,8 @@ class TargetInfo(BaseModel):
     """Target information extracted from the stored attack-strategy identifier."""
 
     target_type: str = Field(..., description="Target class name (e.g., 'OpenAIChatTarget')")
-    endpoint: Optional[str] = Field(None, description="Target endpoint URL")
-    model_name: Optional[str] = Field(None, description="Model or deployment name")
+    endpoint: str | None = Field(None, description="Target endpoint URL")
+    model_name: str | None = Field(None, description="Model or deployment name")
 
 
 class ScoreView(Score):
@@ -60,7 +60,7 @@ class ScoreView(Score):
         deprecated="Use 'timestamp' instead; 'scored_at' is removed in 0.17.0."
     )
     @property
-    def scored_at(self) -> Optional[datetime]:
+    def scored_at(self) -> datetime | None:
         """Deprecated alias for ``timestamp``."""
         return self.timestamp
 
@@ -98,25 +98,25 @@ class MessagePieceView(MessagePiece):
     """
 
     scores: list[ScoreView] = Field(default_factory=list)
-    original_value_url: Optional[str] = Field(
+    original_value_url: str | None = Field(
         default=None,
         description=(
             "Client-fetchable URL for the original media value (e.g. "
             "/api/media?path=... or a SAS-signed blob URL). None for text pieces."
         ),
     )
-    converted_value_url: Optional[str] = Field(
+    converted_value_url: str | None = Field(
         default=None,
         description=(
             "Client-fetchable URL for the converted media value (e.g. "
             "/api/media?path=... or a SAS-signed blob URL). None for text pieces."
         ),
     )
-    original_value_mime_type: Optional[str] = Field(default=None, description="MIME type of the original value")
-    converted_value_mime_type: Optional[str] = Field(default=None, description="MIME type of the converted value")
-    original_filename: Optional[str] = Field(default=None, description="Download filename for the original value")
-    converted_filename: Optional[str] = Field(default=None, description="Download filename for the converted value")
-    response_error_description: Optional[str] = Field(
+    original_value_mime_type: str | None = Field(default=None, description="MIME type of the original value")
+    converted_value_mime_type: str | None = Field(default=None, description="MIME type of the converted value")
+    original_filename: str | None = Field(default=None, description="Download filename for the original value")
+    converted_filename: str | None = Field(default=None, description="Download filename for the converted value")
+    response_error_description: str | None = Field(
         default=None, description="Description of the error if response_error is not 'none'"
     )
 
@@ -131,8 +131,8 @@ class MessagePieceView(MessagePiece):
         cls,
         piece: MessagePiece,
         *,
-        original_value_url: Optional[str] = None,
-        converted_value_url: Optional[str] = None,
+        original_value_url: str | None = None,
+        converted_value_url: str | None = None,
     ) -> "MessagePieceView":
         """
         Build a ``MessagePieceView`` from a domain piece without re-validating.
@@ -229,12 +229,12 @@ class AttackSummary(AttackResult):
     their presentation fields serialize.
     """
 
-    last_response: Optional[MessagePieceView] = None
-    last_score: Optional[ScoreView] = None
+    last_response: MessagePieceView | None = None
+    last_score: ScoreView | None = None
 
     # Mapper-populated presentation fields (need external stats / metadata).
     message_count: int = Field(default=0, description="Total number of messages in the attack")
-    last_message_preview: Optional[str] = Field(default=None, description="Preview of the last message")
+    last_message_preview: str | None = Field(default=None, description="Preview of the last message")
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc), description="Attack creation timestamp"
     )
@@ -262,14 +262,14 @@ class AttackSummary(AttackResult):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
-    def attack_specific_params(self) -> Optional[dict[str, Any]]:
+    def attack_specific_params(self) -> dict[str, Any] | None:
         """Return the attack strategy params, or ``None``."""
         identifier = self.get_attack_strategy_identifier()
         return (identifier.params or None) if identifier else None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
-    def target(self) -> Optional[TargetInfo]:
+    def target(self) -> TargetInfo | None:
         """Return the objective target info extracted from the identifier."""
         identifier = self.get_attack_strategy_identifier()
         target_id = identifier.get_child("objective_target") if identifier else None
@@ -344,13 +344,13 @@ class MessagePieceRequest(BaseModel):
 
     data_type: str = Field(default="text", description="Data type: 'text', 'image', 'audio', etc.")
     original_value: str = Field(..., description="Original value (text or base64 for media)")
-    converted_value: Optional[str] = Field(None, description="Converted value. If provided, bypasses converters.")
-    mime_type: Optional[str] = Field(None, description="MIME type for media content")
-    prompt_metadata: Optional[dict[str, Any]] = Field(
+    converted_value: str | None = Field(None, description="Converted value. If provided, bypasses converters.")
+    mime_type: str | None = Field(None, description="MIME type for media content")
+    prompt_metadata: dict[str, Any] | None = Field(
         None,
         description="Metadata to attach to the piece (e.g., {'video_id': '...'} for remix mode).",
     )
-    original_prompt_id: Optional[str] = Field(
+    original_prompt_id: str | None = Field(
         None,
         description="ID of the source piece when prepending from an existing conversation. "
         "Preserves lineage so the new piece traces back to the original.",
@@ -380,18 +380,16 @@ class CreateAttackRequest(BaseModel):
     supplied in ``labels`` (typically the current operator's labels).
     """
 
-    name: Optional[str] = Field(None, description="Attack name/label")
+    name: str | None = Field(None, description="Attack name/label")
     target_registry_name: str = Field(..., description="Target registry name to attack")
-    source_conversation_id: Optional[str] = Field(
+    source_conversation_id: str | None = Field(
         None, description="Conversation to branch from (clone messages into the new attack)"
     )
-    cutoff_index: Optional[int] = Field(
-        None, description="Include messages up to and including this turn index (0-based)"
-    )
-    prepended_conversation: Optional[list[PrependedMessageRequest]] = Field(
+    cutoff_index: int | None = Field(None, description="Include messages up to and including this turn index (0-based)")
+    prepended_conversation: list[PrependedMessageRequest] | None = Field(
         None, description="Messages to prepend (system prompts, branching context)", max_length=200
     )
-    labels: Optional[dict[str, str]] = Field(None, description="User-defined labels for filtering")
+    labels: dict[str, str] | None = Field(None, description="User-defined labels for filtering")
 
 
 class CreateAttackResponse(BaseModel):
@@ -423,8 +421,8 @@ class ConversationSummary(BaseModel):
 
     conversation_id: str = Field(..., description="Unique conversation identifier")
     message_count: int = Field(0, description="Number of messages in this conversation")
-    last_message_preview: Optional[str] = Field(None, description="Preview of the last message")
-    created_at: Optional[datetime] = Field(None, description="Timestamp of the first message")
+    last_message_preview: str | None = Field(None, description="Preview of the last message")
+    created_at: datetime | None = Field(None, description="Timestamp of the first message")
 
 
 class AttackConversationsResponse(BaseModel):
@@ -446,10 +444,8 @@ class CreateConversationRequest(BaseModel):
     the cutoff turn, preserving tracking relationships (original_prompt_id).
     """
 
-    source_conversation_id: Optional[str] = Field(None, description="Conversation to branch from")
-    cutoff_index: Optional[int] = Field(
-        None, description="Include messages up to and including this turn index (0-based)"
-    )
+    source_conversation_id: str | None = Field(None, description="Conversation to branch from")
+    cutoff_index: int | None = Field(None, description="Include messages up to and including this turn index (0-based)")
 
 
 class CreateConversationResponse(BaseModel):
@@ -493,11 +489,11 @@ class AddMessageRequest(BaseModel):
         default=True,
         description="If True, send to target and wait for response. If False, just store in memory.",
     )
-    target_registry_name: Optional[str] = Field(
+    target_registry_name: str | None = Field(
         None,
         description="Target registry name. Required when send=True so the backend knows which target to use.",
     )
-    converter_ids: Optional[list[str]] = Field(
+    converter_ids: list[str] | None = Field(
         None, description="Converter instance IDs to apply (overrides attack-level)"
     )
     target_conversation_id: str = Field(
@@ -505,7 +501,7 @@ class AddMessageRequest(BaseModel):
         description="The conversation_id to store and send messages under. "
         "Usually the attack's main conversation, but can be a related conversation.",
     )
-    labels: Optional[dict[str, str]] = Field(
+    labels: dict[str, str] | None = Field(
         None,
         description="Labels to attach to every message piece. "
         "Falls back to labels from existing pieces in the conversation.",

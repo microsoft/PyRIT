@@ -3,7 +3,7 @@
 
 import abc
 import logging
-from typing import Any, Union, final
+from typing import Any, final
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -42,6 +42,28 @@ class PromptTarget(Identifiable):
     # constructor parameter, which takes precedence over the class-level value.
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
 
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """
+        Validate that subclasses follow the keyword-only ``__init__`` contract.
+
+        Args:
+            **kwargs: Additional keyword arguments passed to the superclass.
+
+        Raises:
+            TypeError: If the subclass ``__init__`` accepts positional parameters
+                after ``self`` and is not grandfathered via ``_brick_legacy_init``.
+        """
+        super().__init_subclass__(**kwargs)
+        # Local import to avoid a circular dependency at package init time.
+        from pyrit.common.brick_contract import enforce_keyword_only_init
+
+        enforce_keyword_only_init(cls, base_name="PromptTarget")
+
+    # TODO: ``PromptTarget.__init__`` itself accepts positional parameters, which
+    # violates the keyword-only contract enforced by ``__init_subclass__`` on
+    # subclasses. The hook only runs for subclasses, so the base class non-
+    # compliance is tolerated during the warn-first phase. Reshape this
+    # signature (insert ``*`` after ``self``) in 0.16.0 as a BREAKING CHANGE.
     def __init__(
         self,
         verbose: bool = False,
@@ -319,7 +341,7 @@ class PromptTarget(Identifiable):
         self,
         *,
         params: dict[str, Any] | None = None,
-        children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] | None = None,
+        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct the target identifier.
@@ -334,7 +356,7 @@ class PromptTarget(Identifiable):
         Args:
             params (dict[str, Any] | None): Additional behavioral parameters from
                 the subclass (e.g., temperature, top_p). Merged into the base params.
-            children (dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] | None):
+            children (dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None):
                 Named child component identifiers.
 
         Returns:

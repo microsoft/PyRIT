@@ -53,7 +53,7 @@ def get_all_scenarios():
     Dynamically discover all available scenarios from the scenario registry.
 
     Returns:
-        List[str]: Sorted list of scenario names.
+        list[str]: Sorted list of scenario names.
     """
     registry = ScenarioRegistry.get_registry_singleton()
     return registry.get_names()

@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 import base64
 import logging
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 import httpx
 
@@ -53,6 +53,13 @@ class OpenAIImageTarget(OpenAITarget):
     # DALL-E-only quality values that are deprecated in favor of GPT image model values.
     _DEPRECATED_QUALITY_VALUES = {"standard", "hd"}
 
+    # Grandfathered: positional params predate the kwargs-only contract; the
+    # sandwiched ``*args``/``**kwargs`` shape forwards extras to ``OpenAITarget``.
+    # TODO: remove this opt-out and move ``*args`` up to immediately after
+    # ``self`` (or insert ``*,`` and drop ``*args`` entirely) in 0.16.0
+    # (this will be a BREAKING CHANGE for callers passing arguments positionally).
+    _brick_legacy_init = True
+
     def __init__(
         self,
         image_size: Literal[
@@ -65,11 +72,11 @@ class OpenAIImageTarget(OpenAITarget):
             "1792x1024",
             "1024x1792",
         ] = "1024x1024",
-        output_format: Optional[Literal["png", "jpeg", "webp"]] = None,
-        quality: Optional[Literal["auto", "low", "medium", "high", "standard", "hd"]] = None,
-        style: Optional[Literal["natural", "vivid"]] = None,
-        background: Optional[Literal["transparent", "opaque", "auto"]] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        output_format: Literal["png", "jpeg", "webp"] | None = None,
+        quality: Literal["auto", "low", "medium", "high", "standard", "hd"] | None = None,
+        style: Literal["natural", "vivid"] | None = None,
+        background: Literal["transparent", "opaque", "auto"] | None = None,
+        custom_configuration: TargetConfiguration | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:

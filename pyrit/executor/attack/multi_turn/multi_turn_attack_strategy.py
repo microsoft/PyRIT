@@ -7,7 +7,7 @@ import logging  # noqa: TC003
 import uuid
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pyrit.common.logger import logger
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
@@ -58,10 +58,10 @@ class MultiTurnAttackContext(AttackContext[AttackParamsT]):
     executed_turns: int = 0
 
     # Model response produced in the latest turn
-    last_response: Optional[Message] = None
+    last_response: Message | None = None
 
     # Score assigned to the latest response by a scorer component
-    last_score: Optional[Score] = None
+    last_score: Score | None = None
 
 
 class MultiTurnAttackStrategy(AttackStrategy[MultiTurnAttackStrategyContextT, AttackStrategyResultT], ABC):
@@ -85,7 +85,7 @@ class MultiTurnAttackStrategy(AttackStrategy[MultiTurnAttackStrategyContextT, At
         Args:
             objective_target (PromptTarget): The target system to attack.
             context_type (type[MultiTurnAttackContext]): The type of context this strategy will use.
-            params_type (Type[AttackParamsT]): The type of parameters this strategy accepts.
+            params_type (type[AttackParamsT]): The type of parameters this strategy accepts.
             logger (logging.Logger): Logger instance for logging events and messages.
         """
         super().__init__(

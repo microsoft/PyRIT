@@ -4,7 +4,7 @@
 import base64
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any
 
 import aiofiles
 
@@ -93,7 +93,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
 
             # Use simple string for single text piece, otherwise use content list
             if len(pieces) == 1 and pieces[0].converted_value_data_type == "text":
-                content: Union[str, list[dict[str, Any]]] = pieces[0].converted_value
+                content: str | list[dict[str, Any]] = pieces[0].converted_value
             else:
                 content = [await self._piece_to_content_dict_async(piece) for piece in pieces]
 

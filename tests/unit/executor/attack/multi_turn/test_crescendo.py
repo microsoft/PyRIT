@@ -4,7 +4,6 @@
 import json
 import uuid
 from pathlib import Path
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -85,11 +84,11 @@ def create_score(
     *,
     score_type: ScoreType,
     score_value: str,
-    score_category: Optional[list[str]] = None,
+    score_category: list[str] | None = None,
     scorer_class: str,
     score_rationale: str = "Test rationale",
     score_value_description: str = "Test description",
-    score_metadata: Optional[dict] = None,
+    score_metadata: dict | None = None,
 ) -> Score:
     """Create a score with common defaults.
 
@@ -254,10 +253,10 @@ class CrescendoTestHelper:
         *,
         objective_target: MagicMock,
         adversarial_chat: MagicMock,
-        objective_scorer: Optional[MagicMock] = None,
-        refusal_scorer: Optional[MagicMock] = None,
-        prompt_normalizer: Optional[MagicMock] = None,
-        system_prompt_path: Optional[Path] = None,
+        objective_scorer: MagicMock | None = None,
+        refusal_scorer: MagicMock | None = None,
+        prompt_normalizer: MagicMock | None = None,
+        system_prompt_path: Path | None = None,
         **kwargs,
     ) -> CrescendoAttack:
         """Create a CrescendoAttack instance with flexible configuration.
@@ -909,7 +908,7 @@ class TestPromptGeneration:
         mock_objective_target: MagicMock,
         mock_adversarial_chat: MagicMock,
         response_json: str,
-        expected_error: Optional[str],
+        expected_error: str | None,
     ):
         """Test parsing adversarial response with various inputs.
 

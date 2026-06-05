@@ -15,7 +15,7 @@ from __future__ import annotations
 import mimetypes
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
@@ -33,7 +33,7 @@ _FILENAME_PREFIXES = {
 _DEFAULT_EXTENSIONS = {"image": ".png", "audio": ".wav", "video": ".mp4", "file": ".bin"}
 
 
-def infer_mime_type(*, value: Optional[str], data_type: PromptDataType) -> Optional[str]:
+def infer_mime_type(*, value: str | None, data_type: PromptDataType) -> str | None:
     """
     Infer a MIME type from a value and its data type.
 
@@ -51,7 +51,7 @@ def infer_mime_type(*, value: Optional[str], data_type: PromptDataType) -> Optio
     return mime_type
 
 
-def build_filename(*, data_type: str, sha256: Optional[str], value: Optional[str]) -> Optional[str]:
+def build_filename(*, data_type: str, sha256: str | None, value: str | None) -> str | None:
     """
     Build a human-readable download filename from the data type and hash.
 

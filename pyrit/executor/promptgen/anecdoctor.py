@@ -7,7 +7,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Union, overload
+from typing import TYPE_CHECKING, Any, overload
 
 import yaml
 
@@ -103,20 +103,20 @@ class AnecdoctorGenerator(
         self,
         *,
         objective_target: PromptTarget,
-        processing_model: Optional[PromptTarget] = None,
-        converter_config: Optional[StrategyConverterConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        processing_model: PromptTarget | None = None,
+        converter_config: StrategyConverterConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
     ) -> None:
         """
         Initialize the Anecdoctor prompt generation strategy.
 
         Args:
             objective_target (PromptTarget): The chat model to be used for prompt generation.
-            processing_model (Optional[PromptTarget]): The model used for knowledge graph extraction.
+            processing_model (PromptTarget | None): The model used for knowledge graph extraction.
                 If provided, the generator will extract a knowledge graph from the examples before generation.
                 If None, the generator will use few-shot examples directly.
-            converter_config (Optional[StrategyConverterConfig]): Configuration for prompt converters.
-            prompt_normalizer (Optional[PromptNormalizer]): Normalizer for handling prompts.
+            converter_config (StrategyConverterConfig | None): Configuration for prompt converters.
+            prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
         """
         # Initialize base class
         super().__init__(logger=logger, context_type=AnecdoctorContext)
@@ -136,7 +136,7 @@ class AnecdoctorGenerator(
             self._system_prompt_template = self._load_prompt_from_yaml(yaml_filename=self._ANECDOCTOR_USE_KG_YAML)
             # Also preload the KG extraction prompt so `_extract_knowledge_graph_async` doesn't
             # repeat the file read + YAML parse on each invocation.
-            self._kg_prompt_template: Optional[str] = self._load_prompt_from_yaml(
+            self._kg_prompt_template: str | None = self._load_prompt_from_yaml(
                 yaml_filename=self._ANECDOCTOR_BUILD_KG_YAML
             )
         else:
@@ -146,21 +146,21 @@ class AnecdoctorGenerator(
     def _create_identifier(
         self,
         *,
-        params: Optional[dict[str, Any]] = None,
-        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+        params: dict[str, Any] | None = None,
+        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct the identifier for this prompt generator.
 
         Args:
-            params (Optional[Dict[str, Any]]): Additional behavioral parameters.
-            children (Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]]):
+            params (dict[str, Any] | None): Additional behavioral parameters.
+            children (dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None):
                 Named child component identifiers.
 
         Returns:
             ComponentIdentifier: The identifier for this prompt generator.
         """
-        all_children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = {
+        all_children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] = {
             "objective_target": self._objective_target.get_identifier(),
         }
         if children:
@@ -286,7 +286,7 @@ class AnecdoctorGenerator(
 
     async def _send_examples_to_target_async(
         self, *, formatted_examples: str, context: AnecdoctorContext
-    ) -> Optional[Message]:
+    ) -> Message | None:
         """
         Send the formatted examples to the target model.
 
@@ -298,7 +298,7 @@ class AnecdoctorGenerator(
             context (AnecdoctorContext): The generation context containing conversation metadata.
 
         Returns:
-            Optional[Message]: The response from the target model,
+            Message | None: The response from the target model,
                 or None if the request failed.
         """
         # Create message from the formatted examples
@@ -343,7 +343,7 @@ class AnecdoctorGenerator(
         Format the evaluation data as few-shot examples.
 
         Args:
-            evaluation_data (List[str]): The evaluation data to format.
+            evaluation_data (list[str]): The evaluation data to format.
 
         Returns:
             str: Formatted string with examples prefixed by "### examples".
@@ -414,7 +414,7 @@ class AnecdoctorGenerator(
         content_type: str,
         language: str,
         evaluation_data: list[str],
-        memory_labels: Optional[dict[str, str]] = None,
+        memory_labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> AnecdoctorResult: ...
 
@@ -434,8 +434,8 @@ class AnecdoctorGenerator(
         Args:
             content_type (str): The type of content to generate (e.g., "viral tweet", "news article").
             language (str): The language of the content to generate (e.g., "english", "spanish").
-            evaluation_data (List[str]): The data in ClaimsReview format to use in constructing the prompt.
-            memory_labels (Optional[Dict[str, str]]): Memory labels for the generation context.
+            evaluation_data (list[str]): The data in ClaimsReview format to use in constructing the prompt.
+            memory_labels (dict[str, str] | None): Memory labels for the generation context.
             **kwargs: Additional parameters for the generation.
 
         Returns:

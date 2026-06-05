@@ -4,7 +4,7 @@
 import base64
 import logging
 from io import BytesIO
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import aiohttp
@@ -49,13 +49,13 @@ class ImageCompressionConverter(PromptConverter):
     def __init__(
         self,
         *,
-        output_format: Optional[Literal["JPEG", "PNG", "WEBP"]] = None,
-        quality: Optional[int] = None,
-        optimize: Optional[bool] = None,
-        progressive: Optional[bool] = None,
-        compress_level: Optional[int] = None,
-        lossless: Optional[bool] = None,
-        method: Optional[int] = None,
+        output_format: Literal["JPEG", "PNG", "WEBP"] | None = None,
+        quality: int | None = None,
+        optimize: bool | None = None,
+        progressive: bool | None = None,
+        compress_level: int | None = None,
+        lossless: bool | None = None,
+        method: int | None = None,
         background_color: tuple[int, int, int] = (0, 0, 0),
         min_compression_threshold: int = 1024,
         fallback_to_original: bool = True,
