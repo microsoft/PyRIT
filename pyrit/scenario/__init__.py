@@ -13,7 +13,10 @@ Specific scenarios should be imported from their subpackages:
     from pyrit.scenario.foundry import RedTeamAgent
 """
 
+import importlib
+import pkgutil
 import sys
+from types import ModuleType
 
 from pyrit.common.parameter import Parameter
 from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
@@ -38,8 +41,9 @@ from pyrit.scenario.scenarios import foundry as _foundry_module
 from pyrit.scenario.scenarios import garak as _garak_module
 
 
-def _register_scenario_alias(short_name: str, canonical_module) -> None:
-    """Alias ``pyrit.scenario.<short_name>`` (and every submodule) to ``canonical_module``.
+def _register_scenario_alias(short_name: str, canonical_module: ModuleType) -> None:
+    """
+    Alias ``pyrit.scenario.<short_name>`` (and every submodule) to ``canonical_module``.
 
     A bare ``sys.modules[short] = canonical`` only fixes ``import
     pyrit.scenario.<short>`` itself. Accessing a submodule via the alias path
@@ -49,9 +53,6 @@ def _register_scenario_alias(short_name: str, canonical_module) -> None:
     we walk the canonical package's submodules eagerly and register every one
     under both names so the second import returns the same module object.
     """
-    import importlib
-    import pkgutil
-
     sys.modules[f"pyrit.scenario.{short_name}"] = canonical_module
     canonical_prefix = canonical_module.__name__ + "."
     short_prefix = f"pyrit.scenario.{short_name}."
