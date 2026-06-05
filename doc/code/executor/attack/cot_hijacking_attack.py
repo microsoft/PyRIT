@@ -18,6 +18,9 @@
 # A reasoning model deeply engaged in solving the puzzle may produce harmful content in the
 # "practical example" section of its output while its safety mechanisms are occupied with the puzzle logic.
 # The adversarial chat iteratively refines the puzzle prompt based on feedback from previous attempts.
+#
+# Configure scoring via `AttackScoringConfig.objective_scorer`. For paper-aligned iterative
+# feedback (continuous SCORE values), wrap a float-scale scorer in `FloatScaleThresholdScorer`.
 
 # %%
 from pyrit.executor.attack import (

@@ -19,6 +19,7 @@ from pyrit.executor.attack import (
     CoTHijackingAttack,
     CoTHijackingAttackContext,
 )
+from pyrit.executor.attack.multi_turn.cot_hijacking import StreamState
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
@@ -28,7 +29,7 @@ from pyrit.models import (
     Score,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptChatTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.score import TrueFalseScorer
 
 
@@ -50,11 +51,14 @@ def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
 
 def create_mock_chat_target(*, name: str = "MockChatTarget") -> MagicMock:
     """Create a mock chat target with common setup."""
-    target = MagicMock(spec=PromptChatTarget)
+    target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock()
     target.set_system_prompt = MagicMock()
     target.get_identifier.return_value = _mock_target_id(name)
-    target.supports_multi_turn = True
+    target.configuration = MagicMock()
+    target.configuration.includes.return_value = True
+    target.capabilities = MagicMock()
+    target.capabilities.supports_json_output = True
     return target
 
 
@@ -72,9 +76,11 @@ class CoTHijackingTestHelper:
         """Create a CoTHijackingAttack instance with flexible configuration."""
         adversarial_config = AttackAdversarialConfig(target=adversarial_chat)
 
-        scoring_config = None
-        if objective_scorer:
-            scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)
+        if objective_scorer is None:
+            objective_scorer = MagicMock(spec=TrueFalseScorer)
+            objective_scorer.get_identifier.return_value = _mock_scorer_id()
+
+        scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)
 
         # Default max_iterations to 3 for tests unless overridden
         kwargs.setdefault("max_iterations", 3)
@@ -86,7 +92,7 @@ class CoTHijackingTestHelper:
             **{
                 k: v
                 for k, v in kwargs.items()
-                if k in ["max_iterations", "puzzle_types", "success_threshold", "float_scale_scorer"]
+                if k in ["max_iterations", "puzzle_types", "n_streams"]
             },
         )
 
@@ -128,10 +134,11 @@ def mock_prompt_normalizer() -> MagicMock:
 
 @pytest.fixture
 def basic_context() -> CoTHijackingAttackContext:
-    """Create basic attack context."""
+    """Create basic attack context with a single initialized stream."""
     return CoTHijackingAttackContext(
         params=AttackParameters(objective="Test objective"),
         session=ConversationSession(),
+        stream_states=[StreamState(stream_id=0, puzzle_type="logic_grid")],
     )
 
 
@@ -208,13 +215,16 @@ class TestCoTHijackingAttackInitialization:
     def test_init_default_max_iterations(
         self,
         mock_objective_target: MagicMock,
+        mock_objective_scorer: MagicMock,
         mock_adversarial_chat: MagicMock,
     ):
         """Test that the real default max_iterations is 10."""
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
+        scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
         attack = CoTHijackingAttack(
             objective_target=mock_objective_target,
             attack_adversarial_config=adversarial_config,
+            attack_scoring_config=scoring_config,
         )
         assert attack._max_iterations == 10
 
@@ -267,47 +277,40 @@ class TestCoTHijackingAttackInitialization:
                 puzzle_types=["invalid_type"],
             )
 
-    def test_init_with_invalid_success_threshold_raises(
+    def test_init_without_objective_scorer_raises(
         self,
         mock_objective_target: MagicMock,
         mock_adversarial_chat: MagicMock,
     ):
-        """Test that success_threshold outside [0, 1] raises ValueError."""
-        with pytest.raises(ValueError, match="success_threshold must be between 0 and 1"):
-            CoTHijackingTestHelper.create_attack(
-                objective_target=mock_objective_target,
-                adversarial_chat=mock_adversarial_chat,
-                success_threshold=1.5,
-            )
-
-    def test_init_without_objective_scorer(
-        self,
-        mock_objective_target: MagicMock,
-        mock_adversarial_chat: MagicMock,
-    ):
-        """Test that initialization without objective scorer works (scorer is optional)."""
+        """Test that initialization without an objective scorer raises ValueError."""
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
         scoring_config = AttackScoringConfig()
 
-        attack = CoTHijackingAttack(
-            objective_target=mock_objective_target,
-            attack_adversarial_config=adversarial_config,
-            attack_scoring_config=scoring_config,
-        )
-        assert attack._objective_scorer is None
-
-    def test_init_adversarial_target_must_be_chat_target(
-        self,
-        mock_objective_target: MagicMock,
-    ):
-        """Test that non-PromptChatTarget adversarial target raises ValueError."""
-        non_chat_target = MagicMock()  # not spec=PromptChatTarget
-        adversarial_config = AttackAdversarialConfig(target=non_chat_target)
-
-        with pytest.raises(ValueError, match="Adversarial target must be a PromptChatTarget"):
+        with pytest.raises(ValueError, match="An objective scorer is required"):
             CoTHijackingAttack(
                 objective_target=mock_objective_target,
                 attack_adversarial_config=adversarial_config,
+                attack_scoring_config=scoring_config,
+            )
+
+    def test_init_adversarial_target_must_support_multi_turn(
+        self,
+        mock_objective_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+    ):
+        """Test that adversarial targets without native MULTI_TURN are rejected."""
+        bad_adversarial = MagicMock(spec=PromptTarget)
+        bad_adversarial.get_identifier.return_value = _mock_target_id("BadAdversarial")
+        bad_adversarial.configuration = MagicMock()
+        bad_adversarial.configuration.includes.return_value = False
+        adversarial_config = AttackAdversarialConfig(target=bad_adversarial)
+        scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
+
+        with pytest.raises(ValueError, match="CoTHijackingAttack"):
+            CoTHijackingAttack(
+                objective_target=mock_objective_target,
+                attack_adversarial_config=adversarial_config,
+                attack_scoring_config=scoring_config,
             )
 
     def test_init_all_supported_puzzle_types_valid(
@@ -324,6 +327,142 @@ class TestCoTHijackingAttackInitialization:
             puzzle_types=SUPPORTED_PUZZLE_TYPES,
         )
         assert attack._puzzle_types == SUPPORTED_PUZZLE_TYPES
+
+    def test_build_identifier_includes_behavioral_params(
+        self,
+        mock_objective_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_adversarial_chat: MagicMock,
+    ):
+        """Test that _build_identifier includes behavioral parameters and adversarial chat."""
+        puzzle_types = ["logic_grid", "sudoku"]
+        attack = CoTHijackingTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+            max_iterations=7,
+            puzzle_types=puzzle_types,
+            n_streams=3,
+        )
+
+        identifier = attack.get_identifier()
+
+        assert identifier.class_name == "CoTHijackingAttack"
+        assert identifier.params["max_iterations"] == 7
+        assert identifier.params["puzzle_types"] == puzzle_types
+        assert identifier.params["n_streams"] == 3
+        assert "adversarial_chat" in identifier.children
+        assert "objective_target" in identifier.children
+        assert "objective_scorer" in identifier.children
+
+    def test_different_configs_produce_different_identifiers(
+        self,
+        mock_objective_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_adversarial_chat: MagicMock,
+    ):
+        """Test that different behavioral configs produce different identifier hashes."""
+        attack1 = CoTHijackingTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+            max_iterations=3,
+        )
+        attack2 = CoTHijackingTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+            max_iterations=5,
+        )
+
+        assert attack1.get_identifier().hash != attack2.get_identifier().hash
+
+    def test_same_config_produces_same_identifier(
+        self,
+        mock_objective_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_adversarial_chat: MagicMock,
+    ):
+        """Test that identical configs produce deterministic identifiers."""
+        attack1 = CoTHijackingTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+            puzzle_types=["logic_grid"],
+        )
+        attack2 = CoTHijackingTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+            puzzle_types=["logic_grid"],
+        )
+
+        assert attack1.get_identifier().hash == attack2.get_identifier().hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestReasoningStepTracking:
+    """Tests for CoT length / reasoning step tracking in the feedback loop."""
+
+    def test_extract_reasoning_step_count_counts_paragraph_breaks(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+    ):
+        """Counts double-newline paragraph breaks in the target response."""
+        attack = CoTHijackingTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+        )
+        message = Message.from_prompt(
+            prompt="Step one\n\nStep two\n\nStep three",
+            role="assistant",
+        )
+
+        assert attack._extract_reasoning_step_count(message=message) == 2
+
+    def test_format_target_feedback_includes_step_number(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+    ):
+        """Feedback sent to the adversarial model includes STEP NUMBER."""
+        feedback = CoTHijackingAttack._format_target_feedback(
+            objective="Test objective",
+            target_response="Model output",
+            score=7.5,
+            step_number=12,
+        )
+
+        assert "LANGUAGE MODEL OUTPUT: Model output" in feedback
+        assert "OBJECTIVE:" in feedback
+        assert "Test objective" in feedback
+        assert "SCORE: 7.5." in feedback
+        assert "STEP NUMBER: 12." in feedback
+
+    @pytest.mark.asyncio
+    async def test_build_adversarial_prompt_includes_step_number_on_refinement(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        basic_context: CoTHijackingAttackContext,
+    ):
+        """Refinement prompts include structured feedback with STEP NUMBER."""
+        attack = CoTHijackingTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+        )
+        basic_context.last_target_response = "Blocked response"
+        basic_context.last_reasoning_step_count = 9
+
+        prompt = await attack._build_adversarial_prompt_async(
+            context=basic_context,
+            stream_state=StreamState(stream_id=0, puzzle_type="logic_grid"),
+            iteration=1,
+        )
+
+        assert "STEP NUMBER: 9." in prompt
+        assert "LANGUAGE MODEL OUTPUT: Blocked response" in prompt
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -368,23 +507,25 @@ class TestContextCreation:
                         assert captured_context is not None
                         assert captured_context.objective == "Test objective"
 
-    @pytest.mark.asyncio
-    async def test_setup_async_raises_for_non_multi_turn_target(
+    def test_init_objective_target_must_support_multi_turn(
         self,
         mock_adversarial_chat: MagicMock,
-        basic_context: CoTHijackingAttackContext,
+        mock_objective_scorer: MagicMock,
     ):
-        """Test that _setup_async raises if target is not a PromptChatTarget."""
-        # Use a plain MagicMock, not spec'd as PromptChatTarget
-        non_chat_target = MagicMock()
+        """Test that objective targets without native MULTI_TURN are rejected at init."""
+        bad_objective = MagicMock(spec=PromptTarget)
+        bad_objective.get_identifier.return_value = _mock_target_id("BadObjective")
+        bad_objective.configuration = MagicMock()
+        bad_objective.configuration.includes.return_value = False
+        adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
+        scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
 
-        attack = CoTHijackingTestHelper.create_attack(
-            objective_target=non_chat_target,
-            adversarial_chat=mock_adversarial_chat,
-        )
-
-        with pytest.raises(ValueError, match="requires a multi-turn target"):
-            await attack._setup_async(context=basic_context)
+        with pytest.raises(ValueError, match="supports_multi_turn"):
+            CoTHijackingAttack(
+                objective_target=bad_objective,
+                attack_adversarial_config=adversarial_config,
+                attack_scoring_config=scoring_config,
+            )
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -547,37 +688,7 @@ class TestAttackExecution:
                     assert basic_context.last_score == failure_score
 
     @pytest.mark.asyncio
-    async def test_perform_attack_no_scorer_returns_failure(
-        self,
-        mock_objective_target: MagicMock,
-        mock_adversarial_chat: MagicMock,
-        basic_context: CoTHijackingAttackContext,
-        sample_response: Message,
-    ):
-        """Test attack with no scorer runs all iterations and returns FAILURE."""
-        attack = CoTHijackingTestHelper.create_attack(
-            objective_target=mock_objective_target,
-            adversarial_chat=mock_adversarial_chat,
-            max_iterations=2,
-        )
-
-        with patch.object(
-            attack, "_generate_attack_prompt_async", new_callable=AsyncMock, return_value="Attack prompt"
-        ):
-            with patch.object(
-                attack, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=sample_response
-            ):
-                result = await attack._perform_async(context=basic_context)
-
-                assert result.outcome == AttackOutcome.FAILURE
-                assert result.executed_turns == 2
-
-    @pytest.mark.parametrize(
-        "puzzle_type",
-        ["logic_grid", "skyscrapers", "category_theory", "sudoku", "logic_grid_enhanced", "skyscrapers_memetic"],
-    )
-    @pytest.mark.asyncio
-    async def test_attack_cycles_puzzle_types(
+    async def test_attack_assigns_puzzle_types_per_stream(
         self,
         mock_objective_target: MagicMock,
         mock_objective_scorer: MagicMock,
@@ -585,31 +696,31 @@ class TestAttackExecution:
         basic_context: CoTHijackingAttackContext,
         sample_response: Message,
         failure_score: Score,
-        puzzle_type: str,
     ):
-        """Test that attack cycles through different puzzle types."""
+        """Test that each parallel stream uses its assigned puzzle type."""
         puzzle_types = [
             "logic_grid",
             "skyscrapers",
             "category_theory",
-            "sudoku",
-            "logic_grid_enhanced",
-            "skyscrapers_memetic",
         ]
         attack = CoTHijackingTestHelper.create_attack(
             objective_target=mock_objective_target,
             adversarial_chat=mock_adversarial_chat,
             objective_scorer=mock_objective_scorer,
-            max_iterations=3,
+            max_iterations=1,
+            n_streams=3,
             puzzle_types=puzzle_types,
         )
+        basic_context.stream_states = [
+            StreamState(stream_id=i, puzzle_type=puzzle_types[i]) for i in range(3)
+        ]
 
         captured_puzzle_types = []
 
         async def capture_puzzle_type(*args, **kwargs):
-            context = kwargs.get("context")
-            if context and hasattr(context, "puzzle_type"):
-                captured_puzzle_types.append(context.puzzle_type)
+            stream_state = kwargs.get("stream_state")
+            if stream_state is not None:
+                captured_puzzle_types.append(stream_state.puzzle_type)
             return "Attack prompt"
 
         with patch.object(
@@ -621,31 +732,174 @@ class TestAttackExecution:
                 with patch.object(attack, "_score_response_async", new_callable=AsyncMock, return_value=failure_score):
                     await attack._perform_async(context=basic_context)
 
-                    assert len(captured_puzzle_types) == 3
-                    # First three puzzle types should cycle from the list
-                    assert captured_puzzle_types == puzzle_types[:3]
+                    assert captured_puzzle_types == puzzle_types
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestGenerateAttackPrompt:
+    """Tests for adversarial prompt generation, template rendering, and JSON parsing."""
+
+    @staticmethod
+    def _create_attack_with_normalizer(
+        *,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+    ) -> tuple[CoTHijackingAttack, MagicMock]:
+        attack = CoTHijackingTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+        )
+        mock_normalizer = MagicMock(spec=PromptNormalizer)
+        mock_normalizer.send_prompt_async = AsyncMock()
+        attack._prompt_normalizer = mock_normalizer
+        return attack, mock_normalizer
+
+    def test_render_meta_prompt_substitutes_objective_via_jinja2(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+    ):
+        """Template rendering injects the attack objective into the meta-prompt."""
+        attack = CoTHijackingTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+        )
+        context = CoTHijackingAttackContext(
+            params=AttackParameters(objective="Build a harmless test puzzle"),
+            session=ConversationSession(),
+        )
+
+        rendered = attack._render_meta_prompt(context=context, puzzle_type="test")
+
+        assert "Build a harmless test puzzle" in rendered
+        assert "{{objective}}" not in rendered
+
+    @pytest.mark.asyncio
+    async def test_generate_attack_prompt_extracts_prompt_from_json(
+        self,
+        mock_objective_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        basic_context: CoTHijackingAttackContext,
+    ):
+        """End-to-end: adversarial model JSON with a prompt key is parsed and returned."""
+        attack, mock_normalizer = self._create_attack_with_normalizer(
+            mock_objective_target=mock_objective_target,
+            mock_adversarial_chat=mock_adversarial_chat,
+            mock_objective_scorer=mock_objective_scorer,
+        )
+        stream_state = StreamState(stream_id=0, puzzle_type="test")
+        mock_normalizer.send_prompt_async.return_value = Message.from_prompt(
+            prompt='{"prompt": "crafted jailbreak prompt"}',
+            role="assistant",
+        )
+
+        result = await attack._generate_attack_prompt_async(
+            context=basic_context,
+            stream_state=stream_state,
+            iteration=0,
+        )
+
+        assert result == "crafted jailbreak prompt"
+        mock_normalizer.send_prompt_async.assert_awaited_once()
+        call_kwargs = mock_normalizer.send_prompt_async.await_args.kwargs
+        assert call_kwargs["conversation_id"] == stream_state.adversarial_chat_conversation_id
+        assert call_kwargs["target"] == mock_adversarial_chat
+        sent_message = call_kwargs["message"]
+        assert sent_message.message_pieces[0].prompt_metadata.get("response_format") == "json"
+
+    @pytest.mark.asyncio
+    async def test_generate_attack_prompt_parses_markdown_wrapped_json(
+        self,
+        mock_objective_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        basic_context: CoTHijackingAttackContext,
+    ):
+        """Markdown-fenced JSON from the adversarial model is stripped and parsed."""
+        attack, mock_normalizer = self._create_attack_with_normalizer(
+            mock_objective_target=mock_objective_target,
+            mock_adversarial_chat=mock_adversarial_chat,
+            mock_objective_scorer=mock_objective_scorer,
+        )
+        stream_state = StreamState(stream_id=0, puzzle_type="test")
+        mock_normalizer.send_prompt_async.return_value = Message.from_prompt(
+            prompt='```json\n{"prompt": "fenced jailbreak"}\n```',
+            role="assistant",
+        )
+
+        result = await attack._generate_attack_prompt_async(
+            context=basic_context,
+            stream_state=stream_state,
+            iteration=0,
+        )
+
+        assert result == "fenced jailbreak"
+
+    @pytest.mark.asyncio
+    async def test_generate_attack_prompt_falls_back_on_malformed_json(
+        self,
+        mock_objective_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        basic_context: CoTHijackingAttackContext,
+    ):
+        """Malformed adversarial output falls back to the rendered meta-prompt."""
+        attack, mock_normalizer = self._create_attack_with_normalizer(
+            mock_objective_target=mock_objective_target,
+            mock_adversarial_chat=mock_adversarial_chat,
+            mock_objective_scorer=mock_objective_scorer,
+        )
+        stream_state = StreamState(stream_id=0, puzzle_type="test")
+        expected_fallback = attack._render_meta_prompt(context=basic_context, puzzle_type="test")
+        mock_normalizer.send_prompt_async.return_value = Message.from_prompt(
+            prompt="this is not valid json {{{",
+            role="assistant",
+        )
+
+        result = await attack._generate_attack_prompt_async(
+            context=basic_context,
+            stream_state=stream_state,
+            iteration=0,
+        )
+
+        assert result == expected_fallback
+
+    @pytest.mark.asyncio
+    async def test_generate_attack_prompt_falls_back_when_prompt_key_missing(
+        self,
+        mock_objective_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        basic_context: CoTHijackingAttackContext,
+    ):
+        """Valid JSON without a prompt key falls back to the rendered meta-prompt."""
+        attack, mock_normalizer = self._create_attack_with_normalizer(
+            mock_objective_target=mock_objective_target,
+            mock_adversarial_chat=mock_adversarial_chat,
+            mock_objective_scorer=mock_objective_scorer,
+        )
+        stream_state = StreamState(stream_id=0, puzzle_type="test")
+        expected_fallback = attack._render_meta_prompt(context=basic_context, puzzle_type="test")
+        mock_normalizer.send_prompt_async.return_value = Message.from_prompt(
+            prompt='{"improvement": "make it harder", "puzzle_framework": "grid"}',
+            role="assistant",
+        )
+
+        result = await attack._generate_attack_prompt_async(
+            context=basic_context,
+            stream_state=stream_state,
+            iteration=0,
+        )
+
+        assert result == expected_fallback
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestScoring:
     """Tests for scoring behavior."""
-
-    @pytest.mark.asyncio
-    async def test_score_response_returns_none_when_no_scorer(
-        self,
-        mock_objective_target: MagicMock,
-        mock_adversarial_chat: MagicMock,
-        basic_context: CoTHijackingAttackContext,
-        sample_response: Message,
-    ):
-        """Test that _score_response_async returns None when no scorer configured."""
-        attack = CoTHijackingTestHelper.create_attack(
-            objective_target=mock_objective_target,
-            adversarial_chat=mock_adversarial_chat,
-        )
-
-        result = await attack._score_response_async(message=sample_response, context=basic_context)
-        assert result is None
 
     @pytest.mark.asyncio
     async def test_score_response_handles_scorer_exception(
