@@ -65,10 +65,9 @@ KNOWN_LAZY_VIOLATIONS: dict[str, dict[str, str]] = {
 # layers. These are slated to relocate; the ratchet forces them to shrink.
 KNOWN_COMMON_VIOLATIONS: dict[str, dict[str, str]] = {
     "pyrit.common.data_url_converter": {
-        "pyrit.memory.storage": "relocate",
+        "pyrit.memory": "relocate",
     },
     "pyrit.common.display_response": {
-        "pyrit.memory.storage": "relocate",
         "pyrit.memory": "relocate",
         "pyrit.models": "relocate",
     },

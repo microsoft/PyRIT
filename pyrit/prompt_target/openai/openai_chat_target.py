@@ -20,8 +20,7 @@ from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
 from pyrit.prompt_target.openai.openai_chat_audio_config import OpenAIChatAudioConfig
-from pyrit.prompt_target import (
-TargetCapabilities, TargetConfiguration, limit_requests_per_minute, validate_temperature, validate_top_p, OpenAIChatAudioConfig, OpenAITarget)
+from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 logger = logging.getLogger(__name__)
 
