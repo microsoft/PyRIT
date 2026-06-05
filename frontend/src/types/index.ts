@@ -75,6 +75,8 @@ export interface TargetInstance {
   max_requests_per_minute?: number | null
   capabilities?: TargetCapabilitiesInfo | null
   target_specific_params?: Record<string, unknown> | null
+  /** Inner targets for composite targets like RoundRobinTarget. */
+  inner_targets?: TargetInstance[] | null
 }
 
 export interface TargetListResponse {

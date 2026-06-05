@@ -66,6 +66,11 @@ class TargetInstance(BaseModel):
     max_requests_per_minute: Optional[int] = Field(None, description="Maximum requests per minute")
     capabilities: TargetCapabilitiesInfo = Field(..., description="Structured snapshot of target capabilities")
     target_specific_params: Optional[dict[str, Any]] = Field(None, description="Additional target-specific parameters")
+    inner_targets: Optional[list["TargetInstance"]] = Field(
+        None,
+        description="Inner targets for composite targets like RoundRobinTarget. "
+        "Each entry is a full TargetInstance so the frontend can display their details.",
+    )
 
 
 class TargetListResponse(BaseModel):

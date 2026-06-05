@@ -782,4 +782,64 @@ describe("CreateTargetDialog", () => {
 
     expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
   });
+
+  it("should show target picker when RoundRobinTarget is selected", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog
+          {...defaultProps}
+          existingTargets={[
+            {
+              target_registry_name: "openai_a",
+              target_type: "OpenAIChatTarget",
+              model_name: "gpt-4o",
+              endpoint: "https://a.openai.azure.com",
+            },
+            {
+              target_registry_name: "openai_b",
+              target_type: "OpenAIChatTarget",
+              model_name: "gpt-4o",
+              endpoint: "https://b.openai.azure.com",
+            },
+          ]}
+        />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "RoundRobinTarget");
+
+    // Endpoint field should NOT be visible for RoundRobin
+    expect(
+      screen.queryByPlaceholderText("https://your-resource.openai.azure.com/")
+    ).not.toBeInTheDocument();
+
+    // Add Target dropdown should be visible
+    expect(screen.getByText("Add Target")).toBeInTheDocument();
+  });
+
+  it("should disable Create button when fewer than 2 inner targets are selected for RoundRobin", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog
+          {...defaultProps}
+          existingTargets={[
+            {
+              target_registry_name: "openai_a",
+              target_type: "OpenAIChatTarget",
+              model_name: "gpt-4o",
+            },
+          ]}
+        />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "RoundRobinTarget");
+
+    const createButton = screen.getByText("Create Target").closest("button");
+    expect(createButton).toBeDisabled();
+  });
 });

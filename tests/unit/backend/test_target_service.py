@@ -598,6 +598,82 @@ class TestCreateTargetApiKeyAuth:
         assert result.target_type == "TextTarget"
 
 
+class TestCreateRoundRobinTarget:
+    """Tests for creating RoundRobinTarget via the service."""
+
+    async def test_create_round_robin_target_resolves_registry_names(self, sqlite_instance) -> None:
+        """RoundRobinTarget creation resolves registry names to live target objects."""
+        service = TargetService()
+
+        # Register two mock targets in the registry to serve as inner targets.
+        # We mock the RoundRobinTarget constructor because it does deep validation
+        # (same class, multi-turn, editable history) that requires real compatible
+        # targets. The service's job is to resolve registry names and pass them
+        # through — the constructor validation is tested in RoundRobinTarget's own tests.
+        mock_a = MagicMock()
+        mock_a.get_identifier.return_value = _mock_target_identifier(
+            class_name="OpenAIChatTarget", endpoint="https://a.openai.azure.com", model_name="gpt-4o"
+        )
+        mock_b = MagicMock()
+        mock_b.get_identifier.return_value = _mock_target_identifier(
+            class_name="OpenAIChatTarget", endpoint="https://b.openai.azure.com", model_name="gpt-4o"
+        )
+        service._registry.register_instance(mock_a, name="target-a")
+        service._registry.register_instance(mock_b, name="target-b")
+
+        # Patch RoundRobinTarget so the constructor returns a mock that behaves
+        # like a registered target (has get_identifier, capabilities, etc.)
+        mock_rr = MagicMock()
+        mock_rr.get_identifier.return_value = ComponentIdentifier(
+            class_name="RoundRobinTarget",
+            class_module="pyrit.prompt_target.round_robin_target",
+            params={"weights": [2, 1]},
+        )
+        mock_rr._targets = [mock_a, mock_b]
+
+        with patch(
+            "pyrit.backend.services.target_service.RoundRobinTarget",
+            return_value=mock_rr,
+        ) as mock_rr_cls:
+            rr_request = CreateTargetRequest(
+                type="RoundRobinTarget",
+                params={
+                    "target_registry_names": ["target-a", "target-b"],
+                    "weights": [2, 1],
+                },
+            )
+
+            result = await service.create_target_async(request=rr_request)
+
+            # Verify the constructor was called with the resolved targets and weights
+            mock_rr_cls.assert_called_once_with(targets=[mock_a, mock_b], weights=[2, 1])
+            assert result.target_type == "RoundRobinTarget"
+
+    async def test_create_round_robin_target_fewer_than_2_raises(self, sqlite_instance) -> None:
+        """RoundRobinTarget with fewer than 2 registry names raises ValueError."""
+        service = TargetService()
+
+        rr_request = CreateTargetRequest(
+            type="RoundRobinTarget",
+            params={"target_registry_names": ["only-one"]},
+        )
+
+        with pytest.raises(ValueError, match="at least 2"):
+            await service.create_target_async(request=rr_request)
+
+    async def test_create_round_robin_target_unknown_name_raises(self, sqlite_instance) -> None:
+        """RoundRobinTarget with a non-existent registry name raises ValueError."""
+        service = TargetService()
+
+        rr_request = CreateTargetRequest(
+            type="RoundRobinTarget",
+            params={"target_registry_names": ["does-not-exist-a", "does-not-exist-b"]},
+        )
+
+        with pytest.raises(ValueError, match="not found"):
+            await service.create_target_async(request=rr_request)
+
+
 class TestTargetServiceSingleton:
     """Tests for get_target_service singleton function."""
 
@@ -615,3 +691,29 @@ class TestTargetServiceSingleton:
         service1 = get_target_service()
         service2 = get_target_service()
         assert service1 is service2
+
+
+class TestFrontendBackendCompatibilitySync:
+    """Guard against drift between frontend isCompatible() and backend TARGET_EVAL_PARAMS.
+
+    The frontend pre-filters the Create RoundRobinTarget dropdown using a hardcoded
+    set of fields (target_type + TARGET_EVAL_PARAMS). If the backend adds a new
+    behavioral param, this test fails and reminds the developer to update
+    frontend/src/components/Config/CreateTargetDialog.tsx → isCompatible().
+    """
+
+    def test_target_eval_params_match_frontend_iscompatible(self) -> None:
+        """TARGET_EVAL_PARAMS must be exactly {underlying_model_name, temperature, top_p}.
+
+        If this fails, someone added or removed a param from TARGET_EVAL_PARAMS.
+        Update the frontend isCompatible() function in CreateTargetDialog.tsx
+        to check the same fields, then update the expected set here.
+        """
+        from pyrit.models import TARGET_EVAL_PARAMS
+
+        expected = {"underlying_model_name", "temperature", "top_p"}
+        assert expected == TARGET_EVAL_PARAMS, (
+            f"TARGET_EVAL_PARAMS changed to {TARGET_EVAL_PARAMS}. "
+            f"Update the frontend isCompatible() in CreateTargetDialog.tsx to match, "
+            f"then update this test's expected set."
+        )

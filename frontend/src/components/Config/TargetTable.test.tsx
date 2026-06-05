@@ -344,4 +344,57 @@ describe('TargetTable', () => {
 
     expect(screen.queryByText('Filter by type:')).not.toBeInTheDocument()
   })
+
+  it('should show expand button for RoundRobinTarget with inner targets', () => {
+    const rrTarget: TargetInstance = {
+      target_registry_name: 'rr_gpt4o',
+      target_type: 'RoundRobinTarget',
+      model_name: 'gpt-4o',
+      target_specific_params: { weights: [1, 1] },
+      inner_targets: [
+        {
+          target_registry_name: 'inner_a',
+          target_type: 'OpenAIChatTarget',
+          endpoint: 'https://a.openai.azure.com',
+          model_name: 'gpt-4o',
+        },
+        {
+          target_registry_name: 'inner_b',
+          target_type: 'OpenAIChatTarget',
+          endpoint: 'https://b.openai.azure.com',
+          model_name: 'gpt-4o',
+        },
+      ],
+    }
+
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[rrTarget]} />
+      </TestWrapper>
+    )
+
+    // Expand button should be present
+    const expandButton = screen.getByLabelText('Expand inner targets')
+    expect(expandButton).toBeInTheDocument()
+
+    // Inner targets are not visible before expanding
+    expect(screen.queryByText('https://a.openai.azure.com')).not.toBeInTheDocument()
+
+    // Click to expand
+    fireEvent.click(expandButton)
+
+    // Inner targets should now be visible
+    expect(screen.getByText('https://a.openai.azure.com')).toBeInTheDocument()
+    expect(screen.getByText('https://b.openai.azure.com')).toBeInTheDocument()
+  })
+
+  it('should not show expand button for regular targets', () => {
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[sampleTargets[0]]} />
+      </TestWrapper>
+    )
+
+    expect(screen.queryByLabelText('Expand inner targets')).not.toBeInTheDocument()
+  })
 })

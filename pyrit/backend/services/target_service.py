@@ -30,6 +30,7 @@ from pyrit.backend.models.targets import (
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.azure_ml_chat_target import AzureMLChatTarget
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
+from pyrit.prompt_target.round_robin_target import RoundRobinTarget
 from pyrit.registry.object_registries import TargetRegistry
 
 logger = logging.getLogger(__name__)
@@ -259,23 +260,65 @@ class TargetService:
                 - Entra ID auth is requested but the target type does not support it;
                 - Entra ID auth is requested for an OpenAI target or AzureMLChatTarget
                     but the endpoint is not valid (not managed by correct hosts);
-                - If auth_mode='api_key' is set for a target but no key is supplied
+                - If auth_mode='api_key' is set for a target but no key is supplied;
+                - For RoundRobinTarget: if target_registry_names are missing, any name
+                    is not found, or inner targets fail compatibility checks.
         """
         target_class = self._get_target_class(target_type=request.type)
 
-        # Copy params so we can modify values (eg api_key) without changing request.params.
-        params: dict[str, Any] = dict(request.params)
-
-        if request.auth_mode == "entra":
-            params = self._apply_entra_auth(target_class=target_class, target_type=request.type, params=params)
+        # RoundRobinTarget needs special handling: the user passes registry names
+        # of existing targets, and we resolve them to live objects.
+        if request.type == "RoundRobinTarget":
+            target_obj = self._create_round_robin_target(params=dict(request.params))
         else:
-            self._validate_api_key_auth(target_class=target_class, params=params)
+            # Copy params so we can modify values (eg api_key) without changing request.params.
+            params: dict[str, Any] = dict(request.params)
 
-        target_obj = target_class(**params)
+            if request.auth_mode == "entra":
+                params = self._apply_entra_auth(target_class=target_class, target_type=request.type, params=params)
+            else:
+                self._validate_api_key_auth(target_class=target_class, params=params)
+
+            target_obj = target_class(**params)
+
         self._registry.register_instance(target_obj)
 
         target_registry_name = target_obj.get_identifier().unique_name
         return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
+
+    def _create_round_robin_target(self, *, params: dict[str, Any]) -> RoundRobinTarget:
+        """
+        Resolve registry names to target objects and create a RoundRobinTarget.
+
+        The RoundRobinTarget constructor validates all compatibility requirements
+        (same class, same configuration, same behavioral params, ≥2 targets).
+
+        Args:
+            params: Must contain ``target_registry_names`` (list of registry name
+                strings). May contain ``weights`` (list of positive ints).
+
+        Returns:
+            A new RoundRobinTarget wrapping the resolved targets.
+
+        Raises:
+            ValueError: If names are missing, a name is not found in the registry,
+                or the RoundRobinTarget constructor rejects the combination.
+        """
+        registry_names: list[str] = params.get("target_registry_names", [])
+        if not registry_names or len(registry_names) < 2:
+            raise ValueError("RoundRobinTarget requires at least 2 target_registry_names in params.")
+
+        resolved_targets: list[PromptTarget] = []
+        for name in registry_names:
+            target_obj = self._registry.get_instance_by_name(name)
+            if target_obj is None:
+                raise ValueError(f"Target '{name}' not found in the registry.")
+            resolved_targets.append(target_obj)
+
+        weights: list[int] | None = params.get("weights") or None
+
+        # The constructor validates same-class, same-config, behavioral consistency, etc.
+        return RoundRobinTarget(targets=resolved_targets, weights=weights)
 
     @staticmethod
     def _apply_entra_auth(*, target_class: type, target_type: str, params: dict[str, Any]) -> dict[str, Any]:
