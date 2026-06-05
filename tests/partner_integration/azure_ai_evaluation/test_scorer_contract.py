@@ -48,7 +48,7 @@ class TestScorerUtilities:
 
     def test_scorer_identifier_importable(self):
         """RAIServiceScorer uses ScorerEvaluationIdentifier for identity tracking."""
-        from pyrit.identifiers import ScorerEvaluationIdentifier
+        from pyrit.models.identifiers import ScorerEvaluationIdentifier
 
         assert ScorerEvaluationIdentifier is not None
 
