@@ -37,6 +37,7 @@
 # JailbreakV-28K [@luo2024jailbreakv],
 # LLM-LAT [@sheshadri2024lat],
 # MedSafetyBench [@han2024medsafetybench],
+# MM-SafetyBench [@liu2024mmsafetybench],
 # Moral Integrity Corpus [@ziems2022mic],
 # MOSSBench [@li2024mossbench],
 # Multilingual Alignment Prism [@aakanksha2024multilingual],
