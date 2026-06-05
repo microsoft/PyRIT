@@ -163,9 +163,9 @@ import uuid
 # Create a simple test image matching the video resolution (1280x720)
 from PIL import Image
 
-from pyrit.common.path import HOME_PATH
+from pyrit.common.path import DATASETS_PATH
 
-sample_image = HOME_PATH / "assets" / "pyrit_architecture.png"
+sample_image = DATASETS_PATH / "seed_datasets" / "local" / "examples" / "multimodal_data" / "pyrit_architecture.png"
 resized = Image.open(sample_image).resize((1280, 720)).convert("RGB")
 
 import tempfile
