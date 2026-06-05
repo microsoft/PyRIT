@@ -43,9 +43,15 @@ class SeedDatasetProvider(ABC):
 
         This is called when a class inherits from SeedDatasetProvider. A
         deprecation warning is emitted for subclasses that still override the
-        legacy ``fetch_dataset`` instead of ``fetch_dataset_async``.
+        legacy ``fetch_dataset`` instead of ``fetch_dataset_async``. The
+        keyword-only ``__init__`` contract is also enforced via
+        ``enforce_keyword_only_init``.
         """
         super().__init_subclass__(**kwargs)
+        # Local import to avoid a circular dependency at package init time.
+        from pyrit.common.brick_contract import enforce_keyword_only_init
+
+        enforce_keyword_only_init(cls, base_name="SeedDatasetProvider")
         if not inspect.isabstract(cls) and (
             cls.fetch_dataset is not SeedDatasetProvider.fetch_dataset
             and cls.fetch_dataset_async is SeedDatasetProvider.fetch_dataset_async

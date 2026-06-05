@@ -8,11 +8,12 @@ from enum import Enum
 from typing import Any, Optional
 
 import requests
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
         self.source = "https://promptintel.novahunting.ai"
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "promptintel"
@@ -293,11 +295,13 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
             harm_categories=harm_categories,
             description=impact_description if impact_description else None,
             authors=authors,
+            groups=["Cisco Talos Intelligence"],
             source=source_url,
             date_added=date_added,
             metadata=metadata,
         )
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch prompts from the PromptIntel API and return as a SeedDataset.
@@ -315,7 +319,7 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
 
         records = self._fetch_all_prompts()
 
-        all_seeds = []
+        all_seeds: list[SeedUnion] = []
         for record in records:
             seed = self._convert_record_to_seed_prompt(record)
             if seed:

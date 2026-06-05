@@ -14,7 +14,7 @@ from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse, _build_r
 from pyrit.scenario.scenarios.airt.scam import Scam, ScamStrategy
 
 if TYPE_CHECKING:
-    from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse as ContentHarms  # noqa: F401
+    from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse as ContentHarms
 
     ContentHarmsStrategy = Any
 

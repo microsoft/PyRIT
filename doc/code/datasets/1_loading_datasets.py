@@ -55,7 +55,7 @@
 # VLSU [@palaskar2025vlsu],
 # VLGuard [@zong2024vlguard],
 # XSTest [@rottger2023xstest],
-# AILuminate [@vidgen2024ailuminate],
+# AILuminate [@ghosh2025ailuminate],
 # Transphobia Awareness [@scheuerman2025transphobia],
 # Red Team Social Bias [@vantaylor2024socialbias],
 # and PromptIntel [@roccia2024promptintel].

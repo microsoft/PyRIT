@@ -34,7 +34,7 @@ import pyrit.common
 import pyrit.models
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable  # noqa: F401
+    from collections.abc import Iterable
 
 MODELS_PACKAGE = Path(pyrit.models.__file__).parent
 COMMON_PACKAGE = Path(pyrit.common.__file__).parent

@@ -88,6 +88,7 @@ from pyrit.models.seeds import (
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
+    SeedUnion,
     SimulatedTargetSystemPromptPaths,
 )
 
@@ -162,6 +163,7 @@ __all__ = [
     "SeedGroup",
     "SeedSimulatedConversation",
     "SeedType",
+    "SeedUnion",
     "SimulatedTargetSystemPromptPaths",
     "snake_case_to_class_name",
     "sort_message_pieces",

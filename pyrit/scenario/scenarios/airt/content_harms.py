@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from pyrit.common.deprecation import print_deprecation_message
 
 if TYPE_CHECKING:
-    from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse as ContentHarms  # noqa: F401
+    from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse as ContentHarms
 
     ContentHarmsStrategy = Any
 

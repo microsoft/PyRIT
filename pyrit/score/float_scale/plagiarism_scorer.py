@@ -33,6 +33,15 @@ class PlagiarismScorer(FloatScaleScorer):
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
 
+    # Grandfathered: ``reference_text`` is part of the public positional API
+    # at the time the keyword-only Scorer contract was introduced. Opting
+    # into the legacy grace period emits a ``DeprecationWarning`` on import
+    # instead of raising ``TypeError`` so existing user code keeps working
+    # for one release cycle. TODO: drop this opt-out and insert ``*,``
+    # after ``self`` in 0.16.0 (this will be a BREAKING CHANGE for callers
+    # that still pass parameters positionally).
+    _brick_legacy_init = True
+
     def __init__(
         self,
         reference_text: str,

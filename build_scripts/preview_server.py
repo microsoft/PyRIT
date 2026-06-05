@@ -35,7 +35,7 @@ from pathlib import Path
 
 
 class GitHubPagesHandler(http.server.SimpleHTTPRequestHandler):
-    def send_head(self):  # noqa: D401, N802 - inherited interface
+    def send_head(self):  # inherited interface
         path = self.translate_path(self.path)
         # Default behavior: try the path as-is (file or dir-with-index).
         if os.path.isdir(path):

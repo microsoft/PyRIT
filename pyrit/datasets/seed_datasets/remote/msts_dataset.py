@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+from typing_extensions import override
+
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -17,6 +19,8 @@ from pyrit.models import SeedDataset, SeedPrompt
 
 if TYPE_CHECKING:
     from PIL.Image import Image as PILImage
+
+    from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -48,46 +52,6 @@ _PIL_FORMAT_TO_EXTENSION: dict[str, str] = {
     "WEBP": "webp",
 }
 
-_AUTHORS: list[str] = [
-    "Paul Röttger",
-    "Giuseppe Attanasio",
-    "Felix Friedrich",
-    "Janis Goldzycher",
-    "Alicia Parrish",
-    "Rishabh Bhardwaj",
-    "Chiara Di Bonaventura",
-    "Roman Eng",
-    "Gaia El Khoury Geagea",
-    "Sujata Goswami",
-    "Jieun Han",
-    "Dirk Hovy",
-    "Seogyeong Jeong",
-    "Paloma Jeretič",
-    "Flor Miriam Plaza-del-Arco",
-    "Donya Rooein",
-    "Patrick Schramowski",
-    "Anastassia Shaitarova",
-    "Xudong Shen",
-    "Richard Willats",
-    "Andrea Zugarini",
-    "Bertie Vidgen",
-]
-
-_GROUPS: list[str] = [
-    "Bocconi University",
-    "Instituto de Telecomunicações",
-    "TU Darmstadt / hessian.AI",
-    "University of Zurich",
-    "Google DeepMind",
-    "Walled AI",
-    "King's College London",
-    "Sapienza University of Rome",
-    "KAIST",
-    "Aalto University",
-    "expert.ai",
-    "MLCommons",
-]
-
 
 class _MSTSDataset(_RemoteDatasetLoader):
     """
@@ -117,6 +81,46 @@ class _MSTSDataset(_RemoteDatasetLoader):
     Reference: https://huggingface.co/datasets/felfri/MSTS
     Paper: [@rottger2025msts]
     """
+
+    _AUTHORS: list[str] = [
+        "Paul Röttger",
+        "Giuseppe Attanasio",
+        "Felix Friedrich",
+        "Janis Goldzycher",
+        "Alicia Parrish",
+        "Rishabh Bhardwaj",
+        "Chiara Di Bonaventura",
+        "Roman Eng",
+        "Gaia El Khoury Geagea",
+        "Sujata Goswami",
+        "Jieun Han",
+        "Dirk Hovy",
+        "Seogyeong Jeong",
+        "Paloma Jeretič",
+        "Flor Miriam Plaza-del-Arco",
+        "Donya Rooein",
+        "Patrick Schramowski",
+        "Anastassia Shaitarova",
+        "Xudong Shen",
+        "Richard Willats",
+        "Andrea Zugarini",
+        "Bertie Vidgen",
+    ]
+
+    _GROUPS: list[str] = [
+        "Bocconi University",
+        "Instituto de Telecomunicações",
+        "TU Darmstadt / hessian.AI",
+        "University of Zurich",
+        "Google DeepMind",
+        "Walled AI",
+        "King's College London",
+        "Sapienza University of Rome",
+        "KAIST",
+        "Aalto University",
+        "expert.ai",
+        "MLCommons",
+    ]
 
     # Metadata
     harm_categories: list[str] = [
@@ -157,10 +161,12 @@ class _MSTSDataset(_RemoteDatasetLoader):
         self.source = f"https://huggingface.co/datasets/{_HF_REPO_ID}"
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "msts"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch MSTS examples and return as a SeedDataset.
@@ -177,7 +183,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading MSTS dataset (languages={self.languages}, text_modifiers={self.text_modifiers})")
 
-        prompts: list[SeedPrompt] = []
+        prompts: list[SeedUnion] = []
         failed_image_count = 0
 
         for language in self.languages:
@@ -277,7 +283,7 @@ class _MSTSDataset(_RemoteDatasetLoader):
 
         return list(text_modifiers)
 
-    async def _build_prompt_pair_async(self, *, row: dict[str, Any], language: str) -> list[SeedPrompt]:
+    async def _build_prompt_pair_async(self, *, row: dict[str, Any], language: str) -> list["SeedUnion"]:
         """
         Build an image+text SeedPrompt pair for a single MSTS row.
 
@@ -336,8 +342,8 @@ class _MSTSDataset(_RemoteDatasetLoader):
                 "Image component of an MSTS multimodal safety test prompt. "
                 "The unsafe meaning emerges only from the combination of image and text."
             ),
-            authors=_AUTHORS,
-            groups=_GROUPS,
+            authors=self._AUTHORS,
+            groups=self._GROUPS,
             source=self.source,
             prompt_group_id=group_id,
             sequence=0,
@@ -354,8 +360,8 @@ class _MSTSDataset(_RemoteDatasetLoader):
                 "Text component of an MSTS multimodal safety test prompt. "
                 "The unsafe meaning emerges only from the combination of image and text."
             ),
-            authors=_AUTHORS,
-            groups=_GROUPS,
+            authors=self._AUTHORS,
+            groups=self._GROUPS,
             source=self.source,
             prompt_group_id=group_id,
             sequence=0,

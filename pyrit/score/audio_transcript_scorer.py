@@ -89,7 +89,7 @@ def _audio_to_wav(input_path: str, *, sample_rate: int, channels: int) -> str:
     return output_path
 
 
-class AudioTranscriptHelper:  # noqa: B024
+class AudioTranscriptHelper:
     """
     Abstract base class for audio scorers that process audio by transcribing and scoring the text.
 

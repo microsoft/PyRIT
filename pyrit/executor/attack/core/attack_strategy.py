@@ -348,11 +348,28 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     """
     Abstract base class for attack strategies.
     Defines the interface for executing attacks and handling results.
+
+    Subclasses must use the keyword-only constructor shape
+    (``def __init__(self, *, ...)``); the contract is enforced at class
+    definition time via ``enforce_keyword_only_init``. See
+    ``.github/instructions/attacks.instructions.md`` for the full contract.
     """
 
     #: Capability requirements placed on ``objective_target``. Subclasses
     #: override to declare what the attack needs. Validated in ``__init__``.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Enforce the keyword-only constructor contract on subclasses.
+
+        See ``.github/instructions/attacks.instructions.md`` for the contract.
+        """
+        super().__init_subclass__(**kwargs)
+        # Local import to avoid a circular dependency at package init time.
+        from pyrit.common.brick_contract import enforce_keyword_only_init
+
+        enforce_keyword_only_init(cls, base_name="AttackStrategy")
 
     def __init__(
         self,

@@ -11,7 +11,7 @@ These re-exports will be removed in 0.16.0.
 from pyrit.common.deprecation import print_deprecation_message
 
 
-def __getattr__(name: str) -> type:  # noqa: N807
+def __getattr__(name: str) -> type:
     if name == "ConsoleScenarioResultPrinter":
         from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 

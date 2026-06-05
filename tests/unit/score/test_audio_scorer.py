@@ -21,7 +21,7 @@ from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 class MockTextTrueFalseScorer(TrueFalseScorer):
     """Mock TrueFalseScorer for testing audio transcription scoring"""
 
-    def __init__(self, return_value: bool = True):
+    def __init__(self, *, return_value: bool = True):
         self.return_value = return_value
         validator = ScorerPromptValidator(supported_data_types=["text"])
         super().__init__(validator=validator)
@@ -48,7 +48,7 @@ class MockTextTrueFalseScorer(TrueFalseScorer):
 class MockTextFloatScaleScorer(FloatScaleScorer):
     """Mock FloatScaleScorer for testing audio transcription scoring"""
 
-    def __init__(self, return_value: float = 0.8):
+    def __init__(self, *, return_value: float = 0.8):
         self.return_value = return_value
         validator = ScorerPromptValidator(supported_data_types=["text"])
         super().__init__(validator=validator)
