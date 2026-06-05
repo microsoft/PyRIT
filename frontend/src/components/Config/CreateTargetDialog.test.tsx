@@ -346,7 +346,7 @@ describe("CreateTargetDialog", () => {
     });
   });
 
-  it("should show generic error for non-Error exceptions", async () => {
+  it("should surface string throws verbatim via toApiError", async () => {
     const user = userEvent.setup();
     mockedTargetsApi.createTarget.mockRejectedValue("string error");
 
@@ -366,7 +366,7 @@ describe("CreateTargetDialog", () => {
     await user.click(screen.getByText("Create Target"));
 
     await waitFor(() => {
-      expect(screen.getByText("Failed to create target")).toBeInTheDocument();
+      expect(screen.getByText("string error")).toBeInTheDocument();
     });
   });
 
@@ -841,5 +841,161 @@ describe("CreateTargetDialog", () => {
 
     const createButton = screen.getByText("Create Target").closest("button");
     expect(createButton).toBeDisabled();
+  });
+
+  it("filters duplicate-by-identifier-hash targets out of the picker once one is selected", async () => {
+    const user = userEvent.setup();
+
+    // openai_a and openai_a_alias share an identifier_hash — they resolve to the
+    // same backend config, so once one is picked the other should disappear from
+    // the dropdown. openai_b has a different hash and stays.
+    render(
+      <TestWrapper>
+        <CreateTargetDialog
+          {...defaultProps}
+          existingTargets={[
+            {
+              target_registry_name: "openai_a",
+              target_type: "OpenAIChatTarget",
+              model_name: "gpt-4o",
+              underlying_model_name: "gpt-4o",
+              identifier_hash: "hash-a",
+            },
+            {
+              target_registry_name: "openai_a_alias",
+              target_type: "OpenAIChatTarget",
+              model_name: "gpt-4o",
+              underlying_model_name: "gpt-4o",
+              identifier_hash: "hash-a",
+            },
+            {
+              target_registry_name: "openai_b",
+              target_type: "OpenAIChatTarget",
+              model_name: "gpt-4o",
+              underlying_model_name: "gpt-4o",
+              identifier_hash: "hash-b",
+            },
+          ]}
+        />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "RoundRobinTarget");
+
+    // Before selecting anything: all three are eligible.
+    const select = screen.getByText("Select a target to add...").closest("select")!;
+    expect(select.querySelector('option[value="openai_a"]')).not.toBeNull();
+    expect(select.querySelector('option[value="openai_a_alias"]')).not.toBeNull();
+    expect(select.querySelector('option[value="openai_b"]')).not.toBeNull();
+
+    // Pick openai_a.
+    await user.selectOptions(select, "openai_a");
+
+    // openai_a_alias (same hash) should now be filtered out, openai_b stays.
+    expect(select.querySelector('option[value="openai_a_alias"]')).toBeNull();
+    expect(select.querySelector('option[value="openai_b"]')).not.toBeNull();
+  });
+
+  it("applies underlying_model_name → model_name fallback when filtering compatible targets", async () => {
+    const user = userEvent.setup();
+
+    // foundry_a has no underlying_model_name but model_name='DeepSeek-R1' — the
+    // backend treats its effective underlying model as 'DeepSeek-R1' via the
+    // TARGET_EVAL_PARAM_FALLBACKS fallback. foundry_b also lacks underlying_model_name
+    // but has model_name='Gemini', which is a different effective underlying model.
+    // foundry_c is a true match: same effective underlying model as foundry_a.
+    render(
+      <TestWrapper>
+        <CreateTargetDialog
+          {...defaultProps}
+          existingTargets={[
+            {
+              target_registry_name: "foundry_a",
+              target_type: "OpenAIChatTarget",
+              model_name: "DeepSeek-R1",
+              identifier_hash: "hash-a",
+            },
+            {
+              target_registry_name: "foundry_b",
+              target_type: "OpenAIChatTarget",
+              model_name: "Gemini",
+              identifier_hash: "hash-b",
+            },
+            {
+              target_registry_name: "foundry_c",
+              target_type: "OpenAIChatTarget",
+              model_name: "DeepSeek-R1",
+              identifier_hash: "hash-c",
+            },
+          ]}
+        />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "RoundRobinTarget");
+    const select = screen.getByText("Select a target to add...").closest("select")!;
+    await user.selectOptions(select, "foundry_a");
+
+    // foundry_b's effective underlying model ('Gemini') differs from foundry_a's
+    // ('DeepSeek-R1') once the model_name fallback is applied, so it must be
+    // filtered out — the backend would reject the pair with HTTP 400.
+    expect(select.querySelector('option[value="foundry_b"]')).toBeNull();
+    // foundry_c shares the effective underlying model and stays eligible.
+    expect(select.querySelector('option[value="foundry_c"]')).not.toBeNull();
+  });
+
+  it("surfaces the backend error detail when target creation fails", async () => {
+    const user = userEvent.setup();
+
+    // Simulate an axios error with an RFC 7807 detail body — this is what the
+    // backend returns when, for example, RoundRobinTarget rejects an incompatible
+    // pair the frontend filter missed.
+    const axiosError = Object.assign(new Error("Request failed with status code 400"), {
+      isAxiosError: true,
+      response: {
+        status: 400,
+        data: {
+          detail:
+            "Behavioral parameter 'underlying_model_name' differs across targets: target 0 has 'DeepSeek-R1', target 1 has 'gemini-2.0-flash'.",
+        },
+      },
+    });
+    mockedTargetsApi.createTarget.mockRejectedValueOnce(axiosError);
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog
+          {...defaultProps}
+          existingTargets={[
+            {
+              target_registry_name: "a",
+              target_type: "OpenAIChatTarget",
+              model_name: "gpt-4o",
+              identifier_hash: "hash-a",
+            },
+            {
+              target_registry_name: "b",
+              target_type: "OpenAIChatTarget",
+              model_name: "gpt-4o",
+              identifier_hash: "hash-b",
+            },
+          ]}
+        />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "RoundRobinTarget");
+    const select = screen.getByText("Select a target to add...").closest("select")!;
+    await user.selectOptions(select, "a");
+    await user.selectOptions(select, "b");
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      // The backend's detail (the actual validation message) should be shown to
+      // the user, not the generic "Request failed with status code 400".
+      expect(screen.getByText(/Behavioral parameter/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Request failed with status code 400/)).not.toBeInTheDocument();
   });
 });

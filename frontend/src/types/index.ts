@@ -77,6 +77,9 @@ export interface TargetInstance {
   target_specific_params?: Record<string, unknown> | null
   /** Inner targets for composite targets like RoundRobinTarget. */
   inner_targets?: TargetInstance[] | null
+  /** ComponentIdentifier content hash. Targets with the same hash resolve to the
+   *  same backend configuration and are treated as duplicates for RoundRobinTarget grouping. */
+  identifier_hash?: string | null
 }
 
 export interface TargetListResponse {

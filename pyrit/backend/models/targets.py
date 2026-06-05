@@ -71,6 +71,12 @@ class TargetInstance(BaseModel):
         description="Inner targets for composite targets like RoundRobinTarget. "
         "Each entry is a full TargetInstance so the frontend can display their details.",
     )
+    identifier_hash: Optional[str] = Field(
+        None,
+        description="ComponentIdentifier content hash. Two targets with the same hash resolve "
+        "to the same underlying configuration (same endpoint, model, api_version, key, etc.) "
+        "and are treated as duplicates for RoundRobinTarget grouping.",
+    )
 
 
 class TargetListResponse(BaseModel):

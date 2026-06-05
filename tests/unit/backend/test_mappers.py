@@ -1129,6 +1129,11 @@ class TestTargetObjectToInstance:
         assert result.endpoint == "http://test"
         assert result.model_name == "gpt-4"
         assert result.temperature == 0.7
+        # identifier_hash is auto-populated by the ComponentIdentifier validator and
+        # surfaced on the DTO so the frontend can dedupe targets that resolve to the
+        # same underlying configuration.
+        assert result.identifier_hash is not None
+        assert result.identifier_hash == mock_identifier.hash
 
     def test_no_endpoint_returns_none(self) -> None:
         """Test that missing endpoint returns None."""

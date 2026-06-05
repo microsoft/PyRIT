@@ -105,6 +105,7 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         capabilities=_target_capabilities_to_info(target_obj.capabilities),
         target_specific_params=combined_specific,
         inner_targets=inner_targets,
+        identifier_hash=identifier.hash,
     )
 
 

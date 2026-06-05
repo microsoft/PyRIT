@@ -21,6 +21,7 @@ import {
 } from '@fluentui/react-components'
 import { DeleteRegular } from '@fluentui/react-icons'
 import { targetsApi } from '@/services/api'
+import { toApiError } from '@/services/errors'
 import type { TargetInstance } from '@/types'
 import { useCreateTargetDialogStyles } from './CreateTargetDialog.styles'
 
@@ -91,20 +92,38 @@ interface SelectedInnerTarget {
 }
 
 /**
+ * Resolve the effective underlying model for compatibility checks.
+ *
+ * Mirrors the backend's TARGET_EVAL_PARAM_FALLBACKS rule: when
+ * underlying_model_name is empty (null, undefined, or empty string), fall back
+ * to model_name. Without this fallback, two targets with the same model_name
+ * but no underlying_model_name would compare as compatible on the frontend
+ * even though they resolve to different actual models on the backend (or vice
+ * versa), so the user would only see the failure as an opaque HTTP 400.
+ *
+ * Keep in sync with TARGET_EVAL_PARAM_FALLBACKS in
+ * pyrit/models/identifiers/evaluation_identifier.py — the
+ * TestFrontendBackendCompatibilitySync test guards against drift.
+ */
+function effectiveUnderlyingModel(t: TargetInstance): string | null {
+  return t.underlying_model_name || t.model_name || null
+}
+
+/**
  * Check if two targets are compatible for grouping in a RoundRobinTarget.
  *
  * Must match the behavioral params that RoundRobinTarget validates on the backend:
- * same target_type + TARGET_EVAL_PARAMS (underlying_model_name, temperature, top_p).
+ * same target_type + TARGET_EVAL_PARAMS (underlying_model_name, temperature, top_p),
+ * with the underlying_model_name → model_name fallback from TARGET_EVAL_PARAM_FALLBACKS.
  *
- * NOTE: model_name is intentionally NOT checked — inner targets can have different
- * deployment names as long
- * as the underlying model is the same. Keep this in sync with
- * RoundRobinTarget._validate_behavioral_consistency and TARGET_EVAL_PARAMS.
+ * NOTE: model_name itself is intentionally NOT compared directly — inner targets can
+ * have different deployment names as long as the underlying model is the same.
+ * Keep this in sync with RoundRobinTarget._validate_behavioral_consistency.
  */
 function isCompatible(a: TargetInstance, b: TargetInstance): boolean {
   return (
     a.target_type === b.target_type &&
-    (a.underlying_model_name ?? null) === (b.underlying_model_name ?? null) &&
+    effectiveUnderlyingModel(a) === effectiveUnderlyingModel(b) &&
     (a.temperature ?? null) === (b.temperature ?? null) &&
     (a.top_p ?? null) === (b.top_p ?? null)
   )
@@ -170,13 +189,23 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   }, [open, isRoundRobin, existingTargets])
 
   // Compute which targets are eligible to be added next, based on compatibility
-  // with the first selected target. We also exclude RoundRobinTargets (no nesting)
-  // and already-selected targets (no duplicates).
+  // with the first selected target. We also exclude RoundRobinTargets (no nesting),
+  // already-selected targets, and any target whose identifier_hash matches one already
+  // selected (different registry names that resolve to the same backend config).
   const eligibleTargets = useMemo(() => {
-    // Start by excluding RoundRobinTargets and already-selected targets
+    // Targets the user has already selected — exclude by registry name AND by hash so
+    // aliases pointing at the same underlying endpoint don't show up as separate options.
     const selectedNames = new Set(selectedInnerTargets.map((t) => t.registryName))
+    const selectedHashes = new Set(
+      selectedInnerTargets
+        .map((sel) => availableTargets.find((t) => t.target_registry_name === sel.registryName)?.identifier_hash)
+        .filter((h): h is string => Boolean(h)),
+    )
     const candidates = availableTargets.filter(
-      (t) => t.target_type !== 'RoundRobinTarget' && !selectedNames.has(t.target_registry_name),
+      (t) =>
+        t.target_type !== 'RoundRobinTarget' &&
+        !selectedNames.has(t.target_registry_name) &&
+        !(t.identifier_hash && selectedHashes.has(t.identifier_hash)),
     )
     // If nothing is selected yet, all non-RRT candidates are eligible
     if (selectedInnerTargets.length === 0) return candidates
@@ -285,11 +314,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       resetForm()
       onCreated()
     } catch (err) {
-      if (err instanceof Error) {
-        setError(err.message)
-      } else {
-        setError('Failed to create target')
-      }
+      // Surface the backend's RFC 7807 `detail` (e.g. RoundRobinTarget validation
+      // messages) rather than the generic axios "Request failed with status code 400".
+      setError(toApiError(err).detail)
     } finally {
       setSubmitting(false)
     }

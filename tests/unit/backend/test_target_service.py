@@ -804,3 +804,22 @@ class TestFrontendBackendCompatibilitySync:
             f"Update the frontend isCompatible() in CreateTargetDialog.tsx to match, "
             f"then update this test's expected set."
         )
+
+    def test_target_eval_param_fallbacks_match_frontend(self) -> None:
+        """TARGET_EVAL_PARAM_FALLBACKS must match the fallback rule implemented in
+        the frontend effectiveUnderlyingModel() helper in CreateTargetDialog.tsx.
+
+        If this fails, someone added or changed a fallback. Update
+        effectiveUnderlyingModel() (and any sibling resolvers) in
+        CreateTargetDialog.tsx so the frontend pre-filter agrees with what the
+        backend RoundRobinTarget._validate_behavioral_consistency check accepts,
+        then update this test's expected dict.
+        """
+        from pyrit.models import TARGET_EVAL_PARAM_FALLBACKS
+
+        expected = {"underlying_model_name": "model_name"}
+        assert expected == TARGET_EVAL_PARAM_FALLBACKS, (
+            f"TARGET_EVAL_PARAM_FALLBACKS changed to {TARGET_EVAL_PARAM_FALLBACKS}. "
+            f"Update effectiveUnderlyingModel() in CreateTargetDialog.tsx to match, "
+            f"then update this test's expected dict."
+        )
