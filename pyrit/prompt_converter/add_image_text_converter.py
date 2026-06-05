@@ -193,7 +193,7 @@ class AddImageTextConverter(_BaseImageTextConverter):
         if self._font_load_failed:
             return cast("FreeTypeFont", ImageFont.load_default(size=size))
         try:
-            return ImageFont.truetype(self._font_name, size)
+            return ImageFont.truetype(self._font_name, size)  # type: ignore[ty:invalid-argument-type]
         except OSError:
             logger.warning(f"Cannot open font resource: {self._font_name}. Using Pillow built-in default font.")
             self._font_load_failed = True
