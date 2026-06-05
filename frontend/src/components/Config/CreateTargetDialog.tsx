@@ -24,6 +24,7 @@ import { targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { TargetInstance } from '@/types'
 import { useCreateTargetDialogStyles } from './CreateTargetDialog.styles'
+import { MAX_WEIGHT, parseWeight } from './weightValidation'
 
 interface TargetTypeConfig {
   readonly kind: 'openai' | 'azureml' | 'roundrobin'
@@ -88,7 +89,14 @@ interface CreateTargetDialogProps {
 /** State for one selected inner target in the RoundRobinTarget form. */
 interface SelectedInnerTarget {
   readonly registryName: string
-  weight: number
+  /**
+   * Raw text the user has typed into the weight input. May be transiently
+   * invalid (empty, "2.5", "99999999999", etc.) — the canonical numeric weight
+   * is derived on demand via {@link parseWeight}. Keeping the raw string as
+   * the single source of truth avoids the "user types 0 and the field
+   * silently reverts" UX bug.
+   */
+  weightInput: string
 }
 
 /**
@@ -218,16 +226,16 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   }, [availableTargets, selectedInnerTargets])
 
   const addInnerTarget = (registryName: string) => {
-    setSelectedInnerTargets((prev) => [...prev, { registryName, weight: 1 }])
+    setSelectedInnerTargets((prev) => [...prev, { registryName, weightInput: '1' }])
   }
 
   const removeInnerTarget = (registryName: string) => {
     setSelectedInnerTargets((prev) => prev.filter((t) => t.registryName !== registryName))
   }
 
-  const updateInnerTargetWeight = (registryName: string, weight: number) => {
+  const setInnerTargetWeightInput = (registryName: string, weightInput: string) => {
     setSelectedInnerTargets((prev) =>
-      prev.map((t) => (t.registryName === registryName ? { ...t, weight } : t)),
+      prev.map((t) => (t.registryName === registryName ? { ...t, weightInput } : t)),
     )
   }
 
@@ -260,56 +268,79 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         setError('Please select at least 2 targets.')
         return
       }
-    } else {
-      const errors: { targetType?: string; endpoint?: string } = {}
-      if (!targetType) errors.targetType = 'Please select a target type'
-      if (!endpoint) errors.endpoint = 'Please provide an endpoint URL'
-      if (Object.keys(errors).length > 0) {
-        setFieldErrors(errors)
-        return
+      // Re-validate every weight at submit time. The Submit button's disabled
+      // state usually catches this, but pressing Enter inside the weight input
+      // triggers the form's onSubmit handler, bypassing the button.
+      const parsedWeights: number[] = []
+      for (const t of selectedInnerTargets) {
+        const parsed = parseWeight(t.weightInput)
+        if (!parsed.ok) {
+          setError(`Invalid weight for "${t.registryName}": ${parsed.error}.`)
+          return
+        }
+        parsedWeights.push(parsed.value)
       }
-      setFieldErrors({})
+
+      setSubmitting(true)
+      setError(null)
+
+      try {
+        await targetsApi.createTarget({
+          type: 'RoundRobinTarget',
+          params: {
+            target_registry_names: selectedInnerTargets.map((t) => t.registryName),
+            weights: parsedWeights,
+          },
+        })
+        resetForm()
+        onCreated()
+      } catch (err) {
+        // Surface the backend's RFC 7807 `detail` (e.g. RoundRobinTarget validation
+        // messages) rather than the generic axios "Request failed with status code 400".
+        setError(toApiError(err).detail)
+      } finally {
+        setSubmitting(false)
+      }
+      return
     }
+
+    const errors: { targetType?: string; endpoint?: string } = {}
+    if (!targetType) errors.targetType = 'Please select a target type'
+    if (!endpoint) errors.endpoint = 'Please provide an endpoint URL'
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      return
+    }
+    setFieldErrors({})
 
     setSubmitting(true)
     setError(null)
 
     try {
-      if (isRoundRobin) {
-        // RoundRobinTarget: send registry names + weights to the backend
-        await targetsApi.createTarget({
-          type: 'RoundRobinTarget',
-          params: {
-            target_registry_names: selectedInnerTargets.map((t) => t.registryName),
-            weights: selectedInnerTargets.map((t) => t.weight),
-          },
-        })
-      } else {
-        const params: Record<string, unknown> = {
-          endpoint,
-        }
-        if (modelName) params.model_name = modelName
-        if (!isEntra && apiKey) params.api_key = apiKey
-
-        if (hasDifferentUnderlying && underlyingModel) params.underlying_model = underlyingModel
-
-        if (isAzureML) {
-          const parsedMaxNewTokens = parseInt(maxNewTokens, 10)
-          if (!isNaN(parsedMaxNewTokens)) params.max_new_tokens = parsedMaxNewTokens
-          const parsedTemperature = parseFloat(temperature)
-          if (!isNaN(parsedTemperature)) params.temperature = parsedTemperature
-          const parsedTopP = parseFloat(topP)
-          if (!isNaN(parsedTopP)) params.top_p = parsedTopP
-          const parsedRepetitionPenalty = parseFloat(repetitionPenalty)
-          if (!isNaN(parsedRepetitionPenalty)) params.repetition_penalty = parsedRepetitionPenalty
-        }
-
-        await targetsApi.createTarget({
-          type: targetType,
-          params,
-          ...(isEntra ? { auth_mode: 'entra' as const } : {}),
-        })
+      const params: Record<string, unknown> = {
+        endpoint,
       }
+      if (modelName) params.model_name = modelName
+      if (!isEntra && apiKey) params.api_key = apiKey
+
+      if (hasDifferentUnderlying && underlyingModel) params.underlying_model = underlyingModel
+
+      if (isAzureML) {
+        const parsedMaxNewTokens = parseInt(maxNewTokens, 10)
+        if (!isNaN(parsedMaxNewTokens)) params.max_new_tokens = parsedMaxNewTokens
+        const parsedTemperature = parseFloat(temperature)
+        if (!isNaN(parsedTemperature)) params.temperature = parsedTemperature
+        const parsedTopP = parseFloat(topP)
+        if (!isNaN(parsedTopP)) params.top_p = parsedTopP
+        const parsedRepetitionPenalty = parseFloat(repetitionPenalty)
+        if (!isNaN(parsedRepetitionPenalty)) params.repetition_penalty = parsedRepetitionPenalty
+      }
+
+      await targetsApi.createTarget({
+        type: targetType,
+        params,
+        ...(isEntra ? { auth_mode: 'entra' as const } : {}),
+      })
 
       resetForm()
       onCreated()
@@ -398,31 +429,53 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                           const target = availableTargets.find(
                             (t) => t.target_registry_name === sel.registryName,
                           )
+                          const weightParse = parseWeight(sel.weightInput)
+                          const weightError = weightParse.ok ? null : weightParse.error
                           return (
                             <div key={sel.registryName} className={styles.selectedTargetRow}>
-                              <Text size={200} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                {target?.target_registry_name ?? sel.registryName}
-                                {target?.model_name ? ` (${target.model_name})` : ''}
-                              </Text>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                <Label size="small">Weight:</Label>
-                                <Input
-                                  type="number"
-                                  value={String(sel.weight)}
-                                  min="1"
-                                  style={{ width: '60px' }}
-                                  onChange={(_, data) => {
-                                    const w = parseInt(data.value, 10)
-                                    if (!isNaN(w) && w > 0) updateInnerTargetWeight(sel.registryName, w)
-                                  }}
-                                />
-                                <Button
-                                  appearance="subtle"
-                                  size="small"
-                                  icon={<DeleteRegular />}
-                                  aria-label={`Remove ${sel.registryName}`}
-                                  onClick={() => removeInnerTarget(sel.registryName)}
-                                />
+                              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <Text size={200} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {target?.target_registry_name ?? sel.registryName}
+                                    {target?.model_name ? ` (${target.model_name})` : ''}
+                                  </Text>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <Label size="small">Weight:</Label>
+                                    <Input
+                                      type="number"
+                                      value={sel.weightInput}
+                                      min="1"
+                                      max={String(MAX_WEIGHT)}
+                                      step="1"
+                                      aria-invalid={weightError !== null}
+                                      aria-label={`Weight for ${sel.registryName}`}
+                                      style={{ width: '70px' }}
+                                      onChange={(_, data) =>
+                                        setInnerTargetWeightInput(sel.registryName, data.value)
+                                      }
+                                    />
+                                    <Button
+                                      appearance="subtle"
+                                      size="small"
+                                      icon={<DeleteRegular />}
+                                      aria-label={`Remove ${sel.registryName}`}
+                                      onClick={() => removeInnerTarget(sel.registryName)}
+                                    />
+                                  </div>
+                                </div>
+                                {weightError && (
+                                  <Text
+                                    size={100}
+                                    role="alert"
+                                    style={{
+                                      color: tokens.colorPaletteRedForeground1,
+                                      marginTop: '2px',
+                                      alignSelf: 'flex-end',
+                                    }}
+                                  >
+                                    {weightError}
+                                  </Text>
+                                )}
                               </div>
                             </div>
                           )
@@ -584,7 +637,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
               disabled={
                 submitting ||
                 !targetType ||
-                (isRoundRobin ? selectedInnerTargets.length < 2 : !endpoint || showEntraEndpointError)
+                (isRoundRobin
+                  ? selectedInnerTargets.length < 2 ||
+                    selectedInnerTargets.some((t) => !parseWeight(t.weightInput).ok)
+                  : !endpoint || showEntraEndpointError)
               }
             >
               {submitting ? 'Creating...' : 'Create Target'}

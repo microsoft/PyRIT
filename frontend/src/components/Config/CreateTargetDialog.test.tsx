@@ -2,6 +2,7 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import CreateTargetDialog from "./CreateTargetDialog";
+import { parseWeight, MAX_WEIGHT } from "./weightValidation";
 import { targetsApi } from "@/services/api";
 
 jest.mock("@/services/api", () => ({
@@ -27,6 +28,72 @@ async function selectTargetType(
   const select = screen.getByRole("combobox");
   await user.selectOptions(select, value);
 }
+
+describe("parseWeight", () => {
+  it("rejects empty input", () => {
+    expect(parseWeight("")).toEqual({ ok: false, error: "Weight is required" });
+  });
+
+  it("rejects decimals like '2.5' (parseInt would silently truncate to 2)", () => {
+    expect(parseWeight("2.5")).toEqual({
+      ok: false,
+      error: "Weight must be a whole number",
+    });
+  });
+
+  it("rejects scientific notation like '1e10' (parseInt would silently return 1)", () => {
+    expect(parseWeight("1e10")).toEqual({
+      ok: false,
+      error: "Weight must be a whole number",
+    });
+  });
+
+  it("rejects negatives", () => {
+    expect(parseWeight("-3")).toEqual({
+      ok: false,
+      error: "Weight must be a whole number",
+    });
+  });
+
+  it("rejects whitespace and trailing characters", () => {
+    expect(parseWeight(" 5")).toEqual({
+      ok: false,
+      error: "Weight must be a whole number",
+    });
+    expect(parseWeight("5x")).toEqual({
+      ok: false,
+      error: "Weight must be a whole number",
+    });
+  });
+
+  it("rejects 0 with a 'must be at least 1' error (no silent revert)", () => {
+    expect(parseWeight("0")).toEqual({
+      ok: false,
+      error: "Weight must be at least 1",
+    });
+  });
+
+  it(`rejects values above MAX_WEIGHT (${MAX_WEIGHT})`, () => {
+    expect(parseWeight(String(MAX_WEIGHT + 1))).toEqual({
+      ok: false,
+      error: `Weight must be at most ${MAX_WEIGHT}`,
+    });
+    expect(parseWeight("99999999999")).toEqual({
+      ok: false,
+      error: `Weight must be at most ${MAX_WEIGHT}`,
+    });
+  });
+
+  it("accepts boundary values 1 and MAX_WEIGHT", () => {
+    expect(parseWeight("1")).toEqual({ ok: true, value: 1 });
+    expect(parseWeight(String(MAX_WEIGHT))).toEqual({ ok: true, value: MAX_WEIGHT });
+  });
+
+  it("accepts typical integer weights", () => {
+    expect(parseWeight("7")).toEqual({ ok: true, value: 7 });
+    expect(parseWeight("42")).toEqual({ ok: true, value: 42 });
+  });
+});
 
 describe("CreateTargetDialog", () => {
   const defaultProps = {
@@ -998,4 +1065,125 @@ describe("CreateTargetDialog", () => {
     });
     expect(screen.queryByText(/Request failed with status code 400/)).not.toBeInTheDocument();
   });
+
+  // ===========================================================================
+  // RoundRobinTarget weight input validation
+  // ===========================================================================
+
+  /**
+   * Helper: render the dialog with two compatible inner targets already
+   * pickable, then select both — leaves the form in the state where every
+   * remaining concern is the weight inputs.
+   */
+  async function renderWithTwoRoundRobinTargetsSelected(): Promise<{
+    user: ReturnType<typeof userEvent.setup>;
+    weightInputs: HTMLInputElement[];
+  }> {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <CreateTargetDialog
+          {...defaultProps}
+          existingTargets={[
+            {
+              target_registry_name: "a",
+              target_type: "OpenAIChatTarget",
+              model_name: "gpt-4o",
+              identifier_hash: "hash-a",
+            },
+            {
+              target_registry_name: "b",
+              target_type: "OpenAIChatTarget",
+              model_name: "gpt-4o",
+              identifier_hash: "hash-b",
+            },
+          ]}
+        />
+      </TestWrapper>
+    );
+    await selectTargetType(user, "RoundRobinTarget");
+    const select = screen.getByText("Select a target to add...").closest("select")!;
+    await user.selectOptions(select, "a");
+    await user.selectOptions(select, "b");
+    // Wait for both weight inputs to actually render — under load, React
+    // updates can lag behind the userEvent returns and queries return 0 or 1
+    // result, causing downstream assertions to operate on stale state.
+    await waitFor(
+      () => {
+        expect(screen.getAllByLabelText(/Weight for /)).toHaveLength(2);
+      },
+      { timeout: 10000 },
+    );
+    const weightInputs = screen.getAllByLabelText(/Weight for /) as HTMLInputElement[];
+    return { user, weightInputs };
+  }
+
+  // Note: exhaustive validation of decimal, scientific notation, negative,
+  // zero, and out-of-range cases is covered by the parseWeight unit tests
+  // above. These integration tests only verify the UI wiring: that invalid
+  // input surfaces an alert + disables Create, and that valid input round
+  // trips through createTarget as parsed ints.
+
+  it("shows an alert and disables Create when a weight is invalid", async () => {
+    const { user, weightInputs } = await renderWithTwoRoundRobinTargetsSelected();
+
+    // Use fireEvent.change to bypass HTML5 step="1" constraint that
+    // userEvent.type would respect. We specifically want to verify our JS
+    // validation catches values that bypass browser-level checks.
+    fireEvent.change(weightInputs[0], { target: { value: "2.5" } });
+
+    // Re-query state under waitFor — under heavy load React commits can lag
+    // behind fireEvent's return, and stale references won't reflect updates.
+    await waitFor(
+      () => {
+        const inputs = screen.getAllByLabelText(/Weight for /) as HTMLInputElement[];
+        expect(inputs[0].value).toBe("2.5");
+        expect(inputs[0].getAttribute("aria-invalid")).toBe("true");
+      },
+      { timeout: 10000 },
+    );
+
+    expect(screen.getByText("Weight must be a whole number")).toBeInTheDocument();
+    expect(screen.getByText("Create Target").closest("button")).toBeDisabled();
+
+    // Pressing Enter inside the weight input must not bypass the disabled
+    // button and submit the form.
+    await user.click(screen.getByText("Create Target"));
+    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
+  }, 30000);
+
+  it("submits parsed integer weights when all inputs are valid", async () => {
+    mockedTargetsApi.createTarget.mockResolvedValueOnce({
+      target_registry_name: "rr",
+    } as unknown as Awaited<ReturnType<typeof mockedTargetsApi.createTarget>>);
+
+    const { user, weightInputs } = await renderWithTwoRoundRobinTargetsSelected();
+    fireEvent.change(weightInputs[0], { target: { value: "7" } });
+    fireEvent.change(weightInputs[1], { target: { value: "42" } });
+
+    // Wait until both inputs reflect the new values and Create is enabled
+    // (which only happens once both weights have flushed to state and parsed
+    // successfully).
+    await waitFor(
+      () => {
+        const inputs = screen.getAllByLabelText(/Weight for /) as HTMLInputElement[];
+        expect(inputs[0].value).toBe("7");
+        expect(inputs[1].value).toBe("42");
+        expect(screen.getByText("Create Target").closest("button")).not.toBeDisabled();
+      },
+      { timeout: 10000 },
+    );
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(
+      () => {
+        expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 10000 },
+    );
+    const call = mockedTargetsApi.createTarget.mock.calls[0][0];
+    expect(call.type).toBe("RoundRobinTarget");
+    expect(call.params?.weights).toEqual([7, 42]);
+  }, 30000);
 });
