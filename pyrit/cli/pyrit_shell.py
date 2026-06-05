@@ -572,7 +572,7 @@ class PyRITShell(cmd.Cmd):
         """Clear the screen."""
         import os
 
-        os.system("cls" if os.name == "nt" else "clear")
+        os.system("cls" if os.name == "nt" else "clear")  # type: ignore[ty:deprecated]
 
     # Shortcuts and aliases
     do_quit = do_exit
