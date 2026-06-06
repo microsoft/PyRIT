@@ -771,7 +771,7 @@ class TestGenerateAttackPrompt:
             session=ConversationSession(),
         )
 
-        rendered = attack._render_meta_prompt(context=context, puzzle_type="test")
+        rendered = attack._render_meta_prompt(context=context, puzzle_type="logic_grid")
 
         assert "Build a harmless test puzzle" in rendered
         assert "{{objective}}" not in rendered
@@ -790,7 +790,7 @@ class TestGenerateAttackPrompt:
             mock_adversarial_chat=mock_adversarial_chat,
             mock_objective_scorer=mock_objective_scorer,
         )
-        stream_state = StreamState(stream_id=0, puzzle_type="test")
+        stream_state = StreamState(stream_id=0, puzzle_type="logic_grid")
         mock_normalizer.send_prompt_async.return_value = Message.from_prompt(
             prompt='{"prompt": "crafted jailbreak prompt"}',
             role="assistant",
@@ -824,7 +824,7 @@ class TestGenerateAttackPrompt:
             mock_adversarial_chat=mock_adversarial_chat,
             mock_objective_scorer=mock_objective_scorer,
         )
-        stream_state = StreamState(stream_id=0, puzzle_type="test")
+        stream_state = StreamState(stream_id=0, puzzle_type="logic_grid")
         mock_normalizer.send_prompt_async.return_value = Message.from_prompt(
             prompt='```json\n{"prompt": "fenced jailbreak"}\n```',
             role="assistant",
@@ -852,8 +852,8 @@ class TestGenerateAttackPrompt:
             mock_adversarial_chat=mock_adversarial_chat,
             mock_objective_scorer=mock_objective_scorer,
         )
-        stream_state = StreamState(stream_id=0, puzzle_type="test")
-        expected_fallback = attack._render_meta_prompt(context=basic_context, puzzle_type="test")
+        stream_state = StreamState(stream_id=0, puzzle_type="logic_grid")
+        expected_fallback = attack._render_meta_prompt(context=basic_context, puzzle_type="logic_grid")
         mock_normalizer.send_prompt_async.return_value = Message.from_prompt(
             prompt="this is not valid json {{{",
             role="assistant",
@@ -881,8 +881,8 @@ class TestGenerateAttackPrompt:
             mock_adversarial_chat=mock_adversarial_chat,
             mock_objective_scorer=mock_objective_scorer,
         )
-        stream_state = StreamState(stream_id=0, puzzle_type="test")
-        expected_fallback = attack._render_meta_prompt(context=basic_context, puzzle_type="test")
+        stream_state = StreamState(stream_id=0, puzzle_type="logic_grid")
+        expected_fallback = attack._render_meta_prompt(context=basic_context, puzzle_type="logic_grid")
         mock_normalizer.send_prompt_async.return_value = Message.from_prompt(
             prompt='{"improvement": "make it harder", "puzzle_framework": "grid"}',
             role="assistant",

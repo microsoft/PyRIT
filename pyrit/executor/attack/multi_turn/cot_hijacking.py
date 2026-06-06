@@ -81,7 +81,6 @@ SUPPORTED_PUZZLE_TYPES = [
     "skyscrapers",
     "logic_grid_enhanced",
     "skyscrapers_memetic",
-    "test",
 ]
 
 DEFAULT_PUZZLE_TYPES = [
@@ -103,7 +102,6 @@ PUZZLE_PROMPT_PATHS = {
     "skyscrapers": Path(EXECUTOR_SEED_PROMPT_PATH) / "cot_hijacking" / "puzzle_generation_skyscrapers.yaml",
     "sudoku": Path(EXECUTOR_SEED_PROMPT_PATH) / "cot_hijacking" / "puzzle_generation_sudoku.yaml",
     "category_theory": Path(EXECUTOR_SEED_PROMPT_PATH) / "cot_hijacking" / "puzzle_generation_category_theory.yaml",
-    "test": Path(EXECUTOR_SEED_PROMPT_PATH) / "cot_hijacking" / "puzzle_generation_test.yaml",
     "logic_grid_enhanced": Path(EXECUTOR_SEED_PROMPT_PATH)
     / "cot_hijacking"
     / "puzzle_generation_logic_grid_enhanced.yaml",

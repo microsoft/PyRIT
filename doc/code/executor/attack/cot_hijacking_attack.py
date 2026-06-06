@@ -55,7 +55,7 @@ attack = CoTHijackingAttack(
     attack_adversarial_config=adversarial_config,
     attack_scoring_config=scoring_config,
     max_iterations=3,
-    puzzle_types=["test"],
+    puzzle_types=["logic_grid"],
 )
 
 result = await attack.execute_async(objective=objective)  # type: ignore
