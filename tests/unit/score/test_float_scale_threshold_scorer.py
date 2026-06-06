@@ -2,14 +2,12 @@
 # Licensed under the MIT license.
 
 import uuid
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.score import FloatScaleThresholdScorer
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -238,9 +236,7 @@ async def test_float_scale_threshold_scorer_with_real_float_scorer_on_blocked(pa
         def _build_identifier(self) -> ComponentIdentifier:
             return self._create_identifier()
 
-        async def _score_piece_async(
-            self, message_piece: MessagePiece, *, objective: Optional[str] = None
-        ) -> list[Score]:
+        async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
             return [
                 Score(
                     score_value="0.9",

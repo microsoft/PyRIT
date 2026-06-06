@@ -3,23 +3,24 @@
 
 
 import uuid
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import pytest
 
 from pyrit.common.utils import to_sha256
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
-from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
+    IdentifierFilter,
+    IdentifierType,
     MessagePiece,
     Score,
+    build_atomic_attack_identifier,
 )
 
 if TYPE_CHECKING:
@@ -28,14 +29,17 @@ if TYPE_CHECKING:
 
 def create_message_piece(conversation_id: str, prompt_num: int, targeted_harm_categories=None, labels=None):
     """Helper function to create MessagePiece with optional targeted harm categories and labels."""
-    return MessagePiece(
-        role="user",
-        original_value=f"Test prompt {prompt_num}",
-        converted_value=f"Test prompt {prompt_num}",
-        conversation_id=conversation_id,
-        targeted_harm_categories=targeted_harm_categories,
-        labels=labels,
-    )
+    kwargs: dict = {
+        "role": "user",
+        "original_value": f"Test prompt {prompt_num}",
+        "converted_value": f"Test prompt {prompt_num}",
+        "conversation_id": conversation_id,
+    }
+    if targeted_harm_categories is not None:
+        kwargs["targeted_harm_categories"] = targeted_harm_categories
+    if labels is not None:
+        kwargs["labels"] = labels
+    return MessagePiece(**kwargs)
 
 
 def create_attack_result(
@@ -1266,7 +1270,7 @@ def test_get_unique_attack_labels_deduplicates_across_sources(sqlite_instance: M
 def _make_attack_result_with_identifier(
     conversation_id: str,
     class_name: str,
-    converter_class_names: Optional[list[str]] = None,
+    converter_class_names: list[str] | None = None,
 ) -> AttackResult:
     """Helper to create an AttackResult with a ComponentIdentifier containing converters."""
     children: dict = {}
@@ -1354,6 +1358,62 @@ def test_get_attack_results_attack_classes_empty_returns_all(sqlite_instance: Me
 
     results = sqlite_instance.get_attack_results(attack_classes=[])
     assert len(results) == 2
+
+
+def _eval_hash_for(class_name: str) -> str:
+    from pyrit.models.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
+
+    return AtomicAttackEvaluationIdentifier(
+        build_atomic_attack_identifier(
+            attack_identifier=ComponentIdentifier(
+                class_name=class_name,
+                class_module="pyrit.attacks",
+            ),
+        ),
+    ).eval_hash
+
+
+def test_get_attack_results_by_atomic_attack_eval_hashes_single(sqlite_instance: MemoryInterface):
+    """Filter by a single eval_hash; only matching rows are returned."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
+    ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+
+    target_hash = _eval_hash_for("CrescendoAttack")
+    results = sqlite_instance.get_attack_results(atomic_attack_eval_hashes=[target_hash])
+    assert len(results) == 1
+    assert results[0].conversation_id == "conv_1"
+
+
+def test_get_attack_results_by_atomic_attack_eval_hashes_multi_uses_or(sqlite_instance: MemoryInterface):
+    """Multiple eval_hashes OR-combine — matches any of the listed hashes."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
+    ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
+    ar3 = _make_attack_result_with_identifier("conv_3", "TreeOfAttacksAttack")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
+
+    hashes = [_eval_hash_for("CrescendoAttack"), _eval_hash_for("ManualAttack")]
+    results = sqlite_instance.get_attack_results(atomic_attack_eval_hashes=hashes)
+    assert {r.conversation_id for r in results} == {"conv_1", "conv_2"}
+
+
+def test_get_attack_results_atomic_attack_eval_hashes_empty_returns_all(sqlite_instance: MemoryInterface):
+    """atomic_attack_eval_hashes=[] behaves like None (no filter applied)."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
+    ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+
+    results = sqlite_instance.get_attack_results(atomic_attack_eval_hashes=[])
+    assert len(results) == 2
+
+
+def test_get_attack_results_atomic_attack_eval_hashes_no_match(sqlite_instance: MemoryInterface):
+    """A non-matching eval_hash returns no rows."""
+    ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1])
+
+    results = sqlite_instance.get_attack_results(atomic_attack_eval_hashes=["deadbeef" * 8])
+    assert len(results) == 0
 
 
 def test_get_attack_results_converter_classes_none_returns_all(sqlite_instance: MemoryInterface):

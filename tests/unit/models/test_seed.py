@@ -16,12 +16,13 @@ from pyrit.common.path import DATASETS_PATH
 from pyrit.models import (
     Message,
     MessagePiece,
+    SeedAttackGroup,
     SeedDataset,
     SeedGroup,
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.models.seeds import SeedSimulatedConversation
+from pyrit.models.seeds import SeedSimulatedConversation, SimulatedTargetSystemPromptPaths
 
 
 @pytest.fixture
@@ -962,7 +963,7 @@ def test_seed_dataset_dict_to_seed_prompt_all_base_params():
         # SeedPrompt-specific fields
         "role": "assistant",
         "sequence": 5,
-        "parameters": {"param1": "val1"},
+        "parameters": ["param1"],
         "seed_type": "prompt",
     }
 
@@ -990,7 +991,7 @@ def test_seed_dataset_dict_to_seed_prompt_all_base_params():
     # Verify SeedPrompt-specific fields
     assert seed.role == "assistant"
     assert seed.sequence == 5
-    assert seed.parameters == {"param1": "val1"}
+    assert seed.parameters == ["param1"]
 
 
 def test_seed_dataset_dict_to_seed_objective_all_base_params():
@@ -1098,7 +1099,7 @@ def test_seed_dataset_uses_dataset_defaults_for_missing_params():
     # These should use sensible defaults
     assert seed.role == "user"
     assert seed.sequence == 0
-    assert seed.parameters == {}
+    assert seed.parameters == []
 
 
 def test_next_message_single_turn_no_objective():
@@ -1110,7 +1111,94 @@ def test_next_message_single_turn_no_objective():
     assert group.prepended_conversation is None
     assert group.next_message is not None
     assert len(group.next_message.message_pieces) == 1
+
+
+def test_seed_group_preserves_polymorphic_subclasses():
+    """list[Seed] must preserve concrete subclasses: instances pass through and model_dump keeps subclass fields."""
+    objective = SeedObjective(value="Reach the goal")
+    prompt = SeedPrompt(value="Hello", role="user", sequence=0)
+    group = SeedGroup(seeds=[objective, prompt])
+
+    # Instances are preserved, not coerced down to the base Seed.
+    assert isinstance(group.objective, SeedObjective)
+    assert any(isinstance(s, SeedPrompt) for s in group.seeds)
+
+    # SerializeAsAny keeps subclass-specific fields on dump (SeedPrompt has role/parameters, SeedObjective does not).
+    dumped = group.model_dump()
+    by_value = {s["value"]: s for s in dumped["seeds"]}
+    assert by_value["Hello"]["role"] == "user"
+    assert "parameters" in by_value["Hello"]
+    assert "role" not in by_value["Reach the goal"]
+
+    # Dict reconstruction uses the seed_type discriminator (the path used by YAML/dataset inputs).
+    rebuilt = SeedGroup(
+        seeds=[
+            {"value": "Reach the goal", "seed_type": "objective"},
+            {"value": "Hello", "role": "user", "sequence": 0, "seed_type": "prompt"},
+        ]
+    )
+    assert isinstance(rebuilt.objective, SeedObjective)
+    assert any(isinstance(s, SeedPrompt) for s in rebuilt.seeds)
     assert group.next_message.get_value() == "Hello"
+
+
+def test_seed_group_round_trip_preserves_subclasses():
+    """model_validate(model_dump()) must reconstruct the original subclass instances, not coerce to base Seed."""
+    objective = SeedObjective(value="goal")
+    prompt = SeedPrompt(value="hi", role="user", sequence=0)
+    group = SeedGroup(seeds=[objective, prompt])
+
+    rt = SeedGroup.model_validate(group.model_dump())
+
+    assert [type(s).__name__ for s in rt.seeds] == [type(s).__name__ for s in group.seeds]
+    assert isinstance(rt.objective, SeedObjective)
+    assert rt.objective.value == "goal"
+
+
+def test_seed_attack_group_round_trip_preserves_subclasses():
+    """The original blocking bug: SeedAttackGroup(model_validate(model_dump())) must work."""
+    sag = SeedAttackGroup(
+        seeds=[
+            SeedObjective(value="objective"),
+            SeedPrompt(value="hi", data_type="text", role="user", sequence=0),
+        ]
+    )
+    rt = SeedAttackGroup.model_validate(sag.model_dump())
+    assert isinstance(rt.objective, SeedObjective)
+    assert rt.objective.value == "objective"
+    assert any(isinstance(s, SeedPrompt) for s in rt.seeds)
+
+
+def test_seed_simulated_conversation_round_trip():
+    """SeedSimulatedConversation's computed ``value`` round-trips through both python and json modes."""
+    sc = SeedSimulatedConversation(
+        adversarial_chat_system_prompt_path=SimulatedTargetSystemPromptPaths.COMPLIANT.value,
+        num_turns=4,
+    )
+    rt_py = SeedSimulatedConversation.model_validate(sc.model_dump())
+    rt_json = SeedSimulatedConversation.model_validate(sc.model_dump(mode="json"))
+    assert rt_py.value == sc.value
+    assert rt_json.value == sc.value
+    assert rt_py.num_turns == 4
+
+
+def test_seed_objective_rejects_non_text_data_type():
+    """SeedObjective locks ``data_type`` to ``"text"``."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        SeedObjective(value="goal", data_type="image_path")
+
+
+def test_seed_simulated_conversation_rejects_non_text_data_type():
+    """SeedSimulatedConversation locks ``data_type`` to ``"text"``."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        SeedSimulatedConversation(
+            adversarial_chat_system_prompt_path=SimulatedTargetSystemPromptPaths.COMPLIANT.value,
+            data_type="image_path",
+        )
 
 
 def test_next_message_single_turn_with_objective():

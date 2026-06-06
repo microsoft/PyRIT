@@ -5,7 +5,7 @@ import ast
 import hashlib
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pypdf import PageObject, PdfReader, PdfWriter
 from reportlab.lib.units import mm
@@ -13,9 +13,8 @@ from reportlab.lib.utils import simpleSplit
 from reportlab.pdfgen import canvas
 
 from pyrit.common.logger import logger
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType, SeedPrompt, data_serializer_factory
-from pyrit.models.data_type_serializer import DataTypeSerializer
+from pyrit.memory import DataTypeSerializer, data_serializer_factory
+from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 
@@ -37,9 +36,13 @@ class PDFConverter(PromptConverter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("binary_path",)
 
+    # Grandfathered: all parameters are part of the public positional API.
+    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
+    _brick_legacy_init = True
+
     def __init__(
         self,
-        prompt_template: Optional[SeedPrompt] = None,
+        prompt_template: SeedPrompt | None = None,
         font_type: str = "Helvetica",
         font_size: int = 12,
         font_color: tuple[int, int, int] = (255, 255, 255),
@@ -47,14 +50,14 @@ class PDFConverter(PromptConverter):
         page_height: int = 297,
         column_width: int = 0,
         row_height: int = 10,
-        existing_pdf: Optional[Path] = None,
-        injection_items: Optional[list[dict[str, Any]]] = None,
+        existing_pdf: Path | None = None,
+        injection_items: list[dict[str, Any]] | None = None,
     ) -> None:
         """
         Initialize the converter with the specified parameters.
 
         Args:
-            prompt_template (Optional[SeedPrompt], optional): A ``SeedPrompt`` object representing a template.
+            prompt_template (SeedPrompt | None, optional): A ``SeedPrompt`` object representing a template.
             font_type (str): Font type for the PDF. Defaults to "Helvetica".
             font_size (int): Font size for the PDF. Defaults to 12.
             font_color (tuple): Font color for the PDF in RGB format. Defaults to (255, 255, 255).
@@ -62,8 +65,8 @@ class PDFConverter(PromptConverter):
             page_height (int): Height of the PDF page in mm. Defaults to 297 (A4 height).
             column_width (int): Width of each column in the PDF. Defaults to 0 (full page width).
             row_height (int): Height of each row in the PDF. Defaults to 10.
-            existing_pdf (Optional[Path], optional): Path to an existing PDF file. Defaults to None.
-            injection_items (Optional[List[Dict]], optional): A list of injection items for modifying an existing PDF.
+            existing_pdf (Path | None, optional): Path to an existing PDF file. Defaults to None.
+            injection_items (list[Dict] | None, optional): A list of injection items for modifying an existing PDF.
 
         Raises:
             ValueError: If the font color is invalid or the injection items are not provided as a list of dictionaries.
@@ -79,9 +82,9 @@ class PDFConverter(PromptConverter):
         self._row_height = row_height
 
         # Keeping the user's path here
-        self._existing_pdf_path: Optional[Path] = existing_pdf
+        self._existing_pdf_path: Path | None = existing_pdf
         # We store the file data in a separate BytesIO for type checker compatibility
-        self._existing_pdf_bytes: Optional[BytesIO] = None
+        self._existing_pdf_bytes: BytesIO | None = None
 
         self._injection_items = injection_items or []
 
@@ -158,7 +161,7 @@ class PDFConverter(PromptConverter):
         pdf_bytes = self._modify_existing_pdf() if self._existing_pdf_bytes else self._generate_pdf(content)
 
         # Step 3: Serialize PDF
-        pdf_serializer = await self._serialize_pdf(pdf_bytes, content)
+        pdf_serializer = await self._serialize_pdf_async(pdf_bytes, content)
 
         # Return the result
         return ConverterResult(output_text=pdf_serializer.value, output_type="binary_path")
@@ -416,7 +419,7 @@ class PDFConverter(PromptConverter):
 
         return overlay_page, overlay_buffer
 
-    async def _serialize_pdf(self, pdf_bytes: bytes, content: str) -> DataTypeSerializer:
+    async def _serialize_pdf_async(self, pdf_bytes: bytes, content: str) -> DataTypeSerializer:
         """
         Serialize the generated PDF using a data serializer.
 
@@ -436,5 +439,5 @@ class PDFConverter(PromptConverter):
             data_type="binary_path",
             extension=extension,
         )
-        await pdf_serializer.save_data(pdf_bytes)
+        await pdf_serializer.save_data_async(pdf_bytes)
         return pdf_serializer

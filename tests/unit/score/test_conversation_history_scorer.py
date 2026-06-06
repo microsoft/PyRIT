@@ -2,14 +2,12 @@
 # Licensed under the MIT license.
 
 import uuid
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
-from pyrit.models import Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.score import (
     Scorer,
     SelfAskGeneralFloatScaleScorer,
@@ -38,7 +36,7 @@ class MockFloatScaleScorer(FloatScaleScorer):
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier()
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         return []
 
 
@@ -51,7 +49,7 @@ class MockTrueFalseScorer(TrueFalseScorer):
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier()
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         return []
 
 
@@ -64,13 +62,13 @@ class MockUnsupportedScorer(Scorer):
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier()
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         return []
 
     def validate_return_scores(self, scores: list[Score]):
         pass
 
-    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         return [
             Score(
                 score_value="false",
@@ -754,7 +752,7 @@ async def test_conversation_scorer_blocked_trigger_preserves_prior_turn_scoring(
             return self._create_identifier()
 
         async def _score_async(  # type: ignore[override]
-            self, message: Message, *, objective: Optional[str] = None
+            self, message: Message, *, objective: str | None = None
         ) -> list[Score]:
             captured_messages.append(message)
             piece = message.message_pieces[0]
@@ -774,9 +772,7 @@ async def test_conversation_scorer_blocked_trigger_preserves_prior_turn_scoring(
                 ]
             return []
 
-        async def _score_piece_async(
-            self, message_piece: MessagePiece, *, objective: Optional[str] = None
-        ) -> list[Score]:
+        async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
             return []
 
     inner_scorer = HarmfulContentDetector()

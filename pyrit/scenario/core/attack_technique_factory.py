@@ -32,8 +32,13 @@ from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackScoringConfig,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable, build_seed_identifier
-from pyrit.models import SeedAttackTechniqueGroup, SeedSimulatedConversation
+from pyrit.models import (
+    ComponentIdentifier,
+    Identifiable,
+    SeedAttackTechniqueGroup,
+    SeedSimulatedConversation,
+    build_seed_identifier,
+)
 from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemPromptPaths
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
@@ -327,6 +332,11 @@ class AttackTechniqueFactory(Identifiable):
         """Whether this technique drives an adversarial chat during execution."""
         return self._uses_adversarial
 
+    @property
+    def scoring_config_type(self) -> type | None:
+        """The required ``attack_scoring_config`` subtype, or ``None`` if any config is accepted."""
+        return self._get_scoring_config_type()
+
     def create(
         self,
         *,
@@ -489,7 +499,7 @@ class AttackTechniqueFactory(Identifiable):
         """
         Introspect the attack class to determine the required type for ``attack_scoring_config``.
 
-        Resolves the type annotation (handling ``Optional[X]`` / ``X | None``) and returns
+        Resolves the type annotation (handling ``X | None`` / ``X | None``) and returns
         the inner concrete type. Returns ``None`` if the annotation is the base
         ``AttackScoringConfig`` or cannot be resolved — meaning any config is accepted.
 
@@ -518,7 +528,7 @@ class AttackTechniqueFactory(Identifiable):
     @staticmethod
     def _unwrap_optional(annotation: Any) -> type | None:
         """
-        Unwrap ``Optional[X]``, ``X | None``, or ``Union[X, None]`` to extract X.
+        Unwrap ``X | None``, ``X | None``, or ``X | None`` to extract X.
 
         Returns:
             The inner type X, or None if the annotation cannot be unwrapped to a single type.

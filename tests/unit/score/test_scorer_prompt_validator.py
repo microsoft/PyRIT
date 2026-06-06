@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import uuid
+
 import pytest
 
 from pyrit.models import Message, MessagePiece
@@ -165,23 +167,24 @@ class TestScorerPromptValidatorValidate:
         """Test that validate raises error for unsupported pieces when enforce_all_pieces_valid=True."""
         validator = ScorerPromptValidator(supported_data_types=["text"], enforce_all_pieces_valid=True)
 
+        image_id = uuid.uuid4()
         text_piece = MessagePiece(
             role="assistant",
             original_value="text",
             converted_value_data_type="text",
             conversation_id="test",
-            id="text-1",
+            id=uuid.uuid4(),
         )
         image_piece = MessagePiece(
             role="assistant",
             original_value="image.png",
             converted_value_data_type="image_path",
             conversation_id="test",
-            id="image-1",
+            id=image_id,
         )
         response = Message(message_pieces=[text_piece, image_piece])
 
-        with pytest.raises(ValueError, match="Message piece image-1 with data type image_path is not supported"):
+        with pytest.raises(ValueError, match=f"Message piece {image_id} with data type image_path is not supported"):
             validator.validate(response, objective=None)
 
     def test_validate_raises_when_exceeds_max_pieces(self):

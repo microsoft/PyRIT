@@ -2,7 +2,17 @@ name: misrepresentation_persuasion
 description: |
   A persuasion technique from https://arxiv.org/abs/2401.06373
 authors:
-  - Zeng et al.
+  - Yi Zeng
+  - Hongpeng Lin
+  - Jingwen Zhang
+  - Diyi Yang
+  - Ruoxi Jia
+  - Weiyan Shi
+groups:
+  - Virginia Tech
+  - Renmin University of China
+  - UC Davis
+  - Stanford University
 source: https://github.com/CHATS-lab/persuasive_jailbreaker/blob/main/PAP_Better_Incontext_Sample/mutation_utils.py
 data_type: text
 value: >

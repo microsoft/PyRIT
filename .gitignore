@@ -1,6 +1,6 @@
 # PyRIT-specific configs
 submodules/
-results/
+/results/
 dbdata/
 eval/
 default_memory.json.memory
@@ -59,6 +59,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+.mypy_cache/
 cover/
 
 # Translations

@@ -5,7 +5,7 @@ import abc
 import logging
 from typing import Literal
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.models.literals import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
@@ -22,6 +22,12 @@ class SmugglerConverter(PromptConverter, abc.ABC):
 
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
+
+    # Grandfathered: ``action`` is part of the public positional API of every
+    # SmugglerConverter subclass.
+    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0
+    # (this will be a BREAKING CHANGE for callers passing ``action`` positionally).
+    _brick_legacy_init = True
 
     def __init__(self, action: Literal["encode", "decode"] = "encode") -> None:
         """
@@ -108,7 +114,7 @@ class SmugglerConverter(PromptConverter, abc.ABC):
             message (str): The message to encode.
 
         Returns:
-            Tuple[str, str]: A tuple containing a summary and the encoded message.
+            tuple[str, str]: A tuple containing a summary and the encoded message.
         """
         raise NotImplementedError
 

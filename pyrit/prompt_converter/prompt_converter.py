@@ -6,11 +6,10 @@ import asyncio
 import inspect
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, get_args
 
 from pyrit import prompt_converter
-from pyrit.identifiers import ComponentIdentifier, Identifiable
-from pyrit.models import PromptDataType
+from pyrit.models import ComponentIdentifier, Identifiable, PromptDataType
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
@@ -57,20 +56,26 @@ class PromptConverter(Identifiable):
     #: ``super().__init__(converter_target=...)`` so the base class can validate it.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
-    _identifier: Optional[ComponentIdentifier] = None
+    _identifier: ComponentIdentifier | None = None
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
-        Validate that concrete subclasses define required class attributes.
+        Validate that concrete subclasses define required class attributes
+        and follow the keyword-only ``__init__`` contract.
 
         Args:
             **kwargs: Additional keyword arguments passed to the superclass.
 
         Raises:
             TypeError: If a concrete subclass does not define non-empty SUPPORTED_INPUT_TYPES
-                or SUPPORTED_OUTPUT_TYPES.
+                or SUPPORTED_OUTPUT_TYPES, or if its ``__init__`` accepts
+                positional parameters after ``self``.
         """
         super().__init_subclass__(**kwargs)
+        # Local import to avoid a circular dependency at package init time.
+        from pyrit.common.brick_contract import enforce_keyword_only_init
+
+        enforce_keyword_only_init(cls, base_name="PromptConverter")
         # Only validate concrete (non-abstract) classes
         if not inspect.isabstract(cls):
             if not cls.SUPPORTED_INPUT_TYPES:
@@ -89,7 +94,7 @@ class PromptConverter(Identifiable):
         Initialize the prompt converter.
 
         Args:
-            converter_target (Optional[PromptTarget]): Target used by the converter, if any. When
+            converter_target (PromptTarget | None): Target used by the converter, if any. When
                 provided, it is validated against ``TARGET_REQUIREMENTS``.
         """
         super().__init__()
@@ -168,7 +173,7 @@ class PromptConverter(Identifiable):
         if prompt.count(start_token) != prompt.count(end_token):
             raise ValueError("Uneven number of start tokens and end tokens.")
 
-        tasks = [self._replace_text_match(match) for match in matches]
+        tasks = [self._replace_text_match_async(match) for match in matches]
         converted_parts = await asyncio.gather(*tasks)
 
         for original, converted in zip(matches, converted_parts, strict=False):
@@ -176,7 +181,7 @@ class PromptConverter(Identifiable):
 
         return ConverterResult(output_text=prompt, output_type="text")
 
-    async def _replace_text_match(self, match: str) -> ConverterResult:
+    async def _replace_text_match_async(self, match: str) -> ConverterResult:
         return await self.convert_async(prompt=match, input_type="text")
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -196,8 +201,8 @@ class PromptConverter(Identifiable):
     def _create_identifier(
         self,
         *,
-        params: Optional[dict[str, Any]] = None,
-        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+        params: dict[str, Any] | None = None,
+        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct and return the converter identifier.
@@ -210,9 +215,9 @@ class PromptConverter(Identifiable):
         to set the identifier with their specific parameters.
 
         Args:
-            params (Optional[Dict[str, Any]]): Additional behavioral parameters from
+            params (dict[str, Any] | None): Additional behavioral parameters from
                 the subclass (e.g., font, encoding_func). Merged into the base params.
-            children (Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]]):
+            children (dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None):
                 Named child component identifiers (e.g., sub-converters, converter targets).
 
         Returns:

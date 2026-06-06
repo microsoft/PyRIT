@@ -5,7 +5,7 @@ import base64
 import json
 import logging
 from collections.abc import MutableSequence
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.exceptions import (
@@ -13,17 +13,9 @@ from pyrit.exceptions import (
     PyritException,
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import (
-    ChatMessage,
-    DataTypeSerializer,
-    Message,
-    MessagePiece,
-    construct_response_from_request,
-    data_serializer_factory,
-)
+from pyrit.memory import DataTypeSerializer, data_serializer_factory
+from pyrit.models import ChatMessage, ComponentIdentifier, Message, MessagePiece, construct_response_from_request
 from pyrit.models.json_response_config import _JsonResponseConfig
-from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
@@ -33,7 +25,7 @@ from pyrit.prompt_target.openai.openai_target import OpenAITarget
 logger = logging.getLogger(__name__)
 
 
-class OpenAIChatTarget(OpenAITarget, PromptTarget):
+class OpenAIChatTarget(OpenAITarget):
     """
     Facilitates multimodal (image and text) input and text output generation.
 
@@ -81,17 +73,17 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
     def __init__(
         self,
         *,
-        max_completion_tokens: Optional[int] = None,
-        max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        frequency_penalty: Optional[float] = None,
-        presence_penalty: Optional[float] = None,
-        seed: Optional[int] = None,
-        n: Optional[int] = None,
-        audio_response_config: Optional[OpenAIChatAudioConfig] = None,
-        extra_body_parameters: Optional[dict[str, Any]] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        max_completion_tokens: int | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        seed: int | None = None,
+        n: int | None = None,
+        audio_response_config: OpenAIChatAudioConfig | None = None,
+        extra_body_parameters: dict[str, Any] | None = None,
+        custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -234,10 +226,10 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
 
         logger.info(f"Sending the following prompt to the prompt target: {message}")
 
-        body = await self._construct_request_body(conversation=normalized_conversation, json_config=json_config)
+        body = await self._construct_request_body_async(conversation=normalized_conversation, json_config=json_config)
 
         # Use unified error handling - automatically detects ChatCompletion and validates
-        response = await self._handle_openai_request(
+        response = await self._handle_openai_request_async(
             api_call=lambda: self._client.chat.completions.create(**body),
             request=message,
         )
@@ -260,7 +252,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             pass
         return False
 
-    def _extract_partial_content(self, response: Any) -> Optional[str]:
+    def _extract_partial_content(self, response: Any) -> str | None:
         """
         Extract partial content from a Chat Completions response with finish_reason=content_filter.
 
@@ -280,7 +272,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             pass
         return None
 
-    def _validate_response(self, response: Any, request: MessagePiece) -> Optional[Message]:
+    def _validate_response(self, response: Any, request: MessagePiece) -> Message | None:
         """
         Validate a Chat Completions API response for errors.
 
@@ -378,7 +370,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             and self._audio_response_config.prefer_transcript_for_history
         )
 
-    async def _construct_message_from_response(self, response: Any, request: MessagePiece) -> Message:
+    async def _construct_message_from_response_async(self, response: Any, request: MessagePiece) -> Message:
         """
         Construct a Message from a ChatCompletion response.
 
@@ -416,7 +408,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             audio_response = message.audio
 
             # Add transcript as text piece with metadata
-            audio_transcript: Optional[str] = getattr(audio_response, "transcript", None)
+            audio_transcript: str | None = getattr(audio_response, "transcript", None)
             if audio_transcript:
                 transcript_piece = construct_response_from_request(
                     request=request,
@@ -427,7 +419,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
                 pieces.append(transcript_piece)
 
             # Save audio data and add as audio_path piece
-            audio_data: Optional[str] = getattr(audio_response, "data", None)
+            audio_data: str | None = getattr(audio_response, "data", None)
             if audio_data:
                 audio_path = await self._save_audio_response_async(audio_data_base64=audio_data)
                 audio_piece = construct_response_from_request(
@@ -493,7 +485,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
 
         if audio_format == "pcm16":
             # Raw PCM needs WAV headers - OpenAI uses 24kHz mono PCM16
-            await audio_serializer.save_formatted_audio(
+            await audio_serializer.save_formatted_audio_async(
                 data=audio_bytes,
                 num_channels=1,
                 sample_width=2,
@@ -501,7 +493,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             )
         else:
             # wav, mp3, flac, opus are already properly formatted
-            await audio_serializer.save_data(audio_bytes)
+            await audio_serializer.save_data_async(audio_bytes)
 
         return audio_serializer.value
 
@@ -633,7 +625,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
                         data_type="audio_path",
                         extension=ext,
                     )
-                    base64_data = await audio_serializer.read_data_base64()
+                    base64_data = await audio_serializer.read_data_base64_async()
                     audio_format = ext.lower().lstrip(".")
                     input_audio_entry = {"data": base64_data, "format": audio_format}
                     entry = {"type": "input_audio", "input_audio": input_audio_entry}
@@ -650,7 +642,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
             chat_messages.append(chat_message.model_dump(exclude_none=True))
         return chat_messages
 
-    async def _construct_request_body(
+    async def _construct_request_body_async(
         self, *, conversation: MutableSequence[Message], json_config: _JsonResponseConfig
     ) -> dict[str, Any]:
         messages = await self._build_chat_messages_async(conversation)
@@ -677,7 +669,7 @@ class OpenAIChatTarget(OpenAITarget, PromptTarget):
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}
 
-    def _build_response_format(self, json_config: _JsonResponseConfig) -> Optional[dict[str, Any]]:
+    def _build_response_format(self, json_config: _JsonResponseConfig) -> dict[str, Any] | None:
         if not json_config.enabled:
             return None
 

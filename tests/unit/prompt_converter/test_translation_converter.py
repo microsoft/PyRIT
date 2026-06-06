@@ -7,8 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from unit.mocks import MockPromptTarget
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.prompt_converter import TranslationConverter
 
 
@@ -97,7 +96,7 @@ async def test_translation_converter_retries_on_exception(sqlite_instance):
     mock_send_prompt = AsyncMock(side_effect=Exception("Test failure"))
     with patch.object(prompt_target, "send_prompt_async", mock_send_prompt):
         with patch("asyncio.sleep", new_callable=AsyncMock):
-            with pytest.raises(Exception):  # noqa: B017
+            with pytest.raises(Exception):
                 await translation_converter.convert_async(prompt="hello")
 
             assert mock_send_prompt.call_count == max_retries

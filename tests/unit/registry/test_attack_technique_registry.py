@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
@@ -259,7 +259,7 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
     def test_policy_is_read_only(self):
         """Policy property has no setter — it's read-only."""
         with pytest.raises(AttributeError):
-            self.registry.scorer_override_policy = ScorerOverridePolicy.RAISE
+            self.registry.scorer_override_policy = ScorerOverridePolicy.RAISE  # type: ignore[ty:invalid-assignment]
 
     def test_policy_passed_to_factories_via_register_from_factories(self):
         """Factories registered via register_from_factories inherit the registry's default policy."""

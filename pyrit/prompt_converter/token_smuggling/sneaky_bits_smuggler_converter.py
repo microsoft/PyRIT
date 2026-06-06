@@ -2,9 +2,9 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional
+from typing import Literal
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.prompt_converter.token_smuggling.base import SmugglerConverter
 
 logger = logging.getLogger(__name__)
@@ -22,19 +22,23 @@ class SneakyBitsSmugglerConverter(SmugglerConverter):
         - [@embracethered2025sneakybits]
     """
 
+    # Grandfathered: ``action`` is inherited from SmugglerConverter's public API.
+    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0.
+    _brick_legacy_init = True
+
     def __init__(
         self,
         action: Literal["encode", "decode"] = "encode",
-        zero_char: Optional[str] = None,
-        one_char: Optional[str] = None,
+        zero_char: str | None = None,
+        one_char: str | None = None,
     ) -> None:
         """
         Initialize the converter with options for encoding/decoding in Sneaky Bits mode.
 
         Args:
             action (Literal["encode", "decode"]): The action to perform.
-            zero_char (Optional[str]): Character to represent binary 0 in ``sneaky_bits`` mode (default: U+2062).
-            one_char (Optional[str]): Character to represent binary 1 in ``sneaky_bits`` mode (default: U+2064).
+            zero_char (str | None): Character to represent binary 0 in ``sneaky_bits`` mode (default: U+2062).
+            one_char (str | None): Character to represent binary 1 in ``sneaky_bits`` mode (default: U+2064).
 
         Raises:
             ValueError: If an unsupported action or ``encoding_mode`` is provided.
@@ -69,7 +73,7 @@ class SneakyBitsSmugglerConverter(SmugglerConverter):
             message (str): The message to encode.
 
         Returns:
-            Tuple[str, str]: A tuple where the first element is a bit summary (empty in this implementation)
+            tuple[str, str]: A tuple where the first element is a bit summary (empty in this implementation)
             and the second element is the encoded message containing the invisible bits.
         """
         encoded_bits = []

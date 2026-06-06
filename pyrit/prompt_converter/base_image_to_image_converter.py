@@ -11,7 +11,8 @@ from urllib.parse import urlparse
 import aiohttp
 from PIL import Image
 
-from pyrit.models import PromptDataType, data_serializer_factory
+from pyrit.memory import data_serializer_factory
+from pyrit.models import PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)
@@ -125,7 +126,7 @@ class BaseImageToImageConverter(PromptConverter, ABC):
         transformed.save(buffer, output_format)
         return buffer, output_format
 
-    async def _read_image_from_url(self, url: str) -> bytes:
+    async def _read_image_from_url_async(self, url: str) -> bytes:
         """
         Download data from a URL and return the content as bytes.
 
@@ -167,7 +168,9 @@ class BaseImageToImageConverter(PromptConverter, ABC):
         img_serializer = data_serializer_factory(category="prompt-memory-entries", value=prompt, data_type="image_path")
 
         original_img_bytes = (
-            await self._read_image_from_url(prompt) if input_type == "url" else await img_serializer.read_data()
+            await self._read_image_from_url_async(prompt)
+            if input_type == "url"
+            else await img_serializer.read_data_async()
         )
         original_img = Image.open(BytesIO(original_img_bytes))
         original_format = original_img.format or "JPEG"
@@ -176,6 +179,6 @@ class BaseImageToImageConverter(PromptConverter, ABC):
         img_serializer.file_extension = output_format.lower()
 
         image_str = base64.b64encode(transformed_bytes.getvalue())
-        await img_serializer.save_b64_image(data=image_str.decode())
+        await img_serializer.save_b64_image_async(data=image_str.decode())
 
         return ConverterResult(output_text=str(img_serializer.value), output_type="image_path")

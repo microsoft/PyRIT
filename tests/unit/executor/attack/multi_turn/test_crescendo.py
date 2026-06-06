@@ -4,7 +4,6 @@
 import json
 import uuid
 from pathlib import Path
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,10 +23,10 @@ from pyrit.executor.attack import (
     CrescendoAttackContext,
     CrescendoAttackResult,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
     ChatMessageRole,
+    ComponentIdentifier,
     ConversationType,
     Message,
     MessagePiece,
@@ -85,11 +84,11 @@ def create_score(
     *,
     score_type: ScoreType,
     score_value: str,
-    score_category: Optional[list[str]] = None,
+    score_category: list[str] | None = None,
     scorer_class: str,
     score_rationale: str = "Test rationale",
     score_value_description: str = "Test description",
-    score_metadata: Optional[dict] = None,
+    score_metadata: dict | None = None,
 ) -> Score:
     """Create a score with common defaults.
 
@@ -254,10 +253,10 @@ class CrescendoTestHelper:
         *,
         objective_target: MagicMock,
         adversarial_chat: MagicMock,
-        objective_scorer: Optional[MagicMock] = None,
-        refusal_scorer: Optional[MagicMock] = None,
-        prompt_normalizer: Optional[MagicMock] = None,
-        system_prompt_path: Optional[Path] = None,
+        objective_scorer: MagicMock | None = None,
+        refusal_scorer: MagicMock | None = None,
+        prompt_normalizer: MagicMock | None = None,
+        system_prompt_path: Path | None = None,
         **kwargs,
     ) -> CrescendoAttack:
         """Create a CrescendoAttack instance with flexible configuration.
@@ -444,8 +443,8 @@ class TestCrescendoAttackInitialization:
         """Adversarial chat must natively support MULTI_TURN and SYSTEM_PROMPT."""
         from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
-        mock_adversarial_chat.configuration.includes.side_effect = lambda *, capability: capability != CapabilityName(
-            missing_capability
+        mock_adversarial_chat.configuration.includes.side_effect = lambda *, capability: (
+            capability != CapabilityName(missing_capability)
         )
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
 
@@ -909,7 +908,7 @@ class TestPromptGeneration:
         mock_objective_target: MagicMock,
         mock_adversarial_chat: MagicMock,
         response_json: str,
-        expected_error: Optional[str],
+        expected_error: str | None,
     ):
         """Test parsing adversarial response with various inputs.
 
@@ -930,6 +929,73 @@ class TestPromptGeneration:
             # Should not raise
             result = attack._parse_adversarial_response(response_json)
             assert isinstance(result, str)
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("generated_question", "generated_question"),
+            ("generatedQuestion", "generated_question"),
+            ("GeneratedQuestion", "generated_question"),
+            ("rationaleBehindJailbreak", "rationale_behind_jailbreak"),
+            ("lastResponseSummary", "last_response_summary"),
+            ("", ""),
+        ],
+    )
+    def test_camel_to_snake_handles_common_cases(self, raw: str, expected: str) -> None:
+        """``_camel_to_snake`` normalizes camelCase / PascalCase and leaves snake_case alone."""
+        assert CrescendoAttack._camel_to_snake(raw) == expected
+
+    def test_parse_adversarial_response_accepts_camel_case_keys(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+    ) -> None:
+        """camelCase keys are normalized to snake_case so well-formed JSON with the wrong casing still parses.
+
+        Regression test for the Azure DevOps Integration Tests failure on
+        ``4_sequential_attack.ipynb``, where the adversarial model returned
+        ``generatedQuestion`` / ``rationaleBehindJailbreak`` /
+        ``lastResponseSummary`` for three retries straight and the strict
+        snake_case-only parser tore down the run.
+        """
+        attack = CrescendoTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+        )
+        camel_case_response = (
+            '{"generatedQuestion": "Attack question", '
+            '"lastResponseSummary": "Summary text", '
+            '"rationaleBehindJailbreak": "Why this works"}'
+        )
+
+        result = attack._parse_adversarial_response(camel_case_response)
+
+        assert result == "Attack question"
+
+    def test_parse_adversarial_response_mixed_casing_still_validates_extras(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+    ) -> None:
+        """Extra keys remain rejected even after camelCase normalization.
+
+        ``unexpectedKey`` normalizes to ``unexpected_key`` (still not in the
+        expected set), so the strict extra-key check continues to fire — we
+        only loosen casing, not the schema.
+        """
+        attack = CrescendoTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+        )
+        response_with_extra = (
+            '{"generatedQuestion": "Attack", '
+            '"lastResponseSummary": "Summary", '
+            '"rationaleBehindJailbreak": "Rationale", '
+            '"unexpectedKey": "value"}'
+        )
+
+        with pytest.raises(InvalidJsonException, match="Unexpected keys"):
+            attack._parse_adversarial_response(response_with_extra)
 
     async def test_custom_message_is_sent_to_target(
         self,

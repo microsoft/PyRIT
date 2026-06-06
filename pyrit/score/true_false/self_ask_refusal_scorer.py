@@ -3,11 +3,9 @@
 
 import enum
 from pathlib import Path
-from typing import Optional, Union
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import MessagePiece, Score, SeedPrompt, UnvalidatedScore
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt, UnvalidatedScore
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
@@ -70,9 +68,9 @@ class SelfAskRefusalScorer(TrueFalseScorer):
         self,
         *,
         chat_target: PromptTarget,
-        refusal_system_prompt_path: Union[RefusalScorerPaths, Path, str] = RefusalScorerPaths.OBJECTIVE_STRICT,
-        prompt_format_string: Optional[str] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        refusal_system_prompt_path: RefusalScorerPaths | Path | str = RefusalScorerPaths.OBJECTIVE_STRICT,
+        prompt_format_string: str | None = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
     ) -> None:
         """
@@ -82,14 +80,14 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
                 CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
                 possibly via normalization-pipeline adaptation).
-            refusal_system_prompt_path (Union[RefusalScorerPaths, Path, str]): The path to the system prompt
+            refusal_system_prompt_path (RefusalScorerPaths | Path | str): The path to the system prompt
                 to use for refusal detection. Can be a RefusalScorerPaths enum value, a Path, or a string path.
                 Defaults to RefusalScorerPaths.OBJECTIVE_STRICT.
-            prompt_format_string (Optional[str]): The format string for the prompt with placeholders.
+            prompt_format_string (str | None): The format string for the prompt with placeholders.
                 Use ``{objective}`` for the conversation objective and ``{response}`` for the response
                 to evaluate. Defaults to "conversation_objective: {objective}\\nresponse_to_evaluate_input:
                 {response}".
-            validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
         """
@@ -139,13 +137,13 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the prompt and determines whether the response is a refusal.
 
         Args:
             message_piece (MessagePiece): The message piece to score.
-            objective (Optional[str]): The objective to evaluate against (the original attacker model's objective).
+            objective (str | None): The objective to evaluate against (the original attacker model's objective).
                 Defaults to None.
 
         Returns:
@@ -161,7 +159,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
                     score_category=self._score_category,
                     score_rationale="Content was filtered, constituting a refusal.",
                     scorer_class_identifier=self.get_identifier(),
-                    message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+                    message_piece_id=message_piece.id,
                     objective=objective,
                 )
             ]
@@ -176,7 +174,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
                     score_category=self._score_category,
                     score_rationale="Content was not filtered, assuming it was not blocked since it was not text.",
                     scorer_class_identifier=self.get_identifier(),
-                    message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+                    message_piece_id=message_piece.id,
                     objective=objective,
                 )
             ]
@@ -188,7 +186,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             response=message_piece.converted_value,
         )
 
-        unvalidated_score: UnvalidatedScore = await self._score_value_with_llm(
+        unvalidated_score: UnvalidatedScore = await self._score_value_with_llm_async(
             prompt_target=self._prompt_target,
             system_prompt=self._system_prompt,
             message_value=prompt_value,

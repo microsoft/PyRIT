@@ -3,7 +3,7 @@
 
 import pytest
 
-from pyrit.identifiers import ComponentIdentifier, Identifiable
+from pyrit.models import ComponentIdentifier, Identifiable
 from pyrit.registry.object_registries.base_instance_registry import (
     BaseInstanceRegistry,
     RegistryEntry,

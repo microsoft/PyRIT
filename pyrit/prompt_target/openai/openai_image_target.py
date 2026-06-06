@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 import base64
 import logging
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 import httpx
 
@@ -11,12 +11,8 @@ from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import (
-    Message,
-    construct_response_from_request,
-    data_serializer_factory,
-)
+from pyrit.memory import data_serializer_factory
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
@@ -53,6 +49,13 @@ class OpenAIImageTarget(OpenAITarget):
     # DALL-E-only quality values that are deprecated in favor of GPT image model values.
     _DEPRECATED_QUALITY_VALUES = {"standard", "hd"}
 
+    # Grandfathered: positional params predate the kwargs-only contract; the
+    # sandwiched ``*args``/``**kwargs`` shape forwards extras to ``OpenAITarget``.
+    # TODO: remove this opt-out and move ``*args`` up to immediately after
+    # ``self`` (or insert ``*,`` and drop ``*args`` entirely) in 0.16.0
+    # (this will be a BREAKING CHANGE for callers passing arguments positionally).
+    _brick_legacy_init = True
+
     def __init__(
         self,
         image_size: Literal[
@@ -65,11 +68,11 @@ class OpenAIImageTarget(OpenAITarget):
             "1792x1024",
             "1024x1792",
         ] = "1024x1024",
-        output_format: Optional[Literal["png", "jpeg", "webp"]] = None,
-        quality: Optional[Literal["auto", "low", "medium", "high", "standard", "hd"]] = None,
-        style: Optional[Literal["natural", "vivid"]] = None,
-        background: Optional[Literal["transparent", "opaque", "auto"]] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        output_format: Literal["png", "jpeg", "webp"] | None = None,
+        quality: Literal["auto", "low", "medium", "high", "standard", "hd"] | None = None,
+        style: Literal["natural", "vivid"] | None = None,
+        background: Literal["transparent", "opaque", "auto"] | None = None,
+        custom_configuration: TargetConfiguration | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -261,7 +264,7 @@ class OpenAIImageTarget(OpenAITarget):
             image_generation_args["background"] = self.background
 
         # Use unified error handler for consistent error handling
-        return await self._handle_openai_request(
+        return await self._handle_openai_request_async(
             api_call=lambda: self._client.images.generate(**image_generation_args),
             request=message,
         )
@@ -290,8 +293,8 @@ class OpenAIImageTarget(OpenAITarget):
                 category="prompt-memory-entries", value=image_path, data_type="image_path"
             )
 
-            image_name = str(await img_serializer.get_data_filename())
-            image_bytes = await img_serializer.read_data()
+            image_name = str(await img_serializer.get_data_filename_async())
+            image_bytes = await img_serializer.read_data_async()
             image_type = img_serializer.get_mime_type(image_path)
 
             image_files.append((image_name, image_bytes, image_type))
@@ -299,7 +302,8 @@ class OpenAIImageTarget(OpenAITarget):
         # Construct request parameters for image editing
         image_edit_args: dict[str, Any] = {
             "model": self._model_name,
-            # Single image can be sent (and MUST BE in MAI models) as a tuple, multiple images must be a list
+            # Single image sent as a tuple (mandatory for targets that support only one image input such as MAI,
+            # also supported by other targets such as OpenAI). Multiple images always sent as a list.
             "image": image_files[0] if len(image_files) == 1 else image_files,
             "prompt": text_prompt,
             "size": self.image_size,
@@ -314,12 +318,12 @@ class OpenAIImageTarget(OpenAITarget):
         if self.background:
             image_edit_args["background"] = self.background
 
-        return await self._handle_openai_request(
+        return await self._handle_openai_request_async(
             api_call=lambda: self._client.images.edit(**image_edit_args),
             request=message,
         )
 
-    async def _construct_message_from_response(self, response: Any, request: Any) -> Message:
+    async def _construct_message_from_response_async(self, response: Any, request: Any) -> Message:
         """
         Construct a Message from an ImagesResponse.
 
@@ -334,7 +338,7 @@ class OpenAIImageTarget(OpenAITarget):
             EmptyResponseException: If the image generation returned an empty response.
         """
         image_data = response.data[0]
-        image_bytes = await self._get_image_bytes(image_data)
+        image_bytes = await self._get_image_bytes_async(image_data)
 
         extension = self.output_format or "png"
         data = data_serializer_factory(
@@ -342,13 +346,13 @@ class OpenAIImageTarget(OpenAITarget):
             data_type="image_path",
             extension=extension,
         )
-        await data.save_data(data=image_bytes)
+        await data.save_data_async(data=image_bytes)
 
         return construct_response_from_request(
             request=request, response_text_pieces=[data.value], response_type="image_path"
         )
 
-    async def _get_image_bytes(self, image_data: Any) -> bytes:
+    async def _get_image_bytes_async(self, image_data: Any) -> bytes:
         """
         Extract image bytes from the API response.
 

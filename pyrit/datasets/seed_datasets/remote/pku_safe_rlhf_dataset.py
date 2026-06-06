@@ -2,12 +2,14 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional
+from typing import Literal
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -23,36 +25,62 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
     Paper: [@ji2024pkusaferlhf]
     """
 
+    _AUTHORS = [
+        "Jiaming Ji",
+        "Donghai Hong",
+        "Borong Zhang",
+        "Boyuan Chen",
+        "Juntao Dai",
+        "Boren Zheng",
+        "Tianyi Qiu",
+        "Jiayi Zhou",
+        "Kaile Wang",
+        "Boxuan Li",
+        "Sirui Han",
+        "Yike Guo",
+        "Yaodong Yang",
+    ]
+
+    _GROUPS = [
+        "Peking University",
+        "The Hong Kong University of Science and Technology",
+        "Infinigence-AI",
+    ]
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "huge"  # 73907 prompt-response pairs across 19 harm categories
+    tags: frozenset[str] = frozenset({"default", "safety"})
+
     def __init__(
         self,
         *,
         source: str = "PKU-Alignment/PKU-SafeRLHF",
         include_safe_prompts: bool = True,
-        filter_harm_categories: Optional[
-            list[
-                Literal[
-                    "Animal Abuse",
-                    "Copyright Issues",
-                    "Cybercrime",
-                    "Discriminatory Behavior",
-                    "Disrupting Public Order",
-                    "Drugs",
-                    "Economic Crime",
-                    "Endangering National Security",
-                    "Endangering Public Health",
-                    "Environmental Damage",
-                    "Human Trafficking",
-                    "Insulting Behavior",
-                    "Mental Manipulation",
-                    "Physical Harm",
-                    "Privacy Violation",
-                    "Psychological Harm",
-                    "Sexual Content",
-                    "Violence",
-                    "White-Collar Crime",
-                ]
+        filter_harm_categories: list[
+            Literal[
+                "Animal Abuse",
+                "Copyright Issues",
+                "Cybercrime",
+                "Discriminatory Behavior",
+                "Disrupting Public Order",
+                "Drugs",
+                "Economic Crime",
+                "Endangering National Security",
+                "Endangering Public Health",
+                "Environmental Damage",
+                "Human Trafficking",
+                "Insulting Behavior",
+                "Mental Manipulation",
+                "Physical Harm",
+                "Privacy Violation",
+                "Psychological Harm",
+                "Sexual Content",
+                "Violence",
+                "White-Collar Crime",
             ]
-        ] = None,
+        ]
+        | None = None,
     ) -> None:
         """
         Initialize the PKU-SafeRLHF dataset loader.
@@ -68,10 +96,12 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
         self.filter_harm_categories = filter_harm_categories
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "pku_safe_rlhf"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch PKU-SafeRLHF dataset and return as SeedDataset.
@@ -84,7 +114,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading PKU-SafeRLHF dataset from {self.source}")
 
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.source,
             config="default",
             cache=cache,
@@ -125,6 +155,8 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
                             "their helpfulness or harmfulness. Only the 'prompt' column is extracted."
                         ),
                         source=f"https://huggingface.co/datasets/{self.source}",
+                        authors=self._AUTHORS,
+                        groups=self._GROUPS,
                     )
                 )
 

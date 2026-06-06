@@ -30,11 +30,22 @@ repos:
         files: ^(doc/.*\.(py|ipynb|md)|doc/myst\.yml)$
         pass_filenames: false
         additional_dependencies: ['pyyaml']
+      - id: check-no-rest-roles
+        name: Reject Sphinx reST cross-reference roles
+        entry: python ./build_scripts/check_no_rest_roles.py
+        language: python
+        files: ^pyrit/.*\.py$
       - id: enforce_alembic_revision_immutability
         name: Enforce Alembic Revision Immutability
         entry: python ./build_scripts/enforce_alembic_revision_immutability.py
         language: python
         files: ^pyrit/memory/alembic/versions/.*\.py$
+        pass_filenames: false
+      - id: check-async-suffix
+        name: Enforce _async Suffix on async def
+        entry: python ./build_scripts/check_async_suffix.py
+        language: python
+        files: ^pyrit/.*\.py$
         pass_filenames: false
       - id: memory-migrations-check
         name: Check Memory Migrations
@@ -69,11 +80,16 @@ repos:
       name: Ruff (Jupyter Notebooks)
       args: [--fix]
 
-  - repo: https://github.com/allganize/ty-pre-commit
-    rev: v0.0.40
+  - repo: local
     hooks:
       - id: ty-check
         name: ty (type check)
+        # Run ty in the project's uv-managed venv so it can resolve project
+        # dependencies (tqdm etc). The third-party ty-pre-commit hook installs
+        # ty in an isolated env without project deps, which causes spurious
+        # ``unresolved-import`` errors now that the rule is set to ``error``.
+        entry: uv run --link-mode=copy ty check
+        language: system
         files: ^pyrit/
         exclude: ^pyrit/auxiliary_attacks/
         types: [python]

@@ -3,9 +3,8 @@
 
 import logging
 import random
-from typing import Optional
 
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.models import ComponentIdentifier
 from pyrit.prompt_converter.text_selection_strategy import WordSelectionStrategy
 from pyrit.prompt_converter.word_level_converter import WordLevelConverter
 
@@ -25,16 +24,16 @@ class ZalgoConverter(WordLevelConverter):
         self,
         *,
         intensity: int = 10,
-        seed: Optional[int] = None,
-        word_selection_strategy: Optional[WordSelectionStrategy] = None,
+        seed: int | None = None,
+        word_selection_strategy: WordSelectionStrategy | None = None,
     ) -> None:
         """
         Initialize the converter with the specified selection parameters.
 
         Args:
             intensity (int): Number of combining marks per character (higher = more cursed). Default is 10.
-            seed (Optional[int]): Optional seed for reproducible output.
-            word_selection_strategy (Optional[WordSelectionStrategy]): Strategy for selecting which words to convert.
+            seed (int | None): Optional seed for reproducible output.
+            word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
                 If None, all words will be converted.
         """
         super().__init__(word_selection_strategy=word_selection_strategy)

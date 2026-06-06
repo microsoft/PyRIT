@@ -5,8 +5,7 @@ from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, PromptDataType, Score, UnvalidatedScore
+from pyrit.models import ComponentIdentifier, Message, PromptDataType, Score, UnvalidatedScore
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -36,7 +35,7 @@ class FloatScaleScorer(Scorer):
     "blocked = True") should override ``_score_piece_async`` or ``_build_fallback_score``.
     """
 
-    def __init__(self, *, validator: ScorerPromptValidator, chat_target: Optional[PromptTarget] = None) -> None:
+    def __init__(self, *, validator: ScorerPromptValidator, chat_target: PromptTarget | None = None) -> None:
         """
         Initialize the FloatScaleScorer.
 
@@ -47,7 +46,7 @@ class FloatScaleScorer(Scorer):
         """
         super().__init__(validator=validator, chat_target=chat_target)
 
-    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         """
         Build a single-element list containing a neutral ``0.0`` score when no pieces could be scored.
 
@@ -56,7 +55,7 @@ class FloatScaleScorer(Scorer):
 
         Args:
             message (Message): The message whose first piece is inspected for status.
-            objective (Optional[str]): The objective associated with this scoring call.
+            objective (str | None): The objective associated with this scoring call.
 
         Returns:
             list[Score]: A single-element list containing a ``0.0`` ``float_scale`` score
@@ -131,7 +130,7 @@ class FloatScaleScorer(Scorer):
             harm_category=self.evaluation_file_mapping.harm_category,
         )
 
-    async def _score_value_with_llm(
+    async def _score_value_with_llm_async(
         self,
         *,
         prompt_target: PromptTarget,
@@ -139,19 +138,19 @@ class FloatScaleScorer(Scorer):
         message_value: str,
         message_data_type: PromptDataType,
         scored_prompt_id: str | UUID,
-        prepended_text_message_piece: Optional[str] = None,
-        category: Optional[str | UUID] = None,
-        objective: Optional[str] = None,
+        prepended_text_message_piece: str | None = None,
+        category: str | UUID | None = None,
+        objective: str | None = None,
         score_value_output_key: str = "score_value",
         rationale_output_key: str = "rationale",
         description_output_key: str = "description",
         metadata_output_key: str = "metadata",
         category_output_key: str = "category",
-        attack_identifier: Optional[ComponentIdentifier] = None,
+        attack_identifier: ComponentIdentifier | None = None,
     ) -> UnvalidatedScore:
         score: UnvalidatedScore | None = None
         try:
-            score = await super()._score_value_with_llm(
+            score = await super()._score_value_with_llm_async(
                 prompt_target=prompt_target,
                 system_prompt=system_prompt,
                 message_value=message_value,

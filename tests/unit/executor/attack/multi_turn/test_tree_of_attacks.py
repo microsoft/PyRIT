@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional, cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,9 +26,9 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TAPAttackScoringConfig,
     _TreeOfAttacksNode,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
     Message,
@@ -50,11 +50,11 @@ class NodeMockConfig:
     """Configuration for creating mock _TreeOfAttacksNode objects."""
 
     node_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    parent_id: Optional[str] = None
+    parent_id: str | None = None
     prompt_sent: bool = False
     completed: bool = True
     off_topic: bool = False
-    objective_score_value: Optional[float] = None
+    objective_score_value: float | None = None
     auxiliary_scores: dict[str, float] = field(default_factory=dict)
     objective_target_conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     adversarial_chat_conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -64,7 +64,7 @@ class MockNodeFactory:
     """Factory for creating mock _TreeOfAttacksNode objects."""
 
     @staticmethod
-    def create_node(config: Optional[NodeMockConfig] = None) -> "_TreeOfAttacksNode":
+    def create_node(config: NodeMockConfig | None = None) -> "_TreeOfAttacksNode":
         """Create a mock _TreeOfAttacksNode with the given configuration."""
         if config is None:
             config = NodeMockConfig()
@@ -95,7 +95,7 @@ class MockNodeFactory:
         # Set up objective score
         if config.objective_score_value is not None:
             node.objective_score = MagicMock(
-                get_value=MagicMock(return_value=config.objective_score_value), score_metadata=None
+                spec=Score, get_value=MagicMock(return_value=config.objective_score_value), score_metadata=None
             )
         else:
             node.objective_score = None
@@ -150,14 +150,14 @@ class AttackBuilder:
     """Builder for creating TreeOfAttacksWithPruningAttack instances with common configurations."""
 
     def __init__(self) -> None:
-        self.objective_target: Optional[PromptTarget] = None
-        self.adversarial_chat: Optional[PromptTarget] = None
-        self.objective_scorer: Optional[Scorer] = None
+        self.objective_target: PromptTarget | None = None
+        self.adversarial_chat: PromptTarget | None = None
+        self.objective_scorer: Scorer | None = None
         self.auxiliary_scorers: list[Scorer] = []
         self.tree_params: dict[str, Any] = {}
-        self.converters: Optional[AttackConverterConfig] = None
+        self.converters: AttackConverterConfig | None = None
         self.successful_threshold: float = 0.8
-        self.prompt_normalizer: Optional[PromptNormalizer] = None
+        self.prompt_normalizer: PromptNormalizer | None = None
         self._supports_multi_turn: bool = True
 
     def with_default_mocks(self) -> "AttackBuilder":
@@ -236,8 +236,8 @@ class AttackBuilder:
         )
         target.capabilities.supports_multi_turn = supports_multi_turn
         target.capabilities.output_modalities = frozenset({frozenset(["text"])})
-        target.configuration.includes.side_effect = (
-            lambda capability: capability == CapabilityName.MULTI_TURN and supports_multi_turn
+        target.configuration.includes.side_effect = lambda capability: (
+            capability == CapabilityName.MULTI_TURN and supports_multi_turn
         )
         target.configuration.capabilities.output_modalities = frozenset({frozenset(["text"])})
         return cast("PromptTarget", target)
@@ -293,7 +293,6 @@ class TestHelpers:
     def create_score(value: float = 0.9) -> Score:
         """Create a mock Score object."""
         return Score(
-            id=None,
             score_type="float_scale",
             score_value=str(value),
             score_category=["test"],
@@ -332,7 +331,6 @@ class TestHelpers:
 
         # Create the float scale score that the mock scorer will return
         float_score = Score(
-            id=None,
             score_type="float_scale",
             score_value=str(original_float_value),
             score_category=["objective"],
@@ -2209,11 +2207,13 @@ def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _
         node.completed = True
         if b.error is not None:
             node.objective_score = MagicMock(
+                spec=Score,
                 get_value=MagicMock(return_value=0.0),
                 score_metadata=None,
             )
         elif b.score is not None:
             node.objective_score = MagicMock(
+                spec=Score,
                 get_value=MagicMock(return_value=b.score),
                 score_metadata=None,
             )

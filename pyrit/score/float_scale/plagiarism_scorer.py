@@ -3,12 +3,10 @@
 
 import re
 from enum import Enum
-from typing import Optional
 
 import numpy as np
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -34,12 +32,21 @@ class PlagiarismScorer(FloatScaleScorer):
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
 
+    # Grandfathered: ``reference_text`` is part of the public positional API
+    # at the time the keyword-only Scorer contract was introduced. Opting
+    # into the legacy grace period emits a ``DeprecationWarning`` on import
+    # instead of raising ``TypeError`` so existing user code keeps working
+    # for one release cycle. TODO: drop this opt-out and insert ``*,``
+    # after ``self`` in 0.16.0 (this will be a BREAKING CHANGE for callers
+    # that still pass parameters positionally).
+    _brick_legacy_init = True
+
     def __init__(
         self,
         reference_text: str,
         metric: PlagiarismMetric = PlagiarismMetric.LCS,
         n: int = 5,
-        validator: Optional[ScorerPromptValidator] = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the PlagiarismScorer.
@@ -48,7 +55,7 @@ class PlagiarismScorer(FloatScaleScorer):
             reference_text (str): The reference text to compare against.
             metric (PlagiarismMetric): The plagiarism detection metric to use. Defaults to PlagiarismMetric.LCS.
             n (int): The n-gram size for n-gram similarity. Defaults to 5.
-            validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator for the scorer. Defaults to None.
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 
@@ -76,7 +83,7 @@ class PlagiarismScorer(FloatScaleScorer):
         Tokenize text using whitespace-based tokenization (case-insensitive).
 
         Returns:
-            List[str]: List of lowercase tokens with punctuation removed.
+            list[str]: List of lowercase tokens with punctuation removed.
         """
         text = text.lower()
         text = re.sub(r"[^\w\s]", "", text)
@@ -165,13 +172,13 @@ class PlagiarismScorer(FloatScaleScorer):
 
         raise ValueError("metric must be 'lcs', 'levenshtein', or 'jaccard'")
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the AI response against the reference text using the specified metric.
 
         Args:
             message_piece (MessagePiece): The piece to score.
-            objective (Optional[str]): Not applicable for this scorer.
+            objective (str | None): Not applicable for this scorer.
 
         Returns:
             list[Score]: A list containing the computed score.
@@ -186,7 +193,7 @@ class PlagiarismScorer(FloatScaleScorer):
                 score_metadata=None,
                 score_type="float_scale",
                 score_rationale="Score is deterministic.",
-                message_piece_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+                message_piece_id=message_piece.id,
                 scorer_class_identifier=self.get_identifier(),
             )
         ]

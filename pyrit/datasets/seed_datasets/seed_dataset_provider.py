@@ -6,7 +6,7 @@ import inspect
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import fields as dc_fields
-from typing import Any, Optional
+from typing import Any
 
 from tqdm import tqdm
 
@@ -43,9 +43,15 @@ class SeedDatasetProvider(ABC):
 
         This is called when a class inherits from SeedDatasetProvider. A
         deprecation warning is emitted for subclasses that still override the
-        legacy ``fetch_dataset`` instead of ``fetch_dataset_async``.
+        legacy ``fetch_dataset`` instead of ``fetch_dataset_async``. The
+        keyword-only ``__init__`` contract is also enforced via
+        ``enforce_keyword_only_init``.
         """
         super().__init_subclass__(**kwargs)
+        # Local import to avoid a circular dependency at package init time.
+        from pyrit.common.brick_contract import enforce_keyword_only_init
+
+        enforce_keyword_only_init(cls, base_name="SeedDatasetProvider")
         if not inspect.isabstract(cls) and (
             cls.fetch_dataset is not SeedDatasetProvider.fetch_dataset
             and cls.fetch_dataset_async is SeedDatasetProvider.fetch_dataset_async
@@ -100,7 +106,7 @@ class SeedDatasetProvider(ABC):
         )
         return await self.fetch_dataset(cache=cache)
 
-    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
+    async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:  # pyrit-async-suffix-exempt
         """
         Fetch the dataset (deprecated alias of ``fetch_dataset_async``).
 
@@ -120,7 +126,7 @@ class SeedDatasetProvider(ABC):
         )
         return await self.fetch_dataset_async(cache=cache)
 
-    async def _parse_metadata(self) -> Optional[SeedDatasetMetadata]:
+    async def _parse_metadata_async(self) -> SeedDatasetMetadata | None:
         """
         Parse provider-specific metadata into the shared schema.
 
@@ -129,7 +135,7 @@ class SeedDatasetProvider(ABC):
         returns None, which means metadata is not available for this provider.
 
         Returns:
-            Optional[SeedDatasetMetadata]: Parsed metadata for this provider, or None.
+            SeedDatasetMetadata | None: Parsed metadata for this provider, or None.
         """
         return None
 
@@ -139,20 +145,20 @@ class SeedDatasetProvider(ABC):
         Get all registered dataset provider classes.
 
         Returns:
-            Dict[str, Type[SeedDatasetProvider]]: Dictionary mapping class names to provider classes.
+            dict[str, type[SeedDatasetProvider]]: Dictionary mapping class names to provider classes.
         """
         return cls._registry.copy()
 
     @classmethod
-    async def get_all_dataset_names_async(cls, filters: Optional[SeedDatasetFilter] = None) -> list[str]:
+    async def get_all_dataset_names_async(cls, filters: SeedDatasetFilter | None = None) -> list[str]:
         """
         Get the names of all registered datasets.
 
         Args:
-            filters (Optional[SeedDatasetFilter]): List of filters to apply.
+            filters (SeedDatasetFilter | None): List of filters to apply.
 
         Returns:
-            List[str]: List of dataset names from all registered providers.
+            list[str]: List of dataset names from all registered providers.
 
         Raises:
             ValueError: If no providers are registered or if providers cannot be instantiated.
@@ -168,7 +174,7 @@ class SeedDatasetProvider(ABC):
                 provider = provider_class()
 
                 # Parser ensures a standard metadata format
-                metadata = await provider._parse_metadata()
+                metadata = await provider._parse_metadata_async()
 
                 if filters:
                     # "all" bypasses metadata filtering and returns every dataset
@@ -273,7 +279,7 @@ class SeedDatasetProvider(ABC):
     async def fetch_datasets_async(
         cls,
         *,
-        dataset_names: Optional[list[str]] = None,
+        dataset_names: list[str] | None = None,
         cache: bool = True,
         max_concurrency: int = 5,
     ) -> list[SeedDataset]:
@@ -291,7 +297,7 @@ class SeedDatasetProvider(ABC):
                             Set to 1 for fully sequential execution.
 
         Returns:
-            List[SeedDataset]: List of all fetched datasets.
+            list[SeedDataset]: List of all fetched datasets.
 
         Raises:
             ValueError: If any requested dataset_name does not exist.
@@ -313,14 +319,14 @@ class SeedDatasetProvider(ABC):
             if invalid_names:
                 raise ValueError(f"Dataset(s) not found: {invalid_names}. Available datasets: {available_names}")
 
-        async def fetch_single_dataset(
+        async def fetch_single_dataset_async(
             provider_name: str, provider_class: type["SeedDatasetProvider"]
-        ) -> Optional[tuple[str, SeedDataset]]:
+        ) -> tuple[str, SeedDataset] | None:
             """
             Fetch a single dataset with error handling.
 
             Returns:
-                Optional[Tuple[str, SeedDataset]]: Tuple of provider name and dataset, or None if filtered.
+                tuple[str, SeedDataset] | None: Tuple of provider name and dataset, or None if filtered.
             """
             provider = provider_class()
 
@@ -339,23 +345,23 @@ class SeedDatasetProvider(ABC):
         total_count = len(cls._registry)
         pbar = tqdm(total=total_count, desc="Loading datasets - this can take a few minutes", unit="dataset")
 
-        async def fetch_with_semaphore(
+        async def fetch_with_semaphore_async(
             provider_name: str, provider_class: type["SeedDatasetProvider"]
-        ) -> Optional[tuple[str, SeedDataset]]:
+        ) -> tuple[str, SeedDataset] | None:
             """
             Enforce concurrency limit and update progress during dataset fetch.
 
             Returns:
-                Optional[Tuple[str, SeedDataset]]: Tuple of provider name and dataset, or None if filtered.
+                tuple[str, SeedDataset] | None: Tuple of provider name and dataset, or None if filtered.
             """
             async with semaphore:
-                result = await fetch_single_dataset(provider_name, provider_class)
+                result = await fetch_single_dataset_async(provider_name, provider_class)
                 pbar.update(1)
                 return result
 
         # Fetch all datasets with controlled concurrency and progress bar
         tasks = [
-            fetch_with_semaphore(provider_name, provider_class)
+            fetch_with_semaphore_async(provider_name, provider_class)
             for provider_name, provider_class in cls._registry.items()
         ]
 

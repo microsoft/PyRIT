@@ -129,7 +129,7 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
         to all non-aggregate strategies.
 
         Returns:
-            Set[str]: Set of tags that represent aggregates.
+            set[str]: Set of tags that represent aggregates.
         """
         return {"all"}
 
@@ -145,7 +145,7 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
             tag (str): The tag to filter by (e.g., "easy", "converter", "multi_turn").
 
         Returns:
-            Set[T]: Set of strategies that include the specified tag, excluding
+            set[T]: Set of strategies that include the specified tag, excluding
                     any aggregate markers.
         """
         aggregate_tags = cls.get_aggregate_tags()
@@ -202,11 +202,11 @@ class ScenarioStrategy(Enum, metaclass=_DeprecatedEnumMeta):
         The special "all" tag is automatically supported and expands to all non-aggregate strategies.
 
         Args:
-            strategies (Set[T]): The initial set of attack strategies, which may include
+            strategies (set[T]): The initial set of attack strategies, which may include
                                 aggregate tags.
 
         Returns:
-            Set[T]: The normalized set of concrete attack strategies with aggregate tags
+            set[T]: The normalized set of concrete attack strategies with aggregate tags
                    expanded and removed.
         """
         print_deprecation_message(

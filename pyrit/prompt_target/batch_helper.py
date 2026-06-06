@@ -3,7 +3,7 @@
 
 import asyncio
 from collections.abc import Callable, Generator, Sequence
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 
@@ -31,7 +31,7 @@ def _get_chunks(*args: Sequence[Any], batch_size: int) -> Generator[list[Sequenc
         yield [arg[i : i + batch_size] for arg in args]
 
 
-def _validate_rate_limit_parameters(prompt_target: Optional[PromptTarget], batch_size: int) -> None:
+def _validate_rate_limit_parameters(prompt_target: PromptTarget | None, batch_size: int) -> None:
     """
     Validate the constraints between Rate Limit (Requests Per Minute) and batch size.
 
@@ -49,7 +49,7 @@ def _validate_rate_limit_parameters(prompt_target: Optional[PromptTarget], batch
 
 async def batch_task_async(
     *,
-    prompt_target: Optional[PromptTarget] = None,
+    prompt_target: PromptTarget | None = None,
     batch_size: int,
     items_to_batch: Sequence[Sequence[Any]],
     task_func: Callable[..., Any],

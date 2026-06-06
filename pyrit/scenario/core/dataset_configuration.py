@@ -11,7 +11,7 @@ with either explicit SeedGroups or dataset names (mutually exclusive).
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pyrit.memory import CentralMemory
 from pyrit.models import SeedAttackGroup, SeedGroup
@@ -34,11 +34,11 @@ class DatasetConfiguration:
     Only ONE of `seed_groups` or `dataset_names` can be set.
 
     Args:
-        seed_groups (Optional[List[SeedGroup]]): Explicit list of SeedGroup to use.
-        dataset_names (Optional[List[str]]): Names of datasets to load from memory.
-        max_dataset_size (Optional[int]): If set, randomly samples up to this many SeedGroups
+        seed_groups (list[SeedGroup] | None): Explicit list of SeedGroup to use.
+        dataset_names (list[str] | None): Names of datasets to load from memory.
+        max_dataset_size (int | None): If set, randomly samples up to this many SeedGroups
             from the configured dataset source (without replacement, so no duplicates).
-        scenario_strategies (Optional[Sequence[ScenarioStrategy]]): The scenario
+        scenario_strategies (Sequence[ScenarioStrategy] | None): The scenario
             strategies being executed. Subclasses can use this to filter or customize
             which seed groups are loaded based on the selected strategies.
     """
@@ -46,20 +46,20 @@ class DatasetConfiguration:
     def __init__(
         self,
         *,
-        seed_groups: Optional[list[SeedGroup]] = None,
-        dataset_names: Optional[list[str]] = None,
-        max_dataset_size: Optional[int] = None,
-        scenario_strategies: Optional[Sequence[ScenarioStrategy]] = None,
+        seed_groups: list[SeedGroup] | None = None,
+        dataset_names: list[str] | None = None,
+        max_dataset_size: int | None = None,
+        scenario_strategies: Sequence[ScenarioStrategy] | None = None,
     ) -> None:
         """
         Initialize a DatasetConfiguration.
 
         Args:
-            seed_groups (Optional[List[SeedGroup]]): Explicit list of SeedGroup to use.
-            dataset_names (Optional[List[str]]): Names of datasets to load from memory.
-            max_dataset_size (Optional[int]): If set, randomly samples up to this many SeedGroups
+            seed_groups (list[SeedGroup] | None): Explicit list of SeedGroup to use.
+            dataset_names (list[str] | None): Names of datasets to load from memory.
+            max_dataset_size (int | None): If set, randomly samples up to this many SeedGroups
                 (without replacement).
-            scenario_strategies (Optional[Sequence[ScenarioStrategy]]): The scenario
+            scenario_strategies (Sequence[ScenarioStrategy] | None): The scenario
                 strategies being executed. Subclasses can use this to filter or customize
                 which seed groups are loaded.
 
@@ -98,7 +98,7 @@ class DatasetConfiguration:
         are loaded based on the stored scenario_composites.
 
         Returns:
-            Dict[str, List[SeedGroup]]: Dictionary mapping dataset names to their
+            dict[str, list[SeedGroup]]: Dictionary mapping dataset names to their
                 seed groups. When explicit seed_groups are provided, the key is
                 '_explicit_seed_groups'. Each dataset's seed groups are potentially
                 sampled down to max_dataset_size.
@@ -142,7 +142,7 @@ class DatasetConfiguration:
             dataset_name (str): The name of the dataset to load.
 
         Returns:
-            List[SeedGroup]: Seed groups loaded from memory, or empty list if none found.
+            list[SeedGroup]: Seed groups loaded from memory, or empty list if none found.
         """
         memory = CentralMemory.get_memory_instance()
         return list(memory.get_seed_groups(dataset_name=dataset_name) or [])
@@ -156,7 +156,7 @@ class DatasetConfiguration:
         which dataset each seed group came from.
 
         Returns:
-            List[SeedGroup]: All resolved seed groups from all datasets,
+            list[SeedGroup]: All resolved seed groups from all datasets,
                 with max_dataset_size applied per dataset.
 
         Raises:
@@ -177,7 +177,7 @@ class DatasetConfiguration:
         prepended conversations, or simulated conversation configuration.
 
         Returns:
-            Dict[str, List[SeedAttackGroup]]: Dictionary mapping dataset names to their
+            dict[str, list[SeedAttackGroup]]: Dictionary mapping dataset names to their
                 seed attack groups.
 
         Raises:
@@ -198,7 +198,7 @@ class DatasetConfiguration:
         SeedAttackGroup functionality.
 
         Returns:
-            List[SeedAttackGroup]: All resolved seed attack groups from all datasets.
+            list[SeedAttackGroup]: All resolved seed attack groups from all datasets.
 
         Raises:
             ValueError: If no seed groups could be resolved from the configuration.
@@ -216,7 +216,7 @@ class DatasetConfiguration:
         This is used by the CLI to display what datasets the scenario uses by default.
 
         Returns:
-            List[str]: List of dataset names, or empty list if using explicit seed_groups.
+            list[str]: List of dataset names, or empty list if using explicit seed_groups.
         """
         if self._dataset_names is not None:
             return list(self._dataset_names)
@@ -229,10 +229,10 @@ class DatasetConfiguration:
         Uses random sampling without replacement (no duplicates in the result).
 
         Args:
-            seed_groups (List[SeedGroup]): The seed groups to potentially sample from.
+            seed_groups (list[SeedGroup]): The seed groups to potentially sample from.
 
         Returns:
-            List[SeedGroup]: The original list if max_dataset_size is not set,
+            list[SeedGroup]: The original list if max_dataset_size is not set,
                 or a random sample of up to max_dataset_size unique items.
         """
         if self.max_dataset_size is None or len(seed_groups) <= self.max_dataset_size:
@@ -257,7 +257,7 @@ class DatasetConfiguration:
         samples up to that many prompts per dataset (without replacement).
 
         Returns:
-            List[SeedPrompt]: List of SeedPrompt objects from all configured datasets.
+            list[SeedPrompt]: List of SeedPrompt objects from all configured datasets.
                 Returns an empty list if no prompts are found.
 
         Raises:

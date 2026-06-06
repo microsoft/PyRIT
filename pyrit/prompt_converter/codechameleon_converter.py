@@ -7,11 +7,10 @@ import pathlib
 import re
 import textwrap
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import PromptDataType, SeedPrompt
+from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 
@@ -53,8 +52,8 @@ class CodeChameleonConverter(PromptConverter):
         self,
         *,
         encrypt_type: str,
-        encrypt_function: Optional[Callable[..., Any]] = None,
-        decrypt_function: Optional[Callable[..., Any] | list[Callable[..., Any] | str]] = None,
+        encrypt_function: Callable[..., Any] | None = None,
+        decrypt_function: Callable[..., Any] | list[Callable[..., Any] | str] | None = None,
     ) -> None:
         """
         Initialize the converter with the specified encryption type and optional functions.
@@ -164,10 +163,10 @@ class CodeChameleonConverter(PromptConverter):
 
             def __init__(self, value: str) -> None:
                 self.value = value
-                self.left: Optional[TreeNode] = None
-                self.right: Optional[TreeNode] = None
+                self.left: TreeNode | None = None
+                self.right: TreeNode | None = None
 
-        def build_tree(words: list[str], start: int, end: int) -> Optional[TreeNode]:
+        def build_tree(words: list[str], start: int, end: int) -> TreeNode | None:
             """
             Recursively build a balanced binary tree from a sublist of words.
 
@@ -190,7 +189,7 @@ class CodeChameleonConverter(PromptConverter):
 
             return node
 
-        def tree_to_json(node: Optional[TreeNode]) -> Optional[dict[str, Any]]:
+        def tree_to_json(node: TreeNode | None) -> dict[str, Any] | None:
             """
             Convert a tree to a JSON representation.
 

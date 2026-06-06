@@ -11,7 +11,7 @@ Targets have two concepts:
 This module defines the Instance models for runtime target management.
 """
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -56,16 +56,14 @@ class TargetInstance(BaseModel):
 
     target_registry_name: str = Field(..., description="Target registry key (e.g., 'azure_openai_chat')")
     target_type: str = Field(..., description="Target class name (e.g., 'OpenAIChatTarget')")
-    endpoint: Optional[str] = Field(None, description="Target endpoint URL")
-    model_name: Optional[str] = Field(None, description="Model or deployment name used in API calls")
-    underlying_model_name: Optional[str] = Field(
-        None, description="Underlying model name if different (e.g., 'gpt-4o')"
-    )
-    temperature: Optional[float] = Field(None, description="Temperature parameter for generation")
-    top_p: Optional[float] = Field(None, description="Top-p parameter for generation")
-    max_requests_per_minute: Optional[int] = Field(None, description="Maximum requests per minute")
+    endpoint: str | None = Field(None, description="Target endpoint URL")
+    model_name: str | None = Field(None, description="Model or deployment name used in API calls")
+    underlying_model_name: str | None = Field(None, description="Underlying model name if different (e.g., 'gpt-4o')")
+    temperature: float | None = Field(None, description="Temperature parameter for generation")
+    top_p: float | None = Field(None, description="Top-p parameter for generation")
+    max_requests_per_minute: int | None = Field(None, description="Maximum requests per minute")
     capabilities: TargetCapabilitiesInfo = Field(..., description="Structured snapshot of target capabilities")
-    target_specific_params: Optional[dict[str, Any]] = Field(None, description="Additional target-specific parameters")
+    target_specific_params: dict[str, Any] | None = Field(None, description="Additional target-specific parameters")
 
 
 class TargetListResponse(BaseModel):

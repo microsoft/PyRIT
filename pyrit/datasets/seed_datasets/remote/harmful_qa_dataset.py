@@ -2,11 +2,12 @@
 # Licensed under the MIT license.
 
 import logging
+import warnings
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -28,18 +29,32 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
 
     HF_DATASET_NAME: str = "declare-lab/HarmfulQA"
 
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    size: str = "large"  # 1960 harmful questions by academic topic
+    tags: frozenset[str] = frozenset({"default", "safety", "jailbreak"})
+
     def __init__(
         self,
         *,
-        split: str = "train",
+        split: str | None = None,
     ) -> None:
         """
         Initialize the HarmfulQA dataset loader.
 
         Args:
-            split: Dataset split to load. Defaults to "train".
+            split: **Deprecated.** Upstream ``declare-lab/HarmfulQA`` publishes only the
+                ``"train"`` split, so this kwarg has no effect. It will be removed in
+                v0.16.0.
         """
-        self.split = split
+        if split is not None:
+            warnings.warn(
+                "'split' is deprecated and will be removed in v0.16.0. "
+                "Upstream declare-lab/HarmfulQA publishes only the 'train' split, "
+                "so this kwarg has no effect.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
     @property
     def dataset_name(self) -> str:
@@ -58,9 +73,9 @@ class _HarmfulQADataset(_RemoteDatasetLoader):
         """
         logger.info(f"Loading HarmfulQA dataset from {self.HF_DATASET_NAME}")
 
-        data = await self._fetch_from_huggingface(
+        data = await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
-            split=self.split,
+            split="train",
             cache=cache,
         )
 

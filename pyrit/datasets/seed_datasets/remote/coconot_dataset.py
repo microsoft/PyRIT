@@ -3,33 +3,19 @@
 
 import logging
 from enum import Enum
+from typing import TYPE_CHECKING
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedObjective
 
+if TYPE_CHECKING:
+    from pyrit.models.seeds.seed_group import SeedUnion
+
 logger = logging.getLogger(__name__)
-
-
-_AUTHORS: list[str] = [
-    "Faeze Brahman",
-    "Sachin Kumar",
-    "Vidhisha Balachandran",
-    "Pradeep Dasigi",
-    "Valentina Pyatkin",
-    "Abhilasha Ravichander",
-    "Sarah Wiegreffe",
-    "Nouha Dziri",
-    "Khyathi Chandu",
-    "Jack Hessel",
-    "Yulia Tsvetkov",
-    "Noah A. Smith",
-    "Yejin Choi",
-    "Hannaneh Hajishirzi",
-]
-
-_GROUPS: list[str] = ["Allen Institute for AI"]
 
 
 class CoCoNotCategory(Enum):
@@ -79,6 +65,25 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
     License: ODC-BY 1.0.
     """
 
+    _AUTHORS: list[str] = [
+        "Faeze Brahman",
+        "Sachin Kumar",
+        "Vidhisha Balachandran",
+        "Pradeep Dasigi",
+        "Valentina Pyatkin",
+        "Abhilasha Ravichander",
+        "Sarah Wiegreffe",
+        "Nouha Dziri",
+        "Khyathi Chandu",
+        "Jack Hessel",
+        "Yulia Tsvetkov",
+        "Noah A. Smith",
+        "Yejin Choi",
+        "Hannaneh Hajishirzi",
+    ]
+
+    _GROUPS: list[str] = ["Allen Institute for AI"]
+
     HF_DATASET_NAME: str = "allenai/coconot"
 
     CONFIG: str
@@ -116,12 +121,13 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         """
         return self.SPLITS
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the CoCoNot subset and return it as a SeedDataset.
 
         Iterates ``self._resolved_splits()`` and calls the inherited
-        ``_fetch_from_huggingface`` once per split, then filters by
+        ``_fetch_from_huggingface_async`` once per split, then filters by
         ``self._categories`` if set.
 
         Args:
@@ -137,11 +143,11 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         """
         wanted_categories = {c.value for c in self._categories} if self._categories else None
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
-        seeds: list[SeedObjective] = []
+        seeds: list[SeedUnion] = []
 
         for split in self._resolved_splits():
             logger.info(f"Loading CoCoNot rows (config={self.CONFIG}, split={split})")
-            rows = await self._fetch_from_huggingface(
+            rows = await self._fetch_from_huggingface_async(
                 dataset_name=self.HF_DATASET_NAME,
                 config=self.CONFIG,
                 split=split,
@@ -150,6 +156,16 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
             for row in rows:
                 category = row.get("category")
                 if wanted_categories is not None and category not in wanted_categories:
+                    continue
+                # The upstream HF dataset contains a small number of rows with an
+                # empty ``prompt`` (observed in original.train under the wildchats
+                # subcategory). SeedObjective enforces value != "" downstream, so
+                # skip them here to keep the loader resilient to upstream drift.
+                if not (row.get("prompt") or "").strip():
+                    logger.warning(
+                        f"Skipping CoCoNot row with empty prompt "
+                        f"(id={row.get('id')!r}, category={category!r}, split={split!r})"
+                    )
                     continue
                 seeds.append(self._row_to_seed(row=row, split=split, source_url=source_url))
 
@@ -190,8 +206,8 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
             harm_categories=[category] if category else [],
             description=self.DEFAULT_DESCRIPTION,
             source=source_url,
-            authors=_AUTHORS,
-            groups=_GROUPS,
+            authors=self._AUTHORS,
+            groups=self._GROUPS,
             metadata=metadata,
         )
 
@@ -243,6 +259,7 @@ class _CoCoNotRefusalDataset(_CoCoNotBaseDataset):
             self._validate_enums(values=splits, enum_cls=CoCoNotSplit, label="splits")
         self._splits = splits
 
+    @override
     def _resolved_splits(self) -> tuple[str, ...]:
         """
         Return the splits to load, honoring the user-supplied ``splits`` filter.
@@ -256,6 +273,7 @@ class _CoCoNotRefusalDataset(_CoCoNotBaseDataset):
         return tuple(s.value for s in self._splits)
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "coconot_refusal"
@@ -275,7 +293,7 @@ class _CoCoNotContrastDataset(_CoCoNotBaseDataset):
     CONFIG: str = "contrast"
     SPLITS: tuple[str, ...] = ("test",)
     size: str = "medium"
-    tags: set[str] = set()
+    tags: set[str] = {"safety", "refusal"}
     DEFAULT_DESCRIPTION: str = (
         "CoCoNot contrast set — 379 benign prompts that look superficially similar to "
         "refusal-target prompts but should be complied with. Used to measure "
@@ -284,6 +302,7 @@ class _CoCoNotContrastDataset(_CoCoNotBaseDataset):
     )
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "coconot_contrast"

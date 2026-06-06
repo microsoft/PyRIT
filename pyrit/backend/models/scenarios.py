@@ -10,7 +10,7 @@ the metadata about available scenarios (listing) and scenario execution (runs).
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -40,7 +40,7 @@ class RegisteredScenario(BaseModel):
     )
     all_strategies: list[str] = Field(..., description="All available concrete strategy names")
     default_datasets: list[str] = Field(..., description="Default dataset names used by the scenario")
-    max_dataset_size: Optional[int] = Field(None, description="Maximum items per dataset (None means unlimited)")
+    max_dataset_size: int | None = Field(None, description="Maximum items per dataset (None means unlimited)")
     supported_parameters: list[ScenarioParameterSummary] = Field(
         default_factory=list, description="Scenario-declared custom parameters"
     )

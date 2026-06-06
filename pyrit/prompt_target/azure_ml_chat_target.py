@@ -16,9 +16,9 @@ from pyrit.exceptions import (
     handle_bad_request_exception,
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.message_normalizer import ChatMessageNormalizer, MessageListNormalizer
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     construct_response_from_request,
 )
@@ -284,12 +284,12 @@ class AzureMLChatTarget(PromptTarget):
         Args:
             messages (list[Message]): The message objects containing the role and content.
 
+        Returns:
+            str: The generated response message.
+
         Raises:
             EmptyResponseException: If the response from the chat is empty.
             Exception: For any other errors during the process.
-
-        Returns:
-            str: The generated response message.
         """
         headers = await self._get_headers_async()
         payload = await self._construct_http_body_async(messages)

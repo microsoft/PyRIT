@@ -10,7 +10,6 @@ and memory_labels consistently according to the established contracts.
 
 import uuid
 from contextlib import suppress
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -24,10 +23,10 @@ from pyrit.executor.attack import (
     TreeOfAttacksWithPruningAttack,
 )
 from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     ChatMessageRole,
+    ComponentIdentifier,
     Message,
     MessagePiece,
     PromptDataType,
@@ -911,7 +910,7 @@ def _assert_prepended_text_in_adversarial_context(
     *,
     prepended_conversation: list[Message],
     adversarial_chat_conversation_id: str,
-    adversarial_chat_mock: Optional[MagicMock] = None,
+    adversarial_chat_mock: MagicMock | None = None,
 ) -> None:
     """
     Assert that text content from prepended conversation appears in adversarial chat context.
