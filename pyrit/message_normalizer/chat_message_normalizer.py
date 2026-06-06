@@ -9,14 +9,14 @@ from typing import TYPE_CHECKING, Any
 import aiofiles
 
 from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
+from pyrit.memory import DataTypeSerializer
 from pyrit.message_normalizer.message_normalizer import (
     MessageListNormalizer,
     MessageStringNormalizer,
     SystemMessageBehavior,
     apply_system_message_behavior_async,
 )
-from pyrit.models import ChatMessage, DataTypeSerializer, Message
-from pyrit.models.messages.message_piece import MessagePiece
+from pyrit.models import ChatMessage, Message, MessagePiece
 
 if TYPE_CHECKING:
     from pyrit.models.literals import ChatMessageRole

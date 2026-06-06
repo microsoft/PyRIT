@@ -19,7 +19,7 @@ from pyrit.exceptions import (
     execution_context,
     get_execution_context,
 )
-from pyrit.memory import CentralMemory, MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface, set_message_piece_sha256_async
 from pyrit.models import (
     ComponentIdentifier,
     Message,
@@ -377,7 +377,7 @@ class PromptNormalizer:
 
     async def _calc_hash_async(self, request: Message) -> None:
         """Add a request to the memory."""
-        tasks = [asyncio.create_task(piece.set_sha256_values_async()) for piece in request.message_pieces]
+        tasks = [asyncio.create_task(set_message_piece_sha256_async(piece)) for piece in request.message_pieces]
         await asyncio.gather(*tasks)
 
     async def hash_and_persist_message_async(self, *, message: Message) -> None:

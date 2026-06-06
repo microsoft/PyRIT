@@ -17,7 +17,6 @@ from pydantic import (
 )
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models.data_type_serializer import data_serializer_factory
 from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ChatMessageRole,
     PromptDataType,
@@ -306,22 +305,19 @@ class MessagePiece(BaseModel):
         """
         Compute SHA256 hash values for original and converted payloads.
 
-        Async because blob payloads may need to be fetched. Must be called
-        explicitly after construction.
+        .. deprecated:: 0.15.0
+            Use ``pyrit.memory.storage.serializers.set_message_piece_sha256_async`` instead.
+            This method will be removed in 0.17.0.
         """
-        original_serializer = data_serializer_factory(
-            category="prompt-memory-entries",
-            data_type=self.original_value_data_type,
-            value=self.original_value,
-        )
-        self.original_value_sha256 = await original_serializer.get_sha256_async()
+        import importlib
 
-        converted_serializer = data_serializer_factory(
-            category="prompt-memory-entries",
-            data_type=self.converted_value_data_type,
-            value=self.converted_value,
+        print_deprecation_message(
+            old_item="pyrit.models.messages.message_piece.MessagePiece.set_sha256_values_async",
+            new_item="pyrit.memory.storage.serializers.set_message_piece_sha256_async",
+            removed_in="0.17.0",
         )
-        self.converted_value_sha256 = await converted_serializer.get_sha256_async()
+        serializers = importlib.import_module("pyrit.memory.storage.serializers")
+        await serializers.set_message_piece_sha256_async(self)
 
 
 def sort_message_pieces(message_pieces: list[MessagePiece]) -> list[MessagePiece]:

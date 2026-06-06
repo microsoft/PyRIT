@@ -15,12 +15,8 @@ from pyrit.exceptions import (
     pyrit_target_retry,
 )
 from pyrit.exceptions.exception_classes import ServerErrorException
-from pyrit.models import (
-    ComponentIdentifier,
-    Message,
-    construct_response_from_request,
-    data_serializer_factory,
-)
+from pyrit.memory import data_serializer_factory
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.realtime_audio import (
     RealtimeTargetResult,
     ServerVadConfig,

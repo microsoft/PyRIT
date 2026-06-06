@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
-from pyrit.models import data_serializer_factory
+from pyrit.memory import data_serializer_factory
 
 logger = logging.getLogger(__name__)
 

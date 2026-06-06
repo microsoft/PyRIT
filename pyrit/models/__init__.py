@@ -17,6 +17,7 @@ ComponentIdentifier``). The previous ``pyrit.identifiers`` location is kept as
 a deprecation shim through ``0.16.0``.
 """
 
+import importlib
 from typing import TYPE_CHECKING, Any
 
 from pyrit.common.deprecation import print_deprecation_message
@@ -27,17 +28,6 @@ from pyrit.models.chat_message import (
 )
 from pyrit.models.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.conversation_stats import ConversationStats
-from pyrit.models.data_type_serializer import (
-    AllowedCategories,
-    AudioPathDataTypeSerializer,
-    BinaryPathDataTypeSerializer,
-    DataTypeSerializer,
-    ErrorDataTypeSerializer,
-    ImagePathDataTypeSerializer,
-    TextDataTypeSerializer,
-    VideoPathDataTypeSerializer,
-    data_serializer_factory,
-)
 from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
 from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
 from pyrit.models.identifiers import (
@@ -101,10 +91,6 @@ from pyrit.models.seeds import (
     SeedUnion,
     SimulatedTargetSystemPromptPaths,
 )
-
-# Keep old module-level imports working (deprecated, will be removed)
-# These are re-exported from the seeds submodule
-from pyrit.models.storage_io import AzureBlobStorageIO, DiskStorageIO, StorageIO
 
 __all__ = [
     "ALLOWED_CHAT_MESSAGE_ROLES",
@@ -204,6 +190,24 @@ _DEPRECATED_RENAME_ALIASES: dict[str, Any] = {
     "ScorerIdentifier": ComponentIdentifier,
 }
 
+# Names that moved to ``pyrit.memory.storage``. Served lazily via importlib so that
+# importing ``pyrit.models`` stays import-boundary clean and fires no warning until a
+# moved name is actually accessed. Will be removed in 0.17.0.
+_MOVED_TO_MEMORY_STORAGE: dict[str, str] = {
+    "AllowedCategories": "pyrit.memory.storage.serializers",
+    "AudioPathDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "BinaryPathDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "DataTypeSerializer": "pyrit.memory.storage.serializers",
+    "ErrorDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "ImagePathDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "TextDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "VideoPathDataTypeSerializer": "pyrit.memory.storage.serializers",
+    "data_serializer_factory": "pyrit.memory.storage.serializers",
+    "AzureBlobStorageIO": "pyrit.memory.storage.storage",
+    "DiskStorageIO": "pyrit.memory.storage.storage",
+    "StorageIO": "pyrit.memory.storage.storage",
+}
+
 _warned: set[str] = set()
 
 
@@ -218,4 +222,14 @@ def __getattr__(name: str) -> Any:
             )
             _warned.add(name)
         return target
+    if name in _MOVED_TO_MEMORY_STORAGE:
+        target_module = _MOVED_TO_MEMORY_STORAGE[name]
+        if name not in _warned:
+            print_deprecation_message(
+                old_item=f"{__name__}.{name}",
+                new_item=f"{target_module}.{name}",
+                removed_in="0.17.0",
+            )
+            _warned.add(name)
+        return getattr(importlib.import_module(target_module), name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
