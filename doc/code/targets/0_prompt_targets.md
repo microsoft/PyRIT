@@ -1,6 +1,6 @@
 # Prompt Targets
 
-Prompt Targets are endpoints for where to send prompts. For example, a target could be a GPT-4 or Llama endpoint. Targets are typically used with other components like [attacks](../executor/attack/0_attack.md), [scorers](../scoring/0_scoring.ipynb), and [converters](../converters/0_converters.ipynb).
+Prompt Targets are endpoints for where to send prompts. For example, a target could be a GPT-4 or Llama endpoint. Targets are typically used with other components like [attacks](../executor/0_executor.md), [scorers](../scoring/0_scoring.ipynb), and [converters](../converters/0_converters.ipynb).
 
 - An attack's main job is to change prompts to a given format, apply any converters, and then send them off to prompt targets (sometimes using various strategies). Within an attack, prompt targets are (mostly) swappable, meaning you can use the same logic with different target endpoints.
 - A scorer's main job is to score a prompt. Often, these use LLMs, in which case, a given scorer can often use different configured targets.

@@ -1,79 +1,72 @@
 # Executor
 
-## Overview
+The **executor** is the engine room of PyRIT: it takes prompts, sends them to a target, and
+decides what happens next. Every executor — whether it sends a single prompt, runs a multi-turn
+conversation, orchestrates a workflow, or scores a benchmark — shares one lifecycle and one
+4-component shape. This page covers that shared shape; the sections below it cover each category.
 
-The `pyrit/executor` module provides a flexible framework for executing various operations in PyRIT. This document explains the core components and how they are utilized across different executor categories.
+## Executor vs. attack technique
 
-## Core Components (`pyrit/executor/core`)
+Two words get used loosely, so we pin them down here:
 
-The core executor module contains the foundational classes and interfaces that all executor categories inherit from:
+- An **executor** (here, an **attack strategy**) is the *algorithm* — e.g. `PromptSendingAttack`,
+  `CrescendoAttack`, `TreeOfAttacksWithPruningAttack`. It knows *how* to drive a target.
+- An **[attack technique](../scenarios/0_attack_techniques.ipynb)** is one configured executor
+  packaged with its seeds so a [scenario](../scenarios/0_scenarios.ipynb) can pick it by name. It is
+  the *recipe*, not the engine.
 
-- **Strategy** (`strategy.py`): Abstract base class for strategies with enforced lifecycle management.
-- **StrategyContext** (`strategy.py`): The abstract base class that manages strategy context (all data needed to successfully execute the strategy).
-- **StrategyConverterConfig** (`config.py`): Configuration for prompt converters used in strategies.
-- **StrategyResult** (`pyrit/models/strategy_result.py`): Base class for all strategy results.
+You use executors directly when you want fine-grained control (the rest of this section). You reach
+for techniques when you want a scenario to select and run many attacks for you. Notably, **many
+single-turn attacks are really just techniques** — a `PromptSendingAttack` plus a particular set of
+seeds — so before writing a new single-turn subclass, check whether a registered technique already
+does the job.
+
+## The four components
+
+Every executor is an `AttackStrategy` (a `Strategy`) and follows the same flow:
 
 ```{mermaid}
 flowchart LR
-    A(["Strategy"])
-    A --consumes--> B(["Strategy Context"])
-    A --takes in as parameters within __init__--> D(["Strategy Configurations (e.g. Converters)"])
-    A --produces--> C(["Strategy Result <br>"])
+    A(["Attack Strategy"])
+    A --consumes--> B(["Attack Context <br>(objective, labels, prepended conversation)"])
+    A --configured by--> D(["Attack Configurations <br>(Adversarial, Scoring, Converter)"])
+    A --produces--> C(["Attack Result"])
 ```
 
-To execute, one generally follows this pattern:
-1. Create an **strategy context** containing state information
-2. Initialize a **strategy** (with optional **configurations** for converters etc.)
-3. _Execute_ the attack strategy with the created context
-4. Receive and process the **strategy result**
+To run one:
 
-Each attack implements a lifecycle with distinct phases (all abstract methods), and the `Strategy` class provides a non-abstract `execute_async()` method that enforces this lifecycle:
-* `_validate_context`: Validate context
-* `_setup_async`: Initialize state
-* `_perform_async`: Execute the core  logic
-* `_teardown_async`: Clean up resources
+1. Initialize a **strategy** with optional **configurations** (converters, scorers, adversarial chat).
+2. Call `execute_async(...)` with an **objective** (and optional prepended conversation / next message).
+3. Receive an **`AttackResult`** describing what happened and whether the objective was met.
 
-This implementation enforces a consistent execution flow across all strategies by:
-1. Guaranteeing that setup is always performed before the attack begins
-2. Ensuring the attack logic is only executed if setup succeeds
-3. Guaranteeing teardown is always executed, even if errors occur, through the use of a finally block
-4. Providing centralized error handling and logging
+The context is created for you from the `execute_async` arguments — you rarely build one by hand.
+See [Attack Configuration](16_attack_configuration.ipynb) for what you can put in the context and
+configs (prepended conversations, multimodal seeds, next-turn messages, memory labels).
 
-## Executor Categories
+## The shared lifecycle
 
-All of these categories follow the flow of control described above.
+`Strategy.execute_async()` is non-abstract and enforces the same four phases for every executor:
 
-### Attack (`pyrit/executor/attack`)
+- `_validate_context` — check the inputs
+- `_setup_async` — initialize state
+- `_perform_async` — run the core algorithm
+- `_teardown_async` — clean up, always (in a `finally`)
 
-Attacks implement various adversarial testing strategies to send prompts to a target endpoint, evaluate the responses, and report on the success of the attack.
+This guarantees setup runs before the attack, the attack runs only if setup succeeds, teardown
+always runs even on error, and logging/error handling is centralized. Every category below inherits
+this contract.
 
-- **Single-Turn Attacks**: Single-turn attacks typically send prompts to a target endpoint to try to achieve a specific objective within a single turn. These attack strategies evaluate the target response using optional scorers to determine if the objective has been met.
-- **Multi-Turn Attacks**: Multi-turn attacks introduce an iterative attack process where an adversarial chat model generates prompts to send to a target system, attempting to achieve a specified objective over multiple turns. This strategy also evaluates the response using a scorer to determine if the objective has been met. These attacks continue iterating until the objective is met or a maximum numbers of turns is attempted. These types of attacks tend to work better than single-turn attacks in eliciting harm if a target endpoint keeps track of conversation history.
+## Categories
 
-Read more about the Attack architecture [here](../executor/attack/0_attack.md)
+- **Single-Turn** — send a prompt (or a prepared conversation ending in one new prompt) and score
+  the response. No adversarial model required.
+- **Multi-Turn** — an adversarial model iterates against the target until the objective is met or a
+  turn limit is hit. Includes compound attacks (running other attacks) and streaming attacks.
+- **Attack Configuration** — the cross-cutting inputs (prepended conversations, multimodal seeds,
+  next-turn messages, labels) that every attack accepts.
+- **Workflow** — generic multi-step orchestration that doesn't fit the attack/benchmark mould
+  (e.g. cross-prompt injection / XPIA).
+- **Benchmark** — evaluate a model against a fixed dataset and criteria (e.g. Q&A accuracy).
+- **Prompt Generator** — produce adversarial prompts (e.g. fuzzing, Anecdoctor) to augment datasets.
 
-### Prompt Generator (`pyrit/executor/promptgen`)
-
-Prompt generators create various types of prompts using different strategies. Some examples are:
-
-- **Fuzzer Generator**: Generates diverse jailbreak prompts by systematically exploring and generating prompt templates using the Monte Carlo Tree Search to balance exploration of new templates with exploitation of promising ones.
-- **Anecdoctor Generator**: Generates misinformation content by using few-shot examples directly or by extracting a knowledge graph from examples, then using it.
-
-Read more about Prompt Generators [here](../executor/promptgen/0_promptgen.md)
-
-### Workflow (`pyrit/executor/workflow`)
-
-Workflows orchestrate complex multi-step operations. Examples include:
-
-- **XPIA Workflow**: This workflow orchestrates an cross prompt-injection attack (XPIA), where one might hide a prompt injection within a website or PDF and ask a target system to evaluate the contents to trigger the prompt injection.
-
-Read more about Workflows [here](../executor/workflow/0_workflow.md)
-
-
-### Benchmark (`pyrit/executor/benchmark`)
-
-Benchmarks evaluate model performance and safety based off of specific criteria. Examples include:
-
-- **Question Answering Benchmark**: This benchmark strategy evaluates target models by sending multiple choice questions as prompts and seeing how accurately the model answers those questions. The responses are evaluated for benchmark reporting.
-
-Read more about Benchmarks [here](../executor/benchmark/0_benchmark.md)
+The following pages walk through each, with short runnable examples.
