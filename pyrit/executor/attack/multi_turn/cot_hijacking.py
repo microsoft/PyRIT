@@ -27,7 +27,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any
 
 import yaml
 from jinja2 import Environment
@@ -62,9 +62,6 @@ from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 
-if TYPE_CHECKING:
-    from pyrit.score import Scorer
-
 logger = logging.getLogger(__name__)
 
 # The adversarial model maintains a separate multi-turn conversation per stream.
@@ -92,9 +89,10 @@ DEFAULT_PUZZLE_TYPES = [
     "skyscrapers_memetic",
 ]
 
+
 async def _await_none() -> None:
     """No-op awaitable used to pad asyncio.gather when a stream step is skipped."""
-    return None
+    return
 
 
 PUZZLE_PROMPT_PATHS = {
@@ -119,7 +117,7 @@ class StreamState:
     puzzle_type: str
     last_target_response: str = ""
     last_reasoning_step_count: int = 0
-    last_score: Optional[Score] = None
+    last_score: Score | None = None
     adversarial_chat_conversation_id: str = ""
 
     def __post_init__(self) -> None:
@@ -135,7 +133,7 @@ class CoTHijackingAttackContext(MultiTurnAttackContext[Any]):
     iteration: int = 0
     current_prompt: str = ""
     puzzle_type: str = "logic_grid"
-    last_score: Optional[Score] = None
+    last_score: Score | None = None
     attack_succeeded: bool = False
     last_target_response: str = ""
     last_reasoning_step_count: int = 0
@@ -165,11 +163,11 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[assignment]
         attack_adversarial_config: AttackAdversarialConfig,
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         max_iterations: int = 10,
-        puzzle_types: Optional[list[str]] = None,
+        puzzle_types: list[str] | None = None,
         n_streams: int = 1,
     ) -> None:
         """
@@ -224,9 +222,7 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         self._attack_scoring_config = attack_scoring_config
 
         if attack_scoring_config.objective_scorer is None:
-            raise ValueError(
-                "An objective scorer is required. Provide attack_scoring_config.objective_scorer."
-            )
+            raise ValueError("An objective scorer is required. Provide attack_scoring_config.objective_scorer.")
 
         self._objective_scorer = attack_scoring_config.objective_scorer
 
@@ -249,7 +245,7 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
             prompt_normalizer=self._prompt_normalizer,
         )
 
-    def get_attack_scoring_config(self) -> Optional[AttackScoringConfig]:
+    def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
         Get the attack scoring configuration used by this strategy.
 
@@ -354,8 +350,8 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         self._logger.info(f"Max iterations: {self._max_iterations}")
         self._logger.info(f"Number of parallel streams: {self._n_streams}")
 
-        best_response: Optional[Message] = None
-        best_score: Optional[Score] = None
+        best_response: Message | None = None
+        best_score: Score | None = None
 
         for iteration in range(self._max_iterations):
             context.iteration = iteration + 1
@@ -400,8 +396,8 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
             )
 
             # Step 4: Update stream states with responses and scores
-            for i, (stream_state, response, score) in enumerate(
-                zip(context.stream_states, stream_responses, stream_scores)
+            for _i, (stream_state, response, score) in enumerate(
+                zip(context.stream_states, stream_responses, stream_scores, strict=True)
             ):
                 if response and not isinstance(response, Exception):
                     stream_state.last_target_response = str(response.get_value())
@@ -414,7 +410,11 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
             best_score_value = -1.0
             for i, score in enumerate(stream_scores):
                 if score and not isinstance(score, Exception):
-                    score_value = float(score.get_value()) if isinstance(score.get_value(), (int, float)) else (1.0 if score.get_value() else 0.0)
+                    score_value = (
+                        float(score.get_value())
+                        if isinstance(score.get_value(), (int, float))
+                        else (1.0 if score.get_value() else 0.0)
+                    )
                     if score_value > best_score_value:
                         best_score_value = score_value
                         best_idx = i
@@ -492,7 +492,7 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         )
 
         # Request structured JSON when supported so puzzle prompts parse reliably.
-        prompt_metadata: Optional[dict[str, str]] = None
+        prompt_metadata: dict[str, str] | None = None
         if (
             getattr(self._adversarial_chat, "capabilities", None)
             and self._adversarial_chat.capabilities.supports_json_output
@@ -529,7 +529,10 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
             # Extract the jailbreak prompt from JSON response
             return str(parsed.get("prompt", adversarial_prompt))
         except Exception as e:
-            self._logger.warning(f"Adversarial model failed for stream {stream_state.stream_id}: {e}. Falling back to adversarial prompt.")
+            self._logger.warning(
+                f"Adversarial model failed for stream {stream_state.stream_id}: {e}. "
+                "Falling back to adversarial prompt."
+            )
             return adversarial_prompt
 
     async def _build_adversarial_prompt_async(
@@ -562,14 +565,13 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
                 previous_response="",
                 previous_score="",
             )
-        else:
-            # Subsequent iterations: send structured feedback matching the paper's format.
-            return self._format_target_feedback(
-                objective=context.params.objective,
-                target_response=context.last_target_response,
-                score=self._extract_raw_score(context.last_score) if context.last_score else 0.0,
-                step_number=context.last_reasoning_step_count,
-            )
+        # Subsequent iterations: send structured feedback matching the paper's format.
+        return self._format_target_feedback(
+            objective=context.params.objective,
+            target_response=context.last_target_response,
+            score=self._extract_raw_score(context.last_score) if context.last_score else 0.0,
+            step_number=context.last_reasoning_step_count,
+        )
 
     def _render_meta_prompt(
         self,
@@ -601,18 +603,17 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         # Render with Jinja2
         env = Environment()
         template = env.from_string(raw_template_value)
-        meta_prompt = template.render(
+        return template.render(
             objective=context.params.objective,
             puzzle_type=puzzle_type,
             previous_response=previous_response if previous_response else "",
             previous_score=previous_score if previous_score else "",
         )
-        return meta_prompt
 
     # Target Model Interaction
     async def _send_prompt_to_target_async(
         self, *, message: Message, context: CoTHijackingAttackContext
-    ) -> Optional[Message]:
+    ) -> Message | None:
         """
         Send prompt to objective target and get response.
 
@@ -654,7 +655,7 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         return response
 
     # Response Scoring
-    async def _score_response_async(self, *, message: Message, context: CoTHijackingAttackContext) -> Optional[Score]:
+    async def _score_response_async(self, *, message: Message, context: CoTHijackingAttackContext) -> Score | None:
         """
         Score the response using the configured objective scorer.
 
@@ -668,7 +669,7 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
             self._logger.warning(f"Scoring failed: {e}")
             return None
 
-    def _extract_reasoning_step_count(self, *, message: Optional[Message]) -> int:
+    def _extract_reasoning_step_count(self, *, message: Message | None) -> int:
         """
         Estimate reasoning steps using the paper's paragraph-break heuristic.
 

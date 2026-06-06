@@ -6,7 +6,6 @@ Unit tests for CoT Hijacking Attack implementation.
 """
 
 import uuid
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -29,7 +28,7 @@ from pyrit.models import (
     Score,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import CapabilityName, PromptTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import TrueFalseScorer
 
 
@@ -70,7 +69,7 @@ class CoTHijackingTestHelper:
         *,
         objective_target: MagicMock,
         adversarial_chat: MagicMock,
-        objective_scorer: Optional[MagicMock] = None,
+        objective_scorer: MagicMock | None = None,
         **kwargs,
     ) -> CoTHijackingAttack:
         """Create a CoTHijackingAttack instance with flexible configuration."""
@@ -89,11 +88,7 @@ class CoTHijackingTestHelper:
             objective_target=objective_target,
             attack_adversarial_config=adversarial_config,
             attack_scoring_config=scoring_config,
-            **{
-                k: v
-                for k, v in kwargs.items()
-                if k in ["max_iterations", "puzzle_types", "n_streams"]
-            },
+            **{k: v for k, v in kwargs.items() if k in ["max_iterations", "puzzle_types", "n_streams"]},
         )
 
         # Mock the memory to avoid "Central memory instance has not been set" error
@@ -711,9 +706,7 @@ class TestAttackExecution:
             n_streams=3,
             puzzle_types=puzzle_types,
         )
-        basic_context.stream_states = [
-            StreamState(stream_id=i, puzzle_type=puzzle_types[i]) for i in range(3)
-        ]
+        basic_context.stream_states = [StreamState(stream_id=i, puzzle_type=puzzle_types[i]) for i in range(3)]
 
         captured_puzzle_types = []
 
