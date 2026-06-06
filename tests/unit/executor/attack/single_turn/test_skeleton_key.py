@@ -400,10 +400,12 @@ class TestSkeletonKeyAttackExecuteAsync:
             attack_scoring_config=AttackScoringConfig(objective_scorer=mock_true_false_scorer),
         )
 
-        with patch.object(attack, "_setup_async", new_callable=AsyncMock), patch.object(
-            attack, "_send_prompt_to_objective_target_async", new_callable=AsyncMock, return_value=sample_response
-        ), patch.object(
-            attack, "_evaluate_response_async", new_callable=AsyncMock, return_value=success_score
+        with (
+            patch.object(attack, "_setup_async", new_callable=AsyncMock),
+            patch.object(
+                attack, "_send_prompt_to_objective_target_async", new_callable=AsyncMock, return_value=sample_response
+            ),
+            patch.object(attack, "_evaluate_response_async", new_callable=AsyncMock, return_value=success_score),
         ):
             result = await attack._perform_async(context=basic_context)
 
@@ -420,10 +422,12 @@ class TestSkeletonKeyAttackExecuteAsync:
             attack_scoring_config=AttackScoringConfig(objective_scorer=mock_true_false_scorer),
         )
 
-        with patch.object(attack, "_setup_async", new_callable=AsyncMock), patch.object(
-            attack, "_send_prompt_to_objective_target_async", new_callable=AsyncMock, return_value=sample_response
-        ) as mock_send, patch.object(
-            attack, "_evaluate_response_async", new_callable=AsyncMock, return_value=success_score
+        with (
+            patch.object(attack, "_setup_async", new_callable=AsyncMock),
+            patch.object(
+                attack, "_send_prompt_to_objective_target_async", new_callable=AsyncMock, return_value=sample_response
+            ) as mock_send,
+            patch.object(attack, "_evaluate_response_async", new_callable=AsyncMock, return_value=success_score),
         ):
             await attack._perform_async(context=basic_context)
 
