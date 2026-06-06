@@ -3,7 +3,7 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any, Optional
+from typing import Any
 
 import tenacity
 from openai import AsyncOpenAI
@@ -31,9 +31,9 @@ class OpenAITextEmbedding(EmbeddingSupport):
     def __init__(
         self,
         *,
-        api_key: Optional[str | Callable[[], str | Awaitable[str]]] = None,
-        endpoint: Optional[str] = None,
-        model_name: Optional[str] = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        endpoint: str | None = None,
+        model_name: str | None = None,
     ) -> None:
         """
         Initialize text embedding client for Azure OpenAI or platform OpenAI.

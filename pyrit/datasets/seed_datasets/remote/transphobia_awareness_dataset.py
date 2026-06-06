@@ -5,11 +5,12 @@ import logging
 from typing import Any
 
 import pandas as pd
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +54,12 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
         self.source = source
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "transphobia_awareness"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Transphobia-Awareness dataset and return as SeedDataset.
@@ -82,7 +85,7 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
         unique_keywords = ratings_df["keyword"].unique().tolist()
         harm_categories = ["transphobia"] + unique_keywords
 
-        seed_prompts: list[SeedPrompt] = []
+        seed_prompts: list[SeedUnion] = []
 
         for _, row in ratings_df.iterrows():
             metadata: dict[str, Any] = {
@@ -127,6 +130,12 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
                     "Dipto Das",
                     "Michael Ann DeVito",
                     "Jed R. Brubaker",
+                ],
+                groups=[
+                    "Sony AI",
+                    "University of Colorado Boulder",
+                    "University of Toronto",
+                    "Northeastern University",
                 ],
             )
             seed_prompts.append(prompt)

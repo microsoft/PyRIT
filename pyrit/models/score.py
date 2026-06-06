@@ -46,7 +46,7 @@ class Score(BaseModel):
         validate_assignment=False,
     )
 
-    id: uuid.UUID | str = Field(default_factory=uuid4)  # noqa: A003
+    id: uuid.UUID | str = Field(default_factory=uuid4)
 
     # The value the scorer ended up with; e.g. "true" (if true_false) or "0.5" (if float_scale)
     score_value: str

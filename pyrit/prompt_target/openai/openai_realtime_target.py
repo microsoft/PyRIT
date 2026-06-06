@@ -6,7 +6,7 @@ import base64
 import logging
 import re
 import wave
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from openai import AsyncOpenAI
 
@@ -15,12 +15,8 @@ from pyrit.exceptions import (
     pyrit_target_retry,
 )
 from pyrit.exceptions.exception_classes import ServerErrorException
-from pyrit.models import (
-    ComponentIdentifier,
-    Message,
-    construct_response_from_request,
-    data_serializer_factory,
-)
+from pyrit.memory import data_serializer_factory
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.realtime_audio import (
     RealtimeTargetResult,
     ServerVadConfig,
@@ -87,9 +83,9 @@ class RealtimeTarget(OpenAITarget):
     def __init__(
         self,
         *,
-        voice: Optional[RealTimeVoice] = None,
-        existing_convo: Optional[dict[str, Any]] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        voice: RealTimeVoice | None = None,
+        existing_convo: dict[str, Any] | None = None,
+        custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -121,7 +117,7 @@ class RealtimeTarget(OpenAITarget):
 
         self.voice = voice
         self._existing_conversation = existing_convo if existing_convo is not None else {}
-        self._realtime_client: Optional[AsyncOpenAI] = None
+        self._realtime_client: AsyncOpenAI | None = None
 
     def open_streaming_session(
         self,
@@ -550,7 +546,7 @@ class RealtimeTarget(OpenAITarget):
         num_channels: int = 1,
         sample_width: int = 2,
         sample_rate: int = 16000,
-        output_filename: Optional[str] = None,
+        output_filename: str | None = None,
     ) -> str:
         """
         Save audio bytes to a WAV file.
@@ -583,7 +579,7 @@ class RealtimeTarget(OpenAITarget):
         num_channels: int = 1,
         sample_width: int = 2,
         sample_rate: int = 16000,
-        output_filename: Optional[str] = None,
+        output_filename: str | None = None,
     ) -> str:
         """
         Use ``save_audio_async`` instead; this is a deprecated alias.
@@ -865,7 +861,7 @@ class RealtimeTarget(OpenAITarget):
             conversation_id: conversation ID
 
         Returns:
-            Tuple[str, RealtimeTargetResult]: Path to saved audio file and the RealtimeTargetResult
+            tuple[str, RealtimeTargetResult]: Path to saved audio file and the RealtimeTargetResult
 
         Raises:
             RuntimeError: If no audio is received from the server.
@@ -913,7 +909,7 @@ class RealtimeTarget(OpenAITarget):
             conversation_id (str): Conversation ID
 
         Returns:
-            Tuple[str, RealtimeTargetResult]: Path to saved audio file and the RealtimeTargetResult
+            tuple[str, RealtimeTargetResult]: Path to saved audio file and the RealtimeTargetResult
 
         Raises:
             Exception: If sending audio fails.

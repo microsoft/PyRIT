@@ -259,7 +259,7 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
     def test_policy_is_read_only(self):
         """Policy property has no setter — it's read-only."""
         with pytest.raises(AttributeError):
-            self.registry.scorer_override_policy = ScorerOverridePolicy.RAISE
+            self.registry.scorer_override_policy = ScorerOverridePolicy.RAISE  # type: ignore[ty:invalid-assignment]
 
     def test_policy_passed_to_factories_via_register_from_factories(self):
         """Factories registered via register_from_factories inherit the registry's default policy."""

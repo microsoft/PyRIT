@@ -2,9 +2,8 @@
 # Licensed under the MIT license.
 
 import logging
-import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -17,7 +16,6 @@ from pyrit.executor.attack.single_turn.single_turn_attack_strategy import (
 from pyrit.models import (
     Message,
     SeedDataset,
-    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -55,11 +53,11 @@ class SkeletonKeyAttack(PromptSendingAttack):
         self,
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
-        skeleton_key_prompt: Optional[str] = None,
-        skeleton_key_acceptance: Optional[str] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
+        skeleton_key_prompt: str | None = None,
+        skeleton_key_acceptance: str | None = None,
         max_attempts_on_failure: int = 0,
     ) -> None:
         """
@@ -67,12 +65,12 @@ class SkeletonKeyAttack(PromptSendingAttack):
 
         Args:
             objective_target (PromptTarget): The target system to attack.
-            attack_converter_config (Optional[AttackConverterConfig]): Configuration for prompt converters.
-            attack_scoring_config (Optional[AttackScoringConfig]): Configuration for scoring components.
-            prompt_normalizer (Optional[PromptNormalizer]): Normalizer for handling prompts.
-            skeleton_key_prompt (Optional[str]): The skeleton key prompt to prepend as the user turn.
+            attack_converter_config (AttackConverterConfig | None): Configuration for prompt converters.
+            attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
+            prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
+            skeleton_key_prompt (str | None): The skeleton key prompt to prepend as the user turn.
                 If not provided, uses the default skeleton key prompt.
-            skeleton_key_acceptance (Optional[str]): The simulated assistant acceptance response to prepend.
+            skeleton_key_acceptance (str | None): The simulated assistant acceptance response to prepend.
                 If not provided, uses the default acceptance response.
             max_attempts_on_failure (int): Maximum number of attempts to retry on failure.
         """
@@ -85,13 +83,17 @@ class SkeletonKeyAttack(PromptSendingAttack):
             params_type=SkeletonKeyAttackParameters,
         )
 
-        self._skeleton_key_prompt = skeleton_key_prompt or SeedDataset.from_yaml_file(
-            self.DEFAULT_SKELETON_KEY_PROMPT_PATH
-        ).prompts[0].value
+        self._skeleton_key_prompt = (
+            skeleton_key_prompt
+            if skeleton_key_prompt is not None
+            else SeedDataset.from_yaml_file(self.DEFAULT_SKELETON_KEY_PROMPT_PATH).prompts[0].value
+        )
 
-        self._skeleton_key_acceptance = skeleton_key_acceptance or SeedDataset.from_yaml_file(
-            self.DEFAULT_SKELETON_KEY_ACCEPTANCE_PATH
-        ).prompts[0].value
+        self._skeleton_key_acceptance = (
+            skeleton_key_acceptance
+            if skeleton_key_acceptance is not None
+            else SeedDataset.from_yaml_file(self.DEFAULT_SKELETON_KEY_ACCEPTANCE_PATH).prompts[0].value
+        )
 
     async def _setup_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """
@@ -100,15 +102,9 @@ class SkeletonKeyAttack(PromptSendingAttack):
         Args:
             context (SingleTurnAttackContext): The attack context containing attack parameters.
         """
-        context.conversation_id = str(uuid.uuid4())
         context.prepended_conversation = [
             Message.from_prompt(prompt=self._skeleton_key_prompt, role="user"),
             Message.from_prompt(prompt=self._skeleton_key_acceptance, role="assistant"),
         ]
 
-        await self._conversation_manager.initialize_context_async(
-            context=context,
-            target=self._objective_target,
-            conversation_id=context.conversation_id,
-            memory_labels=self._memory_labels,
-        )
+        await super()._setup_async(context=context)

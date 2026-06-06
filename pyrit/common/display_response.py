@@ -8,8 +8,8 @@ from PIL import Image
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.notebook_utils import is_in_ipython_session
-from pyrit.memory import CentralMemory
-from pyrit.models import AzureBlobStorageIO, DiskStorageIO, MessagePiece
+from pyrit.memory import AzureBlobStorageIO, CentralMemory, DiskStorageIO
+from pyrit.models import MessagePiece
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ async def display_image_response_async(response_piece: MessagePiece) -> None:
         image = Image.open(image_stream)
 
         # Jupyter built-in display function only works in notebooks.
-        display(image)  # type: ignore[ty:unresolved-reference] # noqa: F821
+        display(image)  # type: ignore[ty:unresolved-reference]
     if response_piece.response_error == "blocked":
         logger.info("---\nContent blocked, cannot show a response.\n---")
 

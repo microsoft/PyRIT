@@ -290,7 +290,7 @@ async def test_send_prompt_async_bad_request_error(
         mock_generate.side_effect = bad_request_error
 
         # Non-content-filter BadRequestError should be re-raised (same as chat target behavior)
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             await image_target.send_prompt_async(message=Message([request]))
 
 

@@ -23,7 +23,7 @@ This module provides:
 from __future__ import annotations
 
 from abc import ABC
-from typing import TYPE_CHECKING, Any, ClassVar, Optional
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -65,18 +65,18 @@ class ChildEvalRule(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     exclude: bool = False
-    included_params: Optional[frozenset[str]] = None
-    included_item_values: Optional[dict[str, Any]] = Field(default=None)
-    param_fallbacks: Optional[dict[str, str]] = Field(default=None)
-    inner_child_name: Optional[str] = Field(default=None)
+    included_params: frozenset[str] | None = None
+    included_item_values: dict[str, Any] | None = Field(default=None)
+    param_fallbacks: dict[str, str] | None = Field(default=None)
+    inner_child_name: str | None = Field(default=None)
 
 
 def _build_eval_dict(
     identifier: ComponentIdentifier,
     *,
     child_eval_rules: dict[str, ChildEvalRule],
-    _included_params: Optional[frozenset[str]] = None,
-    _param_fallbacks: Optional[dict[str, str]] = None,
+    _included_params: frozenset[str] | None = None,
+    _param_fallbacks: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
     Build a filtered dictionary for eval-hash computation.
@@ -89,10 +89,10 @@ def _build_eval_dict(
         identifier (ComponentIdentifier): The component identity to process.
         child_eval_rules (dict[str, ChildEvalRule]): Per-child eval rules.
             Keys are child names; values describe how each child is filtered.
-        _included_params (Optional[frozenset[str]]): Internal. If set, only
+        _included_params (frozenset[str] | None): Internal. If set, only
             include params whose keys are in this frozenset. Passed down from
             a parent rule's ``included_params``.
-        _param_fallbacks (Optional[dict[str, str]]): Internal. Maps a primary
+        _param_fallbacks (dict[str, str] | None): Internal. Maps a primary
             param key to a fallback key. When the primary value is falsy,
             the fallback key's value from raw params is used instead.
             Passed down from a parent rule's ``param_fallbacks``.
@@ -177,7 +177,7 @@ def compute_eval_hash(
     identifier: ComponentIdentifier,
     *,
     child_eval_rules: dict[str, ChildEvalRule],
-    own_rule: Optional[ChildEvalRule] = None,
+    own_rule: ChildEvalRule | None = None,
 ) -> str:
     """
     Compute a behavioral equivalence hash for evaluation grouping.
@@ -200,7 +200,7 @@ def compute_eval_hash(
         identifier (ComponentIdentifier): The component identity to compute
             the hash for.
         child_eval_rules (dict[str, ChildEvalRule]): Per-child eval rules.
-        own_rule (Optional[ChildEvalRule]): Rule applied to the root entity's
+        own_rule (ChildEvalRule | None): Rule applied to the root entity's
             own params and fallbacks. Only ``included_params`` and
             ``param_fallbacks`` are honored; ``exclude``, ``included_item_values``,
             and ``inner_child_name`` are not meaningful at the root and will
@@ -252,7 +252,7 @@ class EvaluationIdentifier(ABC):
     """
 
     CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]]
-    OWN_RULE: ClassVar[Optional[ChildEvalRule]] = None
+    OWN_RULE: ClassVar[ChildEvalRule | None] = None
 
     def __init__(self, identifier: ComponentIdentifier) -> None:
         """
@@ -357,7 +357,7 @@ class ObjectiveTargetEvaluationIdentifier(EvaluationIdentifier):
     """
 
     CHILD_EVAL_RULES: ClassVar[dict[str, ChildEvalRule]] = {}
-    OWN_RULE: ClassVar[Optional[ChildEvalRule]] = ChildEvalRule(
+    OWN_RULE: ClassVar[ChildEvalRule | None] = ChildEvalRule(
         included_params=TARGET_EVAL_PARAMS,
         param_fallbacks=TARGET_EVAL_PARAM_FALLBACKS,
     )

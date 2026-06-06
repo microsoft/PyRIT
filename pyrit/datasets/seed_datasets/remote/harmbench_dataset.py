@@ -3,10 +3,12 @@
 
 from typing import Literal
 
+from typing_extensions import override
+
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedObjective
+from pyrit.models import Modality, SeedDataset, SeedObjective, SeedUnion
 
 
 class _HarmBenchDataset(_RemoteDatasetLoader):
@@ -45,10 +47,12 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
         self.source_type: Literal["public_url", "file"] = source_type
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "harmbench"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch HarmBench dataset and return as SeedDataset.
@@ -73,7 +77,7 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
         )
 
         # Validate and process examples
-        seeds = []
+        seeds: list[SeedUnion] = []
         for example in examples:
             # Check for missing keys in the example
             missing_keys = required_keys - example.keys()
@@ -95,6 +99,13 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
                 ),
                 source="https://github.com/centerforaisafety/HarmBench",
                 authors=["Mantas Mazeika", "Long Phan", "Xuwang Yin", "Andy Zou", "Zifan Wang", "Norman Mu"],
+                groups=[
+                    "University of Illinois Urbana-Champaign",
+                    "Center for AI Safety",
+                    "Carnegie Mellon University",
+                    "University of California, Berkeley",
+                    "Microsoft",
+                ],
             )
             seeds.append(seed_prompt)
 

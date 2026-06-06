@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 import pytest
 from PIL import Image
 
-from pyrit.models import (
+from pyrit.memory.storage import (
     AllowedCategories,
     BinaryPathDataTypeSerializer,
     DataTypeSerializer,
@@ -19,7 +19,10 @@ from pyrit.models import (
     ImagePathDataTypeSerializer,
     TextDataTypeSerializer,
     data_serializer_factory,
+    set_message_piece_sha256_async,
+    set_seed_sha256_async,
 )
+from pyrit.models import MessagePiece, SeedPrompt
 
 
 def test_allowed_categories():
@@ -252,7 +255,7 @@ async def test_read_data_local_file_with_dummy_image(sqlite_instance):
         with open(image_path, "rb") as f:
             mock_storage_io.read_file_async.return_value = f.read()
 
-        with patch("pyrit.models.data_type_serializer.DiskStorageIO", return_value=mock_storage_io):
+        with patch("pyrit.memory.storage.serializers.DiskStorageIO", return_value=mock_storage_io):
             serializer = data_serializer_factory(
                 category="prompt-memory-entries", data_type="image_path", value=image_path
             )
@@ -385,7 +388,7 @@ async def test_save_b64_image_raises_when_results_storage_io_none():
 
 
 async def test_save_formatted_audio_raises_when_results_storage_io_none():
-    from pyrit.models import data_serializer_factory as factory
+    from pyrit.memory.storage import data_serializer_factory as factory
 
     serializer = factory(category="prompt-memory-entries", data_type="audio_path")
     mock_memory = MagicMock()
@@ -408,7 +411,7 @@ async def test_save_formatted_audio_writes_local_wav_via_to_thread(sqlite_instan
     """save_formatted_audio (local-disk path) should produce a readable WAV via _write_wav_sync."""
     import wave
 
-    from pyrit.models import data_serializer_factory as factory
+    from pyrit.memory.storage import data_serializer_factory as factory
 
     serializer = factory(category="prompt-memory-entries", data_type="audio_path")
     output_path = tmp_path / "out.wav"
@@ -434,7 +437,7 @@ def test_write_wav_sync_produces_readable_wav(tmp_path):
     """_write_wav_sync should produce a WAV file readable by wave.open with the same metadata and frames."""
     import wave
 
-    from pyrit.models.data_type_serializer import _write_wav_sync
+    from pyrit.memory.storage.serializers import _write_wav_sync
 
     out_path = tmp_path / "direct.wav"
     pcm = b"\x10\x00\x20\x00\x30\x00\x40\x00"
@@ -459,7 +462,7 @@ async def test_save_formatted_audio_writes_azure_wav_via_storage_io(sqlite_insta
     import wave
 
     from pyrit.common import path as common_path
-    from pyrit.models import data_serializer_factory as factory
+    from pyrit.memory.storage import data_serializer_factory as factory
 
     captured: dict[str, bytes] = {}
 
@@ -480,7 +483,7 @@ async def test_save_formatted_audio_writes_azure_wav_via_storage_io(sqlite_insta
         with patch.object(serializer, "get_data_filename_async", new_callable=AsyncMock, return_value=azure_url):
             # Redirect so the temp_audio.wav write lands in tmp_path
             with patch.object(common_path, "DB_DATA_PATH", str(tmp_path)):
-                from pyrit.models import data_type_serializer as dts_module
+                from pyrit.memory.storage import serializers as dts_module
 
                 with patch.object(dts_module, "DB_DATA_PATH", str(tmp_path)):
                     await serializer.save_formatted_audio_async(
@@ -600,7 +603,7 @@ async def test_get_data_filename_emits_deprecation_warning_and_delegates(sqlite_
 
 async def test_save_formatted_audio_azure_storage_unlinks_local_temp(tmp_path):
     """save_formatted_audio_async cleans up the local temp WAV after writing to Azure storage."""
-    from pyrit.models import data_serializer_factory as factory
+    from pyrit.memory.storage import data_serializer_factory as factory
 
     serializer = factory(category="prompt-memory-entries", data_type="audio_path")
     mock_memory = MagicMock()
@@ -611,7 +614,7 @@ async def test_save_formatted_audio_azure_storage_unlinks_local_temp(tmp_path):
     with (
         patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory),
         patch.object(serializer, "get_data_filename_async", new_callable=AsyncMock, return_value=azure_url),
-        patch("pyrit.models.data_type_serializer.DB_DATA_PATH", tmp_path),
+        patch("pyrit.memory.storage.serializers.DB_DATA_PATH", tmp_path),
     ):
         await serializer.save_formatted_audio_async(data=b"\x00\x01\x02\x03")
 
@@ -622,7 +625,26 @@ async def test_save_formatted_audio_azure_storage_unlinks_local_temp(tmp_path):
     assert serializer.value == azure_url
 
 
-@pytest.mark.asyncio
+async def test_set_message_piece_sha256_async_sets_text_hashes(sqlite_instance):
+    piece = MessagePiece(role="user", original_value="Hello")
+    piece.original_value = "newvalue"
+    piece.converted_value = "newvalue"
+
+    await set_message_piece_sha256_async(piece)
+
+    expected = "70e01503173b8e904d53b40b3ebb3bded5e5d3add087d3463a4b1abe92f1a8ca"
+    assert piece.original_value_sha256 == expected
+    assert piece.converted_value_sha256 == expected
+
+
+async def test_set_seed_sha256_async_sets_text_hash(sqlite_instance):
+    seed = SeedPrompt(value="Hello1", data_type="text")
+
+    await set_seed_sha256_async(seed)
+
+    assert seed.value_sha256 == "948edbe7ede5aa7423476ae29dcd7d61e7711a071aea0d83698377effa896525"
+
+
 async def test_save_formatted_audio_async_cleans_up_temp_file_on_azure_upload_failure(tmp_path):
     """Regression test: temp file must be deleted even when Azure upload fails."""
     serializer = data_serializer_factory(category="prompt-memory-entries", data_type="audio_path")
@@ -639,7 +661,7 @@ async def test_save_formatted_audio_async_cleans_up_temp_file_on_azure_upload_fa
 
     with patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory):
         with patch.object(serializer, "get_data_filename_async", new_callable=AsyncMock, return_value=azure_url):
-            with patch("pyrit.models.data_type_serializer.DB_DATA_PATH", tmp_path):
+            with patch("pyrit.memory.storage.serializers.DB_DATA_PATH", tmp_path):
                 with pytest.raises(RuntimeError, match="Azure upload failed"):
                     await serializer.save_formatted_audio_async(data=b"\x00\x01\x02")
 

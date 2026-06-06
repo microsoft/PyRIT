@@ -179,7 +179,7 @@ class TestTargetInitializerInitialize:
         target = registry.get_instance_by_name("azure_openai_gpt4o")
         assert target is not None
         # The token provider gets wrapped by _ensure_async_token_provider, so just verify it's callable
-        assert callable(target._api_key)
+        assert callable(target._api_key)  # type: ignore[ty:unresolved-attribute]
 
 
 @pytest.mark.usefixtures("patch_central_database")

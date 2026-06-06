@@ -7,15 +7,10 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
-from pyrit.models import (
-    ComponentIdentifier,
-    Message,
-    MessagePiece,
-    construct_response_from_request,
-    data_serializer_factory,
-)
+from pyrit.memory import data_serializer_factory
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, construct_response_from_request
 from pyrit.models.literals import PromptDataType
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
@@ -25,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Avoid errors for users who don't have playwright installed
 if TYPE_CHECKING:
-    from playwright.async_api import Page
+    from playwright.async_api import Page  # type: ignore[ty:unresolved-import]
 else:
     Page = None
 
@@ -128,7 +123,7 @@ class PlaywrightCopilotTarget(PromptTarget):
         *,
         page: "Page",
         copilot_type: CopilotType = CopilotType.CONSUMER,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        custom_configuration: TargetConfiguration | None = None,
     ) -> None:
         """
         Initialize the Playwright Copilot target.
@@ -254,7 +249,7 @@ class PlaywrightCopilotTarget(PromptTarget):
 
         return [response_entry]
 
-    async def _interact_with_copilot_async(self, message: Message) -> Union[str, list[tuple[str, PromptDataType]]]:
+    async def _interact_with_copilot_async(self, message: Message) -> str | list[tuple[str, PromptDataType]]:
         """
         Interact with Microsoft Copilot interface to send multimodal prompts.
 
@@ -262,7 +257,7 @@ class PlaywrightCopilotTarget(PromptTarget):
             message: The message containing text and/or image pieces to send.
 
         Returns:
-            Union[str, List[Tuple[str, PromptDataType]]]: The response content from Copilot,
+            str | list[tuple[str, PromptDataType]]: The response content from Copilot,
                 either as a single text string or a list of (data, data_type) tuples.
         """
         selectors = self._get_selectors()
@@ -276,9 +271,7 @@ class PlaywrightCopilotTarget(PromptTarget):
 
         return await self._wait_for_response_async(selectors)
 
-    async def _wait_for_response_async(
-        self, selectors: CopilotSelectors
-    ) -> Union[str, list[tuple[str, PromptDataType]]]:
+    async def _wait_for_response_async(self, selectors: CopilotSelectors) -> str | list[tuple[str, PromptDataType]]:
         """
         Wait for Copilot's response and extract the text and/or images.
 
@@ -286,7 +279,7 @@ class PlaywrightCopilotTarget(PromptTarget):
             selectors (CopilotSelectors): The selectors for the Copilot interface.
 
         Returns:
-            Union[str, List[Tuple[str, PromptDataType]]]: The response content from Copilot,
+            str | list[tuple[str, PromptDataType]]: The response content from Copilot,
                 either as a single text string or a list of (data, data_type) tuples.
 
         Raises:
@@ -332,7 +325,7 @@ class PlaywrightCopilotTarget(PromptTarget):
 
     async def _extract_content_if_ready_async(
         self, selectors: CopilotSelectors, initial_group_count: int
-    ) -> Union[str, list[tuple[str, PromptDataType]], None]:
+    ) -> str | list[tuple[str, PromptDataType]] | None:
         """
         Extract content if ready, otherwise return None.
 
@@ -343,7 +336,7 @@ class PlaywrightCopilotTarget(PromptTarget):
             initial_group_count (int): Number of message groups before this response.
 
         Returns:
-            Union[str, List[Tuple[str, PromptDataType]], None]: The extracted content if ready,
+            str | list[tuple[str, PromptDataType]] | None: The extracted content if ready,
                 None if content is not ready yet or extraction fails.
         """
         try:
@@ -733,7 +726,7 @@ class PlaywrightCopilotTarget(PromptTarget):
 
     def _assemble_response(
         self, *, response_pieces: list[tuple[str, PromptDataType]]
-    ) -> Union[str, list[tuple[str, PromptDataType]]]:
+    ) -> str | list[tuple[str, PromptDataType]]:
         """
         Assemble response pieces into appropriate return format.
 
@@ -755,7 +748,7 @@ class PlaywrightCopilotTarget(PromptTarget):
 
     async def _extract_multimodal_content_async(
         self, selectors: CopilotSelectors, initial_group_count: int = 0
-    ) -> Union[str, list[tuple[str, PromptDataType]]]:
+    ) -> str | list[tuple[str, PromptDataType]]:
         """
         Extract multimodal content (text and images) from Copilot response.
 

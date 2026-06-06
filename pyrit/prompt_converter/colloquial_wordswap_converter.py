@@ -4,7 +4,6 @@
 import pathlib
 import random
 import re
-from typing import Optional
 
 import yaml
 
@@ -28,8 +27,8 @@ class ColloquialWordswapConverter(PromptConverter):
         self,
         *,
         deterministic: bool = False,
-        custom_substitutions: Optional[dict[str, list[str]]] = None,
-        wordswap_path: Optional[str] = None,
+        custom_substitutions: dict[str, list[str]] | None = None,
+        wordswap_path: str | None = None,
     ) -> None:
         """
         Initialize the converter with optional deterministic mode and substitutions source.
@@ -37,9 +36,9 @@ class ColloquialWordswapConverter(PromptConverter):
         Args:
             deterministic (bool): If True, use the first substitution for each wordswap.
                 If False, randomly choose a substitution for each wordswap. Defaults to False.
-            custom_substitutions (Optional[dict[str, list[str]]]): A dictionary of custom substitutions
+            custom_substitutions (dict[str, list[str]] | None): A dictionary of custom substitutions
                 to override the defaults. Defaults to None.
-            wordswap_path (Optional[str]): Path to a YAML file containing word substitutions.
+            wordswap_path (str | None): Path to a YAML file containing word substitutions.
                 Can be a filename within the built-in colloquial_wordswaps directory (e.g., "filipino.yaml")
                 or an absolute path to a custom YAML file. Defaults to None (uses singaporean.yaml).
 

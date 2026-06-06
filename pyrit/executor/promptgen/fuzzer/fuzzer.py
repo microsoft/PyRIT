@@ -8,7 +8,7 @@ import random
 import textwrap
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional, Union, overload
+from typing import TYPE_CHECKING, Any, overload
 
 import numpy as np
 from colorama import Fore, Style
@@ -51,14 +51,14 @@ class _PromptNode:
     def __init__(
         self,
         template: str,
-        parent: Optional[_PromptNode] = None,
+        parent: _PromptNode | None = None,
     ) -> None:
         """
         Create the PromptNode instance.
 
         Args:
             template (str): Prompt template.
-            parent (Optional[_PromptNode]): Parent node.
+            parent (_PromptNode | None): Parent node.
         """
         self.id = uuid.uuid4()
         self.template: str = template
@@ -66,7 +66,7 @@ class _PromptNode:
         self.level: int = 0 if parent is None else parent.level + 1
         self.visited_num = 0
         self.rewards: float = 0
-        self.parent: Optional[_PromptNode] = None
+        self.parent: _PromptNode | None = None
         if parent is not None:
             self.add_parent(parent)
 
@@ -157,7 +157,7 @@ class _MCTSExplorer:
         exploration = self.frequency_weight * np.sqrt(2 * np.log(step) / (node.visited_num + 0.01))
         return float(exploitation + exploration)
 
-    def update_rewards(self, path: list[_PromptNode], reward: float, last_node: Optional[_PromptNode] = None) -> None:
+    def update_rewards(self, path: list[_PromptNode], reward: float, last_node: _PromptNode | None = None) -> None:
         """
         Update rewards for nodes in the path.
 
@@ -185,19 +185,19 @@ class FuzzerContext(PromptGeneratorStrategyContext):
     # Per-execution input data
     prompts: list[str]
     prompt_templates: list[str]
-    max_query_limit: Optional[int] = None
+    max_query_limit: int | None = None
 
     # Tracking state
     total_target_query_count: int = 0
     total_jailbreak_count: int = 0
-    jailbreak_conversation_ids: list[Union[str, uuid.UUID]] = field(default_factory=list)
+    jailbreak_conversation_ids: list[str | uuid.UUID] = field(default_factory=list)
     executed_turns: int = 0
 
     # Tree structure
     initial_prompt_nodes: list[_PromptNode] = field(default_factory=list)
     new_prompt_nodes: list[_PromptNode] = field(default_factory=list)
     mcts_selected_path: list[_PromptNode] = field(default_factory=list)
-    last_choice_node: Optional[_PromptNode] = None
+    last_choice_node: _PromptNode | None = None
 
     # Optional memory labels to apply to the prompts
     memory_labels: dict[str, str] = field(default_factory=dict)
@@ -223,7 +223,7 @@ class FuzzerResult(PromptGeneratorStrategyResult):
 
     # Concrete fields instead of metadata storage
     successful_templates: list[str] = Field(default_factory=list)
-    jailbreak_conversation_ids: list[Union[str, uuid.UUID]] = Field(default_factory=list)
+    jailbreak_conversation_ids: list[str | uuid.UUID] = Field(default_factory=list)
     total_queries: int = 0
     templates_explored: int = 0
 
@@ -541,8 +541,8 @@ class FuzzerGenerator(
         objective_target: PromptTarget,
         template_converters: list[FuzzerConverter],
         scoring_target: PromptTarget,
-        converter_config: Optional[StrategyConverterConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        converter_config: StrategyConverterConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         frequency_weight: float = _DEFAULT_FREQUENCY_WEIGHT,
         reward_penalty: float = _DEFAULT_REWARD_PENALTY,
         minimum_reward: float = _DEFAULT_MINIMUM_REWARD,
@@ -562,10 +562,10 @@ class FuzzerGenerator(
 
         Args:
             objective_target (PromptTarget): The target to send the prompts to.
-            template_converters (List[FuzzerConverter]): The converters to apply on the selected jailbreak template.
+            template_converters (list[FuzzerConverter]): The converters to apply on the selected jailbreak template.
             scoring_target (PromptTarget): The chat target to use for scoring responses.
-            converter_config (Optional[StrategyConverterConfig]): Configuration for prompt converters.
-            prompt_normalizer (Optional[PromptNormalizer]): The prompt normalizer to use.
+            converter_config (StrategyConverterConfig | None): Configuration for prompt converters.
+            prompt_normalizer (PromptNormalizer | None): The prompt normalizer to use.
             frequency_weight (float): Constant that balances between high reward and selection frequency.
             reward_penalty (float): Penalty that diminishes reward as path length increases.
             minimum_reward (float): Minimal reward to prevent rewards from being too small.
@@ -608,10 +608,10 @@ class FuzzerGenerator(
         *,
         objective_target: PromptTarget,
         template_converters: list[FuzzerConverter],
-        converter_config: Optional[StrategyConverterConfig] = None,
-        scorer: Optional[Scorer] = None,
+        converter_config: StrategyConverterConfig | None = None,
+        scorer: Scorer | None = None,
         scoring_success_threshold: float = 0.8,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         frequency_weight: float = _DEFAULT_FREQUENCY_WEIGHT,
         reward_penalty: float = _DEFAULT_REWARD_PENALTY,
         minimum_reward: float = _DEFAULT_MINIMUM_REWARD,
@@ -624,13 +624,13 @@ class FuzzerGenerator(
 
         Args:
             objective_target (PromptTarget): The target to send the prompts to.
-            template_converters (List[FuzzerConverter]): The converters to apply on the selected jailbreak template.
+            template_converters (list[FuzzerConverter]): The converters to apply on the selected jailbreak template.
                 In each iteration, one converter is chosen at random.
-            converter_config (Optional[StrategyConverterConfig]): Configuration for prompt converters.
+            converter_config (StrategyConverterConfig | None): Configuration for prompt converters.
                 Defaults to None.
-            scorer (Optional[Scorer]): Configuration for scoring responses. Defaults to None.
+            scorer (Scorer | None): Configuration for scoring responses. Defaults to None.
             scoring_success_threshold (float): The score threshold to consider a jailbreak successful.
-            prompt_normalizer (Optional[PromptNormalizer]): The prompt normalizer to use. Defaults to None.
+            prompt_normalizer (PromptNormalizer | None): The prompt normalizer to use. Defaults to None.
             frequency_weight (float): Constant that balances between high reward and selection frequency.
                 Defaults to 0.5.
             reward_penalty (float): Penalty that diminishes reward as path length increases.
@@ -685,21 +685,21 @@ class FuzzerGenerator(
     def _create_identifier(
         self,
         *,
-        params: Optional[dict[str, Any]] = None,
-        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+        params: dict[str, Any] | None = None,
+        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct the identifier for this prompt generator.
 
         Args:
-            params (Optional[Dict[str, Any]]): Additional behavioral parameters.
-            children (Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]]):
+            params (dict[str, Any] | None): Additional behavioral parameters.
+            children (dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None):
                 Named child component identifiers.
 
         Returns:
             ComponentIdentifier: The identifier for this prompt generator.
         """
-        all_children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = {
+        all_children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] = {
             "objective_target": self._objective_target.get_identifier(),
         }
         if children:
@@ -725,7 +725,7 @@ class FuzzerGenerator(
         Validate input parameters.
 
         Args:
-            template_converters (List[FuzzerConverter]): List of template converters.
+            template_converters (list[FuzzerConverter]): List of template converters.
             batch_size (int): The batch size for sending prompts.
 
         Raises:
@@ -972,10 +972,10 @@ class FuzzerGenerator(
 
         Args:
             template (SeedPrompt): The template to use.
-            prompts (List[str]): The prompts to fill into the template.
+            prompts (list[str]): The prompts to fill into the template.
 
         Returns:
-            List[str]: The generated jailbreak prompts.
+            list[str]: The generated jailbreak prompts.
 
         Raises:
             ValueError: If the template doesn't have the required 'prompt' parameter.
@@ -992,10 +992,10 @@ class FuzzerGenerator(
 
         Args:
             context (FuzzerContext): The generation context.
-            prompts (List[str]): The prompts to send.
+            prompts (list[str]): The prompts to send.
 
         Returns:
-            List[Message]: The responses from the target.
+            list[Message]: The responses from the target.
         """
         requests = self._create_normalizer_requests(prompts)
 
@@ -1012,7 +1012,7 @@ class FuzzerGenerator(
         Create normalizer requests from prompts.
 
         Args:
-            prompts (List[str]): The prompts to create requests for.
+            prompts (list[str]): The prompts to create requests for.
 
         Returns:
             List of normalizer requests.
@@ -1041,11 +1041,11 @@ class FuzzerGenerator(
         Score the responses from the target.
 
         Args:
-            responses (List[Message]): The responses to score.
-            tasks (List[str]): The original tasks/prompts used for generating the responses.
+            responses (list[Message]): The responses to score.
+            tasks (list[str]): The original tasks/prompts used for generating the responses.
 
         Returns:
-            List[Score]: The scores for each response.
+            list[Score]: The scores for each response.
         """
         if not responses:
             return []
@@ -1071,8 +1071,8 @@ class FuzzerGenerator(
 
         Args:
             context (FuzzerContext): The generation context.
-            scores (List[Score]): The scores for each response.
-            responses (List[Message]): The responses that were scored.
+            scores (list[Score]): The scores for each response.
+            responses (list[Message]): The responses that were scored.
             template_node (_PromptNode): The template node that was tested.
             current_seed (_PromptNode): The seed node that was selected.
 
@@ -1198,8 +1198,8 @@ class FuzzerGenerator(
         *,
         prompts: list[str],
         prompt_templates: list[str],
-        max_query_limit: Optional[int] = None,
-        memory_labels: Optional[dict[str, str]] = None,
+        max_query_limit: int | None = None,
+        memory_labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> FuzzerResult: ...
 
@@ -1217,10 +1217,10 @@ class FuzzerGenerator(
         Execute the Fuzzer generation strategy asynchronously.
 
         Args:
-            prompts (List[str]): The list of prompts to use for generation.
-            prompt_templates (List[str]): The list of prompt templates to use.
-            max_query_limit (Optional[int]): The maximum number of queries to execute.
-            memory_labels (Optional[dict[str, str]]): Optional labels to apply to the prompts.
+            prompts (list[str]): The list of prompts to use for generation.
+            prompt_templates (list[str]): The list of prompt templates to use.
+            max_query_limit (int | None): The maximum number of queries to execute.
+            memory_labels (dict[str, str] | None): Optional labels to apply to the prompts.
             **kwargs: Additional keyword arguments.
 
         Returns:

@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
 from pyrit.analytics.text_matching import ExactTextMatching, TextMatching
 from pyrit.models import ComponentIdentifier, MessagePiece, Score
@@ -27,22 +26,22 @@ class SubStringScorer(TrueFalseScorer):
         self,
         *,
         substring: str,
-        text_matcher: Optional[TextMatching] = None,
-        categories: Optional[list[str]] = None,
+        text_matcher: TextMatching | None = None,
+        categories: list[str] | None = None,
         aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
-        validator: Optional[ScorerPromptValidator] = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the SubStringScorer.
 
         Args:
             substring (str): The substring to search for in the text.
-            text_matcher (Optional[TextMatching]): The text matching strategy to use.
+            text_matcher (TextMatching | None): The text matching strategy to use.
                 Defaults to ExactTextMatching with case_sensitive=False.
-            categories (Optional[list[str]]): Optional list of categories for the score. Defaults to None.
+            categories (list[str] | None): Optional list of categories for the score. Defaults to None.
             aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
-            validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
         """
         self._substring = substring
         self._text_matcher = text_matcher if text_matcher else ExactTextMatching(case_sensitive=False)
@@ -65,13 +64,13 @@ class SubStringScorer(TrueFalseScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score the given message piece based on presence of the substring.
 
         Args:
             message_piece (MessagePiece): The message piece to score.
-            objective (Optional[str]): The objective to evaluate against. Defaults to None.
+            objective (str | None): The objective to evaluate against. Defaults to None.
                 Currently not used for this scorer.
 
         Returns:

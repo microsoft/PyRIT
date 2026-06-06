@@ -9,7 +9,7 @@ This is the attack-centric API design where every user interaction targets a mod
 """
 
 from datetime import datetime
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -26,8 +26,8 @@ class Score(BaseModel):
     score_value: str = Field(
         ..., description="Score value ('true'/'false' for true_false, '0.0'-'1.0' for float_scale)"
     )
-    score_category: Optional[list[str]] = Field(None, description="Harm categories (e.g., ['hate', 'violence'])")
-    score_rationale: Optional[str] = Field(None, description="Explanation for the score")
+    score_category: list[str] | None = Field(None, description="Harm categories (e.g., ['hate', 'violence'])")
+    score_rationale: str | None = Field(None, description="Explanation for the score")
     scored_at: datetime = Field(..., description="When the score was generated")
 
 
@@ -46,24 +46,24 @@ class MessagePiece(BaseModel):
     converted_value_data_type: str = Field(
         default="text", description="Data type of the converted value: 'text', 'image', 'audio', etc."
     )
-    original_value: Optional[str] = Field(default=None, description="Original value before conversion")
-    original_value_mime_type: Optional[str] = Field(default=None, description="MIME type of original value")
+    original_value: str | None = Field(default=None, description="Original value before conversion")
+    original_value_mime_type: str | None = Field(default=None, description="MIME type of original value")
     converted_value: str = Field(..., description="Converted value (text or base64 for media)")
-    converted_value_mime_type: Optional[str] = Field(default=None, description="MIME type of converted value")
+    converted_value_mime_type: str | None = Field(default=None, description="MIME type of converted value")
     scores: list[Score] = Field(default_factory=list, description="Scores embedded in this piece")
     response_error: PromptResponseError = Field(
         default="none", description="Error status: none, processing, blocked, empty, unknown"
     )
-    response_error_description: Optional[str] = Field(
+    response_error_description: str | None = Field(
         default=None, description="Description of the error if response_error is not 'none'"
     )
-    original_filename: Optional[str] = Field(
+    original_filename: str | None = Field(
         default=None, description="Original filename extracted from file path or blob URL"
     )
-    converted_filename: Optional[str] = Field(
+    converted_filename: str | None = Field(
         default=None, description="Converted filename extracted from file path or blob URL"
     )
-    prompt_metadata: Optional[dict[str, Any]] = Field(
+    prompt_metadata: dict[str, Any] | None = Field(
         default=None, description="Metadata associated with the piece (e.g., video_id for remix mode)"
     )
 
@@ -86,8 +86,8 @@ class TargetInfo(BaseModel):
     """Target information extracted from the stored TargetIdentifier."""
 
     target_type: str = Field(..., description="Target class name (e.g., 'OpenAIChatTarget')")
-    endpoint: Optional[str] = Field(None, description="Target endpoint URL")
-    model_name: Optional[str] = Field(None, description="Model or deployment name")
+    endpoint: str | None = Field(None, description="Target endpoint URL")
+    model_name: str | None = Field(None, description="Model or deployment name")
 
 
 class RetryEventResponse(BaseModel):
@@ -110,20 +110,18 @@ class AttackSummary(BaseModel):
     attack_result_id: str = Field(..., description="Database-assigned unique ID for this AttackResult")
     conversation_id: str = Field(..., description="Primary conversation of this attack result")
     attack_type: str = Field("", description="Attack class name (e.g., 'CrescendoAttack', 'ManualAttack')")
-    attack_specific_params: Optional[dict[str, Any]] = Field(None, description="Additional attack-specific parameters")
-    target: Optional[TargetInfo] = Field(None, description="Target information from the stored identifier")
+    attack_specific_params: dict[str, Any] | None = Field(None, description="Additional attack-specific parameters")
+    target: TargetInfo | None = Field(None, description="Target information from the stored identifier")
     converters: list[str] = Field(
         default_factory=list, description="Request converter class names applied in this attack"
     )
     objective: str = Field("", description="Natural-language description of the attacker's objective")
-    outcome: Optional[Literal["undetermined", "success", "failure", "error"]] = Field(
+    outcome: Literal["undetermined", "success", "failure", "error"] | None = Field(
         None, description="Attack outcome (null if not yet determined)"
     )
     outcome_reason: str | None = Field(None, description="Reason for the outcome")
     last_response: str | None = Field(None, description="Model response from the final turn")
-    last_message_preview: Optional[str] = Field(
-        None, description="Preview of the last message (truncated to ~100 chars)"
-    )
+    last_message_preview: str | None = Field(None, description="Preview of the last message (truncated to ~100 chars)")
     score_value: str | None = Field(None, description="Score value from the objective scorer")
     executed_turns: int = Field(0, ge=0, description="Number of turns executed")
     execution_time_ms: int = Field(0, ge=0, description="Execution time in milliseconds")
@@ -195,13 +193,13 @@ class MessagePieceRequest(BaseModel):
 
     data_type: str = Field(default="text", description="Data type: 'text', 'image', 'audio', etc.")
     original_value: str = Field(..., description="Original value (text or base64 for media)")
-    converted_value: Optional[str] = Field(None, description="Converted value. If provided, bypasses converters.")
-    mime_type: Optional[str] = Field(None, description="MIME type for media content")
-    prompt_metadata: Optional[dict[str, Any]] = Field(
+    converted_value: str | None = Field(None, description="Converted value. If provided, bypasses converters.")
+    mime_type: str | None = Field(None, description="MIME type for media content")
+    prompt_metadata: dict[str, Any] | None = Field(
         None,
         description="Metadata to attach to the piece (e.g., {'video_id': '...'} for remix mode).",
     )
-    original_prompt_id: Optional[str] = Field(
+    original_prompt_id: str | None = Field(
         None,
         description="ID of the source piece when prepending from an existing conversation. "
         "Preserves lineage so the new piece traces back to the original.",
@@ -231,18 +229,16 @@ class CreateAttackRequest(BaseModel):
     supplied in ``labels`` (typically the current operator's labels).
     """
 
-    name: Optional[str] = Field(None, description="Attack name/label")
+    name: str | None = Field(None, description="Attack name/label")
     target_registry_name: str = Field(..., description="Target registry name to attack")
-    source_conversation_id: Optional[str] = Field(
+    source_conversation_id: str | None = Field(
         None, description="Conversation to branch from (clone messages into the new attack)"
     )
-    cutoff_index: Optional[int] = Field(
-        None, description="Include messages up to and including this turn index (0-based)"
-    )
-    prepended_conversation: Optional[list[PrependedMessageRequest]] = Field(
+    cutoff_index: int | None = Field(None, description="Include messages up to and including this turn index (0-based)")
+    prepended_conversation: list[PrependedMessageRequest] | None = Field(
         None, description="Messages to prepend (system prompts, branching context)", max_length=200
     )
-    labels: Optional[dict[str, str]] = Field(None, description="User-defined labels for filtering")
+    labels: dict[str, str] | None = Field(None, description="User-defined labels for filtering")
 
 
 class CreateAttackResponse(BaseModel):
@@ -274,8 +270,8 @@ class ConversationSummary(BaseModel):
 
     conversation_id: str = Field(..., description="Unique conversation identifier")
     message_count: int = Field(0, description="Number of messages in this conversation")
-    last_message_preview: Optional[str] = Field(None, description="Preview of the last message")
-    created_at: Optional[datetime] = Field(None, description="Timestamp of the first message")
+    last_message_preview: str | None = Field(None, description="Preview of the last message")
+    created_at: datetime | None = Field(None, description="Timestamp of the first message")
 
 
 class AttackConversationsResponse(BaseModel):
@@ -297,10 +293,8 @@ class CreateConversationRequest(BaseModel):
     the cutoff turn, preserving tracking relationships (original_prompt_id).
     """
 
-    source_conversation_id: Optional[str] = Field(None, description="Conversation to branch from")
-    cutoff_index: Optional[int] = Field(
-        None, description="Include messages up to and including this turn index (0-based)"
-    )
+    source_conversation_id: str | None = Field(None, description="Conversation to branch from")
+    cutoff_index: int | None = Field(None, description="Include messages up to and including this turn index (0-based)")
 
 
 class CreateConversationResponse(BaseModel):
@@ -344,11 +338,11 @@ class AddMessageRequest(BaseModel):
         default=True,
         description="If True, send to target and wait for response. If False, just store in memory.",
     )
-    target_registry_name: Optional[str] = Field(
+    target_registry_name: str | None = Field(
         None,
         description="Target registry name. Required when send=True so the backend knows which target to use.",
     )
-    converter_ids: Optional[list[str]] = Field(
+    converter_ids: list[str] | None = Field(
         None, description="Converter instance IDs to apply (overrides attack-level)"
     )
     target_conversation_id: str = Field(
@@ -356,7 +350,7 @@ class AddMessageRequest(BaseModel):
         description="The conversation_id to store and send messages under. "
         "Usually the attack's main conversation, but can be a related conversation.",
     )
-    labels: Optional[dict[str, str]] = Field(
+    labels: dict[str, str] | None = Field(
         None,
         description="Labels to attach to every message piece. "
         "Falls back to labels from existing pieces in the conversation.",

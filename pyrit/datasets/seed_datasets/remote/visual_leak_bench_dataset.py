@@ -4,7 +4,9 @@
 import logging
 import uuid
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
@@ -12,7 +14,7 @@ from pyrit.datasets.seed_datasets.remote._image_cache import (
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +84,8 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         *,
         source: str = METADATA_URL,
         source_type: Literal["public_url", "file"] = "public_url",
-        categories: Optional[list[VisualLeakBenchCategory]] = None,
-        pii_types: Optional[list[VisualLeakBenchPIIType]] = None,
+        categories: list[VisualLeakBenchCategory] | None = None,
+        pii_types: list[VisualLeakBenchPIIType] | None = None,
     ) -> None:
         """
         Initialize the VisualLeakBench dataset loader.
@@ -113,10 +115,12 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             self._validate_enums(pii_types, VisualLeakBenchPIIType, "PII type")
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "visual_leak_bench"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch VisualLeakBench examples and return as SeedDataset.
@@ -143,7 +147,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        prompts: list[SeedPrompt] = []
+        prompts: list[SeedUnion] = []
         failed_image_count = 0
 
         for example in examples:
@@ -210,6 +214,12 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             Exception: If the image cannot be fetched.
         """
         authors = ["Youting Wang", "Yuan Tang", "Yitian Qian", "Chen Zhao"]
+        groups = [
+            "Northeastern University",
+            "Carnegie Mellon University",
+            "Boston University",
+            "New York University",
+        ]
         description = (
             "VisualLeakBench is a benchmark for evaluating Large Vision-Language Models against "
             "visual privacy attacks. It contains 1,000 adversarial images spanning OCR Injection "
@@ -239,6 +249,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             harm_categories=harm_categories,
             description=description,
             authors=authors,
+            groups=groups,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
             sequence=0,
@@ -258,6 +269,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             harm_categories=harm_categories,
             description=description,
             authors=authors,
+            groups=groups,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
             sequence=0,

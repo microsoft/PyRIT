@@ -232,14 +232,14 @@ class PromptMemoryEntry(Base):
         sequence (int): The order of the conversation within a conversation_id.
             Can be the same number for multi-part requests or multi-part responses.
         timestamp (DateTime): The timestamp of the memory entry.
-        labels (Dict[str, str]): The labels associated with the memory entry. Several can be standardized.
-        targeted_harm_categories (List[str]): The targeted harm categories for the memory entry.
+        labels (dict[str, str]): The labels associated with the memory entry. Several can be standardized.
+        targeted_harm_categories (list[str]): The targeted harm categories for the memory entry.
         prompt_metadata (JSON): The metadata associated with the prompt. This can be specific to any scenarios.
             Because memory is how components talk with each other, this can be component specific.
             e.g. the URI from a file uploaded to a blob store, or a document type you want to upload.
         converters (list[PromptConverter]): The converters for the prompt.
         prompt_target (PromptTarget): The target for the prompt.
-        attack_identifier (Dict[str, str]): The attack identifier for the prompt.
+        attack_identifier (dict[str, str]): The attack identifier for the prompt.
         original_value_data_type (PromptDataType): The data type of the original prompt (text, image)
         original_value (str): The text of the original prompt. If prompt is an image, it's a link.
         original_value_sha256 (str): The SHA256 hash of the original prompt data.
@@ -564,16 +564,16 @@ class SeedEntry(Base):
         value_sha256 (str): The SHA256 hash of the value of the seed prompt data.
         data_type (PromptDataType): The data type of the seed prompt.
         dataset_name (str): The name of the dataset the seed prompt belongs to.
-        harm_categories (List[str]): The harm categories associated with the seed prompt.
+        harm_categories (list[str]): The harm categories associated with the seed prompt.
         description (str): The description of the seed prompt.
-        authors (List[str]): The authors of the seed prompt.
-        groups (List[str]): The groups involved in authoring the seed prompt (if any).
+        authors (list[str]): The authors of the seed prompt.
+        groups (list[str]): The groups involved in authoring the seed prompt (if any).
         source (str): The source of the seed prompt.
         date_added (DateTime): The date the seed prompt was added.
         added_by (str): The user who added the seed prompt.
         prompt_metadata (dict[str, str | int]): The metadata associated with the seed prompt. This includes
             information that is useful for the specific target you're probing, such as encoding data.
-        parameters (List[str]): The parameters included in the value.
+        parameters (list[str]): The parameters included in the value.
             Note that seed prompts do not have parameters, only prompt templates do.
             However, they are stored in the same table.
         prompt_group_id (uuid.UUID): The ID of a group the seed prompt may optionally belong to.
@@ -742,8 +742,8 @@ class AttackResultEntry(Base):
         outcome_reason (str): Optional reason for the outcome, providing additional context.
         attack_metadata (dict[str, Any]): Metadata can be included as key-value pairs to provide extra context.
         labels (dict[str, str]): Optional labels associated with the attack result entry.
-        pruned_conversation_ids (List[str]): List of conversation IDs that were pruned from the attack.
-        adversarial_chat_conversation_ids (List[str]): List of conversation IDs used for adversarial chat.
+        pruned_conversation_ids (list[str]): List of conversation IDs that were pruned from the attack.
+        adversarial_chat_conversation_ids (list[str]): List of conversation IDs used for adversarial chat.
         timestamp (DateTime): The timestamp of the attack result entry.
         last_response (PromptMemoryEntry): Relationship to the last response prompt memory entry.
         last_score (ScoreEntry): Relationship to the last score entry.
@@ -1083,7 +1083,7 @@ class ScenarioResultEntry(Base):
         self.number_tries = entry.number_tries
         self.completion_time = entry.completion_time
 
-        # Serialize attack_results: dict[str, List[AttackResult]] -> dict[str, List[str]]
+        # Serialize attack_results: dict[str, list[AttackResult]] -> dict[str, list[str]]
         # Store only conversation_ids - the full AttackResults can be queried from the database
         serialized_attack_results = {}
         for attack_name, results in entry.attack_results.items():
