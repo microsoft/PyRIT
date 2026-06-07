@@ -735,6 +735,73 @@ class TestCustomAdversarialPrompt:
         assert f1.get_identifier().hash != f2.get_identifier().hash
 
 
+class TestDeprecatedAdversarialConfig:
+    """Tests for the deprecated ``adversarial_config`` parameter."""
+
+    class _AdversarialAttack:
+        def __init__(self, *, objective_target, attack_scoring_config=None, attack_adversarial_config=None):
+            self.objective_target = objective_target
+            self.attack_scoring_config = attack_scoring_config
+            self.attack_adversarial_config = attack_adversarial_config
+
+        def get_identifier(self):
+            return ComponentIdentifier(class_name="_AdversarialAttack", class_module="test")
+
+    @staticmethod
+    def _scoring():
+        return MagicMock(spec=AttackScoringConfig)
+
+    def test_adversarial_config_emits_deprecation_warning(self):
+        target = MagicMock(spec=PromptTarget)
+        with pytest.warns(DeprecationWarning, match="adversarial_config"):
+            factory = AttackTechniqueFactory(
+                name="durian",
+                attack_class=self._AdversarialAttack,
+                adversarial_config=AttackAdversarialConfig(target=target),
+            )
+        assert factory.uses_adversarial is True
+        assert factory.adversarial_chat is target
+
+    def test_adversarial_config_unpacked_into_create(self):
+        target = MagicMock(spec=PromptTarget)
+        seed = SeedPrompt(value="hi {{ objective }}", data_type="text", parameters=["objective"])
+        with pytest.warns(DeprecationWarning):
+            factory = AttackTechniqueFactory(
+                name="durian",
+                attack_class=self._AdversarialAttack,
+                adversarial_config=AttackAdversarialConfig(
+                    target=target, system_prompt_path="some/path.yaml", seed_prompt=seed
+                ),
+            )
+        technique = factory.create(objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=self._scoring())
+        config = technique.attack.attack_adversarial_config
+        assert config.target is target
+        assert config.system_prompt_path == "some/path.yaml"
+        assert config.seed_prompt is seed
+
+    def test_adversarial_config_with_adversarial_chat_raises(self):
+        target = MagicMock(spec=PromptTarget)
+        with pytest.raises(ValueError, match="cannot be combined"):
+            AttackTechniqueFactory(
+                name="durian",
+                attack_class=self._AdversarialAttack,
+                adversarial_config=AttackAdversarialConfig(target=target),
+                adversarial_chat=MagicMock(spec=PromptTarget),
+            )
+
+    def test_adversarial_config_with_custom_prompt_raises(self):
+        target = MagicMock(spec=PromptTarget)
+        with pytest.raises(ValueError, match="cannot be combined"):
+            AttackTechniqueFactory(
+                name="durian",
+                attack_class=self._AdversarialAttack,
+                adversarial_config=AttackAdversarialConfig(target=target),
+                adversarial_seed_prompt=SeedPrompt(
+                    value="hi {{ objective }}", data_type="text", parameters=["objective"]
+                ),
+            )
+
+
 class TestUnwrapOptional:
     """Tests for AttackTechniqueFactory._unwrap_optional static method."""
 

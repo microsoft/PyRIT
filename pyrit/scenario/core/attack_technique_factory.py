@@ -26,6 +26,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Union
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.executor.attack.core.attack_config import (
@@ -83,6 +84,7 @@ class AttackTechniqueFactory(Identifiable):
         adversarial_chat: PromptTarget | None = None,
         adversarial_system_prompt_path: str | Path | None = None,
         adversarial_seed_prompt: SeedPrompt | str | None = None,
+        adversarial_config: AttackAdversarialConfig | None = None,
         seed_technique: SeedAttackTechniqueGroup | None = None,
         uses_adversarial: bool | None = None,
         scorer_override_policy: ScorerOverridePolicy = ScorerOverridePolicy.WARN,
@@ -115,6 +117,12 @@ class AttackTechniqueFactory(Identifiable):
                 ``str``) used to generate the adversarial chat's first message.
                 Combined with the resolved target like
                 ``adversarial_system_prompt_path``.
+            adversarial_config: Deprecated. A pre-built ``AttackAdversarialConfig``
+                whose target and prompts are unpacked into ``adversarial_chat``,
+                ``adversarial_system_prompt_path``, and ``adversarial_seed_prompt``.
+                Mutually exclusive with those newer parameters. Prefer passing
+                ``adversarial_chat`` directly; this parameter will be removed in a
+                future release.
             seed_technique: Optional technique seed group attached to created
                 techniques.
             uses_adversarial: Whether this technique drives an adversarial
@@ -130,9 +138,31 @@ class AttackTechniqueFactory(Identifiable):
                 or if the attack class constructor uses ``**kwargs``.
             ValueError: If ``objective_target`` or
                 ``attack_adversarial_config`` is included in ``attack_kwargs``,
-                or if ``uses_adversarial=False`` while an adversarial chat or
-                prompt is wired.
+                if the deprecated ``adversarial_config`` is combined with
+                ``adversarial_chat`` / ``adversarial_system_prompt_path`` /
+                ``adversarial_seed_prompt``, or if ``uses_adversarial=False``
+                while an adversarial chat or prompt is wired.
         """
+        if adversarial_config is not None:
+            if (
+                adversarial_chat is not None
+                or adversarial_system_prompt_path is not None
+                or adversarial_seed_prompt is not None
+            ):
+                raise ValueError(
+                    f"Factory '{name}': the deprecated 'adversarial_config' cannot be combined with "
+                    f"'adversarial_chat', 'adversarial_system_prompt_path', or 'adversarial_seed_prompt'. "
+                    f"Pass only the newer parameters."
+                )
+            print_deprecation_message(
+                old_item="AttackTechniqueFactory(adversarial_config=...)",
+                new_item="adversarial_chat (with optional adversarial_system_prompt_path / adversarial_seed_prompt)",
+                removed_in="0.16.0",
+            )
+            adversarial_chat = adversarial_config.target
+            adversarial_system_prompt_path = adversarial_config.system_prompt_path
+            adversarial_seed_prompt = adversarial_config.seed_prompt
+
         self._name = name
         self._attack_class = attack_class
         self._strategy_tags = list(strategy_tags) if strategy_tags else []
@@ -163,6 +193,7 @@ class AttackTechniqueFactory(Identifiable):
         strategy_tags: list[str] | None = None,
         attack_kwargs: dict[str, Any] | None = None,
         adversarial_chat: PromptTarget | None = None,
+        adversarial_config: AttackAdversarialConfig | None = None,
         uses_adversarial: bool | None = None,
         scorer_override_policy: ScorerOverridePolicy = ScorerOverridePolicy.WARN,
     ) -> AttackTechniqueFactory:
@@ -198,6 +229,9 @@ class AttackTechniqueFactory(Identifiable):
                 technique. When ``None`` (the default), the adversarial target is
                 resolved lazily at ``create()`` time. Forwarded to the factory
                 constructor.
+            adversarial_config: Deprecated. A pre-built ``AttackAdversarialConfig``;
+                mutually exclusive with ``adversarial_chat``. Forwarded to the
+                factory constructor, which unpacks it. Prefer ``adversarial_chat``.
             uses_adversarial: Whether this technique drives an adversarial chat
                 during execution. ``None`` auto-derives from the attack class
                 constructor signature and seed-technique shape. Forwarded to
@@ -233,6 +267,7 @@ class AttackTechniqueFactory(Identifiable):
             strategy_tags=strategy_tags,
             attack_kwargs=attack_kwargs,
             adversarial_chat=adversarial_chat,
+            adversarial_config=adversarial_config,
             seed_technique=seed_technique,
             uses_adversarial=uses_adversarial,
             scorer_override_policy=scorer_override_policy,
