@@ -9,7 +9,8 @@ from pathlib import Path
 import numpy as np
 
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.models import ComponentIdentifier, PromptDataType, data_serializer_factory
+from pyrit.memory import data_serializer_factory
+from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)

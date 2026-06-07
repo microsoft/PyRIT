@@ -26,12 +26,8 @@ from pyrit.memory.memory_models import (
     EmbeddingDataEntry,
     PromptMemoryEntry,
 )
-from pyrit.models import (
-    AzureBlobStorageIO,
-    ComponentIdentifier,
-    ConversationStats,
-    MessagePiece,
-)
+from pyrit.memory.storage import AzureBlobStorageIO
+from pyrit.models import ComponentIdentifier, ConversationStats, MessagePiece
 
 if TYPE_CHECKING:
     from azure.core.credentials import AccessToken
@@ -879,7 +875,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     # attributes from the (potentially stale) detached object
                     # and silently overwrite concurrent updates to columns
                     # that are NOT in update_fields.
-                    entry_in_session = session.get(type(entry), entry.id)
+                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
                     if entry_in_session is None:
                         entry_in_session = session.merge(entry)
                     for field, value in update_fields.items():
