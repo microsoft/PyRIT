@@ -452,17 +452,53 @@ class TestReasoningStepTracking:
             objective_target=mock_objective_target,
             adversarial_chat=mock_adversarial_chat,
         )
-        basic_context.last_target_response = "Blocked response"
-        basic_context.last_reasoning_step_count = 9
+        stream_state = StreamState(
+            stream_id=0,
+            puzzle_type="logic_grid",
+            last_target_response="Blocked response",
+            last_reasoning_step_count=9,
+        )
 
         prompt = await attack._build_adversarial_prompt_async(
             context=basic_context,
-            stream_state=StreamState(stream_id=0, puzzle_type="logic_grid"),
+            stream_state=stream_state,
             iteration=1,
         )
 
         assert "STEP NUMBER: 9." in prompt
         assert "LANGUAGE MODEL OUTPUT: Blocked response" in prompt
+
+    @pytest.mark.asyncio
+    async def test_build_adversarial_prompt_uses_per_stream_feedback_not_context(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        basic_context: CoTHijackingAttackContext,
+    ):
+        """Refinement feedback comes from stream_state, not global context.last_*."""
+        attack = CoTHijackingTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+        )
+        basic_context.last_target_response = "global best response"
+        basic_context.last_reasoning_step_count = 1
+
+        stream_state = StreamState(
+            stream_id=0,
+            puzzle_type="logic_grid",
+            last_target_response="stream-specific response",
+            last_reasoning_step_count=7,
+        )
+
+        prompt = await attack._build_adversarial_prompt_async(
+            context=basic_context,
+            stream_state=stream_state,
+            iteration=1,
+        )
+
+        assert "LANGUAGE MODEL OUTPUT: stream-specific response" in prompt
+        assert "STEP NUMBER: 7." in prompt
+        assert "global best response" not in prompt
 
 
 @pytest.mark.usefixtures("patch_central_database")

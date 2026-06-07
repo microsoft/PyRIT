@@ -343,8 +343,8 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         1. All streams generate prompts concurrently
         2. All prompts are sent to the target concurrently
         3. All responses are scored concurrently
-        4. The best response is selected and fed back to all streams
-        5. Streams continue with refined generation based on best feedback
+        4. The best response is selected for success checking and global tracking
+        5. Each stream refines using its own prior response, score, and step count
 
         Returns:
             AttackResult: Result of the attack.
@@ -544,7 +544,7 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
 
         For the first iteration, sends the initial meta-prompt.
         For subsequent iterations, sends feedback that allows the adversarial model
-        to refine its approach based on the best previous response and score.
+        to refine its approach based on this stream's previous response and score.
 
         Args:
             context: Attack context
@@ -566,9 +566,11 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
             # Subsequent iterations: send structured feedback matching the paper's format.
             return self._format_target_feedback(
                 objective=context.params.objective,
-                target_response=context.last_target_response,
-                score=self._extract_raw_score(context.last_score) if context.last_score else 0.0,
-                step_number=context.last_reasoning_step_count,
+                target_response=stream_state.last_target_response,
+                score=self._extract_raw_score(stream_state.last_score)
+                if stream_state.last_score
+                else 0.0,
+                step_number=stream_state.last_reasoning_step_count,
             )
 
     def _render_meta_prompt(
