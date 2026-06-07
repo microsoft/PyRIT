@@ -11,11 +11,13 @@
 # %% [markdown]
 # # Attack Techniques
 #
-# An **attack technique** is the *how* of an attack, packaged so a scenario can pick it by name.
-# It bundles an [attack](../executor/0_executor.md) (the algorithm — e.g. `RolePlayAttack`,
-# `TreeOfAttacksWithPruningAttack`) together with the seeds and configuration that make it a
-# reusable recipe. The objective — the *what* you are probing for — stays separate and is supplied
-# by the dataset.
+# An **attack technique** is *anything that, once configured, generally helps an attack achieve its
+# objective* — a role-play framing, a many-shot priming set, a particular jailbreak template, a
+# crescendo escalation. A technique is always **specific to an attack**: it is the *how* of one
+# configured [attack](../executor/0_executor.md) (the algorithm — e.g. `RolePlayAttack`,
+# `TreeOfAttacksWithPruningAttack`), bundled with the seeds and configuration that make it a reusable
+# recipe and packaged so a scenario can pick it by name. The objective — the *what* you are probing
+# for — stays separate and is supplied by the dataset.
 #
 # > **Technique vs. attack.** The *attack* (a.k.a. executor) is the algorithm that runs prompts
 # > against a target. The *technique* wraps one configured attack so it can be registered, listed,

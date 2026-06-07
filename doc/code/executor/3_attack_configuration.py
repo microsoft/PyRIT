@@ -19,7 +19,7 @@
 #
 # | Argument | Purpose |
 # |---|---|
-# | `objective` | What you are trying to get the target to do. Drives scoring and multi-turn adversarial prompts. |
+# | `objective` | What you are trying to get the **objective target** (the system under test) to do. Drives scoring and multi-turn adversarial prompts. |
 # | `memory_labels` | A `dict[str, str]` tagged onto every prompt/response, so you can filter this run later in memory. |
 # | `prepended_conversation` | A list of `Message`s to seed the conversation before the attack's own turns (system prompt, prior history). |
 # | `next_message` | The exact next message to send, instead of letting the attack derive it from the objective. Useful for multimodal or pre-built seeds. |
@@ -45,6 +45,7 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
+# The objective target — the system under test. Here a TextTarget that just records what would be sent.
 target = TextTarget()
 attack = PromptSendingAttack(objective_target=target)
 
@@ -122,8 +123,8 @@ await output_attack_async(result)
 #   applied to every prompt and response.
 # - **`AttackScoringConfig`** — the objective scorer plus any auxiliary
 #   [scorers](../scoring/0_scoring.ipynb).
-# - **`AttackAdversarialConfig`** — the adversarial chat model that multi-turn attacks use to generate
-#   each next prompt (see [Multi-Turn Attacks](2_multi_turn.ipynb)).
+# - **`AttackAdversarialConfig`** — the adversarial target (a model PyRIT controls) that multi-turn
+#   attacks use to generate each next prompt (see [Multi-Turn Attacks](2_multi_turn.ipynb)).
 #
 # Converter and scoring configs apply to single- and multi-turn attacks alike; the adversarial config
 # only applies to attacks that drive a conversation. Below builds a converter config — it's just a

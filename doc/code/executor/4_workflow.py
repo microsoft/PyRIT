@@ -14,7 +14,7 @@
 #
 # Workflows orchestrate attacks that involve more than a single target exchange — they wire together an *attack setup* step, an external *processing* step, and scoring. The canonical example is a **Cross-domain Prompt Injection Attack (XPIA)**, where an adversary plants instructions in content (a web page, a resume, an email) that a separate AI system later ingests and acts on.
 #
-# Unlike the single- and multi-turn attacks, the attacker here never talks to the target model directly; the injection is delivered through a side channel and triggered by a legitimate user (or agent) action. This page shows two `XPIAWorkflow` examples.
+# Unlike the single- and multi-turn attacks, the attacker here never talks to the **objective target** (the AI system that later ingests the content) directly; the injection is delivered through a side channel and triggered by a legitimate user (or agent) action. This page shows two `XPIAWorkflow` examples.
 #
 # > These notebooks require external infrastructure (Azure Blob Storage, a running AI-recruiter Docker service). The outputs below are preserved from a prior run.
 #

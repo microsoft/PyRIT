@@ -12,7 +12,7 @@
 # %% [markdown]
 # # 5. Benchmarks
 #
-# Benchmarks evaluate a model against a fixed, structured dataset rather than a single objective. PyRIT ships question-answering benchmarks that score multiple-choice responses and fairness/bias benchmarks that probe for skewed behavior across demographic groups. Use them to measure a target systematically and to track regressions over time.
+# Benchmarks evaluate an **objective target** (the system under test) against a fixed, structured dataset rather than a single objective. PyRIT ships question-answering benchmarks that score multiple-choice responses and fairness/bias benchmarks that probe for skewed behavior across demographic groups. No adversarial target is involved — each item is sent to the objective target once and scored. Use them to measure a target systematically and to track regressions over time.
 
 # %% [markdown]
 # ## Q&A Benchmark

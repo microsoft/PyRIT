@@ -12,11 +12,12 @@
 # %% [markdown]
 # # Single-Turn Attacks
 #
-# A single-turn attack tries to achieve its objective in **one new prompt**. It may prepare the
-# conversation first — prepending a benign exchange, many-shot examples, or a role-play frame — but
-# the actual ask lands in a single message, and an optional [scorer](../scoring/0_scoring.ipynb)
-# decides whether it worked. Single-turn attacks don't need an adversarial model to drive a
-# conversation, which makes them fast and cheap (a few do use one to *prepare* the prompt).
+# A single-turn attack sends a single prompt — **one attack turn** — to the objective target. It may
+# prepare that prompt first (prepending a benign exchange, many-shot examples, or a role-play frame),
+# but only one crafted message is the actual ask, and an optional
+# [scorer](../scoring/0_scoring.ipynb) decides whether it worked. Because there is no back-and-forth to
+# drive, single-turn attacks don't need an adversarial target to *run* — which makes them fast and
+# cheap. (A few do use an adversarial target to *prepare* the one prompt; those are called out below.)
 #
 # > **Single-turn attacks are often just [attack techniques](../scenarios/0_attack_techniques.ipynb).**
 # > Most are a `PromptSendingAttack` plus a specific set of seeds or a fixed configuration. If you are
@@ -49,11 +50,11 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-# The target we are attacking.
+# The objective target — the system under test that every attack here sends its one request to.
 objective_target = OpenAIChatTarget()
 
-# A few single-turn attacks use an adversarial model to *prepare* the prompt (not to hold a
-# conversation). It works best with a model that has no safety filtering, so it doesn't refuse.
+# A few single-turn attacks use an adversarial target to *prepare* the prompt (not to hold a
+# conversation). PyRIT controls this model; it works best with no safety filtering so it doesn't refuse.
 adversarial_endpoint = os.environ["AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT"]
 adversarial_chat = OpenAIChatTarget(
     endpoint=adversarial_endpoint,
