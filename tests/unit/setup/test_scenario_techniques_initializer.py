@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
+from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.models import SeedPrompt
 from pyrit.prompt_target import PromptTarget
@@ -17,8 +17,6 @@ from pyrit.registry.object_registries.attack_technique_registry import AttackTec
 from pyrit.score.true_false.self_ask_true_false_scorer import TrueFalseQuestionPaths
 from pyrit.setup.initializers import ScenarioTechniqueInitializer
 from pyrit.setup.initializers.components.scenario_techniques import (
-    VIOLENT_DURIAN_SEED_PROMPT_PATH,
-    VIOLENT_DURIAN_SYSTEM_PROMPT_PATH,
     build_scenario_technique_factories,
 )
 
@@ -298,11 +296,11 @@ class TestViolentDurianTechnique:
         assert factory.uses_adversarial is True
 
     def test_data_paths_resolve_to_files(self):
-        assert VIOLENT_DURIAN_SYSTEM_PROMPT_PATH.exists()
-        assert VIOLENT_DURIAN_SEED_PROMPT_PATH.exists()
+        assert (EXECUTOR_RED_TEAM_PATH / "violent_durian.yaml").exists()
+        assert (EXECUTOR_RED_TEAM_PATH / "violent_durian_seed_prompt.yaml").exists()
 
     def test_seed_prompt_yaml_renders_objective(self):
-        sp = SeedPrompt.from_yaml_file(VIOLENT_DURIAN_SEED_PROMPT_PATH)
+        sp = SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "violent_durian_seed_prompt.yaml")
         assert sp.parameters == ["objective"]
         rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE")
         assert "UNIQUE_TEST_OBJECTIVE" in rendered
