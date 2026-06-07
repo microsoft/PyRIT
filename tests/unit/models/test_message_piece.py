@@ -10,9 +10,8 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
-from unit.mocks import MockPromptTarget, get_mock_target, get_sample_conversations
+from unit.mocks import MockPromptTarget, get_sample_conversations
 
-from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import (
     ComponentIdentifier,
     Message,
@@ -81,21 +80,6 @@ def test_prompt_targets_serialize(patch_central_database):
     assert patch_central_database.called
     assert entry.prompt_target_identifier.class_name == "MockPromptTarget"
     assert entry.prompt_target_identifier.class_module == "unit.mocks"
-
-
-def test_executors_serialize():
-    attack = PromptSendingAttack(objective_target=get_mock_target())
-
-    entry = MessagePiece(
-        role="user",
-        original_value="Hello",
-        converted_value="Hello",
-        attack_identifier=attack.get_identifier(),
-    )
-
-    assert entry.attack_identifier.hash is not None
-    assert entry.attack_identifier.class_name == "PromptSendingAttack"
-    assert entry.attack_identifier.class_module == "pyrit.executor.attack.single_turn.prompt_sending"
 
 
 async def test_hashes_generated():
@@ -693,10 +677,6 @@ def test_message_piece_to_dict():
             class_name="MockPromptTarget",
             class_module="unit.mocks",
         ),
-        attack_identifier=ComponentIdentifier(
-            class_name="PromptSendingAttack",
-            class_module="pyrit.executor.attack.single_turn.prompt_sending_attack",
-        ),
         scorer_identifier=ComponentIdentifier(
             class_name="TestScorer",
             class_module="pyrit.score.test_scorer",
@@ -740,7 +720,6 @@ def test_message_piece_to_dict():
         "prompt_metadata",
         "converter_identifiers",
         "prompt_target_identifier",
-        "attack_identifier",
         "scorer_identifier",
         "original_value_data_type",
         "original_value",
@@ -768,7 +747,6 @@ def test_message_piece_to_dict():
     assert result["prompt_metadata"] == entry.prompt_metadata
     assert result["converter_identifiers"] == [conv.to_dict() for conv in entry.converter_identifiers]
     assert result["prompt_target_identifier"] == entry.prompt_target_identifier.to_dict()
-    assert result["attack_identifier"] == entry.attack_identifier.to_dict()
     assert result["scorer_identifier"] == entry.scorer_identifier.to_dict()
     assert result["original_value_data_type"] == entry.original_value_data_type
     assert result["original_value"] == entry.original_value
@@ -1094,7 +1072,6 @@ def test_to_dict_from_dict_roundtrip():
         prompt_metadata={"doc_type": "text"},
         converter_identifiers=[converter_id],
         prompt_target_identifier=target_id,
-        attack_identifier=attack_id,
         original_value_data_type="text",
         converted_value_data_type="text",
         response_error="none",
@@ -1141,7 +1118,6 @@ class TestCopyLineageFrom:
     def test_copies_lineage_fields_from_source_to_target(self) -> None:
         source = self._make_piece(
             conversation_id="conv-A",
-            attack_identifier={"__type__": "Attack", "__module__": "x", "id": "atk-1"},
             prompt_target_identifier={"__type__": "Target", "__module__": "x", "id": "tgt-1"},
         )
         source.prompt_metadata = {"k": "v"}
@@ -1151,7 +1127,6 @@ class TestCopyLineageFrom:
         target.copy_lineage_from(source=source)
 
         assert target.conversation_id == "conv-A"
-        assert target.attack_identifier == source.attack_identifier
         assert target.prompt_target_identifier == source.prompt_target_identifier
         assert target.prompt_metadata == {"k": "v"}
 
@@ -1224,7 +1199,6 @@ class TestPhase3PydanticMigration:
             "prompt_metadata",
             "converter_identifiers",
             "prompt_target_identifier",
-            "attack_identifier",
             "scorer_identifier",
             "scores",
         ]
@@ -1239,7 +1213,6 @@ class TestPhase3PydanticMigration:
         assert d["prompt_metadata"] == {}
         assert d["converter_identifiers"] == []
         assert d["prompt_target_identifier"] is None
-        assert d["attack_identifier"] is None
         assert d["scorer_identifier"] is None
         assert d["original_value_data_type"] == "text"
         assert d["original_value"] == "hello"

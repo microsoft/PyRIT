@@ -166,7 +166,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         # Initialize utilities
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
 
-        self._conversation_manager = ConversationManager(attack_identifier=self.get_identifier())
+        self._conversation_manager = ConversationManager()
 
         # set the maximum number of turns for the attack
         if max_turns <= 0:
@@ -260,7 +260,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         self._adversarial_chat.set_system_prompt(
             system_prompt=adversarial_system_prompt,
             conversation_id=context.session.adversarial_chat_conversation_id,
-            attack_identifier=self.get_identifier(),
             labels=context.memory_labels,  # deprecated
         )
 
@@ -270,7 +269,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             adversarial_messages = get_adversarial_chat_messages(
                 prepended_conversation=context.prepended_conversation,
                 adversarial_chat_conversation_id=context.session.adversarial_chat_conversation_id,
-                attack_identifier=self.get_identifier(),
                 adversarial_chat_target_identifier=self._adversarial_chat.get_identifier(),
                 labels=context.memory_labels,
             )
@@ -388,7 +386,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         with execution_context(
             component_role=ComponentRole.ADVERSARIAL_CHAT,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._adversarial_chat.get_identifier(),
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
@@ -397,7 +394,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
                 message=prompt_message,
                 conversation_id=context.session.adversarial_chat_conversation_id,
                 target=self._adversarial_chat,
-                attack_identifier=self.get_identifier(),
                 labels=context.memory_labels,
             )
 
@@ -550,7 +546,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._objective_target.get_identifier(),
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
@@ -563,7 +558,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
                 response_converter_configurations=self._response_converters,
                 target=self._objective_target,
                 labels=context.memory_labels,
-                attack_identifier=self.get_identifier(),
             )
 
         if response is None:
@@ -598,7 +592,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_SCORER,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._objective_scorer.get_identifier(),
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,

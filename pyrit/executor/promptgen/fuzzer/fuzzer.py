@@ -1003,7 +1003,6 @@ class FuzzerGenerator(
             requests=requests,
             target=self._objective_target,
             labels=context.memory_labels,
-            attack_identifier=self.get_identifier(),
             batch_size=self._batch_size,
         )
 

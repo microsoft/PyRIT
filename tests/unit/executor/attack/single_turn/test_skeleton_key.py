@@ -295,7 +295,6 @@ class TestSkeletonKeyPromptSending:
         assert call_args.kwargs["request_converter_configurations"] == request_converters
         assert call_args.kwargs["response_converter_configurations"] == response_converters
         assert call_args.kwargs["labels"] == {"test": "label"}
-        assert "attack_identifier" in call_args.kwargs
 
 
 @pytest.mark.usefixtures("patch_central_database")

@@ -90,7 +90,6 @@ async def test_converter_send_prompt_async_bad_json_exception_retries(
                     original_value_data_type="text",
                     converted_value_data_type="text",
                     prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                    attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                     labels={"test": "test"},
                 )
             ]

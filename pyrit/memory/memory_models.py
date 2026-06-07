@@ -24,6 +24,7 @@ from sqlalchemy.dialects.sqlite import CHAR
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
+    foreign,
     mapped_column,
     relationship,
 )
@@ -37,6 +38,7 @@ from pyrit.models import (
     AttackResult,
     ChatMessageRole,
     ComponentIdentifier,
+    Conversation,
     ConversationReference,
     ConversationType,
     MessagePiece,
@@ -239,7 +241,6 @@ class PromptMemoryEntry(Base):
             e.g. the URI from a file uploaded to a blob store, or a document type you want to upload.
         converters (list[PromptConverter]): The converters for the prompt.
         prompt_target (PromptTarget): The target for the prompt.
-        attack_identifier (dict[str, str]): The attack identifier for the prompt.
         original_value_data_type (PromptDataType): The data type of the original prompt (text, image)
         original_value (str): The text of the original prompt. If prompt is an image, it's a link.
         original_value_sha256 (str): The SHA256 hash of the original prompt data.
@@ -267,8 +268,6 @@ class PromptMemoryEntry(Base):
     prompt_metadata: Mapped[dict[str, str | int]] = mapped_column(JSON)
     targeted_harm_categories: Mapped[list[str] | None] = mapped_column(JSON)
     converter_identifiers: Mapped[list[dict[str, str]] | None] = mapped_column(JSON)
-    prompt_target_identifier: Mapped[dict[str, str]] = mapped_column(JSON)
-    attack_identifier: Mapped[dict[str, str]] = mapped_column(JSON)
     response_error: Mapped[Literal["blocked", "none", "processing", "unknown"]] = mapped_column(String, nullable=True)
 
     original_value_data_type: Mapped[PromptDataType] = mapped_column(String, nullable=False)
@@ -294,6 +293,18 @@ class PromptMemoryEntry(Base):
         foreign_keys="ScoreEntry.prompt_request_response_id",
     )
 
+    # Conversation-scoped metadata (e.g. the target identifier) lives in the
+    # ``Conversations`` table keyed by ``conversation_id`` rather than on every row.
+    # ``viewonly`` because this join is read-only (there is no FK constraint); reads
+    # eager-load it via ``joinedload`` so detached entries can still hydrate the
+    # target onto the reconstructed ``MessagePiece``.
+    conversation_metadata: Mapped["ConversationEntry | None"] = relationship(
+        "ConversationEntry",
+        primaryjoin=lambda: foreign(PromptMemoryEntry.conversation_id) == ConversationEntry.conversation_id,
+        viewonly=True,
+        uselist=False,
+    )
+
     def __init__(self, *, entry: MessagePiece) -> None:
         """
         Initialize a PromptMemoryEntry from a MessagePiece.
@@ -310,8 +321,6 @@ class PromptMemoryEntry(Base):
         self.prompt_metadata = entry.prompt_metadata
         self.targeted_harm_categories = entry.targeted_harm_categories
         self.converter_identifiers = _dump_identifiers(entry.converter_identifiers)
-        self.prompt_target_identifier = _dump_identifier(entry.prompt_target_identifier) or {}
-        self.attack_identifier = _dump_identifier(entry.attack_identifier) or {}
 
         self.original_value = entry.original_value
         self.original_value_data_type = entry.original_value_data_type
@@ -336,8 +345,6 @@ class PromptMemoryEntry(Base):
         # Reconstruct ComponentIdentifiers with the stored pyrit_version
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
         converter_ids = _load_identifiers(self.converter_identifiers, pyrit_version=stored_version)
-        target_id = _load_identifier(self.prompt_target_identifier, pyrit_version=stored_version)
-        attack_id = _load_identifier(self.attack_identifier, pyrit_version=stored_version)
 
         message_piece = MessagePiece(
             role=self.role,
@@ -350,8 +357,6 @@ class PromptMemoryEntry(Base):
             sequence=self.sequence,
             prompt_metadata=self.prompt_metadata,
             converter_identifiers=converter_ids or [],
-            prompt_target_identifier=target_id,
-            attack_identifier=attack_id,
             original_value_data_type=self.original_value_data_type,
             converted_value_data_type=self.converted_value_data_type,
             response_error=self.response_error,
@@ -365,6 +370,11 @@ class PromptMemoryEntry(Base):
         message_piece.labels = self.labels or {}
         message_piece.targeted_harm_categories = self.targeted_harm_categories or []
         message_piece.scores = [score.get_score() for score in self.scores]
+        # The target identifier is conversation-scoped: hydrate it from the
+        # ``Conversations`` row (eager-loaded via ``conversation_metadata``) so it is
+        # served once per conversation rather than stored on every piece.
+        if self.conversation_metadata is not None:
+            message_piece.prompt_target_identifier = self.conversation_metadata.get_conversation().target_identifier
         return message_piece
 
     def __str__(self) -> str:
@@ -374,13 +384,50 @@ class PromptMemoryEntry(Base):
         Returns:
             str: Formatted string representation of the memory entry.
         """
-        if self.prompt_target_identifier:
-            # prompt_target_identifier is stored as dict in the database
-            class_name = self.prompt_target_identifier.get("class_name") or self.prompt_target_identifier.get(
-                "__type__", "Unknown"
-            )
-            return f"{class_name}: {self.role}: {self.converted_value}"
-        return f": {self.role}: {self.converted_value}"
+        return f"{self.role}: {self.converted_value}"
+
+
+class ConversationEntry(Base):
+    """
+    Conversation-scoped metadata, persisted once per ``conversation_id``.
+
+    Holds identifiers that belong to the conversation as a whole -- currently the
+    target identifier -- so they are not duplicated onto every ``PromptMemoryEntry``
+    row. The target is captured once when the conversation's pieces are written and
+    rehydrated onto pieces on read.
+    """
+
+    __tablename__ = "Conversations"
+    __table_args__ = {"extend_existing": True}
+
+    conversation_id = mapped_column(String, primary_key=True, nullable=False)
+    target_identifier: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
+
+    # Version of PyRIT used when this entry was created. Nullable for backwards
+    # compatibility with existing databases.
+    pyrit_version = mapped_column(String, nullable=True)
+
+    def __init__(self, *, conversation: Conversation) -> None:
+        """
+        Initialize a ConversationEntry from a Conversation model.
+
+        Args:
+            conversation (Conversation): The conversation metadata to persist.
+        """
+        self.conversation_id = conversation.conversation_id
+        self.target_identifier = _dump_identifier(conversation.target_identifier)
+        self.pyrit_version = pyrit.__version__
+
+    def get_conversation(self) -> Conversation:
+        """
+        Convert this database entry back into a Conversation model.
+
+        Returns:
+            Conversation: The reconstructed conversation metadata.
+        """
+        stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
+        target_id = _load_identifier(self.target_identifier, pyrit_version=stored_version)
+        return Conversation(conversation_id=self.conversation_id, target_identifier=target_id)
 
 
 class EmbeddingDataEntry(Base):

@@ -614,7 +614,6 @@ def test_memory_property_raises_when_memory_none():
 async def test_add_prepended_conversation_to_memory(mock_memory_instance):
     normalizer = PromptNormalizer()
     conv_id = "test-conv-id"
-    attack_id = get_mock_attack_identifier()
 
     piece = MessagePiece(role="user", original_value="prepended text", conversation_id="old-id")
     message = Message(message_pieces=[piece])
@@ -622,14 +621,12 @@ async def test_add_prepended_conversation_to_memory(mock_memory_instance):
     result = await normalizer.add_prepended_conversation_to_memory_async(
         conversation_id=conv_id,
         should_convert=False,
-        attack_identifier=attack_id,
         prepended_conversation=[message],
     )
 
     assert result is not None
     assert len(result) == 1
     assert result[0].message_pieces[0].conversation_id == conv_id
-    assert result[0].message_pieces[0].attack_identifier == attack_id
     mock_memory_instance.add_message_to_memory.assert_called_once()
 
 

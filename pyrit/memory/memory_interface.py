@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from sqlalchemy import MetaData, and_, not_, or_
+from sqlalchemy import MetaData, and_, not_, or_, select
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm.attributes import InstrumentedAttribute
@@ -27,6 +27,7 @@ from pyrit.memory.memory_exporter import MemoryExporter
 from pyrit.memory.memory_models import (
     AttackResultEntry,
     Base,
+    ConversationEntry,
     EmbeddingDataEntry,
     PromptMemoryEntry,
     ScenarioResultEntry,
@@ -35,6 +36,8 @@ from pyrit.memory.memory_models import (
 )
 from pyrit.models import (
     AttackResult,
+    ComponentIdentifier,
+    Conversation,
     ConversationStats,
     DataTypeSerializer,
     IdentifierFilter,
@@ -348,6 +351,66 @@ class MemoryInterface(abc.ABC):
         """
         Insert a list of message pieces into the memory storage.
         """
+
+    def _capture_conversations(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+        """
+        Record one ``Conversations`` row per conversation for the given pieces.
+
+        Conversation-scoped metadata (currently the target identifier) is persisted
+        once per ``conversation_id`` instead of being stamped onto every piece. This
+        runs from each backend's ``add_message_pieces_to_memory`` so every write path
+        -- normalizer, conversation duplication, prepended conversations, direct
+        target writers -- captures the target through a single choke point.
+
+        Args:
+            message_pieces (Sequence[MessagePiece]): The pieces being persisted.
+        """
+        targets_by_conversation: dict[str, ComponentIdentifier | None] = {}
+        for piece in message_pieces:
+            if piece.not_in_memory:
+                continue
+            conversation_id = piece.conversation_id
+            if targets_by_conversation.get(conversation_id) is None:
+                targets_by_conversation[conversation_id] = piece.prompt_target_identifier
+        for conversation_id, target_identifier in targets_by_conversation.items():
+            self._upsert_conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+
+    def _upsert_conversation(
+        self, *, conversation_id: str, target_identifier: ComponentIdentifier | None
+    ) -> None:
+        """
+        Insert or update the ``Conversations`` row for ``conversation_id``.
+
+        A non-``None`` ``target_identifier`` is written; a ``None`` value never
+        overwrites a target already recorded for the conversation (so response/copy
+        pieces and write ordering cannot clobber it).
+
+        Args:
+            conversation_id (str): The conversation to record.
+            target_identifier (ComponentIdentifier | None): The target the conversation
+                is held with, if known.
+
+        Raises:
+            SQLAlchemyError: If the upsert fails.
+        """
+        if not conversation_id:
+            return
+        entry = ConversationEntry(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+        )
+        with closing(self.get_session()) as session:
+            try:
+                existing = session.get(ConversationEntry, conversation_id)
+                if existing is None:
+                    session.add(entry)
+                elif target_identifier is not None:
+                    existing.target_identifier = entry.target_identifier
+                    existing.pyrit_version = entry.pyrit_version
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error upserting conversation {conversation_id}: {e}")
+                raise
 
     @abc.abstractmethod
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
@@ -853,6 +916,25 @@ class MemoryInterface(abc.ABC):
         message_pieces = self.get_message_pieces(conversation_id=conversation_id)
         return group_conversation_message_pieces_by_sequence(message_pieces=message_pieces)
 
+    def get_conversation_metadata(self, *, conversation_id: str) -> Conversation | None:
+        """
+        Return the conversation-scoped metadata stored for ``conversation_id``.
+
+        Args:
+            conversation_id (str): The conversation to look up.
+
+        Returns:
+            Conversation | None: The conversation metadata (including the target
+                identifier), or ``None`` if no row exists for the conversation.
+        """
+        entries = self._query_entries(
+            ConversationEntry,
+            conditions=ConversationEntry.conversation_id == str(conversation_id),
+        )
+        if not entries:
+            return None
+        return entries[0].get_conversation()
+
     def get_request_from_response(self, *, response: Message) -> Message:
         """
         Retrieve the request that produced the given response.
@@ -873,6 +955,80 @@ class MemoryInterface(abc.ABC):
 
         conversation = self.get_conversation(conversation_id=response.conversation_id)
         return conversation[response.sequence - 1]
+
+    def _resolve_attack_id_to_conversation_condition(self, *, attack_id: str | uuid.UUID) -> Any:
+        """
+        Build a deprecated ``attack_id`` filter condition for ``get_message_pieces``.
+
+        The attack identifier is no longer stamped on every piece. Instead, resolve the
+        raw attack-strategy hash against persisted ``AttackResult`` rows and constrain
+        the query to those attacks' main conversations.
+
+        Args:
+            attack_id (str | uuid.UUID): The raw attack-strategy identifier hash.
+
+        Returns:
+            Any: A SQLAlchemy condition restricting pieces to the matching attacks'
+                main conversation ids (matches nothing when no attack matches).
+        """
+        print_deprecation_message(
+            old_item="get_message_pieces(attack_id=...) / get_prompt_scores(attack_id=...)",
+            new_item="get_message_pieces(conversation_id=...) resolved via get_attack_results(...)",
+            removed_in="0.17.0",
+        )
+        matching_conversation_ids = {
+            result.conversation_id
+            for result in self.get_attack_results()
+            if (strategy := result.get_attack_strategy_identifier()) is not None and strategy.hash == str(attack_id)
+        }
+        return PromptMemoryEntry.conversation_id.in_(matching_conversation_ids)
+
+    def _build_message_piece_identifier_conditions(
+        self, *, identifier_filters: Sequence[IdentifierFilter]
+    ) -> list[Any]:
+        """
+        Build ``get_message_pieces`` conditions for identifier filters.
+
+        ``CONVERTER`` identifiers remain on the piece. ``TARGET`` identifiers moved to
+        the ``Conversations`` table, so target filters are applied via a subquery on
+        ``ConversationEntry`` correlated by ``conversation_id``. ``ATTACK`` identifiers
+        are no longer stamped on pieces (use ``get_attack_results`` instead) and are
+        rejected by ``_build_identifier_filter_conditions``.
+
+        Args:
+            identifier_filters (Sequence[IdentifierFilter]): The filters to convert.
+
+        Returns:
+            list[Any]: SQLAlchemy conditions for the message-piece query.
+        """
+        conditions: list[Any] = []
+        piece_filters = [f for f in identifier_filters if f.identifier_type != IdentifierType.TARGET]
+        target_filters = [f for f in identifier_filters if f.identifier_type == IdentifierType.TARGET]
+
+        if piece_filters:
+            conditions.extend(
+                self._build_identifier_filter_conditions(
+                    identifier_filters=piece_filters,
+                    identifier_column_map={
+                        IdentifierType.CONVERTER: PromptMemoryEntry.converter_identifiers,
+                    },
+                    caller="get_message_pieces",
+                )
+            )
+        if target_filters:
+            target_conditions = self._build_identifier_filter_conditions(
+                identifier_filters=target_filters,
+                identifier_column_map={
+                    IdentifierType.TARGET: ConversationEntry.target_identifier,
+                },
+                caller="get_message_pieces",
+            )
+            conditions.append(
+                PromptMemoryEntry.conversation_id.in_(
+                    select(ConversationEntry.conversation_id).where(and_(*target_conditions))
+                )
+            )
+        return conditions
 
     def get_message_pieces(
         self,
@@ -929,13 +1085,7 @@ class MemoryInterface(abc.ABC):
         try:
             conditions: list[Any] = []
             if attack_id:
-                conditions.append(
-                    self._get_condition_json_property_match(
-                        json_column=PromptMemoryEntry.attack_identifier,
-                        property_path="$.hash",
-                        value=str(attack_id),
-                    )
-                )
+                conditions.append(self._resolve_attack_id_to_conversation_condition(attack_id=attack_id))
             if role:
                 conditions.append(PromptMemoryEntry.role == role)
             if conversation_id:
@@ -953,17 +1103,7 @@ class MemoryInterface(abc.ABC):
             if not_data_type:
                 conditions.append(PromptMemoryEntry.converted_value_data_type != not_data_type)
             if identifier_filters:
-                conditions.extend(
-                    self._build_identifier_filter_conditions(
-                        identifier_filters=identifier_filters,
-                        identifier_column_map={
-                            IdentifierType.ATTACK: PromptMemoryEntry.attack_identifier,
-                            IdentifierType.TARGET: PromptMemoryEntry.prompt_target_identifier,
-                            IdentifierType.CONVERTER: PromptMemoryEntry.converter_identifiers,
-                        },
-                        caller="get_message_pieces",
-                    )
-                )
+                conditions.extend(self._build_message_piece_identifier_conditions(identifier_filters=identifier_filters))
 
             # Identify list parameters that may need batching
             list_params: list[tuple[InstrumentedAttribute[Any], Sequence[Any], str]] = []

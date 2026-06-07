@@ -157,7 +157,6 @@ class LLMGenericTextConverter(PromptConverter):
             self._converter_target.set_system_prompt(
                 system_prompt=system_prompt,
                 conversation_id=conversation_id,
-                attack_identifier=None,
             )
 
         converted_prompt = prompt

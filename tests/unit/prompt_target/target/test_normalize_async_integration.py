@@ -37,7 +37,6 @@ def _make_message_piece(*, role: str, content: str, conversation_id: str = "conv
         original_value_data_type="text",
         converted_value_data_type="text",
         prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
-        attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
     )
 
 

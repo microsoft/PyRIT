@@ -312,6 +312,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_memory]
         if not pieces_to_insert:
             return
+        self._capture_conversations(message_pieces=pieces_to_insert)
         self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in pieces_to_insert])
 
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
@@ -361,12 +362,21 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             try:
                 query = session.query(model_class)
                 if join_scores and model_class == PromptMemoryEntry:
-                    query = query.options(joinedload(PromptMemoryEntry.scores))
+                    query = query.options(
+                        joinedload(PromptMemoryEntry.scores),
+                        joinedload(PromptMemoryEntry.conversation_metadata),
+                    )
                 elif model_class == AttackResultEntry:
                     query = query.options(
-                        joinedload(AttackResultEntry.last_response).joinedload(PromptMemoryEntry.scores),
+                        joinedload(AttackResultEntry.last_response)
+                        .joinedload(PromptMemoryEntry.scores),
+                        joinedload(AttackResultEntry.last_response).joinedload(
+                            PromptMemoryEntry.conversation_metadata
+                        ),
                         joinedload(AttackResultEntry.last_score),
                     )
+                elif model_class == PromptMemoryEntry:
+                    query = query.options(joinedload(PromptMemoryEntry.conversation_metadata))
                 if conditions is not None:
                     query = query.filter(conditions)
                 if order_by is not None:

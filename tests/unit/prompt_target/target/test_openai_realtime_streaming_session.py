@@ -12,7 +12,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from pyrit.models import ComponentIdentifier, Message, MessagePiece
+from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.realtime_audio import (
     STREAMING_INTERRUPTED_KEY,
     CommittedEvent,
@@ -643,73 +643,6 @@ async def test_buffer_start_session_ms_advances_across_commits():
 
 
 # ---------------------------------------------------------------------------
-# 9. attack_identifier is stamped on persisted user + assistant pieces
-# ---------------------------------------------------------------------------
-
-
-async def test_attack_identifier_stamped_on_persisted_pieces_when_set():
-    """When ``attack_identifier`` is provided, every persisted piece carries it."""
-    target = _build_target()
-    normalizer = _build_normalizer()
-
-    persisted_messages: list[Message] = []
-
-    async def _capture(*, message: Message) -> None:
-        persisted_messages.append(message)
-
-    normalizer.hash_and_persist_message_async = AsyncMock(side_effect=_capture)
-
-    attack_id = ComponentIdentifier(class_name="BargeInAttack", class_module="test")
-
-    finish = asyncio.Event()
-    session = _OpenAIRealtimeStreamingSession(
-        target=target,
-        audio_chunks=_paced_chunks([b"\x01" * 96], finish),
-        prompt_normalizer=normalizer,
-        attack_identifier=attack_id,
-    )
-    _mock_session_wire(session)
-
-    with _patched_dispatcher():
-        await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="i")])
-
-    # Expect one user message + one assistant message (two pieces) — three pieces total.
-    all_pieces = [piece for msg in persisted_messages for piece in msg.message_pieces]
-    assert len(all_pieces) == 3
-    for piece in all_pieces:
-        assert piece.attack_identifier == attack_id
-
-
-async def test_attack_identifier_absent_when_not_provided():
-    """Without ``attack_identifier``, persisted pieces have None attribution (back-compat)."""
-    target = _build_target()
-    normalizer = _build_normalizer()
-
-    persisted_messages: list[Message] = []
-
-    async def _capture(*, message: Message) -> None:
-        persisted_messages.append(message)
-
-    normalizer.hash_and_persist_message_async = AsyncMock(side_effect=_capture)
-
-    finish = asyncio.Event()
-    session = _OpenAIRealtimeStreamingSession(
-        target=target,
-        audio_chunks=_paced_chunks([b"\x01" * 96], finish),
-        prompt_normalizer=normalizer,
-    )
-    _mock_session_wire(session)
-
-    with _patched_dispatcher():
-        await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="i")])
-
-    all_pieces = [piece for msg in persisted_messages for piece in msg.message_pieces]
-    assert len(all_pieces) == 3
-    for piece in all_pieces:
-        assert piece.attack_identifier is None
-
-
-# ---------------------------------------------------------------------------
 # 10. persist_prepended_conversation=False skips the prepended-memory write
 # ---------------------------------------------------------------------------
 
@@ -770,7 +703,6 @@ def test_open_streaming_session_forwards_kwargs_to_session_constructor(sqlite_in
     req_cfgs = [MagicMock(name="req_cfg")]
     resp_cfgs = [MagicMock(name="resp_cfg")]
     vad = ServerVadConfig(prefix_padding_ms=42)
-    attack_id = {"__type__": "BargeInAttack", "id": "x"}
 
     captured: dict[str, Any] = {}
 
@@ -790,7 +722,6 @@ def test_open_streaming_session_forwards_kwargs_to_session_constructor(sqlite_in
             response_converter_configurations=resp_cfgs,
             prepended_conversation=prepended,
             server_vad=vad,
-            attack_identifier=attack_id,
             persist_prepended_conversation=False,
         )
 
@@ -802,7 +733,6 @@ def test_open_streaming_session_forwards_kwargs_to_session_constructor(sqlite_in
     assert captured["response_converter_configurations"] is resp_cfgs
     assert captured["prepended_conversation"] is prepended
     assert captured["server_vad"] is vad
-    assert captured["attack_identifier"] is attack_id
     assert captured["persist_prepended_conversation"] is False
 
 

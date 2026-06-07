@@ -153,9 +153,8 @@ class RealtimeTarget(OpenAITarget):
             server_vad: Server-side voice activity detection. ``True`` (default) enables
                 VAD with default tuning. Pass a ``ServerVadConfig`` for custom tuning, or
                 ``False`` to disable (sending streaming config will then raise).
-            attack_identifier: Stamped on every persisted user / assistant piece for
-                attribution. Pass the caller's identifier so live messages share the
-                provenance contract of prepended messages.
+            attack_identifier: Deprecated. This parameter is ignored and will be removed in
+                release 0.17.0.
             persist_prepended_conversation: When ``True`` (default), the session writes
                 ``prepended_conversation`` to memory itself. Pass ``False`` when the
                 caller already persisted the prepended conversation (e.g. via
@@ -168,6 +167,12 @@ class RealtimeTarget(OpenAITarget):
             (but not yielded). The session owns its websocket connection + dispatcher
             for the duration of ``run_async``.
         """
+        if attack_identifier is not None:
+            print_deprecation_message(
+                old_item="open_streaming_session(..., attack_identifier=...)",
+                new_item="open_streaming_session(...)",
+                removed_in="0.17.0",
+            )
         return _OpenAIRealtimeStreamingSession(
             target=self,
             audio_chunks=audio_chunks,
@@ -177,7 +182,6 @@ class RealtimeTarget(OpenAITarget):
             response_converter_configurations=response_converter_configurations,
             prepended_conversation=prepended_conversation,
             server_vad=server_vad,
-            attack_identifier=attack_identifier,
             persist_prepended_conversation=persist_prepended_conversation,
         )
 

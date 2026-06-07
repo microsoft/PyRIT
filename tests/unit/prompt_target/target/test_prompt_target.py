@@ -60,7 +60,6 @@ def test_set_system_prompt(azure_openai_target: OpenAIChatTarget, mock_attack_st
     azure_openai_target.set_system_prompt(
         system_prompt="system prompt",
         conversation_id="1",
-        attack_identifier=mock_attack_strategy.get_identifier(),
         labels={},
     )
 
@@ -76,7 +75,6 @@ async def test_set_system_prompt_adds_memory(
     azure_openai_target.set_system_prompt(
         system_prompt="system prompt",
         conversation_id="1",
-        attack_identifier=mock_attack_strategy.get_identifier(),
         labels={},
     )
 
@@ -110,7 +108,6 @@ async def test_send_prompt_with_system_calls_chat_complete(
         azure_openai_target.set_system_prompt(
             system_prompt="system prompt",
             conversation_id="1",
-            attack_identifier=mock_attack_strategy.get_identifier(),
             labels={},
         )
 
@@ -164,7 +161,6 @@ async def test_send_prompt_async_with_delay(
 
 _LINEAGE_CONVERSATION_ID = "original-conv-id-12345"
 _LINEAGE_LABELS = {"op_name": "test_op", "user_id": "user42"}
-_LINEAGE_ATTACK_IDENTIFIER = ComponentIdentifier(class_name="TestAttack", class_module="tests.attacks")
 _LINEAGE_PROMPT_TARGET_IDENTIFIER = ComponentIdentifier(class_name="OpenAIChatTarget", class_module="pyrit")
 _LINEAGE_PROMPT_METADATA = {"scenario": "test_scenario", "turn": 3}
 
@@ -179,7 +175,6 @@ def _make_lineage_piece(*, role: str, content: str) -> MessagePiece:
         converted_value_data_type="text",
         labels=dict(_LINEAGE_LABELS),
         prompt_target_identifier=_LINEAGE_PROMPT_TARGET_IDENTIFIER,
-        attack_identifier=_LINEAGE_ATTACK_IDENTIFIER,
         prompt_metadata=dict(_LINEAGE_PROMPT_METADATA),
     )
 
@@ -242,7 +237,6 @@ async def test_history_squash_preserves_metadata_on_normalized_message():
 
     assert normalized_piece.conversation_id == _LINEAGE_CONVERSATION_ID
     assert normalized_piece.labels == _LINEAGE_LABELS
-    assert normalized_piece.attack_identifier == _LINEAGE_ATTACK_IDENTIFIER
     assert normalized_piece.prompt_target_identifier == _LINEAGE_PROMPT_TARGET_IDENTIFIER
     assert normalized_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
@@ -291,7 +285,6 @@ async def test_response_preserves_metadata_after_history_squash():
 
     assert response_piece.conversation_id == _LINEAGE_CONVERSATION_ID
     assert response_piece.labels == _LINEAGE_LABELS
-    assert response_piece.attack_identifier == _LINEAGE_ATTACK_IDENTIFIER
     assert response_piece.prompt_target_identifier == _LINEAGE_PROMPT_TARGET_IDENTIFIER
     assert response_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
@@ -338,7 +331,6 @@ async def test_system_squash_preserves_metadata():
 
     assert normalized_piece.conversation_id == _LINEAGE_CONVERSATION_ID
     assert normalized_piece.labels == _LINEAGE_LABELS
-    assert normalized_piece.attack_identifier == _LINEAGE_ATTACK_IDENTIFIER
     assert normalized_piece.prompt_target_identifier == _LINEAGE_PROMPT_TARGET_IDENTIFIER
     assert normalized_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
@@ -389,7 +381,6 @@ async def test_history_squash_propagates_lineage_to_all_pieces():
     for piece in normalized[0].message_pieces:
         assert piece.conversation_id == _LINEAGE_CONVERSATION_ID
         assert piece.labels == _LINEAGE_LABELS
-        assert piece.attack_identifier == _LINEAGE_ATTACK_IDENTIFIER
         assert piece.prompt_target_identifier == _LINEAGE_PROMPT_TARGET_IDENTIFIER
         assert piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 
@@ -453,7 +444,6 @@ async def test_conversation_id_stamped_on_all_but_full_lineage_only_on_last():
         # Last message should carry full lineage.
         last_piece = normalized[-1].message_pieces[0]
         assert last_piece.labels == _LINEAGE_LABELS
-        assert last_piece.attack_identifier == _LINEAGE_ATTACK_IDENTIFIER
         assert last_piece.prompt_target_identifier == _LINEAGE_PROMPT_TARGET_IDENTIFIER
         assert last_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
 

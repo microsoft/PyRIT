@@ -295,6 +295,7 @@ class PromptTarget(Identifiable):
             system_prompt (str): The system prompt text to set.
             conversation_id (str): The conversation id to attach the prompt to.
             attack_identifier (ComponentIdentifier | None): Optional attack identifier.
+                Deprecated: this parameter is ignored and will be removed in release 0.17.0.
             labels (dict[str, str] | None): Optional labels.
 
         Raises:
@@ -306,6 +307,13 @@ class PromptTarget(Identifiable):
                 old_item="set_system_prompt(..., labels=...)",
                 new_item="set_system_prompt(...)",
                 removed_in="0.16.0",
+            )
+
+        if attack_identifier is not None:
+            print_deprecation_message(
+                old_item="set_system_prompt(..., attack_identifier=...)",
+                new_item="set_system_prompt(...)",
+                removed_in="0.17.0",
             )
 
         if not self.capabilities.supports_multi_turn or not self.capabilities.supports_editable_history:
@@ -326,7 +334,6 @@ class PromptTarget(Identifiable):
                 original_value=system_prompt,
                 converted_value=system_prompt,
                 prompt_target_identifier=self.get_identifier(),
-                attack_identifier=attack_identifier,
                 labels=labels or {},
             ).to_message()
         )

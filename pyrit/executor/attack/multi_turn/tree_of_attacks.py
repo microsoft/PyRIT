@@ -404,7 +404,6 @@ class _TreeOfAttacksNode:
 
         # Use ConversationManager to add messages to memory
         conversation_manager = ConversationManager(
-            attack_identifier=self._attack_id,
             prompt_normalizer=self._prompt_normalizer,
         )
 
@@ -558,7 +557,6 @@ class _TreeOfAttacksNode:
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,
             attack_strategy_name=self._attack_strategy_name,
-            attack_identifier=self._attack_id,
             component_identifier=self._objective_target.get_identifier(),
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
@@ -570,7 +568,6 @@ class _TreeOfAttacksNode:
                 conversation_id=self.objective_target_conversation_id,
                 target=self._objective_target,
                 labels=self._memory_labels,
-                attack_identifier=self._attack_id,
             )
 
         # Store the last response text for reference
@@ -618,7 +615,6 @@ class _TreeOfAttacksNode:
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,
             attack_strategy_name=self._attack_strategy_name,
-            attack_identifier=self._attack_id,
             component_identifier=self._objective_target.get_identifier(),
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
@@ -630,7 +626,6 @@ class _TreeOfAttacksNode:
                 conversation_id=self.objective_target_conversation_id,
                 target=self._objective_target,
                 labels=self._memory_labels,
-                attack_identifier=self._attack_id,
             )
 
         # Store the last response text for reference
@@ -675,7 +670,6 @@ class _TreeOfAttacksNode:
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_SCORER,
             attack_strategy_name=self._attack_strategy_name,
-            attack_identifier=self._attack_id,
             component_identifier=self._objective_scorer.get_identifier(),
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=objective,
@@ -1021,7 +1015,6 @@ class _TreeOfAttacksNode:
         self._adversarial_chat.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=self.adversarial_chat_conversation_id,
-            attack_identifier=self._attack_id,
             labels=self._memory_labels,  # deprecated
         )
 
@@ -1138,7 +1131,6 @@ class _TreeOfAttacksNode:
         with execution_context(
             component_role=ComponentRole.ADVERSARIAL_CHAT,
             attack_strategy_name=self._attack_strategy_name,
-            attack_identifier=self._attack_id,
             component_identifier=self._adversarial_chat.get_identifier(),
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
@@ -1148,7 +1140,6 @@ class _TreeOfAttacksNode:
                 conversation_id=self.adversarial_chat_conversation_id,
                 target=self._adversarial_chat,
                 labels=self._memory_labels,
-                attack_identifier=self._attack_id,
             )
 
         return response.get_value()

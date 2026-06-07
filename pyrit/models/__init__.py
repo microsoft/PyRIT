@@ -70,6 +70,7 @@ from pyrit.models.literals import (
     SeedType,
 )
 from pyrit.models.messages import (
+    Conversation,
     Message,
     MessagePiece,
     construct_response_from_request,
@@ -126,6 +127,7 @@ __all__ = [
     "ComponentIdentifier",
     "compute_eval_hash",
     "config_hash",
+    "Conversation",
     "ConversationReference",
     "ConversationStats",
     "ConversationType",

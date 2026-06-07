@@ -54,7 +54,6 @@ def get_adversarial_chat_messages(
     prepended_conversation: list[Message],
     *,
     adversarial_chat_conversation_id: str,
-    attack_identifier: ComponentIdentifier,
     adversarial_chat_target_identifier: ComponentIdentifier,
     labels: dict[str, str] | None = None,  # deprecated
 ) -> list[Message]:
@@ -72,7 +71,6 @@ def get_adversarial_chat_messages(
     Args:
         prepended_conversation: The original conversation messages to transform.
         adversarial_chat_conversation_id: Conversation ID for the adversarial chat.
-        attack_identifier (ComponentIdentifier): Attack identifier to associate with messages.
         adversarial_chat_target_identifier (ComponentIdentifier): Target identifier for the adversarial chat.
         labels: Optional labels to associate with the messages.
             Deprecated: This parameter will be removed in a release 0.16.0.
@@ -114,7 +112,6 @@ def get_adversarial_chat_messages(
                 original_value_data_type=piece.original_value_data_type,
                 converted_value_data_type=piece.converted_value_data_type,
                 conversation_id=adversarial_chat_conversation_id,
-                attack_identifier=attack_identifier,
                 prompt_target_identifier=adversarial_chat_target_identifier,
                 labels=labels or {},  # deprecated
             )
@@ -190,20 +187,17 @@ class ConversationManager:
     def __init__(
         self,
         *,
-        attack_identifier: ComponentIdentifier,
         prompt_normalizer: PromptNormalizer | None = None,
     ) -> None:
         """
         Initialize the conversation manager.
 
         Args:
-            attack_identifier (ComponentIdentifier): The identifier of the attack this manager belongs to.
             prompt_normalizer: Optional prompt normalizer for converting prompts.
                 If not provided, a default PromptNormalizer instance will be created.
         """
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
         self._memory = CentralMemory.get_memory_instance()
-        self._attack_identifier = attack_identifier
 
     def get_conversation(self, conversation_id: str) -> list[Message]:
         """
@@ -276,7 +270,6 @@ class ConversationManager:
         target.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=conversation_id,
-            attack_identifier=self._attack_identifier,
             labels=labels,  # deprecated
         )
 
@@ -485,7 +478,6 @@ class ConversationManager:
 
             for piece in message_copy.message_pieces:
                 piece.conversation_id = conversation_id
-                piece.attack_identifier = self._attack_identifier
 
             # Count turns at message level (only assistant/simulated_assistant messages)
             # A multi-part response still counts as one turn

@@ -4,7 +4,6 @@
 import os
 import uuid
 from collections.abc import Generator, MutableSequence, Sequence
-from datetime import timezone
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -197,49 +196,40 @@ def test_get_memories_with_json_properties(memory_interface: AzureSQLMemory):
     converter_identifiers = [Base64Converter().get_identifier()]
     target = TextTarget()
 
-    # Start a session
-    with memory_interface.get_session() as session:  # type: ignore[arg-type]
-        # Create a ConversationData entry with all attributes filled
-        entry = PromptMemoryEntry(
-            entry=MessagePiece(
-                conversation_id=specific_conversation_id,
-                role="user",
-                sequence=1,
-                original_value="Test content",
-                converted_value="Test content",
-                labels={"normalizer_id": "id1"},
-                converter_identifiers=converter_identifiers,
-                prompt_target_identifier=target.get_identifier(),
-            )
-        )
+    piece = MessagePiece(
+        conversation_id=specific_conversation_id,
+        role="user",
+        sequence=1,
+        original_value="Test content",
+        converted_value="Test content",
+        labels={"normalizer_id": "id1"},
+        converter_identifiers=converter_identifiers,
+        prompt_target_identifier=target.get_identifier(),
+    )
 
-        # Insert the ConversationData entry
-        session.add(entry)
-        session.commit()
+    memory_interface.add_message_pieces_to_memory(message_pieces=[piece])
 
-        # Use the get_memories_with_conversation_id method to retrieve entries with the specific conversation_id
-        retrieved_entries = memory_interface.get_conversation(conversation_id=specific_conversation_id)
+    # Use the get_memories_with_conversation_id method to retrieve entries with the specific conversation_id
+    retrieved_entries = memory_interface.get_conversation(conversation_id=specific_conversation_id)
 
-        # Verify that the retrieved entry matches the inserted entry
-        assert len(retrieved_entries) == 1
-        retrieved_entry = retrieved_entries[0].message_pieces[0]
-        assert retrieved_entry.conversation_id == specific_conversation_id
-        assert retrieved_entry.api_role == "user"
-        assert retrieved_entry.original_value == "Test content"
-        # For timestamp, you might want to check if it's close to the current time instead of an exact match
-        assert (
-            abs((retrieved_entry.timestamp - entry.timestamp.replace(tzinfo=timezone.utc)).total_seconds()) < 10
-        )  # Assuming the test runs quickly
+    # Verify that the retrieved entry matches the inserted entry
+    assert len(retrieved_entries) == 1
+    retrieved_entry = retrieved_entries[0].message_pieces[0]
+    assert retrieved_entry.conversation_id == specific_conversation_id
+    assert retrieved_entry.api_role == "user"
+    assert retrieved_entry.original_value == "Test content"
+    # For timestamp, you might want to check if it's close to the current time instead of an exact match
+    assert abs((retrieved_entry.timestamp - piece.timestamp).total_seconds()) < 10  # Assuming the test runs quickly
 
-        converter_identifiers = retrieved_entry.converter_identifiers
-        assert len(converter_identifiers) == 1
-        assert converter_identifiers[0].class_name == "Base64Converter"
+    converter_identifiers = retrieved_entry.converter_identifiers
+    assert len(converter_identifiers) == 1
+    assert converter_identifiers[0].class_name == "Base64Converter"
 
-        prompt_target = retrieved_entry.prompt_target_identifier
-        assert prompt_target.class_name == "TextTarget"
+    prompt_target = retrieved_entry.prompt_target_identifier
+    assert prompt_target.class_name == "TextTarget"
 
-        labels = retrieved_entry.labels
-        assert labels["normalizer_id"] == "id1"
+    labels = retrieved_entry.labels
+    assert labels["normalizer_id"] == "id1"
 
 
 def test_get_memories_with_attack_id(memory_interface: AzureSQLMemory):

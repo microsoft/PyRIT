@@ -103,7 +103,6 @@ class ConversationScorer(Scorer, ABC):
                     conversation_id=original_piece.conversation_id,
                     labels=original_piece.labels,  # deprecated
                     prompt_target_identifier=original_piece.prompt_target_identifier,
-                    attack_identifier=original_piece.attack_identifier,
                     original_value_data_type="text",
                     converted_value_data_type="text",
                     response_error="none",

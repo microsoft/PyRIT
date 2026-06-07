@@ -114,7 +114,6 @@ class MessagePiece(BaseModel):
     prompt_metadata: dict[str, Any] = Field(default_factory=dict)
     converter_identifiers: list[ComponentIdentifierField] = Field(default_factory=list)
     prompt_target_identifier: ComponentIdentifierField | None = None
-    attack_identifier: ComponentIdentifierField | None = None
     scorer_identifier: ComponentIdentifierField | None = None
     scores: list[Score] = Field(default_factory=list)
 
@@ -220,7 +219,7 @@ class MessagePiece(BaseModel):
         Copy lineage metadata from ``source`` onto this piece.
 
         Lineage fields are the metadata that tie a piece back to its originating
-        conversation, attack, and target. Mutable containers (``labels``,
+        conversation and target. Mutable containers (``labels``,
         ``prompt_metadata``) are shallow-copied so that mutations on one piece
         do not affect others.
 
@@ -229,7 +228,6 @@ class MessagePiece(BaseModel):
         """
         self.conversation_id = source.conversation_id
         self.labels = dict(source.labels)
-        self.attack_identifier = source.attack_identifier
         self.prompt_target_identifier = source.prompt_target_identifier
         self.prompt_metadata = dict(source.prompt_metadata)
 

@@ -307,7 +307,6 @@ async def test_send_prompt_async_empty_response_adds_to_memory(
                 original_value_data_type="text",
                 converted_value_data_type="text",
                 prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
             MessagePiece(
@@ -318,7 +317,6 @@ async def test_send_prompt_async_empty_response_adds_to_memory(
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
                 prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
         ]
@@ -400,7 +398,6 @@ async def test_send_prompt_async(openai_response_json: dict, target: OpenAIRespo
                 original_value_data_type="text",
                 converted_value_data_type="text",
                 prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
             MessagePiece(
@@ -411,7 +408,6 @@ async def test_send_prompt_async(openai_response_json: dict, target: OpenAIRespo
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
                 prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
         ]
@@ -446,7 +442,6 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
                 original_value_data_type="text",
                 converted_value_data_type="text",
                 prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
             MessagePiece(
@@ -457,7 +452,6 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
                 prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
         ]

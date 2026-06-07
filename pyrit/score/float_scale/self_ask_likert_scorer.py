@@ -453,7 +453,6 @@ class SelfAskLikertScorer(FloatScaleScorer):
             message_data_type=message_piece.converted_value_data_type,
             scored_prompt_id=message_piece.id,
             category=self._score_category,
-            attack_identifier=message_piece.attack_identifier,
             objective=objective,
         )
 

@@ -225,7 +225,6 @@ async def test_perform_async_opens_session_with_expected_kwargs(vad_target):
     assert kwargs["request_converter_configurations"] == attack._request_converters
     assert kwargs["response_converter_configurations"] == attack._response_converters
     assert kwargs["prepended_conversation"] == ctx.prepended_conversation
-    assert kwargs["attack_identifier"] == attack.get_identifier()
     assert kwargs["persist_prepended_conversation"] is False
 
 

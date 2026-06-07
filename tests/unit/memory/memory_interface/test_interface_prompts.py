@@ -14,6 +14,7 @@ from unit.mocks import get_mock_target
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
+    AttackResult,
     ComponentIdentifier,
     IdentifierFilter,
     IdentifierType,
@@ -21,6 +22,7 @@ from pyrit.models import (
     MessagePiece,
     Score,
     SeedPrompt,
+    build_atomic_attack_identifier,
 )
 
 
@@ -135,7 +137,6 @@ def test_duplicate_memory(sqlite_instance: MemoryInterface):
             converted_value="Hello, how are you?",
             conversation_id=conversation_id_1,
             sequence=0,
-            attack_identifier=attack1.get_identifier(),
         ),
         MessagePiece(
             role="assistant",
@@ -143,14 +144,12 @@ def test_duplicate_memory(sqlite_instance: MemoryInterface):
             converted_value="I'm fine, thank you!",
             conversation_id=conversation_id_1,
             sequence=1,
-            attack_identifier=attack1.get_identifier(),
         ),
         MessagePiece(
             role="assistant",
             original_value="original prompt text",
             converted_value="I'm fine, thank you!",
             conversation_id=conversation_id_3,
-            attack_identifier=attack2.get_identifier(),
         ),
         MessagePiece(
             role="user",
@@ -158,7 +157,6 @@ def test_duplicate_memory(sqlite_instance: MemoryInterface):
             converted_value="Hello, how are you?",
             conversation_id=conversation_id_2,
             sequence=0,
-            attack_identifier=attack1.get_identifier(),
         ),
         MessagePiece(
             role="assistant",
@@ -166,7 +164,6 @@ def test_duplicate_memory(sqlite_instance: MemoryInterface):
             converted_value="I'm fine, thank you!",
             conversation_id=conversation_id_2,
             sequence=1,
-            attack_identifier=attack1.get_identifier(),
         ),
     ]
     sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
@@ -179,28 +176,6 @@ def test_duplicate_memory(sqlite_instance: MemoryInterface):
     )
     all_pieces = sqlite_instance.get_message_pieces()
     assert len(all_pieces) == 9
-    # Attack IDs are preserved (not changed) when duplicating
-    assert all(p.attack_identifier is not None for p in all_pieces)
-    assert (
-        len(
-            [
-                p
-                for p in all_pieces
-                if p.attack_identifier is not None and p.attack_identifier.hash == attack1.get_identifier().hash
-            ]
-        )
-        == 8
-    )
-    assert (
-        len(
-            [
-                p
-                for p in all_pieces
-                if p.attack_identifier is not None and p.attack_identifier.hash == attack2.get_identifier().hash
-            ]
-        )
-        == 1
-    )
     assert len([p for p in all_pieces if p.conversation_id == conversation_id_1]) == 2
     assert len([p for p in all_pieces if p.conversation_id == conversation_id_2]) == 2
     assert len([p for p in all_pieces if p.conversation_id == conversation_id_3]) == 1
@@ -223,7 +198,6 @@ def test_duplicate_conversation_pieces_not_score(sqlite_instance: MemoryInterfac
             converted_value="Hello, how are you?",
             conversation_id=conversation_id,
             sequence=0,
-            attack_identifier=attack1.get_identifier(),
             labels=memory_labels,
         ),
         MessagePiece(
@@ -233,7 +207,6 @@ def test_duplicate_conversation_pieces_not_score(sqlite_instance: MemoryInterfac
             converted_value="I'm fine, thank you!",
             conversation_id=conversation_id,
             sequence=0,
-            attack_identifier=attack1.get_identifier(),
             labels=memory_labels,
         ),
     ]
@@ -276,8 +249,6 @@ def test_duplicate_conversation_pieces_not_score(sqlite_instance: MemoryInterfac
     for piece in new_pieces:
         assert piece.id not in (prompt_id_1, prompt_id_2)
     assert len(sqlite_instance.get_prompt_scores(labels=memory_labels)) == 2
-    # Attack ID is preserved, so both original and duplicated pieces have the same attack ID
-    assert len(sqlite_instance.get_prompt_scores(attack_id=attack1.get_identifier().hash)) == 2
 
     # The duplicate prompts ids should not have scores so only two scores are returned
     assert len(sqlite_instance.get_prompt_scores(prompt_ids=[str(prompt_id_1), str(prompt_id_2)] + new_pieces_ids)) == 2
@@ -294,14 +265,12 @@ def test_duplicate_conversation_excluding_last_turn(sqlite_instance: MemoryInter
             original_value="original prompt text",
             conversation_id=conversation_id_1,
             sequence=0,
-            attack_identifier=attack1.get_identifier(),
         ),
         MessagePiece(
             role="assistant",
             original_value="original prompt text",
             conversation_id=conversation_id_1,
             sequence=1,
-            attack_identifier=attack1.get_identifier(),
         ),
         MessagePiece(
             role="user",
@@ -309,7 +278,6 @@ def test_duplicate_conversation_excluding_last_turn(sqlite_instance: MemoryInter
             converted_value="I'm fine, thank you!",
             sequence=2,
             conversation_id=conversation_id_1,
-            attack_identifier=attack2.get_identifier(),
         ),
         MessagePiece(
             role="user",
@@ -317,7 +285,6 @@ def test_duplicate_conversation_excluding_last_turn(sqlite_instance: MemoryInter
             converted_value="Hello, how are you?",
             conversation_id=conversation_id_2,
             sequence=2,
-            attack_identifier=attack2.get_identifier(),
         ),
         MessagePiece(
             role="assistant",
@@ -325,7 +292,6 @@ def test_duplicate_conversation_excluding_last_turn(sqlite_instance: MemoryInter
             converted_value="I'm fine, thank you!",
             conversation_id=conversation_id_2,
             sequence=3,
-            attack_identifier=attack1.get_identifier(),
         ),
     ]
     sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
@@ -359,7 +325,6 @@ def test_duplicate_conversation_excluding_last_turn_not_score(sqlite_instance: M
             converted_value="Hello, how are you?",
             conversation_id=conversation_id,
             sequence=0,
-            attack_identifier=attack1.get_identifier(),
             labels=memory_labels,
         ),
         MessagePiece(
@@ -369,7 +334,6 @@ def test_duplicate_conversation_excluding_last_turn_not_score(sqlite_instance: M
             converted_value="I'm fine, thank you!",
             conversation_id=conversation_id,
             sequence=1,
-            attack_identifier=attack1.get_identifier(),
             labels=memory_labels,
         ),
         MessagePiece(
@@ -378,7 +342,6 @@ def test_duplicate_conversation_excluding_last_turn_not_score(sqlite_instance: M
             converted_value="That's good.",
             conversation_id=conversation_id,
             sequence=2,
-            attack_identifier=attack1.get_identifier(),
             labels=memory_labels,
         ),
         MessagePiece(
@@ -387,7 +350,6 @@ def test_duplicate_conversation_excluding_last_turn_not_score(sqlite_instance: M
             converted_value="Thanks.",
             conversation_id=conversation_id,
             sequence=3,
-            attack_identifier=attack1.get_identifier(),
             labels=memory_labels,
         ),
     ]
@@ -430,8 +392,6 @@ def test_duplicate_conversation_excluding_last_turn_not_score(sqlite_instance: M
     assert new_pieces[0].id != prompt_id_1
     assert new_pieces[1].id != prompt_id_2
     assert len(sqlite_instance.get_prompt_scores(labels=memory_labels)) == 2
-    # Attack ID is preserved
-    assert len(sqlite_instance.get_prompt_scores(attack_id=attack1.get_identifier().hash)) == 2
     # The duplicate prompts ids should not have scores so only two scores are returned
     assert len(sqlite_instance.get_prompt_scores(prompt_ids=[str(prompt_id_1), str(prompt_id_2)] + new_pieces_ids)) == 2
 
@@ -445,28 +405,24 @@ def test_duplicate_conversation_excluding_last_turn_same_attack(sqlite_instance:
             original_value="original prompt text",
             conversation_id=conversation_id_1,
             sequence=0,
-            attack_identifier=attack1.get_identifier(),
         ),
         MessagePiece(
             role="assistant",
             original_value="original prompt text",
             conversation_id=conversation_id_1,
             sequence=1,
-            attack_identifier=attack1.get_identifier(),
         ),
         MessagePiece(
             role="user",
             original_value="original prompt text",
             conversation_id=conversation_id_1,
             sequence=2,
-            attack_identifier=attack1.get_identifier(),
         ),
         MessagePiece(
             role="assistant",
             original_value="original prompt text",
             conversation_id=conversation_id_1,
             sequence=3,
-            attack_identifier=attack1.get_identifier(),
         ),
     ]
     sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
@@ -486,39 +442,6 @@ def test_duplicate_conversation_excluding_last_turn_same_attack(sqlite_instance:
         assert piece.sequence < 2
 
 
-def test_duplicate_memory_preserves_attack_id(sqlite_instance: MemoryInterface):
-    attack1 = PromptSendingAttack(objective_target=get_mock_target())
-    conversation_id = "11111"
-    pieces = [
-        MessagePiece(
-            role="user",
-            original_value="original prompt text",
-            converted_value="Hello, how are you?",
-            conversation_id=conversation_id,
-            sequence=0,
-            attack_identifier=attack1.get_identifier(),
-        ),
-    ]
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
-    assert len(sqlite_instance.get_message_pieces()) == 1
-
-    # Duplicating preserves the attack ID
-    new_conversation_id = sqlite_instance.duplicate_conversation(
-        conversation_id=conversation_id,
-    )
-
-    # Verify duplication succeeded
-    all_pieces = sqlite_instance.get_message_pieces()
-    assert len(all_pieces) == 2
-    assert new_conversation_id != conversation_id
-
-    # Both pieces should have the same attack ID
-    assert all(p.attack_identifier is not None for p in all_pieces)
-    attack_ids = {p.attack_identifier.hash for p in all_pieces if p.attack_identifier is not None}
-    assert len(attack_ids) == 1
-    assert attack1.get_identifier().hash in attack_ids
-
-
 def test_duplicate_conversation_creates_new_ids(sqlite_instance: MemoryInterface):
     """Test that duplicated conversation has new piece IDs."""
     attack1 = PromptSendingAttack(objective_target=get_mock_target())
@@ -529,7 +452,6 @@ def test_duplicate_conversation_creates_new_ids(sqlite_instance: MemoryInterface
         converted_value="Hello",
         conversation_id=conversation_id,
         sequence=1,
-        attack_identifier=attack1.get_identifier(),
     )
     sqlite_instance.add_message_pieces_to_memory(message_pieces=[original_piece])
 
@@ -560,7 +482,6 @@ def test_duplicate_conversation_preserves_original_prompt_id(sqlite_instance: Me
         original_value="traceable prompt",
         conversation_id=conversation_id,
         sequence=1,
-        attack_identifier=attack1.get_identifier(),
     )
     sqlite_instance.add_message_pieces_to_memory(message_pieces=[original_piece])
     original_prompt_id = original_piece.original_prompt_id
@@ -586,21 +507,18 @@ def test_duplicate_conversation_with_multiple_pieces(sqlite_instance: MemoryInte
             original_value="user message 1",
             conversation_id=conversation_id,
             sequence=1,
-            attack_identifier=attack1.get_identifier(),
         ),
         MessagePiece(
             role="assistant",
             original_value="assistant response 1",
             conversation_id=conversation_id,
             sequence=2,
-            attack_identifier=attack1.get_identifier(),
         ),
         MessagePiece(
             role="user",
             original_value="user message 2",
             conversation_id=conversation_id,
             sequence=3,
-            attack_identifier=attack1.get_identifier(),
         ),
     ]
     sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
@@ -932,31 +850,29 @@ def test_get_message_pieces_attack(sqlite_instance: MemoryInterface):
     attack1 = PromptSendingAttack(objective_target=get_mock_target())
     attack2 = PromptSendingAttack(objective_target=get_mock_target("Target2"))
 
-    entries = [
-        PromptMemoryEntry(
-            entry=MessagePiece(
-                role="user",
-                original_value="Hello 1",
-                attack_identifier=attack1.get_identifier(),
-            )
-        ),
-        PromptMemoryEntry(
-            entry=MessagePiece(
-                role="assistant",
-                original_value="Hello 2",
-                attack_identifier=attack2.get_identifier(),
-            )
-        ),
-        PromptMemoryEntry(
-            entry=MessagePiece(
-                role="user",
-                original_value="Hello 3",
-                attack_identifier=attack1.get_identifier(),
-            )
-        ),
+    pieces = [
+        MessagePiece(role="user", original_value="Hello 1", conversation_id="c1", sequence=0),
+        MessagePiece(role="assistant", original_value="Hello 2", conversation_id="c2", sequence=0),
+        MessagePiece(role="user", original_value="Hello 3", conversation_id="c1", sequence=1),
     ]
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
 
-    sqlite_instance._insert_entries(entries=entries)
+    # attack_identifier is no longer stamped on pieces; the deprecated attack_id filter
+    # resolves to an attack's main conversation via persisted AttackResults.
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            AttackResult(
+                conversation_id="c1",
+                objective="objective 1",
+                atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack1.get_identifier()),
+            ),
+            AttackResult(
+                conversation_id="c2",
+                objective="objective 2",
+                atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=attack2.get_identifier()),
+            ),
+        ]
+    )
 
     attack1_entries = sqlite_instance.get_message_pieces(attack_id=attack1.get_identifier().hash)
 
@@ -1115,7 +1031,6 @@ def test_get_message_pieces_with_non_matching_memory_labels(sqlite_instance: Mem
                 role="user",
                 original_value="Hello 3",
                 converted_value="Hello 1",
-                attack_identifier=attack.get_identifier(),
             )
         ),
     ]
@@ -1371,53 +1286,21 @@ def test_get_request_from_response_raises_error_for_sequence_less_than_one(sqlit
 
 def test_get_message_pieces_by_attack_identifier_filter(sqlite_instance: MemoryInterface):
     attack1 = PromptSendingAttack(objective_target=get_mock_target())
-    attack2 = PromptSendingAttack(objective_target=get_mock_target("Target2"))
 
-    entries = [
-        PromptMemoryEntry(
-            entry=MessagePiece(
-                role="user",
-                original_value="Hello 1",
-                attack_identifier=attack1.get_identifier(),
-            )
-        ),
-        PromptMemoryEntry(
-            entry=MessagePiece(
-                role="assistant",
-                original_value="Hello 2",
-                attack_identifier=attack2.get_identifier(),
-            )
-        ),
-    ]
-
-    sqlite_instance._insert_entries(entries=entries)
-
-    # Filter by exact attack hash
-    results = sqlite_instance.get_message_pieces(
-        identifier_filters=[
-            IdentifierFilter(
-                identifier_type=IdentifierType.ATTACK,
-                property_path="$.hash",
-                value=attack1.get_identifier().hash,
-                partial_match=False,
-            )
-        ],
-    )
-    assert len(results) == 1
-    assert results[0].original_value == "Hello 1"
-
-    # No match
-    results = sqlite_instance.get_message_pieces(
-        identifier_filters=[
-            IdentifierFilter(
-                identifier_type=IdentifierType.ATTACK,
-                property_path="$.hash",
-                value="nonexistent_hash",
-                partial_match=False,
-            )
-        ],
-    )
-    assert len(results) == 0
+    # IdentifierType.ATTACK is no longer stamped on message pieces, so the piece-level
+    # identifier filter rejects it. Attack filtering now goes through get_attack_results
+    # or the deprecated attack_id parameter.
+    with pytest.raises(ValueError, match="does not support identifier type"):
+        sqlite_instance.get_message_pieces(
+            identifier_filters=[
+                IdentifierFilter(
+                    identifier_type=IdentifierType.ATTACK,
+                    property_path="$.hash",
+                    value=attack1.get_identifier().hash,
+                    partial_match=False,
+                )
+            ],
+        )
 
 
 def test_get_message_pieces_by_target_identifier_filter(sqlite_instance: MemoryInterface):
@@ -1432,24 +1315,20 @@ def test_get_message_pieces_by_target_identifier_filter(sqlite_instance: MemoryI
         params={"endpoint": "https://azure.com", "model_name": "gpt-3.5"},
     )
 
-    entries = [
-        PromptMemoryEntry(
-            entry=MessagePiece(
+    sqlite_instance.add_message_pieces_to_memory(
+        message_pieces=[
+            MessagePiece(
                 role="user",
                 original_value="Hello OpenAI",
                 prompt_target_identifier=target_id_1,
-            )
-        ),
-        PromptMemoryEntry(
-            entry=MessagePiece(
+            ),
+            MessagePiece(
                 role="user",
                 original_value="Hello Azure",
                 prompt_target_identifier=target_id_2,
-            )
-        ),
-    ]
-
-    sqlite_instance._insert_entries(entries=entries)
+            ),
+        ]
+    )
 
     # Filter by target hash
     results = sqlite_instance.get_message_pieces(

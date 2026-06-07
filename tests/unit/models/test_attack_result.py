@@ -387,7 +387,6 @@ def test_to_dict_from_dict_roundtrip():
         sequence=1,
         timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
         prompt_target_identifier=target_id,
-        attack_identifier=attack_id,
     )
     last_score = Score(
         score_value="true",

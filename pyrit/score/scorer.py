@@ -350,7 +350,6 @@ class Scorer(Identifiable, abc.ABC):
             prompt_metadata=piece.prompt_metadata,
             converter_identifiers=list(piece.converter_identifiers),  # type: ignore[arg-type]
             prompt_target_identifier=piece.prompt_target_identifier,
-            attack_identifier=piece.attack_identifier,
             response_error="none",
             timestamp=piece.timestamp,
         )
@@ -676,7 +675,6 @@ class Scorer(Identifiable, abc.ABC):
         description_output_key: str = "description",
         metadata_output_key: str = "metadata",
         category_output_key: str = "category",
-        attack_identifier: ComponentIdentifier | None = None,
     ) -> UnvalidatedScore:
         """
         Send a request to a target, and take care of retries.
@@ -710,8 +708,6 @@ class Scorer(Identifiable, abc.ABC):
                 Defaults to "metadata".
             category_output_key (str): The key in the JSON response that contains the category.
                 Defaults to "category".
-            attack_identifier (ComponentIdentifier | None): The attack identifier.
-                Defaults to None.
 
         Returns:
             UnvalidatedScore: The score object containing the response from the target LLM.
@@ -727,7 +723,6 @@ class Scorer(Identifiable, abc.ABC):
         prompt_target.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=conversation_id,
-            attack_identifier=attack_identifier,
         )
         prompt_metadata: dict[str, str | int] = {"response_format": "json"}
 
