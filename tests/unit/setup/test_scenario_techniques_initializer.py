@@ -9,13 +9,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
-from pyrit.executor.attack import PromptSendingAttack
+from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.models import SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.score.true_false.self_ask_true_false_scorer import TrueFalseQuestionPaths
 from pyrit.setup.initializers import ScenarioTechniqueInitializer
 from pyrit.setup.initializers.components.scenario_techniques import (
+    VIOLENT_DURIAN_SEED_PROMPT_PATH,
+    VIOLENT_DURIAN_SYSTEM_PROMPT_PATH,
     build_scenario_technique_factories,
 )
 
@@ -264,6 +267,57 @@ class TestScenarioTechniqueInitializerRegistration:
                 assert config.target is fallback_target
 
             mock_openai.assert_any_call(temperature=1.2)
+
+
+# ---------------------------------------------------------------------------
+# Violent Durian (opt-in technique in the catalog)
+# ---------------------------------------------------------------------------
+
+
+class TestViolentDurianTechnique:
+    """Tests for the opt-in violent_durian entry in the canonical catalog."""
+
+    @staticmethod
+    def _violent_durian_factory():
+        return next(f for f in build_scenario_technique_factories() if f.name == "violent_durian")
+
+    def test_in_catalog(self):
+        names = {f.name for f in build_scenario_technique_factories()}
+        assert "violent_durian" in names
+
+    def test_not_tagged_core_or_default(self):
+        """Tagged multi_turn only so it is never selected by core/default scenario aggregates."""
+        factory = self._violent_durian_factory()
+        assert "core" not in factory.strategy_tags
+        assert "default" not in factory.strategy_tags
+        assert factory.strategy_tags == ["multi_turn"]
+
+    def test_uses_red_teaming_attack_with_adversarial(self):
+        factory = self._violent_durian_factory()
+        assert factory.attack_class is RedTeamingAttack
+        assert factory.uses_adversarial is True
+
+    def test_data_paths_resolve_to_files(self):
+        assert VIOLENT_DURIAN_SYSTEM_PROMPT_PATH.exists()
+        assert VIOLENT_DURIAN_SEED_PROMPT_PATH.exists()
+
+    def test_seed_prompt_yaml_renders_objective(self):
+        sp = SeedPrompt.from_yaml_file(VIOLENT_DURIAN_SEED_PROMPT_PATH)
+        assert sp.parameters == ["objective"]
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE")
+        assert "UNIQUE_TEST_OBJECTIVE" in rendered
+        assert "durian" in rendered.lower()
+
+    def test_criminal_persona_scorer_yaml_resolves(self):
+        assert TrueFalseQuestionPaths.CRIMINAL_PERSONA.value.exists()
+
+    @pytest.mark.asyncio
+    async def test_registered_by_initializer(self, mock_adversarial_target):
+        init = ScenarioTechniqueInitializer()
+        await init.initialize_async()
+
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        assert "violent_durian" in set(registry.get_names())
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,6 @@ from pyrit.setup.initializers.airt import AIRTInitializer
 from pyrit.setup.initializers.components.scenario_techniques import ScenarioTechniqueInitializer
 from pyrit.setup.initializers.components.scorers import ScorerInitializer
 from pyrit.setup.initializers.components.targets import TargetInitializer
-from pyrit.setup.initializers.components.violent_durian import ViolentDurianInitializer
 from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 from pyrit.setup.initializers.scenarios.load_default_datasets import LoadDefaultDatasets
 from pyrit.setup.initializers.scenarios.objective_list import ScenarioObjectiveListInitializer
@@ -25,7 +24,6 @@ __all__ = [
     "SimpleInitializer",
     "LoadDefaultDatasets",
     "ScenarioObjectiveListInitializer",
-    "ViolentDurianInitializer",
 ]
 
 

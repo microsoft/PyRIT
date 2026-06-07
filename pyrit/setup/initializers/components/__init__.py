@@ -6,7 +6,6 @@
 from pyrit.setup.initializers.components.scenario_techniques import ScenarioTechniqueInitializer
 from pyrit.setup.initializers.components.scorers import ScorerInitializer, ScorerInitializerTags
 from pyrit.setup.initializers.components.targets import TargetConfig, TargetInitializer, TargetInitializerTags
-from pyrit.setup.initializers.components.violent_durian import ViolentDurianInitializer
 
 __all__ = [
     "ScenarioTechniqueInitializer",
@@ -15,5 +14,4 @@ __all__ = [
     "TargetConfig",
     "TargetInitializer",
     "TargetInitializerTags",
-    "ViolentDurianInitializer",
 ]

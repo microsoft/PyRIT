@@ -285,6 +285,9 @@ def _scenario_factories() -> list[AttackTechniqueFactory]:
         adv_target.capabilities.includes.return_value = True
         TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
         SCENARIO_FACTORIES_FIXTURE.extend(build_scenario_technique_factories())
+        # This runs at collection time (parametrize). Reset so we don't leak the mock
+        # "adversarial_chat" into the global TargetRegistry singleton of every xdist worker.
+        TargetRegistry.reset_instance()
     return SCENARIO_FACTORIES_FIXTURE
 
 

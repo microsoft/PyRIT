@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 
+from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
 from pyrit.executor.attack import (
     ContextComplianceAttack,
     ManyShotJailbreakAttack,
@@ -26,6 +27,7 @@ from pyrit.executor.attack import (
     RolePlayPaths,
     TreeOfAttacksWithPruningAttack,
 )
+from pyrit.models import SeedPrompt
 from pyrit.registry.object_registries.attack_technique_registry import (
     AttackTechniqueRegistry,
 )
@@ -33,6 +35,13 @@ from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
+
+# Violent Durian: a criminal-persona RedTeamingAttack adapted from Project Moonshot
+# (https://github.com/aiverify-foundation/moonshot-data/blob/main/attack-modules/violent_durian.py).
+# Tagged "multi_turn" only (no "core"/"default") so it is selectable as an option but never run
+# by default.
+VIOLENT_DURIAN_SYSTEM_PROMPT_PATH = EXECUTOR_RED_TEAM_PATH / "violent_durian.yaml"
+VIOLENT_DURIAN_SEED_PROMPT_PATH = EXECUTOR_RED_TEAM_PATH / "violent_durian_seed_prompt.yaml"
 
 
 def build_scenario_technique_factories() -> list[AttackTechniqueFactory]:
@@ -101,6 +110,13 @@ def build_scenario_technique_factories() -> list[AttackTechniqueFactory]:
         AttackTechniqueFactory.with_simulated_conversation(
             name="crescendo_journalist_interview",
             strategy_tags=["core", "single_turn"],
+        ),
+        AttackTechniqueFactory(
+            name="violent_durian",
+            attack_class=RedTeamingAttack,
+            strategy_tags=["multi_turn"],
+            adversarial_system_prompt_path=VIOLENT_DURIAN_SYSTEM_PROMPT_PATH,
+            adversarial_seed_prompt=SeedPrompt.from_yaml_file(VIOLENT_DURIAN_SEED_PROMPT_PATH),
         ),
     ]
 
