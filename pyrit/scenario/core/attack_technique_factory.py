@@ -108,8 +108,7 @@ class AttackTechniqueFactory(Identifiable):
                 technique. When ``None`` (the default), the adversarial target is
                 resolved lazily at ``create()`` time from the registry/default,
                 so the factory stays cheap to construct. A scenario can still
-                override the target per-create via
-                ``attack_adversarial_config_override``.
+                supply the target per-create via ``create(adversarial_chat=...)``.
             adversarial_system_prompt_path: Optional path to a YAML system
                 prompt for the adversarial chat. Combined with the resolved
                 adversarial target at ``create()`` time.
@@ -401,6 +400,7 @@ class AttackTechniqueFactory(Identifiable):
         *,
         objective_target: PromptTarget,
         attack_scoring_config: AttackScoringConfig,
+        adversarial_chat: PromptTarget | None = None,
         attack_adversarial_config_override: AttackAdversarialConfig | None = None,
         attack_converter_config_override: AttackConverterConfig | None = None,
     ) -> AttackTechnique:
@@ -411,10 +411,15 @@ class AttackTechniqueFactory(Identifiable):
         real constructor. Config objects frozen at factory construction time are
         deep-copied into every new instance.
 
-        The ``*_override`` parameters let a caller **replace** a config that was
-        baked into the factory at construction time.  When ``None`` (the
-        default), the factory's original config is kept as-is — so baked-in
-        converters, adversarial targets, etc. are preserved automatically.
+        Create-time ``adversarial_chat`` mirrors the constructor's adversarial
+        target slot: pass it to supply the adversarial target for techniques that
+        resolve it lazily (i.e. that did **not** bake one in). Supplying
+        ``adversarial_chat`` when the factory already baked one is a conflict and
+        raises — create() fills the lazy slot, it does not overwrite a technique's
+        own adversarial target. (The custom adversarial prompts remain
+        construction-time only.) Like a baked target, a create-time
+        ``adversarial_chat`` only reaches attacks whose constructor accepts
+        ``attack_adversarial_config``.
 
         Override configs are only forwarded when the attack class constructor
         declares a matching parameter (without the ``_override`` suffix).
@@ -426,9 +431,14 @@ class AttackTechniqueFactory(Identifiable):
             attack_scoring_config: The scoring config to use for the attack. This is important
                 for attacks like TAP that may need a more specific scorer than the
                 scorer the scenario provides.
-            attack_adversarial_config_override: When non-None, replaces any
-                adversarial config baked into the factory.  Only forwarded if
-                the attack class constructor accepts ``attack_adversarial_config``.
+            adversarial_chat: Optional adversarial chat target to use for this
+                attack. Only valid when the factory did not bake one. Only
+                forwarded if the attack class constructor accepts
+                ``attack_adversarial_config``.
+            attack_adversarial_config_override: Deprecated. A pre-built
+                ``AttackAdversarialConfig`` whose target is used as the create-time
+                ``adversarial_chat``. Mutually exclusive with ``adversarial_chat``.
+                Prefer ``adversarial_chat``.
             attack_converter_config_override: When non-None, replaces any
                 converter config baked into the factory.  Only forwarded if
                 the attack class constructor accepts ``attack_converter_config``.
@@ -437,9 +447,33 @@ class AttackTechniqueFactory(Identifiable):
             A fresh AttackTechnique with a newly-constructed attack strategy.
 
         Raises:
-            ValueError: If ``scorer_override_policy`` is RAISE and the override
-                config is incompatible with the attack's type annotation.
+            ValueError: If ``adversarial_chat`` is combined with the deprecated
+                ``attack_adversarial_config_override``, if a create-time
+                adversarial chat is supplied while the factory already baked one,
+                or if ``scorer_override_policy`` is RAISE and the override config
+                is incompatible with the attack's type annotation.
         """
+        if attack_adversarial_config_override is not None:
+            if adversarial_chat is not None:
+                raise ValueError(
+                    f"Factory '{self._name}': 'attack_adversarial_config_override' (deprecated) cannot be "
+                    f"combined with 'adversarial_chat'. Pass only 'adversarial_chat'."
+                )
+            print_deprecation_message(
+                old_item="AttackTechniqueFactory.create(attack_adversarial_config_override=...)",
+                new_item="adversarial_chat",
+                removed_in="0.16.0",
+            )
+            create_time_target: PromptTarget | None = attack_adversarial_config_override.target
+        else:
+            create_time_target = adversarial_chat
+
+        if create_time_target is not None and self._adversarial_chat is not None:
+            raise ValueError(
+                f"Factory '{self._name}': an adversarial chat is already baked into this technique, so "
+                f"create() cannot supply one. Remove the baked adversarial_chat or the create-time one."
+            )
+
         kwargs = dict(self._attack_kwargs)
         kwargs["objective_target"] = objective_target
 
@@ -449,38 +483,45 @@ class AttackTechniqueFactory(Identifiable):
             accepted_params=accepted_params,
         ):
             kwargs["attack_scoring_config"] = attack_scoring_config
-        if "attack_adversarial_config" in accepted_params:
-            if attack_adversarial_config_override is not None:
-                kwargs["attack_adversarial_config"] = self._build_adversarial_config(
-                    override=attack_adversarial_config_override
-                )
-            elif self._uses_adversarial:
-                kwargs["attack_adversarial_config"] = self._build_adversarial_config()
+        if "attack_adversarial_config" in accepted_params and (
+            create_time_target is not None or self._uses_adversarial
+        ):
+            kwargs["attack_adversarial_config"] = self._build_adversarial_config(
+                create_time_target=create_time_target,
+                override=attack_adversarial_config_override,
+            )
         if attack_converter_config_override is not None and "attack_converter_config" in accepted_params:
             kwargs["attack_converter_config"] = attack_converter_config_override
 
         attack = self._attack_class(**kwargs)
         return AttackTechnique(attack=attack, seed_technique=self._seed_technique)
 
-    def _build_adversarial_config(self, *, override: AttackAdversarialConfig | None = None) -> AttackAdversarialConfig:
+    def _build_adversarial_config(
+        self,
+        *,
+        create_time_target: PromptTarget | None = None,
+        override: AttackAdversarialConfig | None = None,
+    ) -> AttackAdversarialConfig:
         """
         Build the adversarial config for a created attack, resolving the target lazily.
 
-        Target precedence: an explicit ``override.target`` wins, then the factory's baked
-        ``adversarial_chat``, then the lazily-resolved default adversarial target. The
-        factory's custom ``adversarial_system_prompt_path`` / ``adversarial_seed_prompt``
-        take precedence over the override's, so a technique keeps its bespoke persona while
-        a scenario can still swap the underlying adversarial target.
+        Target precedence: an explicit ``create_time_target`` wins, then the factory's baked
+        ``adversarial_chat``, then the lazily-resolved default adversarial target. (The
+        factory never bakes a target *and* receives a create-time one — ``create()`` raises
+        on that conflict.) The factory's custom ``adversarial_system_prompt_path`` /
+        ``adversarial_seed_prompt`` take precedence over the deprecated override's, so a
+        technique keeps its bespoke persona while a scenario can still supply the target.
 
         Args:
-            override: An adversarial config supplied at ``create()`` time whose target (and,
-                as a fallback, prompts) should be used.
+            create_time_target: An adversarial target supplied at ``create()`` time.
+            override: Deprecated adversarial config supplied at ``create()`` time whose
+                prompts are used as a fallback for a technique that didn't set its own.
 
         Returns:
             AttackAdversarialConfig: Config wrapping the resolved adversarial chat target.
         """
-        if override is not None and override.target is not None:
-            target: PromptTarget = override.target
+        if create_time_target is not None:
+            target: PromptTarget = create_time_target
         elif self._adversarial_chat is not None:
             target = self._adversarial_chat
         else:

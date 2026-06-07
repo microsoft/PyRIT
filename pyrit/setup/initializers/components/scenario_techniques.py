@@ -52,7 +52,7 @@ def build_scenario_technique_factories() -> list[AttackTechniqueFactory]:
     default adversarial target is resolved lazily inside
     ``AttackTechniqueFactory.create`` via
     ``get_default_adversarial_target()``. Scenarios may also pass
-    ``attack_adversarial_config_override`` at create time (but only when the
+    ``adversarial_chat`` at create time (but only when the
     factory did not bake one in at construction).
 
     A bare ``PromptSendingAttack`` factory is intentionally omitted from the
