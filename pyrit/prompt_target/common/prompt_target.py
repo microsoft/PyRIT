@@ -333,9 +333,9 @@ class PromptTarget(Identifiable):
                 conversation_id=conversation_id,
                 original_value=system_prompt,
                 converted_value=system_prompt,
-                prompt_target_identifier=self.get_identifier(),
                 labels=labels or {},
-            ).to_message()
+            ).to_message(),
+            target_identifier=self.get_identifier(),
         )
 
     def dispose_db_engine(self) -> None:

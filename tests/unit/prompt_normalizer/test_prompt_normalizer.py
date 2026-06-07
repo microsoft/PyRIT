@@ -844,4 +844,5 @@ async def test_add_prepended_conversation_to_memory_emits_deprecation_warning_an
         converter_configurations=None,
         attack_identifier=None,
         prepended_conversation=None,
+        target_identifier=None,
     )

@@ -54,7 +54,6 @@ def get_adversarial_chat_messages(
     prepended_conversation: list[Message],
     *,
     adversarial_chat_conversation_id: str,
-    adversarial_chat_target_identifier: ComponentIdentifier,
     labels: dict[str, str] | None = None,  # deprecated
 ) -> list[Message]:
     """
@@ -71,7 +70,6 @@ def get_adversarial_chat_messages(
     Args:
         prepended_conversation: The original conversation messages to transform.
         adversarial_chat_conversation_id: Conversation ID for the adversarial chat.
-        adversarial_chat_target_identifier (ComponentIdentifier): Target identifier for the adversarial chat.
         labels: Optional labels to associate with the messages.
             Deprecated: This parameter will be removed in a release 0.16.0.
 
@@ -112,7 +110,6 @@ def get_adversarial_chat_messages(
                 original_value_data_type=piece.original_value_data_type,
                 converted_value_data_type=piece.converted_value_data_type,
                 conversation_id=adversarial_chat_conversation_id,
-                prompt_target_identifier=adversarial_chat_target_identifier,
                 labels=labels or {},  # deprecated
             )
 
@@ -352,6 +349,7 @@ class ConversationManager:
             request_converters=request_converters,
             prepended_conversation_config=prepended_conversation_config,
             max_turns=max_turns,
+            target_identifier=target.get_identifier(),
         )
 
     async def _handle_non_chat_target_async(
@@ -432,6 +430,7 @@ class ConversationManager:
         request_converters: list[PromptConverterConfiguration] | None = None,
         prepended_conversation_config: Optional["PrependedConversationConfig"] = None,
         max_turns: int | None = None,
+        target_identifier: ComponentIdentifier | None = None,
     ) -> int:
         """
         Add prepended conversation messages to memory for a chat target.
@@ -452,6 +451,8 @@ class ConversationManager:
             request_converters: Optional converters to apply to messages.
             prepended_conversation_config: Optional configuration for converter roles.
             max_turns: If provided, validates that turn count doesn't exceed this limit.
+            target_identifier (ComponentIdentifier | None): The target the conversation is held
+                with, if known. Recorded once per conversation.
 
         Returns:
             The number of turns (assistant messages) added.
@@ -498,7 +499,7 @@ class ConversationManager:
                 )
 
             # Add to memory
-            self._memory.add_message_to_memory(request=message_copy)
+            self._memory.add_message_to_memory(request=message_copy, target_identifier=target_identifier)
             logger.debug(f"Added prepended message {i + 1}/{len(valid_messages)} to memory")
 
         return turn_count
@@ -512,6 +513,7 @@ class ConversationManager:
         request_converters: list[PromptConverterConfiguration] | None,
         prepended_conversation_config: Optional["PrependedConversationConfig"],
         max_turns: int | None,
+        target_identifier: ComponentIdentifier | None = None,
     ) -> ConversationState:
         """
         Process prepended conversation for a chat target.
@@ -528,6 +530,8 @@ class ConversationManager:
             request_converters: Converters to apply.
             prepended_conversation_config: Configuration for converter roles.
             max_turns: Maximum turns for validation.
+            target_identifier (ComponentIdentifier | None): The objective target the
+                conversation is held with, if known.
 
         Returns:
             ConversationState with turn_count and scores.
@@ -547,6 +551,7 @@ class ConversationManager:
             request_converters=request_converters,
             prepended_conversation_config=prepended_conversation_config,
             max_turns=max_turns,
+            target_identifier=target_identifier,
         )
 
         # Update context for multi-turn attacks to reflect prepended_conversation

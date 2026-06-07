@@ -269,12 +269,13 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             adversarial_messages = get_adversarial_chat_messages(
                 prepended_conversation=context.prepended_conversation,
                 adversarial_chat_conversation_id=context.session.adversarial_chat_conversation_id,
-                adversarial_chat_target_identifier=self._adversarial_chat.get_identifier(),
                 labels=context.memory_labels,
             )
 
             for msg in adversarial_messages:
-                self._memory.add_message_to_memory(request=msg)
+                self._memory.add_message_to_memory(
+                    request=msg, target_identifier=self._adversarial_chat.get_identifier()
+                )
 
     async def _perform_async(self, *, context: MultiTurnAttackContext[Any]) -> AttackResult:
         """

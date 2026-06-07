@@ -118,12 +118,12 @@ class PromptNormalizer:
         # Prepare the request by updating conversation ID, labels, and attack identifier
         request = copy.deepcopy(message)
         conversation_id = conversation_id if conversation_id else str(uuid4())
+        target_identifier = target.get_identifier()
 
         for piece in request.message_pieces:
             piece.conversation_id = conversation_id
             if labels:
                 piece.labels = labels  # deprecated
-            piece.prompt_target_identifier = target.get_identifier()
 
         # Apply request converters
         await self.convert_values_async(converter_configurations=request_converter_configurations, message=request)
@@ -134,10 +134,10 @@ class PromptNormalizer:
 
         try:
             responses = await target.send_prompt_async(message=request)
-            self.memory.add_message_to_memory(request=request)
+            self.memory.add_message_to_memory(request=request, target_identifier=target_identifier)
         except EmptyResponseException:
             # Empty responses are retried, but we don't want them to stop execution
-            self.memory.add_message_to_memory(request=request)
+            self.memory.add_message_to_memory(request=request, target_identifier=target_identifier)
 
             responses = [
                 construct_response_from_request(
@@ -150,7 +150,7 @@ class PromptNormalizer:
 
         except Exception as ex:
             # Ensure request to memory before processing exception
-            self.memory.add_message_to_memory(request=request)
+            self.memory.add_message_to_memory(request=request, target_identifier=target_identifier)
 
             error_response = construct_response_from_request(
                 request=request.message_pieces[0],
@@ -160,7 +160,7 @@ class PromptNormalizer:
             )
 
             await self._calc_hash_async(request=error_response)
-            self.memory.add_message_to_memory(request=error_response)
+            self.memory.add_message_to_memory(request=error_response, target_identifier=target_identifier)
             cid = request.message_pieces[0].conversation_id if request and request.message_pieces else None
             raise Exception(f"Error sending prompt with conversation ID: {cid}") from ex
 
@@ -177,7 +177,7 @@ class PromptNormalizer:
                 error="empty",
             )
             await self._calc_hash_async(request=empty_response)
-            self.memory.add_message_to_memory(request=empty_response)
+            self.memory.add_message_to_memory(request=empty_response, target_identifier=target_identifier)
             return empty_response
 
         # Process all response messages (targets return list[Message])
@@ -190,7 +190,7 @@ class PromptNormalizer:
                     converter_configurations=response_converter_configurations, message=resp
                 )
             await self._calc_hash_async(request=resp)
-            self.memory.add_message_to_memory(request=resp)
+            self.memory.add_message_to_memory(request=resp, target_identifier=target_identifier)
 
         # Return the last response for backward compatibility
         return responses[-1]
@@ -384,7 +384,9 @@ class PromptNormalizer:
         tasks = [asyncio.create_task(piece.set_sha256_values_async()) for piece in request.message_pieces]
         await asyncio.gather(*tasks)
 
-    async def hash_and_persist_message_async(self, *, message: Message) -> None:
+    async def hash_and_persist_message_async(
+        self, *, message: Message, target_identifier: ComponentIdentifier | None = None
+    ) -> None:
         """
         Hash and persist a Message to memory.
 
@@ -393,9 +395,11 @@ class PromptNormalizer:
 
         Args:
             message (Message): The message to hash and persist.
+            target_identifier (ComponentIdentifier | None): The target the conversation
+                is held with, if known.
         """
         await self._calc_hash_async(request=message)
-        self.memory.add_message_to_memory(request=message)
+        self.memory.add_message_to_memory(request=message, target_identifier=target_identifier)
 
     async def add_prepended_conversation_to_memory_async(
         self,
@@ -404,6 +408,7 @@ class PromptNormalizer:
         converter_configurations: list[PromptConverterConfiguration] | None = None,
         attack_identifier: ComponentIdentifier | None = None,
         prepended_conversation: list[Message] | None = None,
+        target_identifier: ComponentIdentifier | None = None,
     ) -> list[Message] | None:
         """
         Process the prepended conversation by converting it if needed and adding it to memory.
@@ -416,6 +421,8 @@ class PromptNormalizer:
             attack_identifier (ComponentIdentifier | None): Identifier for the attack.
                 Deprecated: this parameter is ignored and will be removed in release 0.17.0.
             prepended_conversation (list[Message] | None): The conversation to prepend
+            target_identifier (ComponentIdentifier | None): The target the conversation is held
+                with, if known. Recorded once per conversation.
 
         Returns:
             list[Message] | None: The processed prepended conversation
@@ -443,7 +450,7 @@ class PromptNormalizer:
                 # and if not, this won't hurt anything
                 piece.id = uuid4()
 
-            self.memory.add_message_to_memory(request=request)
+            self.memory.add_message_to_memory(request=request, target_identifier=target_identifier)
 
         return prepended_conversation
 
@@ -467,6 +474,7 @@ class PromptNormalizer:
         converter_configurations: list[PromptConverterConfiguration] | None = None,
         attack_identifier: ComponentIdentifier | None = None,
         prepended_conversation: list[Message] | None = None,
+        target_identifier: ComponentIdentifier | None = None,
     ) -> list[Message] | None:
         """
         Use ``add_prepended_conversation_to_memory_async`` instead; this is a deprecated alias.
@@ -485,6 +493,7 @@ class PromptNormalizer:
             converter_configurations=converter_configurations,
             attack_identifier=attack_identifier,
             prepended_conversation=prepended_conversation,
+            target_identifier=target_identifier,
         )
 
 

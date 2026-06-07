@@ -349,7 +349,6 @@ class Scorer(Identifiable, abc.ABC):
             labels=piece.labels,
             prompt_metadata=piece.prompt_metadata,
             converter_identifiers=list(piece.converter_identifiers),  # type: ignore[arg-type]
-            prompt_target_identifier=piece.prompt_target_identifier,
             response_error="none",
             timestamp=piece.timestamp,
         )
@@ -738,7 +737,6 @@ class Scorer(Identifiable, abc.ABC):
                     original_value_data_type="text",
                     converted_value_data_type="text",
                     conversation_id=conversation_id,
-                    prompt_target_identifier=prompt_target.get_identifier(),
                     prompt_metadata=prompt_metadata,
                 )
             )
@@ -751,7 +749,6 @@ class Scorer(Identifiable, abc.ABC):
                 original_value_data_type=message_data_type,
                 converted_value_data_type=message_data_type,
                 conversation_id=conversation_id,
-                prompt_target_identifier=prompt_target.get_identifier(),
                 prompt_metadata=prompt_metadata,
             )
         )

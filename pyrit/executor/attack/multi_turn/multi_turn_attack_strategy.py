@@ -141,7 +141,9 @@ class MultiTurnAttackStrategy(AttackStrategy[MultiTurnAttackStrategyContextT, At
 
         if system_messages:
             new_conversation_id, pieces = memory.duplicate_messages(messages=system_messages)
-            memory.add_message_pieces_to_memory(message_pieces=pieces)
+            memory.add_message_pieces_to_memory(
+                message_pieces=pieces, target_identifier=self._objective_target.get_identifier()
+            )
             context.session.conversation_id = new_conversation_id
         else:
             context.session.conversation_id = str(uuid.uuid4())

@@ -28,6 +28,7 @@ from pyrit.memory.memory_models import (
 )
 from pyrit.models import (
     AzureBlobStorageIO,
+    ComponentIdentifier,
     ConversationStats,
     MessagePiece,
 )
@@ -698,7 +699,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             conditions.append(condition)
         return and_(*conditions)
 
-    def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+    def add_message_pieces_to_memory(
+        self, *, message_pieces: Sequence[MessagePiece], target_identifier: ComponentIdentifier | None = None
+    ) -> None:
         """
         Insert a list of message pieces into the memory storage.
 
@@ -708,6 +711,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         Args:
             message_pieces (Sequence[MessagePiece]): A sequence of MessagePiece instances to be added.
+            target_identifier (ComponentIdentifier | None): The target the conversation(s)
+                are held with, if known. Applied to every distinct ``conversation_id``.
         """
         # ``not_in_memory`` pieces are ephemeral — typically synthesized inside a
         # scorer to score arbitrary content that never came through a real
@@ -718,7 +723,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_memory]
         if not pieces_to_insert:
             return
-        self._capture_conversations(message_pieces=pieces_to_insert)
+        self._capture_conversations(message_pieces=pieces_to_insert, target_identifier=target_identifier)
         self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in pieces_to_insert])
 
     def dispose_engine(self) -> None:
@@ -830,18 +835,12 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                 if join_scores and model_class == PromptMemoryEntry:
                     query = query.options(
                         joinedload(PromptMemoryEntry.scores),
-                        joinedload(PromptMemoryEntry.conversation_metadata),
                     )
                 elif model_class == AttackResultEntry:
                     query = query.options(
                         joinedload(AttackResultEntry.last_response).joinedload(PromptMemoryEntry.scores),
-                        joinedload(AttackResultEntry.last_response).joinedload(
-                            PromptMemoryEntry.conversation_metadata
-                        ),
                         joinedload(AttackResultEntry.last_score),
                     )
-                elif model_class == PromptMemoryEntry:
-                    query = query.options(joinedload(PromptMemoryEntry.conversation_metadata))
                 if conditions is not None:
                     query = query.filter(conditions)
                 if order_by is not None:

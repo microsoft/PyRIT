@@ -86,12 +86,13 @@ class TextTarget(PromptTarget):
                     sequence=int(sequence_str) if sequence_str else 0,
                     labels=labels,  # deprecated
                     response_error=row.get("response_error", None),
-                    prompt_target_identifier=self.get_identifier(),
                 )
                 message_pieces.append(message_piece)
 
         # This is post validation, so the message_pieces should be okay and normalized
-        self._memory.add_message_pieces_to_memory(message_pieces=message_pieces)
+        self._memory.add_message_pieces_to_memory(
+            message_pieces=message_pieces, target_identifier=self.get_identifier()
+        )
         return message_pieces
 
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:

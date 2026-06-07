@@ -314,7 +314,7 @@ async def test_run_async_swaps_user_audio_and_records_identifiers_when_request_c
 
     persisted_user_messages: list[Message] = []
 
-    async def _capture(*, message: Message) -> None:
+    async def _capture(*, message: Message, target_identifier=None) -> None:
         if message.message_pieces[0].api_role == "user":
             persisted_user_messages.append(message)
 
@@ -349,7 +349,7 @@ async def test_run_async_skips_swap_and_identifiers_when_no_request_converters()
 
     persisted_user_messages: list[Message] = []
 
-    async def _capture(*, message: Message) -> None:
+    async def _capture(*, message: Message, target_identifier=None) -> None:
         if message.message_pieces[0].api_role == "user":
             persisted_user_messages.append(message)
 

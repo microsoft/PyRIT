@@ -2175,9 +2175,14 @@ class TestAttackServiceAdditionalCoverage:
     async def test_create_related_conversation_uses_duplicate_branch(self, attack_service, mock_memory):
         """When source_conversation_id and cutoff_index are provided, duplication path is used."""
         from pyrit.backend.models.attacks import CreateConversationRequest
+        from pyrit.models import Conversation
 
         ar = make_attack_result(conversation_id="attack-1")
         mock_memory.get_attack_results.return_value = [ar]
+        expected_target = ComponentIdentifier(class_name="TextTarget", class_module="pyrit.prompt_target")
+        mock_memory.get_conversation_metadata.return_value = Conversation(
+            conversation_id="attack-1", target_identifier=expected_target
+        )
 
         with patch.object(attack_service, "_duplicate_conversation_up_to", return_value="branch-dup") as mock_dup:
             result = await attack_service.create_related_conversation_async(
@@ -2187,7 +2192,11 @@ class TestAttackServiceAdditionalCoverage:
 
         assert result is not None
         assert result.conversation_id == "branch-dup"
-        mock_dup.assert_called_once_with(source_conversation_id="attack-1", cutoff_index=2)
+        mock_dup.assert_called_once_with(
+            source_conversation_id="attack-1",
+            cutoff_index=2,
+            target_identifier=expected_target,
+        )
 
     async def test_add_message_merges_converter_identifiers_without_duplicates(self, attack_service, mock_memory):
         """Should merge new converter identifiers with existing attack identifiers by hash."""

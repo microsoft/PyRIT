@@ -128,7 +128,6 @@ class GandalfScorer(TrueFalseScorer):
                     original_value=conversation_as_text,
                     converted_value=conversation_as_text,
                     conversation_id=scoring_conversation_id,
-                    prompt_target_identifier=self._prompt_target.get_identifier(),
                 )
             ]
         )

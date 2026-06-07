@@ -1320,14 +1320,20 @@ def test_get_message_pieces_by_target_identifier_filter(sqlite_instance: MemoryI
             MessagePiece(
                 role="user",
                 original_value="Hello OpenAI",
-                prompt_target_identifier=target_id_1,
+                conversation_id="conv-openai",
             ),
+        ],
+        target_identifier=target_id_1,
+    )
+    sqlite_instance.add_message_pieces_to_memory(
+        message_pieces=[
             MessagePiece(
                 role="user",
                 original_value="Hello Azure",
-                prompt_target_identifier=target_id_2,
+                conversation_id="conv-azure",
             ),
-        ]
+        ],
+        target_identifier=target_id_2,
     )
 
     # Filter by target hash

@@ -526,10 +526,11 @@ def test_get_memories_with_json_properties(sqlite_instance):
         converted_value="Test content",
         labels={"normalizer_id": "id1"},
         converter_identifiers=converter_identifiers,
-        prompt_target_identifier=target.get_identifier(),
     )
 
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
+    sqlite_instance.add_message_pieces_to_memory(
+        message_pieces=[piece], target_identifier=target.get_identifier()
+    )
 
     # Use the get_memories_with_conversation_id method to retrieve entries with the specific conversation_id
     retrieved_entries = sqlite_instance.get_conversation(conversation_id=specific_conversation_id)
@@ -547,8 +548,10 @@ def test_get_memories_with_json_properties(sqlite_instance):
     assert len(converter_identifiers) == 1
     assert converter_identifiers[0].class_name == "Base64Converter"
 
-    prompt_target = retrieved_entry.prompt_target_identifier
-    assert prompt_target.class_name == "TextTarget"
+    # The target identifier is conversation-scoped and stored in the Conversations table.
+    metadata = sqlite_instance.get_conversation_metadata(conversation_id=specific_conversation_id)
+    assert metadata is not None
+    assert metadata.target_identifier.class_name == "TextTarget"
 
     labels = retrieved_entry.labels
     assert labels["normalizer_id"] == "id1"

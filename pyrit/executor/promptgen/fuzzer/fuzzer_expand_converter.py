@@ -71,7 +71,6 @@ class FuzzerExpandConverter(FuzzerConverter):
                     converted_value=formatted_prompt,
                     conversation_id=conversation_id,
                     sequence=1,
-                    prompt_target_identifier=self.converter_target.get_identifier(),
                     original_value_data_type=input_type,
                     converted_value_data_type=input_type,
                     converter_identifiers=[self.get_identifier()],

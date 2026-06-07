@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
-from unit.mocks import MockPromptTarget, get_sample_conversations
+from unit.mocks import get_sample_conversations
 
 from pyrit.models import (
     ComponentIdentifier,
@@ -67,19 +67,6 @@ def test_converters_serialize():
 
     assert converter.class_name == "Base64Converter"
     assert converter.class_module == "pyrit.prompt_converter.base64_converter"
-
-
-def test_prompt_targets_serialize(patch_central_database):
-    target = MockPromptTarget()
-    entry = MessagePiece(
-        role="user",
-        original_value="Hello",
-        converted_value="Hello",
-        prompt_target_identifier=target.get_identifier(),
-    )
-    assert patch_central_database.called
-    assert entry.prompt_target_identifier.class_name == "MockPromptTarget"
-    assert entry.prompt_target_identifier.class_module == "unit.mocks"
 
 
 async def test_hashes_generated():
@@ -673,10 +660,6 @@ def test_message_piece_to_dict():
                 params={"supported_input_types": ["text"], "supported_output_types": ["text"]},
             )
         ],
-        prompt_target_identifier=ComponentIdentifier(
-            class_name="MockPromptTarget",
-            class_module="unit.mocks",
-        ),
         scorer_identifier=ComponentIdentifier(
             class_name="TestScorer",
             class_module="pyrit.score.test_scorer",
@@ -719,7 +702,6 @@ def test_message_piece_to_dict():
         "targeted_harm_categories",
         "prompt_metadata",
         "converter_identifiers",
-        "prompt_target_identifier",
         "scorer_identifier",
         "original_value_data_type",
         "original_value",
@@ -746,7 +728,6 @@ def test_message_piece_to_dict():
     assert result["targeted_harm_categories"] == entry.targeted_harm_categories
     assert result["prompt_metadata"] == entry.prompt_metadata
     assert result["converter_identifiers"] == [conv.to_dict() for conv in entry.converter_identifiers]
-    assert result["prompt_target_identifier"] == entry.prompt_target_identifier.to_dict()
     assert result["scorer_identifier"] == entry.scorer_identifier.to_dict()
     assert result["original_value_data_type"] == entry.original_value_data_type
     assert result["original_value"] == entry.original_value
@@ -1071,7 +1052,6 @@ def test_to_dict_from_dict_roundtrip():
         timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
         prompt_metadata={"doc_type": "text"},
         converter_identifiers=[converter_id],
-        prompt_target_identifier=target_id,
         original_value_data_type="text",
         converted_value_data_type="text",
         response_error="none",
@@ -1118,7 +1098,6 @@ class TestCopyLineageFrom:
     def test_copies_lineage_fields_from_source_to_target(self) -> None:
         source = self._make_piece(
             conversation_id="conv-A",
-            prompt_target_identifier={"__type__": "Target", "__module__": "x", "id": "tgt-1"},
         )
         source.prompt_metadata = {"k": "v"}
 
@@ -1127,7 +1106,6 @@ class TestCopyLineageFrom:
         target.copy_lineage_from(source=source)
 
         assert target.conversation_id == "conv-A"
-        assert target.prompt_target_identifier == source.prompt_target_identifier
         assert target.prompt_metadata == {"k": "v"}
 
     def test_labels_and_metadata_are_shallow_copied(self) -> None:
@@ -1198,7 +1176,6 @@ class TestPhase3PydanticMigration:
             "targeted_harm_categories",
             "prompt_metadata",
             "converter_identifiers",
-            "prompt_target_identifier",
             "scorer_identifier",
             "scores",
         ]
@@ -1212,7 +1189,6 @@ class TestPhase3PydanticMigration:
         assert d["targeted_harm_categories"] == []
         assert d["prompt_metadata"] == {}
         assert d["converter_identifiers"] == []
-        assert d["prompt_target_identifier"] is None
         assert d["scorer_identifier"] is None
         assert d["original_value_data_type"] == "text"
         assert d["original_value"] == "hello"

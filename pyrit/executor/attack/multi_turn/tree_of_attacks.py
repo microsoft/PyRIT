@@ -412,6 +412,7 @@ class _TreeOfAttacksNode:
             conversation_id=self.objective_target_conversation_id,
             request_converters=self._request_converters,
             prepended_conversation_config=prepended_conversation_config,
+            target_identifier=self._objective_target.get_identifier(),
         )
 
         # Build context string for adversarial chat system prompt (like Crescendo)
@@ -820,7 +821,9 @@ class _TreeOfAttacksNode:
             system_messages = [m for m in messages if m.api_role == "system"]
             if system_messages:
                 new_id, pieces = self._memory.duplicate_messages(messages=system_messages)
-                self._memory.add_message_pieces_to_memory(message_pieces=pieces)
+                self._memory.add_message_pieces_to_memory(
+                    message_pieces=pieces, target_identifier=self._objective_target.get_identifier()
+                )
                 duplicate_node.objective_target_conversation_id = new_id
             else:
                 duplicate_node.objective_target_conversation_id = str(uuid.uuid4())

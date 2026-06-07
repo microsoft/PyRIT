@@ -322,7 +322,9 @@ async def _probe_system_prompt_async(target: PromptTarget, timeout_s: float, ret
         prompt_metadata=_probe_metadata(),
     )
     try:
-        target._memory.add_message_to_memory(request=Message(message_pieces=[system_piece]))
+        target._memory.add_message_to_memory(
+            request=Message(message_pieces=[system_piece]), target_identifier=target.get_identifier()
+        )
     except Exception as exc:
         logger.debug("System-prompt probe could not seed system message: %s", exc)
         return False
@@ -406,7 +408,9 @@ async def _probe_multi_turn_async(target: PromptTarget, timeout_s: float, retrie
 
     # Seed memory so the second send sees real prior history.
     try:
-        target._memory.add_message_to_memory(request=Message(message_pieces=[first]))
+        target._memory.add_message_to_memory(
+            request=Message(message_pieces=[first]), target_identifier=target.get_identifier()
+        )
         assistant_reply = MessagePiece(
             role="assistant",
             original_value="Got it.",
@@ -414,7 +418,9 @@ async def _probe_multi_turn_async(target: PromptTarget, timeout_s: float, retrie
             conversation_id=conversation_id,
             prompt_metadata=_probe_metadata(),
         ).to_message()
-        target._memory.add_message_to_memory(request=assistant_reply)
+        target._memory.add_message_to_memory(
+            request=assistant_reply, target_identifier=target.get_identifier()
+        )
     except Exception as exc:
         logger.debug("Multi-turn probe could not seed conversation history: %s", exc)
         return False

@@ -28,7 +28,7 @@ def _make_strategy(*, supports_multi_turn: bool):
     target = MagicMock()
     target.capabilities.supports_multi_turn = supports_multi_turn
     target.configuration.includes.return_value = supports_multi_turn
-    target.get_identifier.return_value = MagicMock()
+    target.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
 
     with patch.multiple(
         MultiTurnAttackStrategy,
@@ -378,13 +378,13 @@ class TestTAPNodeDuplicateSystemMessages:
         target = MagicMock()
         target.capabilities.supports_multi_turn = supports_multi_turn
         target.configuration.includes.return_value = supports_multi_turn
-        target.get_identifier.return_value = MagicMock()
+        target.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
 
         adversarial_chat = MagicMock()
-        adversarial_chat.get_identifier.return_value = MagicMock()
+        adversarial_chat.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
 
         scorer = MagicMock()
-        scorer.get_identifier.return_value = MagicMock()
+        scorer.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
 
         seed = MagicMock()
         seed.render_template_value.return_value = "template"
@@ -694,14 +694,14 @@ class TestValueErrorGuards:
         target.configuration = TargetConfiguration(
             capabilities=TargetCapabilities(supports_multi_turn=False, supports_system_prompt=True),
         )
-        target.get_identifier.return_value = MagicMock()
+        target.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
         return target
 
     def _make_adversarial_config(self):
         from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig
 
         adversarial_chat = MagicMock()
-        adversarial_chat.get_identifier.return_value = MagicMock()
+        adversarial_chat.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
         return AttackAdversarialConfig(target=adversarial_chat)
 
     def _make_scoring_config(self):
@@ -709,7 +709,7 @@ class TestValueErrorGuards:
         from pyrit.score import TrueFalseScorer
 
         scorer = MagicMock(spec=TrueFalseScorer)
-        scorer.get_identifier.return_value = MagicMock()
+        scorer.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
         return AttackScoringConfig(objective_scorer=scorer)
 
     async def test_crescendo_raises_for_single_turn_target(self):
@@ -752,13 +752,13 @@ class TestTAPBranchingPreservesSystemPrompts:
         target = MagicMock()
         target.capabilities.supports_multi_turn = supports_multi_turn
         target.configuration.includes.return_value = supports_multi_turn
-        target.get_identifier.return_value = MagicMock()
+        target.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
 
         adversarial_chat = MagicMock()
-        adversarial_chat.get_identifier.return_value = MagicMock()
+        adversarial_chat.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
 
         scorer = MagicMock()
-        scorer.get_identifier.return_value = MagicMock()
+        scorer.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
 
         seed = MagicMock()
         seed.render_template_value.return_value = "template"

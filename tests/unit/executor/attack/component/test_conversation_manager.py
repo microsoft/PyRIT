@@ -251,7 +251,6 @@ class TestGetAdversarialChatMessages:
         result = get_adversarial_chat_messages(
             messages,
             adversarial_chat_conversation_id="adversarial_conv",
-            adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
         )
 
         assert len(result) == 1
@@ -266,7 +265,6 @@ class TestGetAdversarialChatMessages:
         result = get_adversarial_chat_messages(
             messages,
             adversarial_chat_conversation_id="adversarial_conv",
-            adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
         )
 
         assert len(result) == 1
@@ -284,7 +282,6 @@ class TestGetAdversarialChatMessages:
         result = get_adversarial_chat_messages(
             messages,
             adversarial_chat_conversation_id="adversarial_conv",
-            adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
         )
 
         assert len(result) == 1
@@ -302,7 +299,6 @@ class TestGetAdversarialChatMessages:
         result = get_adversarial_chat_messages(
             messages,
             adversarial_chat_conversation_id="adversarial_conv",
-            adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
         )
 
         # Only user message should be present, system skipped
@@ -318,7 +314,6 @@ class TestGetAdversarialChatMessages:
         result = get_adversarial_chat_messages(
             messages,
             adversarial_chat_conversation_id="adversarial_conv",
-            adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
         )
 
         # New ID should be different from original
@@ -339,7 +334,6 @@ class TestGetAdversarialChatMessages:
         result = get_adversarial_chat_messages(
             messages,
             adversarial_chat_conversation_id="adversarial_conv",
-            adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
         )
 
         assert result[0].get_piece().original_value == "Original content"
@@ -350,7 +344,6 @@ class TestGetAdversarialChatMessages:
         result = get_adversarial_chat_messages(
             [],
             adversarial_chat_conversation_id="adversarial_conv",
-            adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
         )
 
         assert result == []
@@ -364,7 +357,6 @@ class TestGetAdversarialChatMessages:
         result = get_adversarial_chat_messages(
             messages,
             adversarial_chat_conversation_id="adversarial_conv",
-            adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
             labels=labels,
         )
 
@@ -381,7 +373,6 @@ class TestGetAdversarialChatMessages:
             get_adversarial_chat_messages(
                 messages,
                 adversarial_chat_conversation_id="adversarial_conv",
-                adversarial_chat_target_identifier=_mock_target_id("adversarial_target"),
                 labels={"env": "prod"},
             )
 

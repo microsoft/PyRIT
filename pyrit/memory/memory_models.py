@@ -24,7 +24,6 @@ from sqlalchemy.dialects.sqlite import CHAR
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
-    foreign,
     mapped_column,
     relationship,
 )
@@ -293,18 +292,6 @@ class PromptMemoryEntry(Base):
         foreign_keys="ScoreEntry.prompt_request_response_id",
     )
 
-    # Conversation-scoped metadata (e.g. the target identifier) lives in the
-    # ``Conversations`` table keyed by ``conversation_id`` rather than on every row.
-    # ``viewonly`` because this join is read-only (there is no FK constraint); reads
-    # eager-load it via ``joinedload`` so detached entries can still hydrate the
-    # target onto the reconstructed ``MessagePiece``.
-    conversation_metadata: Mapped["ConversationEntry | None"] = relationship(
-        "ConversationEntry",
-        primaryjoin=lambda: foreign(PromptMemoryEntry.conversation_id) == ConversationEntry.conversation_id,
-        viewonly=True,
-        uselist=False,
-    )
-
     def __init__(self, *, entry: MessagePiece) -> None:
         """
         Initialize a PromptMemoryEntry from a MessagePiece.
@@ -370,11 +357,6 @@ class PromptMemoryEntry(Base):
         message_piece.labels = self.labels or {}
         message_piece.targeted_harm_categories = self.targeted_harm_categories or []
         message_piece.scores = [score.get_score() for score in self.scores]
-        # The target identifier is conversation-scoped: hydrate it from the
-        # ``Conversations`` row (eager-loaded via ``conversation_metadata``) so it is
-        # served once per conversation rather than stored on every piece.
-        if self.conversation_metadata is not None:
-            message_piece.prompt_target_identifier = self.conversation_metadata.get_conversation().target_identifier
         return message_piece
 
     def __str__(self) -> str:

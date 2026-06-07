@@ -347,12 +347,22 @@ class MemoryInterface(abc.ABC):
         """
 
     @abc.abstractmethod
-    def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+    def add_message_pieces_to_memory(
+        self, *, message_pieces: Sequence[MessagePiece], target_identifier: ComponentIdentifier | None = None
+    ) -> None:
         """
         Insert a list of message pieces into the memory storage.
+
+        Args:
+            message_pieces (Sequence[MessagePiece]): The pieces to persist.
+            target_identifier (ComponentIdentifier | None): The target the conversation(s)
+                are held with, if known. A conversation is always with a single target, so
+                this is applied to every distinct ``conversation_id`` in ``message_pieces``.
         """
 
-    def _capture_conversations(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+    def _capture_conversations(
+        self, *, message_pieces: Sequence[MessagePiece], target_identifier: ComponentIdentifier | None = None
+    ) -> None:
         """
         Record one ``Conversations`` row per conversation for the given pieces.
 
@@ -362,17 +372,26 @@ class MemoryInterface(abc.ABC):
         -- normalizer, conversation duplication, prepended conversations, direct
         target writers -- captures the target through a single choke point.
 
+        A conversation is always held with a single target, so ``target_identifier``
+        (when provided) is applied to every distinct ``conversation_id`` in this call.
+        A ``None`` target never overwrites a target already recorded for the
+        conversation (see ``_upsert_conversation``).
+
         Args:
             message_pieces (Sequence[MessagePiece]): The pieces being persisted.
+            target_identifier (ComponentIdentifier | None): The target the conversation(s)
+                are held with, if known.
         """
-        targets_by_conversation: dict[str, ComponentIdentifier | None] = {}
+        conversation_ids: list[str] = []
+        seen: set[str] = set()
         for piece in message_pieces:
             if piece.not_in_memory:
                 continue
             conversation_id = piece.conversation_id
-            if targets_by_conversation.get(conversation_id) is None:
-                targets_by_conversation[conversation_id] = piece.prompt_target_identifier
-        for conversation_id, target_identifier in targets_by_conversation.items():
+            if conversation_id not in seen:
+                seen.add(conversation_id)
+                conversation_ids.append(conversation_id)
+        for conversation_id in conversation_ids:
             self._upsert_conversation(conversation_id=conversation_id, target_identifier=target_identifier)
 
     def _upsert_conversation(
@@ -1171,8 +1190,10 @@ class MemoryInterface(abc.ABC):
             The uuid for the new conversation.
         """
         messages = self.get_conversation(conversation_id=conversation_id)
+        source_metadata = self.get_conversation_metadata(conversation_id=conversation_id)
+        source_target = source_metadata.target_identifier if source_metadata else None
         new_conversation_id, all_pieces = self.duplicate_messages(messages=messages)
-        self.add_message_pieces_to_memory(message_pieces=all_pieces)
+        self.add_message_pieces_to_memory(message_pieces=all_pieces, target_identifier=source_target)
         return new_conversation_id
 
     def duplicate_conversation_excluding_last_turn(self, *, conversation_id: str) -> str:
@@ -1204,12 +1225,16 @@ class MemoryInterface(abc.ABC):
             message for message in messages if message.sequence <= last_message.sequence - length_of_sequence_to_remove
         ]
 
+        source_metadata = self.get_conversation_metadata(conversation_id=conversation_id)
+        source_target = source_metadata.target_identifier if source_metadata else None
         new_conversation_id, all_pieces = self.duplicate_messages(messages=messages_to_duplicate)
-        self.add_message_pieces_to_memory(message_pieces=all_pieces)
+        self.add_message_pieces_to_memory(message_pieces=all_pieces, target_identifier=source_target)
 
         return new_conversation_id
 
-    def add_message_to_memory(self, *, request: Message) -> None:
+    def add_message_to_memory(
+        self, *, request: Message, target_identifier: ComponentIdentifier | None = None
+    ) -> None:
         """
         Insert a list of message pieces into the memory storage.
 
@@ -1217,7 +1242,9 @@ class MemoryInterface(abc.ABC):
         If necessary, generates embedding data for applicable entries
 
         Args:
-            request (MessagePiece): The message piece to add to the memory.
+            request (Message): The message to add to the memory.
+            target_identifier (ComponentIdentifier | None): The target the conversation
+                is held with, if known. Forwarded to ``add_message_pieces_to_memory``.
         """
         request.validate()
 
@@ -1226,7 +1253,7 @@ class MemoryInterface(abc.ABC):
 
         self._update_sequence(message_pieces=message_pieces)
 
-        self.add_message_pieces_to_memory(message_pieces=message_pieces)
+        self.add_message_pieces_to_memory(message_pieces=message_pieces, target_identifier=target_identifier)
 
         if self.memory_embedding:
             for piece in message_pieces:

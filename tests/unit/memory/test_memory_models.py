@@ -52,7 +52,6 @@ def _make_message_piece(**overrides) -> MessagePiece:
         "labels": {"label1": "value1"},
         "prompt_metadata": {"meta": "data"},
         "converter_identifiers": [ComponentIdentifier(class_name="NoOp", class_module="pyrit.converters")],
-        "prompt_target_identifier": ComponentIdentifier(class_name="MockTarget", class_module="tests.mocks"),
         "original_value_data_type": "text",
         "converted_value_data_type": "text",
         "response_error": "none",
@@ -234,8 +233,8 @@ class TestPromptMemoryEntry:
         assert recovered.conversation_id == piece.conversation_id
         assert isinstance(recovered.converter_identifiers[0], ComponentIdentifier)
 
-    def test_str_without_target_identifier(self):
-        piece = _make_message_piece(prompt_target_identifier=None)
+    def test_str_renders_role_and_value(self):
+        piece = _make_message_piece()
         entry = PromptMemoryEntry(entry=piece)
         s = str(entry)
         assert "user" in s

@@ -313,6 +313,7 @@ class AttackService:
                 cutoff_index=request.cutoff_index,
                 labels_override=labels,
                 remap_assistant_to_simulated=True,
+                target_identifier=target_identifier,
             )
         else:
             conversation_id = str(uuid.uuid4())
@@ -345,6 +346,7 @@ class AttackService:
                 conversation_id=conversation_id,
                 prepended=request.prepended_conversation,
                 labels=labels,  # deprecated
+                target_identifier=target_identifier,
             )
 
         return CreateAttackResponse(
@@ -476,9 +478,13 @@ class AttackService:
 
         # --- Branch via duplication (preferred for tracking) ---------------
         if request.source_conversation_id is not None and request.cutoff_index is not None:
+            source_metadata = self._memory.get_conversation_metadata(
+                conversation_id=request.source_conversation_id
+            )
             new_conversation_id = self._duplicate_conversation_up_to(
                 source_conversation_id=request.source_conversation_id,
                 cutoff_index=request.cutoff_index,
+                target_identifier=source_metadata.target_identifier if source_metadata else None,
             )
         else:
             new_conversation_id = str(uuid.uuid4())
@@ -623,11 +629,13 @@ class AttackService:
                 labels=attack_labels,  # deprecated
             )
         else:
+            existing_metadata = self._memory.get_conversation_metadata(conversation_id=msg_conversation_id)
             await self._store_message_only_async(
                 conversation_id=msg_conversation_id,
                 request=request,
                 sequence=sequence,
                 labels=attack_labels,  # deprecated
+                target_identifier=existing_metadata.target_identifier if existing_metadata else None,
             )
 
         await self._update_attack_after_message_async(attack_result_id=attack_result_id, ar=ar, request=request)
@@ -829,6 +837,7 @@ class AttackService:
         cutoff_index: int,
         labels_override: dict[str, str] | None = None,
         remap_assistant_to_simulated: bool = False,
+        target_identifier: ComponentIdentifier | None = None,
     ) -> str:
         """
         Duplicate messages from a conversation up to and including a turn index.
@@ -846,6 +855,9 @@ class AttackService:
             remap_assistant_to_simulated: When True, pieces with role
                 ``assistant`` are changed to ``simulated_assistant`` so the
                 branched context is inert and won't confuse the target.
+
+            target_identifier (ComponentIdentifier | None): The target the new conversation
+                is held with, if known. Recorded once for the duplicated conversation.
 
         Returns:
             The new conversation ID containing the duplicated messages.
@@ -866,7 +878,9 @@ class AttackService:
                 piece.role = "simulated_assistant"
 
         if all_pieces:
-            self._memory.add_message_pieces_to_memory(message_pieces=list(all_pieces))
+            self._memory.add_message_pieces_to_memory(
+                message_pieces=list(all_pieces), target_identifier=target_identifier
+            )
 
         return new_conversation_id
 
@@ -954,6 +968,7 @@ class AttackService:
         conversation_id: str,
         prepended: list[Any],
         labels: dict[str, str] | None = None,  # deprecated
+        target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store prepended conversation messages in memory."""
         for seq, msg in enumerate(prepended):
@@ -965,7 +980,9 @@ class AttackService:
                     sequence=seq,
                     labels=labels,  # deprecated
                 )
-                self._memory.add_message_pieces_to_memory(message_pieces=[piece])
+                self._memory.add_message_pieces_to_memory(
+                    message_pieces=[piece], target_identifier=target_identifier
+                )
 
     async def _send_and_store_message_async(
         self,
@@ -1011,6 +1028,7 @@ class AttackService:
         request: AddMessageRequest,
         sequence: int,
         labels: dict[str, str] | None = None,  # deprecated
+        target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store message without sending (send=False)."""
         await self._persist_base64_pieces_async(request)
@@ -1022,7 +1040,9 @@ class AttackService:
                 sequence=sequence,
                 labels=labels,  # deprecated
             )
-            self._memory.add_message_pieces_to_memory(message_pieces=[piece])
+            self._memory.add_message_pieces_to_memory(
+                message_pieces=[piece], target_identifier=target_identifier
+            )
 
     def _resolve_video_remix_metadata(self, request: AddMessageRequest) -> None:
         """

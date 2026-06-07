@@ -203,6 +203,7 @@ class _OpenAIRealtimeStreamingSession:
                     conversation_id=self._conversation_id,
                     should_convert=False,
                     prepended_conversation=self._prepended_conversation,
+                    target_identifier=self._target.get_identifier(),
                 )
 
             self._queue = asyncio.Queue()
@@ -408,7 +409,6 @@ class _OpenAIRealtimeStreamingSession:
             converted_value=converted_user_path,
             converted_value_data_type="audio_path",
             conversation_id=self._conversation_id,
-            prompt_target_identifier=target_identifier,
         )
         for cfg in self._request_converter_configurations:
             user_piece.converter_identifiers.extend(converter.get_identifier() for converter in cfg.converters)
@@ -419,14 +419,12 @@ class _OpenAIRealtimeStreamingSession:
             original_value=result.flatten_transcripts(),
             original_value_data_type="text",
             conversation_id=self._conversation_id,
-            prompt_target_identifier=target_identifier,
         )
         assistant_audio_piece = MessagePiece(
             role="assistant",
             original_value=assistant_audio_path,
             original_value_data_type="audio_path",
             conversation_id=self._conversation_id,
-            prompt_target_identifier=target_identifier,
         )
         if result.interrupted:
             assistant_text_piece.prompt_metadata[STREAMING_INTERRUPTED_KEY] = True
@@ -439,8 +437,12 @@ class _OpenAIRealtimeStreamingSession:
                 message=assistant_message,
             )
 
-        await self._prompt_normalizer.hash_and_persist_message_async(message=user_message)
-        await self._prompt_normalizer.hash_and_persist_message_async(message=assistant_message)
+        await self._prompt_normalizer.hash_and_persist_message_async(
+            message=user_message, target_identifier=target_identifier
+        )
+        await self._prompt_normalizer.hash_and_persist_message_async(
+            message=assistant_message, target_identifier=target_identifier
+        )
         return assistant_message
 
     # ---- Wire helpers -------------------------------------------------------

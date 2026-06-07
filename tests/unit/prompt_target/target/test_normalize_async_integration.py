@@ -16,7 +16,7 @@ from openai.types.chat import ChatCompletion
 
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.message_normalizer import GenericSystemSquashNormalizer
-from pyrit.models import ComponentIdentifier, Message, MessagePiece
+from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import AzureMLChatTarget, OpenAIChatTarget
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityHandlingPolicy,
@@ -36,7 +36,6 @@ def _make_message_piece(*, role: str, content: str, conversation_id: str = "conv
         converted_value=content,
         original_value_data_type="text",
         converted_value_data_type="text",
-        prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
     )
 
 
