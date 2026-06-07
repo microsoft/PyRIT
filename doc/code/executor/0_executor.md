@@ -40,7 +40,7 @@ To run one:
 3. Receive an **`AttackResult`** describing what happened and whether the objective was met.
 
 The context is created for you from the `execute_async` arguments — you rarely build one by hand.
-See [Attack Configuration](16_attack_configuration.ipynb) for what you can put in the context and
+See [Attack Configuration](3_attack_configuration.ipynb) for what you can put in the context and
 configs (prepended conversations, multimodal seeds, next-turn messages, memory labels).
 
 ## The shared lifecycle

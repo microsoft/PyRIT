@@ -100,36 +100,12 @@ project:
             - file: code/datasets/5_simulated_conversation.ipynb
         - file: code/executor/0_executor.md
           children:
-            - file: code/executor/1_single_turn.md
-              children:
-                - file: code/executor/2_prompt_sending.ipynb
-                - file: code/executor/3_role_play.ipynb
-                - file: code/executor/4_context_compliance.ipynb
-                - file: code/executor/5_many_shot.ipynb
-                - file: code/executor/6_skeleton_key.ipynb
-                - file: code/executor/7_flip.ipynb
-            - file: code/executor/8_multi_turn.md
-              children:
-                - file: code/executor/9_red_teaming.ipynb
-                - file: code/executor/10_crescendo.ipynb
-                - file: code/executor/11_tap.ipynb
-                - file: code/executor/12_multi_prompt_sending.ipynb
-                - file: code/executor/13_chunked_request.ipynb
-                - file: code/executor/14_sequential.ipynb
-                - file: code/executor/15_barge_in.ipynb
-            - file: code/executor/16_attack_configuration.ipynb
-            - file: code/executor/17_workflow.md
-              children:
-                - file: code/executor/18_xpia_website.ipynb
-                - file: code/executor/19_xpia_ai_recruiter.ipynb
-            - file: code/executor/20_benchmark.md
-              children:
-                - file: code/executor/21_qa_benchmark.ipynb
-                - file: code/executor/22_bias_benchmark.ipynb
-            - file: code/executor/23_promptgen.md
-              children:
-                - file: code/executor/24_anecdoctor_generator.ipynb
-                - file: code/executor/25_fuzzer_generator.ipynb
+            - file: code/executor/1_single_turn.ipynb
+            - file: code/executor/2_multi_turn.ipynb
+            - file: code/executor/3_attack_configuration.ipynb
+            - file: code/executor/4_workflow.ipynb
+            - file: code/executor/5_benchmark.ipynb
+            - file: code/executor/6_promptgen.ipynb
         - file: code/targets/0_prompt_targets.md
           children:
             - file: code/targets/1_openai_chat_target.ipynb

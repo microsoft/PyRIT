@@ -1,32 +1,91 @@
 # ---
 # jupyter:
 #   jupytext:
+#     cell_metadata_filter: -all
 #     text_representation:
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
 #       jupytext_version: 1.19.1
 # ---
+
 # %% [markdown]
-# # 2. Bias & Fairness Benchmark
+# # 5. Benchmarks
 #
-# Not every assessment is an attack — sometimes you want to measure how a model behaves when
-# presented with questions that probe for bias or unfairness. LLMs are inherently non-deterministic,
-# so reliable bias testing requires structured approaches with repeated measurements.
+# Benchmarks evaluate a model against a fixed, structured dataset rather than a single objective. PyRIT ships question-answering benchmarks that score multiple-choice responses and fairness/bias benchmarks that probe for skewed behavior across demographic groups. Use them to measure a target systematically and to track regressions over time.
+
+# %% [markdown]
+# ## Q&A Benchmark
 #
-# PyRIT provides two complementary benchmarks:
+# `QuestionAnsweringBenchmark` runs a multiple-choice dataset (here, WMDP) through a target and scores each answer. Fetching the dataset can take a minute.
+
+# %%
+from pyrit.datasets.executors.question_answer.wmdp_dataset import fetch_wmdp_dataset
+from pyrit.executor.attack import AttackScoringConfig
+from pyrit.executor.benchmark import QuestionAnsweringBenchmark
+from pyrit.models import (
+    QuestionAnsweringEntry,
+    QuestionChoice,
+)
+from pyrit.output import output_attack_async
+from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.score import SelfAskQuestionAnswerScorer
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+
+# Initialize PyRIT (load environment files and set central memory instance)
+await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
+
+# Define the scoring configuration for the benchmark
+scoring_config = AttackScoringConfig(objective_scorer=SelfAskQuestionAnswerScorer(chat_target=OpenAIChatTarget()))
+
+# Create the benchmark with scorer and execute with demo dataset
+benchmark = QuestionAnsweringBenchmark(
+    objective_target=OpenAIChatTarget(),
+    attack_scoring_config=scoring_config,
+)
+
+question = QuestionAnsweringEntry(
+    question="What is the capital of France?",
+    answer_type="str",
+    correct_answer=0,
+    choices=[
+        QuestionChoice(index=0, text="Paris"),
+        QuestionChoice(index=1, text="London"),
+        QuestionChoice(index=2, text="Berlin"),
+        QuestionChoice(index=3, text="Madrid"),
+    ],
+)
+
+result = await benchmark.execute_async(question_answering_entry=question)  # type: ignore
+await output_attack_async(result)
+
+# %%
+# Fetch WMDP dataset for Q/A Model Testing; this is big and can take a minute
+
+wmdp_ds = fetch_wmdp_dataset(category="cyber")
+
+# %%
+# Evaluate the Q/A Model response
+results = []
+for question in wmdp_ds.questions[:3]:
+    result = await benchmark.execute_async(question_answering_entry=question)  # type: ignore
+    results.append(result)
+    await output_attack_async(result)
+
+# %% [markdown]
+# You can run custom analysis on the benchmarking results. See the below example on how to get the percentage of correct answers from the `AttackResult`.
+
+# %%
+from pyrit.models import AttackOutcome
+
+success = sum(r.outcome == AttackOutcome.SUCCESS for r in results)
+print(f"Success rate: {(success / len(results)) * 100:.2f}%")
+
+# %% [markdown]
+# ## Bias & Fairness Benchmark
 #
-# - **`QuestionAnsweringBenchmark`**: Evaluates whether a model gives correct answers to
-#   multiple-choice questions. Useful for testing if a model gives definitive YES/NO answers to
-#   ambiguous questions.
-# - **`FairnessBiasBenchmark`**: Generates fictional content (e.g., biographies) for configurable
-#   subjects and scores the responses on categories like pronoun usage. Useful for detecting
-#   demographic biases in generated text.
-#
-# For a general introduction to benchmarks, see [Benchmark Overview](./20_benchmark.md).
-# For Q&A benchmarking with external datasets like WMDP, see [Q&A Benchmark](./21_qa_benchmark.ipynb).
-#
-# ## Setup
+# These benchmarks test for definitive yes/no answers and for biased pronoun associations across professions and story types using `FairnessBiasBenchmark`.
+
 # %%
 from collections import Counter
 from pathlib import Path

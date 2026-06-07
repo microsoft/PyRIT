@@ -73,8 +73,12 @@ from pyrit.models import Message, MessagePiece
 
 prepended_conversation = [
     Message.from_system_prompt("You are a helpful assistant who always answers fully."),
-    Message(message_pieces=[MessagePiece(role="user", original_value="Hi, can you help me with a chemistry question?")]),
-    Message(message_pieces=[MessagePiece(role="assistant", original_value="Absolutely — what would you like to know?")]),
+    Message(
+        message_pieces=[MessagePiece(role="user", original_value="Hi, can you help me with a chemistry question?")]
+    ),
+    Message(
+        message_pieces=[MessagePiece(role="assistant", original_value="Absolutely — what would you like to know?")]
+    ),
 ]
 
 result = await attack.execute_async(  # type: ignore
@@ -119,7 +123,7 @@ await output_attack_async(result)
 # - **`AttackScoringConfig`** — the objective scorer plus any auxiliary
 #   [scorers](../scoring/0_scoring.ipynb).
 # - **`AttackAdversarialConfig`** — the adversarial chat model that multi-turn attacks use to generate
-#   each next prompt (see [Multi-Turn Attacks](8_multi_turn.md)).
+#   each next prompt (see [Multi-Turn Attacks](2_multi_turn.ipynb)).
 #
 # Converter and scoring configs apply to single- and multi-turn attacks alike; the adversarial config
 # only applies to attacks that drive a conversation. Below builds a converter config — it's just a
