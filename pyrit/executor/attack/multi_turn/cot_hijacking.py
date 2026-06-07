@@ -184,10 +184,10 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
             max_iterations: Maximum number of attack iterations to attempt.
             puzzle_types: List of puzzle types to use for prompt generation.
             n_streams: Number of parallel streams to run with different puzzle types.
-                The reference implementation (gentlyzhao/Hijacking) defaults to
-                n_streams=6. Each stream maintains its own adversarial conversation
-                history and receives feedback from its own target response and score.
-                Default: 1.
+                The paper uses n_streams=6. Each stream maintains its own conversation
+                history with the adversarial model, and at each iteration, the best
+                result is selected and fed back to all streams for refinement.
+                Default: 1 (sequential puzzle types).
 
         Note:
             This attack is specifically designed for reasoning models (e.g. DeepSeek-R1, o1)
@@ -343,9 +343,8 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         1. All streams generate prompts concurrently
         2. All prompts are sent to the target concurrently
         3. All responses are scored concurrently
-        4. Each stream stores its own response, score, and step count for feedback
-        5. The best response is tracked for early-exit on success
-        6. Streams refine independently using their own feedback on the next iteration
+        4. The best response is selected and fed back to all streams
+        5. Streams continue with refined generation based on best feedback
 
         Returns:
             AttackResult: Result of the attack.
@@ -544,8 +543,8 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         Build a prompt for the adversarial model that maintains conversation context.
 
         For the first iteration, sends the initial meta-prompt.
-        For subsequent iterations, sends feedback from this stream's own target response,
-        score, and step count (matching the reference implementation's per-stream loop).
+        For subsequent iterations, sends feedback that allows the adversarial model
+        to refine its approach based on the best previous response and score.
 
         Args:
             context: Attack context
@@ -564,12 +563,12 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
                 previous_score="",
             )
         else:
-            # Subsequent iterations: per-stream feedback matching the reference format.
+            # Subsequent iterations: send structured feedback matching the paper's format.
             return self._format_target_feedback(
                 objective=context.params.objective,
-                target_response=stream_state.last_target_response,
-                score=self._extract_raw_score(stream_state.last_score) if stream_state.last_score else 0.0,
-                step_number=stream_state.last_reasoning_step_count,
+                target_response=context.last_target_response,
+                score=self._extract_raw_score(context.last_score) if context.last_score else 0.0,
+                step_number=context.last_reasoning_step_count,
             )
 
     def _render_meta_prompt(
