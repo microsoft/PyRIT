@@ -253,8 +253,8 @@ class AttackTechniqueFactory(Identifiable):
         seed_technique = SeedAttackTechniqueGroup(
             seeds=[
                 SeedSimulatedConversation(
-                    adversarial_chat_system_prompt_path=adversarial_chat_system_prompt_path,
-                    next_message_system_prompt_path=next_message_system_prompt_path,
+                    adversarial_chat_system_prompt_path=Path(adversarial_chat_system_prompt_path),
+                    next_message_system_prompt_path=Path(next_message_system_prompt_path),
                     num_turns=num_turns,
                 ),
             ],
