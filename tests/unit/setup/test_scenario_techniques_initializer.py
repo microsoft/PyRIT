@@ -263,7 +263,7 @@ class TestScenarioTechniqueInitializerRegistration:
             registry = AttackTechniqueRegistry.get_registry_singleton()
             factories = registry.get_factories()
             for name in PERSONA_CRESCENDO_TECHNIQUE_NAMES:
-                config = factories[name]._resolve_default_adversarial_config()
+                config = factories[name]._build_adversarial_config()
                 assert config.target is fallback_target
 
             mock_openai.assert_any_call(temperature=1.2)

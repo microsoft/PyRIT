@@ -603,14 +603,72 @@ class TestCustomAdversarialPrompt:
         )
         assert factory.uses_adversarial is True
 
-    def test_custom_prompt_with_baked_config_raises(self):
+    def test_custom_prompt_with_baked_chat_coexist(self):
+        """A baked adversarial_chat and custom prompts can be combined freely."""
         target = MagicMock(spec=PromptTarget)
-        with pytest.raises(ValueError, match="cannot be combined"):
+        seed = SeedPrompt(value="hi {{ objective }}", data_type="text", parameters=["objective"])
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_chat=target,
+            adversarial_system_prompt_path="some/path.yaml",
+            adversarial_seed_prompt=seed,
+        )
+        technique = factory.create(objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=self._scoring())
+        config = technique.attack.attack_adversarial_config
+        assert config.target is target
+        assert config.system_prompt_path == "some/path.yaml"
+        assert config.seed_prompt is seed
+
+    def test_adversarial_chat_implies_uses_adversarial(self):
+        target = MagicMock(spec=PromptTarget)
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=_StubAttack,
+            adversarial_chat=target,
+        )
+        assert factory.uses_adversarial is True
+        assert factory.adversarial_chat is target
+
+    def test_adversarial_chat_used_as_default_target(self):
+        """When no override is given, the baked adversarial_chat is used (no lazy default)."""
+        target = MagicMock(spec=PromptTarget)
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_chat=target,
+        )
+        with patch(
+            "pyrit.scenario.core.attack_technique_factory.get_default_adversarial_target",
+        ) as mock_default:
+            technique = factory.create(
+                objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=self._scoring()
+            )
+        mock_default.assert_not_called()
+        assert technique.attack.attack_adversarial_config.target is target
+
+    def test_override_target_beats_baked_adversarial_chat(self):
+        baked = MagicMock(spec=PromptTarget)
+        override_target = MagicMock(spec=PromptTarget)
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_chat=baked,
+        )
+        technique = factory.create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=self._scoring(),
+            attack_adversarial_config_override=AttackAdversarialConfig(target=override_target),
+        )
+        assert technique.attack.attack_adversarial_config.target is override_target
+
+    def test_adversarial_chat_with_uses_adversarial_false_raises(self):
+        with pytest.raises(ValueError, match="uses_adversarial=False"):
             AttackTechniqueFactory(
                 name="durian",
-                attack_class=self._AdversarialAttack,
-                adversarial_config=AttackAdversarialConfig(target=target),
-                adversarial_system_prompt_path="some/path.yaml",
+                attack_class=_StubAttack,
+                adversarial_chat=MagicMock(spec=PromptTarget),
+                uses_adversarial=False,
             )
 
     def test_custom_prompt_with_uses_adversarial_false_raises(self):
