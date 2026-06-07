@@ -107,8 +107,7 @@ class AttackTechniqueFactory(Identifiable):
             adversarial_chat: Optional adversarial chat target baked into the
                 technique. When ``None`` (the default), the adversarial target is
                 resolved lazily at ``create()`` time from the registry/default,
-                so the factory stays cheap to construct. A scenario can still
-                supply the target per-create via ``create(adversarial_chat=...)``.
+                so the factory stays cheap to construct.
             adversarial_system_prompt_path: Optional path to a YAML system
                 prompt for the adversarial chat. Combined with the resolved
                 adversarial target at ``create()`` time.
