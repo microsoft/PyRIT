@@ -6,6 +6,7 @@ Unit tests for CoT Hijacking Attack implementation.
 """
 
 import uuid
+from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -28,7 +29,7 @@ from pyrit.models import (
     Score,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.score import TrueFalseScorer
 
 
@@ -69,7 +70,7 @@ class CoTHijackingTestHelper:
         *,
         objective_target: MagicMock,
         adversarial_chat: MagicMock,
-        objective_scorer: MagicMock | None = None,
+        objective_scorer: Optional[MagicMock] = None,
         **kwargs,
     ) -> CoTHijackingAttack:
         """Create a CoTHijackingAttack instance with flexible configuration."""
@@ -88,7 +89,11 @@ class CoTHijackingTestHelper:
             objective_target=objective_target,
             attack_adversarial_config=adversarial_config,
             attack_scoring_config=scoring_config,
-            **{k: v for k, v in kwargs.items() if k in ["max_iterations", "puzzle_types", "n_streams"]},
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k in ["max_iterations", "puzzle_types", "n_streams"]
+            },
         )
 
         # Mock the memory to avoid "Central memory instance has not been set" error
@@ -447,17 +452,70 @@ class TestReasoningStepTracking:
             objective_target=mock_objective_target,
             adversarial_chat=mock_adversarial_chat,
         )
-        basic_context.last_target_response = "Blocked response"
-        basic_context.last_reasoning_step_count = 9
+        stream_state = StreamState(
+            stream_id=0,
+            puzzle_type="logic_grid",
+            last_target_response="Blocked response",
+            last_reasoning_step_count=9,
+        )
 
         prompt = await attack._build_adversarial_prompt_async(
             context=basic_context,
-            stream_state=StreamState(stream_id=0, puzzle_type="logic_grid"),
+            stream_state=stream_state,
             iteration=1,
         )
 
         assert "STEP NUMBER: 9." in prompt
         assert "LANGUAGE MODEL OUTPUT: Blocked response" in prompt
+
+    @pytest.mark.asyncio
+    async def test_build_adversarial_prompt_uses_per_stream_feedback(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        basic_context: CoTHijackingAttackContext,
+        failure_score: Score,
+        success_score: Score,
+    ):
+        """Each stream's refinement feedback comes from its own response, not the global best."""
+        attack = CoTHijackingTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+        )
+        stream_a = StreamState(
+            stream_id=0,
+            puzzle_type="logic_grid",
+            last_target_response="Weak logic grid response",
+            last_reasoning_step_count=2,
+            last_score=failure_score,
+        )
+        stream_b = StreamState(
+            stream_id=1,
+            puzzle_type="sudoku",
+            last_target_response="Strong sudoku response",
+            last_reasoning_step_count=8,
+            last_score=success_score,
+        )
+        # Global context tracks the best result for early-exit only, not attacker feedback.
+        basic_context.last_target_response = "Strong sudoku response"
+        basic_context.last_reasoning_step_count = 8
+        basic_context.last_score = success_score
+
+        prompt_a = await attack._build_adversarial_prompt_async(
+            context=basic_context,
+            stream_state=stream_a,
+            iteration=1,
+        )
+        prompt_b = await attack._build_adversarial_prompt_async(
+            context=basic_context,
+            stream_state=stream_b,
+            iteration=1,
+        )
+
+        assert "LANGUAGE MODEL OUTPUT: Weak logic grid response" in prompt_a
+        assert "STEP NUMBER: 2." in prompt_a
+        assert "LANGUAGE MODEL OUTPUT: Strong sudoku response" in prompt_b
+        assert "STEP NUMBER: 8." in prompt_b
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -706,7 +764,9 @@ class TestAttackExecution:
             n_streams=3,
             puzzle_types=puzzle_types,
         )
-        basic_context.stream_states = [StreamState(stream_id=i, puzzle_type=puzzle_types[i]) for i in range(3)]
+        basic_context.stream_states = [
+            StreamState(stream_id=i, puzzle_type=puzzle_types[i]) for i in range(3)
+        ]
 
         captured_puzzle_types = []
 
