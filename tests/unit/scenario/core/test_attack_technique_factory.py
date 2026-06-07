@@ -3,11 +3,15 @@
 
 """Tests for the AttackTechniqueFactory class."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack.core.attack_config import (
+    AttackAdversarialConfig,
+    AttackConverterConfig,
+    AttackScoringConfig,
+)
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, Identifiable, SeedAttackTechniqueGroup, SeedPrompt
 from pyrit.prompt_target import PromptTarget
@@ -565,6 +569,112 @@ class TestScorerPolicy:
 
         with pytest.raises(ValueError, match="error detail"):
             factory._apply_scorer_policy("error detail")
+
+
+class TestCustomAdversarialPrompt:
+    """Tests for the adversarial_system_prompt_path / adversarial_seed_prompt params."""
+
+    class _AdversarialAttack:
+        def __init__(self, *, objective_target, attack_scoring_config=None, attack_adversarial_config=None):
+            self.objective_target = objective_target
+            self.attack_scoring_config = attack_scoring_config
+            self.attack_adversarial_config = attack_adversarial_config
+
+        def get_identifier(self):
+            return ComponentIdentifier(class_name="_AdversarialAttack", class_module="test")
+
+    @staticmethod
+    def _scoring():
+        return MagicMock(spec=AttackScoringConfig)
+
+    def test_custom_prompt_implies_uses_adversarial(self):
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=_StubAttack,
+            adversarial_system_prompt_path="some/path.yaml",
+        )
+        assert factory.uses_adversarial is True
+
+    def test_custom_seed_prompt_implies_uses_adversarial(self):
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=_StubAttack,
+            adversarial_seed_prompt=SeedPrompt(value="hi {{ objective }}", data_type="text", parameters=["objective"]),
+        )
+        assert factory.uses_adversarial is True
+
+    def test_custom_prompt_with_baked_config_raises(self):
+        target = MagicMock(spec=PromptTarget)
+        with pytest.raises(ValueError, match="cannot be combined"):
+            AttackTechniqueFactory(
+                name="durian",
+                attack_class=self._AdversarialAttack,
+                adversarial_config=AttackAdversarialConfig(target=target),
+                adversarial_system_prompt_path="some/path.yaml",
+            )
+
+    def test_custom_prompt_with_uses_adversarial_false_raises(self):
+        with pytest.raises(ValueError, match="uses_adversarial=False"):
+            AttackTechniqueFactory(
+                name="durian",
+                attack_class=_StubAttack,
+                adversarial_system_prompt_path="some/path.yaml",
+                uses_adversarial=False,
+            )
+
+    def test_lazy_resolution_attaches_custom_prompts(self):
+        seed = SeedPrompt(value="durian {{ objective }}", data_type="text", parameters=["objective"])
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_system_prompt_path="durian/system.yaml",
+            adversarial_seed_prompt=seed,
+        )
+        fallback = MagicMock(spec=PromptTarget)
+        with patch(
+            "pyrit.scenario.core.attack_technique_factory.get_default_adversarial_target",
+            return_value=fallback,
+        ):
+            technique = factory.create(
+                objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=self._scoring()
+            )
+
+        config = technique.attack.attack_adversarial_config
+        assert config.target is fallback
+        assert config.system_prompt_path == "durian/system.yaml"
+        assert config.seed_prompt is seed
+
+    def test_override_target_is_combined_with_custom_prompts(self):
+        seed = SeedPrompt(value="durian {{ objective }}", data_type="text", parameters=["objective"])
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_system_prompt_path="durian/system.yaml",
+            adversarial_seed_prompt=seed,
+        )
+        override_target = MagicMock(spec=PromptTarget)
+        override = AttackAdversarialConfig(target=override_target, system_prompt_path="ignored.yaml")
+
+        technique = factory.create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=self._scoring(),
+            attack_adversarial_config_override=override,
+        )
+
+        config = technique.attack.attack_adversarial_config
+        # Override contributes only the target; the technique keeps its custom prompts.
+        assert config.target is override_target
+        assert config.system_prompt_path == "durian/system.yaml"
+        assert config.seed_prompt is seed
+
+    def test_identifier_distinguishes_custom_system_prompt(self):
+        f1 = AttackTechniqueFactory(
+            name="durian", attack_class=self._AdversarialAttack, adversarial_system_prompt_path="a.yaml"
+        )
+        f2 = AttackTechniqueFactory(
+            name="durian", attack_class=self._AdversarialAttack, adversarial_system_prompt_path="b.yaml"
+        )
+        assert f1.get_identifier().hash != f2.get_identifier().hash
 
 
 class TestUnwrapOptional:
