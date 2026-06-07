@@ -376,7 +376,8 @@ class ConversationEntry(Base):
     Holds identifiers that belong to the conversation as a whole -- currently the
     target identifier -- so they are not duplicated onto every ``PromptMemoryEntry``
     row. The target is captured once when the conversation's pieces are written and
-    rehydrated onto pieces on read.
+    read back via ``MemoryInterface.get_conversation_metadata`` (it is not stamped
+    onto individual pieces).
     """
 
     __tablename__ = "Conversations"

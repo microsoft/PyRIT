@@ -557,6 +557,37 @@ def test_get_memories_with_json_properties(sqlite_instance):
     assert labels["normalizer_id"] == "id1"
 
 
+def test_capture_conversation_none_target_does_not_clobber(sqlite_instance):
+    # A conversation is held with a single target. The request piece records the
+    # target; a later write for the same conversation that has no target (e.g. a
+    # response or branched copy) must NOT overwrite the recorded target with None.
+    conversation_id = "conv-none-clobber"
+    target = TextTarget()
+
+    request_piece = MessagePiece(
+        conversation_id=conversation_id,
+        role="user",
+        sequence=1,
+        original_value="hello",
+    )
+    sqlite_instance.add_message_pieces_to_memory(
+        message_pieces=[request_piece], target_identifier=target.get_identifier()
+    )
+
+    response_piece = MessagePiece(
+        conversation_id=conversation_id,
+        role="assistant",
+        sequence=2,
+        original_value="world",
+    )
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[response_piece], target_identifier=None)
+
+    metadata = sqlite_instance.get_conversation_metadata(conversation_id=conversation_id)
+    assert metadata is not None
+    assert metadata.target_identifier is not None
+    assert metadata.target_identifier.class_name == "TextTarget"
+
+
 def test_update_entries(sqlite_instance):
     # Insert a test entry
     entry = PromptMemoryEntry(
