@@ -4,6 +4,7 @@
 import json
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -42,8 +43,10 @@ from pyrit.models import (
     ConversationType,
     MessagePiece,
     PromptDataType,
+    PromptResponseError,
     ScenarioIdentifier,
     ScenarioResult,
+    ScenarioRunState,
     Score,
     ScorerEvaluationIdentifier,
     Seed,
@@ -78,7 +81,7 @@ def _dump_identifier(identifier: ComponentIdentifier | None) -> dict[str, Any] |
     return identifier.model_dump(context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH})
 
 
-def _dump_identifiers(identifiers: list[ComponentIdentifier]) -> list[dict[str, Any] | None]:
+def _dump_identifiers(identifiers: list[ComponentIdentifier]) -> list[dict[str, Any]]:
     """
     Serialize a list of ``ComponentIdentifier`` objects for JSON storage.
 
@@ -86,9 +89,11 @@ def _dump_identifiers(identifiers: list[ComponentIdentifier]) -> list[dict[str, 
         identifiers (list[ComponentIdentifier]): The identifiers to serialize.
 
     Returns:
-        list[dict[str, Any] | None]: The serialized identifiers in order.
+        list[dict[str, Any]]: The serialized identifiers in order.
     """
-    return [_dump_identifier(identifier) for identifier in identifiers]
+    return [
+        identifier.model_dump(context={"max_value_length": MAX_IDENTIFIER_VALUE_LENGTH}) for identifier in identifiers
+    ]
 
 
 def _load_identifier(stored: dict[str, Any] | None, *, pyrit_version: str | None = None) -> ComponentIdentifier | None:
@@ -111,22 +116,22 @@ def _load_identifier(stored: dict[str, Any] | None, *, pyrit_version: str | None
 
 
 def _load_identifiers(
-    stored: list[dict[str, Any]] | None, *, pyrit_version: str | None = None
-) -> list[ComponentIdentifier | None] | None:
+    stored: Sequence[dict[str, Any] | None] | None, *, pyrit_version: str | None = None
+) -> list[ComponentIdentifier] | None:
     """
     Reconstruct a list of ``ComponentIdentifier`` objects from their stored representation.
 
     Args:
-        stored (list[dict[str, Any]] | None): The stored identifier dicts, or None.
+        stored (Sequence[dict[str, Any] | None] | None): The stored identifier dicts, or None.
         pyrit_version (str | None): If provided, injected as each identifier's ``pyrit_version``.
 
     Returns:
-        list[ComponentIdentifier | None] | None: The reconstructed identifiers, or None if
+        list[ComponentIdentifier] | None: The reconstructed identifiers, or None if
             ``stored`` is falsy.
     """
     if not stored:
         return None
-    return [_load_identifier(item, pyrit_version=pyrit_version) for item in stored]
+    return [identifier for item in stored if (identifier := _load_identifier(item, pyrit_version=pyrit_version))]
 
 
 class CustomUUID(TypeDecorator[uuid.UUID]):
@@ -267,10 +272,10 @@ class PromptMemoryEntry(Base):
     labels: Mapped[dict[str, str]] = mapped_column(JSON)
     prompt_metadata: Mapped[dict[str, str | int]] = mapped_column(JSON)
     targeted_harm_categories: Mapped[list[str] | None] = mapped_column(JSON)
-    converter_identifiers: Mapped[list[dict[str, str]] | None] = mapped_column(JSON)
-    prompt_target_identifier: Mapped[dict[str, str]] = mapped_column(JSON)
-    attack_identifier: Mapped[dict[str, str]] = mapped_column(JSON)
-    response_error: Mapped[Literal["blocked", "none", "processing", "unknown"]] = mapped_column(String, nullable=True)
+    converter_identifiers: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
+    prompt_target_identifier: Mapped[dict[str, Any]] = mapped_column(JSON)
+    attack_identifier: Mapped[dict[str, Any]] = mapped_column(JSON)
+    response_error: Mapped[PromptResponseError | None] = mapped_column(String, nullable=True)
 
     original_value_data_type: Mapped[PromptDataType] = mapped_column(String, nullable=False)
     original_value = mapped_column(Unicode, nullable=False)
@@ -355,7 +360,7 @@ class PromptMemoryEntry(Base):
             attack_identifier=attack_id,
             original_value_data_type=self.original_value_data_type,
             converted_value_data_type=self.converted_value_data_type,
-            response_error=self.response_error,
+            response_error=self.response_error or "none",
             original_prompt_id=self.original_prompt_id,
             timestamp=self.timestamp,
         )
@@ -880,7 +885,7 @@ class AttackResultEntry(Base):
     attribution_parent_id: Mapped[uuid.UUID | None] = mapped_column(
         CustomUUID, ForeignKey("ScenarioResultEntries.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    attribution_data: Mapped[dict[str, Any | None]] = mapped_column(JSON, nullable=True)
+    attribution_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     last_response: Mapped["PromptMemoryEntry | None"] = relationship(
         "PromptMemoryEntry",
@@ -1114,8 +1119,8 @@ class ScenarioResultEntry(Base):
     scenario_version = mapped_column(INTEGER, nullable=False, default=1)
     pyrit_version = mapped_column(String, nullable=False)
     scenario_init_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    objective_target_identifier: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
-    objective_scorer_identifier: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
+    objective_target_identifier: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    objective_scorer_identifier: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     scenario_run_state: Mapped[str] = mapped_column(String, nullable=False, default="CREATED")
     attack_results_json: Mapped[str] = mapped_column(Unicode, nullable=False)
     display_group_map_json: Mapped[str | None] = mapped_column(Unicode, nullable=True)
@@ -1134,7 +1139,7 @@ class ScenarioResultEntry(Base):
     # silently change which objectives the scenario operates on. Column is
     # named ``scenario_metadata`` because SQLAlchemy's ``DeclarativeBase``
     # reserves ``metadata`` as a class attribute on the model.
-    scenario_metadata: Mapped[dict[str, Any | None]] = mapped_column(JSON, nullable=True)
+    scenario_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     def __init__(self, *, entry: ScenarioResult) -> None:
         """
@@ -1150,14 +1155,14 @@ class ScenarioResultEntry(Base):
         self.pyrit_version = entry.scenario_identifier.pyrit_version
         self.scenario_init_data = entry.scenario_identifier.init_data
         # Convert ComponentIdentifier to dict for JSON storage
-        self.objective_target_identifier = _dump_identifier(entry.objective_target_identifier)
+        self.objective_target_identifier = _dump_identifier(entry.objective_target_identifier) or {}
         # Ensure eval_hash is set before truncation so it survives the DB round-trip.
         if entry.objective_scorer_identifier and entry.objective_scorer_identifier.eval_hash is None:
             entry.objective_scorer_identifier = entry.objective_scorer_identifier.with_eval_hash(
                 ScorerEvaluationIdentifier(entry.objective_scorer_identifier).eval_hash
             )
         self.objective_scorer_identifier = _dump_identifier(entry.objective_scorer_identifier)
-        self.scenario_run_state = entry.scenario_run_state
+        self.scenario_run_state = entry.scenario_run_state.value
         self.labels = entry.labels
         self.number_tries = entry.number_tries
         self.completion_time = entry.completion_time
@@ -1219,7 +1224,7 @@ class ScenarioResultEntry(Base):
             objective_target_identifier=target_identifier,
             attack_results=attack_results,
             objective_scorer_identifier=scorer_identifier,
-            scenario_run_state=self.scenario_run_state,
+            scenario_run_state=ScenarioRunState(self.scenario_run_state),
             labels=self.labels or {},
             creation_time=self.timestamp,
             number_tries=self.number_tries,
