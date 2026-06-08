@@ -6,6 +6,7 @@ import {
   HomeRegular,
   SettingsRegular,
   HistoryRegular,
+  PersonFeedbackRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
 } from '@fluentui/react-icons'
@@ -18,9 +19,16 @@ interface NavigationProps {
   onNavigate: (view: ViewName) => void
   onToggleTheme: () => void
   isDarkMode: boolean
+  onOpenFeedback: () => void
 }
 
-export default function Navigation({ currentView, onNavigate, onToggleTheme, isDarkMode }: NavigationProps) {
+export default function Navigation({
+  currentView,
+  onNavigate,
+  onToggleTheme,
+  isDarkMode,
+  onOpenFeedback,
+}: NavigationProps) {
   const styles = useNavigationStyles()
 
   return (
@@ -66,6 +74,15 @@ export default function Navigation({ currentView, onNavigate, onToggleTheme, isD
       />
 
       <div className={styles.spacer} />
+
+      <Button
+        className={styles.navButton}
+        appearance="subtle"
+        icon={<PersonFeedbackRegular />}
+        title="Send feedback"
+        aria-label="Send feedback"
+        onClick={onOpenFeedback}
+      />
 
       <Button
         className={styles.navButton}

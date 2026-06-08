@@ -6,6 +6,7 @@ import ChatWindow from './components/Chat/ChatWindow'
 import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
 import AttackHistory from './components/History/AttackHistory'
+import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import { DEFAULT_HISTORY_FILTERS } from './components/History/historyFilters'
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
@@ -47,6 +48,10 @@ function App() {
   const [isLoadingAttack, setIsLoadingAttack] = useState(false)
   /** Persisted filter state for the history view */
   const [historyFilters, setHistoryFilters] = useState<HistoryFilters>({ ...DEFAULT_HISTORY_FILTERS })
+  /** App version display, attached to feedback context */
+  const [appVersion, setAppVersion] = useState<string>('')
+  /** Whether the feedback dialog is currently open */
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
 
   // Fetch default labels from backend, then override operator with active account if available
   useEffect(() => {
@@ -58,6 +63,9 @@ function App() {
         const data = await versionApi.getVersion()
         if (data.default_labels && Object.keys(data.default_labels).length > 0) {
           defaultLabels = data.default_labels
+        }
+        if (data.display || data.version) {
+          if (!ignore) setAppVersion(data.display ?? data.version ?? '')
         }
       } catch {
         /* version fetch handled elsewhere */
@@ -188,6 +196,7 @@ function App() {
             onNavigate={setCurrentView}
             onToggleTheme={toggleTheme}
             isDarkMode={isDarkMode}
+            onOpenFeedback={() => setFeedbackOpen(true)}
           >
             {currentView === 'home' && (
               <Home
@@ -230,6 +239,15 @@ function App() {
               />
             )}
           </MainLayout>
+          <FeedbackDialog
+            open={feedbackOpen}
+            onClose={() => setFeedbackOpen(false)}
+            context={{
+              app_version: appVersion || undefined,
+              current_view: currentView,
+              target_type: activeTarget?.target_type,
+            }}
+          />
         </FluentProvider>
       </ConnectionHealthProvider>
     </ErrorBoundary>

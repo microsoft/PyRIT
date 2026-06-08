@@ -17,6 +17,7 @@ describe("Navigation", () => {
     onNavigate: jest.fn(),
     onToggleTheme: jest.fn(),
     isDarkMode: false,
+    onOpenFeedback: jest.fn(),
   };
 
   beforeEach(() => {
@@ -81,6 +82,18 @@ describe("Navigation", () => {
 
     const historyButton = screen.getByTitle("Attack History");
     expect(historyButton).toBeInTheDocument();
+  });
+
+  it("renders the send feedback button and forwards clicks to onOpenFeedback", () => {
+    const onOpenFeedback = jest.fn();
+    renderWithProvider(
+      <Navigation {...defaultProps} onOpenFeedback={onOpenFeedback} />
+    );
+
+    const feedbackButton = screen.getByTitle("Send feedback");
+    expect(feedbackButton).toBeInTheDocument();
+    fireEvent.click(feedbackButton);
+    expect(onOpenFeedback).toHaveBeenCalledTimes(1);
   });
 
   it("calls onNavigate with 'history' when history button is clicked", () => {
