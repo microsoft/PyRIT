@@ -76,9 +76,9 @@
     },
     "pyritInitializer": {
       "type": "string",
-      "defaultValue": "target airt",
+      "defaultValue": "target, airt",
       "metadata": {
-        "description": "PyRIT initializer to run. Default \"target airt\" registers target configs + attack defaults."
+        "description": "PyRIT initializer to run. Default \"target, airt\" registers target configs + attack defaults."
       }
     },
     "envSecretName": {
