@@ -82,7 +82,7 @@ from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAn
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultT
 from pyrit.models.results.strategy_result import StrategyResult, StrategyResultT
 from pyrit.models.retry_event import RetryEvent
-from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
+from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult, ScenarioRunState
 from pyrit.models.score import Score, ScoreType, UnvalidatedScore
 
 # Seeds - import from new seeds submodule for forward compatibility
@@ -170,6 +170,7 @@ __all__ = [
     "ScorerIdentifier",
     "ScenarioIdentifier",
     "ScenarioResult",
+    "ScenarioRunState",
     "Seed",
     "SeedAttackGroup",
     "SeedAttackTechniqueGroup",
