@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
-from typing import NoReturn, Optional, cast
+from typing import NoReturn, cast
 
 from pyrit.models import PromptDataType
 
@@ -165,7 +165,7 @@ class TargetCapabilities:
         return bool(getattr(self, capability.value))
 
     @staticmethod
-    def get_known_capabilities(underlying_model: str) -> "Optional[TargetCapabilities]":
+    def get_known_capabilities(underlying_model: str) -> "TargetCapabilities | None":
         """
         Return the known capabilities for a specific underlying model, or None if unrecognized.
 

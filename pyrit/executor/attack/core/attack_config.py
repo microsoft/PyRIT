@@ -3,7 +3,6 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Union
 
 from pyrit.executor.core import StrategyConverterConfig
 from pyrit.models import SeedPrompt
@@ -26,10 +25,10 @@ class AttackAdversarialConfig:
     target: PromptTarget
 
     # Path to the YAML file containing the system prompt for the adversarial chat target
-    system_prompt_path: Optional[Union[str, Path]] = None
+    system_prompt_path: str | Path | None = None
 
     # Seed prompt for the adversarial chat target (supports {{ objective }} template variable)
-    seed_prompt: Union[str, SeedPrompt] = "Generate your first message to achieve: {{ objective }}"
+    seed_prompt: str | SeedPrompt = "Generate your first message to achieve: {{ objective }}"
 
 
 @dataclass
@@ -42,10 +41,10 @@ class AttackScoringConfig:
     """
 
     # Primary scorer for evaluating attack effectiveness
-    objective_scorer: Optional[TrueFalseScorer] = None
+    objective_scorer: TrueFalseScorer | None = None
 
     # Refusal scorer for detecting refusals or non-compliance
-    refusal_scorer: Optional[TrueFalseScorer] = None
+    refusal_scorer: TrueFalseScorer | None = None
 
     # Additional scorers for auxiliary metrics or custom evaluations
     auxiliary_scorers: list[Scorer] = field(default_factory=list)

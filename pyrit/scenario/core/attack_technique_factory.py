@@ -499,7 +499,7 @@ class AttackTechniqueFactory(Identifiable):
         """
         Introspect the attack class to determine the required type for ``attack_scoring_config``.
 
-        Resolves the type annotation (handling ``Optional[X]`` / ``X | None``) and returns
+        Resolves the type annotation (handling ``X | None`` / ``X | None``) and returns
         the inner concrete type. Returns ``None`` if the annotation is the base
         ``AttackScoringConfig`` or cannot be resolved — meaning any config is accepted.
 
@@ -528,7 +528,7 @@ class AttackTechniqueFactory(Identifiable):
     @staticmethod
     def _unwrap_optional(annotation: Any) -> type | None:
         """
-        Unwrap ``Optional[X]``, ``X | None``, or ``Union[X, None]`` to extract X.
+        Unwrap ``X | None``, ``X | None``, or ``X | None`` to extract X.
 
         Returns:
             The inner type X, or None if the annotation cannot be unwrapped to a single type.

@@ -56,7 +56,7 @@ class TrueFalseScorer(Scorer):
             validator (ScorerPromptValidator): Custom validator.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
-            chat_target (Optional[PromptTarget]): Optional chat target used by the scorer,
+            chat_target (PromptTarget | None): Optional chat target used by the scorer,
                 forwarded to the base class for validation against ``TARGET_REQUIREMENTS``.
         """
         self._score_aggregator = score_aggregator
@@ -117,7 +117,7 @@ class TrueFalseScorer(Scorer):
 
         return find_objective_metrics_by_eval_hash(eval_hash=eval_hash, file_path=result_file)
 
-    async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
         """
         Score the given request response asynchronously.
 
@@ -128,7 +128,7 @@ class TrueFalseScorer(Scorer):
 
         Args:
             message (Message): The message to score.
-            objective (Optional[str]): The objective to evaluate against. Defaults to None.
+            objective (str | None): The objective to evaluate against. Defaults to None.
 
         Returns:
             list[Score]: A list containing a single aggregated true/false Score, or an empty
@@ -158,7 +158,7 @@ class TrueFalseScorer(Scorer):
             )
         ]
 
-    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         """
         Build a single-element list containing a ``false`` score when no pieces could be scored.
 
@@ -167,7 +167,7 @@ class TrueFalseScorer(Scorer):
 
         Args:
             message (Message): The message whose first piece is inspected for status.
-            objective (Optional[str]): The objective associated with this scoring call.
+            objective (str | None): The objective associated with this scoring call.
 
         Returns:
             list[Score]: A single-element list containing a ``false`` ``true_false`` score

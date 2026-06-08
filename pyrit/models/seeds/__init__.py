@@ -19,7 +19,7 @@ from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_attack_group import SeedAttackGroup
 from pyrit.models.seeds.seed_attack_technique_group import SeedAttackTechniqueGroup
 from pyrit.models.seeds.seed_dataset import SeedDataset
-from pyrit.models.seeds.seed_group import SeedGroup
+from pyrit.models.seeds.seed_group import SeedGroup, SeedUnion
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
 from pyrit.models.seeds.seed_simulated_conversation import (
@@ -46,5 +46,6 @@ __all__ = [
     "SeedObjective",
     "SeedPrompt",
     "SeedSimulatedConversation",
+    "SeedUnion",
     "SimulatedTargetSystemPromptPaths",
 ]

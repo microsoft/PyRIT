@@ -8,7 +8,7 @@ from collections.abc import MutableSequence, Sequence
 from contextlib import closing, suppress
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Optional, TypeVar, Union, cast
+from typing import Any, Literal, TypeVar, cast
 
 from sqlalchemy import and_, create_engine, exists, func, or_, text
 from sqlalchemy.engine.base import Engine
@@ -29,7 +29,8 @@ from pyrit.memory.memory_models import (
     PromptMemoryEntry,
     ScenarioResultEntry,
 )
-from pyrit.models import ConversationStats, DiskStorageIO, MessagePiece
+from pyrit.memory.storage import DiskStorageIO
+from pyrit.models import ConversationStats, MessagePiece
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
     def __init__(
         self,
         *,
-        db_path: Optional[Union[Path, str]] = None,
+        db_path: Path | str | None = None,
         verbose: bool = False,
         skip_schema_migration: bool = False,
         silent: bool = False,
@@ -68,7 +69,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Initialize the SQLiteMemory instance.
 
         Args:
-            db_path (Optional[Union[Path, str]]): Path to the SQLite database file.
+            db_path (Path | str | None): Path to the SQLite database file.
                 Defaults to "pyrit.db".
             verbose (bool): Whether to enable verbose logging.
                 Defaults to False.
@@ -80,7 +81,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         super().__init__()
 
         if db_path == ":memory:":
-            self.db_path: Union[Path, str] = ":memory:"
+            self.db_path: Path | str = ":memory:"
         else:
             self.db_path = Path(db_path or Path(DB_DATA_PATH, self.DEFAULT_DB_FILE_NAME)).resolve()
         self.results_path = str(DB_DATA_PATH)
@@ -179,7 +180,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         return [or_(pme_match, are_match)]
 
     def _get_message_pieces_prompt_metadata_conditions(
-        self, *, prompt_metadata: dict[str, Union[str, int]]
+        self, *, prompt_metadata: dict[str, str | int]
     ) -> list[TextClause]:
         """
         Generate SQLAlchemy filter conditions for filtering conversation pieces by prompt metadata.
@@ -195,7 +196,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         condition = text(json_conditions).bindparams(**{key: str(value) for key, value in prompt_metadata.items()})
         return [condition]
 
-    def _get_seed_metadata_conditions(self, *, metadata: dict[str, Union[str, int]]) -> Any:
+    def _get_seed_metadata_conditions(self, *, metadata: dict[str, str | int]) -> Any:
         """
         Generate SQLAlchemy filter conditions for filtering seed prompts by metadata.
 
@@ -256,7 +257,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Args:
             json_column (InstrumentedAttribute[Any]): The JSON-backed SQLAlchemy field to query.
             property_path (str): The JSON path for the target array.
-            array_element_path (Optional[str]): An optional JSON path applied to each array item before matching.
+            array_element_path (str | None): An optional JSON path applied to each array item before matching.
             array_to_match (Sequence[str]): The array that must match the extracted JSON array values.
                 Combination semantics for multiple entries are controlled by ``match_mode``.
                 If ``array_to_match`` is empty, the condition matches only if the target is also an
@@ -334,10 +335,10 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         self,
         model_class: type[Model],
         *,
-        conditions: Optional[Any] = None,
+        conditions: Any | None = None,
         distinct: bool = False,
         join_scores: bool = False,
-        order_by: Optional[Any] = None,
+        order_by: Any | None = None,
         limit: int | None = None,
     ) -> MutableSequence[Model]:
         """
@@ -440,7 +441,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                     # attributes from the (potentially stale) detached object
                     # and silently overwrite concurrent updates to columns
                     # that are NOT in update_fields.
-                    entry_in_session = session.get(type(entry), entry.id)
+                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
                     if entry_in_session is None:
                         entry_in_session = session.merge(entry)
                     for field, value in update_fields.items():
@@ -487,18 +488,18 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
     def export_conversations(
         self,
         *,
-        attack_id: Optional[str | uuid.UUID] = None,
-        conversation_id: Optional[str | uuid.UUID] = None,
-        prompt_ids: Optional[Sequence[str] | Sequence[uuid.UUID]] = None,
-        labels: Optional[dict[str, str]] = None,
-        sent_after: Optional[datetime] = None,
-        sent_before: Optional[datetime] = None,
-        original_values: Optional[Sequence[str]] = None,
-        converted_values: Optional[Sequence[str]] = None,
-        data_type: Optional[str] = None,
-        not_data_type: Optional[str] = None,
-        converted_value_sha256: Optional[Sequence[str]] = None,
-        file_path: Optional[Path] = None,
+        attack_id: str | uuid.UUID | None = None,
+        conversation_id: str | uuid.UUID | None = None,
+        prompt_ids: Sequence[str] | Sequence[uuid.UUID] | None = None,
+        labels: dict[str, str] | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        original_values: Sequence[str] | None = None,
+        converted_values: Sequence[str] | None = None,
+        data_type: str | None = None,
+        not_data_type: str | None = None,
+        converted_value_sha256: Sequence[str] | None = None,
+        file_path: Path | None = None,
         export_type: str = "json",
     ) -> Path:
         """
@@ -614,7 +615,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             file_extension = f".{export_type}"
             file_path = DB_DATA_PATH / f"{table_name}{file_extension}"
             # Convert to list for exporter compatibility
-            self.exporter.export_data(list(data), file_path=file_path, export_type=export_type)
+            self.exporter.export_data(list(data), file_path=file_path, export_type=export_type)  # type: ignore[ty:invalid-argument-type]
 
     def _get_attack_result_harm_category_condition(self, *, targeted_harm_categories: Sequence[str]) -> Any:
         """

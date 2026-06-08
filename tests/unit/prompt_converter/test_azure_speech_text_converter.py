@@ -11,7 +11,7 @@ from pyrit.prompt_converter import AzureSpeechAudioToTextConverter
 
 def is_speechsdk_installed():
     try:
-        import azure.cognitiveservices.speech  # noqa: F401
+        import azure.cognitiveservices.speech  # type: ignore[ty:unresolved-import]  # noqa: F401
 
         return True
     except ModuleNotFoundError:
@@ -39,7 +39,7 @@ class TestAzureSpeechAudioToTextConverter:
     @patch("azure.cognitiveservices.speech.SpeechRecognizer")
     @patch("pyrit.prompt_converter.azure_speech_audio_to_text_converter.logger")
     def test_stop_cb(self, mock_logger, MockSpeechRecognizer, mock_get_required_value):  # noqa: N803
-        import azure.cognitiveservices.speech as speechsdk
+        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]
 
         # Create a mock event
         mock_event = MagicMock()
@@ -68,7 +68,7 @@ class TestAzureSpeechAudioToTextConverter:
     @patch("azure.cognitiveservices.speech.SpeechRecognizer")
     @patch("pyrit.prompt_converter.azure_speech_audio_to_text_converter.logger")
     def test_transcript_cb(self, mock_logger, MockSpeechRecognizer, mock_get_required_value):  # noqa: N803
-        import azure.cognitiveservices.speech as speechsdk
+        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]
 
         # Create a mock event
         mock_event = MagicMock()

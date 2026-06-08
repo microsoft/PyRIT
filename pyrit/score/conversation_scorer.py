@@ -3,7 +3,7 @@
 
 import uuid
 from abc import ABC, abstractmethod
-from typing import Optional, cast
+from typing import cast
 from uuid import UUID
 
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
@@ -32,7 +32,7 @@ class ConversationScorer(Scorer, ABC):
         enforce_all_pieces_valid=False,
     )
 
-    async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
         """
         Scores the entire conversation history by concatenating all messages and passing to the wrapped scorer.
 
@@ -47,7 +47,7 @@ class ConversationScorer(Scorer, ABC):
         Args:
             message (Message): A message from the conversation to be scored.
                 The conversation ID from the first message piece is used to retrieve the full conversation from memory.
-            objective (Optional[str]): Optional objective to evaluate against.
+            objective (str | None): Optional objective to evaluate against.
 
         Returns:
             list[Score]: List of Score objects from the underlying scorer
@@ -128,7 +128,7 @@ class ConversationScorer(Scorer, ABC):
 
         return scores
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Not used - ConversationScorer operates at conversation level via _score_async.
 
@@ -159,7 +159,7 @@ class ConversationScorer(Scorer, ABC):
 def create_conversation_scorer(
     *,
     scorer: Scorer,
-    validator: Optional[ScorerPromptValidator] = None,
+    validator: ScorerPromptValidator | None = None,
 ) -> Scorer:
     """
     Create a ConversationScorer that inherits from the same type as the wrapped scorer.
@@ -171,7 +171,7 @@ def create_conversation_scorer(
     Args:
         scorer (Scorer): The scorer to wrap for conversation-level evaluation.
             Must be an instance of FloatScaleScorer or TrueFalseScorer.
-        validator (Optional[ScorerPromptValidator]): Optional validator override.
+        validator (ScorerPromptValidator | None): Optional validator override.
             If not provided, uses the wrapped scorer's validator.
 
     Returns:
@@ -187,7 +187,7 @@ def create_conversation_scorer(
         >>> isinstance(conversation_scorer, ConversationScorer)  # True
     """
     # Determine the base class of the wrapped scorer
-    scorer_base_class: Optional[type[Scorer]] = None
+    scorer_base_class: type[Scorer] | None = None
 
     if isinstance(scorer, FloatScaleScorer):
         scorer_base_class = FloatScaleScorer

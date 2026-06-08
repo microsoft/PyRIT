@@ -18,7 +18,7 @@ The middleware:
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 import jwt
@@ -241,7 +241,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             logger.warning("Failed to resolve group memberships: %s", e)
             return []
 
-    def _validate_token(self, token: str) -> tuple[Optional[AuthenticatedUser], dict[str, Any]]:
+    def _validate_token(self, token: str) -> tuple[AuthenticatedUser | None, dict[str, Any]]:
         """
         Validate a JWT against Entra ID JWKS.
 

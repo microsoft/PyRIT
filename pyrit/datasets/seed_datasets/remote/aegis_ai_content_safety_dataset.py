@@ -2,9 +2,10 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional
+from typing import Literal
 
 from datasets import load_dataset
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -33,6 +34,18 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
     Warning: This dataset contains unsafe and potentially harmful content. Consult your
     legal department before using these prompts for testing.
     """
+
+    _AUTHORS = [
+        "Shaona Ghosh",
+        "Prasoon Varshney",
+        "Makesh Narsimhan Sreedhar",
+        "Aishwarya Padmakumar",
+        "Traian Rebedea",
+        "Jibin Rajan Varghese",
+        "Christopher Parisien",
+    ]
+
+    _GROUPS = ["NVIDIA"]
 
     HARM_CATEGORIES = [
         "Controlled/Regulated Substances",
@@ -68,35 +81,34 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
     def __init__(
         self,
         *,
-        harm_categories: Optional[
-            list[
-                Literal[
-                    "Controlled/Regulated Substances",
-                    "Copyright/Trademark/Plagiarism",
-                    "Criminal Planning/Confessions",
-                    "Fraud/Deception",
-                    "Guns and Illegal Weapons",
-                    "Harassment",
-                    "Hate/Identity Hate",
-                    "High Risk Gov Decision Making",
-                    "Illegal Activity",
-                    "Immoral/Unethical",
-                    "Malware",
-                    "Manipulation",
-                    "Needs Caution",
-                    "Other",
-                    "PII/Privacy",
-                    "Political/Misinformation/Conspiracy",
-                    "Profanity",
-                    "Sexual",
-                    "Sexual (minor)",
-                    "Suicide and Self Harm",
-                    "Threat",
-                    "Unauthorized Advice",
-                    "Violence",
-                ]
+        harm_categories: list[
+            Literal[
+                "Controlled/Regulated Substances",
+                "Copyright/Trademark/Plagiarism",
+                "Criminal Planning/Confessions",
+                "Fraud/Deception",
+                "Guns and Illegal Weapons",
+                "Harassment",
+                "Hate/Identity Hate",
+                "High Risk Gov Decision Making",
+                "Illegal Activity",
+                "Immoral/Unethical",
+                "Malware",
+                "Manipulation",
+                "Needs Caution",
+                "Other",
+                "PII/Privacy",
+                "Political/Misinformation/Conspiracy",
+                "Profanity",
+                "Sexual",
+                "Sexual (minor)",
+                "Suicide and Self Harm",
+                "Threat",
+                "Unauthorized Advice",
+                "Violence",
             ]
-        ] = None,
+        ]
+        | None = None,
     ) -> None:
         """
         Initialize the NVIDIA Aegis AI Content Safety Dataset loader.
@@ -121,10 +133,12 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
         self.source = "https://huggingface.co/datasets/nvidia/Aegis-AI-Content-Safety-Dataset-2.0"
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "aegis_content_safety"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch NVIDIA Aegis AI Content Safety dataset with optional filtering and return as SeedDataset.
@@ -183,6 +197,8 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
                         dataset_name=self.dataset_name,
                         harm_categories=prompt_harm_categories if prompt_harm_categories else None,
                         source=self.source,
+                        authors=self._AUTHORS,
+                        groups=self._GROUPS,
                     )
                 )
 

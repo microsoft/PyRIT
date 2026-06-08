@@ -9,6 +9,7 @@ import {
   Button,
   Input,
   Label,
+  Link,
   Radio,
   RadioGroup,
   Select,
@@ -348,9 +349,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
                 Targets can also be auto-populated by adding an initializer (e.g. <code>airt</code>) to your{' '}
                 <code>~/.pyrit/.pyrit_conf</code> file, which reads endpoints from your <code>.env</code> and{' '}
                 <code>.env.local</code> files. See{' '}
-                <a href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example" target="_blank" rel="noopener noreferrer">
+                <Link href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example" target="_blank" inline>
                   .pyrit_conf_example
-                </a>.
+                </Link>.
               </Label>
             </form>
           </DialogContent>

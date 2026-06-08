@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Generic, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 from pyrit.common.utils import verify_and_resolve_path
 
@@ -43,9 +43,9 @@ class ScorerMetrics:
     num_responses: int
     num_human_raters: int
     num_scorer_trials: int = field(default=1, kw_only=True)
-    dataset_name: Optional[str] = field(default=None, kw_only=True)
-    dataset_version: Optional[str] = field(default=None, kw_only=True)
-    trial_scores: Optional[np.ndarray] = field(default=None, kw_only=True)
+    dataset_name: str | None = field(default=None, kw_only=True)
+    dataset_version: str | None = field(default=None, kw_only=True)
+    trial_scores: np.ndarray | None = field(default=None, kw_only=True)
     average_score_time_seconds: float = field(default=0.0, kw_only=True)
 
     def to_json(self) -> str:
@@ -63,7 +63,7 @@ class ScorerMetrics:
         return json.dumps(asdict(self))
 
     @classmethod
-    def from_json_file(cls: type[T], file_path: Union[str, Path]) -> T:
+    def from_json_file(cls: type[T], file_path: str | Path) -> T:
         """
         Load a metrics instance from a JSON file on disk.
 
@@ -74,7 +74,7 @@ class ScorerMetrics:
         fields (e.g., cached ``init=False`` attributes) before constructing the instance.
 
         Args:
-            file_path (Union[str, Path]): The path to the JSON file.
+            file_path (str | Path): The path to the JSON file.
 
         Returns:
             ScorerMetrics: An instance of ScorerMetrics (or subclass) with the loaded data.
@@ -96,7 +96,7 @@ class ScorerMetrics:
         return cls(**filtered_data)
 
     @classmethod
-    def from_json(cls: type[T], file_path: Union[str, Path]) -> T:
+    def from_json(cls: type[T], file_path: str | Path) -> T:
         """
         Load a metrics instance from a JSON file (deprecated alias for ``from_json_file``).
 
@@ -104,7 +104,7 @@ class ScorerMetrics:
         string. Use ``from_json_file`` instead.
 
         Args:
-            file_path (Union[str, Path]): The path to the JSON file.
+            file_path (str | Path): The path to the JSON file.
 
         Returns:
             ScorerMetrics: An instance of ScorerMetrics (or subclass) with the loaded data.
@@ -157,14 +157,14 @@ class HarmScorerMetrics(ScorerMetrics):
     t_statistic: float
     p_value: float
     krippendorff_alpha_combined: float
-    harm_category: Optional[str] = field(default=None, kw_only=True)
-    harm_definition: Optional[str] = field(default=None, kw_only=True)
-    harm_definition_version: Optional[str] = field(default=None, kw_only=True)
-    krippendorff_alpha_humans: Optional[float] = None
-    krippendorff_alpha_model: Optional[float] = None
-    _harm_definition_obj: Optional[HarmDefinition] = field(default=None, init=False, repr=False)
+    harm_category: str | None = field(default=None, kw_only=True)
+    harm_definition: str | None = field(default=None, kw_only=True)
+    harm_definition_version: str | None = field(default=None, kw_only=True)
+    krippendorff_alpha_humans: float | None = None
+    krippendorff_alpha_model: float | None = None
+    _harm_definition_obj: HarmDefinition | None = field(default=None, init=False, repr=False)
 
-    def get_harm_definition(self) -> Optional[HarmDefinition]:
+    def get_harm_definition(self) -> HarmDefinition | None:
         """
         Load and return the HarmDefinition object for this metrics instance.
 
@@ -205,7 +205,7 @@ class ObjectiveScorerMetrics(ScorerMetrics):
             in its positive predictions.
         recall (float): The recall of the model scores, an indicator of the model's ability to correctly
             identify positive labels.
-        trial_scores (Optional[np.ndarray]): The raw scores from each trial. Shape is (num_trials, num_responses).
+        trial_scores (np.ndarray | None): The raw scores from each trial. Shape is (num_trials, num_responses).
             Useful for debugging and analyzing scorer variance.
     """
 

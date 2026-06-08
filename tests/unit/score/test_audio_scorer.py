@@ -4,7 +4,6 @@
 import os
 import tempfile
 import uuid
-from typing import Optional
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -21,7 +20,7 @@ from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 class MockTextTrueFalseScorer(TrueFalseScorer):
     """Mock TrueFalseScorer for testing audio transcription scoring"""
 
-    def __init__(self, return_value: bool = True):
+    def __init__(self, *, return_value: bool = True):
         self.return_value = return_value
         validator = ScorerPromptValidator(supported_data_types=["text"])
         super().__init__(validator=validator)
@@ -29,7 +28,7 @@ class MockTextTrueFalseScorer(TrueFalseScorer):
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier()
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         return [
             Score(
                 score_type="true_false",
@@ -48,7 +47,7 @@ class MockTextTrueFalseScorer(TrueFalseScorer):
 class MockTextFloatScaleScorer(FloatScaleScorer):
     """Mock FloatScaleScorer for testing audio transcription scoring"""
 
-    def __init__(self, return_value: float = 0.8):
+    def __init__(self, *, return_value: float = 0.8):
         self.return_value = return_value
         validator = ScorerPromptValidator(supported_data_types=["text"])
         super().__init__(validator=validator)
@@ -56,7 +55,7 @@ class MockTextFloatScaleScorer(FloatScaleScorer):
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier()
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         return [
             Score(
                 score_type="float_scale",

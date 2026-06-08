@@ -17,7 +17,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import quote, urlparse
 
 from azure.identity.aio import DefaultAzureCredential
@@ -155,7 +155,7 @@ async def _sign_blob_url_async(*, blob_url: str) -> str:
         return blob_url
 
 
-def _resolve_media_url(*, value: Optional[str], data_type: str) -> Optional[str]:
+def _resolve_media_url(*, value: str | None, data_type: str) -> str | None:
     """
     For media path types, convert a local file path to a ``/api/media`` URL.
 
@@ -311,7 +311,7 @@ def pyrit_scores_to_dto(scores: list[PyritScore]) -> list[Score]:
     ]
 
 
-def _infer_mime_type(*, value: Optional[str], data_type: PromptDataType) -> Optional[str]:
+def _infer_mime_type(*, value: str | None, data_type: PromptDataType) -> str | None:
     """
     Infer MIME type from a value and its data type.
 
@@ -335,9 +335,9 @@ def _infer_mime_type(*, value: Optional[str], data_type: PromptDataType) -> Opti
 def _build_filename(
     *,
     data_type: str,
-    sha256: Optional[str],
-    value: Optional[str],
-) -> Optional[str]:
+    sha256: str | None,
+    value: str | None,
+) -> str | None:
     """
     Build a human-readable download filename from the data type and hash.
 
@@ -355,7 +355,7 @@ def _build_filename(
         value: The original value (path or URL) used to infer file extension.
 
     Returns:
-        Optional[str]: A filename like ``image_a1b2c3d4e5f6.png``, or ``None`` for text-like types.
+        str | None: A filename like ``image_a1b2c3d4e5f6.png``, or ``None`` for text-like types.
     """
     # Map data types to friendly prefixes
     prefix_map = {
@@ -462,7 +462,7 @@ def request_piece_to_pyrit_message_piece(
     role: ChatMessageRole,
     conversation_id: str,
     sequence: int,
-    labels: Optional[dict[str, str]] = None,  # deprecated
+    labels: dict[str, str] | None = None,  # deprecated
 ) -> PyritMessagePiece:
     """
     Convert a single request piece DTO to a PyRIT MessagePiece domain object.
@@ -509,7 +509,7 @@ def request_to_pyrit_message(
     request: AddMessageRequest,
     conversation_id: str,
     sequence: int,
-    labels: Optional[dict[str, str]] = None,  # deprecated
+    labels: dict[str, str] | None = None,  # deprecated
 ) -> PyritMessage:
     """
     Build a PyRIT Message from an AddMessageRequest DTO.

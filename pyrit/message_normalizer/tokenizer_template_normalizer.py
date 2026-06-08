@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Literal, Optional, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
 from pyrit.common import get_non_required_value
 from pyrit.message_normalizer.chat_message_normalizer import ChatMessageNormalizer
@@ -109,7 +109,7 @@ class TokenizerTemplateNormalizer(MessageStringNormalizer):
         self.system_message_behavior = system_message_behavior
 
     @staticmethod
-    def _load_tokenizer(model_name: str, token: Optional[str]) -> "PreTrainedTokenizerBase":
+    def _load_tokenizer(model_name: str, token: str | None) -> "PreTrainedTokenizerBase":
         """
         Load a tokenizer from HuggingFace.
 
@@ -134,8 +134,8 @@ class TokenizerTemplateNormalizer(MessageStringNormalizer):
         cls,
         model_name_or_alias: str,
         *,
-        token: Optional[str] = None,
-        system_message_behavior: Optional[TokenizerSystemBehavior] = None,
+        token: str | None = None,
+        system_message_behavior: TokenizerSystemBehavior | None = None,
     ) -> "TokenizerTemplateNormalizer":
         """
         Create a normalizer from a model name or alias.

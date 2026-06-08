@@ -3,7 +3,6 @@
 
 import uuid
 from pathlib import Path
-from typing import Union
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -215,7 +214,7 @@ class TestRedTeamingAttackInitialization:
         mock_objective_target: MagicMock,
         mock_objective_scorer: MagicMock,
         mock_adversarial_chat: MagicMock,
-        seed_prompt: Union[str, SeedPrompt],
+        seed_prompt: str | SeedPrompt,
         expected_value: str,
         expected_type: type,
     ):

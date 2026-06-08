@@ -4,19 +4,19 @@
 import base64
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any
 
 import aiofiles
 
 from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
+from pyrit.memory import DataTypeSerializer
 from pyrit.message_normalizer.message_normalizer import (
     MessageListNormalizer,
     MessageStringNormalizer,
     SystemMessageBehavior,
     apply_system_message_behavior_async,
 )
-from pyrit.models import ChatMessage, DataTypeSerializer, Message
-from pyrit.models.messages.message_piece import MessagePiece
+from pyrit.models import ChatMessage, Message, MessagePiece
 
 if TYPE_CHECKING:
     from pyrit.models.literals import ChatMessageRole
@@ -93,7 +93,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
 
             # Use simple string for single text piece, otherwise use content list
             if len(pieces) == 1 and pieces[0].converted_value_data_type == "text":
-                content: Union[str, list[dict[str, Any]]] = pieces[0].converted_value
+                content: str | list[dict[str, Any]] = pieces[0].converted_value
             else:
                 content = [await self._piece_to_content_dict_async(piece) for piece in pieces]
 

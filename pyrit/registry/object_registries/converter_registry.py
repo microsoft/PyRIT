@@ -12,7 +12,7 @@ NOTE: This is a placeholder implementation. A full implementation will be added 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
 from pyrit.registry.object_registries.retrievable_instance_registry import (
     RetrievableInstanceRegistry,
@@ -37,8 +37,8 @@ class ConverterRegistry(RetrievableInstanceRegistry["PromptConverter"]):
         self,
         converter: PromptConverter,
         *,
-        name: Optional[str] = None,
-        tags: Optional[Union[dict[str, str], list[str]]] = None,
+        name: str | None = None,
+        tags: dict[str, str] | list[str] | None = None,
     ) -> None:
         """
         Register a converter instance.
@@ -56,7 +56,7 @@ class ConverterRegistry(RetrievableInstanceRegistry["PromptConverter"]):
         self.register(converter, name=name, tags=tags)
         logger.debug(f"Registered converter instance: {name} ({converter.__class__.__name__})")
 
-    def get_instance_by_name(self, name: str) -> Optional[PromptConverter]:
+    def get_instance_by_name(self, name: str) -> PromptConverter | None:
         """
         Get a registered converter instance by name.
 

@@ -80,11 +80,16 @@ repos:
       name: Ruff (Jupyter Notebooks)
       args: [--fix]
 
-  - repo: https://github.com/allganize/ty-pre-commit
-    rev: v0.0.43
+  - repo: local
     hooks:
       - id: ty-check
         name: ty (type check)
+        # Run ty in the project's uv-managed venv so it can resolve project
+        # dependencies (tqdm etc). The third-party ty-pre-commit hook installs
+        # ty in an isolated env without project deps, which causes spurious
+        # ``unresolved-import`` errors now that the rule is set to ``error``.
+        entry: uv run --link-mode=copy ty check
+        language: system
         files: ^pyrit/
         exclude: ^pyrit/auxiliary_attacks/
         types: [python]
