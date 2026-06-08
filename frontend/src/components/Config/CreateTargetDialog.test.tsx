@@ -322,6 +322,21 @@ describe("CreateTargetDialog", () => {
     ).toBeInTheDocument();
   });
 
+  it("should render .pyrit_conf_example as an accessible link", () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    const link = screen.getByRole("link", { name: ".pyrit_conf_example" });
+    expect(link).toBeInTheDocument();
+    expect(link).toHaveAttribute(
+      "href",
+      "https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example"
+    );
+  });
+
   it("should show field validation errors when submitting form without endpoint", async () => {
     const user = userEvent.setup();
 
