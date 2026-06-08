@@ -285,8 +285,3 @@ export const labelsApi = {
     return response.data
   },
 }
-
-// ---------------------------------------------------------------------------
-// (Feedback used to live here as feedbackApi; it now opens a pre-filled
-// GitHub issue from the frontend directly. See components/Feedback/.)
-// ---------------------------------------------------------------------------
