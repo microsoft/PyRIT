@@ -38,7 +38,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional, overload
+from typing import Any, overload
 
 import numpy as np
 import torch.multiprocessing as mp
@@ -93,8 +93,8 @@ class GCGContext(PromptGeneratorStrategyContext):
 
     workers: list[Any] = field(default_factory=list)
     test_workers: list[Any] = field(default_factory=list)
-    attack: Optional[Any] = None
-    logfile_path: Optional[str] = None
+    attack: Any | None = None
+    logfile_path: str | None = None
 
 
 class GCGResult(PromptGeneratorStrategyResult):
@@ -138,11 +138,11 @@ class GCGGenerator(
         self,
         *,
         models: list[GCGModelConfig],
-        algorithm: Optional[GCGAlgorithmConfig] = None,
-        strategy: Optional[GCGStrategyConfig] = None,
-        output: Optional[GCGOutputConfig] = None,
-        test_models: Optional[list[GCGModelConfig]] = None,
-        hf_token: Optional[str] = None,
+        algorithm: GCGAlgorithmConfig | None = None,
+        strategy: GCGStrategyConfig | None = None,
+        output: GCGOutputConfig | None = None,
+        test_models: list[GCGModelConfig] | None = None,
+        hf_token: str | None = None,
     ) -> None:
         """
         Initialize the GCG generator.
@@ -307,9 +307,9 @@ class GCGGenerator(
         *,
         goals: list[str],
         targets: list[str],
-        test_goals: Optional[list[str]] = None,
-        test_targets: Optional[list[str]] = None,
-        memory_labels: Optional[dict[str, str]] = None,
+        test_goals: list[str] | None = None,
+        test_targets: list[str] | None = None,
+        memory_labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> GCGResult: ...
 

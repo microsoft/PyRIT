@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -27,13 +26,13 @@ from pyrit.models import (
 # helpers
 def make_attack(
     outcome: AttackOutcome,
-    attack_type: Optional[str] = "default",
+    attack_type: str | None = "default",
     conversation_id: str = "conv-1",
 ) -> AttackResult:
     """
     Minimal valid AttackResult for analytics tests.
     """
-    attack_identifier: Optional[ComponentIdentifier] = None
+    attack_identifier: ComponentIdentifier | None = None
     if attack_type is not None:
         attack_identifier = ComponentIdentifier(class_name=attack_type, class_module="tests.unit.analytics")
 
@@ -190,7 +189,7 @@ def _make_attack_with_target(
     target: ComponentIdentifier,
     *,
     outcome: AttackOutcome = AttackOutcome.SUCCESS,
-    timestamp: Optional[datetime] = None,
+    timestamp: datetime | None = None,
 ) -> AttackResult:
     technique = ComponentIdentifier(
         class_name="PromptSendingAttack",

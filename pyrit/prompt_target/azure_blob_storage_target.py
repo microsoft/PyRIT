@@ -3,7 +3,6 @@
 
 import logging
 from enum import Enum
-from typing import Optional
 from urllib.parse import urlparse
 
 from azure.core.exceptions import ClientAuthenticationError
@@ -69,11 +68,11 @@ class AzureBlobStorageTarget(PromptTarget):
     def __init__(
         self,
         *,
-        container_url: Optional[str] = None,
-        sas_token: Optional[str] = None,
+        container_url: str | None = None,
+        sas_token: str | None = None,
         blob_content_type: SupportedContentType = SupportedContentType.PLAIN_TEXT,
-        max_requests_per_minute: Optional[int] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        max_requests_per_minute: int | None = None,
+        custom_configuration: TargetConfiguration | None = None,
     ) -> None:
         """
         Initialize the Azure Blob Storage target.
@@ -95,8 +94,8 @@ class AzureBlobStorageTarget(PromptTarget):
             env_var_name=self.AZURE_STORAGE_CONTAINER_ENVIRONMENT_VARIABLE, passed_value=container_url
         )
 
-        self._sas_token: Optional[str] = sas_token
-        self._client_async: Optional[AsyncContainerClient] = None
+        self._sas_token: str | None = sas_token
+        self._client_async: AsyncContainerClient | None = None
 
         super().__init__(
             endpoint=self._container_url,

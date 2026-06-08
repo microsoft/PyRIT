@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.common.utils import verify_and_resolve_path
@@ -38,8 +38,8 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
         self,
         *,
         chat_target: PromptTarget,
-        true_false_question_path: Optional[pathlib.Path] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        true_false_question_path: pathlib.Path | None = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
     ) -> None:
         """
@@ -49,9 +49,9 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
             chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
                 CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
                 possibly via normalization-pipeline adaptation).
-            true_false_question_path (Optional[pathlib.Path]): The path to the true/false question file.
+            true_false_question_path (pathlib.Path | None): The path to the true/false question file.
                 Defaults to None, which uses the default question_answering.yaml file.
-            validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
         """
@@ -67,13 +67,13 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
             score_aggregator=score_aggregator,
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score the message piece using question answering evaluation.
 
         Args:
             message_piece (MessagePiece): The answer given by the target to be scored.
-            objective (Optional[str]): The objective, which usually contains the question and the correct answer.
+            objective (str | None): The objective, which usually contains the question and the correct answer.
                 Defaults to None.
 
         Returns:

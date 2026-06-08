@@ -3,7 +3,7 @@
 
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 import jwt
 
@@ -36,12 +36,12 @@ class ManualCopilotAuthenticator(Authenticator):
     #: Environment variable name for the Copilot access token
     ACCESS_TOKEN_ENV_VAR: str = "COPILOT_ACCESS_TOKEN"
 
-    def __init__(self, *, access_token: Optional[str] = None) -> None:
+    def __init__(self, *, access_token: str | None = None) -> None:
         """
         Initialize the ManualCopilotAuthenticator with a pre-obtained access token.
 
         Args:
-            access_token (Optional[str]): A valid JWT access token for Microsoft Copilot.
+            access_token (str | None): A valid JWT access token for Microsoft Copilot.
                 This token can be obtained from browser DevTools when connected to Copilot.
                 If None, the token will be read from the ``COPILOT_ACCESS_TOKEN`` environment variable.
 

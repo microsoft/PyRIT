@@ -3,7 +3,7 @@
 
 import logging
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.utils import warn_if_set
@@ -55,26 +55,26 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         self,
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         max_attempts_on_failure: int = 0,
         params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
-        prepended_conversation_config: Optional[PrependedConversationConfig] = None,
+        prepended_conversation_config: PrependedConversationConfig | None = None,
     ) -> None:
         """
         Initialize the prompt injection attack strategy.
 
         Args:
             objective_target (PromptTarget): The target system to attack.
-            attack_converter_config (Optional[AttackConverterConfig]): Configuration for prompt converters.
-            attack_scoring_config (Optional[AttackScoringConfig]): Configuration for scoring components.
-            prompt_normalizer (Optional[PromptNormalizer]): Normalizer for handling prompts.
+            attack_converter_config (AttackConverterConfig | None): Configuration for prompt converters.
+            attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
+            prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
             max_attempts_on_failure (int): Maximum number of attempts to retry on failure.
-            params_type (Type[AttackParamsT]): The type of parameters this strategy accepts.
+            params_type (type[AttackParamsT]): The type of parameters this strategy accepts.
                 Defaults to AttackParameters. Use AttackParameters.excluding() to create
                 a params type that rejects certain fields.
-            prepended_conversation_config (Optional[PrependedConversationConfiguration]):
+            prepended_conversation_config (PrependedConversationConfiguration | None):
                 Configuration for how to process prepended conversations. Controls converter
                 application by role, message normalization, and non-chat target behavior.
 
@@ -119,12 +119,12 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         # Store the prepended conversation configuration
         self._prepended_conversation_config = prepended_conversation_config
 
-    def get_attack_scoring_config(self) -> Optional[AttackScoringConfig]:
+    def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
         Get the attack scoring configuration used by this strategy.
 
         Returns:
-            Optional[AttackScoringConfig]: The scoring configuration with objective and auxiliary scorers.
+            AttackScoringConfig | None: The scoring configuration with objective and auxiliary scorers.
         """
         return AttackScoringConfig(
             objective_scorer=self._objective_scorer,
@@ -242,18 +242,18 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         )
 
     def _determine_attack_outcome(
-        self, *, response: Optional[Message], score: Optional[Score], context: SingleTurnAttackContext[Any]
-    ) -> tuple[AttackOutcome, Optional[str]]:
+        self, *, response: Message | None, score: Score | None, context: SingleTurnAttackContext[Any]
+    ) -> tuple[AttackOutcome, str | None]:
         """
         Determine the outcome of the attack based on the response and score.
 
         Args:
-            response (Optional[Message]): The last response from the target (if any).
-            score (Optional[Score]): The objective score (if any).
+            response (Message | None): The last response from the target (if any).
+            score (Score | None): The objective score (if any).
             context (SingleTurnAttackContext): The attack context containing configuration.
 
         Returns:
-            tuple[AttackOutcome, Optional[str]]: A tuple of (outcome, outcome_reason).
+            tuple[AttackOutcome, str | None]: A tuple of (outcome, outcome_reason).
         """
         if not self._objective_scorer:
             # No scorer means we can't determine success/failure
@@ -299,7 +299,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
 
     async def _send_prompt_to_objective_target_async(
         self, *, message: Message, context: SingleTurnAttackContext[Any]
-    ) -> Optional[Message]:
+    ) -> Message | None:
         """
         Send the prompt to the target and return the response.
 
@@ -308,7 +308,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             context (SingleTurnAttackContext): The attack context containing parameters and labels.
 
         Returns:
-            Optional[Message]: The model's response if successful, or None if
+            Message | None: The model's response if successful, or None if
                 the request was filtered, blocked, or encountered an error.
         """
         with execution_context(
@@ -334,7 +334,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         *,
         response: Message,
         objective: str,
-    ) -> Optional[Score]:
+    ) -> Score | None:
         """
         Evaluate the response against the objective using the configured scorers.
 
@@ -346,7 +346,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             objective (str): The natural-language description of the attack's objective.
 
         Returns:
-            Optional[Score]: The score from the objective scorer if configured, or None if
+            Score | None: The score from the objective scorer if configured, or None if
                 no objective scorer is set. Note that auxiliary scorer results are not returned
                 but are still executed and stored.
         """

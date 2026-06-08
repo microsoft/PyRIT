@@ -100,7 +100,7 @@ class PyRITInitializer(ABC):
         set for this initializer to work correctly.
 
         Returns:
-            List[str]: List of required environment variable names. Defaults to empty list.
+            list[str]: List of required environment variable names. Defaults to empty list.
         """
         return []
 
@@ -255,7 +255,7 @@ class PyRITInitializer(ABC):
         initializer has been run before or which instance is queried.
 
         Returns:
-            Dict[str, Any]: Information about what defaults and globals are set.
+            dict[str, Any]: Information about what defaults and globals are set.
         """
         # Check if memory is initialized - required for running initialization in sandbox
         from pyrit.memory import CentralMemory
@@ -334,7 +334,7 @@ class PyRITInitializer(ABC):
         await SimpleInitializer.get_info_async() instead of SimpleInitializer().get_info_async()
 
         Returns:
-            Dict[str, Any]: Dictionary containing name, description, class information, and default values.
+            dict[str, Any]: Dictionary containing name, description, class information, and default values.
         """
         # Create a temporary instance to access properties
         instance = cls()

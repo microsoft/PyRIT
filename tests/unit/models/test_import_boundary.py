@@ -56,14 +56,8 @@ KNOWN_TOP_LEVEL_VIOLATIONS: dict[str, dict[str, str]] = {}
 # ratchet, tracked separately so the phase that removes the lazy workaround is
 # explicit.
 KNOWN_LAZY_VIOLATIONS: dict[str, dict[str, str]] = {
-    "pyrit.models.data_type_serializer": {
-        "pyrit.memory": "phase-9",
-    },
     "pyrit.models.identifiers.evaluation_identifier": {
         "pyrit.executor.attack.core.attack_strategy": "phase-7",
-    },
-    "pyrit.models.storage_io": {
-        "pyrit.auth": "phase-9",
     },
 }
 
@@ -71,7 +65,7 @@ KNOWN_LAZY_VIOLATIONS: dict[str, dict[str, str]] = {
 # layers. These are slated to relocate; the ratchet forces them to shrink.
 KNOWN_COMMON_VIOLATIONS: dict[str, dict[str, str]] = {
     "pyrit.common.data_url_converter": {
-        "pyrit.models": "relocate",
+        "pyrit.memory": "relocate",
     },
     "pyrit.common.display_response": {
         "pyrit.memory": "relocate",

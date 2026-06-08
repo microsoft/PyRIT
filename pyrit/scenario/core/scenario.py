@@ -18,14 +18,14 @@ from abc import ABC
 from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, cast, get_origin
+from typing import TYPE_CHECKING, Any, ClassVar, cast, get_origin
 
 try:
     # Built-in on Python 3.11+. Fall back to the ``exceptiongroup`` backport on 3.10
     # (declared as a conditional dependency in pyproject.toml).
-    from builtins import ExceptionGroup  # type: ignore[attr-defined]
+    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
 except ImportError:  # pragma: no cover - exercised only on 3.10
-    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef]
+    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
 
 from tqdm.auto import tqdm
 
@@ -38,7 +38,7 @@ from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import AttackOutcome, AttackResult, SeedAttackGroup
-from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
+from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult, ScenarioRunState
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
@@ -194,7 +194,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         default_strategy: ScenarioStrategy,
         default_dataset_config: DatasetConfiguration,
         objective_scorer: Scorer,
-        scenario_result_id: Optional[Union[uuid.UUID, str]] = None,
+        scenario_result_id: uuid.UUID | str | None = None,
         include_default_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
@@ -203,14 +203,14 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         Args:
             name (str): Descriptive name for the scenario.
             version (int): Version number of the scenario.
-            strategy_class (Type[ScenarioStrategy]): The strategy enum class for this scenario.
+            strategy_class (type[ScenarioStrategy]): The strategy enum class for this scenario.
             default_strategy (ScenarioStrategy): The default strategy member used when no
                 ``scenario_strategies`` are passed to ``initialize_async``. Usually an aggregate
                 member like ``MyStrategy.ALL`` or ``MyStrategy.DEFAULT``.
             default_dataset_config (DatasetConfiguration): The default dataset configuration used
                 when no ``dataset_config`` is passed to ``initialize_async``.
             objective_scorer (Scorer): The objective scorer used to evaluate attack results.
-            scenario_result_id (Optional[Union[uuid.UUID, str]]): Optional ID of an existing scenario result to resume.
+            scenario_result_id (uuid.UUID | str | None): Optional ID of an existing scenario result to resume.
                 Can be either a UUID object or a string representation of a UUID.
                 If provided and found in memory, the scenario will resume from prior progress.
                 All other parameters must still match the stored scenario configuration.
@@ -240,10 +240,10 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         self._default_dataset_config = default_dataset_config
 
         # These will be set in initialize_async
-        self._objective_target: Optional[PromptTarget] = None
-        self._objective_target_identifier: Optional[ComponentIdentifier] = None
+        self._objective_target: PromptTarget | None = None
+        self._objective_target_identifier: ComponentIdentifier | None = None
         self._memory_labels: dict[str, str] = {}
-        self._max_concurrency: Optional[int] = None
+        self._max_concurrency: int | None = None
         self._max_retries: int = 0
 
         self._objective_scorer = objective_scorer
@@ -252,7 +252,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         self._name = name if name else type(self).__name__
         self._memory = CentralMemory.get_memory_instance()
         self._atomic_attacks: list[AtomicAttack] = []
-        self._scenario_result_id: Optional[str] = str(scenario_result_id) if scenario_result_id else None
+        self._scenario_result_id: str | None = str(scenario_result_id) if scenario_result_id else None
 
         # Store prepared strategies for use in _get_atomic_attacks_async
         self._scenario_strategies: list[ScenarioStrategy] = []
@@ -550,7 +550,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
     def _prepare_strategies(
         self,
-        strategies: Optional[Sequence[ScenarioStrategy]],
+        strategies: Sequence[ScenarioStrategy] | None,
     ) -> list[ScenarioStrategy]:
         """
         Resolve strategy inputs into a concrete list for this scenario.
@@ -575,11 +575,11 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         self,
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        scenario_strategies: Optional[Sequence[ScenarioStrategy]] = None,
-        dataset_config: Optional[DatasetConfiguration] = None,
+        scenario_strategies: Sequence[ScenarioStrategy] | None = None,
+        dataset_config: DatasetConfiguration | None = None,
         max_concurrency: int = 4,
         max_retries: int = 0,
-        memory_labels: Optional[dict[str, str]] = None,
+        memory_labels: dict[str, str] | None = None,
         include_baseline: bool | None = None,
     ) -> None:
         """
@@ -595,10 +595,10 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
 
         Args:
             objective_target (PromptTarget): The target system to attack.
-            scenario_strategies (Optional[Sequence[ScenarioStrategy]]): The strategies to execute.
+            scenario_strategies (Sequence[ScenarioStrategy] | None): The strategies to execute.
                 Can be a list of ScenarioStrategy enum members. If None, uses the default aggregate
                 from the scenario's configuration.
-            dataset_config (Optional[DatasetConfiguration]): Configuration for the dataset source.
+            dataset_config (DatasetConfiguration | None): Configuration for the dataset source.
                 Use this to specify dataset names or maximum dataset size from the CLI.
                 If not provided, scenarios use their constructor-supplied default_dataset_config.
             max_concurrency (int): Maximum number of concurrent units of work for the scenario.
@@ -613,7 +613,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
                 Set to 0 (default) for no automatic retries. If set to a positive number,
                 the scenario will automatically retry up to this many times after an exception.
                 For example, max_retries=3 allows up to 4 total attempts (1 initial + 3 retries).
-            memory_labels (Optional[Dict[str, str]]): Additional labels to apply to all
+            memory_labels (dict[str, str] | None): Additional labels to apply to all
                 attack runs in the scenario. These help track and categorize the scenario.
             include_baseline (bool | None): Whether to prepend a baseline atomic attack that sends
                 all objectives without modifications, allowing comparison between unmodified prompts
@@ -733,7 +733,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
             objective_scorer_identifier=self._objective_scorer_identifier,
             labels=self._memory_labels,
             attack_results=attack_results,
-            scenario_run_state="CREATED",
+            scenario_run_state=ScenarioRunState.CREATED,
             display_group_map=self._display_group_map,
             metadata=self._build_initial_scenario_metadata(),
         )
@@ -977,7 +977,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         join is sufficient.
 
         Returns:
-            List[AtomicAttack]: List of atomic attacks with uncompleted objectives.
+            list[AtomicAttack]: List of atomic attacks with uncompleted objectives.
         """
         if not self._scenario_result_id:
             # No scenario result yet, return all atomic attacks
@@ -1430,7 +1430,7 @@ class Scenario(ABC):  # noqa: B024 - retained for subclass type-checking even wi
         for outcome in outcomes:
             if isinstance(outcome, BaseException):
                 logger.error(f"Atomic attack failed in scenario '{self._name}': {str(outcome)}")
-                error: Optional[BaseException] = outcome
+                error: BaseException | None = outcome
             else:
                 atomic_attack, atomic_results = outcome
                 error = self._partial_result_to_exception(atomic_attack=atomic_attack, atomic_results=atomic_results)

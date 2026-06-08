@@ -251,7 +251,7 @@ class TestDecodingTrustToxicityDataset:
 
         meta = dataset.seeds[0].metadata
         assert meta is not None
-        # challenging stored as bool (bool ≤ int so dict[str, Union[str, int]] accepts it)
+        # challenging stored as bool (bool ≤ int so dict[str, str | int] accepts it)
         assert meta["challenging"] is True
         # All eight Perspective scores stringified at full precision
         for key in _PERSPECTIVE_SCORE_KEYS:

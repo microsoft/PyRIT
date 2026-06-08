@@ -6,7 +6,6 @@ import logging
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Optional
 
 import av
 
@@ -107,7 +106,7 @@ class AudioTranscriptHelper:
         self,
         *,
         text_capable_scorer: Scorer,
-        use_entra_auth: Optional[bool] = None,
+        use_entra_auth: bool | None = None,
     ) -> None:
         """
         Initialize the base audio scorer.
@@ -154,13 +153,13 @@ class AudioTranscriptHelper:
                 f"Supported types: {scorer._validator._supported_data_types}"
             )
 
-    async def _score_audio_async(self, *, message_piece: MessagePiece, objective: Optional[str] = None) -> list[Score]:
+    async def _score_audio_async(self, *, message_piece: MessagePiece, objective: str | None = None) -> list[Score]:
         """
         Transcribe audio and score the transcript.
 
         Args:
             message_piece (MessagePiece): The message piece containing the audio file path.
-            objective (Optional[str]): Optional objective description for scoring.
+            objective (str | None): Optional objective description for scoring.
 
         Returns:
             List of scores for the transcribed audio.
@@ -267,7 +266,7 @@ class AudioTranscriptHelper:
             channels=self._DEFAULT_CHANNELS,
         )
 
-    def _extract_audio_from_video(self, video_path: str) -> Optional[str]:
+    def _extract_audio_from_video(self, video_path: str) -> str | None:
         """
         Extract audio track from a video file.
 
@@ -281,7 +280,7 @@ class AudioTranscriptHelper:
         return AudioTranscriptHelper.extract_audio_from_video(video_path)
 
     @staticmethod
-    def extract_audio_from_video(video_path: str) -> Optional[str]:
+    def extract_audio_from_video(video_path: str) -> str | None:
         """
         Extract audio track from a video file (static version).
 

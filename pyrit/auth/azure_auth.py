@@ -6,7 +6,7 @@ from __future__ import annotations
 import inspect
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Union, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import msal
 from azure.core.credentials import AccessToken
@@ -41,7 +41,7 @@ class TokenProviderCredential:
     get_azure_token_provider) and Azure SDK clients that require a TokenCredential object.
     """
 
-    def __init__(self, token_provider: Callable[[], Union[str, Callable[..., Any]]]) -> None:
+    def __init__(self, token_provider: Callable[[], str | Callable[..., Any]]) -> None:
         """
         Initialize TokenProviderCredential.
 
@@ -75,7 +75,7 @@ class AsyncTokenProviderCredential:
     async clients that require an AsyncTokenCredential object (with async def get_token).
     """
 
-    def __init__(self, token_provider: Callable[[], Union[str, Awaitable[str]]]) -> None:
+    def __init__(self, token_provider: Callable[[], str | Awaitable[str]]) -> None:
         """
         Initialize AsyncTokenProviderCredential.
 
@@ -394,14 +394,14 @@ def get_azure_openai_auth(endpoint: str) -> Callable[[], Awaitable[str]]:
     return get_azure_async_token_provider(scope)
 
 
-def get_speech_config(resource_id: Union[str, None], key: Union[str, None], region: str) -> speechsdk.SpeechConfig:
+def get_speech_config(resource_id: str | None, key: str | None, region: str) -> speechsdk.SpeechConfig:
     """
     Get the speech config using key/region pair (for key auth scenarios) or resource_id/region pair
     (for Entra auth scenarios).
 
     Args:
-        resource_id (Union[str, None]): The resource ID to get the token for.
-        key (Union[str, None]): The Azure Speech key
+        resource_id (str | None): The resource ID to get the token for.
+        key (str | None): The Azure Speech key
         region (str): The region to get the token for.
 
     Returns:
@@ -437,8 +437,8 @@ def get_speech_config(resource_id: Union[str, None], key: Union[str, None], regi
 async def get_speech_config_async(
     *,
     token_provider: Callable[[], str | Awaitable[str]] | None,
-    resource_id: Union[str, None],
-    key: Union[str, None],
+    resource_id: str | None,
+    key: str | None,
     region: str,
 ) -> speechsdk.SpeechConfig:
     """

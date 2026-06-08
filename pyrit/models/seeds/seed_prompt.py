@@ -15,7 +15,6 @@ from pydantic import Field, model_validator
 from tinytag import TinyTag
 
 from pyrit.common.path import PATHS_DICT
-from pyrit.models.data_type_serializer import DataTypeSerializer
 from pyrit.models.json_schema_definition import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     JsonSchemaDefinition,
     get_common_json_schema,
@@ -158,7 +157,7 @@ class SeedPrompt(Seed):
             return
         if self.metadata is None:
             self.metadata = {}
-        extension = DataTypeSerializer.get_extension(self.value)
+        extension = Path(self.value).suffix or None
         if extension:
             extension = extension.lstrip(".")
             self.metadata.update({"format": extension})

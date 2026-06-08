@@ -4,7 +4,7 @@
 import logging
 import uuid
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal
 
 from typing_extensions import override
 
@@ -81,9 +81,9 @@ class _VLSUMultimodalDataset(_RemoteDatasetLoader):
         *,
         source: str = "https://raw.githubusercontent.com/apple/ml-vlsu/main/data/VLSU.csv",
         source_type: Literal["public_url", "file"] = "public_url",
-        categories: Optional[list[VLSUCategory]] = None,
-        unsafe_grades: Optional[list[str]] = None,
-        max_examples: Optional[int] = None,
+        categories: list[VLSUCategory] | None = None,
+        unsafe_grades: list[str] | None = None,
+        max_examples: int | None = None,
     ) -> None:
         """
         Initialize the ML-VLSU multimodal dataset loader.

@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 import base64
 import logging
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 import httpx
 
@@ -11,12 +11,8 @@ from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
 )
-from pyrit.models import (
-    ComponentIdentifier,
-    Message,
-    construct_response_from_request,
-    data_serializer_factory,
-)
+from pyrit.memory import data_serializer_factory
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
@@ -72,11 +68,11 @@ class OpenAIImageTarget(OpenAITarget):
             "1792x1024",
             "1024x1792",
         ] = "1024x1024",
-        output_format: Optional[Literal["png", "jpeg", "webp"]] = None,
-        quality: Optional[Literal["auto", "low", "medium", "high", "standard", "hd"]] = None,
-        style: Optional[Literal["natural", "vivid"]] = None,
-        background: Optional[Literal["transparent", "opaque", "auto"]] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        output_format: Literal["png", "jpeg", "webp"] | None = None,
+        quality: Literal["auto", "low", "medium", "high", "standard", "hd"] | None = None,
+        style: Literal["natural", "vivid"] | None = None,
+        background: Literal["transparent", "opaque", "auto"] | None = None,
+        custom_configuration: TargetConfiguration | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:

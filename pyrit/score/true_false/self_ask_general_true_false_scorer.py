@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -35,9 +35,9 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
         *,
         chat_target: PromptTarget,
         system_prompt_format_string: str,
-        prompt_format_string: Optional[str] = None,
-        category: Optional[str] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        prompt_format_string: str | None = None,
+        category: str | None = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
         score_value_output_key: str = "score_value",
         rationale_output_key: str = "rationale",
@@ -61,9 +61,9 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
                 possibly via normalization-pipeline adaptation).
             system_prompt_format_string (str): System prompt template with placeholders for
                 objective, task (alias of objective), prompt, and message_piece.
-            prompt_format_string (Optional[str]): User prompt template with the same placeholders.
-            category (Optional[str]): Category for the score.
-            validator (Optional[ScorerPromptValidator]): Custom validator. If omitted, a default
+            prompt_format_string (str | None): User prompt template with the same placeholders.
+            category (str | None): Category for the score.
+            validator (ScorerPromptValidator | None): Custom validator. If omitted, a default
                 validator will be used requiring text input and an objective.
             score_aggregator (TrueFalseAggregatorFunc): Aggregator for combining scores. Defaults to
                 TrueFalseScoreAggregator.OR.
@@ -112,7 +112,7 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score a single message piece using the configured prompts.
 

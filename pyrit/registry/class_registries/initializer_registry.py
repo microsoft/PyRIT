@@ -15,7 +15,7 @@ import inspect
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pyrit.models import class_name_to_snake_case, validate_registry_name
 from pyrit.registry.base import ClassRegistryEntry
@@ -47,7 +47,7 @@ class InitializerMetadata(ClassRegistryEntry):
     required_env_vars: tuple[str, ...] = field(kw_only=True)
 
     # Supported parameters as tuples of (name, description, default).
-    supported_parameters: tuple[tuple[str, str, Optional[list[str]]], ...] = field(kw_only=True, default=())
+    supported_parameters: tuple[tuple[str, str, list[str] | None], ...] = field(kw_only=True, default=())
 
 
 class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetadata]):
@@ -61,7 +61,7 @@ class InitializerRegistry(BaseClassRegistry["PyRITInitializer", InitializerMetad
     The directory structure is used for organization but not exposed to users.
     """
 
-    def __init__(self, *, discovery_path: Optional[Path] = None, lazy_discovery: bool = False) -> None:
+    def __init__(self, *, discovery_path: Path | None = None, lazy_discovery: bool = False) -> None:
         """
         Initialize the initializer registry.
 

@@ -4,14 +4,14 @@
 """
 Base class registry for PyRIT.
 
-This module provides the abstract base class for registries that store classes (Type[T]).
+This module provides the abstract base class for registries that store classes (type[T]).
 These registries allow on-demand instantiation of registered classes.
 
 For registries that store pre-configured instances, see object_registries/.
 
 Terminology:
 - **Metadata**: A TypedDict describing a registered class (e.g., ScenarioMetadata)
-- **Class**: The actual Python class (Type[T]) that can be instantiated
+- **Class**: The actual Python class (type[T]) that can be instantiated
 - **Instance**: A created object of that class
 - **ClassEntry**: Internal wrapper holding a class plus optional factory/defaults
 """
@@ -19,11 +19,12 @@ Terminology:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Generic, Optional, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
-    from typing import Self
+
+    from typing_extensions import Self
 
 from pyrit.models import class_name_to_snake_case
 from pyrit.registry.base import ClassRegistryEntry, RegistryProtocol
@@ -38,14 +39,14 @@ class ClassEntry(Generic[T]):
     """
     Internal wrapper for a registered class.
 
-    This holds the class itself (Type[T]) along with optional factory
+    This holds the class itself (type[T]) along with optional factory
     and default parameters for creating instances.
 
     Note: This is an internal implementation detail. Users interact with
     registries via get_class(), create_instance(), and list_metadata().
 
     Attributes:
-        registered_class: The actual Python class (Type[T]).
+        registered_class: The actual Python class (type[T]).
         factory: Optional callable to create instances with custom logic.
         default_kwargs: Default keyword arguments for instance creation.
     """
@@ -54,14 +55,14 @@ class ClassEntry(Generic[T]):
         self,
         *,
         registered_class: type[T],
-        factory: Optional[Callable[..., T]] = None,
-        default_kwargs: Optional[dict[str, object]] = None,
+        factory: Callable[..., T] | None = None,
+        default_kwargs: dict[str, object] | None = None,
     ) -> None:
         """
         Initialize a class entry.
 
         Args:
-            registered_class: The actual Python class (Type[T]).
+            registered_class: The actual Python class (type[T]).
             factory: Optional callable that creates an instance.
             default_kwargs: Default keyword arguments for instantiation.
         """
@@ -97,7 +98,7 @@ class ClassEntry(Generic[T]):
 
 class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT]):
     """
-    Abstract base class for registries that store classes (Type[T]).
+    Abstract base class for registries that store classes (type[T]).
 
     This class implements RegistryProtocol and provides the common infrastructure
     for class registries including:
@@ -129,7 +130,7 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
         """
         # Maps registry names to ClassEntry wrappers
         self._class_entries: dict[str, ClassEntry[T]] = {}
-        self._metadata_cache: Optional[list[MetadataT]] = None
+        self._metadata_cache: list[MetadataT] | None = None
         self._discovered = False
         self._lazy_discovery = lazy_discovery
 
@@ -149,7 +150,7 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
         """
         if cls not in cls._instances:
             cls._instances[cls] = cls()  # type: ignore[ty:invalid-assignment]
-        return cls._instances[cls]
+        return cls._instances[cls]  # type: ignore[ty:invalid-return-type]
 
     @classmethod
     def reset_instance(cls) -> None:
@@ -198,7 +199,7 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
             name: The registry name (snake_case identifier).
 
         Returns:
-            The registered class (Type[T]).
+            The registered class (type[T]).
             Note: This returns the class itself, not an instance.
 
         Raises:
@@ -211,7 +212,7 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
             raise KeyError(f"'{name}' not found in registry. Available: {available}")
         return entry.registered_class
 
-    def get_entry(self, name: str) -> Optional[ClassEntry[T]]:
+    def get_entry(self, name: str) -> ClassEntry[T] | None:
         """
         Get the full ClassEntry for a registered class.
 
@@ -242,8 +243,8 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
     def list_metadata(
         self,
         *,
-        include_filters: Optional[dict[str, object]] = None,
-        exclude_filters: Optional[dict[str, object]] = None,
+        include_filters: dict[str, object] | None = None,
+        exclude_filters: dict[str, object] | None = None,
     ) -> list[MetadataT]:
         """
         List metadata for all registered classes, optionally filtered.
@@ -286,15 +287,15 @@ class BaseClassRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, MetadataT])
         self,
         cls: type[T],
         *,
-        name: Optional[str] = None,
-        factory: Optional[Callable[..., T]] = None,
-        default_kwargs: Optional[dict[str, object]] = None,
+        name: str | None = None,
+        factory: Callable[..., T] | None = None,
+        default_kwargs: dict[str, object] | None = None,
     ) -> None:
         """
         Register a class with the registry.
 
         Args:
-            cls: The class to register (Type[T], not an instance).
+            cls: The class to register (type[T], not an instance).
             name: Optional custom registry name. If not provided, derived from class name.
             factory: Optional callable for creating instances with custom logic.
             default_kwargs: Default keyword arguments for instance creation.
