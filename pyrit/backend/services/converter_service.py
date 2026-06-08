@@ -36,8 +36,8 @@ from pyrit.backend.models.converters import (
     CreateConverterResponse,
     PreviewStep,
 )
+from pyrit.memory import data_serializer_factory
 from pyrit.models import PromptDataType
-from pyrit.models.data_type_serializer import data_serializer_factory
 from pyrit.prompt_converter import PromptConverter
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.object_registries import ConverterRegistry
@@ -501,7 +501,7 @@ class ConverterService:
                 continue
 
             origin = get_origin(annotation)
-            # Unwrap Optional[X] to X
+            # Unwrap X | None to X
             if origin is Union:
                 args = get_args(annotation)
                 non_none = [a for a in args if a is not type(None)]

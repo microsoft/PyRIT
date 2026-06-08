@@ -10,9 +10,9 @@ from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, patch
 import pytest
 
 try:
-    from builtins import ExceptionGroup  # type: ignore[attr-defined]
+    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
 except ImportError:  # pragma: no cover - 3.10 only
-    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef]
+    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
 
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
@@ -138,7 +138,7 @@ class ConcreteScenario(Scenario):
     # so we don't have to thread include_baseline=False through every initialize_async call.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
-    def __init__(self, atomic_attacks_to_return=None, **kwargs):
+    def __init__(self, *, atomic_attacks_to_return=None, **kwargs):
         # Add required strategy_class if not provided
 
         class TestStrategy(ScenarioStrategy):
@@ -685,7 +685,7 @@ def create_mock_truefalse_scorer():
 class ConcreteScenarioWithTrueFalseScorer(Scenario):
     """Concrete implementation of Scenario for testing baseline-only execution."""
 
-    def __init__(self, atomic_attacks_to_return=None, **kwargs):
+    def __init__(self, *, atomic_attacks_to_return=None, **kwargs):
         # Add required strategy_class if not provided
 
         class TestStrategy(ScenarioStrategy):

@@ -4,7 +4,7 @@
 """
 Class registries package.
 
-This package contains registries that store classes (Type[T]) which can be
+This package contains registries that store classes (type[T]) which can be
 instantiated on demand. Examples include ScenarioRegistry and InitializerRegistry.
 
 For registries that store pre-configured instances, see object_registries/.

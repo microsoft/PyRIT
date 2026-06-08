@@ -3,7 +3,6 @@
 
 import os
 import uuid
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -34,7 +33,7 @@ def video_converter_sample_video(tmp_path, patch_central_database):
     video_path = str(tmp_path / "test_video.mp4")
     width, height = 512, 512
     if is_opencv_installed():
-        import cv2  # noqa: F401
+        import cv2
 
         # Create a video writer object
         video_encoding = cv2.VideoWriter_fourcc(*"mp4v")
@@ -61,7 +60,7 @@ def video_converter_sample_video(tmp_path, patch_central_database):
 class MockTrueFalseScorer(TrueFalseScorer):
     """Mock TrueFalseScorer for testing"""
 
-    def __init__(self, return_value: bool = True):
+    def __init__(self, *, return_value: bool = True):
         self.return_value = return_value
         validator = ScorerPromptValidator(supported_data_types=["image_path"])
         super().__init__(validator=validator)
@@ -74,7 +73,7 @@ class MockTrueFalseScorer(TrueFalseScorer):
         """
         return self._create_identifier()
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         return [
             Score(
                 score_type="true_false",
@@ -93,7 +92,7 @@ class MockTrueFalseScorer(TrueFalseScorer):
 class MockFloatScaleScorer(FloatScaleScorer):
     """Mock FloatScaleScorer for testing"""
 
-    def __init__(self, return_value: float = 0.8):
+    def __init__(self, *, return_value: float = 0.8):
         self.return_value = return_value
         validator = ScorerPromptValidator(supported_data_types=["image_path"])
         super().__init__(validator=validator)
@@ -106,7 +105,7 @@ class MockFloatScaleScorer(FloatScaleScorer):
         """
         return self._create_identifier()
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         return [
             Score(
                 score_type="float_scale",
@@ -285,7 +284,7 @@ def test_video_scorer_default_num_frames():
 class MockAudioTrueFalseScorer(TrueFalseScorer):
     """Mock AudioTrueFalseScorer for testing video+audio integration"""
 
-    def __init__(self, return_value: bool = True):
+    def __init__(self, *, return_value: bool = True):
         self.return_value = return_value
         self.received_objective = None
         # Audio scorer needs to support audio_path data type
@@ -295,7 +294,7 @@ class MockAudioTrueFalseScorer(TrueFalseScorer):
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier()
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         self.received_objective = objective
         return [
             Score(

@@ -13,7 +13,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from inspect import signature
-from typing import TYPE_CHECKING, Any, Optional, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
@@ -219,22 +219,22 @@ class RedTeamAgent(Scenario):
     def __init__(
         self,
         *,
-        adversarial_chat: Optional[PromptTarget] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        scenario_result_id: Optional[str] = None,
+        adversarial_chat: PromptTarget | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        scenario_result_id: str | None = None,
         include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
         Initialize a Foundry Scenario with the specified attack strategies.
 
         Args:
-            adversarial_chat (Optional[PromptTarget]): Target for multi-turn attacks
+            adversarial_chat (PromptTarget | None): Target for multi-turn attacks
                 like Crescendo and RedTeaming. Additionally used for scoring defaults.
                 If not provided, a default OpenAI target will be created using environment variables.
-            attack_scoring_config (Optional[AttackScoringConfig]): Configuration for attack scoring,
+            attack_scoring_config (AttackScoringConfig | None): Configuration for attack scoring,
                 including the objective scorer and auxiliary scorers. If not provided, creates a default
                 configuration with a composite scorer using Azure Content Filter and SelfAsk Refusal scorers.
-            scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
+            scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
             include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
                 ``include_baseline`` to ``initialize_async`` instead.
 
@@ -280,13 +280,11 @@ class RedTeamAgent(Scenario):
         self,
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        scenario_strategies: Optional[
-            Sequence["FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy"]
-        ] = None,
-        dataset_config: Optional[DatasetConfiguration] = None,
+        scenario_strategies: Sequence["FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy"] | None = None,
+        dataset_config: DatasetConfiguration | None = None,
         max_concurrency: int = 4,
         max_retries: int = 0,
-        memory_labels: Optional[dict[str, str]] = None,
+        memory_labels: dict[str, str] | None = None,
         include_baseline: bool | None = None,
     ) -> None:
         """
@@ -299,10 +297,10 @@ class RedTeamAgent(Scenario):
                 objects (for pairing an attack with converters), or a mix of both. Passing
                 ScenarioCompositeStrategy is deprecated — use FoundryComposite instead.
                 If None, uses the default aggregate (EASY).
-            dataset_config (Optional[DatasetConfiguration]): Configuration for the dataset source.
+            dataset_config (DatasetConfiguration | None): Configuration for the dataset source.
             max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 4.
             max_retries (int): Maximum number of retries on failure. Defaults to 0.
-            memory_labels (Optional[dict[str, str]]): Labels to attach to all memory entries.
+            memory_labels (dict[str, str] | None): Labels to attach to all memory entries.
             include_baseline (bool | None): See ``Scenario.initialize_async``.
         """
         # This override exists purely for type-widening: FoundryComposite is a dataclass,
@@ -320,7 +318,7 @@ class RedTeamAgent(Scenario):
 
     def _prepare_strategies(  # type: ignore[ty:invalid-method-override]
         self,
-        strategies: "Optional[Sequence[FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy]]",
+        strategies: "Sequence[FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy] | None",
     ) -> list[ScenarioStrategy]:
         """
         Resolve strategies and build FoundryComposite objects.
@@ -396,7 +394,7 @@ class RedTeamAgent(Scenario):
         Resolve seed groups from the dataset configuration.
 
         Returns:
-            List[SeedGroup]: The resolved seed groups.
+            list[SeedGroup]: The resolved seed groups.
         """
         return self._dataset_config.get_all_seed_attack_groups()
 
@@ -405,7 +403,7 @@ class RedTeamAgent(Scenario):
         Retrieve the list of AtomicAttack instances in this scenario.
 
         Returns:
-            List[AtomicAttack]: The list of AtomicAttack instances in this scenario.
+            list[AtomicAttack]: The list of AtomicAttack instances in this scenario.
         """
         # Resolve seed groups now that initialize_async has been called
         self._seed_groups = self._resolve_seed_groups()
@@ -510,7 +508,7 @@ class RedTeamAgent(Scenario):
         *,
         attack_type: type[AttackStrategyT],
         converters: list[PromptConverter],
-        attack_kwargs: Optional[dict[str, Any]] = None,
+        attack_kwargs: dict[str, Any] | None = None,
     ) -> AttackStrategyT:
         """
         Create an attack instance with the specified converters.
@@ -530,7 +528,7 @@ class RedTeamAgent(Scenario):
             attack_type (type[AttackStrategyT]): The attack strategy class to instantiate.
                 Must accept objective_target and attack_converter_config parameters.
             converters (list[PromptConverter]): List of converters to apply as request converters.
-            attack_kwargs (Optional[dict[str, Any]]): Additional attack-specific keyword arguments
+            attack_kwargs (dict[str, Any] | None): Additional attack-specific keyword arguments
                 to pass to the attack constructor (e.g., tree_width for TreeOfAttacksWithPruningAttack).
 
         Returns:

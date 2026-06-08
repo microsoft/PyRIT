@@ -3,7 +3,7 @@
 
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def get_required_value(*, env_var_name: str, passed_value: Any) -> Any:
     raise ValueError(f"Environment variable {env_var_name} is required")
 
 
-def get_non_required_value(*, env_var_name: str, passed_value: Optional[str] = None) -> str:
+def get_non_required_value(*, env_var_name: str, passed_value: str | None = None) -> str:
     """
     Get a non-required value from an environment variable or a passed value,
     preferring the passed value.

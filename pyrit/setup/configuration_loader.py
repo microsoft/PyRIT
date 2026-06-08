@@ -11,7 +11,7 @@ from YAML files and initializes PyRIT accordingly.
 import pathlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.path import DEFAULT_CONFIG_PATH
 from pyrit.common.yaml_loadable import YamlLoadable
@@ -29,8 +29,8 @@ if TYPE_CHECKING:
 
 # Type alias for YAML-serializable values that can be passed as initializer args
 # This matches what YAML can represent: primitives, lists, and nested dicts
-YamlPrimitive = Union[str, int, float, bool, None]
-YamlValue = Union[YamlPrimitive, list["YamlValue"], dict[str, "YamlValue"]]
+YamlPrimitive = str | int | float | bool | None
+YamlValue = YamlPrimitive | list["YamlValue"] | dict[str, "YamlValue"]
 
 # Mapping from snake_case config values to internal constants
 _MEMORY_DB_TYPE_MAP: dict[str, str] = {
@@ -51,7 +51,7 @@ class InitializerConfig:
     """
 
     name: str
-    args: Optional[dict[str, YamlValue]] = None
+    args: dict[str, YamlValue] | None = None
 
 
 @dataclass
@@ -77,7 +77,7 @@ class ScenarioConfig:
     """
 
     name: str
-    args: Optional[dict[str, YamlValue]] = None
+    args: dict[str, YamlValue] | None = None
 
 
 def _scenario_config_to_dict(config: ScenarioConfig) -> dict[str, Any]:
@@ -137,16 +137,16 @@ class ConfigurationLoader(YamlLoadable):
     """
 
     memory_db_type: str = "sqlite"
-    initializers: list[Union[str, dict[str, Any]]] = field(default_factory=list)
-    initialization_scripts: Optional[list[str]] = None
-    env_files: Optional[list[str]] = None
+    initializers: list[str | dict[str, Any]] = field(default_factory=list)
+    initialization_scripts: list[str] | None = None
+    env_files: list[str] | None = None
     silent: bool = False
-    operator: Optional[str] = None
-    operation: Optional[str] = None
-    scenario: Optional[Union[str, dict[str, Any]]] = None
+    operator: str | None = None
+    operation: str | None = None
+    scenario: str | dict[str, Any] | None = None
     max_concurrent_scenario_runs: int = 3
     allow_custom_initializers: bool = False
-    server: Optional[dict[str, Any]] = None
+    server: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -229,7 +229,7 @@ class ConfigurationLoader(YamlLoadable):
             ValueError: For any other shape.
         """
         if self.scenario is None:
-            self._scenario_config: Optional[ScenarioConfig] = None
+            self._scenario_config: ScenarioConfig | None = None
             return
 
         if isinstance(self.scenario, str):
@@ -263,7 +263,7 @@ class ConfigurationLoader(YamlLoadable):
             ValueError: If ``server`` is not ``None`` or a dict, or if ``url`` is not a string.
         """
         if self.server is None:
-            self._server_config: Optional[ServerConfig] = None
+            self._server_config: ServerConfig | None = None
             return
 
         if isinstance(self.server, dict):
@@ -276,12 +276,12 @@ class ConfigurationLoader(YamlLoadable):
         raise ValueError(f"Server entry must be a dict, got: {type(self.server).__name__}")
 
     @property
-    def server_config(self) -> Optional[ServerConfig]:
+    def server_config(self) -> ServerConfig | None:
         """The normalized ``server:`` block, or ``None`` when not configured."""
         return self._server_config
 
     @property
-    def scenario_config(self) -> Optional[ScenarioConfig]:
+    def scenario_config(self) -> ScenarioConfig | None:
         """The normalized ``scenario:`` block, or ``None`` when not configured."""
         return self._scenario_config
 
@@ -313,12 +313,12 @@ class ConfigurationLoader(YamlLoadable):
 
     @staticmethod
     def load_with_overrides(
-        config_file: Optional[pathlib.Path] = None,
+        config_file: pathlib.Path | None = None,
         *,
-        memory_db_type: Optional[str] = None,
-        initializers: Optional[Sequence[Union[str, dict[str, Any]]]] = None,
-        initialization_scripts: Optional[Sequence[str]] = None,
-        env_files: Optional[Sequence[str]] = None,
+        memory_db_type: str | None = None,
+        initializers: Sequence[str | dict[str, Any]] | None = None,
+        initialization_scripts: Sequence[str] | None = None,
+        env_files: Sequence[str] | None = None,
     ) -> "ConfigurationLoader":
         """
         Load configuration with optional overrides.
@@ -487,7 +487,7 @@ class ConfigurationLoader(YamlLoadable):
 
         return resolved
 
-    def resolve_initialization_scripts(self) -> Optional[Sequence[pathlib.Path]]:
+    def resolve_initialization_scripts(self) -> Sequence[pathlib.Path] | None:
         """
         Resolve initialization script paths.
 
@@ -512,7 +512,7 @@ class ConfigurationLoader(YamlLoadable):
 
         return resolved
 
-    def resolve_env_files(self) -> Optional[Sequence[pathlib.Path]]:
+    def resolve_env_files(self) -> Sequence[pathlib.Path] | None:
         """
         Resolve environment file paths.
 
@@ -564,7 +564,7 @@ class ConfigurationLoader(YamlLoadable):
 
 
 async def initialize_from_config_async(
-    config_path: Optional[Union[str, pathlib.Path]] = None,
+    config_path: str | pathlib.Path | None = None,
 ) -> ConfigurationLoader:
     """
     Initialize PyRIT from a configuration file.

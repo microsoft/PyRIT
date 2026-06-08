@@ -232,19 +232,22 @@ class Seed(BaseModel):
     async def set_sha256_value_async(self) -> None:
         """
         Compute the SHA256 hash value asynchronously.
-        It should be called after prompt `value` is serialized to text,
-        as file paths used in the `value` may have changed from local to memory storage paths.
 
-        Note, this method is async due to the blob retrieval. And because of that, we opted
-        to take it out of main and setter functions. The disadvantage is that it must be explicitly called.
+        .. deprecated:: 0.15.0
+            Use ``pyrit.memory.storage.serializers.set_seed_sha256_async`` instead.
+            This method will be removed in 0.17.0.
         """
-        from pyrit.models.data_type_serializer import data_serializer_factory
+        import importlib
 
-        original_serializer = data_serializer_factory(
-            category="seed-prompt-entries", data_type=self.data_type, value=self.value
+        from pyrit.common.deprecation import print_deprecation_message
+
+        print_deprecation_message(
+            old_item="pyrit.models.seeds.seed.Seed.set_sha256_value_async",
+            new_item="pyrit.memory.storage.serializers.set_seed_sha256_async",
+            removed_in="0.17.0",
         )
-
-        self.value_sha256 = await original_serializer.get_sha256_async()
+        serializers = importlib.import_module("pyrit.memory.storage.serializers")
+        await serializers.set_seed_sha256_async(self)
 
     @staticmethod
     def escape_for_jinja(value: str) -> str:

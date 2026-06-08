@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -29,8 +28,8 @@ class RetryEvent(BaseModel):
     exception_type: str = ""
     exception_message: str = ""
     component_role: str = ""
-    component_name: Optional[str] = None
-    endpoint: Optional[str] = None
+    component_name: str | None = None
+    endpoint: str | None = None
     elapsed_seconds: float = 0.0
 
     def to_dict(self) -> dict:
@@ -38,7 +37,7 @@ class RetryEvent(BaseModel):
         Serialize to a dictionary suitable for JSON storage.
 
         .. deprecated::
-            Use :meth:`model_dump` with ``mode="json"`` instead. This method
+            Use ``model_dump`` with ``mode="json"`` instead. This method
             will be removed in version 0.16.0.
 
         Returns:
@@ -57,7 +56,7 @@ class RetryEvent(BaseModel):
         Deserialize from a dictionary.
 
         .. deprecated::
-            Use :meth:`model_validate` instead. This method will be removed
+            Use ``model_validate`` instead. This method will be removed
             in version 0.16.0.
 
         Args:

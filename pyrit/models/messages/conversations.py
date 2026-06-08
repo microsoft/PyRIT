@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
 from pyrit.models.messages.message import Message
 from pyrit.models.messages.message_piece import MessagePiece
@@ -178,7 +178,7 @@ def construct_response_from_request(
     request: MessagePiece,
     response_text_pieces: list[str],
     response_type: PromptDataType = "text",
-    prompt_metadata: Optional[dict[str, Union[str, int]]] = None,
+    prompt_metadata: dict[str, str | int] | None = None,
     error: PromptResponseError = "none",
 ) -> Message:
     """
@@ -188,7 +188,7 @@ def construct_response_from_request(
         request (MessagePiece): Source request message piece.
         response_text_pieces (list[str]): Response values to include.
         response_type (PromptDataType): Data type for original and converted response values.
-        prompt_metadata (Optional[Dict[str, Union[str, int]]]): Additional metadata to merge.
+        prompt_metadata (dict[str, str | int] | None): Additional metadata to merge.
         error (PromptResponseError): Error classification for the response.
 
     Returns:

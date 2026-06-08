@@ -10,7 +10,7 @@ def read_json(file: IO[Any]) -> list[dict[str, str]]:
     Read a JSON file and return its content.
 
     Returns:
-        List[Dict[str, str]]: Parsed JSON content.
+        list[dict[str, str]]: Parsed JSON content.
     """
     return cast("list[dict[str, str]]", json.load(file))
 
@@ -21,7 +21,7 @@ def write_json(file: IO[Any], examples: list[dict[str, str]]) -> None:
 
     Args:
         file: A file-like object opened for writing JSON data.
-        examples (List[Dict[str, str]]): List of dictionaries to write as JSON.
+        examples (list[dict[str, str]]): List of dictionaries to write as JSON.
     """
     json.dump(examples, file)
 
@@ -31,7 +31,7 @@ def read_jsonl(file: IO[Any]) -> list[dict[str, str]]:
     Read a JSONL file and return its content.
 
     Returns:
-        List[Dict[str, str]]: Parsed JSONL content.
+        list[dict[str, str]]: Parsed JSONL content.
     """
     return [json.loads(line) for line in file if line.strip()]
 
@@ -42,7 +42,7 @@ def write_jsonl(file: IO[Any], examples: list[dict[str, str]]) -> None:
 
     Args:
         file: A file-like object opened for writing JSONL data.
-        examples (List[Dict[str, str]]): List of dictionaries to write as JSONL.
+        examples (list[dict[str, str]]): List of dictionaries to write as JSONL.
     """
     for example in examples:
         file.write(json.dumps(example) + "\n")

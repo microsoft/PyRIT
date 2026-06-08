@@ -10,7 +10,7 @@ import traceback
 import uuid
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Optional, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
 
 from pyrit.common.logger import logger
 from pyrit.exceptions.retry_collector import (
@@ -68,16 +68,16 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     related_conversations: set[ConversationReference] = field(default_factory=set)
 
     # Mutable overrides for attacks that generate these values internally
-    _next_message_override: Optional[Message] = None
-    _prepended_conversation_override: Optional[list[Message]] = None
-    _memory_labels_override: Optional[dict[str, str]] = None
+    _next_message_override: Message | None = None
+    _prepended_conversation_override: list[Message] | None = None
+    _memory_labels_override: dict[str, str] | None = None
 
     # Optional attribution from an upstream orchestrator (e.g. Scenario). When
     # set, the persistence path stamps attribution_parent_id + attribution_data
     # onto the resulting AttackResult so it can be located later for hydration
     # and resume. Set by AttackExecutor per-task before scheduling. Stays None
     # for ad-hoc/direct attack execution outside any orchestrator.
-    _attribution: Optional[AttackResultAttribution] = None
+    _attribution: AttackResultAttribution | None = None
 
     # Convenience properties that delegate to params or overrides
     @property
@@ -115,7 +115,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         self._prepended_conversation_override = value
 
     @property
-    def next_message(self) -> Optional[Message]:
+    def next_message(self) -> Message | None:
         """Optional message to send to the objective target."""
         # Check override first (for attacks that generate internally)
         if self._next_message_override is not None:
@@ -126,7 +126,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         return None
 
     @next_message.setter
-    def next_message(self, value: Optional[Message]) -> None:
+    def next_message(self, value: Message | None) -> None:
         """Set the next message (for attacks that generate internally)."""
         self._next_message_override = value
 
@@ -348,11 +348,28 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     """
     Abstract base class for attack strategies.
     Defines the interface for executing attacks and handling results.
+
+    Subclasses must use the keyword-only constructor shape
+    (``def __init__(self, *, ...)``); the contract is enforced at class
+    definition time via ``enforce_keyword_only_init``. See
+    ``.github/instructions/attacks.instructions.md`` for the full contract.
     """
 
     #: Capability requirements placed on ``objective_target``. Subclasses
     #: override to declare what the attack needs. Validated in ``__init__``.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Enforce the keyword-only constructor contract on subclasses.
+
+        See ``.github/instructions/attacks.instructions.md`` for the contract.
+        """
+        super().__init_subclass__(**kwargs)
+        # Local import to avoid a circular dependency at package init time.
+        from pyrit.common.brick_contract import enforce_keyword_only_init
+
+        enforce_keyword_only_init(cls, base_name="AttackStrategy")
 
     def __init__(
         self,
@@ -368,7 +385,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Args:
             objective_target (PromptTarget): The target system to attack.
             context_type (type[AttackStrategyContextT]): The type of context this strategy operates on.
-            params_type (Type[AttackParamsT]): The type of parameters this strategy accepts.
+            params_type (type[AttackParamsT]): The type of parameters this strategy accepts.
                 Defaults to AttackParameters. Use AttackParameters.excluding() to create
                 a params type that rejects certain fields.
             logger (logging.Logger): Logger instance for logging events.
@@ -392,8 +409,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     def _create_identifier(
         self,
         *,
-        params: Optional[dict[str, Any]] = None,
-        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+        params: dict[str, Any] | None = None,
+        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct the attack strategy identifier.
@@ -403,15 +420,15 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         additional params or children.
 
         Args:
-            params (Optional[Dict[str, Any]]): Additional behavioral parameters from
+            params (dict[str, Any] | None): Additional behavioral parameters from
                 the subclass.
-            children (Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]]):
+            children (dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None):
                 Named child component identifiers.
 
         Returns:
             ComponentIdentifier: The identifier for this attack strategy.
         """
-        all_children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = {
+        all_children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] = {
             "objective_target": self.get_objective_target().get_identifier(),
         }
 
@@ -455,7 +472,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Get the parameters type for this attack strategy.
 
         Returns:
-            Type[AttackParameters]: The parameters type this strategy accepts.
+            type[AttackParameters]: The parameters type this strategy accepts.
         """
         return self._params_type
 
@@ -468,12 +485,12 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         """
         return self._objective_target
 
-    def get_attack_scoring_config(self) -> Optional[AttackScoringConfig]:
+    def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
         Get the attack scoring configuration used by this strategy.
 
         Returns:
-            Optional[AttackScoringConfig]: The scoring configuration, or None if not applicable.
+            AttackScoringConfig | None: The scoring configuration, or None if not applicable.
 
         Note:
             Subclasses that use scoring should override this method to return their
@@ -495,9 +512,9 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         self,
         *,
         objective: str,
-        next_message: Optional[Message] = None,
-        prepended_conversation: Optional[list[Message]] = None,
-        memory_labels: Optional[dict[str, str]] = None,
+        next_message: Message | None = None,
+        prepended_conversation: list[Message] | None = None,
+        memory_labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> AttackStrategyResultT: ...
 
@@ -521,9 +538,9 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
 
         Args:
             objective (str): The objective of the attack.
-            next_message (Optional[Message]): Message to send to the target.
-            prepended_conversation (Optional[List[Message]]): Conversation to prepend.
-            memory_labels (Optional[Dict[str, str]]): Memory labels for the attack context.
+            next_message (Message | None): Message to send to the target.
+            prepended_conversation (list[Message] | None): Conversation to prepend.
+            memory_labels (dict[str, str] | None): Memory labels for the attack context.
             **kwargs: Additional context-specific parameters (conversation_id, system_prompt, etc.).
 
         Returns:

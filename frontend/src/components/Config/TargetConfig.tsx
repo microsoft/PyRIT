@@ -3,6 +3,7 @@ import {
   tokens,
   Text,
   Button,
+  Link,
   Spinner,
 } from '@fluentui/react-components'
 import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
@@ -107,9 +108,9 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
             to auto-populate targets from your <code>.env</code> and <code>.env.local</code> files.
             For example, add <code>airt</code> to the <code>initializers</code> list to register
             Azure OpenAI targets automatically. See the{' '}
-            <a href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example" target="_blank" rel="noopener noreferrer">
+            <Link href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example" target="_blank" inline>
               .pyrit_conf_example
-            </a>{' '}
+            </Link>{' '}
             for details.
           </Text>
           <Button

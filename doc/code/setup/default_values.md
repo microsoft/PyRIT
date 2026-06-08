@@ -23,7 +23,7 @@ from pyrit.common.apply_defaults import apply_defaults
 
 class MyConverter(PromptConverter):
     @apply_defaults
-    def __init__(self, *, converter_target: Optional[PromptTarget] = None, temperature: Optional[float] = None):
+    def __init__(self, *, converter_target: PromptTarget | None = None, temperature: float | None = None):
         self.converter_target = converter_target
         self.temperature = temperature
 ```

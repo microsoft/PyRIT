@@ -3,7 +3,7 @@
 
 import logging
 import subprocess as sp
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -20,14 +20,14 @@ _DEFAULT_PARAM_KEYS: list[str] = [
 def log_params(
     *,
     params: Any,
-    param_keys: Optional[list[str]] = None,
+    param_keys: list[str] | None = None,
 ) -> None:
     """
     Log selected parameters via Python logging.
 
     Args:
         params (Any): A config object with a `to_dict()` method containing all parameters.
-        param_keys (Optional[list[str]]): Keys to extract and log. Defaults to standard GCG training keys.
+        param_keys (list[str] | None): Keys to extract and log. Defaults to standard GCG training keys.
     """
     if param_keys is None:
         param_keys = _DEFAULT_PARAM_KEYS

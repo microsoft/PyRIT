@@ -10,7 +10,8 @@ from PIL import Image, ImageFont
 from PIL.ImageFont import FreeTypeFont
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models import ComponentIdentifier, PromptDataType, data_serializer_factory
+from pyrit.memory import data_serializer_factory
+from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.base_image_text_converter import _BaseImageTextConverter
 from pyrit.prompt_converter.prompt_converter import ConverterResult
 
@@ -192,7 +193,7 @@ class AddImageTextConverter(_BaseImageTextConverter):
         if self._font_load_failed:
             return cast("FreeTypeFont", ImageFont.load_default(size=size))
         try:
-            return ImageFont.truetype(self._font_name, size)
+            return ImageFont.truetype(self._font_name, size)  # type: ignore[ty:invalid-argument-type]
         except OSError:
             logger.warning(f"Cannot open font resource: {self._font_name}. Using Pillow built-in default font.")
             self._font_load_failed = True

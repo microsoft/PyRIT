@@ -13,7 +13,7 @@ The azure-ai-evaluation red team module uses the scenario framework for attack e
 
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.scenario import ScenarioStrategy
-from pyrit.scenario.foundry import FoundryStrategy, RedTeamAgent
+from pyrit.scenario.foundry import FoundryStrategy, RedTeamAgent  # type: ignore[ty:unresolved-import]
 
 
 class TestRedTeamStrategyContract:
@@ -37,7 +37,7 @@ class TestDatasetConfigurationContract:
 
     def test_dataset_configuration_importable(self):
         """DatasetConfigurationBuilder produces DatasetConfiguration."""
-        from pyrit.scenario import DatasetConfiguration  # noqa: F811
+        from pyrit.scenario import DatasetConfiguration
 
         assert DatasetConfiguration is not None
 
@@ -57,7 +57,7 @@ class TestScenarioResultContract:
 
     def test_scenario_result_importable(self):
         """ScenarioOrchestrator reads ScenarioResult."""
-        from pyrit.models.scenario_result import ScenarioResult  # noqa: F811
+        from pyrit.models.scenario_result import ScenarioResult
 
         assert ScenarioResult is not None
 

@@ -167,7 +167,7 @@ class ConcreteScenario(Scenario):
 
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
-    def __init__(self, atomic_attacks_to_return=None, objective_scorer=None, **kwargs):
+    def __init__(self, *, atomic_attacks_to_return=None, objective_scorer=None, **kwargs):
         strategy_class = kwargs.pop("strategy_class", None) or _build_test_strategy()
 
         # Create a default mock scorer if not provided

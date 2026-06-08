@@ -7,7 +7,12 @@ export interface MessageAttachment {
   name: string
   url: string
   mimeType: string
-  size: number
+  /**
+   * Decoded byte count when known. Omitted for path / URL / scheme-prefixed
+   * values (e.g. `/api/media?path=...`) where the value is a reference, not
+   * the payload, so its string length would be meaningless.
+   */
+  size?: number
   file?: File
   /** Backend piece ID — preserved so remix/copy can trace back to the original piece */
   pieceId?: string

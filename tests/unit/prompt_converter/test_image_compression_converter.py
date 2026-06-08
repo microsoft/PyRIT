@@ -362,7 +362,7 @@ async def test_image_compression_converter_corrupted_image_bytes():
         mock_serializer = AsyncMock()
         mock_serializer.read_data_async.return_value = corrupted_bytes
         mock_factory.return_value = mock_serializer
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             await converter.convert_async(prompt="corrupted.png", input_type="image_path")
 
 

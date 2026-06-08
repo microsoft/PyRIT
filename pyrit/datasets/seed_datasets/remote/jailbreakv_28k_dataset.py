@@ -6,7 +6,7 @@ import pathlib
 import uuid
 import zipfile
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -87,7 +87,7 @@ class _JailbreakV28KDataset(_RemoteDatasetLoader):
         source: str = "JailbreakV-28K/JailBreakV-28k",
         zip_dir: str = str(pathlib.Path.home()),
         split: Literal["JailBreakV_28K", "mini_JailBreakV_28K"] = "mini_JailBreakV_28K",
-        harm_categories: Optional[list[_HarmCategory]] = None,
+        harm_categories: list[_HarmCategory] | None = None,
     ) -> None:
         """
         Initialize the JailBreakV-28K dataset loader.
