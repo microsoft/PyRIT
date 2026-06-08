@@ -306,7 +306,12 @@ export default function FeedbackDialog({ open, onClose, context }: FeedbackDialo
                   />
                 </Field>
 
-                <SecretWarning matches={secretMatches} />
+                <SecretWarning
+                  matches={secretMatches}
+                  confirmOpen={confirmOpen}
+                  onConfirmOpenChange={setConfirmOpen}
+                  onConfirmSubmit={fireSubmit}
+                />
 
                 <Text className={styles.helper}>
                   Continuing opens a new tab on github.com with this form pre-filled. You
@@ -336,44 +341,6 @@ export default function FeedbackDialog({ open, onClose, context }: FeedbackDialo
                 data-testid="feedback-submit-button"
               >
                 Continue on GitHub
-              </Button>
-            </DialogActions>
-          </DialogBody>
-        </DialogSurface>
-      </Dialog>
-
-      <Dialog
-        open={confirmOpen}
-        onOpenChange={(_, data) => setConfirmOpen(data.open)}
-      >
-        <DialogSurface data-testid="feedback-confirm-dialog">
-          <DialogBody>
-            <DialogTitle>Possible secret in your feedback</DialogTitle>
-            <DialogContent>
-              <Text>
-                Your feedback looks like it may contain:{' '}
-                <strong>{secretMatches.map((m) => m.label).join(', ')}</strong>.
-              </Text>
-              <br />
-              <Text>
-                The GitHub issue at <strong>github.com/microsoft/PyRIT</strong> is public —
-                anyone can read it. Are you sure you want to continue?
-              </Text>
-            </DialogContent>
-            <DialogActions>
-              <Button
-                appearance="primary"
-                onClick={() => setConfirmOpen(false)}
-                data-testid="feedback-confirm-cancel"
-              >
-                Go back and fix
-              </Button>
-              <Button
-                appearance="secondary"
-                onClick={fireSubmit}
-                data-testid="feedback-confirm-submit"
-              >
-                Submit anyway
               </Button>
             </DialogActions>
           </DialogBody>

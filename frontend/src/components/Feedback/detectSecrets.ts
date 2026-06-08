@@ -97,7 +97,7 @@ const RULES: SecretRule[] = [
     id: 'inline-credential',
     label: 'Inline credential (password/secret/api_key = ...)',
     pattern:
-      /\b(?:password|passwd|pwd|secret|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret|api[_-]?token)\s*[:=]\s*["']?[A-Za-z0-9._/+=\-]{6,}["']?/gi,
+      /\b(?:password|passwd|pwd|secret|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret|api[_-]?token)\s*[:=]\s*["']?[A-Za-z0-9._/+=-]{6,}["']?/gi,
   },
   {
     id: 'huggingface-token',
