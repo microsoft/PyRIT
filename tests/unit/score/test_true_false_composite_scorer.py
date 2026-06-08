@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -46,7 +45,7 @@ class MockScorer(TrueFalseScorer):
         """
         return self._create_identifier()
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         return [
             Score(
                 score_value=str(self._score_value),
@@ -154,9 +153,7 @@ def test_composite_scorer_invalid_scorer_type():
         def _build_identifier(self) -> ComponentIdentifier:
             return self._create_identifier()
 
-        async def _score_piece_async(
-            self, message_piece: MessagePiece, *, objective: Optional[str] = None
-        ) -> list[Score]:
+        async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
             return []
 
     with pytest.raises(ValueError, match="All scorers must be true_false scorers"):

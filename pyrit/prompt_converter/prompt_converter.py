@@ -6,7 +6,7 @@ import asyncio
 import inspect
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, get_args
 
 from pyrit import prompt_converter
 from pyrit.models import ComponentIdentifier, Identifiable, PromptDataType
@@ -56,7 +56,7 @@ class PromptConverter(Identifiable):
     #: ``super().__init__(converter_target=...)`` so the base class can validate it.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
-    _identifier: Optional[ComponentIdentifier] = None
+    _identifier: ComponentIdentifier | None = None
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
@@ -94,7 +94,7 @@ class PromptConverter(Identifiable):
         Initialize the prompt converter.
 
         Args:
-            converter_target (Optional[PromptTarget]): Target used by the converter, if any. When
+            converter_target (PromptTarget | None): Target used by the converter, if any. When
                 provided, it is validated against ``TARGET_REQUIREMENTS``.
         """
         super().__init__()
@@ -201,8 +201,8 @@ class PromptConverter(Identifiable):
     def _create_identifier(
         self,
         *,
-        params: Optional[dict[str, Any]] = None,
-        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+        params: dict[str, Any] | None = None,
+        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct and return the converter identifier.
@@ -215,9 +215,9 @@ class PromptConverter(Identifiable):
         to set the identifier with their specific parameters.
 
         Args:
-            params (Optional[Dict[str, Any]]): Additional behavioral parameters from
+            params (dict[str, Any] | None): Additional behavioral parameters from
                 the subclass (e.g., font, encoding_func). Merged into the base params.
-            children (Optional[Dict[str, Union[ComponentIdentifier, List[ComponentIdentifier]]]]):
+            children (dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None):
                 Named child component identifiers (e.g., sub-converters, converter targets).
 
         Returns:

@@ -5,7 +5,7 @@ import io
 import logging
 import uuid
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
@@ -178,9 +178,9 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         self,
         *,
         variant: MMSafetyBenchVariant = MMSafetyBenchVariant.SD_TYPOGRAPHY,
-        categories: Optional[list[MMSafetyBenchCategory]] = None,
+        categories: list[MMSafetyBenchCategory] | None = None,
         use_tiny: bool = False,
-        token: Optional[str] = None,
+        token: str | None = None,
     ) -> None:
         """
         Initialize the MM-SafetyBench dataset loader.

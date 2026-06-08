@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Literal
 
 from typing_extensions import override
 
@@ -58,7 +58,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
         self,
         *,
         source: str = "Babelscape/ALERT",
-        category: Optional[Literal["alert", "alert_adversarial"]] = "alert_adversarial",
+        category: Literal["alert", "alert_adversarial"] | None = "alert_adversarial",
     ) -> None:
         """
         Initialize the Babelscape ALERT dataset loader.

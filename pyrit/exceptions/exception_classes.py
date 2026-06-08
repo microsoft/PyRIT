@@ -6,7 +6,7 @@ import logging
 import os
 from abc import ABC
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any
 
 from openai import RateLimitError
 from tenacity import (
@@ -176,14 +176,14 @@ class RateLimitException(PyritException):
 class ServerErrorException(PyritException):
     """Exception class for opaque 5xx errors returned by the server."""
 
-    def __init__(self, *, status_code: int = 500, message: str = "Server Error", body: Optional[str] = None) -> None:
+    def __init__(self, *, status_code: int = 500, message: str = "Server Error", body: str | None = None) -> None:
         """
         Initialize a server error exception.
 
         Args:
             status_code (int): Status code for the error.
             message (str): Error message.
-            body (Optional[str]): Optional raw server response body.
+            body (str | None): Optional raw server response body.
 
         """
         super().__init__(status_code=status_code, message=message)
@@ -247,7 +247,7 @@ class ExperimentalWarning(FutureWarning):
 
 
 def pyrit_custom_result_retry(
-    retry_function: Callable[..., bool], retry_max_num_attempts: Optional[int] = None
+    retry_function: Callable[..., bool], retry_max_num_attempts: int | None = None
 ) -> Callable[..., Any]:
     """
     Apply retry logic with exponential backoff to a function.

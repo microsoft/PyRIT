@@ -4,7 +4,7 @@
 import logging
 import uuid
 from enum import Enum
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Literal
 
 from typing_extensions import override
 
@@ -115,7 +115,7 @@ class _SIUODataset(_RemoteDatasetLoader):
         *,
         source: str = GEN_JSON_URL,
         source_type: Literal["public_url", "file"] = "public_url",
-        categories: Optional[list[SIUOCategory]] = None,
+        categories: list[SIUOCategory] | None = None,
     ) -> None:
         """
         Initialize the SIUO dataset loader.
@@ -125,7 +125,7 @@ class _SIUODataset(_RemoteDatasetLoader):
                 HuggingFace mirror pinned to a commit SHA for reproducibility.
             source_type (Literal["public_url", "file"]): Whether source is a
                 public URL or a local file path. Defaults to 'public_url'.
-            categories (Optional[list[SIUOCategory]]): Optional filter; only rows
+            categories (list[SIUOCategory] | None): Optional filter; only rows
                 whose category matches one of these enum values are included.
                 If None, every category is included.
 

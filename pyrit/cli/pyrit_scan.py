@@ -17,7 +17,7 @@ import logging
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.cli._cli_args import (
     ARG_HELP,
@@ -332,7 +332,7 @@ def _extract_scenario_args(*, parsed: Namespace) -> dict[str, Any]:
     }
 
 
-def parse_args(args: Optional[list[str]] = None) -> Namespace:
+def parse_args(args: list[str] | None = None) -> Namespace:
     """
     Parse command-line arguments (pass 1 — tolerant of scenario-declared flags).
 
@@ -760,7 +760,7 @@ async def _run_async(*, parsed_args: Namespace) -> int:
         return 1
 
 
-def main(args: Optional[list[str]] = None) -> int:
+def main(args: list[str] | None = None) -> int:
     """
     Start the PyRIT scanner CLI.
 

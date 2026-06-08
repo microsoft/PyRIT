@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
 from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
@@ -23,7 +22,7 @@ class AudioTrueFalseScorer(TrueFalseScorer):
         self,
         *,
         text_capable_scorer: TrueFalseScorer,
-        validator: Optional[ScorerPromptValidator] = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the AudioTrueFalseScorer.
@@ -54,7 +53,7 @@ class AudioTrueFalseScorer(TrueFalseScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score an audio file by transcribing it and scoring the transcript.
 

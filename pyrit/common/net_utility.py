@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Any, Literal, Optional, cast, overload
+from typing import Any, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 import httpx
@@ -88,10 +88,10 @@ async def make_request_and_raise_if_error_async(
     method: str,
     post_type: PostType = "json",
     debug: bool = False,
-    extra_url_parameters: Optional[dict[str, str]] = None,
-    request_body: Optional[dict[str, object]] = None,
-    files: Optional[dict[str, tuple[str, bytes, str]]] = None,
-    headers: Optional[dict[str, str]] = None,
+    extra_url_parameters: dict[str, str] | None = None,
+    request_body: dict[str, object] | None = None,
+    files: dict[str, tuple[str, bytes, str]] | None = None,
+    headers: dict[str, str] | None = None,
     **httpx_client_kwargs: Any,
 ) -> httpx.Response:
     """

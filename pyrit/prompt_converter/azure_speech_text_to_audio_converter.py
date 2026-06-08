@@ -3,14 +3,15 @@
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     import azure.cognitiveservices.speech as speechsdk  # noqa: F401
 
 from pyrit.auth.azure_auth import get_speech_config_async
 from pyrit.common import default_values
-from pyrit.models import ComponentIdentifier, PromptDataType, data_serializer_factory
+from pyrit.memory import data_serializer_factory
+from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 logger = logging.getLogger(__name__)
@@ -47,9 +48,9 @@ class AzureSpeechTextToAudioConverter(PromptConverter):
     def __init__(
         self,
         *,
-        azure_speech_region: Optional[str] = None,
-        azure_speech_key: Optional[str | Callable[[], str | Awaitable[str]]] = None,
-        azure_speech_resource_id: Optional[str] = None,
+        azure_speech_region: str | None = None,
+        azure_speech_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        azure_speech_resource_id: str | None = None,
         synthesis_language: str = "en_US",
         synthesis_voice_name: str = "en-US-AvaNeural",
         output_format: AzureSpeechAudioFormat = "wav",

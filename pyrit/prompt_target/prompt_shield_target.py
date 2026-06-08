@@ -4,7 +4,7 @@
 import json
 import logging
 from collections.abc import Callable
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pyrit.common import default_values, net_utility
 from pyrit.models import (
@@ -62,12 +62,12 @@ class PromptShieldTarget(PromptTarget):
 
     def __init__(
         self,
-        endpoint: Optional[str] = None,
-        api_key: Optional[str | Callable[[], str]] = None,
-        api_version: Optional[str] = "2024-09-01",
-        field: Optional[PromptShieldEntryField] = None,
-        max_requests_per_minute: Optional[int] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        endpoint: str | None = None,
+        api_key: str | Callable[[], str] | None = None,
+        api_version: str | None = "2024-09-01",
+        field: PromptShieldEntryField | None = None,
+        max_requests_per_minute: int | None = None,
+        custom_configuration: TargetConfiguration | None = None,
     ) -> None:
         """
         Class that initializes an Azure Content Safety Prompt Shield Target.

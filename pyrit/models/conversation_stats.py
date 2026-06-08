@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from datetime import datetime
-from typing import ClassVar, Optional
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -29,7 +29,7 @@ class ConversationStats(BaseModel):
     """
 
     message_count: int = 0
-    last_message_preview: Optional[str] = None
-    last_message_data_type: Optional[PromptDataType] = None
+    last_message_preview: str | None = None
+    last_message_data_type: PromptDataType | None = None
     labels: dict[str, str] = Field(default_factory=dict)
-    created_at: Optional[datetime] = None
+    created_at: datetime | None = None

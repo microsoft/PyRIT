@@ -26,7 +26,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
 
@@ -107,8 +107,8 @@ class SequentialChildAttack:
 
     strategy: AttackStrategy[Any, AttackResult]
     seed_group: SeedAttackGroup
-    adversarial_chat: Optional[PromptTarget] = None
-    objective_scorer: Optional[TrueFalseScorer] = None
+    adversarial_chat: PromptTarget | None = None
+    objective_scorer: TrueFalseScorer | None = None
     memory_labels: Mapping[str, str] = field(default_factory=dict)
 
 
@@ -288,7 +288,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         *,
         child_attack: SequentialChildAttack,
         memory_labels: dict[str, str],
-        attribution: Optional[AttackResultAttribution] = None,
+        attribution: AttackResultAttribution | None = None,
     ) -> AttackResult:
         """
         Execute one child attack via ``AttackExecutor`` and return its result.

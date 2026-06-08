@@ -10,7 +10,8 @@ from typing import cast
 from PIL import Image, ImageFont
 from PIL.ImageFont import FreeTypeFont
 
-from pyrit.models import ComponentIdentifier, PromptDataType, data_serializer_factory
+from pyrit.memory import data_serializer_factory
+from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.base_image_text_converter import _BaseImageTextConverter
 from pyrit.prompt_converter.prompt_converter import ConverterResult
 

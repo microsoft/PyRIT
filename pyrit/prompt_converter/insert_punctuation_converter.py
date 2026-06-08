@@ -4,7 +4,6 @@
 import random
 import re
 import string
-from typing import Optional
 
 from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
@@ -69,7 +68,7 @@ class InsertPunctuationConverter(PromptConverter):
         Space, letters, numbers, double punctuations are all invalid.
 
         Args:
-            punctuation_list (List[str]): List of punctuations to validate.
+            punctuation_list (list[str]): List of punctuations to validate.
 
         Returns:
             bool: valid list and valid punctuations
@@ -77,7 +76,7 @@ class InsertPunctuationConverter(PromptConverter):
         return all(char in string.punctuation for char in punctuation_list)
 
     async def convert_async(
-        self, *, prompt: str, input_type: PromptDataType = "text", punctuation_list: Optional[list[str]] = None
+        self, *, prompt: str, input_type: PromptDataType = "text", punctuation_list: list[str] | None = None
     ) -> ConverterResult:
         """
         Convert the given prompt by inserting punctuation.
@@ -85,7 +84,7 @@ class InsertPunctuationConverter(PromptConverter):
         Args:
             prompt (str): The text to convert.
             input_type (PromptDataType): The type of input data.
-            punctuation_list (Optional[List[str]]): List of punctuations to use for insertion.
+            punctuation_list (list[str] | None): List of punctuations to use for insertion.
 
         Returns:
             ConverterResult: The result containing an iteration of modified prompts.
@@ -115,7 +114,7 @@ class InsertPunctuationConverter(PromptConverter):
 
         Args:
             prompt (str): The text to modify.
-            punctuation_list (List[str]): List of punctuations for insertion.
+            punctuation_list (list[str]): List of punctuations for insertion.
 
         Returns:
             str: The modified prompt with inserted punctuation from helper method.
@@ -144,10 +143,10 @@ class InsertPunctuationConverter(PromptConverter):
         Insert punctuation between words in the prompt.
 
         Args:
-            words (List[str]): List of words and punctuations.
-            word_indices (List[int]): Indices of the actual words without punctuations in words list.
+            words (list[str]): List of words and punctuations.
+            word_indices (list[int]): Indices of the actual words without punctuations in words list.
             num_insertions (int): Number of punctuations to insert.
-            punctuation_list (List[str]): punctuations for insertion.
+            punctuation_list (list[str]): punctuations for insertion.
 
         Returns:
             str: The modified prompt with inserted punctuation.
@@ -171,7 +170,7 @@ class InsertPunctuationConverter(PromptConverter):
         Args:
             prompt (str): The prompt string
             num_insertions (int): Number of punctuations to insert.
-            punctuation_list (List[str]): punctuations for insertion.
+            punctuation_list (list[str]): punctuations for insertion.
 
         Returns:
             str: The modified prompt with inserted punctuation.

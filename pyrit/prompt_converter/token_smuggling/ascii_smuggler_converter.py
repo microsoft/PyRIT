@@ -62,7 +62,7 @@ class AsciiSmugglerConverter(SmugglerConverter):
             message (str): The message to encode.
 
         Returns:
-            Tuple[str, str]: A tuple with a summary of code points and the encoded message.
+            tuple[str, str]: A tuple with a summary of code points and the encoded message.
         """
         encoded = ""
         code_points = ""

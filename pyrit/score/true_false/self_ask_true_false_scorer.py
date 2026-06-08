@@ -4,7 +4,7 @@
 import enum
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 import yaml
 
@@ -109,10 +109,10 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
         self,
         *,
         chat_target: PromptTarget,
-        true_false_question_path: Optional[Union[str, Path]] = None,
-        true_false_question: Optional[TrueFalseQuestion] = None,
-        true_false_system_prompt_path: Optional[Union[str, Path]] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        true_false_question_path: str | Path | None = None,
+        true_false_question: TrueFalseQuestion | None = None,
+        true_false_system_prompt_path: str | Path | None = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
     ) -> None:
         """
@@ -122,10 +122,10 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
             chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
                 CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
                 possibly via normalization-pipeline adaptation).
-            true_false_question_path (Optional[Union[str, Path]]): The path to the true/false question file.
-            true_false_question (Optional[TrueFalseQuestion]): The true/false question object.
-            true_false_system_prompt_path (Optional[Union[str, Path]]): The path to the system prompt file.
-            validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
+            true_false_question_path (str | Path | None): The path to the true/false question file.
+            true_false_question (TrueFalseQuestion | None): The true/false question object.
+            true_false_system_prompt_path (str | Path | None): The path to the system prompt file.
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
 
@@ -194,13 +194,13 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the given message piece using "self-ask" for the chat target.
 
         Args:
             message_piece (MessagePiece): The message piece containing the text or image to be scored.
-            objective (Optional[str]): The objective to evaluate against (the original attacker model's objective).
+            objective (str | None): The objective to evaluate against (the original attacker model's objective).
                 Defaults to None.
 
         Returns:

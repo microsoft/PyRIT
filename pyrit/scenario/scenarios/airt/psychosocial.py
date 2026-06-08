@@ -4,7 +4,7 @@
 import logging
 import pathlib
 from dataclasses import dataclass
-from typing import Any, Optional, TypeVar
+from typing import Any, TypeVar
 
 import yaml
 
@@ -73,7 +73,7 @@ class ResolvedSeedData:
     """Helper dataclass for resolved seed data."""
 
     seed_groups: list[SeedAttackGroup]
-    subharm: Optional[str]
+    subharm: str | None
 
 
 class PsychosocialStrategy(ScenarioStrategy):
@@ -97,12 +97,12 @@ class PsychosocialStrategy(ScenarioStrategy):
     LicensedTherapist = ("licensed_therapist", set[str]())
 
     @property
-    def harm_category_filter(self) -> Optional[str]:
+    def harm_category_filter(self) -> str | None:
         """
         Get the harm category filter for this strategy.
 
         Returns:
-            Optional[str]: The harm category to filter seeds by, or "psychosocial" as default.
+            str | None: The harm category to filter seeds by, or "psychosocial" as default.
         """
         # For specific strategies, filter by the strategy value (which matches harm_categories in data)
         # otherwise, use psychosocial as the default for ALL strategy
@@ -179,11 +179,11 @@ class Psychosocial(Scenario):
     def __init__(
         self,
         *,
-        objectives: Optional[list[str]] = None,
-        adversarial_chat: Optional[PromptTarget] = None,
-        objective_scorer: Optional[FloatScaleThresholdScorer] = None,
-        scenario_result_id: Optional[str] = None,
-        subharm_configs: Optional[dict[str, SubharmConfig]] = None,
+        objectives: list[str] | None = None,
+        adversarial_chat: PromptTarget | None = None,
+        objective_scorer: FloatScaleThresholdScorer | None = None,
+        scenario_result_id: str | None = None,
+        subharm_configs: dict[str, SubharmConfig] | None = None,
         max_turns: int = 5,
         include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
@@ -191,16 +191,16 @@ class Psychosocial(Scenario):
         Initialize the Psychosocial Harms Scenario.
 
         Args:
-            objectives (Optional[List[str]]): DEPRECATED - Use dataset_config in initialize_async instead.
+            objectives (list[str] | None): DEPRECATED - Use dataset_config in initialize_async instead.
                 List of objectives to test for psychosocial harms.
-            adversarial_chat (Optional[PromptTarget]): Additionally used for adversarial attacks
+            adversarial_chat (PromptTarget | None): Additionally used for adversarial attacks
                 and scoring defaults. If not provided, a default OpenAI target will be created using
                 environment variables.
-            objective_scorer (Optional[FloatScaleThresholdScorer]): Scorer to evaluate attack success.
+            objective_scorer (FloatScaleThresholdScorer | None): Scorer to evaluate attack success.
                 If not provided, creates a default scorer for evaluating psychosocial harms
                 (crisis management, harmful facilitation, etc.).
-            scenario_result_id (Optional[str]): Optional ID of an existing scenario result to resume.
-            subharm_configs (Optional[Dict[str, SubharmConfig]]): Dictionary mapping subharm names
+            scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
+            subharm_configs (dict[str, SubharmConfig] | None): Dictionary mapping subharm names
                 to their SubharmConfig. Each seed in the dataset specifies its subharm in
                 harm_categories[0], which is used to look up the appropriate config. Example:
                 {
@@ -255,7 +255,7 @@ class Psychosocial(Scenario):
         # Store deprecated objectives for later resolution in _resolve_seed_groups
         self._deprecated_objectives = objectives
         # Will be resolved in _get_atomic_attacks_async
-        self._seed_groups: Optional[list[SeedAttackGroup]] = None
+        self._seed_groups: list[SeedAttackGroup] | None = None
 
     def _resolve_seed_groups(self) -> ResolvedSeedData:
         """
@@ -300,12 +300,12 @@ class Psychosocial(Scenario):
             subharm=harm_category_filter,
         )
 
-    def _extract_harm_category_filter(self) -> Optional[str]:
+    def _extract_harm_category_filter(self) -> str | None:
         """
         Extract harm category filter from scenario strategies.
 
         Returns:
-            Optional[str]: The harm category to filter by, or None if no filter is set.
+            str | None: The harm category to filter by, or None if no filter is set.
         """
         for strategy in self._scenario_strategies:
             if isinstance(strategy, PsychosocialStrategy):
@@ -324,11 +324,11 @@ class Psychosocial(Scenario):
         Filter seed groups by harm category.
 
         Args:
-            seed_groups (List[SeedAttackGroup]): List of seed attack groups to filter.
+            seed_groups (list[SeedAttackGroup]): List of seed attack groups to filter.
             harm_category (str): Harm category to filter by (e.g., 'imminent_crisis', 'psychosocial').
 
         Returns:
-            List[SeedAttackGroup]: Filtered seed groups containing only seeds with the specified harm category.
+            list[SeedAttackGroup]: Filtered seed groups containing only seeds with the specified harm category.
         """
         filtered_groups = []
         for group in seed_groups:
@@ -339,7 +339,7 @@ class Psychosocial(Scenario):
                 filtered_groups.append(SeedAttackGroup(seeds=filtered_seeds))
         return filtered_groups
 
-    def _get_scorer(self, subharm: Optional[str] = None) -> FloatScaleThresholdScorer:
+    def _get_scorer(self, subharm: str | None = None) -> FloatScaleThresholdScorer:
         """
         Create scorer for psychosocial harms evaluation.
 
@@ -349,7 +349,7 @@ class Psychosocial(Scenario):
         3. Avoids facilitating harmful requests
 
         Args:
-            subharm (Optional[str]): The specific subharm category to get a scorer for
+            subharm (str | None): The specific subharm category to get a scorer for
                 (e.g., 'imminent_crisis', 'dependency'). If provided and exists in
                 subharm_configs, uses that rubric. Otherwise falls back to default.
 
@@ -420,7 +420,7 @@ class Psychosocial(Scenario):
 
         return atomic_attacks
 
-    def _create_scoring_config(self, subharm: Optional[str]) -> AttackScoringConfig:
+    def _create_scoring_config(self, subharm: str | None) -> AttackScoringConfig:
         subharm_config = self._subharm_configs.get(subharm) if subharm else None
         scorer = self._get_scorer(subharm=subharm) if subharm_config else self._objective_scorer
         return AttackScoringConfig(objective_scorer=scorer)
@@ -470,7 +470,7 @@ class Psychosocial(Scenario):
         self,
         *,
         scoring_config: AttackScoringConfig,
-        subharm: Optional[str],
+        subharm: str | None,
         seed_groups: list[SeedAttackGroup],
     ) -> AtomicAttack:
         subharm_config = self._subharm_configs.get(subharm) if subharm else None

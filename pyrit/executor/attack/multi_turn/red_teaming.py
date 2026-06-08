@@ -6,7 +6,7 @@ from __future__ import annotations
 import enum
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
@@ -100,9 +100,9 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         max_turns: int = 10,
         score_last_turn_only: bool = False,
     ) -> None:
@@ -175,12 +175,12 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         self._max_turns = max_turns
         self._score_last_turn_only = score_last_turn_only
 
-    def get_attack_scoring_config(self) -> Optional[AttackScoringConfig]:
+    def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
         Get the attack scoring configuration used by this strategy.
 
         Returns:
-            Optional[AttackScoringConfig]: The scoring configuration with objective scorer
+            AttackScoringConfig | None: The scoring configuration with objective scorer
                 and use_score_as_feedback.
         """
         return AttackScoringConfig(
@@ -578,7 +578,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
 
         return response
 
-    async def _score_response_async(self, *, context: MultiTurnAttackContext[Any]) -> Optional[Score]:
+    async def _score_response_async(self, *, context: MultiTurnAttackContext[Any]) -> Score | None:
         """
         Evaluate the objective target's response with the objective scorer.
 
@@ -589,7 +589,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             context (MultiTurnAttackContext): The attack context containing the response to score.
 
         Returns:
-            Optional[Score]: The score of the response if available, otherwise None.
+            Score | None: The score of the response if available, otherwise None.
         """
         if not context.last_response:
             logger.warning("No response available in context to score")
@@ -613,12 +613,12 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         objective_scores = scoring_results
         return objective_scores[0] if objective_scores else None
 
-    def _set_adversarial_chat_seed_prompt(self, *, seed_prompt: Union[str, SeedPrompt]) -> None:
+    def _set_adversarial_chat_seed_prompt(self, *, seed_prompt: str | SeedPrompt) -> None:
         """
         Set the seed prompt for the adversarial chat.
 
         Args:
-            seed_prompt (Union[str, SeedPrompt]): The seed prompt to set for the adversarial chat.
+            seed_prompt (str | SeedPrompt): The seed prompt to set for the adversarial chat.
 
         Raises:
             ValueError: If the seed prompt is not a string or SeedPrompt object.

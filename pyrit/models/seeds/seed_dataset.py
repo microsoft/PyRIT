@@ -271,7 +271,7 @@ class SeedDataset(BaseModel):
         ``prompt_group_alias`` into a shared ``prompt_group_id``.
 
         Args:
-            data (Dict[str, Any]): Dataset payload with top-level defaults and seed entries.
+            data (dict[str, Any]): Dataset payload with top-level defaults and seed entries.
 
         Returns:
             SeedDataset: Constructed dataset.

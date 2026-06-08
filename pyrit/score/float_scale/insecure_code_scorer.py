@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 from pathlib import Path
-from typing import Optional, Union
 
 from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
@@ -26,17 +25,17 @@ class InsecureCodeScorer(FloatScaleScorer):
         self,
         *,
         chat_target: PromptTarget,
-        system_prompt_path: Optional[Union[str, Path]] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        system_prompt_path: str | Path | None = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the Insecure Code Scorer.
 
         Args:
             chat_target (PromptTarget): The target to use for scoring code security.
-            system_prompt_path (Optional[Union[str, Path]]): Path to the YAML file containing the system prompt.
+            system_prompt_path (str | Path | None): Path to the YAML file containing the system prompt.
                 Defaults to the default insecure code scoring prompt if not provided.
-            validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator for the scorer. Defaults to None.
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
 
@@ -72,13 +71,13 @@ class InsecureCodeScorer(FloatScaleScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the given message piece using LLM to detect security vulnerabilities.
 
         Args:
             message_piece (MessagePiece): The code snippet to be scored.
-            objective (Optional[str]): Optional objective description for scoring. Defaults to None.
+            objective (str | None): Optional objective description for scoring. Defaults to None.
 
         Returns:
             list[Score]: A list containing a single Score object.

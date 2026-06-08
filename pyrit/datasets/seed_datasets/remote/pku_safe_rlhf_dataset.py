@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional
+from typing import Literal
 
 from typing_extensions import override
 
@@ -57,31 +57,30 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
         *,
         source: str = "PKU-Alignment/PKU-SafeRLHF",
         include_safe_prompts: bool = True,
-        filter_harm_categories: Optional[
-            list[
-                Literal[
-                    "Animal Abuse",
-                    "Copyright Issues",
-                    "Cybercrime",
-                    "Discriminatory Behavior",
-                    "Disrupting Public Order",
-                    "Drugs",
-                    "Economic Crime",
-                    "Endangering National Security",
-                    "Endangering Public Health",
-                    "Environmental Damage",
-                    "Human Trafficking",
-                    "Insulting Behavior",
-                    "Mental Manipulation",
-                    "Physical Harm",
-                    "Privacy Violation",
-                    "Psychological Harm",
-                    "Sexual Content",
-                    "Violence",
-                    "White-Collar Crime",
-                ]
+        filter_harm_categories: list[
+            Literal[
+                "Animal Abuse",
+                "Copyright Issues",
+                "Cybercrime",
+                "Discriminatory Behavior",
+                "Disrupting Public Order",
+                "Drugs",
+                "Economic Crime",
+                "Endangering National Security",
+                "Endangering Public Health",
+                "Environmental Damage",
+                "Human Trafficking",
+                "Insulting Behavior",
+                "Mental Manipulation",
+                "Physical Harm",
+                "Privacy Violation",
+                "Psychological Harm",
+                "Sexual Content",
+                "Violence",
+                "White-Collar Crime",
             ]
-        ] = None,
+        ]
+        | None = None,
     ) -> None:
         """
         Initialize the PKU-SafeRLHF dataset loader.

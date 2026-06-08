@@ -12,7 +12,7 @@ from pyrit.prompt_converter import AzureSpeechTextToAudioConverter
 
 def is_speechsdk_installed():
     try:
-        import azure.cognitiveservices.speech  # noqa: F401
+        import azure.cognitiveservices.speech  # type: ignore[ty:unresolved-import]  # noqa: F401
 
         return True
     except ModuleNotFoundError:
@@ -34,7 +34,7 @@ class TestAzureSpeechTextToAudioConverter:
         MockSpeechSynthesizer,  # noqa: N803
         sqlite_instance,
     ):
-        import azure.cognitiveservices.speech as speechsdk
+        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]
 
         mock_synthesizer = MagicMock()
         mock_result = MagicMock()

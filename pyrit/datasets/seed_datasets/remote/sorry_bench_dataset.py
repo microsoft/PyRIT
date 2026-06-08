@@ -3,7 +3,6 @@
 
 import logging
 import os
-from typing import Optional
 
 from typing_extensions import override
 
@@ -133,9 +132,9 @@ class _SorryBenchDataset(_RemoteDatasetLoader):
         self,
         *,
         source: str = "sorry-bench/sorry-bench-202503",
-        categories: Optional[list[str]] = None,
-        prompt_style: Optional[str] = None,
-        token: Optional[str] = None,
+        categories: list[str] | None = None,
+        prompt_style: str | None = None,
+        token: str | None = None,
     ) -> None:
         """
         Initialize the Sorry-Bench dataset loader.

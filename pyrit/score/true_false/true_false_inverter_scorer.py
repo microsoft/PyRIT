@@ -15,13 +15,13 @@ from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 class TrueFalseInverterScorer(TrueFalseScorer):
     """A scorer that inverts a true false score."""
 
-    def __init__(self, *, scorer: TrueFalseScorer, validator: Optional[ScorerPromptValidator] = None) -> None:
+    def __init__(self, *, scorer: TrueFalseScorer, validator: ScorerPromptValidator | None = None) -> None:
         """
         Initialize the TrueFalseInverterScorer.
 
         Args:
             scorer (TrueFalseScorer): The underlying true/false scorer whose results will be inverted.
-            validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
                 Note: This parameter is present for signature compatibility but is not used.
 
         Raises:
@@ -54,7 +54,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         Delegate to the wrapped scorer.
 
         Returns:
-            Optional[PromptTarget]: The chat target from the wrapped scorer.
+            PromptTarget | None: The chat target from the wrapped scorer.
         """
         return self._scorer.get_chat_target()
 
@@ -62,17 +62,17 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         self,
         message: Message,
         *,
-        objective: Optional[str] = None,
-        role_filter: Optional[ChatMessageRole] = None,
+        objective: str | None = None,
+        role_filter: ChatMessageRole | None = None,
     ) -> list[Score]:
         """
         Scores the piece using the underlying true-false scorer and returns the inverted score.
 
         Args:
             message (Message): The message to score.
-            objective (Optional[str]): The objective to evaluate against (the original attacker model's objective).
+            objective (str | None): The objective to evaluate against (the original attacker model's objective).
                 Defaults to None.
-            role_filter (Optional[ChatMessageRole]): Optional filter for message roles. Defaults to None.
+            role_filter (ChatMessageRole | None): Optional filter for message roles. Defaults to None.
 
         Returns:
             list[Score]: A list containing a single Score object with the inverted true/false value.
@@ -100,13 +100,13 @@ class TrueFalseInverterScorer(TrueFalseScorer):
 
         return [inv_score]
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Indicate that True False Inverter scorers do not support piecewise scoring.
 
         Args:
             message_piece (MessagePiece): Unused.
-            objective (Optional[str]): Unused.
+            objective (str | None): Unused.
 
         Raises:
             NotImplementedError: Always, since composite scoring operates at the response level.

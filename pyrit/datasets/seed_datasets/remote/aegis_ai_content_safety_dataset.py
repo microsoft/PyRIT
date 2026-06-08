@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, Optional
+from typing import Literal
 
 from datasets import load_dataset
 from typing_extensions import override
@@ -81,35 +81,34 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
     def __init__(
         self,
         *,
-        harm_categories: Optional[
-            list[
-                Literal[
-                    "Controlled/Regulated Substances",
-                    "Copyright/Trademark/Plagiarism",
-                    "Criminal Planning/Confessions",
-                    "Fraud/Deception",
-                    "Guns and Illegal Weapons",
-                    "Harassment",
-                    "Hate/Identity Hate",
-                    "High Risk Gov Decision Making",
-                    "Illegal Activity",
-                    "Immoral/Unethical",
-                    "Malware",
-                    "Manipulation",
-                    "Needs Caution",
-                    "Other",
-                    "PII/Privacy",
-                    "Political/Misinformation/Conspiracy",
-                    "Profanity",
-                    "Sexual",
-                    "Sexual (minor)",
-                    "Suicide and Self Harm",
-                    "Threat",
-                    "Unauthorized Advice",
-                    "Violence",
-                ]
+        harm_categories: list[
+            Literal[
+                "Controlled/Regulated Substances",
+                "Copyright/Trademark/Plagiarism",
+                "Criminal Planning/Confessions",
+                "Fraud/Deception",
+                "Guns and Illegal Weapons",
+                "Harassment",
+                "Hate/Identity Hate",
+                "High Risk Gov Decision Making",
+                "Illegal Activity",
+                "Immoral/Unethical",
+                "Malware",
+                "Manipulation",
+                "Needs Caution",
+                "Other",
+                "PII/Privacy",
+                "Political/Misinformation/Conspiracy",
+                "Profanity",
+                "Sexual",
+                "Sexual (minor)",
+                "Suicide and Self Harm",
+                "Threat",
+                "Unauthorized Advice",
+                "Violence",
             ]
-        ] = None,
+        ]
+        | None = None,
     ) -> None:
         """
         Initialize the NVIDIA Aegis AI Content Safety Dataset loader.
