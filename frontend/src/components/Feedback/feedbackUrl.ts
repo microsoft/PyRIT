@@ -85,17 +85,17 @@ const CATEGORY_META: Record<FeedbackCategory, CategoryMeta> = {
   bug: {
     label: 'Bug',
     template: 'bug_report.md',
-    extra_labels: ['Bug: triage'],
+    extra_labels: ['bug'],
   },
   feature: {
     label: 'Feature request',
     template: 'feature_request.md',
-    extra_labels: ['feature-request'],
+    extra_labels: ['enhancement'],
   },
   doc: {
     label: 'Documentation improvement',
     template: 'doc_improvement.md',
-    extra_labels: ['Documentation'],
+    extra_labels: ['documentation'],
   },
   praise: {
     label: 'Praise',

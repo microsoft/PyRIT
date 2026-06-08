@@ -121,10 +121,10 @@ describe('buildGithubFeedbackUrl', () => {
       versions: 'PyRIT 0.5.0, Windows 11',
     }
 
-    it('selects the bug_report template and adds Bug: triage label', () => {
+    it('selects the bug_report template and adds the bug label', () => {
       const { params } = parse(buildGithubFeedbackUrl(bug))
       expect(params.get('template')).toBe('bug_report.md')
-      expect(params.get('labels')).toBe('GUI,Bug: triage')
+      expect(params.get('labels')).toBe('GUI,bug')
     })
 
     it('builds a title with the [Co-PyRIT Bug] tag and Describe excerpt', () => {
@@ -170,10 +170,10 @@ describe('buildGithubFeedbackUrl', () => {
       additional_context: 'See attached screenshots.',
     }
 
-    it('selects the feature_request template and adds feature-request label', () => {
+    it('selects the feature_request template and adds the enhancement label', () => {
       const { params } = parse(buildGithubFeedbackUrl(feature))
       expect(params.get('template')).toBe('feature_request.md')
-      expect(params.get('labels')).toBe('GUI,feature-request')
+      expect(params.get('labels')).toBe('GUI,enhancement')
     })
 
     it('uses the Solution as the title excerpt', () => {
@@ -205,7 +205,7 @@ describe('buildGithubFeedbackUrl', () => {
     it('selects the doc_improvement template and adds Documentation label', () => {
       const { params } = parse(buildGithubFeedbackUrl(doc))
       expect(params.get('template')).toBe('doc_improvement.md')
-      expect(params.get('labels')).toBe('GUI,Documentation')
+      expect(params.get('labels')).toBe('GUI,documentation')
     })
 
     it('emits the doc template sections', () => {

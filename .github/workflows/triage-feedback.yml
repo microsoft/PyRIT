@@ -2,7 +2,7 @@
 #
 # The dialog tags every new issue with the umbrella label `GUI` plus the
 # template-specific label that matches the chosen category (e.g. `praise`,
-# `Bug: triage`, `feature-request`, `Documentation`). This workflow:
+# `bug`, `enhancement`, `documentation`). This workflow:
 #
 #   * On any new issue carrying the `GUI` label, posts a category-aware
 #     "thanks for the feedback" comment so the user gets immediate acknowledgement.
@@ -152,11 +152,11 @@ jobs:
           def detect_category(labels):
               if "praise" in labels:
                   return "praise"
-              if "Bug: triage" in labels:
+              if "bug" in labels:
                   return "bug"
-              if "feature-request" in labels:
+              if "enhancement" in labels:
                   return "feature"
-              if "Documentation" in labels:
+              if "documentation" in labels:
                   return "doc"
               return "other"
 

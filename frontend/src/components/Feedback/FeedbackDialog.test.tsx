@@ -220,7 +220,7 @@ describe("FeedbackDialog", () => {
       );
       const params = new URLSearchParams(url.split("?")[1] ?? "");
       expect(params.get("template")).toBe("bug_report.md");
-      expect(params.get("labels")).toBe("GUI,Bug: triage");
+      expect(params.get("labels")).toBe("GUI,bug");
       expect(params.get("title")).toContain("[Co-PyRIT Bug]");
       expect(params.get("body")).toContain("#### Describe the bug");
       expect(onClose).toHaveBeenCalledTimes(1);
@@ -244,7 +244,7 @@ describe("FeedbackDialog", () => {
       expect(params.get("body")).toContain("#### What do you love?");
     });
 
-    it("submits feature requests to feature_request with feature-request label", async () => {
+    it("submits feature requests to feature_request with the enhancement label", async () => {
       renderDialog();
       const user = await pickCategory("feature");
       const solution = screen.getByTestId("feedback-feature-solution-input");
@@ -257,7 +257,7 @@ describe("FeedbackDialog", () => {
       const url = openSpy.mock.calls[0][0] as string;
       const params = new URLSearchParams(url.split("?")[1] ?? "");
       expect(params.get("template")).toBe("feature_request.md");
-      expect(params.get("labels")).toBe("GUI,feature-request");
+      expect(params.get("labels")).toBe("GUI,enhancement");
       expect(params.get("body")).toContain(
         "#### Describe the solution you'd like",
       );
@@ -276,7 +276,7 @@ describe("FeedbackDialog", () => {
       const url = openSpy.mock.calls[0][0] as string;
       const params = new URLSearchParams(url.split("?")[1] ?? "");
       expect(params.get("template")).toBe("doc_improvement.md");
-      expect(params.get("labels")).toBe("GUI,Documentation");
+      expect(params.get("labels")).toBe("GUI,documentation");
     });
 
     it("submits 'other' to the blank template with only the GUI label", async () => {
