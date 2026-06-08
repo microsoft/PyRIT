@@ -9,8 +9,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from pyrit.models.json_schema_definition import (
-    JSON_SCHEMA_METADATA_KEY,
-    JsonSchemaDefinition,  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    JSON_SCHEMA_METADATA_KEY,  # noqa: TC001  (runtime-required by Pydantic field annotations)
 )
 
 # Would prefer StrEnum, but.... Python 3.10
