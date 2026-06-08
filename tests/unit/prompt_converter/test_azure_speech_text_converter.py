@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import warnings
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -117,15 +116,6 @@ class TestAzureSpeechAudioToTextConverter:
         prompt = "dummy_audio.mp3"
         with pytest.raises(ValueError):
             assert await converter.convert_async(prompt=prompt, input_type="audio_path")
-
-    def test_use_entra_auth_emits_deprecation_warning(self):
-        """Test that use_entra_auth emits DeprecationWarning."""
-        with pytest.warns(DeprecationWarning, match="use_entra_auth.*deprecated"):
-            AzureSpeechAudioToTextConverter(
-                azure_speech_region="test_region",
-                azure_speech_resource_id="test_resource_id",
-                use_entra_auth=True,
-            )
 
     @patch(
         "pyrit.common.default_values.get_required_value",
@@ -259,50 +249,3 @@ class TestAzureSpeechAudioToTextConverter:
         assert result.output_type == "text"
         mock_get_config.assert_called_once()
         mock_recognize.assert_called_once_with(audio_bytes=b"fake audio bytes", speech_config=mock_speech_config)
-
-    @patch("pyrit.prompt_converter.azure_speech_audio_to_text_converter.get_speech_config")
-    @patch(
-        "pyrit.common.default_values.get_required_value",
-        side_effect=lambda env_var_name, passed_value: passed_value or "dummy_value",
-    )
-    def test_recognize_audio_calls_get_speech_config(self, mock_required, mock_get_config):
-        """Test that recognize_audio() calls get_speech_config and _recognize_audio."""
-        mock_speech_config = MagicMock()
-        mock_get_config.return_value = mock_speech_config
-
-        converter = AzureSpeechAudioToTextConverter(azure_speech_region="test_region", azure_speech_key="test_key")
-
-        with patch.object(converter, "_recognize_audio", return_value="transcribed") as mock_recognize:
-            result = converter.recognize_audio(audio_bytes=b"fake audio")
-
-        assert result == "transcribed"
-        mock_get_config.assert_called_once_with(resource_id=None, key="test_key", region="test_region")
-        mock_recognize.assert_called_once_with(audio_bytes=b"fake audio", speech_config=mock_speech_config)
-
-    @patch(
-        "pyrit.common.default_values.get_required_value",
-        side_effect=lambda env_var_name, passed_value: passed_value or "dummy_value",
-    )
-    def test_recognize_audio_warns_when_token_provider_set(self, mock_required):
-        """Test that recognize_audio() emits DeprecationWarning when _token_provider is set."""
-
-        def my_provider():
-            return "my_token"
-
-        converter = AzureSpeechAudioToTextConverter(
-            azure_speech_region="test_region",
-            azure_speech_key=my_provider,
-            azure_speech_resource_id="test_resource_id",
-        )
-
-        with (
-            patch("pyrit.prompt_converter.azure_speech_audio_to_text_converter.get_speech_config") as mock_config,
-            patch.object(converter, "_recognize_audio", return_value="text"),
-            warnings.catch_warnings(record=True) as w,
-        ):
-            warnings.simplefilter("always")
-            mock_config.return_value = MagicMock()
-            converter.recognize_audio(audio_bytes=b"fake audio")
-
-        deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert any("recognize_audio" in str(x.message) and "deprecated" in str(x.message) for x in deprecation_warnings)
