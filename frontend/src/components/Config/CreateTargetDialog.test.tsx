@@ -1201,4 +1201,77 @@ describe("CreateTargetDialog", () => {
     expect(call.type).toBe("RoundRobinTarget");
     expect(call.params?.weights).toEqual([7, 42]);
   }, 30000);
+
+  it("removes a selected inner target when its delete button is clicked", async () => {
+    const { user } = await renderWithTwoRoundRobinTargetsSelected();
+
+    // Both targets show up as selected rows.
+    expect(screen.getAllByLabelText(/Weight for /)).toHaveLength(2);
+
+    await user.click(screen.getByLabelText("Remove a"));
+
+    await waitFor(
+      () => {
+        expect(screen.getAllByLabelText(/Weight for /)).toHaveLength(1);
+      },
+      { timeout: 10000 },
+    );
+    // With only one inner target left, Create is disabled (needs >= 2).
+    expect(screen.getByText("Create Target").closest("button")).toBeDisabled();
+  }, 30000);
+
+  it("submit-time guards reject invalid weights even if the disabled button is bypassed", async () => {
+    // Re-validating at submit time defends against pressing Enter inside the
+    // weight input, which submits the form regardless of the button's disabled
+    // state. We exercise that branch directly by submitting the form element.
+    const { weightInputs } = await renderWithTwoRoundRobinTargetsSelected();
+
+    fireEvent.change(weightInputs[0], { target: { value: "2.5" } });
+    await waitFor(
+      () => {
+        expect(screen.getByText("Create Target").closest("button")).toBeDisabled();
+      },
+      { timeout: 10000 },
+    );
+
+    // Find the form (the dialog wraps the fields in a <form>) and dispatch
+    // submit directly to simulate Enter-key submission bypassing the button.
+    const form = weightInputs[0].closest("form")!;
+    fireEvent.submit(form);
+
+    // Error surfaces in the dialog's top-level MessageBar, and the API is not
+    // called.
+    await waitFor(
+      () => {
+        expect(
+          screen.getByText(/Invalid weight for "a": Weight must be a whole number\./),
+        ).toBeInTheDocument();
+      },
+      { timeout: 10000 },
+    );
+    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
+  }, 30000);
+
+  it("submit-time guard rejects submission with fewer than 2 selected inner targets", async () => {
+    // Same bypass scenario as above, but for the "need at least 2" guard.
+    const { user, weightInputs } = await renderWithTwoRoundRobinTargetsSelected();
+    await user.click(screen.getByLabelText("Remove b"));
+    await waitFor(
+      () => {
+        expect(screen.getAllByLabelText(/Weight for /)).toHaveLength(1);
+      },
+      { timeout: 10000 },
+    );
+
+    const form = weightInputs[0].closest("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(
+      () => {
+        expect(screen.getByText("Please select at least 2 targets.")).toBeInTheDocument();
+      },
+      { timeout: 10000 },
+    );
+    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
+  }, 30000);
 });

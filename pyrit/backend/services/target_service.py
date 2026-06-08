@@ -321,8 +321,7 @@ class TargetService:
         raw_weights: list[int] | None = params.get("weights") or None
         if raw_weights is not None and len(raw_weights) != len(registry_names):
             raise ValueError(
-                f"weights length ({len(raw_weights)}) must match target_registry_names length "
-                f"({len(registry_names)})."
+                f"weights length ({len(raw_weights)}) must match target_registry_names length ({len(registry_names)})."
             )
 
         # Deduplicate by ComponentIdentifier hash: two registry entries that
