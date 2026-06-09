@@ -14,7 +14,7 @@ nb_directory_path = pathlib.Path(path.DOCS_CODE_PATH, "executor").resolve()
 
 skipped_files = [
     # requires a publicly accessible Azure Storage Account and the AI recruiter service running locally
-    "4_workflow.ipynb",
+    "5_workflow.ipynb",
 ]
 
 

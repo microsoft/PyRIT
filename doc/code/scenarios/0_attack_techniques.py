@@ -25,10 +25,24 @@
 # > runs a set of techniques against a set of objectives.
 #
 # A technique is represented by
-# [`AttackTechnique`](../../../pyrit/scenario/core/attack_technique.py), which holds an
-# `AttackStrategy` plus an optional `SeedAttackTechniqueGroup` (e.g. jailbreak templates). You rarely
-# build one by hand — instead you register a **factory** and let scenarios construct techniques on
-# demand with the right target and scorer.
+# [`AttackTechnique`](../../../pyrit/scenario/core/attack_technique.py) and built by an
+# [`AttackTechniqueFactory`](../../../pyrit/scenario/core/attack_technique_factory.py). Concretely, in
+# PyRIT terms, a technique can bundle:
+#
+# - the **attack class** (`attack_class`, an `AttackStrategy` subclass) **and all its constructor
+#   args** (`attack_kwargs`) — e.g. `max_turns`, `tree_width`/`tree_depth`, or an
+#   `AttackConverterConfig` of request/response **converters**;
+# - an **adversarial chat** target (`adversarial_chat`) plus its **system prompt**
+#   (`adversarial_system_prompt_path`) and **seed prompt** (`adversarial_seed_prompt`), for attacks
+#   that drive a conversation;
+# - a **`SeedAttackTechniqueGroup`** (`seed_technique`) of general-technique seeds, which can carry a
+#   **system prompt**, a **prepended_conversation**, a **simulated_conversation**
+#   (`SeedSimulatedConversation`), and a **next_message**;
+# - the selection metadata that lets a scenario pick it: its `name` and `strategy_tags`.
+#
+# The objective is *not* part of the technique — it stays separate and is supplied by the dataset at
+# run time. You rarely build a technique by hand; instead you register a **factory** and let scenarios
+# construct techniques on demand with the scenario's own objective target and scorer.
 
 # %% [markdown]
 # ## Where techniques come from: initializers

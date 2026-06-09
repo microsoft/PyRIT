@@ -39,9 +39,6 @@
 # Every example below follows the same shape: construct the attack, call `execute_async(objective=...)`,
 # and print the `AttackResult`. See [Attack Configuration](3_attack_configuration.ipynb) for the inputs
 # (prepended conversations, multimodal seeds, labels) that all of these accept.
-#
-# > **Note:** Set the memory instance with `initialize_pyrit_async` before running any attack. For
-# > details, see the [Memory Configuration Guide](../memory/0_memory.md).
 
 # %%
 import os

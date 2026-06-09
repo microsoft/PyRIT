@@ -45,15 +45,9 @@
 # | Chunked Request | Splits a request across turns so no single message looks unsafe. |
 # | Barge-In *(streaming)* | Interrupts a streaming target mid-response. |
 #
-# Attacks that orchestrate *other* attacks (e.g. Sequential) are a separate **compound** family,
-# covered in [Compound Attacks](7_compound.ipynb).
-#
 # The examples below use small turn/tree limits so they run quickly. See
 # [Attack Configuration](3_attack_configuration.ipynb) for the converter, scoring, and adversarial
 # options they all accept.
-#
-# > **Note:** Set the memory instance with `initialize_pyrit_async` before running any attack. See the
-# > [Memory Configuration Guide](../memory/0_memory.md).
 
 # %%
 import os

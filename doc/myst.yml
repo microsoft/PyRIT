@@ -103,10 +103,10 @@ project:
             - file: code/executor/1_single_turn.ipynb
             - file: code/executor/2_multi_turn.ipynb
             - file: code/executor/3_attack_configuration.ipynb
-            - file: code/executor/4_workflow.ipynb
-            - file: code/executor/5_benchmark.ipynb
-            - file: code/executor/6_promptgen.ipynb
-            - file: code/executor/7_compound.ipynb
+            - file: code/executor/4_compound.ipynb
+            - file: code/executor/5_workflow.ipynb
+            - file: code/executor/6_benchmark.ipynb
+            - file: code/executor/7_promptgen.ipynb
         - file: code/targets/0_prompt_targets.md
           children:
             - file: code/targets/1_openai_chat_target.ipynb

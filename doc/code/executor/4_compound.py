@@ -38,9 +38,6 @@
 # | `STRICT_ALL` | the first non-success | SUCCESS only if **every** child did (pipeline) |
 # | `EXHAUSTIVE` | never (runs all) | SUCCESS if any child did |
 # | `LAST_RESULT` | never (runs all) | inherits the last child's outcome |
-#
-# > **Note:** Set the memory instance with `initialize_pyrit_async` before running any attack. See the
-# > [Memory Configuration Guide](../memory/0_memory.md).
 
 # %%
 import os
