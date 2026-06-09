@@ -51,6 +51,7 @@ from pyrit.models import (
     SeedSimulatedConversation,
     SeedType,
 )
+from pyrit.models.scenario_result import ScenarioRunState
 
 logger = logging.getLogger(__name__)
 
@@ -306,7 +307,7 @@ class PromptMemoryEntry(Base):
         self.timestamp = entry.timestamp
         self.labels = entry.labels
         self.prompt_metadata = entry.prompt_metadata
-        self.converter_identifiers = _dump_identifiers(entry.converter_identifiers)
+        self.converter_identifiers = _dump_identifiers(entry.converter_identifiers)  # type: ignore[ty:invalid-assignment]
         self.prompt_target_identifier = _dump_identifier(entry.prompt_target_identifier) or {}
         self.attack_identifier = _dump_identifier(entry.attack_identifier) or {}
 
@@ -318,7 +319,7 @@ class PromptMemoryEntry(Base):
         self.converted_value_data_type = entry.converted_value_data_type
         self.converted_value_sha256 = entry.converted_value_sha256
 
-        self.response_error = entry.response_error
+        self.response_error = entry.response_error  # type: ignore[ty:invalid-assignment]
 
         self.original_prompt_id = entry.original_prompt_id
         self.pyrit_version = pyrit.__version__
@@ -346,7 +347,7 @@ class PromptMemoryEntry(Base):
             conversation_id=self.conversation_id,
             sequence=self.sequence,
             prompt_metadata=self.prompt_metadata,
-            converter_identifiers=converter_ids or [],
+            converter_identifiers=[c for c in (converter_ids or []) if c is not None],
             prompt_target_identifier=target_id,
             attack_identifier=attack_id,
             original_value_data_type=self.original_value_data_type,
@@ -863,7 +864,7 @@ class AttackResultEntry(Base):
         # Attribution / parent linkage (set by the attack persistence path when
         # an AttackResultAttribution is present on the AttackContext; otherwise None)
         self.attribution_parent_id = uuid.UUID(entry.attribution_parent_id) if entry.attribution_parent_id else None
-        self.attribution_data = entry.attribution_data
+        self.attribution_data = entry.attribution_data  # type: ignore[ty:invalid-assignment]
 
     @staticmethod
     def _get_id_as_uuid(obj: Any) -> uuid.UUID | None:
@@ -1054,7 +1055,7 @@ class ScenarioResultEntry(Base):
         self.pyrit_version = entry.scenario_identifier.pyrit_version
         self.scenario_init_data = entry.scenario_identifier.init_data
         # Convert ComponentIdentifier to dict for JSON storage
-        self.objective_target_identifier = _dump_identifier(entry.objective_target_identifier)
+        self.objective_target_identifier = _dump_identifier(entry.objective_target_identifier)  # type: ignore[ty:invalid-assignment]
         # Ensure eval_hash is set before truncation so it survives the DB round-trip.
         if entry.objective_scorer_identifier and entry.objective_scorer_identifier.eval_hash is None:
             entry.objective_scorer_identifier = entry.objective_scorer_identifier.with_eval_hash(
@@ -1078,7 +1079,7 @@ class ScenarioResultEntry(Base):
 
         self.error_message = entry.error_message
         self.error_type = entry.error_type
-        self.scenario_metadata = entry.metadata if entry.metadata else None
+        self.scenario_metadata = entry.metadata if entry.metadata else None  # type: ignore[ty:invalid-assignment]
 
         self.timestamp = datetime.now(tz=timezone.utc)
 
@@ -1123,7 +1124,7 @@ class ScenarioResultEntry(Base):
             objective_target_identifier=target_identifier,
             attack_results=attack_results,
             objective_scorer_identifier=scorer_identifier,
-            scenario_run_state=self.scenario_run_state,
+            scenario_run_state=ScenarioRunState(self.scenario_run_state),
             labels=self.labels or {},
             creation_time=self.timestamp,
             number_tries=self.number_tries,
