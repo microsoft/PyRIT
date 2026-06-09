@@ -10,7 +10,6 @@ from typing import cast
 from PIL import Image, ImageFont
 from PIL.ImageFont import FreeTypeFont
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import data_serializer_factory
 from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.base_image_text_converter import _BaseImageTextConverter
@@ -32,8 +31,8 @@ class AddTextImageConverter(_BaseImageTextConverter):
 
     def __init__(
         self,
-        *args: str,
-        text_to_add: str = "",
+        *,
+        text_to_add: str,
         font_name: str = "helvetica.ttf",
         color: tuple[int, int, int] = (0, 0, 0),
         font_size: int = 15,
@@ -44,8 +43,6 @@ class AddTextImageConverter(_BaseImageTextConverter):
         Initialize the converter with the text and text properties.
 
         Args:
-            *args: Deprecated positional argument for text_to_add. Use text_to_add=... instead.
-                Will be removed in version 0.15.0.
             text_to_add (str): Text to add to an image.
             font_name (str): Path of font to use. Must be a TrueType font (.ttf). Defaults to "helvetica.ttf".
             color (tuple): Color to print text in, using RGB values. Defaults to (0, 0, 0).
@@ -54,21 +51,8 @@ class AddTextImageConverter(_BaseImageTextConverter):
             y_pos (int): Y coordinate to place text in (0 is upper most). Defaults to 10.
 
         Raises:
-            TypeError: If more than one positional argument is passed, or if text_to_add
-                is passed as both positional and keyword argument.
             ValueError: If ``text_to_add`` is empty, or if ``font_name`` does not end with ".ttf".
         """
-        if args:
-            if len(args) > 1:
-                raise TypeError(f"AddTextImageConverter takes at most 1 positional argument, got {len(args)}")
-            if text_to_add:
-                raise TypeError("Cannot pass text_to_add as both positional and keyword argument")
-            print_deprecation_message(
-                old_item="Passing text_to_add as a positional argument to AddTextImageConverter",
-                new_item="AddTextImageConverter(text_to_add=...) keyword argument",
-                removed_in="0.15.0",
-            )
-            text_to_add = args[0]
         if text_to_add.strip() == "":
             raise ValueError("Please provide valid text_to_add value")
         if not font_name.endswith(".ttf"):

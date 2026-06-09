@@ -541,6 +541,20 @@ wheels = [
 ]
 
 [[package]]
+name = "azure-keyvault-secrets"
+version = "4.11.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-core" },
+    { name = "isodate" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f1/b8/03c7b4edd1e3355ad5fffb70e68af70cd09542963f45cf3a2aa9fb3930b5/azure_keyvault_secrets-4.11.0.tar.gz", hash = "sha256:ac14727b9159cca353173ec5a454d8d7b192a6f2f5e7eb540f9fbcf914fa0ca0", size = 112291, upload-time = "2026-04-17T00:52:12.422Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/78/76/41c513917c0e8dc68de0c33578c6a0668b4a09eb4dc3e2782d382dc2947f/azure_keyvault_secrets-4.11.0-py3-none-any.whl", hash = "sha256:d8543b710423569bd00ada2a2533fe83d52d8e1fe026e1c47f41a3bc0fc73ef5", size = 103148, upload-time = "2026-04-17T00:52:13.796Z" },
+]
+
+[[package]]
 name = "azure-mgmt-core"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -5161,6 +5175,7 @@ dependencies = [
     { name = "azure-ai-contentsafety" },
     { name = "azure-core" },
     { name = "azure-identity" },
+    { name = "azure-keyvault-secrets" },
     { name = "azure-storage-blob" },
     { name = "base2048" },
     { name = "colorama" },
@@ -5280,6 +5295,7 @@ requires-dist = [
     { name = "azure-cognitiveservices-speech", marker = "extra == 'speech'", specifier = ">=1.44.0" },
     { name = "azure-core", specifier = ">=1.38.0" },
     { name = "azure-identity", specifier = ">=1.19.0" },
+    { name = "azure-keyvault-secrets", specifier = ">=4.9.0" },
     { name = "azure-storage-blob", specifier = ">=12.19.0" },
     { name = "base2048", specifier = ">=0.1.3" },
     { name = "colorama", specifier = ">=0.4.6" },
