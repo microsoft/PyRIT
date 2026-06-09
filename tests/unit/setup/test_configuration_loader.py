@@ -458,6 +458,21 @@ class TestLoadWithOverrides:
         assert config.initialization_scripts is None
         assert config.env_files is None
 
+    @mock.patch("pyrit.setup.configuration_loader.ConfigurationLoader.from_yaml_file")
+    @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
+    def test_load_with_overrides_reads_env_akv_ref_from_default_config(self, mock_default_path, mock_from_yaml):
+        """Test env_akv_ref is loaded when default config file exists."""
+        mock_default_path.exists.return_value = True
+        mock_from_yaml.return_value = ConfigurationLoader(
+            memory_db_type="sqlite",
+            env_akv_ref=["https://default.vault.azure.net/secrets/from-default"],
+        )
+
+        config = ConfigurationLoader.load_with_overrides()
+
+        mock_from_yaml.assert_called_once_with(mock_default_path)
+        assert config.env_akv_ref == ["https://default.vault.azure.net/secrets/from-default"]
+
     @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
     def test_load_with_overrides_memory_db_type_override(self, mock_default_path):
         """Test memory_db_type override takes precedence."""
