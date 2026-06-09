@@ -9,7 +9,7 @@ import uuid
 import zipfile
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 from typing_extensions import override
 
@@ -51,18 +51,6 @@ class FigStepVariant(Enum):
     FIGSTEP_PRO = "figstep_pro"
 
 
-_DESCRIPTION = (
-    "Multimodal jailbreak prompt from the FigStep SafeBench benchmark. The image "
-    "encodes the harmful instruction as typography and the text prompt asks the "
-    "model to 'fill in the empty items' of the numbered list. The original harmful "
-    "question is preserved as the group objective."
-)
-
-# Subfolder prefix used inside data/images/FigStep-Pro/sub-figures.zip:
-# e.g. "image_0_splits/image_0_split_0.png".
-_FIGSTEP_PRO_SPLIT_PATTERN = re.compile(r"^image_(?P<idx>\d+)_splits/image_\1_split_(?P<n>\d+)\.png$")
-
-
 class _FigStepDataset(_RemoteDatasetLoader):
     """
     Loader for the FigStep typographic-image jailbreak benchmark (SafeBench).
@@ -100,7 +88,20 @@ class _FigStepDataset(_RemoteDatasetLoader):
     Repository: https://github.com/ThuCCSLab/FigStep
     """
 
-    _AUTHORS: tuple[str, ...] = (
+    _DESCRIPTION: ClassVar[str] = (
+        "Multimodal jailbreak prompt from the FigStep SafeBench benchmark. The image "
+        "encodes the harmful instruction as typography and the text prompt asks the "
+        "model to 'fill in the empty items' of the numbered list. The original harmful "
+        "question is preserved as the group objective."
+    )
+
+    # Subfolder prefix used inside data/images/FigStep-Pro/sub-figures.zip:
+    # e.g. "image_0_splits/image_0_split_0.png".
+    _FIGSTEP_PRO_SPLIT_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
+        r"^image_(?P<idx>\d+)_splits/image_\1_split_(?P<n>\d+)\.png$"
+    )
+
+    _AUTHORS: ClassVar[tuple[str, ...]] = (
         "Yichen Gong",
         "Delong Ran",
         "Jinyuan Liu",
@@ -111,7 +112,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
         "Xiaoyun Wang",
     )
 
-    _GROUPS: tuple[str, ...] = ("Tsinghua University",)
+    _GROUPS: ClassVar[tuple[str, ...]] = ("Tsinghua University",)
 
     COMMIT_SHA: str = "0861b17b3d67887c06ee3534ec65b3012f9becb7"
     RAW_BASE_URL: str = f"https://raw.githubusercontent.com/ThuCCSLab/FigStep/{COMMIT_SHA}/"
@@ -330,7 +331,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
             name=f"FigStep Objective - {category_id}_{task_id}",
             dataset_name=self.dataset_name,
             harm_categories=[row["category_name"]],
-            description=_DESCRIPTION,
+            description=self._DESCRIPTION,
             authors=list(self._AUTHORS),
             groups=list(self._GROUPS),
             source=self.PAPER_URL,
@@ -343,7 +344,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
             name=f"FigStep Image - {category_id}_{task_id}",
             dataset_name=self.dataset_name,
             harm_categories=[row["category_name"]],
-            description=_DESCRIPTION,
+            description=self._DESCRIPTION,
             authors=list(self._AUTHORS),
             groups=list(self._GROUPS),
             source=self.PAPER_URL,
@@ -358,7 +359,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
             name=f"FigStep Text - {category_id}_{task_id}",
             dataset_name=self.dataset_name,
             harm_categories=[row["category_name"]],
-            description=_DESCRIPTION,
+            description=self._DESCRIPTION,
             authors=list(self._AUTHORS),
             groups=list(self._GROUPS),
             source=self.PAPER_URL,
@@ -419,7 +420,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
             name=f"FigStep-Pro Objective - {category_id}_{task_id}",
             dataset_name=self.dataset_name,
             harm_categories=[row["category_name"]],
-            description=_DESCRIPTION,
+            description=self._DESCRIPTION,
             authors=list(self._AUTHORS),
             groups=list(self._GROUPS),
             source=self.PAPER_URL,
@@ -435,7 +436,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
                     name=f"FigStep-Pro Image - {category_id}_{task_id}_split_{split_idx}",
                     dataset_name=self.dataset_name,
                     harm_categories=[row["category_name"]],
-                    description=_DESCRIPTION,
+                    description=self._DESCRIPTION,
                     authors=list(self._AUTHORS),
                     groups=list(self._GROUPS),
                     source=self.PAPER_URL,
@@ -453,7 +454,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
                 name=f"FigStep-Pro Text - {category_id}_{task_id}",
                 dataset_name=self.dataset_name,
                 harm_categories=[row["category_name"]],
-                description=_DESCRIPTION,
+                description=self._DESCRIPTION,
                 authors=list(self._AUTHORS),
                 groups=list(self._GROUPS),
                 source=self.PAPER_URL,
@@ -626,7 +627,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
 
         indexed_paths: list[tuple[int, str]] = []
         for entry in splits_dir.iterdir():
-            match = _FIGSTEP_PRO_SPLIT_PATTERN.match(f"image_{row_idx}_splits/{entry.name}")
+            match = self._FIGSTEP_PRO_SPLIT_PATTERN.match(f"image_{row_idx}_splits/{entry.name}")
             if not match:
                 continue
             indexed_paths.append((int(match.group("n")), str(entry)))
