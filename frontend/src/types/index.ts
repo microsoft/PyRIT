@@ -38,6 +38,14 @@ export interface Message {
   originalContent?: string
   /** Original media attachments before conversion (when different from converted). */
   originalAttachments?: MessageAttachment[]
+  /**
+   * Backend piece ID of the first piece in this message. Preserved so the
+   * GUI can target a specific piece (e.g. for per-message scoring) without
+   * extending Message to carry every individual piece's id.
+   */
+  pieceId?: string
+  /** Aggregated scores across all pieces in this message. */
+  scores?: BackendScore[]
 }
 
 export interface MessageError {
@@ -272,4 +280,37 @@ export interface CreateConversationResponse {
 export interface ChangeMainConversationResponse {
   attack_result_id: string
   conversation_id: string
+}
+
+// --- Scoring ---
+
+export type ScorerScoreType = 'true_false' | 'float_scale' | 'unknown'
+
+export interface ScorerSummary {
+  scorer_registry_name: string
+  scorer_type: string
+  score_type: ScorerScoreType
+  description?: string | null
+  tags?: string[]
+}
+
+export interface ScorerListResponse {
+  items: ScorerSummary[]
+}
+
+export type ScoreConversationMode = 'last_message' | 'whole_conversation'
+
+export interface ScoreConversationRequest {
+  scorer_registry_name: string
+  mode?: ScoreConversationMode
+  objective?: string
+}
+
+export interface ScoreMessageRequest {
+  scorer_registry_name: string
+  objective?: string
+}
+
+export interface ScoreResponse {
+  scores: BackendScore[]
 }

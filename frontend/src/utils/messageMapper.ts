@@ -244,6 +244,11 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
     reasoningSummaries: reasoningSummaries.length > 0 ? reasoningSummaries : undefined,
     originalContent: hasTextDiff ? originalContent : undefined,
     originalAttachments: hasMediaDiff ? originalAttachments : undefined,
+    pieceId: msg.pieces[0]?.piece_id,
+    scores: (() => {
+      const allScores = msg.pieces.flatMap((p) => p.scores ?? [])
+      return allScores.length > 0 ? allScores : undefined
+    })(),
   }
 }
 

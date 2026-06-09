@@ -20,6 +20,10 @@ import type {
   CreateConversationRequest,
   CreateConversationResponse,
   ChangeMainConversationResponse,
+  ScorerListResponse,
+  ScoreConversationRequest,
+  ScoreMessageRequest,
+  ScoreResponse,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -275,6 +279,38 @@ export const attacksApi = {
 
   getConverterOptions: async (): Promise<{ converter_types: string[] }> => {
     const response = await apiClient.get('/attacks/converter-options')
+    return response.data
+  },
+
+  scoreConversation: async (
+    attackResultId: string,
+    conversationId: string,
+    request: ScoreConversationRequest
+  ): Promise<ScoreResponse> => {
+    const response = await apiClient.post(
+      `/attacks/${encodeURIComponent(attackResultId)}/conversations/${encodeURIComponent(conversationId)}/scores`,
+      request
+    )
+    return response.data
+  },
+
+  scoreMessagePiece: async (
+    attackResultId: string,
+    conversationId: string,
+    pieceId: string,
+    request: ScoreMessageRequest
+  ): Promise<ScoreResponse> => {
+    const response = await apiClient.post(
+      `/attacks/${encodeURIComponent(attackResultId)}/conversations/${encodeURIComponent(conversationId)}/pieces/${encodeURIComponent(pieceId)}/scores`,
+      request
+    )
+    return response.data
+  },
+}
+
+export const scorersApi = {
+  listScorers: async (): Promise<ScorerListResponse> => {
+    const response = await apiClient.get('/scorers')
     return response.data
   },
 }

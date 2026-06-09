@@ -8,9 +8,10 @@ import {
   Button,
   Tooltip,
   Spinner,
+  Badge,
   mergeClasses,
 } from '@fluentui/react-components'
-import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular, OpenRegular } from '@fluentui/react-icons'
+import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular, OpenRegular, ClipboardTaskRegular } from '@fluentui/react-icons'
 import { Message, MessageAttachment } from '../../types'
 import { useMessageListStyles } from './MessageList.styles'
 
@@ -24,6 +25,8 @@ interface MessageListProps {
   onBranchConversation?: (messageIndex: number) => void
   /** Branch conversation up to this point into a new attack */
   onBranchAttack?: (messageIndex: number) => void
+  /** Score a single assistant message. Only enabled when provided. */
+  onScoreMessage?: (messageIndex: number) => void
   /** True while loading a historical attack's messages */
   isLoading?: boolean
   /** True when the target is single-turn (disables copy-to-input) */
@@ -105,7 +108,7 @@ function tryFormatJson(text: string): string | null {
   }
 }
 
-export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected }: MessageListProps) {
+export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, onScoreMessage, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -423,6 +426,24 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                     )
                   })()}
 
+                  {/* Score this assistant message */}
+                  {onScoreMessage && (
+                    <Tooltip
+                      content={message.pieceId ? 'Score this message' : 'Cannot score — missing piece id'}
+                      relationship="label"
+                    >
+                      <Button
+                        appearance="subtle"
+                        size="small"
+                        icon={<ClipboardTaskRegular />}
+                        disabled={!message.pieceId}
+                        onClick={() => onScoreMessage(index)}
+                        data-testid={`score-msg-btn-${index}`}
+                        style={{ minWidth: 'auto', padding: '2px' }}
+                      />
+                    </Tooltip>
+                  )}
+
                   {/* Download: non-text media only */}
                   {message.attachments && message.attachments.filter(a => a.type !== 'file').map((att, ai) => (
                     <Tooltip key={ai} content={`Download ${att.name}`} relationship="label">
@@ -436,6 +457,37 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                       />
                     </Tooltip>
                   ))}
+                </div>
+              )}
+
+              {/* Existing scores rendered as compact badges below the action row */}
+              {!isUser && !message.isLoading && message.scores && message.scores.length > 0 && (
+                <div
+                  data-testid={`message-scores-${index}`}
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: tokens.spacingHorizontalXS,
+                    marginTop: tokens.spacingVerticalXS,
+                  }}
+                >
+                  {message.scores.map((s) => {
+                    const label = `${s.scorer_type}: ${s.score_value}`
+                    const tooltipBody = s.score_rationale
+                      ? `${label}\n\n${s.score_rationale}`
+                      : label
+                    return (
+                      <Tooltip key={s.score_id} content={tooltipBody} relationship="description">
+                        <Badge
+                          appearance="outline"
+                          size="small"
+                          data-testid={`message-score-${index}-${s.score_id}`}
+                        >
+                          {label}
+                        </Badge>
+                      </Tooltip>
+                    )
+                  })}
                 </div>
               )}
 

@@ -32,6 +32,8 @@ jest.mock("../../services/api", () => ({
     getConversations: jest.fn(),
     createConversation: jest.fn(),
     changeMainConversation: jest.fn(),
+    scoreConversation: jest.fn(),
+    scoreMessagePiece: jest.fn(),
   },
   convertersApi: {
     listConverterCatalog: jest.fn(),
@@ -39,6 +41,9 @@ jest.mock("../../services/api", () => ({
     getConverter: jest.fn(),
     createConverter: jest.fn(),
     previewConversion: jest.fn(),
+  },
+  scorersApi: {
+    listScorers: jest.fn().mockResolvedValue({ items: [] }),
   },
   labelsApi: {
     getLabels: jest.fn().mockImplementation(() => new Promise(() => {})),
@@ -2157,6 +2162,37 @@ describe("ChatWindow Integration", () => {
 
     const toggleBtn = screen.getByRole("button", { name: /toggle conversations panel/i });
     expect(toggleBtn).toBe(screen.getByTestId("toggle-panel-btn"));
+  });
+
+  it("ribbon Score button is disabled until a conversation is active", () => {
+    render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} attackResultId={null} activeConversationId={null} />
+      </TestWrapper>
+    );
+    expect(screen.getByTestId("score-conversation-btn")).toBeDisabled();
+  });
+
+  it("ribbon Score button opens the score dialog for the active conversation", async () => {
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-score-ribbon"
+          conversationId="conv-score-ribbon"
+          activeConversationId="conv-score-ribbon"
+        />
+      </TestWrapper>
+    );
+
+    const scoreBtn = screen.getByTestId("score-conversation-btn");
+    expect(scoreBtn).toBeEnabled();
+    await userEvent.click(scoreBtn);
+
+    // ScoreDialog mounts and fetches scorers (mock resolves to empty list).
+    await waitFor(() => {
+      expect(screen.getByTestId("score-dialog-empty")).toBeInTheDocument();
+    });
   });
 
   it("should toggle converter panel when convert button is clicked", async () => {

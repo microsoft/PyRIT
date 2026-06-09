@@ -17,11 +17,13 @@ import {
   DismissRegular,
   StarRegular,
   StarFilled,
+  ClipboardTaskRegular,
 } from '@fluentui/react-icons'
 import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
-import type { ConversationSummary } from '../../types'
+import type { BackendScore, ConversationSummary } from '../../types'
 import { useConversationPanelStyles } from './ConversationPanel.styles'
+import ScoreDialog, { type ScoreTarget } from './ScoreDialog'
 
 interface ConversationPanelProps {
   attackResultId: string | null
@@ -34,6 +36,8 @@ interface ConversationPanelProps {
   lockedReason?: string
   /** Increment to trigger a conversation list refresh (e.g. after sending a message) */
   refreshKey?: number
+  /** Called after a conversation is scored so the parent can refetch messages. */
+  onConversationScored?: (conversationId: string, scores: BackendScore[]) => void
 }
 
 export default function ConversationPanel({
@@ -45,12 +49,14 @@ export default function ConversationPanel({
   onClose,
   lockedReason,
   refreshKey,
+  onConversationScored,
 }: ConversationPanelProps) {
   const styles = useConversationPanelStyles()
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [mainConversationId, setMainConversationId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [scoreTarget, setScoreTarget] = useState<ScoreTarget | null>(null)
 
   const fetchConversations = useCallback(async () => {
     if (!attackResultId) {
@@ -202,6 +208,25 @@ export default function ConversationPanel({
                       style={{ minWidth: 'auto', padding: '2px' }}
                     />
                   </Tooltip>
+                  <Tooltip content="Score this conversation" relationship="description">
+                    <Button
+                      appearance="subtle"
+                      size="small"
+                      icon={<ClipboardTaskRegular />}
+                      disabled={!attackResultId}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (!attackResultId) return
+                        setScoreTarget({
+                          kind: 'conversation',
+                          attackResultId,
+                          conversationId: conv.conversation_id,
+                        })
+                      }}
+                      data-testid={`score-btn-${conv.conversation_id}`}
+                      style={{ minWidth: 'auto', padding: '2px' }}
+                    />
+                  </Tooltip>
                   <Badge appearance="tint" size="small">
                     {conv.message_count}
                   </Badge>
@@ -216,6 +241,18 @@ export default function ConversationPanel({
           )
         })}
       </div>
+      <ScoreDialog
+        open={scoreTarget != null}
+        target={scoreTarget}
+        onClose={() => setScoreTarget(null)}
+        onScored={(scores) => {
+          const conversationId = scoreTarget?.conversationId
+          setScoreTarget(null)
+          if (conversationId) {
+            onConversationScored?.(conversationId, scores)
+          }
+        }}
+      />
     </div>
   )
 }

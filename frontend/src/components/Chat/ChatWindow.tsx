@@ -4,12 +4,13 @@ import {
   Text,
   Tooltip,
 } from '@fluentui/react-components'
-import { AddRegular, PanelRightRegular } from '@fluentui/react-icons'
+import { AddRegular, PanelRightRegular, ClipboardTaskRegular } from '@fluentui/react-icons'
 import MessageList from './MessageList'
 import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
 import ConverterPanel from './ConverterPanel'
 import TargetBadge from './TargetBadge'
+import ScoreDialog, { type ScoreTarget } from './ScoreDialog'
 import type { PieceConversion } from './converterTypes'
 import { PIECE_TYPE_TO_DATA_TYPE, basenameFromValue, buildMediaUrl, dataTypeToAttachmentKind, isPathDataType } from './converterTypes'
 import LabelsBar from '../Labels/LabelsBar'
@@ -74,6 +75,7 @@ export default function ChatWindow({
   const [attachmentData, setAttachmentData] = useState<Record<string, string>>({})
   const [pieceConversions, setPieceConversions] = useState<Record<string, PieceConversion>>({})
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
+  const [scoreTarget, setScoreTarget] = useState<ScoreTarget | null>(null)
   const inputBoxRef = useRef<ChatInputAreaHandle>(null)
 
   const handleAttachmentsChange = useCallback((types: string[], data: Record<string, string>) => {
@@ -485,6 +487,28 @@ export default function ChatWindow({
     }
   }, [attackResultId])
 
+  // Open the score dialog for a specific assistant message piece.
+  const handleScoreMessage = useCallback((messageIndex: number) => {
+    if (!attackResultId || !activeConversationId) return
+    const msg = messages[messageIndex]
+    if (!msg?.pieceId) return
+    setScoreTarget({
+      kind: 'piece',
+      attackResultId,
+      conversationId: activeConversationId,
+      pieceId: msg.pieceId,
+    })
+  }, [attackResultId, activeConversationId, messages])
+
+  // After any score completes, refetch messages so the new score badges appear
+  // and bump the conversation panel refresh so its scoreboard / count stays current.
+  const handleScored = useCallback(() => {
+    if (attackResultId && activeConversationId) {
+      loadConversation(attackResultId, activeConversationId)
+    }
+    setPanelRefreshKey(k => k + 1)
+  }, [attackResultId, activeConversationId, loadConversation])
+
   const singleTurnLimitReached = activeTarget?.capabilities?.supports_multi_turn === false && messages.some(m => m.role === 'user')
 
   // Operator locking: if the loaded attack's operator differs from the current
@@ -564,6 +588,32 @@ export default function ChatWindow({
             )}
           </div>
           <div className={styles.ribbonActions}>
+            <Tooltip
+              content={
+                !attackResultId || !activeConversationId
+                  ? 'Score conversation — start or load a conversation first'
+                  : 'Score this conversation'
+              }
+              relationship="label"
+            >
+              <Button
+                appearance="subtle"
+                icon={<ClipboardTaskRegular />}
+                onClick={() => {
+                  if (!attackResultId || !activeConversationId) return
+                  setScoreTarget({
+                    kind: 'conversation',
+                    attackResultId,
+                    conversationId: activeConversationId,
+                  })
+                }}
+                disabled={!attackResultId || !activeConversationId}
+                data-testid="score-conversation-btn"
+                aria-label="Score conversation"
+              >
+                Score
+              </Button>
+            </Tooltip>
             <Tooltip content="Toggle conversations panel" relationship="label">
               <Button
                 appearance="subtle"
@@ -595,6 +645,7 @@ export default function ChatWindow({
           onCopyToNewConversation={attackResultId ? handleCopyToNewConversation : undefined}
           onBranchConversation={attackResultId && activeConversationId ? handleBranchConversation : undefined}
           onBranchAttack={activeTarget && activeConversationId ? handleBranchAttack : undefined}
+          onScoreMessage={attackResultId && activeConversationId ? handleScoreMessage : undefined}
           isLoading={isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
           isSingleTurn={activeTarget?.capabilities?.supports_multi_turn === false}
           isOperatorLocked={isOperatorLocked}
@@ -663,8 +714,15 @@ export default function ChatWindow({
             : undefined
           }
           refreshKey={panelRefreshKey}
+          onConversationScored={handleScored}
         />
       )}
+      <ScoreDialog
+        open={scoreTarget != null}
+        target={scoreTarget}
+        onClose={() => setScoreTarget(null)}
+        onScored={() => { setScoreTarget(null); handleScored() }}
+      />
     </div>
   )
 }
