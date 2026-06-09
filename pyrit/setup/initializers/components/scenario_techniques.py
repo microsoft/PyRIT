@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 
+from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
 from pyrit.executor.attack import (
     ContextComplianceAttack,
     ManyShotJailbreakAttack,
@@ -26,6 +27,7 @@ from pyrit.executor.attack import (
     RolePlayPaths,
     TreeOfAttacksWithPruningAttack,
 )
+from pyrit.models import SeedPrompt
 from pyrit.registry.object_registries.attack_technique_registry import (
     AttackTechniqueRegistry,
 )
@@ -43,7 +45,7 @@ def build_scenario_technique_factories() -> list[AttackTechniqueFactory]:
     default adversarial target is resolved lazily inside
     ``AttackTechniqueFactory.create`` via
     ``get_default_adversarial_target()``. Scenarios may also pass
-    ``attack_adversarial_config_override`` at create time (but only when the
+    ``adversarial_chat`` at create time (but only when the
     factory did not bake one in at construction).
 
     A bare ``PromptSendingAttack`` factory is intentionally omitted from the
@@ -101,6 +103,19 @@ def build_scenario_technique_factories() -> list[AttackTechniqueFactory]:
         AttackTechniqueFactory.with_simulated_conversation(
             name="crescendo_journalist_interview",
             strategy_tags=["core", "single_turn"],
+        ),
+        # Violent Durian: a criminal-persona RedTeamingAttack adapted from Project Moonshot
+        # (https://github.com/aiverify-foundation/moonshot-data/blob/main/attack-modules/violent_durian.py).
+        # Tagged "multi_turn" only (no "core"/"default") so it is selectable as an option but never
+        # run by default.
+        AttackTechniqueFactory(
+            name="violent_durian",
+            attack_class=RedTeamingAttack,
+            strategy_tags=["multi_turn"],
+            adversarial_system_prompt_path=EXECUTOR_RED_TEAM_PATH / "violent_durian.yaml",
+            adversarial_seed_prompt=SeedPrompt.from_yaml_file(
+                EXECUTOR_RED_TEAM_PATH / "violent_durian_seed_prompt.yaml"
+            ),
         ),
     ]
 

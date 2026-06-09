@@ -73,4 +73,45 @@ describe('TargetBadge', () => {
     ).not.toThrow()
     expect(screen.getByTestId('target-badge')).toHaveTextContent('TextTarget')
   })
+
+  it('shows count in display name for RoundRobinTarget with inner targets', () => {
+    const rrTarget: TargetInstance = {
+      target_registry_name: 'rr_test',
+      target_type: 'RoundRobinTarget',
+      model_name: 'gpt-4o',
+      inner_targets: [
+        { target_registry_name: 'a', target_type: 'OpenAIChatTarget', model_name: 'gpt-4o' },
+        { target_registry_name: 'b', target_type: 'OpenAIChatTarget', model_name: 'gpt-4o' },
+        { target_registry_name: 'c', target_type: 'OpenAIChatTarget', model_name: 'gpt-4o' },
+      ],
+    }
+    render(
+      <TestWrapper>
+        <TargetBadge target={rrTarget} />
+      </TestWrapper>
+    )
+    const badge = screen.getByTestId('target-badge')
+    expect(badge).toHaveTextContent('RoundRobinTarget (gpt-4o ×3)')
+  })
+
+  it('prefers underlying_model_name over model_name for RoundRobinTarget badge', () => {
+    const rrTarget: TargetInstance = {
+      target_registry_name: 'rr_mixed',
+      target_type: 'RoundRobinTarget',
+      model_name: 'gpt-4o-japan-nilfilter',
+      underlying_model_name: 'gpt-4o',
+      inner_targets: [
+        { target_registry_name: 'a', target_type: 'OpenAIChatTarget', model_name: 'deploy-1' },
+        { target_registry_name: 'b', target_type: 'OpenAIChatTarget', model_name: 'deploy-2' },
+      ],
+    }
+    render(
+      <TestWrapper>
+        <TargetBadge target={rrTarget} />
+      </TestWrapper>
+    )
+    const badge = screen.getByTestId('target-badge')
+    // Should show the underlying model, not the deployment name
+    expect(badge).toHaveTextContent('RoundRobinTarget (gpt-4o ×2)')
+  })
 })
