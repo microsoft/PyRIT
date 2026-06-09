@@ -51,6 +51,7 @@ from pyrit.models import (
     SeedSimulatedConversation,
     SeedType,
 )
+from pyrit.models.scenario_result import ScenarioRunState
 
 logger = logging.getLogger(__name__)
 
@@ -233,7 +234,6 @@ class PromptMemoryEntry(Base):
             Can be the same number for multi-part requests or multi-part responses.
         timestamp (DateTime): The timestamp of the memory entry.
         labels (dict[str, str]): The labels associated with the memory entry. Several can be standardized.
-        targeted_harm_categories (list[str]): The targeted harm categories for the memory entry.
         prompt_metadata (JSON): The metadata associated with the prompt. This can be specific to any scenarios.
             Because memory is how components talk with each other, this can be component specific.
             e.g. the URI from a file uploaded to a blob store, or a document type you want to upload.
@@ -265,7 +265,6 @@ class PromptMemoryEntry(Base):
     timestamp = mapped_column(UTCDateTime, nullable=False)
     labels: Mapped[dict[str, str]] = mapped_column(JSON)
     prompt_metadata: Mapped[dict[str, str | int]] = mapped_column(JSON)
-    targeted_harm_categories: Mapped[list[str] | None] = mapped_column(JSON)
     converter_identifiers: Mapped[list[dict[str, str]] | None] = mapped_column(JSON)
     prompt_target_identifier: Mapped[dict[str, str]] = mapped_column(JSON)
     attack_identifier: Mapped[dict[str, str]] = mapped_column(JSON)
@@ -308,8 +307,7 @@ class PromptMemoryEntry(Base):
         self.timestamp = entry.timestamp
         self.labels = entry.labels
         self.prompt_metadata = entry.prompt_metadata
-        self.targeted_harm_categories = entry.targeted_harm_categories
-        self.converter_identifiers = _dump_identifiers(entry.converter_identifiers)
+        self.converter_identifiers = _dump_identifiers(entry.converter_identifiers)  # type: ignore[ty:invalid-assignment]
         self.prompt_target_identifier = _dump_identifier(entry.prompt_target_identifier) or {}
         self.attack_identifier = _dump_identifier(entry.attack_identifier) or {}
 
@@ -321,7 +319,7 @@ class PromptMemoryEntry(Base):
         self.converted_value_data_type = entry.converted_value_data_type
         self.converted_value_sha256 = entry.converted_value_sha256
 
-        self.response_error = entry.response_error
+        self.response_error = entry.response_error  # type: ignore[ty:invalid-assignment]
 
         self.original_prompt_id = entry.original_prompt_id
         self.pyrit_version = pyrit.__version__
@@ -331,7 +329,7 @@ class PromptMemoryEntry(Base):
         Convert this database entry back into a MessagePiece object.
 
         Returns:
-            MessagePiece: The reconstructed message piece with all its data and scores.
+            MessagePiece: The reconstructed message piece with all its data.
         """
         # Reconstruct ComponentIdentifiers with the stored pyrit_version
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
@@ -349,7 +347,7 @@ class PromptMemoryEntry(Base):
             conversation_id=self.conversation_id,
             sequence=self.sequence,
             prompt_metadata=self.prompt_metadata,
-            converter_identifiers=converter_ids or [],
+            converter_identifiers=[c for c in (converter_ids or []) if c is not None],
             prompt_target_identifier=target_id,
             attack_identifier=attack_id,
             original_value_data_type=self.original_value_data_type,
@@ -358,13 +356,11 @@ class PromptMemoryEntry(Base):
             original_prompt_id=self.original_prompt_id,
             timestamp=self.timestamp,
         )
-        # Assign deprecated containers post-construction so the DB-load path
-        # does not trip the ``MessagePiece`` deprecation-kwarg validator.
-        # ``validate_assignment=False`` on the model makes this assignment
-        # bypass the model_validator entirely.
+        # Assign deprecated ``labels`` container post-construction so the DB-load
+        # path does not trip the ``MessagePiece`` deprecation-kwarg validator.
+        # ``validate_assignment=False`` on the model makes this assignment bypass
+        # the model_validator entirely.
         message_piece.labels = self.labels or {}
-        message_piece.targeted_harm_categories = self.targeted_harm_categories or []
-        message_piece.scores = [score.get_score() for score in self.scores]
         return message_piece
 
     def __str__(self) -> str:
@@ -732,7 +728,8 @@ class AttackResultEntry(Base):
         id (Uuid): The unique identifier for the attack result entry.
         conversation_id (str): The unique identifier of the conversation that produced this result.
         objective (str): Natural-language description of the attacker's objective.
-        attack_identifier (dict[str, str]): Identifier of the attack (e.g., name, module).
+        atomic_attack_identifier (dict[str, Any] | None): Composite identifier of the attack
+            (technique, seeds, etc.).
         objective_sha256 (str): The SHA256 hash of the objective.
         last_response_id (Uuid): Foreign key to the last response MessagePiece.
         last_score_id (Uuid): Foreign key to the last score ScoreEntry.
@@ -757,7 +754,6 @@ class AttackResultEntry(Base):
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
     conversation_id = mapped_column(String, nullable=False)
     objective = mapped_column(Unicode, nullable=False)
-    attack_identifier: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
     atomic_attack_identifier: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     objective_sha256 = mapped_column(String, nullable=True)
     last_response_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -822,10 +818,6 @@ class AttackResultEntry(Base):
         self.id = uuid.UUID(entry.attack_result_id)
         self.conversation_id = entry.conversation_id
         self.objective = entry.objective
-        # Deprecated column: populated from atomic_attack_identifier for backward compatibility.
-        # Will be removed in 0.15.0.
-        _attack_strategy_id = entry.get_attack_strategy_identifier()
-        self.attack_identifier = _dump_identifier(_attack_strategy_id) or {}
         # Ensure eval_hash is set before truncation so it survives the DB round-trip
         if entry.atomic_attack_identifier and entry.atomic_attack_identifier.eval_hash is None:
             entry.atomic_attack_identifier = entry.atomic_attack_identifier.with_eval_hash(
@@ -872,7 +864,7 @@ class AttackResultEntry(Base):
         # Attribution / parent linkage (set by the attack persistence path when
         # an AttackResultAttribution is present on the AttackContext; otherwise None)
         self.attribution_parent_id = uuid.UUID(entry.attribution_parent_id) if entry.attribution_parent_id else None
-        self.attribution_data = entry.attribution_data
+        self.attribution_data = entry.attribution_data  # type: ignore[ty:invalid-assignment]
 
     @staticmethod
     def _get_id_as_uuid(obj: Any) -> uuid.UUID | None:
@@ -947,15 +939,7 @@ class AttackResultEntry(Base):
                 )
             )
 
-        # Reconstruct atomic_attack_identifier, with backward compatibility for
-        # legacy rows that only have the attack_identifier column.
         atomic_id = _load_identifier(self.atomic_attack_identifier)
-        if atomic_id is None and self.attack_identifier:
-            from pyrit.models import build_atomic_attack_identifier
-
-            atomic_id = build_atomic_attack_identifier(
-                attack_identifier=ComponentIdentifier.model_validate(self.attack_identifier),
-            )
 
         # Deserialize retry events from JSON
         retry_events = []
@@ -1071,7 +1055,7 @@ class ScenarioResultEntry(Base):
         self.pyrit_version = entry.scenario_identifier.pyrit_version
         self.scenario_init_data = entry.scenario_identifier.init_data
         # Convert ComponentIdentifier to dict for JSON storage
-        self.objective_target_identifier = _dump_identifier(entry.objective_target_identifier)
+        self.objective_target_identifier = _dump_identifier(entry.objective_target_identifier)  # type: ignore[ty:invalid-assignment]
         # Ensure eval_hash is set before truncation so it survives the DB round-trip.
         if entry.objective_scorer_identifier and entry.objective_scorer_identifier.eval_hash is None:
             entry.objective_scorer_identifier = entry.objective_scorer_identifier.with_eval_hash(
@@ -1095,7 +1079,7 @@ class ScenarioResultEntry(Base):
 
         self.error_message = entry.error_message
         self.error_type = entry.error_type
-        self.scenario_metadata = entry.metadata if entry.metadata else None
+        self.scenario_metadata = entry.metadata if entry.metadata else None  # type: ignore[ty:invalid-assignment]
 
         self.timestamp = datetime.now(tz=timezone.utc)
 
@@ -1140,7 +1124,7 @@ class ScenarioResultEntry(Base):
             objective_target_identifier=target_identifier,
             attack_results=attack_results,
             objective_scorer_identifier=scorer_identifier,
-            scenario_run_state=self.scenario_run_state,
+            scenario_run_state=ScenarioRunState(self.scenario_run_state),
             labels=self.labels or {},
             creation_time=self.timestamp,
             number_tries=self.number_tries,

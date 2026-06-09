@@ -36,7 +36,6 @@ from pyrit.prompt_target.http_target.http_target_callback_functions import (
     get_http_target_regex_matching_callback_function,
 )
 from pyrit.prompt_target.http_target.httpx_api_target import HTTPXAPITarget
-from pyrit.prompt_target.hugging_face.hugging_face_endpoint_target import HuggingFaceEndpointTarget
 from pyrit.prompt_target.openai.openai_chat_audio_config import OpenAIChatAudioConfig
 from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
 from pyrit.prompt_target.openai.openai_completion_target import OpenAICompletionTarget
@@ -87,7 +86,6 @@ __all__ = [
     "HTTPTarget",
     "HTTPXAPITarget",
     "HuggingFaceChatTarget",
-    "HuggingFaceEndpointTarget",
     "limit_requests_per_minute",
     "OpenAICompletionTarget",
     "OpenAIChatAudioConfig",
