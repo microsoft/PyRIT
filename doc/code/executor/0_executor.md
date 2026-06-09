@@ -65,6 +65,26 @@ A third family, **compound attacks**, doesn't add turns of its own — it orches
 (running them in sequence) toward a single objective. It's covered last, after the building blocks it
 composes.
 
+## When do you actually need an attack?
+
+The durable value of an attack is **adaptive decision-making**: branching and backtracking based on
+the objective target's feedback, like searching a graph for a path that works. Crescendo and TAP are
+the clearest examples — and you can reshape them substantially just by swapping their *primitives*
+(system prompt, converters, scorers, prepended/simulated conversations) rather than writing a new
+class.
+
+A lot of what *looks* like a distinct attack isn't an adaptive algorithm at all:
+
+- **Pure prompt transformations** — obfuscating, or deconstructing-and-reconstructing a prompt — are
+  better expressed as [converters](../converters/0_converters.ipynb) than as attack classes.
+- **Fixed framings** — a role-play wrapper, a primed Q&A history — are really a prepended conversation
+  plus seeds, i.e. an [attack technique](../scenarios/0_attack_techniques.ipynb) over
+  `PromptSendingAttack`.
+
+Several of the single-turn attacks in this section predate that distinction and remain as classes for
+compatibility. When you are building something new, prefer a converter or a technique — reach for a
+new attack class only when you genuinely need a feedback-driven loop.
+
 ## The shared lifecycle
 
 Every executor is a `Strategy`, and `Strategy.execute_async()` is non-abstract: it enforces the same

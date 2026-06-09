@@ -19,10 +19,13 @@
 # drive, single-turn attacks don't need an adversarial target to *run* — which makes them fast and
 # cheap. (A few do use an adversarial target to *prepare* the one prompt; those are called out below.)
 #
-# > **Single-turn attacks are often just [attack techniques](../scenarios/0_attack_techniques.ipynb).**
-# > Most are a `PromptSendingAttack` plus a specific set of seeds or a fixed configuration. If you are
-# > tempted to write a new single-turn subclass, first check whether a registered technique already
-# > expresses it — scenarios can then select it by name.
+# > **Many of these would be converters or techniques today, not attack classes.** A single-turn attack
+# > really only earns its own class when it does something a converter, a prepended conversation, or an
+# > adaptive loop can't. Most below are a `PromptSendingAttack` plus seeds (an
+# > [attack technique](../scenarios/0_attack_techniques.ipynb)) or a pure prompt transformation (a
+# > [converter](../converters/0_converters.ipynb)) — so before writing a new single-turn subclass, check
+# > whether a technique or converter already expresses it. Several here predate that distinction and
+# > remain as classes for compatibility.
 #
 # | Attack | What it does |
 # |---|---|
