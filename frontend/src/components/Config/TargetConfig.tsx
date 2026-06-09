@@ -135,6 +135,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
         onCreated={handleTargetCreated}
+        existingTargets={targets}
       />
     </div>
   )

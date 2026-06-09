@@ -1155,6 +1155,7 @@ def test_get_message_pieces_sorts(
 
 
 def test_message_piece_scores_duplicate_piece(sqlite_instance: MemoryInterface):
+    """Scores for duplicated pieces are returned via get_prompt_scores."""
     original_id = uuid4()
     duplicate_id = uuid4()
 
@@ -1186,14 +1187,15 @@ def test_message_piece_scores_duplicate_piece(sqlite_instance: MemoryInterface):
     )
     sqlite_instance.add_scores_to_memory(scores=[score])
 
-    retrieved_pieces = sqlite_instance.get_message_pieces()
+    # Both the original and the duplicate piece resolve back to the same score
+    # via get_prompt_scores, which queries ScoreEntry by original_prompt_id.
+    scores_for_original = sqlite_instance.get_prompt_scores(prompt_ids=[str(original_id)])
+    scores_for_duplicate = sqlite_instance.get_prompt_scores(prompt_ids=[str(duplicate_id)])
 
-    assert len(retrieved_pieces[0].scores) == 1
-    assert retrieved_pieces[0].scores[0].score_value == "0.8"
-
-    # Check that the duplicate piece has the same score as the original
-    assert len(retrieved_pieces[1].scores) == 1
-    assert retrieved_pieces[1].scores[0].score_value == "0.8"
+    assert len(scores_for_original) == 1
+    assert scores_for_original[0].score_value == "0.8"
+    assert len(scores_for_duplicate) == 1
+    assert scores_for_duplicate[0].score_value == "0.8"
 
 
 async def test_message_piece_hash_stored_and_retrieved(sqlite_instance: MemoryInterface):

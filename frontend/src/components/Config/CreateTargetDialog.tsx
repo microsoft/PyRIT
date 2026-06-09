@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   Dialog,
   DialogSurface,
@@ -20,11 +20,15 @@ import {
   MessageBar,
   MessageBarBody,
 } from '@fluentui/react-components'
+import { DeleteRegular } from '@fluentui/react-icons'
 import { targetsApi } from '@/services/api'
+import { toApiError } from '@/services/errors'
+import type { TargetInstance } from '@/types'
 import { useCreateTargetDialogStyles } from './CreateTargetDialog.styles'
+import { MAX_WEIGHT, parseWeight } from './weightValidation'
 
 interface TargetTypeConfig {
-  readonly kind: 'openai' | 'azureml'
+  readonly kind: 'openai' | 'azureml' | 'roundrobin'
   readonly supportsEntra: boolean
 }
 
@@ -36,6 +40,7 @@ const TARGET_TYPE_CONFIG: Record<string, TargetTypeConfig> = {
   OpenAITTSTarget: { kind: 'openai', supportsEntra: true },
   OpenAIResponseTarget: { kind: 'openai', supportsEntra: true },
   AzureMLChatTarget: { kind: 'azureml', supportsEntra: true },
+  RoundRobinTarget: { kind: 'roundrobin', supportsEntra: false },
 }
 
 const SUPPORTED_TARGET_TYPES = Object.keys(TARGET_TYPE_CONFIG)
@@ -78,9 +83,62 @@ interface CreateTargetDialogProps {
   open: boolean
   onClose: () => void
   onCreated: () => void
+  /** Existing targets, passed from the parent to avoid a redundant API call. */
+  existingTargets?: TargetInstance[]
 }
 
-export default function CreateTargetDialog({ open, onClose, onCreated }: CreateTargetDialogProps) {
+/** State for one selected inner target in the RoundRobinTarget form. */
+interface SelectedInnerTarget {
+  readonly registryName: string
+  /**
+   * Raw text the user has typed into the weight input. May be transiently
+   * invalid (empty, "2.5", "99999999999", etc.) — the canonical numeric weight
+   * is derived on demand via {@link parseWeight}. Keeping the raw string as
+   * the single source of truth avoids the "user types 0 and the field
+   * silently reverts" UX bug.
+   */
+  weightInput: string
+}
+
+/**
+ * Resolve the effective underlying model for compatibility checks.
+ *
+ * Mirrors the backend's TARGET_EVAL_PARAM_FALLBACKS rule: when
+ * underlying_model_name is empty (null, undefined, or empty string), fall back
+ * to model_name. Without this fallback, two targets with the same model_name
+ * but no underlying_model_name would compare as compatible on the frontend
+ * even though they resolve to different actual models on the backend (or vice
+ * versa), so the user would only see the failure as an opaque HTTP 400.
+ *
+ * Keep in sync with TARGET_EVAL_PARAM_FALLBACKS in
+ * pyrit/models/identifiers/evaluation_identifier.py — the
+ * TestFrontendBackendCompatibilitySync test guards against drift.
+ */
+function effectiveUnderlyingModel(t: TargetInstance): string | null {
+  return t.underlying_model_name || t.model_name || null
+}
+
+/**
+ * Check if two targets are compatible for grouping in a RoundRobinTarget.
+ *
+ * Must match the behavioral params that RoundRobinTarget validates on the backend:
+ * same target_type + TARGET_EVAL_PARAMS (underlying_model_name, temperature, top_p),
+ * with the underlying_model_name → model_name fallback from TARGET_EVAL_PARAM_FALLBACKS.
+ *
+ * NOTE: model_name itself is intentionally NOT compared directly — inner targets can
+ * have different deployment names as long as the underlying model is the same.
+ * Keep this in sync with RoundRobinTarget._validate_behavioral_consistency.
+ */
+function isCompatible(a: TargetInstance, b: TargetInstance): boolean {
+  return (
+    a.target_type === b.target_type &&
+    effectiveUnderlyingModel(a) === effectiveUnderlyingModel(b) &&
+    (a.temperature ?? null) === (b.temperature ?? null) &&
+    (a.top_p ?? null) === (b.top_p ?? null)
+  )
+}
+
+export default function CreateTargetDialog({ open, onClose, onCreated, existingTargets }: CreateTargetDialogProps) {
   const styles = useCreateTargetDialogStyles()
   const [targetType, setTargetType] = useState('')
   const [endpoint, setEndpoint] = useState('')
@@ -97,7 +155,14 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
   const [error, setError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<{ targetType?: string; endpoint?: string }>({})
 
+  // --- RoundRobin-specific state ---
+  // The list of targets available for selection (fetched once when dialog opens).
+  const [availableTargets, setAvailableTargets] = useState<TargetInstance[]>([])
+  // Targets the user has picked for the RoundRobinTarget, with their weights.
+  const [selectedInnerTargets, setSelectedInnerTargets] = useState<SelectedInnerTarget[]>([])
+
   const targetConfig = TARGET_TYPE_CONFIG[targetType]
+  const isRoundRobin = targetConfig?.kind === 'roundrobin'
   const isAzureML = targetConfig?.kind === 'azureml'
   const isOpenAi = targetConfig?.kind === 'openai'
   const supportsEntra = targetConfig?.supportsEntra ?? false
@@ -115,6 +180,66 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
   })()
   const showEntraEndpointError = entraEndpointError !== null
 
+  // Fetch the available targets when the dialog opens with RoundRobin selected.
+  // If the parent already passed targets, use those to avoid a redundant API call.
+  useEffect(() => {
+    if (!open || !isRoundRobin) return
+    if (existingTargets && existingTargets.length > 0) {
+      setAvailableTargets(existingTargets)
+      return
+    }
+    let cancelled = false
+    targetsApi.listTargets(200).then((res) => {
+      if (!cancelled) setAvailableTargets(res.items)
+    }).catch(() => {
+      // Ignore fetch errors — the list will just be empty
+    })
+    return () => { cancelled = true }
+  }, [open, isRoundRobin, existingTargets])
+
+  // Compute which targets are eligible to be added next, based on compatibility
+  // with the first selected target. We also exclude RoundRobinTargets (no nesting),
+  // already-selected targets, and any target whose identifier_hash matches one already
+  // selected (different registry names that resolve to the same backend config).
+  const eligibleTargets = useMemo(() => {
+    // Targets the user has already selected — exclude by registry name AND by hash so
+    // aliases pointing at the same underlying endpoint don't show up as separate options.
+    const selectedNames = new Set(selectedInnerTargets.map((t) => t.registryName))
+    const selectedHashes = new Set(
+      selectedInnerTargets
+        .map((sel) => availableTargets.find((t) => t.target_registry_name === sel.registryName)?.identifier_hash)
+        .filter((h): h is string => Boolean(h)),
+    )
+    const candidates = availableTargets.filter(
+      (t) =>
+        t.target_type !== 'RoundRobinTarget' &&
+        !selectedNames.has(t.target_registry_name) &&
+        !(t.identifier_hash && selectedHashes.has(t.identifier_hash)),
+    )
+    // If nothing is selected yet, all non-RRT candidates are eligible
+    if (selectedInnerTargets.length === 0) return candidates
+    // Otherwise, filter to only targets compatible with the first one
+    const firstSelected = availableTargets.find(
+      (t) => t.target_registry_name === selectedInnerTargets[0].registryName,
+    )
+    if (!firstSelected) return candidates
+    return candidates.filter((t) => isCompatible(firstSelected, t))
+  }, [availableTargets, selectedInnerTargets])
+
+  const addInnerTarget = (registryName: string) => {
+    setSelectedInnerTargets((prev) => [...prev, { registryName, weightInput: '1' }])
+  }
+
+  const removeInnerTarget = (registryName: string) => {
+    setSelectedInnerTargets((prev) => prev.filter((t) => t.registryName !== registryName))
+  }
+
+  const setInnerTargetWeightInput = (registryName: string, weightInput: string) => {
+    setSelectedInnerTargets((prev) =>
+      prev.map((t) => (t.registryName === registryName ? { ...t, weightInput } : t)),
+    )
+  }
+
   const resetForm = () => {
     setTargetType('')
     setEndpoint('')
@@ -129,6 +254,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
     setRepetitionPenalty('1.0')
     setError(null)
     setFieldErrors({})
+    setSelectedInnerTargets([])
   }
 
   const handleClose = () => {
@@ -137,6 +263,48 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
   }
 
   const handleSubmit = async () => {
+    // For RoundRobinTarget, validation is different: we need ≥2 selected targets, not endpoint
+    if (isRoundRobin) {
+      if (selectedInnerTargets.length < 2) {
+        setError('Please select at least 2 targets.')
+        return
+      }
+      // Re-validate every weight at submit time. The Submit button's disabled
+      // state usually catches this, but pressing Enter inside the weight input
+      // triggers the form's onSubmit handler, bypassing the button.
+      const parsedWeights: number[] = []
+      for (const t of selectedInnerTargets) {
+        const parsed = parseWeight(t.weightInput)
+        if (!parsed.ok) {
+          setError(`Invalid weight for "${t.registryName}": ${parsed.error}.`)
+          return
+        }
+        parsedWeights.push(parsed.value)
+      }
+
+      setSubmitting(true)
+      setError(null)
+
+      try {
+        await targetsApi.createTarget({
+          type: 'RoundRobinTarget',
+          params: {
+            target_registry_names: selectedInnerTargets.map((t) => t.registryName),
+            weights: parsedWeights,
+          },
+        })
+        resetForm()
+        onCreated()
+      } catch (err) {
+        // Surface the backend's RFC 7807 `detail` (e.g. RoundRobinTarget validation
+        // messages) rather than the generic axios "Request failed with status code 400".
+        setError(toApiError(err).detail)
+      } finally {
+        setSubmitting(false)
+      }
+      return
+    }
+
     const errors: { targetType?: string; endpoint?: string } = {}
     if (!targetType) errors.targetType = 'Please select a target type'
     if (!endpoint) errors.endpoint = 'Please provide an endpoint URL'
@@ -174,14 +342,13 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
         params,
         ...(isEntra ? { auth_mode: 'entra' as const } : {}),
       })
+
       resetForm()
       onCreated()
     } catch (err) {
-      if (err instanceof Error) {
-        setError(err.message)
-      } else {
-        setError('Failed to create target')
-      }
+      // Surface the backend's RFC 7807 `detail` (e.g. RoundRobinTarget validation
+      // messages) rather than the generic axios "Request failed with status code 400".
+      setError(toApiError(err).detail)
     } finally {
       setSubmitting(false)
     }
@@ -223,6 +390,106 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
                 </Select>
               </Field>
 
+              {/* === RoundRobinTarget form: select existing targets === */}
+              {isRoundRobin && (
+                <>
+                  <Field label="Add Target">
+                    <Select
+                      value=""
+                      onChange={(_, data) => {
+                        if (data.value) addInnerTarget(data.value)
+                      }}
+                      disabled={eligibleTargets.length === 0}
+                    >
+                      <option value="">
+                        {eligibleTargets.length === 0
+                          ? 'No compatible targets available'
+                          : 'Select a target to add...'}
+                      </option>
+                      {eligibleTargets.map((t) => (
+                        <option key={t.target_registry_name} value={t.target_registry_name}>
+                          {t.target_registry_name} — {t.target_type}
+                          {t.model_name ? ` (${t.model_name})` : ''}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+
+                  {selectedInnerTargets.length > 0 && (
+                    <div>
+                      <Label size="small" style={{ marginBottom: '4px', display: 'block' }}>
+                        Selected Targets ({selectedInnerTargets.length})
+                        {selectedInnerTargets.length < 2 && (
+                          <Text size={200} style={{ color: tokens.colorPaletteRedForeground1, marginLeft: '8px' }}>
+                            — need at least 2
+                          </Text>
+                        )}
+                      </Label>
+                      <div className={styles.selectedTargetsList}>
+                        {selectedInnerTargets.map((sel) => {
+                          const target = availableTargets.find(
+                            (t) => t.target_registry_name === sel.registryName,
+                          )
+                          const weightParse = parseWeight(sel.weightInput)
+                          const weightError = weightParse.ok ? null : weightParse.error
+                          return (
+                            <div key={sel.registryName} className={styles.selectedTargetRow}>
+                              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <Text size={200} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {target?.target_registry_name ?? sel.registryName}
+                                    {target?.model_name ? ` (${target.model_name})` : ''}
+                                  </Text>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <Label size="small">Weight:</Label>
+                                    <Input
+                                      type="number"
+                                      value={sel.weightInput}
+                                      min="1"
+                                      max={String(MAX_WEIGHT)}
+                                      step="1"
+                                      aria-invalid={weightError !== null}
+                                      aria-label={`Weight for ${sel.registryName}`}
+                                      style={{ width: '70px' }}
+                                      onChange={(_, data) =>
+                                        setInnerTargetWeightInput(sel.registryName, data.value)
+                                      }
+                                    />
+                                    <Button
+                                      appearance="subtle"
+                                      size="small"
+                                      icon={<DeleteRegular />}
+                                      aria-label={`Remove ${sel.registryName}`}
+                                      onClick={() => removeInnerTarget(sel.registryName)}
+                                    />
+                                  </div>
+                                </div>
+                                {weightError && (
+                                  <Text
+                                    size={100}
+                                    role="alert"
+                                    style={{
+                                      color: tokens.colorPaletteRedForeground1,
+                                      marginTop: '2px',
+                                      alignSelf: 'flex-end',
+                                    }}
+                                  >
+                                    {weightError}
+                                  </Text>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* === Standard target form fields (hidden for RoundRobin) === */}
+              {!isRoundRobin && (
+                <>
               <Field
                 label="Endpoint URL"
                 required
@@ -345,6 +612,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
                 </Field>
               )}
 
+              {/* Close the !isRoundRobin conditional wrapper */}
+                </>
+              )}
+
+              {!isRoundRobin && (
               <Label size="small" style={{ color: tokens.colorNeutralForeground3 }}>
                 Targets can also be auto-populated by adding an initializer (e.g. <code>airt</code>) to your{' '}
                 <code>~/.pyrit/.pyrit_conf</code> file, which reads endpoints from your <code>.env</code> and{' '}
@@ -353,6 +625,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
                   .pyrit_conf_example
                 </Link>.
               </Label>
+              )}
             </form>
           </DialogContent>
           <DialogActions>
@@ -362,7 +635,14 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
             <Button
               appearance="primary"
               onClick={handleSubmit}
-              disabled={submitting || !targetType || !endpoint || showEntraEndpointError}
+              disabled={
+                submitting ||
+                !targetType ||
+                (isRoundRobin
+                  ? selectedInnerTargets.length < 2 ||
+                    selectedInnerTargets.some((t) => !parseWeight(t.weightInput).ok)
+                  : !endpoint || showEntraEndpointError)
+              }
             >
               {submitting ? 'Creating...' : 'Create Target'}
             </Button>
