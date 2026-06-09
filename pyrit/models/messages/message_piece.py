@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from pydantic import (
@@ -24,7 +24,6 @@ from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydanti
 )
 from pyrit.models.score import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ComponentIdentifierField,
-    Score,
 )
 
 if TYPE_CHECKING:
@@ -39,44 +38,12 @@ if TYPE_CHECKING:
 # These can be deleted entirely once their ``removed_in`` releases ship — the
 # Pydantic field definitions and ``extra="forbid"`` config will then reject
 # the kwargs naturally.
-_DEPRECATED_KWARGS: tuple[tuple[str, str], ...] = (
-    ("labels", "0.16.0"),
-    ("scorer_identifier", "0.15.0"),
-    ("scores", "0.15.0"),
-    ("targeted_harm_categories", "0.15.0"),
-)
+_DEPRECATED_KWARGS: tuple[tuple[str, str], ...] = (("labels", "0.16.0"),)
 
 
-# ``ComponentIdentifierField`` (and ``Score``) are imported from ``pyrit.models.score``
-# above. Both round-trip through the flat dict storage shape via their own Pydantic
-# serializers, so no local annotated aliases are needed here.
-
-
-def __getattr__(name: str) -> Any:
-    """
-    Lazily resolve deprecated module-level aliases.
-
-    Args:
-        name: The attribute name being accessed.
-
-    Returns:
-        The resolved alias (currently only ``Originator``).
-
-    Raises:
-        AttributeError: If ``name`` is not a known deprecated alias.
-    """
-    if name == "Originator":
-        print_deprecation_message(
-            old_item="pyrit.models.message_piece.Originator",
-            new_item=(
-                "inline Literal['attack', 'converter', 'undefined', 'scorer'] "
-                "(the type alias is being removed; the originator field itself is "
-                "deprecated and will be removed in 0.15.0)"
-            ),
-            removed_in="0.15.0",
-        )
-        return Literal["attack", "converter", "undefined", "scorer"]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# ``ComponentIdentifierField`` is imported from ``pyrit.models.score`` above.
+# It round-trips through the flat dict storage shape via its own Pydantic
+# serializer, so no local annotated alias is needed here.
 
 
 class MessagePiece(BaseModel):
@@ -106,16 +73,12 @@ class MessagePiece(BaseModel):
     converted_value_data_type: PromptDataType = "text"
     converted_value_sha256: str | None = None
     response_error: PromptResponseError = "none"
-    originator: Literal["attack", "converter", "undefined", "scorer"] = "undefined"
     original_prompt_id: uuid.UUID | None = None
     labels: dict[str, Any] = Field(default_factory=dict)
-    targeted_harm_categories: list[str] = Field(default_factory=list)
     prompt_metadata: dict[str, Any] = Field(default_factory=dict)
     converter_identifiers: list[ComponentIdentifierField] = Field(default_factory=list)
     prompt_target_identifier: ComponentIdentifierField | None = None
     attack_identifier: ComponentIdentifierField | None = None
-    scorer_identifier: ComponentIdentifierField | None = None
-    scores: list[Score] = Field(default_factory=list)
 
     # When True, the memory layer skips persisting this piece. Used for ephemeral
     # pieces a scorer creates to score arbitrary content; ``exclude=True`` keeps
@@ -144,14 +107,6 @@ class MessagePiece(BaseModel):
                     new_item="MessagePiece(...)",
                     removed_in=removed_in,
                 )
-        # ``originator`` is special: only warn when the caller explicitly
-        # opts into a non-default value.
-        if data.get("originator", "undefined") != "undefined":
-            print_deprecation_message(
-                old_item="MessagePiece(..., originator=...)",
-                new_item="MessagePiece(...)",
-                removed_in="0.15.0",
-            )
         return data
 
     @model_validator(mode="before")

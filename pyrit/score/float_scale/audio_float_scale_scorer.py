@@ -23,7 +23,6 @@ class AudioFloatScaleScorer(FloatScaleScorer):
         *,
         text_capable_scorer: FloatScaleScorer,
         validator: ScorerPromptValidator | None = None,
-        use_entra_auth: bool | None = None,
     ) -> None:
         """
         Initialize the AudioFloatScaleScorer.
@@ -32,12 +31,6 @@ class AudioFloatScaleScorer(FloatScaleScorer):
             text_capable_scorer: A FloatScaleScorer capable of processing text.
                 This scorer will be used to evaluate the transcribed audio content.
             validator: Validator for the scorer. Defaults to audio_path data type validator.
-            use_entra_auth: **Deprecated.** Will be removed in 0.15.0.
-                Authentication is now configured on the underlying
-                ``AzureSpeechAudioToTextConverter`` via its ``azure_speech_key`` parameter:
-                pass a string API key (or set ``AZURE_SPEECH_KEY``) for key auth, a callable
-                token provider for Entra ID with a custom token, or omit it to use Entra ID
-                via ``DefaultAzureCredential``.
 
         Raises:
             ValueError: If text_capable_scorer does not support text data type.
@@ -45,7 +38,6 @@ class AudioFloatScaleScorer(FloatScaleScorer):
         super().__init__(validator=validator or self._default_validator)
         self._audio_helper = AudioTranscriptHelper(
             text_capable_scorer=text_capable_scorer,
-            use_entra_auth=use_entra_auth,
         )
 
     def _build_identifier(self) -> ComponentIdentifier:
