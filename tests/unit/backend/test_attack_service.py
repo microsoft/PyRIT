@@ -2405,6 +2405,13 @@ class TestAttackServiceAdditionalCoverage:
 
         assert dup_piece.role == "simulated_assistant"
 
+    async def test_store_prepended_messages_noop_when_empty(self, attack_service, mock_memory):
+        """Empty prepended list should be a no-op: no conversation row and no piece writes."""
+        await attack_service._store_prepended_messages_async(conversation_id="conv-1", prepended=[])
+
+        mock_memory.add_conversation_to_memory.assert_not_called()
+        mock_memory.add_message_pieces_to_memory.assert_not_called()
+
 
 class TestAddMessageGuards:
     """Tests for target-mismatch and operator-mismatch guards in add_message_async."""

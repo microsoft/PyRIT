@@ -632,6 +632,40 @@ def test_message_writes_without_registration_create_no_conversation_row(sqlite_i
     assert len(sqlite_instance.get_message_pieces(conversation_id=conversation_id)) == 1
 
 
+def test_add_conversation_to_memory_updates_existing_target_on_reregister(sqlite_instance: MemoryInterface):
+    # Re-registering a conversation with a new non-null target overwrites the previously
+    # recorded one. (A None re-registration never clobbers -- covered separately.)
+    conversation_id = "conv-retarget"
+    target_a = ComponentIdentifier(
+        class_name="OpenAIChatTarget", class_module="pyrit.prompt_target", params={"endpoint": "a"}
+    )
+    target_b = ComponentIdentifier(
+        class_name="OpenAIChatTarget", class_module="pyrit.prompt_target", params={"endpoint": "b"}
+    )
+    sqlite_instance.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=target_a)
+    sqlite_instance.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=target_b)
+
+    metadata = sqlite_instance.get_conversation_metadata(conversation_id=conversation_id)
+    assert metadata is not None
+    assert metadata.target_identifier.hash == target_b.hash
+
+
+def test_upsert_conversation_rolls_back_and_reraises_on_db_error(sqlite_instance: MemoryInterface):
+    # A DB failure during the upsert rolls back the session and propagates the error
+    # rather than leaving a half-written Conversations row.
+    from sqlalchemy.exc import SQLAlchemyError
+
+    session = MagicMock()
+    session.get.side_effect = SQLAlchemyError("boom")
+
+    with patch.object(sqlite_instance, "get_session", return_value=session):
+        with pytest.raises(SQLAlchemyError, match="boom"):
+            sqlite_instance._upsert_conversation(conversation_id="conv-fail", target_identifier=None)
+
+    session.rollback.assert_called_once()
+    session.commit.assert_not_called()
+
+
 def test_add_message_pieces_to_memory_updates_sequence(
     sqlite_instance: MemoryInterface, sample_conversations: Sequence[MessagePiece]
 ):

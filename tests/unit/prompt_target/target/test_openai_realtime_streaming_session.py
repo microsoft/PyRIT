@@ -736,6 +736,35 @@ def test_open_streaming_session_forwards_kwargs_to_session_constructor(sqlite_in
     assert captured["persist_prepended_conversation"] is False
 
 
+@patch.dict("os.environ", _CLEAN_ENV)
+def test_open_streaming_session_attack_identifier_emits_deprecation_warning(sqlite_instance):
+    """Passing the deprecated ``attack_identifier`` kwarg emits a deprecation message."""
+    from pyrit.prompt_target import RealtimeTarget
+
+    target = RealtimeTarget(api_key="k", endpoint="wss://test_url", model_name="test")
+    normalizer = _build_normalizer()
+
+    async def _empty():
+        if False:
+            yield b""
+
+    with (
+        patch(
+            "pyrit.prompt_target.openai.openai_realtime_target._OpenAIRealtimeStreamingSession",
+            side_effect=lambda **kwargs: MagicMock(name="session"),
+        ),
+        patch("pyrit.prompt_target.openai.openai_realtime_target.print_deprecation_message") as mock_deprecation,
+    ):
+        target.open_streaming_session(
+            audio_chunks=_empty(),
+            prompt_normalizer=normalizer,
+            conversation_id="conv-X",
+            attack_identifier=MagicMock(name="attack_identifier"),
+        )
+
+    mock_deprecation.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # 12. Direct unit tests for the _trim_snapshot_to_speech helper
 # ---------------------------------------------------------------------------

@@ -152,6 +152,24 @@ async def test_send_prompt_async_labels_emit_deprecation_warning(mock_memory_ins
     mock_deprecation.assert_called_once()
 
 
+async def test_send_prompt_async_attack_identifier_emits_deprecation_warning(mock_memory_instance, seed_group):
+    prompt_target = MagicMock()
+    prompt_target.send_prompt_async = AsyncMock(
+        return_value=[MessagePiece(role="assistant", original_value="ok", conversation_id="conv-1").to_message()]
+    )
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+
+    normalizer = PromptNormalizer()
+    message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
+
+    with patch("pyrit.prompt_normalizer.prompt_normalizer.print_deprecation_message") as mock_deprecation:
+        await normalizer.send_prompt_async(
+            message=message, target=prompt_target, attack_identifier=get_mock_attack_identifier("TestAttack")
+        )
+
+    mock_deprecation.assert_called_once()
+
+
 async def test_send_prompt_async_empty_response_exception_handled(mock_memory_instance, seed_group):
     # Use MagicMock with send_prompt_async as AsyncMock to avoid coroutine warnings on other methods
     prompt_target = MagicMock()
@@ -628,6 +646,23 @@ async def test_add_prepended_conversation_to_memory(mock_memory_instance):
     assert len(result) == 1
     assert result[0].message_pieces[0].conversation_id == conv_id
     mock_memory_instance.add_message_to_memory.assert_called_once()
+
+
+async def test_add_prepended_conversation_to_memory_attack_identifier_emits_deprecation_warning(mock_memory_instance):
+    normalizer = PromptNormalizer()
+
+    piece = MessagePiece(role="user", original_value="prepended text", conversation_id="old-id")
+    message = Message(message_pieces=[piece])
+
+    with patch("pyrit.prompt_normalizer.prompt_normalizer.print_deprecation_message") as mock_deprecation:
+        await normalizer.add_prepended_conversation_to_memory_async(
+            conversation_id="test-conv-id",
+            should_convert=False,
+            prepended_conversation=[message],
+            attack_identifier=get_mock_attack_identifier("TestAttack"),
+        )
+
+    mock_deprecation.assert_called_once()
 
 
 _AUDIO_SAMPLE_RATE_HZ = 24000
