@@ -79,8 +79,8 @@ export default function Navigation({
         className={styles.navButton}
         appearance="subtle"
         icon={<PersonFeedbackRegular />}
-        title="Send feedback"
-        aria-label="Send feedback"
+        title="Feedback"
+        aria-label="Feedback"
         onClick={onOpenFeedback}
       />
 
