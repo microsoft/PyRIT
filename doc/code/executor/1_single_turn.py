@@ -126,8 +126,8 @@ await output_attack_async(result)
 # %% [markdown]
 # ## Skeleton Key
 #
-# `SkeletonKeyAttack` first sends a known jailbreak that asks the model to update its own guidelines,
-# then sends the objective in the same conversation.
+# `SkeletonKeyAttack` prepends a known jailbreak exchange — the skeleton-key prompt plus a simulated
+# acceptance — as conversation history, then sends the objective in a single turn to the primed target.
 
 # %%
 from pyrit.executor.attack import SkeletonKeyAttack

@@ -338,7 +338,7 @@ class TestCyberRegistryIntegration:
         scenario = Cyber(objective_scorer=mock_objective_scorer)
         factories = scenario._get_attack_technique_factories()
         assert factories["red_teaming"].uses_adversarial is True
-        assert factories["red_teaming"]._adversarial_config is None
+        assert factories["red_teaming"]._adversarial_chat is None
 
     def test_register_idempotent(self):
         """Registering the scenario technique factories twice doesn't duplicate entries."""
