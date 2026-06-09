@@ -173,8 +173,7 @@ project:
             - file: code/memory/6_azure_sql_memory.ipynb
             - file: code/memory/7_azure_sql_memory_attacks.ipynb
             - file: code/memory/8_seed_database.ipynb
-            - file: code/memory/9_exporting_data.ipynb
-            - file: code/memory/10_schema_diagram.md
+            - file: code/memory/9_schema_diagram.md
             - file: code/memory/embeddings.ipynb
         - file: code/setup/0_setup.md
           children:

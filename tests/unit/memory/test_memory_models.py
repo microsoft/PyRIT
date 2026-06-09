@@ -33,6 +33,7 @@ from pyrit.models import (
     Score,
     SeedObjective,
     SeedPrompt,
+    SeedSimulatedConversation,
     build_atomic_attack_identifier,
 )
 
@@ -354,6 +355,124 @@ class TestSeedEntry:
         seed = _make_seed_prompt(parameters=["param1", "param2"])
         entry = SeedEntry(entry=seed)
         assert entry.parameters == ["param1", "param2"]
+
+    # ---- response_json_schema persistence ---------------------------------
+
+    def test_roundtrip_seed_prompt_preserves_inline_response_json_schema(self):
+        """Inline ``response_json_schema`` round-trips through ``SeedEntry``."""
+        schema = {
+            "type": "object",
+            "properties": {"x": {"type": "string"}, "y": {"type": "integer"}},
+            "required": ["x"],
+        }
+        seed = _make_seed_prompt(response_json_schema=schema)
+        entry = SeedEntry(entry=seed)
+        recovered = entry.get_seed()
+        assert isinstance(recovered, SeedPrompt)
+        assert recovered.response_json_schema == schema
+
+    def test_roundtrip_seed_prompt_with_named_schema_kwarg(self):
+        """Named-schema construction round-trips as the resolved body."""
+        from pyrit.models.json_schema_definition import get_common_json_schema
+
+        expected = get_common_json_schema("true_false_with_rationale")
+        seed = _make_seed_prompt(response_json_schema_name="true_false_with_rationale")
+        entry = SeedEntry(entry=seed)
+        recovered = entry.get_seed()
+        assert isinstance(recovered, SeedPrompt)
+        assert recovered.response_json_schema == expected
+        # InitVar is never persisted as a name; only the resolved body survives.
+        assert "response_json_schema_name" not in recovered.__dict__
+
+    def test_seed_prompt_without_schema_does_not_leak_reserved_key(self):
+        """A SeedPrompt without a schema must NOT carry the reserved key out of the DB."""
+        from pyrit.models import SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY
+
+        seed = _make_seed_prompt(metadata={"format": "png"})
+        entry = SeedEntry(entry=seed)
+        assert entry.prompt_metadata == {"format": "png"}
+        recovered = entry.get_seed()
+        assert isinstance(recovered, SeedPrompt)
+        assert recovered.response_json_schema is None
+        assert SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY not in (recovered.metadata or {})
+        assert (recovered.metadata or {}).get("format") == "png"
+
+    def test_seed_prompt_forged_reserved_key_is_stripped_on_save(self):
+        """A caller-forged reserved key in metadata is dropped, not persisted."""
+        from pyrit.models import SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY
+
+        forged = {
+            SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY: "evil",
+            "keep": "me",
+        }
+        seed = _make_seed_prompt(metadata=forged)
+        entry = SeedEntry(entry=seed)
+        assert SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY not in entry.prompt_metadata
+        assert entry.prompt_metadata.get("keep") == "me"
+        recovered = entry.get_seed()
+        assert recovered.response_json_schema is None
+
+    def test_roundtrip_seed_objective_strips_reserved_key(self):
+        """SeedObjective doesn't have a schema field, but the reserved key must still be stripped."""
+        from pyrit.models import SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY
+
+        obj = SeedObjective(
+            value="objective text",
+            name="obj1",
+            dataset_name="ds",
+            added_by="tester",
+            metadata={SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY: "sneaky", "owned": "by-caller"},
+        )
+        entry = SeedEntry(entry=obj)
+        assert SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY not in entry.prompt_metadata
+        recovered = entry.get_seed()
+        assert isinstance(recovered, SeedObjective)
+        assert SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY not in (recovered.metadata or {})
+        assert (recovered.metadata or {}).get("owned") == "by-caller"
+
+    def test_roundtrip_seed_simulated_conversation_strips_reserved_key(self):
+        """SeedSimulatedConversation also has no schema field; reserved key must still be stripped."""
+        from pyrit.models import SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY
+
+        config = SeedSimulatedConversation(
+            num_turns=3,
+            adversarial_chat_system_prompt_path="/path/to/adversarial.yaml",
+            simulated_target_system_prompt_path="/path/to/target.yaml",
+            metadata={SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY: "sneaky", "owned": "by-caller"},
+        )
+        entry = SeedEntry(entry=config)
+        assert SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY not in entry.prompt_metadata
+        recovered = entry.get_seed()
+        assert isinstance(recovered, SeedSimulatedConversation)
+        assert SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY not in (recovered.metadata or {})
+        assert (recovered.metadata or {}).get("owned") == "by-caller"
+
+    def test_corrupt_reserved_key_unpack_returns_no_schema(self):
+        """A malformed JSON-encoded schema in the DB must round-trip as no schema, with clean metadata."""
+        from pyrit.models import SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY
+
+        seed = _make_seed_prompt()
+        entry = SeedEntry(entry=seed)
+        # Simulate corruption that bypasses the write-time pack: write garbage directly.
+        entry.prompt_metadata = {
+            SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY: "{not valid json",
+            "keep": "me",
+        }
+        recovered = entry.get_seed()
+        assert isinstance(recovered, SeedPrompt)
+        # The reserved key never leaks back out, and the rest of the metadata survives.
+        assert SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY not in (recovered.metadata or {})
+        assert (recovered.metadata or {}).get("keep") == "me"
+        assert recovered.response_json_schema is None
+
+    def test_non_json_serializable_schema_raises_descriptive_error(self):
+        """A schema containing non-JSON-native values must raise with context, not a bare TypeError."""
+        # ``set`` is not JSON-serializable; json.dumps would normally raise a bare
+        # ``TypeError: Object of type set is not JSON serializable`` with no hint
+        # about which seed produced it.
+        seed = _make_seed_prompt(name="bad-schema-seed", response_json_schema={"enum": {1, 2, 3}})
+        with pytest.raises(TypeError, match="bad-schema-seed.*not JSON-serializable"):
+            SeedEntry(entry=seed)
 
 
 # ---------------------------------------------------------------------------

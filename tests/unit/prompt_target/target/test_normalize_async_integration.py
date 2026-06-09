@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import warnings
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,7 +14,6 @@ import pytest
 from openai.types.chat import ChatCompletion
 
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.message_normalizer import GenericSystemSquashNormalizer
 from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.prompt_target import AzureMLChatTarget, OpenAIChatTarget
 from pyrit.prompt_target.common.target_capabilities import (
@@ -302,61 +300,6 @@ async def test_azure_ml_target_memory_not_mutated():
     # Memory must still have original system message only (not mutated)
     assert len(memory_conversation) == 1
     assert memory_conversation[0].get_piece().api_role == "system"
-
-
-# ---------------------------------------------------------------------------
-# AzureMLChatTarget — message_normalizer deprecation
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.usefixtures("patch_central_database")
-def test_azure_ml_generic_system_squash_normalizer_emits_deprecation_warning():
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        target = AzureMLChatTarget(
-            endpoint="http://aml-test-endpoint.com",
-            api_key="valid_api_key",
-            message_normalizer=GenericSystemSquashNormalizer(),
-        )
-        deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert len(deprecation_warnings) == 1
-        assert "message_normalizer" in str(deprecation_warnings[0].message)
-        assert "deprecated" in str(deprecation_warnings[0].message)
-
-
-@pytest.mark.usefixtures("patch_central_database")
-def test_azure_ml_generic_system_squash_normalizer_creates_adapt_configuration():
-    """Legacy message_normalizer should be translated into a TargetConfiguration with ADAPT policy."""
-    with warnings.catch_warnings(record=True):
-        warnings.simplefilter("always")
-        target = AzureMLChatTarget(
-            endpoint="http://aml-test-endpoint.com",
-            api_key="valid_api_key",
-            message_normalizer=GenericSystemSquashNormalizer(),
-        )
-    # The shim should create a config with supports_system_prompt=False
-    assert not target.capabilities.supports_system_prompt
-    assert target.configuration.includes(capability=CapabilityName.MULTI_TURN)
-    assert not target.configuration.includes(capability=CapabilityName.SYSTEM_PROMPT)
-
-
-@pytest.mark.usefixtures("patch_central_database")
-def test_azure_ml_message_normalizer_and_custom_config_raises():
-    """Passing both message_normalizer and custom_configuration should raise ValueError."""
-    custom_config = TargetConfiguration(
-        capabilities=TargetCapabilities(
-            supports_multi_turn=True,
-            supports_system_prompt=True,
-            supports_multi_message_pieces=True,
-        )
-    )
-    with pytest.raises(ValueError, match="Cannot specify both"):
-        AzureMLChatTarget(
-            endpoint="http://aml-test-endpoint.com",
-            api_key="valid_api_key",
-            message_normalizer=GenericSystemSquashNormalizer(),
-            custom_configuration=custom_config,
-        )
 
 
 @pytest.mark.usefixtures("patch_central_database")

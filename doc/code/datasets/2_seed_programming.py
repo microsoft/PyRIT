@@ -157,6 +157,10 @@ print(system_prompt.value)
 #
 # This metadata enables filtering (e.g., "find all WAV files with 24kHz sample rate") to match target system requirements.
 #
+# **Constraining the Response Shape:**
+# - `response_json_schema:` inlines a JSON schema on a seed; `response_json_schema_name:` references one bundled under `pyrit/datasets/json_schemas/` (e.g. `true_false_with_rationale`). Set at most one.
+# - Targets that support structured output (e.g. OpenAI's `json_schema` response format) enforce it natively; other targets get the schema appended to the prompt text automatically by the normalization pipeline.
+#
 # #### YAML Example
 #
 # Below is an example from [`illegal-multimodal-group.prompt`](../../../pyrit/datasets/seed_datasets/local/examples/illegal-multimodal-group.prompt), available as part of `pyrit_example_dataset`. This defines a single `SeedGroup` where all seeds have `sequence` 0, meaning they're sent together:

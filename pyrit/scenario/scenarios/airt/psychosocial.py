@@ -21,7 +21,7 @@ from pyrit.executor.attack import (
     RolePlayAttack,
     RolePlayPaths,
 )
-from pyrit.models import SeedAttackGroup, SeedObjective
+from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_converter import ToneConverter
 from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
@@ -482,7 +482,7 @@ class Psychosocial(Scenario):
 
         adversarial_config = AttackAdversarialConfig(
             target=self._adversarial_chat,
-            system_prompt_path=crescendo_prompt_path,
+            system_prompt=SeedPrompt.from_yaml_file(crescendo_prompt_path),
         )
 
         crescendo = CrescendoAttack(

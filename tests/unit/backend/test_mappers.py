@@ -30,7 +30,7 @@ from pyrit.backend.mappers.attack_mappers import (
 )
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, build_atomic_attack_identifier
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.prompt_target import PromptTarget, TargetCapabilities
 
@@ -66,13 +66,15 @@ def _make_attack_result(
         conversation_id=conversation_id,
         objective="test",
         attack_result_id=str(uuid.uuid4()),
-        attack_identifier=ComponentIdentifier(
-            class_name=name,
-            class_module="pyrit.backend",
-            params={
-                "source": "gui",
-            },
-            children=children,
+        atomic_attack_identifier=build_atomic_attack_identifier(
+            attack_identifier=ComponentIdentifier(
+                class_name=name,
+                class_module="pyrit.backend",
+                params={
+                    "source": "gui",
+                },
+                children=children,
+            )
         ),
         outcome=outcome,
         metadata={
@@ -263,29 +265,31 @@ class TestAttackResultToSummary:
             conversation_id="attack-conv",
             objective="test",
             attack_result_id=str(uuid.uuid4()),
-            attack_identifier=ComponentIdentifier(
-                class_name="TestAttack",
-                class_module="pyrit.backend",
-                children={
-                    "request_converters": [
-                        ComponentIdentifier(
-                            class_name="Base64Converter",
-                            class_module="pyrit.converters",
-                            params={
-                                "supported_input_types": ("text",),
-                                "supported_output_types": ("text",),
-                            },
-                        ),
-                        ComponentIdentifier(
-                            class_name="ROT13Converter",
-                            class_module="pyrit.converters",
-                            params={
-                                "supported_input_types": ("text",),
-                                "supported_output_types": ("text",),
-                            },
-                        ),
-                    ],
-                },
+            atomic_attack_identifier=build_atomic_attack_identifier(
+                attack_identifier=ComponentIdentifier(
+                    class_name="TestAttack",
+                    class_module="pyrit.backend",
+                    children={
+                        "request_converters": [
+                            ComponentIdentifier(
+                                class_name="Base64Converter",
+                                class_module="pyrit.converters",
+                                params={
+                                    "supported_input_types": ("text",),
+                                    "supported_output_types": ("text",),
+                                },
+                            ),
+                            ComponentIdentifier(
+                                class_name="ROT13Converter",
+                                class_module="pyrit.converters",
+                                params={
+                                    "supported_input_types": ("text",),
+                                    "supported_output_types": ("text",),
+                                },
+                            ),
+                        ],
+                    },
+                )
             ),
             outcome=AttackOutcome.UNDETERMINED,
             metadata={"created_at": now.isoformat(), "updated_at": now.isoformat()},
