@@ -64,6 +64,10 @@ class TargetInstance(BaseModel):
     max_requests_per_minute: int | None = Field(None, description="Maximum requests per minute")
     capabilities: TargetCapabilitiesInfo = Field(..., description="Structured snapshot of target capabilities")
     target_specific_params: dict[str, Any] | None = Field(None, description="Additional target-specific parameters")
+    inner_targets: list["TargetInstance"] | None = Field(
+        None, description="Inner targets for composite targets like RoundRobinTarget"
+    )
+    identifier_hash: str | None = Field(None, description="ComponentIdentifier content hash for duplicate detection")
 
 
 class TargetListResponse(BaseModel):

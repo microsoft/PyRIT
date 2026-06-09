@@ -1129,6 +1129,11 @@ class TestTargetObjectToInstance:
         assert result.endpoint == "http://test"
         assert result.model_name == "gpt-4"
         assert result.temperature == 0.7
+        # identifier_hash is auto-populated by the ComponentIdentifier validator and
+        # surfaced on the DTO so the frontend can dedupe targets that resolve to the
+        # same underlying configuration.
+        assert result.identifier_hash is not None
+        assert result.identifier_hash == mock_identifier.hash
 
     def test_no_endpoint_returns_none(self) -> None:
         """Test that missing endpoint returns None."""
@@ -1489,6 +1494,134 @@ class TestTargetObjectToInstance:
         assert result.target_specific_params is not None
         assert "target_configuration" not in result.target_specific_params
         assert result.target_specific_params["reasoning_effort"] == "high"
+
+
+class TestTargetObjectToInstanceRoundRobin:
+    """Tests for target_object_to_instance with RoundRobinTarget."""
+
+    def test_round_robin_populates_inner_targets(self) -> None:
+        """Inner targets list is populated for RoundRobinTarget objects."""
+        from pyrit.prompt_target.round_robin_target import RoundRobinTarget
+
+        # Build a mock RoundRobinTarget with two inner targets
+        rr = MagicMock(spec=RoundRobinTarget)
+        rr.capabilities = TargetCapabilities(supports_multi_turn=True)
+
+        inner_a = MagicMock(spec=PromptTarget)
+        inner_a.capabilities = TargetCapabilities()
+        inner_a.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"endpoint": "https://a.openai.azure.com", "model_name": "gpt-4o"},
+        )
+
+        inner_b = MagicMock(spec=PromptTarget)
+        inner_b.capabilities = TargetCapabilities()
+        inner_b.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"endpoint": "https://b.openai.azure.com", "model_name": "gpt-4o"},
+        )
+
+        rr._targets = [inner_a, inner_b]
+        rr.get_identifier.return_value = ComponentIdentifier(
+            class_name="RoundRobinTarget",
+            class_module="pyrit.prompt_target.round_robin_target",
+            params={"weights": [1, 1]},
+        )
+
+        result = target_object_to_instance("rr-1", rr)
+
+        assert result.target_type == "RoundRobinTarget"
+        assert result.inner_targets is not None
+        assert len(result.inner_targets) == 2
+        assert result.inner_targets[0].endpoint == "https://a.openai.azure.com"
+        assert result.inner_targets[1].endpoint == "https://b.openai.azure.com"
+
+    def test_round_robin_hoists_model_name_when_all_inner_targets_match(self) -> None:
+        """model_name is hoisted only when all inner targets share the same deployment name."""
+        from pyrit.prompt_target.round_robin_target import RoundRobinTarget
+
+        rr = MagicMock(spec=RoundRobinTarget)
+        rr.capabilities = TargetCapabilities()
+
+        inner_a = MagicMock(spec=PromptTarget)
+        inner_a.capabilities = TargetCapabilities()
+        inner_a.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"model_name": "gpt-4o", "underlying_model_name": "gpt-4o"},
+        )
+
+        inner_b = MagicMock(spec=PromptTarget)
+        inner_b.capabilities = TargetCapabilities()
+        inner_b.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"model_name": "gpt-4o", "underlying_model_name": "gpt-4o"},
+        )
+
+        rr._targets = [inner_a, inner_b]
+        rr.get_identifier.return_value = ComponentIdentifier(
+            class_name="RoundRobinTarget",
+            class_module="pyrit.prompt_target.round_robin_target",
+            params={"weights": [1, 1]},
+        )
+
+        result = target_object_to_instance("rr-2", rr)
+
+        assert result.model_name == "gpt-4o"
+        assert result.underlying_model_name == "gpt-4o"
+
+    def test_round_robin_omits_model_name_when_inner_targets_differ(self) -> None:
+        """model_name is None when inner targets have different deployment names."""
+        from pyrit.prompt_target.round_robin_target import RoundRobinTarget
+
+        rr = MagicMock(spec=RoundRobinTarget)
+        rr.capabilities = TargetCapabilities()
+
+        inner_a = MagicMock(spec=PromptTarget)
+        inner_a.capabilities = TargetCapabilities()
+        inner_a.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"model_name": "deploy-japan", "underlying_model_name": "gpt-4o"},
+        )
+
+        inner_b = MagicMock(spec=PromptTarget)
+        inner_b.capabilities = TargetCapabilities()
+        inner_b.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"model_name": "deploy-us", "underlying_model_name": "gpt-4o"},
+        )
+
+        rr._targets = [inner_a, inner_b]
+        rr.get_identifier.return_value = ComponentIdentifier(
+            class_name="RoundRobinTarget",
+            class_module="pyrit.prompt_target.round_robin_target",
+            params={"weights": [1, 1]},
+        )
+
+        result = target_object_to_instance("rr-3", rr)
+
+        # model_name should be None since deployments differ
+        assert result.model_name is None
+        # underlying_model_name should still be hoisted (they all share gpt-4o)
+        assert result.underlying_model_name == "gpt-4o"
+
+    def test_non_round_robin_has_no_inner_targets(self) -> None:
+        """Regular targets return None for inner_targets."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities()
+        target_obj.get_identifier.return_value = ComponentIdentifier(
+            class_name="TextTarget",
+            class_module="pyrit.prompt_target",
+        )
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.inner_targets is None
 
 
 # ============================================================================
