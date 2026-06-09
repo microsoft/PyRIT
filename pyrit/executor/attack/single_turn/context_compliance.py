@@ -86,6 +86,11 @@ class ContextComplianceAttack(PromptSendingAttack):
         Raises:
             ValueError: If the context description instructions file is invalid.
         """
+        # Store adversarial chat target BEFORE super().__init__(), because the base
+        # PromptSendingAttack builds and caches the attack identifier during init and the
+        # identifier must include the adversarial chat target.
+        self._adversarial_chat = attack_adversarial_config.target
+
         # Initialize base class
         super().__init__(
             objective_target=objective_target,
@@ -96,15 +101,25 @@ class ContextComplianceAttack(PromptSendingAttack):
             params_type=ContextComplianceAttackParameters,
         )
 
-        # Store adversarial chat target
-        self._adversarial_chat = attack_adversarial_config.target
-
         # Load context description instructions
         instructions_path = context_description_instructions_path or self.DEFAULT_CONTEXT_DESCRIPTION_PATH
         self._load_context_description_instructions(instructions_path=instructions_path)
 
         # Set affirmative response
         self._affirmative_response = affirmative_response or self.DEFAULT_AFFIRMATIVE_RESPONSE
+
+    def get_attack_adversarial_config(self) -> AttackAdversarialConfig | None:
+        """
+        Get the effective adversarial configuration used by this strategy.
+
+        Returns:
+            AttackAdversarialConfig | None: The adversarial target used for rephrasing. The
+                system/seed prompts are not used (context compliance uses its own instruction files).
+        """
+        adversarial_chat = getattr(self, "_adversarial_chat", None)
+        if adversarial_chat is None:
+            return None
+        return AttackAdversarialConfig(target=adversarial_chat, seed_prompt=None)
 
     def _load_context_description_instructions(self, *, instructions_path: Path) -> None:
         """

@@ -112,7 +112,7 @@ def build_scenario_technique_factories() -> list[AttackTechniqueFactory]:
             name="violent_durian",
             attack_class=RedTeamingAttack,
             strategy_tags=["multi_turn"],
-            adversarial_system_prompt_path=EXECUTOR_RED_TEAM_PATH / "violent_durian.yaml",
+            adversarial_system_prompt=SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "violent_durian.yaml"),
             adversarial_seed_prompt=SeedPrompt.from_yaml_file(
                 EXECUTOR_RED_TEAM_PATH / "violent_durian_seed_prompt.yaml"
             ),
