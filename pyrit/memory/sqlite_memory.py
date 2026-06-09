@@ -3,12 +3,11 @@
 
 import json
 import logging
-import uuid
 from collections.abc import MutableSequence, Sequence
 from contextlib import closing, suppress
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar
 
 from sqlalchemy import and_, create_engine, exists, func, or_, text
 from sqlalchemy.engine.base import Engine
@@ -18,7 +17,6 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql.expression import TextClause
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.common.singleton import Singleton
 from pyrit.memory.memory_interface import MemoryInterface
@@ -35,14 +33,6 @@ from pyrit.models import ConversationStats, MessagePiece
 logger = logging.getLogger(__name__)
 
 Model = TypeVar("Model")
-
-
-class _ExportableConversationPiece:
-    def __init__(self, data: dict[str, Any]) -> None:
-        self._data = data
-
-    def model_dump(self, *, mode: str = "python") -> dict[str, Any]:
-        return self._data
 
 
 class SQLiteMemory(MemoryInterface, metaclass=Singleton):
@@ -485,100 +475,6 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             finally:
                 logging.raiseExceptions = previous_raise
 
-    def export_conversations(
-        self,
-        *,
-        attack_id: str | uuid.UUID | None = None,
-        conversation_id: str | uuid.UUID | None = None,
-        prompt_ids: Sequence[str] | Sequence[uuid.UUID] | None = None,
-        labels: dict[str, str] | None = None,
-        sent_after: datetime | None = None,
-        sent_before: datetime | None = None,
-        original_values: Sequence[str] | None = None,
-        converted_values: Sequence[str] | None = None,
-        data_type: str | None = None,
-        not_data_type: str | None = None,
-        converted_value_sha256: Sequence[str] | None = None,
-        file_path: Path | None = None,
-        export_type: str = "json",
-    ) -> Path:
-        """
-        Export conversations and their associated scores from the database to a specified file.
-
-        Returns:
-            Path: The path to the exported file.
-
-        Raises:
-            ValueError: If the specified export format is not supported.
-        """
-        print_deprecation_message(
-            old_item="SQLiteMemory.export_conversations",
-            new_item="the pyrit.output module or direct serialization of get_message_pieces results",
-            removed_in="0.15.0",
-        )
-        # Import here to avoid circular import issues
-        from pyrit.memory.memory_exporter import MemoryExporter
-
-        if not self.exporter:
-            self.exporter = MemoryExporter()
-
-        # Get message pieces using the parent class method with appropriate filters
-        message_pieces = self.get_message_pieces(
-            attack_id=attack_id,
-            conversation_id=conversation_id,
-            prompt_ids=prompt_ids,
-            labels=labels,
-            sent_after=sent_after,
-            sent_before=sent_before,
-            original_values=original_values,
-            converted_values=converted_values,
-            data_type=data_type,
-            not_data_type=not_data_type,
-            converted_value_sha256=converted_value_sha256,
-        )
-
-        # Create the filename if not provided
-        if not file_path:
-            if attack_id:
-                file_name = f"{attack_id}.{export_type}"
-            elif conversation_id:
-                file_name = f"{conversation_id}.{export_type}"
-            else:
-                file_name = f"all_conversations.{export_type}"
-            file_path = Path(DB_DATA_PATH, file_name)
-
-        # Get scores for the message pieces
-        if message_pieces:
-            message_piece_ids = [str(piece.id) for piece in message_pieces]
-            scores = self.get_prompt_scores(prompt_ids=message_piece_ids)
-        else:
-            scores = []
-
-        # Merge conversations and scores - create the data structure manually
-        merged_data = []
-        for piece in message_pieces:
-            piece_data = piece.model_dump(mode="json")
-            # Find associated scores
-            piece_scores = [score for score in scores if score.message_piece_id == piece.id]
-            piece_data["scores"] = [score.model_dump(mode="json") for score in piece_scores]
-            merged_data.append(piece_data)
-
-        if not merged_data:
-            if export_type == "json":
-                with open(file_path, "w", encoding="utf-8") as f:
-                    json.dump(merged_data, f, indent=4)
-            elif export_type in self.exporter.export_strategies:
-                file_path.write_text("", encoding="utf-8")
-            else:
-                raise ValueError(f"Unsupported export format: {export_type}")
-            return file_path
-
-        exportable_pieces = [_ExportableConversationPiece(data=piece_data) for piece_data in merged_data]
-        self.exporter.export_data(
-            cast("list[MessagePiece]", exportable_pieces), file_path=file_path, export_type=export_type
-        )
-        return file_path
-
     def print_schema(self) -> None:
         """
         Print the schema of all tables in the SQLite database.
@@ -592,55 +488,6 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                 nullable = "NULL" if column.nullable else "NOT NULL"
                 default = f" DEFAULT {column.default}" if column.default else ""
                 print(f"  {column.name}: {column.type} {nullable}{default}")
-
-    def export_all_tables(self, *, export_type: str = "json") -> None:
-        """
-        Export all table data using the specified exporter.
-
-        Iterate over all tables, retrieves their data, and exports each to a file named after the table.
-
-        Args:
-            export_type (str): The format to export the data in (defaults to "json").
-        """
-        print_deprecation_message(
-            old_item="SQLiteMemory.export_all_tables",
-            new_item="the pyrit.output module or direct serialization of table query results",
-            removed_in="0.15.0",
-        )
-        table_models = self.get_all_table_models()
-
-        for model in table_models:
-            data = self._query_entries(model)
-            table_name = model.__tablename__
-            file_extension = f".{export_type}"
-            file_path = DB_DATA_PATH / f"{table_name}{file_extension}"
-            # Convert to list for exporter compatibility
-            self.exporter.export_data(list(data), file_path=file_path, export_type=export_type)  # type: ignore[ty:invalid-argument-type]
-
-    def _get_attack_result_harm_category_condition(self, *, targeted_harm_categories: Sequence[str]) -> Any:
-        """
-        SQLite implementation for filtering AttackResults by targeted harm categories.
-        Uses json_extract() function specific to SQLite.
-
-        Returns:
-            Any: A SQLAlchemy subquery for filtering by targeted harm categories.
-        """
-        targeted_harm_categories_subquery = exists().where(
-            and_(
-                PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
-                # Exclude empty strings, None, and empty lists
-                PromptMemoryEntry.targeted_harm_categories.isnot(None),
-                PromptMemoryEntry.targeted_harm_categories != "",
-                PromptMemoryEntry.targeted_harm_categories != "[]",
-                and_(
-                    *[
-                        func.json_extract(PromptMemoryEntry.targeted_harm_categories, "$").like(f'%"{category}"%')
-                        for category in targeted_harm_categories
-                    ]
-                ),
-            )
-        )
-        return targeted_harm_categories_subquery  # noqa: RET504
 
     def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
         """

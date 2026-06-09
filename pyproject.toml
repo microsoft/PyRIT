@@ -34,6 +34,7 @@ dependencies = [
     "av>=14.0.0",
     "azure-core>=1.38.0",
     "azure-identity>=1.19.0",
+    "azure-keyvault-secrets>=4.9.0",
     "azure-ai-contentsafety>=1.0.0",
     "azure-storage-blob>=12.19.0",
     "base2048>=0.1.3",
