@@ -386,7 +386,7 @@ class MemoryInterface(abc.ABC):
         conversation is created.
 
         This is a template method: subclasses implement only the backend-specific
-        ``_add_message_pieces_to_storage`` and inherit the filtering and validation
+        ``_add_message_pieces_to_memory`` and inherit the filtering and validation
         steps so no subclass can forget to run them.
 
         Args:
@@ -396,17 +396,17 @@ class MemoryInterface(abc.ABC):
         if not pieces_to_insert:
             return
         self._validate_persistable_conversation_ids(message_pieces=pieces_to_insert)
-        self._add_message_pieces_to_storage(message_pieces=pieces_to_insert)
+        self._add_message_pieces_to_memory(message_pieces=pieces_to_insert)
 
     @abc.abstractmethod
-    def _add_message_pieces_to_storage(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+    def _add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
         Persist already-validated message pieces to the backing store.
 
         Called by ``add_message_pieces_to_memory`` after ``not_in_memory`` pieces are
-        filtered out, conversation_ids are validated, and the ``Conversations`` rows are
-        captured. Implementations only translate the pieces into storage rows and insert
-        them; they must not re-filter or re-validate.
+        filtered out and conversation_ids are validated. Implementations only translate
+        the pieces into storage rows and insert them; they must not re-filter or
+        re-validate.
 
         Args:
             message_pieces (Sequence[MessagePiece]): Persistable pieces (none flagged

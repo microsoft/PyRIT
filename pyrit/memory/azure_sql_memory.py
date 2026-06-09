@@ -695,7 +695,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             conditions.append(condition)
         return and_(*conditions)
 
-    def _add_message_pieces_to_storage(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+    def _add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
         Persist already-validated message pieces to the Azure SQL store.
 

@@ -302,7 +302,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         combined = joiner.join(conditions)
         return text(f"({combined})").bindparams(**bindparams_dict)
 
-    def _add_message_pieces_to_storage(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+    def _add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
         Persist already-validated message pieces to the SQLite store.
 
@@ -364,8 +364,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                     )
                 elif model_class == AttackResultEntry:
                     query = query.options(
-                        joinedload(AttackResultEntry.last_response)
-                        .joinedload(PromptMemoryEntry.scores),
+                        joinedload(AttackResultEntry.last_response).joinedload(PromptMemoryEntry.scores),
                         joinedload(AttackResultEntry.last_score),
                     )
                 if conditions is not None:
