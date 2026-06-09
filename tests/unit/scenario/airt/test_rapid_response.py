@@ -489,16 +489,16 @@ class TestCoreTechniques:
         factories = scenario._get_attack_technique_factories()
         assert factories["role_play"].uses_adversarial is True
         assert factories["tap"].uses_adversarial is True
-        assert factories["role_play"]._adversarial_config is None
-        assert factories["tap"]._adversarial_config is None
+        assert factories["role_play"]._adversarial_chat is None
+        assert factories["tap"]._adversarial_chat is None
 
     def test_factories_always_use_default_adversarial(self, mock_objective_scorer):
         """Factories defer adversarial wiring to create()-time lazy resolution."""
         scenario = RapidResponse(objective_scorer=mock_objective_scorer)
         factories = scenario._get_attack_technique_factories()
 
-        assert factories["role_play"]._adversarial_config is None
-        assert factories["tap"]._adversarial_config is None
+        assert factories["role_play"]._adversarial_chat is None
+        assert factories["tap"]._adversarial_chat is None
 
 
 # ===========================================================================
@@ -623,12 +623,12 @@ class TestBuildScenarioTechniqueFactories:
         by_name = {f.name: f for f in build_scenario_technique_factories()}
         assert by_name["role_play"].uses_adversarial is True
         assert by_name["tap"].uses_adversarial is True
-        assert by_name["role_play"]._adversarial_config is None
-        assert by_name["tap"]._adversarial_config is None
+        assert by_name["role_play"]._adversarial_chat is None
+        assert by_name["tap"]._adversarial_chat is None
 
     def test_non_adversarial_factories_have_no_adversarial_config(self):
         by_name = {f.name: f for f in build_scenario_technique_factories()}
-        assert by_name["many_shot"]._adversarial_config is None
+        assert by_name["many_shot"]._adversarial_chat is None
 
     def test_crescendo_simulated_has_seed_technique(self):
         by_name = {f.name: f for f in build_scenario_technique_factories()}
