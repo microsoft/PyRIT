@@ -4,17 +4,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict
-
-# Would prefer StrEnum, but.... Python 3.10
-_METADATAKEYS = {
-    "RESPONSE_FORMAT": "response_format",
-    "JSON_SCHEMA": "json_schema",
-    "JSON_SCHEMA_NAME": "json_schema_name",
-    "JSON_SCHEMA_STRICT": "json_schema_strict",
-}
 
 
 class _JsonResponseConfig(BaseModel):
@@ -29,6 +21,14 @@ class _JsonResponseConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # Would prefer StrEnum, but.... Python 3.10
+    _METADATAKEYS: ClassVar[dict[str, str]] = {
+        "RESPONSE_FORMAT": "response_format",
+        "JSON_SCHEMA": "json_schema",
+        "JSON_SCHEMA_NAME": "json_schema_name",
+        "JSON_SCHEMA_STRICT": "json_schema_strict",
+    }
+
     enabled: bool = False
     json_schema: dict[str, Any] | None = None
     schema_name: str = "CustomSchema"
@@ -39,11 +39,11 @@ class _JsonResponseConfig(BaseModel):
         if not metadata:
             return cls(enabled=False)
 
-        response_format = metadata.get(_METADATAKEYS["RESPONSE_FORMAT"])
+        response_format = metadata.get(cls._METADATAKEYS["RESPONSE_FORMAT"])
         if response_format != "json":
             return cls(enabled=False)
 
-        schema_val = metadata.get(_METADATAKEYS["JSON_SCHEMA"])
+        schema_val = metadata.get(cls._METADATAKEYS["JSON_SCHEMA"])
         if schema_val is not None:
             if isinstance(schema_val, str):
                 try:
@@ -56,8 +56,8 @@ class _JsonResponseConfig(BaseModel):
             return cls(
                 enabled=True,
                 json_schema=schema,
-                schema_name=metadata.get(_METADATAKEYS["JSON_SCHEMA_NAME"], "CustomSchema"),
-                strict=metadata.get(_METADATAKEYS["JSON_SCHEMA_STRICT"], True),
+                schema_name=metadata.get(cls._METADATAKEYS["JSON_SCHEMA_NAME"], "CustomSchema"),
+                strict=metadata.get(cls._METADATAKEYS["JSON_SCHEMA_STRICT"], True),
             )
 
         return cls(enabled=True)

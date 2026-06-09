@@ -29,13 +29,13 @@ from pyrit.common.path import (
     SCORER_EVALS_REFUSAL_SCORER_PATH,
 )
 from pyrit.models.literals import PromptDataType
-from pyrit.score.scorer_evaluation.scorer_evaluator import (
-    STANDARD_ASSISTANT_RESPONSE_COL,
-    STANDARD_DATA_TYPE_COL,
-    STANDARD_HARM_COL,
-    STANDARD_HUMAN_LABEL_COL,
-    STANDARD_OBJECTIVE_COL,
-)
+from pyrit.score.scorer_evaluation.human_labeled_dataset import HumanLabeledDataset
+
+STANDARD_HUMAN_LABEL_COL = HumanLabeledDataset.STANDARD_HUMAN_LABEL_COL
+STANDARD_OBJECTIVE_COL = HumanLabeledDataset.STANDARD_OBJECTIVE_COL
+STANDARD_HARM_COL = HumanLabeledDataset.STANDARD_HARM_COL
+STANDARD_ASSISTANT_RESPONSE_COL = HumanLabeledDataset.STANDARD_ASSISTANT_RESPONSE_COL
+STANDARD_DATA_TYPE_COL = HumanLabeledDataset.STANDARD_DATA_TYPE_COL
 
 # Valid data_type values derived from PromptDataType literal
 VALID_DATA_TYPES = set(PromptDataType.__args__)  # type: ignore[attr-defined]
