@@ -66,7 +66,7 @@ def resolve_adversarial_system_prompt(
     error_message: str | None = None,
 ) -> SeedPrompt:
     """
-    Resolve the effective adversarial system-prompt :class:`SeedPrompt` for a strategy.
+    Resolve the effective adversarial system-prompt ``SeedPrompt`` for a strategy.
 
     Resolution order:
 

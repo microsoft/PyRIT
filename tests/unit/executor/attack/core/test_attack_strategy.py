@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.exceptions.retry_collector import RetryCollector
+from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import (
     AttackContext,
@@ -15,7 +16,6 @@ from pyrit.executor.attack.core.attack_strategy import (
 )
 from pyrit.executor.core import StrategyEvent, StrategyEventData
 from pyrit.memory.central_memory import CentralMemory
-from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -787,9 +787,7 @@ def _adv_target(*, model_name: str = "gpt-adv", extra_params: dict | None = None
     params: dict = {"model_name": model_name}
     if extra_params:
         params.update(extra_params)
-    target.get_identifier.return_value = ComponentIdentifier(
-        class_name="AdvChat", class_module="test", params=params
-    )
+    target.get_identifier.return_value = ComponentIdentifier(class_name="AdvChat", class_module="test", params=params)
     return target
 
 

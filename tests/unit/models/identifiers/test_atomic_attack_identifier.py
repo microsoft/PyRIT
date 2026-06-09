@@ -312,7 +312,9 @@ class TestAtomicAttackEvaluationIdentifier:
         a_wrapped = _make_attack(children={"adversarial_chat": wrapper})
         c_bare = build_atomic_attack_identifier(attack_identifier=a_bare)
         c_wrapped = build_atomic_attack_identifier(attack_identifier=a_wrapped)
-        assert AtomicAttackEvaluationIdentifier(c_bare).eval_hash == AtomicAttackEvaluationIdentifier(c_wrapped).eval_hash
+        assert (
+            AtomicAttackEvaluationIdentifier(c_bare).eval_hash == AtomicAttackEvaluationIdentifier(c_wrapped).eval_hash
+        )
 
     # -- objective_scorer exclusion ----------------------------------------
 
