@@ -68,3 +68,5 @@ And you can import it using code like this
 target = TextTarget()
 target.import_scores_from_csv(csv_file_path=".\path.csv")
 ```
+
+> **Note:** `TextTarget.import_scores_from_csv` is deprecated and will be removed in `0.16.0`. To import message pieces manually, read the CSV yourself and add the resulting `MessagePiece` objects to memory via `MemoryInterface.add_message_pieces_to_memory`.

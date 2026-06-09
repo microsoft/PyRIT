@@ -68,6 +68,12 @@ class TextTarget(PromptTarget):
         Returns:
             list[MessagePiece]: A list of message pieces imported from the CSV.
         """
+        print_deprecation_message(
+            old_item="pyrit.prompt_target.TextTarget.import_scores_from_csv",
+            new_item="pyrit.memory.MemoryInterface.add_message_pieces_to_memory",
+            removed_in="0.16.0",
+        )
+
         message_pieces = []
 
         with open(csv_file_path, newline="") as csvfile:
