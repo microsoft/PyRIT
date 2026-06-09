@@ -2391,6 +2391,17 @@ class TestCrescendoAdversarialIdentity:
         assert config.system_prompt is attack._adversarial_chat_system_prompt_template
         assert config.seed_prompt is None
 
+    def test_get_attack_adversarial_config_returns_none_without_target(
+        self, mock_objective_target, mock_adversarial_chat, mock_objective_scorer
+    ):
+        attack = CrescendoTestHelper.create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+        )
+        attack._adversarial_chat = None
+        assert attack.get_attack_adversarial_config() is None
+
     def test_identifier_includes_adversarial_chat_child(
         self, mock_objective_target, mock_adversarial_chat, mock_objective_scorer
     ):

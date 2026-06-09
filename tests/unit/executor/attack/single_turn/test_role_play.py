@@ -449,14 +449,16 @@ class TestRolePlayAttackRephrasing:
 class TestRolePlayAttackAdversarialIdentity:
     """Tests that the adversarial chat target is included in the attack identity."""
 
-    def test_get_attack_adversarial_config_returns_target_only(
-        self, role_play_attack, mock_adversarial_chat_target
-    ):
+    def test_get_attack_adversarial_config_returns_target_only(self, role_play_attack, mock_adversarial_chat_target):
         config = role_play_attack.get_attack_adversarial_config()
         assert config is not None
         assert config.target is mock_adversarial_chat_target
         # RolePlay uses its own definition files, not the adversarial seed prompt.
         assert config.seed_prompt is None
+
+    def test_get_attack_adversarial_config_returns_none_without_target(self, role_play_attack):
+        role_play_attack._adversarial_chat = None
+        assert role_play_attack.get_attack_adversarial_config() is None
 
     def test_identifier_includes_adversarial_chat_child(self, role_play_attack, mock_adversarial_chat_target):
         """Regression: PromptSendingAttack caches the identifier in __init__, so the adversarial

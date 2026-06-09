@@ -892,6 +892,15 @@ class TestContextComplianceAttackAdversarialIdentity:
         assert config.target is mock_adversarial_chat
         assert config.seed_prompt is None
 
+    def test_get_attack_adversarial_config_returns_none_without_target(
+        self, mock_objective_target, mock_attack_adversarial_config
+    ):
+        attack = ContextComplianceAttack(
+            objective_target=mock_objective_target, attack_adversarial_config=mock_attack_adversarial_config
+        )
+        attack._adversarial_chat = None
+        assert attack.get_attack_adversarial_config() is None
+
     def test_identifier_includes_adversarial_chat_child(
         self, mock_objective_target, mock_attack_adversarial_config, mock_adversarial_chat
     ):

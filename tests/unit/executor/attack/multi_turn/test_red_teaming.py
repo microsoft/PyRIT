@@ -18,6 +18,7 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     RTASystemPromptPaths,
 )
+from pyrit.executor.attack.core.attack_config import DEFAULT_ADVERSARIAL_SEED_PROMPT
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -2009,9 +2010,7 @@ class TestRedTeamingAdversarialIdentity:
         assert attack._adversarial_chat_system_prompt_template.value == "custom red team persona"
         assert attack.get_identifier().params["adversarial_system_prompt"] == "custom red team persona"
 
-    def test_inline_seed_prompt_string_used(
-        self, mock_objective_target, mock_adversarial_chat, mock_objective_scorer
-    ):
+    def test_inline_seed_prompt_string_used(self, mock_objective_target, mock_adversarial_chat, mock_objective_scorer):
         attack = RedTeamingAttack(
             objective_target=mock_objective_target,
             attack_adversarial_config=AttackAdversarialConfig(
@@ -2021,3 +2020,24 @@ class TestRedTeamingAdversarialIdentity:
         )
         assert attack._adversarial_chat_seed_prompt.value == "kick off {{ objective }}"
         assert attack.get_identifier().params["adversarial_seed_prompt"] == "kick off {{ objective }}"
+
+    def test_seed_prompt_none_falls_back_to_default(
+        self, mock_objective_target, mock_adversarial_chat, mock_objective_scorer
+    ):
+        attack = RedTeamingAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat, seed_prompt=None),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+        )
+        assert attack._adversarial_chat_seed_prompt.value == DEFAULT_ADVERSARIAL_SEED_PROMPT
+
+    def test_get_attack_adversarial_config_returns_none_without_target(
+        self, mock_objective_target, mock_adversarial_chat, mock_objective_scorer
+    ):
+        attack = RedTeamingAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+        )
+        attack._adversarial_chat = None
+        assert attack.get_attack_adversarial_config() is None

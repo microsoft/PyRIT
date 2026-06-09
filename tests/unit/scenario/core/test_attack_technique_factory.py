@@ -778,6 +778,59 @@ class TestCustomAdversarialPrompt:
         )
         assert f1.get_identifier().hash != f2.get_identifier().hash
 
+    def test_identifier_distinguishes_custom_seed_prompt_object(self):
+        """A SeedPrompt adversarial_seed_prompt is serialized by value, so different prompts differ."""
+        f1 = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_seed_prompt=SeedPrompt(value="a {{ objective }}", data_type="text", parameters=["objective"]),
+        )
+        f2 = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_seed_prompt=SeedPrompt(value="b {{ objective }}", data_type="text", parameters=["objective"]),
+        )
+        assert f1.get_identifier().hash != f2.get_identifier().hash
+
+    def test_create_custom_prompt_conflicts_with_baked_raises(self):
+        """create() must not supply adversarial prompts when the factory baked a custom one."""
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_system_prompt="baked {{ objective }}",
+        )
+        with pytest.raises(ValueError, match="custom adversarial prompt is already baked"):
+            factory.create(
+                objective_target=MagicMock(spec=PromptTarget),
+                attack_scoring_config=self._scoring(),
+                adversarial_system_prompt="create-time {{ objective }}",
+            )
+
+    def test_create_override_with_system_prompt_path_loads_yaml(self):
+        """A deprecated override carrying system_prompt_path is resolved via SeedPrompt.from_yaml_file."""
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+        )
+        loaded = SeedPrompt(value="from yaml {{ objective }}", data_type="text", parameters=["objective"])
+        with (
+            patch(
+                "pyrit.scenario.core.attack_technique_factory.SeedPrompt.from_yaml_file",
+                return_value=loaded,
+            ) as mock_from_yaml,
+            pytest.warns(DeprecationWarning),
+        ):
+            override = AttackAdversarialConfig(
+                target=MagicMock(spec=PromptTarget), system_prompt_path="legacy/persona.yaml"
+            )
+            technique = factory.create(
+                objective_target=MagicMock(spec=PromptTarget),
+                attack_scoring_config=self._scoring(),
+                attack_adversarial_config_override=override,
+            )
+        mock_from_yaml.assert_called_once_with("legacy/persona.yaml")
+        assert technique.attack.attack_adversarial_config.system_prompt is loaded
+
 
 class TestDeprecatedAdversarialConfig:
     """Tests for the deprecated ``adversarial_config`` parameter."""
@@ -822,6 +875,26 @@ class TestDeprecatedAdversarialConfig:
         assert config.target is target
         assert config.system_prompt == "sys {{ objective }}"
         assert config.seed_prompt is seed
+
+    def test_adversarial_config_with_system_prompt_path_loads_yaml(self):
+        """A deprecated adversarial_config carrying system_prompt_path is resolved via from_yaml_file."""
+        target = MagicMock(spec=PromptTarget)
+        loaded = SeedPrompt(value="from yaml {{ objective }}", data_type="text", parameters=["objective"])
+        with (
+            patch(
+                "pyrit.scenario.core.attack_technique_factory.SeedPrompt.from_yaml_file",
+                return_value=loaded,
+            ) as mock_from_yaml,
+            pytest.warns(DeprecationWarning),
+        ):
+            factory = AttackTechniqueFactory(
+                name="durian",
+                attack_class=self._AdversarialAttack,
+                adversarial_config=AttackAdversarialConfig(target=target, system_prompt_path="legacy/persona.yaml"),
+            )
+        mock_from_yaml.assert_called_once_with("legacy/persona.yaml")
+        technique = factory.create(objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=self._scoring())
+        assert technique.attack.attack_adversarial_config.system_prompt is loaded
 
     def test_adversarial_config_with_adversarial_chat_raises(self):
         target = MagicMock(spec=PromptTarget)

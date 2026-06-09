@@ -2496,6 +2496,12 @@ class TestTAPAdversarialIdentity:
         # TAP's first-message seed prompt is a fixed default and is excluded from identity.
         assert config.seed_prompt is None
 
+    def test_get_attack_adversarial_config_returns_none_without_target(self):
+        builder = AttackBuilder().with_default_mocks()
+        attack = builder.build()
+        attack._adversarial_chat = None
+        assert attack.get_attack_adversarial_config() is None
+
     def test_identifier_includes_adversarial_chat_child(self):
         builder = AttackBuilder().with_default_mocks()
         attack = builder.build()
