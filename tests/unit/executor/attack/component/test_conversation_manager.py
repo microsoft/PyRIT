@@ -888,8 +888,25 @@ class TestInitializeContext:
         # All pieces in a Message must share the same conversation_id
         piece_conversation_id = str(uuid.uuid4())
 
-        # Create score for first piece
-        # Prepended conversations are simulated, so only false scores are extracted
+        piece1 = MessagePiece(
+            role="assistant",
+            original_value="Here is the analysis:",
+            original_value_data_type="text",
+            conversation_id=piece_conversation_id,
+        )
+        piece2 = MessagePiece(
+            role="assistant",
+            original_value="chart_image.png",
+            original_value_data_type="image_path",
+            conversation_id=piece_conversation_id,
+        )
+
+        # Pre-stage the original pieces + scores in memory so add_scores_to_memory
+        # passes its existence check. initialize_context_async will then duplicate
+        # the pieces under the target conversation_id, keeping ``original_prompt_id``
+        # set to the input id (which is what ScoreEntry.prompt_request_response_id
+        # points at), so the per-conversation score lookup resolves them.
+        manager._memory.add_message_pieces_to_memory(message_pieces=[piece1, piece2])
         score1 = Score(
             score_type="true_false",
             score_value="false",
@@ -897,19 +914,9 @@ class TestInitializeContext:
             score_value_description="Score for text piece",
             score_rationale="Test rationale for text",
             score_metadata={},
-            message_piece_id=str(uuid.uuid4()),
+            message_piece_id=str(piece1.id),
             scorer_class_identifier=get_mock_scorer_identifier(),
         )
-        piece1 = MessagePiece(
-            role="assistant",
-            original_value="Here is the analysis:",
-            original_value_data_type="text",
-            conversation_id=piece_conversation_id,
-            scores=[score1],  # Attach score directly to piece
-        )
-
-        # Create score for second piece
-        # Also false since prepended conversations only extract false scores
         score2 = Score(
             score_type="true_false",
             score_value="false",
@@ -917,16 +924,10 @@ class TestInitializeContext:
             score_value_description="Score for image piece",
             score_rationale="Test rationale for image",
             score_metadata={},
-            message_piece_id=str(uuid.uuid4()),
+            message_piece_id=str(piece2.id),
             scorer_class_identifier=get_mock_scorer_identifier(),
         )
-        piece2 = MessagePiece(
-            role="assistant",
-            original_value="chart_image.png",
-            original_value_data_type="image_path",
-            conversation_id=piece_conversation_id,
-            scores=[score2],  # Attach score directly to piece
-        )
+        manager._memory.add_scores_to_memory(scores=[score1, score2])
 
         multipart_response = Message(message_pieces=[piece1, piece2])
         context.prepended_conversation = [
@@ -943,8 +944,9 @@ class TestInitializeContext:
 
         # Verify scores from both pieces are returned
         assert len(state.last_assistant_message_scores) == 2
-        assert score1 in state.last_assistant_message_scores
-        assert score2 in state.last_assistant_message_scores
+        returned_ids = {s.id for s in state.last_assistant_message_scores}
+        assert score1.id in returned_ids
+        assert score2.id in returned_ids
 
     async def test_prepended_conversation_ignores_true_scores(
         self,
@@ -958,8 +960,27 @@ class TestInitializeContext:
         are extracted to provide feedback rationale for continued attack attempts.
         """
         manager = ConversationManager(attack_identifier=attack_identifier)
-        conversation_id = str(uuid.uuid4())
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
+
+        piece_with_true = MessagePiece(
+            role="assistant",
+            original_value="Simulated success response",
+            original_value_data_type="text",
+            conversation_id=str(uuid.uuid4()),
+        )
+
+        piece_with_false = MessagePiece(
+            role="assistant",
+            original_value="Simulated refusal response",
+            original_value_data_type="text",
+            conversation_id=str(uuid.uuid4()),
+        )
+
+        # Pre-stage the pieces in memory so add_scores_to_memory passes its
+        # existence check. initialize_context_async will duplicate them under
+        # the target conversation_id, preserving ``original_prompt_id`` so the
+        # score lookup resolves the staged scores.
+        manager._memory.add_message_pieces_to_memory(message_pieces=[piece_with_true, piece_with_false])
 
         # Create a score with true value - should be ignored
         true_score = Score(
@@ -969,7 +990,7 @@ class TestInitializeContext:
             score_value_description="Should be ignored",
             score_rationale="This simulated success should not be extracted",
             score_metadata={},
-            message_piece_id=str(uuid.uuid4()),
+            message_piece_id=str(piece_with_true.id),
             scorer_class_identifier=get_mock_scorer_identifier(),
         )
 
@@ -981,25 +1002,11 @@ class TestInitializeContext:
             score_value_description="Should be extracted",
             score_rationale="This refusal can provide feedback",
             score_metadata={},
-            message_piece_id=str(uuid.uuid4()),
+            message_piece_id=str(piece_with_false.id),
             scorer_class_identifier=get_mock_scorer_identifier(),
         )
 
-        piece_with_true = MessagePiece(
-            role="assistant",
-            original_value="Simulated success response",
-            original_value_data_type="text",
-            conversation_id=str(uuid.uuid4()),
-            scores=[true_score],
-        )
-
-        piece_with_false = MessagePiece(
-            role="assistant",
-            original_value="Simulated refusal response",
-            original_value_data_type="text",
-            conversation_id=str(uuid.uuid4()),
-            scores=[false_score],
-        )
+        manager._memory.add_scores_to_memory(scores=[true_score, false_score])
 
         # Test with true score only - should get no scores
         context.prepended_conversation = [
@@ -1010,7 +1017,7 @@ class TestInitializeContext:
         state = await manager.initialize_context_async(
             context=context,
             target=mock_chat_target,
-            conversation_id=conversation_id,
+            conversation_id=str(uuid.uuid4()),
             max_turns=10,
         )
 
@@ -1032,8 +1039,9 @@ class TestInitializeContext:
         )
 
         assert len(state2.last_assistant_message_scores) == 1
-        assert false_score in state2.last_assistant_message_scores
-        assert context2.last_score == false_score
+        assert state2.last_assistant_message_scores[0].id == false_score.id
+        assert context2.last_score is not None
+        assert context2.last_score.id == false_score.id
 
 
 # =============================================================================
