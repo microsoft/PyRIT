@@ -349,12 +349,22 @@ class MemoryInterface(abc.ABC):
             Any: A SQLAlchemy condition for filtering memory entries based on prompt metadata.
         """
 
-    @abc.abstractmethod
     def add_message_pieces_to_memory(
         self, *, message_pieces: Sequence[MessagePiece], target_identifier: ComponentIdentifier | None = None
     ) -> None:
         """
         Insert a list of message pieces into the memory storage.
+
+        Pieces flagged via ``MessagePiece.not_in_memory = True`` are silently filtered
+        out so callers don't need to track persistence policy themselves. Every
+        remaining piece must carry a non-empty ``conversation_id`` (the memory layer
+        never invents one -- see ``_validate_persistable_conversation_ids``). The
+        conversation-scoped metadata row is captured once per ``conversation_id`` via
+        ``_capture_conversations`` before the storage-specific insert.
+
+        This is a template method: subclasses implement only the backend-specific
+        ``_add_message_pieces_to_storage`` and inherit the filtering, validation, and
+        conversation-capture steps so no subclass can forget to run them.
 
         Args:
             message_pieces (Sequence[MessagePiece]): The pieces to persist.
@@ -362,6 +372,52 @@ class MemoryInterface(abc.ABC):
                 are held with, if known. A conversation is always with a single target, so
                 this is applied to every distinct ``conversation_id`` in ``message_pieces``.
         """
+        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_memory]
+        if not pieces_to_insert:
+            return
+        self._validate_persistable_conversation_ids(message_pieces=pieces_to_insert)
+        self._capture_conversations(message_pieces=pieces_to_insert, target_identifier=target_identifier)
+        self._add_message_pieces_to_storage(message_pieces=pieces_to_insert)
+
+    @abc.abstractmethod
+    def _add_message_pieces_to_storage(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+        """
+        Persist already-validated message pieces to the backing store.
+
+        Called by ``add_message_pieces_to_memory`` after ``not_in_memory`` pieces are
+        filtered out, conversation_ids are validated, and the ``Conversations`` rows are
+        captured. Implementations only translate the pieces into storage rows and insert
+        them; they must not re-filter or re-validate.
+
+        Args:
+            message_pieces (Sequence[MessagePiece]): Persistable pieces (none flagged
+                ``not_in_memory``), each carrying a non-empty ``conversation_id``.
+        """
+
+    @staticmethod
+    def _validate_persistable_conversation_ids(*, message_pieces: Sequence[MessagePiece]) -> None:
+        """
+        Ensure every persistable piece carries a usable ``conversation_id``.
+
+        A conversation is its own entity, so the caller that starts it owns the id; the
+        memory layer never generates one. Any piece reaching persistence without a
+        non-empty, non-blank ``conversation_id`` is a programming error and raises loudly
+        rather than being silently assigned a throwaway conversation.
+
+        Args:
+            message_pieces (Sequence[MessagePiece]): Pieces about to be persisted
+                (``not_in_memory`` pieces should already be filtered out).
+
+        Raises:
+            ValueError: If any piece has a ``None``, empty, or whitespace-only
+                ``conversation_id``.
+        """
+        for piece in message_pieces:
+            if piece.conversation_id is None or not piece.conversation_id.strip():
+                raise ValueError(
+                    f"MessagePiece {piece.id} has no conversation_id. A conversation_id must be set by "
+                    "the caller before a piece is persisted; the memory layer does not generate one."
+                )
 
     def _capture_conversations(
         self, *, message_pieces: Sequence[MessagePiece], target_identifier: ComponentIdentifier | None = None
@@ -391,6 +447,8 @@ class MemoryInterface(abc.ABC):
             if piece.not_in_memory:
                 continue
             conversation_id = piece.conversation_id
+            if not conversation_id:
+                continue
             if conversation_id not in seen:
                 seen.add(conversation_id)
                 conversation_ids.append(conversation_id)
@@ -413,10 +471,15 @@ class MemoryInterface(abc.ABC):
                 is held with, if known.
 
         Raises:
+            ValueError: If ``conversation_id`` is empty (a piece reached persistence
+                without a caller-assigned conversation_id; callers must set one).
             SQLAlchemyError: If the upsert fails.
         """
         if not conversation_id:
-            return
+            raise ValueError(
+                "Cannot upsert a Conversations row without a conversation_id. This indicates a message "
+                "piece reached persistence without a caller-assigned conversation_id."
+            )
         entry = ConversationEntry(
             conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
         )
@@ -1253,6 +1316,12 @@ class MemoryInterface(abc.ABC):
 
         embedding_entries = []
         message_pieces = request.message_pieces
+
+        pieces_to_persist = [piece for piece in message_pieces if not piece.not_in_memory]
+        if not pieces_to_persist:
+            return
+
+        self._validate_persistable_conversation_ids(message_pieces=pieces_to_persist)
 
         self._update_sequence(message_pieces=message_pieces)
 

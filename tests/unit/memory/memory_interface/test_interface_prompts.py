@@ -70,18 +70,21 @@ def test_get_message_pieces_uuid_and_string_ids(sqlite_instance: MemoryInterface
 
     pieces = [
         MessagePiece(
+            conversation_id=str(uuid4()),
             id=uuid1,
             role="user",
             original_value="Test prompt 1",
             converted_value="Test prompt 1",
         ),
         MessagePiece(
+            conversation_id=str(uuid4()),
             id=uuid2,
             role="assistant",
             original_value="Test prompt 2",
             converted_value="Test prompt 2",
         ),
         MessagePiece(
+            conversation_id=str(uuid4()),
             id=uuid3,
             role="user",
             original_value="Test prompt 3",
@@ -114,6 +117,7 @@ def test_get_message_pieces_uuid_and_string_ids(sqlite_instance: MemoryInterface
 
 def test_get_message_pieces_empty_prompt_ids_returns_empty(sqlite_instance: MemoryInterface):
     piece = MessagePiece(
+        conversation_id=str(uuid4()),
         id=uuid.uuid4(),
         role="user",
         original_value="Test prompt",
@@ -547,13 +551,42 @@ def test_duplicate_conversation_with_multiple_pieces(sqlite_instance: MemoryInte
 
 def test_add_message_pieces_to_memory_calls_validate(sqlite_instance: MemoryInterface):
     message = MagicMock(Message)
-    message.message_pieces = [MagicMock(MessagePiece)]
+    message.message_pieces = [MagicMock(MessagePiece, not_in_memory=False, conversation_id="test-conversation")]
     with (
         patch("pyrit.memory.sqlite_memory.SQLiteMemory.add_message_pieces_to_memory"),
         patch("pyrit.memory.memory_interface.MemoryInterface._update_sequence"),
     ):
         sqlite_instance.add_message_to_memory(request=message)
     assert message.validate.called
+
+
+@pytest.mark.parametrize("bad_id", [None, "", "   "])
+def test_add_message_pieces_to_memory_raises_when_conversation_id_missing(
+    sqlite_instance: MemoryInterface, bad_id
+):
+    piece = MessagePiece(role="user", original_value="hello", conversation_id=bad_id)
+    with pytest.raises(ValueError, match="conversation_id"):
+        sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
+
+
+@pytest.mark.parametrize("bad_id", [None, "", "   "])
+def test_add_message_to_memory_raises_when_conversation_id_missing(sqlite_instance: MemoryInterface, bad_id):
+    piece = MessagePiece(role="user", original_value="hello", conversation_id=bad_id)
+    with pytest.raises(ValueError, match="conversation_id"):
+        sqlite_instance.add_message_to_memory(request=Message(message_pieces=[piece]))
+
+
+def test_add_message_pieces_to_memory_skips_not_in_memory_without_conversation_id(
+    sqlite_instance: MemoryInterface,
+):
+    # not_in_memory pieces are filtered out before persistence, so a missing
+    # conversation_id on an ephemeral piece must not raise.
+    ephemeral = MessagePiece(role="user", original_value="ephemeral", conversation_id=None)
+    ephemeral.not_in_memory = True
+
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[ephemeral])
+
+    assert sqlite_instance.get_message_pieces() == []
 
 
 def test_add_message_pieces_to_memory_updates_sequence(
@@ -638,6 +671,7 @@ def test_get_message_pieces_labels(sqlite_instance: MemoryInterface):
     entries = [
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="user",
                 original_value="Hello 1",
                 labels=labels,
@@ -645,6 +679,7 @@ def test_get_message_pieces_labels(sqlite_instance: MemoryInterface):
         ),
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="assistant",
                 original_value="Hello 2",
                 labels=labels,
@@ -652,6 +687,7 @@ def test_get_message_pieces_labels(sqlite_instance: MemoryInterface):
         ),
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="user",
                 original_value="Hello 3",
             )
@@ -711,6 +747,7 @@ def test_get_message_pieces_labels_returns_pme_and_ar_label_matches(sqlite_insta
     # PME with direct labels
     pme_direct = PromptMemoryEntry(
         entry=MessagePiece(
+            conversation_id=str(uuid4()),
             role="user",
             original_value="Direct label",
             labels=labels,
@@ -736,6 +773,7 @@ def test_get_message_pieces_labels_returns_pme_and_ar_label_matches(sqlite_insta
     # PME with no labels and no matching AR
     pme_no_match = PromptMemoryEntry(
         entry=MessagePiece(
+            conversation_id=str(uuid4()),
             role="user",
             original_value="No match",
         )
@@ -781,6 +819,7 @@ def test_get_message_pieces_metadata(sqlite_instance: MemoryInterface):
     entries = [
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="user",
                 original_value="Hello 1",
                 prompt_metadata=metadata,
@@ -788,6 +827,7 @@ def test_get_message_pieces_metadata(sqlite_instance: MemoryInterface):
         ),
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="assistant",
                 original_value="Hello 2",
                 prompt_metadata={"key2": "value2", "key3": "value3"},
@@ -795,6 +835,7 @@ def test_get_message_pieces_metadata(sqlite_instance: MemoryInterface):
         ),
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="user",
                 original_value="Hello 3",
             )
@@ -814,18 +855,21 @@ def test_get_message_pieces_id(sqlite_instance: MemoryInterface):
     entries = [
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="user",
                 original_value="Hello 1",
             )
         ),
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="assistant",
                 original_value="Hello 2",
             )
         ),
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="user",
                 original_value="Hello 3",
             )
@@ -885,18 +929,21 @@ def test_get_message_pieces_sent_after(sqlite_instance: MemoryInterface):
     entries = [
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="user",
                 original_value="Hello 1",
             )
         ),
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="assistant",
                 original_value="Hello 2",
             )
         ),
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="user",
                 original_value="Hello 3",
             )
@@ -918,18 +965,21 @@ def test_get_message_pieces_sent_before(sqlite_instance: MemoryInterface):
     entries = [
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="user",
                 original_value="Hello 1",
             )
         ),
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="assistant",
                 original_value="Hello 2",
             )
         ),
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="user",
                 original_value="Hello 3",
             )
@@ -952,18 +1002,21 @@ def test_get_message_pieces_by_value(sqlite_instance: MemoryInterface):
     entries = [
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="user",
                 original_value="Hello 1",
             )
         ),
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="assistant",
                 original_value="Hello 2",
             )
         ),
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="user",
                 original_value="Hello 3",
             )
@@ -981,14 +1034,17 @@ def test_get_message_pieces_by_value(sqlite_instance: MemoryInterface):
 def test_get_message_pieces_by_hash(sqlite_instance: MemoryInterface):
     entries = [
         MessagePiece(
+            conversation_id=str(uuid4()),
             role="user",
             original_value="Hello 1",
         ),
         MessagePiece(
+            conversation_id=str(uuid4()),
             role="assistant",
             original_value="Hello 2",
         ),
         MessagePiece(
+            conversation_id=str(uuid4()),
             role="user",
             original_value="Hello 3",
         ),
@@ -1075,11 +1131,13 @@ def test_message_piece_scores_duplicate_piece(sqlite_instance: MemoryInterface):
 
     pieces = [
         MessagePiece(
+            conversation_id=str(uuid4()),
             id=original_id,
             role="assistant",
             original_value="prompt text",
         ),
         MessagePiece(
+            conversation_id=str(uuid4()),
             id=duplicate_id,
             role="assistant",
             original_value="prompt text",
@@ -1114,10 +1172,12 @@ def test_message_piece_scores_duplicate_piece(sqlite_instance: MemoryInterface):
 async def test_message_piece_hash_stored_and_retrieved(sqlite_instance: MemoryInterface):
     entries = [
         MessagePiece(
+            conversation_id=str(uuid4()),
             role="user",
             original_value="Hello 1",
         ),
         MessagePiece(
+            conversation_id=str(uuid4()),
             role="assistant",
             original_value="Hello 2",
         ),
@@ -1391,6 +1451,7 @@ def test_get_message_pieces_by_converter_identifier_filter_with_array_element_pa
     entries = [
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="user",
                 original_value="With Base64",
                 converter_identifiers=[converter_a],
@@ -1398,6 +1459,7 @@ def test_get_message_pieces_by_converter_identifier_filter_with_array_element_pa
         ),
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="user",
                 original_value="With both converters",
                 converter_identifiers=[converter_a, converter_b],
@@ -1405,6 +1467,7 @@ def test_get_message_pieces_by_converter_identifier_filter_with_array_element_pa
         ),
         PromptMemoryEntry(
             entry=MessagePiece(
+                conversation_id=str(uuid4()),
                 role="user",
                 original_value="No converters",
             )

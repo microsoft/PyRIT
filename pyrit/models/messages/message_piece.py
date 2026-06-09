@@ -96,7 +96,7 @@ class MessagePiece(BaseModel):
 
     id: uuid.UUID = Field(default_factory=uuid4)
     role: ChatMessageRole
-    conversation_id: str = Field(default_factory=lambda: str(uuid4()))
+    conversation_id: str | None = None
     sequence: int = -1
     timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
     original_value: str
@@ -333,4 +333,7 @@ def sort_message_pieces(message_pieces: list[MessagePiece]) -> list[MessagePiece
         convo_id: min(x.timestamp for x in message_pieces if x.conversation_id == convo_id)
         for convo_id in {x.conversation_id for x in message_pieces}
     }
-    return sorted(message_pieces, key=lambda x: (earliest_timestamps[x.conversation_id], x.conversation_id, x.sequence))
+    return sorted(
+        message_pieces,
+        key=lambda x: (earliest_timestamps[x.conversation_id], x.conversation_id or "", x.sequence),
+    )

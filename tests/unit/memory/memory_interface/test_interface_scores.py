@@ -151,6 +151,7 @@ def test_get_prompt_scores_empty_prompt_ids_returns_empty(sqlite_instance: Memor
         role="user",
         original_value="original prompt text",
         converted_value="Hello, how are you?",
+        conversation_id=str(uuid4()),
     )
     sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
 
@@ -221,6 +222,7 @@ def test_get_scores_by_memory_labels(sqlite_instance: MemoryInterface):
             converted_value="Hello, how are you?",
             sequence=0,
             labels={"sample": "label"},
+            conversation_id=str(uuid4()),
         )
     ]
     sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)

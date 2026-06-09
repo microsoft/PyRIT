@@ -30,7 +30,7 @@ from pyrit.memory.memory_models import (
     ScenarioResultEntry,
 )
 from pyrit.memory.storage import DiskStorageIO
-from pyrit.models import ComponentIdentifier, ConversationStats, MessagePiece
+from pyrit.models import ConversationStats, MessagePiece
 
 logger = logging.getLogger(__name__)
 
@@ -302,26 +302,15 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         combined = joiner.join(conditions)
         return text(f"({combined})").bindparams(**bindparams_dict)
 
-    def add_message_pieces_to_memory(
-        self, *, message_pieces: Sequence[MessagePiece], target_identifier: ComponentIdentifier | None = None
-    ) -> None:
+    def _add_message_pieces_to_storage(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
-        Insert a list of message pieces into the memory storage.
-
-        Pieces flagged via ``MessagePiece.not_in_memory = True`` are
-        silently filtered out so callers don't need to track persistence policy
-        themselves.
+        Persist already-validated message pieces to the SQLite store.
 
         Args:
-            message_pieces (Sequence[MessagePiece]): The pieces to persist.
-            target_identifier (ComponentIdentifier | None): The target the conversation(s)
-                are held with, if known. Applied to every distinct ``conversation_id``.
+            message_pieces (Sequence[MessagePiece]): Persistable pieces (filtered and
+                validated by ``add_message_pieces_to_memory``).
         """
-        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_memory]
-        if not pieces_to_insert:
-            return
-        self._capture_conversations(message_pieces=pieces_to_insert, target_identifier=target_identifier)
-        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in pieces_to_insert])
+        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in message_pieces])
 
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
         """

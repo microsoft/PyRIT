@@ -27,7 +27,7 @@ from pyrit.memory.memory_models import (
     PromptMemoryEntry,
 )
 from pyrit.memory.storage import AzureBlobStorageIO
-from pyrit.models import ComponentIdentifier, ConversationStats, MessagePiece
+from pyrit.models import ConversationStats, MessagePiece
 
 if TYPE_CHECKING:
     from azure.core.credentials import AccessToken
@@ -695,32 +695,20 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             conditions.append(condition)
         return and_(*conditions)
 
-    def add_message_pieces_to_memory(
-        self, *, message_pieces: Sequence[MessagePiece], target_identifier: ComponentIdentifier | None = None
-    ) -> None:
+    def _add_message_pieces_to_storage(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
-        Insert a list of message pieces into the memory storage.
+        Persist already-validated message pieces to the Azure SQL store.
 
-        Pieces flagged via ``MessagePiece.not_in_memory = True`` are
-        silently filtered out so callers don't need to track persistence policy
-        themselves.
+        ``not_in_memory`` pieces are ephemeral -- typically synthesized inside a
+        scorer to score arbitrary content that never came through a real
+        PromptTarget. They are filtered out upstream in
+        ``add_message_pieces_to_memory`` before this method is called.
 
         Args:
-            message_pieces (Sequence[MessagePiece]): A sequence of MessagePiece instances to be added.
-            target_identifier (ComponentIdentifier | None): The target the conversation(s)
-                are held with, if known. Applied to every distinct ``conversation_id``.
+            message_pieces (Sequence[MessagePiece]): Persistable pieces (filtered and
+                validated by ``add_message_pieces_to_memory``).
         """
-        # ``not_in_memory`` pieces are ephemeral — typically synthesized inside a
-        # scorer to score arbitrary content that never came through a real
-        # PromptTarget. They have no conversation, target, or attack lineage, so
-        # persisting them would pollute the memory store with rows that don't
-        # tie to any real exchange. Filtering here lets every caller share one
-        # policy instead of guarding each call site.
-        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_memory]
-        if not pieces_to_insert:
-            return
-        self._capture_conversations(message_pieces=pieces_to_insert, target_identifier=target_identifier)
-        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in pieces_to_insert])
+        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in message_pieces])
 
     def dispose_engine(self) -> None:
         """

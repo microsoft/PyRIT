@@ -67,22 +67,32 @@ class TextTarget(PromptTarget):
 
         Returns:
             list[MessagePiece]: A list of message pieces imported from the CSV.
+
+        Raises:
+            ValueError: If a row is missing a ``conversation_id``.
         """
         message_pieces = []
 
         with open(csv_file_path, newline="") as csvfile:
             csvreader = csv.DictReader(csvfile)
 
-            for row in csvreader:
+            for row_number, row in enumerate(csvreader, start=1):
                 sequence_str = row.get("sequence", None)
                 labels_str = row.get("labels", None)
                 labels = json.loads(labels_str) if labels_str else None
+
+                conversation_id = row.get("conversation_id", None)
+                if not conversation_id or not conversation_id.strip():
+                    raise ValueError(
+                        f"Row {row_number} of '{csv_file_path}' is missing a 'conversation_id'. "
+                        "Every imported row must specify the conversation it belongs to."
+                    )
 
                 message_piece = MessagePiece(
                     role=row["role"],
                     original_value=row["value"],
                     original_value_data_type=row.get("data_type", None),
-                    conversation_id=row.get("conversation_id", None),
+                    conversation_id=conversation_id,
                     sequence=int(sequence_str) if sequence_str else 0,
                     labels=labels,  # deprecated
                     response_error=row.get("response_error", None),

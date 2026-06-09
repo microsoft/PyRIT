@@ -21,6 +21,7 @@ from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     Message,
     build_atomic_attack_identifier,
 )
@@ -197,6 +198,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
                 objective=context.generated_objective,
                 outcome=AttackOutcome.FAILURE,
                 atomic_attack_identifier=build_atomic_attack_identifier(
+                    attack_identifier=ComponentIdentifier.of(self),
                 ),
                 labels=context.memory_labels,
             )
