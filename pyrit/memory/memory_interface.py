@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory.memory_models import (
     AttackResultEntry,
     Base,
