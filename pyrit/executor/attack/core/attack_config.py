@@ -93,19 +93,21 @@ def resolve_adversarial_system_prompt(
     system_prompt = config.system_prompt
     if system_prompt is not None:
         if isinstance(system_prompt, SeedPrompt):
-            seed = system_prompt
-        else:
-            seed = SeedPrompt(
-                value=system_prompt,
-                is_jinja_template=True,
-                parameters=list(required_parameters),
-            )
+            # Validate only explicitly provided SeedPrompts against the required parameters.
+            declared = system_prompt.parameters or []
+            missing = [param for param in required_parameters if param not in declared]
+            if missing:
+                raise ValueError(
+                    error_message or f"Adversarial system prompt is missing required parameters: {missing}"
+                )
+            return system_prompt
 
-        declared = seed.parameters or []
-        missing = [param for param in required_parameters if param not in declared]
-        if missing:
-            raise ValueError(error_message or f"Adversarial system prompt is missing required parameters: {missing}")
-        return seed
+        # Inline strings are trusted — declare all required params so Jinja rendering works.
+        return SeedPrompt(
+            value=system_prompt,
+            is_jinja_template=True,
+            parameters=list(required_parameters),
+        )
 
     template_path = config.system_prompt_path or default_system_prompt_path
     return SeedPrompt.from_yaml_with_required_parameters(
