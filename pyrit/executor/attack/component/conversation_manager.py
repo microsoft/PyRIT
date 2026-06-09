@@ -465,6 +465,8 @@ class ConversationManager:
         if not valid_messages:
             return 0
 
+        self._memory.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=target_identifier)
+
         # Get roles that should have converters applied
         apply_to_roles = (
             prepended_conversation_config.apply_converters_to_roles if prepended_conversation_config else None
@@ -499,7 +501,7 @@ class ConversationManager:
                 )
 
             # Add to memory
-            self._memory.add_message_to_memory(request=message_copy, target_identifier=target_identifier)
+            self._memory.add_message_to_memory(request=message_copy)
             logger.debug(f"Added prepended message {i + 1}/{len(valid_messages)} to memory")
 
         return turn_count

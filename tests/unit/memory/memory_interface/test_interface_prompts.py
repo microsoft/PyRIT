@@ -561,9 +561,7 @@ def test_add_message_pieces_to_memory_calls_validate(sqlite_instance: MemoryInte
 
 
 @pytest.mark.parametrize("bad_id", [None, "", "   "])
-def test_add_message_pieces_to_memory_raises_when_conversation_id_missing(
-    sqlite_instance: MemoryInterface, bad_id
-):
+def test_add_message_pieces_to_memory_raises_when_conversation_id_missing(sqlite_instance: MemoryInterface, bad_id):
     piece = MessagePiece(role="user", original_value="hello", conversation_id=bad_id)
     with pytest.raises(ValueError, match="conversation_id"):
         sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
@@ -587,6 +585,51 @@ def test_add_message_pieces_to_memory_skips_not_in_memory_without_conversation_i
     sqlite_instance.add_message_pieces_to_memory(message_pieces=[ephemeral])
 
     assert sqlite_instance.get_message_pieces() == []
+
+
+def test_add_conversation_to_memory_records_target_for_plain_message_writes(sqlite_instance: MemoryInterface):
+    # Registering a conversation records its target once; subsequent message writes
+    # do not take a target, yet target-filtered reads still find the messages.
+    target_id = ComponentIdentifier(
+        class_name="OpenAIChatTarget",
+        class_module="pyrit.prompt_target",
+        params={"endpoint": "https://api.openai.com", "model_name": "gpt-4"},
+    )
+    conversation_id = "conv-registered"
+    sqlite_instance.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=target_id)
+    sqlite_instance.add_message_pieces_to_memory(
+        message_pieces=[MessagePiece(role="user", original_value="hi", conversation_id=conversation_id)]
+    )
+
+    metadata = sqlite_instance.get_conversation_metadata(conversation_id=conversation_id)
+    assert metadata is not None
+    assert metadata.target_identifier.hash == target_id.hash
+
+    results = sqlite_instance.get_message_pieces(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.TARGET,
+                property_path="$.hash",
+                value=target_id.hash,
+                partial_match=False,
+            )
+        ],
+    )
+    assert len(results) == 1
+    assert results[0].conversation_id == conversation_id
+
+
+def test_message_writes_without_registration_create_no_conversation_row(sqlite_instance: MemoryInterface):
+    # Message writes no longer touch the Conversations table; conversation metadata
+    # exists only when a conversation is explicitly registered.
+    conversation_id = "conv-unregistered"
+    sqlite_instance.add_message_pieces_to_memory(
+        message_pieces=[MessagePiece(role="user", original_value="hi", conversation_id=conversation_id)]
+    )
+
+    assert sqlite_instance.get_conversation_metadata(conversation_id=conversation_id) is None
+    # The messages themselves still persist.
+    assert len(sqlite_instance.get_message_pieces(conversation_id=conversation_id)) == 1
 
 
 def test_add_message_pieces_to_memory_updates_sequence(
@@ -1375,6 +1418,7 @@ def test_get_message_pieces_by_target_identifier_filter(sqlite_instance: MemoryI
         params={"endpoint": "https://azure.com", "model_name": "gpt-3.5"},
     )
 
+    sqlite_instance.add_conversation_to_memory(conversation_id="conv-openai", target_identifier=target_id_1)
     sqlite_instance.add_message_pieces_to_memory(
         message_pieces=[
             MessagePiece(
@@ -1383,8 +1427,8 @@ def test_get_message_pieces_by_target_identifier_filter(sqlite_instance: MemoryI
                 conversation_id="conv-openai",
             ),
         ],
-        target_identifier=target_id_1,
     )
+    sqlite_instance.add_conversation_to_memory(conversation_id="conv-azure", target_identifier=target_id_2)
     sqlite_instance.add_message_pieces_to_memory(
         message_pieces=[
             MessagePiece(
@@ -1393,7 +1437,6 @@ def test_get_message_pieces_by_target_identifier_filter(sqlite_instance: MemoryI
                 conversation_id="conv-azure",
             ),
         ],
-        target_identifier=target_id_2,
     )
 
     # Filter by target hash

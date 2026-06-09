@@ -528,9 +528,10 @@ def test_get_memories_with_json_properties(sqlite_instance):
         converter_identifiers=converter_identifiers,
     )
 
-    sqlite_instance.add_message_pieces_to_memory(
-        message_pieces=[piece], target_identifier=target.get_identifier()
+    sqlite_instance.add_conversation_to_memory(
+        conversation_id=specific_conversation_id, target_identifier=target.get_identifier()
     )
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
 
     # Use the get_memories_with_conversation_id method to retrieve entries with the specific conversation_id
     retrieved_entries = sqlite_instance.get_conversation(conversation_id=specific_conversation_id)
@@ -557,10 +558,10 @@ def test_get_memories_with_json_properties(sqlite_instance):
     assert labels["normalizer_id"] == "id1"
 
 
-def test_capture_conversation_none_target_does_not_clobber(sqlite_instance):
-    # A conversation is held with a single target. The request piece records the
-    # target; a later write for the same conversation that has no target (e.g. a
-    # response or branched copy) must NOT overwrite the recorded target with None.
+def test_register_conversation_none_target_does_not_clobber(sqlite_instance):
+    # A conversation is held with a single target. Registering it records the
+    # target; a later registration for the same conversation with no target (e.g.
+    # a branched copy whose source had no metadata) must NOT overwrite it with None.
     conversation_id = "conv-none-clobber"
     target = TextTarget()
 
@@ -570,9 +571,10 @@ def test_capture_conversation_none_target_does_not_clobber(sqlite_instance):
         sequence=1,
         original_value="hello",
     )
-    sqlite_instance.add_message_pieces_to_memory(
-        message_pieces=[request_piece], target_identifier=target.get_identifier()
+    sqlite_instance.add_conversation_to_memory(
+        conversation_id=conversation_id, target_identifier=target.get_identifier()
     )
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[request_piece])
 
     response_piece = MessagePiece(
         conversation_id=conversation_id,
@@ -580,7 +582,8 @@ def test_capture_conversation_none_target_does_not_clobber(sqlite_instance):
         sequence=2,
         original_value="world",
     )
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=[response_piece], target_identifier=None)
+    sqlite_instance.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=None)
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[response_piece])
 
     metadata = sqlite_instance.get_conversation_metadata(conversation_id=conversation_id)
     assert metadata is not None

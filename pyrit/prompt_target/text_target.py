@@ -100,9 +100,11 @@ class TextTarget(PromptTarget):
                 message_pieces.append(message_piece)
 
         # This is post validation, so the message_pieces should be okay and normalized
-        self._memory.add_message_pieces_to_memory(
-            message_pieces=message_pieces, target_identifier=self.get_identifier()
-        )
+        for conversation_id in {piece.conversation_id for piece in message_pieces if piece.conversation_id}:
+            self._memory.add_conversation_to_memory(
+                conversation_id=conversation_id, target_identifier=self.get_identifier()
+            )
+        self._memory.add_message_pieces_to_memory(message_pieces=message_pieces)
         return message_pieces
 
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:

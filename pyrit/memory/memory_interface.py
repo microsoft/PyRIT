@@ -349,34 +349,53 @@ class MemoryInterface(abc.ABC):
             Any: A SQLAlchemy condition for filtering memory entries based on prompt metadata.
         """
 
-    def add_message_pieces_to_memory(
-        self, *, message_pieces: Sequence[MessagePiece], target_identifier: ComponentIdentifier | None = None
+    def add_conversation_to_memory(
+        self, *, conversation_id: str, target_identifier: ComponentIdentifier | None = None
     ) -> None:
+        """
+        Register a conversation in memory, recording its conversation-scoped metadata.
+
+        A conversation is a first-class entity held with a single target. Call this once
+        when a conversation is created (before, or independently of, adding its messages)
+        to record the target it is held with. Message writes (``add_message_to_memory`` /
+        ``add_message_pieces_to_memory``) deliberately do not take a target, so that
+        conversation ownership is expressed in a single place rather than threaded through
+        every write.
+
+        Registration is idempotent: a non-``None`` ``target_identifier`` is recorded, and
+        a ``None`` value never overwrites a target already recorded for the conversation.
+
+        Args:
+            conversation_id (str): The caller-owned conversation identifier.
+            target_identifier (ComponentIdentifier | None): The target the conversation is
+                held with, if known.
+        """
+        self._upsert_conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+
+    def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
         Insert a list of message pieces into the memory storage.
 
         Pieces flagged via ``MessagePiece.not_in_memory = True`` are silently filtered
         out so callers don't need to track persistence policy themselves. Every
         remaining piece must carry a non-empty ``conversation_id`` (the memory layer
-        never invents one -- see ``_validate_persistable_conversation_ids``). The
-        conversation-scoped metadata row is captured once per ``conversation_id`` via
-        ``_capture_conversations`` before the storage-specific insert.
+        never invents one -- see ``_validate_persistable_conversation_ids``).
+
+        Conversation-scoped metadata (the target a conversation is held with) is not
+        recorded here; register it once via ``add_conversation_to_memory`` when the
+        conversation is created.
 
         This is a template method: subclasses implement only the backend-specific
-        ``_add_message_pieces_to_storage`` and inherit the filtering, validation, and
-        conversation-capture steps so no subclass can forget to run them.
+        ``_add_message_pieces_to_storage`` and inherit the filtering and validation
+        steps so no subclass can forget to run them.
 
         Args:
             message_pieces (Sequence[MessagePiece]): The pieces to persist.
-            target_identifier (ComponentIdentifier | None): The target the conversation(s)
-                are held with, if known. A conversation is always with a single target, so
-                this is applied to every distinct ``conversation_id`` in ``message_pieces``.
         """
         pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_memory]
         if not pieces_to_insert:
             return
         self._validate_persistable_conversation_ids(message_pieces=pieces_to_insert)
-        self._capture_conversations(message_pieces=pieces_to_insert, target_identifier=target_identifier)
         self._add_message_pieces_to_storage(message_pieces=pieces_to_insert)
 
     @abc.abstractmethod
@@ -419,51 +438,13 @@ class MemoryInterface(abc.ABC):
                     "the caller before a piece is persisted; the memory layer does not generate one."
                 )
 
-    def _capture_conversations(
-        self, *, message_pieces: Sequence[MessagePiece], target_identifier: ComponentIdentifier | None = None
-    ) -> None:
-        """
-        Record one ``Conversations`` row per conversation for the given pieces.
-
-        Conversation-scoped metadata (currently the target identifier) is persisted
-        once per ``conversation_id`` instead of being stamped onto every piece. This
-        runs from each backend's ``add_message_pieces_to_memory`` so every write path
-        -- normalizer, conversation duplication, prepended conversations, direct
-        target writers -- captures the target through a single choke point.
-
-        A conversation is always held with a single target, so ``target_identifier``
-        (when provided) is applied to every distinct ``conversation_id`` in this call.
-        A ``None`` target never overwrites a target already recorded for the
-        conversation (see ``_upsert_conversation``).
-
-        Args:
-            message_pieces (Sequence[MessagePiece]): The pieces being persisted.
-            target_identifier (ComponentIdentifier | None): The target the conversation(s)
-                are held with, if known.
-        """
-        conversation_ids: list[str] = []
-        seen: set[str] = set()
-        for piece in message_pieces:
-            if piece.not_in_memory:
-                continue
-            conversation_id = piece.conversation_id
-            if not conversation_id:
-                continue
-            if conversation_id not in seen:
-                seen.add(conversation_id)
-                conversation_ids.append(conversation_id)
-        for conversation_id in conversation_ids:
-            self._upsert_conversation(conversation_id=conversation_id, target_identifier=target_identifier)
-
-    def _upsert_conversation(
-        self, *, conversation_id: str, target_identifier: ComponentIdentifier | None
-    ) -> None:
+    def _upsert_conversation(self, *, conversation_id: str, target_identifier: ComponentIdentifier | None) -> None:
         """
         Insert or update the ``Conversations`` row for ``conversation_id``.
 
         A non-``None`` ``target_identifier`` is written; a ``None`` value never
-        overwrites a target already recorded for the conversation (so response/copy
-        pieces and write ordering cannot clobber it).
+        overwrites a target already recorded for the conversation (so re-registration
+        and copy/duplicate flows cannot clobber it).
 
         Args:
             conversation_id (str): The conversation to record.
@@ -471,15 +452,11 @@ class MemoryInterface(abc.ABC):
                 is held with, if known.
 
         Raises:
-            ValueError: If ``conversation_id`` is empty (a piece reached persistence
-                without a caller-assigned conversation_id; callers must set one).
+            ValueError: If ``conversation_id`` is empty.
             SQLAlchemyError: If the upsert fails.
         """
         if not conversation_id:
-            raise ValueError(
-                "Cannot upsert a Conversations row without a conversation_id. This indicates a message "
-                "piece reached persistence without a caller-assigned conversation_id."
-            )
+            raise ValueError("Cannot register a conversation without a conversation_id.")
         entry = ConversationEntry(
             conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
         )
@@ -1188,7 +1165,9 @@ class MemoryInterface(abc.ABC):
             if not_data_type:
                 conditions.append(PromptMemoryEntry.converted_value_data_type != not_data_type)
             if identifier_filters:
-                conditions.extend(self._build_message_piece_identifier_conditions(identifier_filters=identifier_filters))
+                conditions.extend(
+                    self._build_message_piece_identifier_conditions(identifier_filters=identifier_filters)
+                )
 
             # Identify list parameters that may need batching
             list_params: list[tuple[InstrumentedAttribute[Any], Sequence[Any], str]] = []
@@ -1259,7 +1238,9 @@ class MemoryInterface(abc.ABC):
         source_metadata = self.get_conversation_metadata(conversation_id=conversation_id)
         source_target = source_metadata.target_identifier if source_metadata else None
         new_conversation_id, all_pieces = self.duplicate_messages(messages=messages)
-        self.add_message_pieces_to_memory(message_pieces=all_pieces, target_identifier=source_target)
+        if all_pieces:
+            self.add_conversation_to_memory(conversation_id=new_conversation_id, target_identifier=source_target)
+            self.add_message_pieces_to_memory(message_pieces=all_pieces)
         return new_conversation_id
 
     def duplicate_conversation_excluding_last_turn(self, *, conversation_id: str) -> str:
@@ -1294,13 +1275,13 @@ class MemoryInterface(abc.ABC):
         source_metadata = self.get_conversation_metadata(conversation_id=conversation_id)
         source_target = source_metadata.target_identifier if source_metadata else None
         new_conversation_id, all_pieces = self.duplicate_messages(messages=messages_to_duplicate)
-        self.add_message_pieces_to_memory(message_pieces=all_pieces, target_identifier=source_target)
+        if all_pieces:
+            self.add_conversation_to_memory(conversation_id=new_conversation_id, target_identifier=source_target)
+            self.add_message_pieces_to_memory(message_pieces=all_pieces)
 
         return new_conversation_id
 
-    def add_message_to_memory(
-        self, *, request: Message, target_identifier: ComponentIdentifier | None = None
-    ) -> None:
+    def add_message_to_memory(self, *, request: Message) -> None:
         """
         Insert a list of message pieces into the memory storage.
 
@@ -1309,8 +1290,6 @@ class MemoryInterface(abc.ABC):
 
         Args:
             request (Message): The message to add to the memory.
-            target_identifier (ComponentIdentifier | None): The target the conversation
-                is held with, if known. Forwarded to ``add_message_pieces_to_memory``.
         """
         request.validate()
 
@@ -1321,11 +1300,10 @@ class MemoryInterface(abc.ABC):
         if not pieces_to_persist:
             return
 
-        self._validate_persistable_conversation_ids(message_pieces=pieces_to_persist)
-
         self._update_sequence(message_pieces=message_pieces)
 
-        self.add_message_pieces_to_memory(message_pieces=message_pieces, target_identifier=target_identifier)
+        # conversation_id validation happens in add_message_pieces_to_memory, the shared choke point.
+        self.add_message_pieces_to_memory(message_pieces=message_pieces)
 
         if self.memory_embedding:
             for piece in message_pieces:

@@ -119,6 +119,7 @@ class PromptNormalizer:
         request = copy.deepcopy(message)
         conversation_id = conversation_id if conversation_id else str(uuid4())
         target_identifier = target.get_identifier()
+        self.memory.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=target_identifier)
 
         for piece in request.message_pieces:
             piece.conversation_id = conversation_id
@@ -134,10 +135,10 @@ class PromptNormalizer:
 
         try:
             responses = await target.send_prompt_async(message=request)
-            self.memory.add_message_to_memory(request=request, target_identifier=target_identifier)
+            self.memory.add_message_to_memory(request=request)
         except EmptyResponseException:
             # Empty responses are retried, but we don't want them to stop execution
-            self.memory.add_message_to_memory(request=request, target_identifier=target_identifier)
+            self.memory.add_message_to_memory(request=request)
 
             responses = [
                 construct_response_from_request(
@@ -150,7 +151,7 @@ class PromptNormalizer:
 
         except Exception as ex:
             # Ensure request to memory before processing exception
-            self.memory.add_message_to_memory(request=request, target_identifier=target_identifier)
+            self.memory.add_message_to_memory(request=request)
 
             error_response = construct_response_from_request(
                 request=request.message_pieces[0],
@@ -160,7 +161,7 @@ class PromptNormalizer:
             )
 
             await self._calc_hash_async(request=error_response)
-            self.memory.add_message_to_memory(request=error_response, target_identifier=target_identifier)
+            self.memory.add_message_to_memory(request=error_response)
             cid = request.message_pieces[0].conversation_id if request and request.message_pieces else None
             raise Exception(f"Error sending prompt with conversation ID: {cid}") from ex
 
@@ -177,7 +178,7 @@ class PromptNormalizer:
                 error="empty",
             )
             await self._calc_hash_async(request=empty_response)
-            self.memory.add_message_to_memory(request=empty_response, target_identifier=target_identifier)
+            self.memory.add_message_to_memory(request=empty_response)
             return empty_response
 
         # Process all response messages (targets return list[Message])
@@ -190,7 +191,7 @@ class PromptNormalizer:
                     converter_configurations=response_converter_configurations, message=resp
                 )
             await self._calc_hash_async(request=resp)
-            self.memory.add_message_to_memory(request=resp, target_identifier=target_identifier)
+            self.memory.add_message_to_memory(request=resp)
 
         # Return the last response for backward compatibility
         return responses[-1]
@@ -384,22 +385,20 @@ class PromptNormalizer:
         tasks = [asyncio.create_task(set_message_piece_sha256_async(piece)) for piece in request.message_pieces]
         await asyncio.gather(*tasks)
 
-    async def hash_and_persist_message_async(
-        self, *, message: Message, target_identifier: ComponentIdentifier | None = None
-    ) -> None:
+    async def hash_and_persist_message_async(self, *, message: Message) -> None:
         """
         Hash and persist a Message to memory.
 
         Use when a target assembles a Message outside the ``send_prompt_async`` flow
-        (e.g. streaming sessions that yield per-turn Messages directly).
+        (e.g. streaming sessions that yield per-turn Messages directly). Register the
+        conversation once via ``MemoryInterface.add_conversation_to_memory`` before
+        persisting its messages.
 
         Args:
             message (Message): The message to hash and persist.
-            target_identifier (ComponentIdentifier | None): The target the conversation
-                is held with, if known.
         """
         await self._calc_hash_async(request=message)
-        self.memory.add_message_to_memory(request=message, target_identifier=target_identifier)
+        self.memory.add_message_to_memory(request=message)
 
     async def add_prepended_conversation_to_memory_async(
         self,
@@ -439,6 +438,7 @@ class PromptNormalizer:
 
         # Create a deep copy of the prepended conversation to avoid modifying the original
         prepended_conversation = copy.deepcopy(prepended_conversation)
+        self.memory.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=target_identifier)
 
         for request in prepended_conversation:
             if should_convert and converter_configurations:
@@ -450,7 +450,7 @@ class PromptNormalizer:
                 # and if not, this won't hurt anything
                 piece.id = uuid4()
 
-            self.memory.add_message_to_memory(request=request, target_identifier=target_identifier)
+            self.memory.add_message_to_memory(request=request)
 
         return prepended_conversation
 

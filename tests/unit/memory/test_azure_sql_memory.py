@@ -206,9 +206,10 @@ def test_get_memories_with_json_properties(memory_interface: AzureSQLMemory):
         converter_identifiers=converter_identifiers,
     )
 
-    memory_interface.add_message_pieces_to_memory(
-        message_pieces=[piece], target_identifier=target.get_identifier()
+    memory_interface.add_conversation_to_memory(
+        conversation_id=specific_conversation_id, target_identifier=target.get_identifier()
     )
+    memory_interface.add_message_pieces_to_memory(message_pieces=[piece])
 
     # Use the get_memories_with_conversation_id method to retrieve entries with the specific conversation_id
     retrieved_entries = memory_interface.get_conversation(conversation_id=specific_conversation_id)

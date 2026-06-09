@@ -327,6 +327,9 @@ class PromptTarget(Identifiable):
         if messages:
             raise RuntimeError("Conversation already exists, system prompt needs to be set at the beginning")
 
+        self._memory.add_conversation_to_memory(
+            conversation_id=conversation_id, target_identifier=self.get_identifier()
+        )
         self._memory.add_message_to_memory(
             request=MessagePiece(
                 role="system",
@@ -335,7 +338,6 @@ class PromptTarget(Identifiable):
                 converted_value=system_prompt,
                 labels=labels or {},
             ).to_message(),
-            target_identifier=self.get_identifier(),
         )
 
     def dispose_db_engine(self) -> None:

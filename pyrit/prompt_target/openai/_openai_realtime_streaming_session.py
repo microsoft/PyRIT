@@ -402,6 +402,9 @@ class _OpenAIRealtimeStreamingSession:
         )
 
         target_identifier = target.get_identifier()
+        target._memory.add_conversation_to_memory(
+            conversation_id=self._conversation_id, target_identifier=target_identifier
+        )
         user_piece = MessagePiece(
             role="user",
             original_value=raw_user_path,
@@ -437,12 +440,8 @@ class _OpenAIRealtimeStreamingSession:
                 message=assistant_message,
             )
 
-        await self._prompt_normalizer.hash_and_persist_message_async(
-            message=user_message, target_identifier=target_identifier
-        )
-        await self._prompt_normalizer.hash_and_persist_message_async(
-            message=assistant_message, target_identifier=target_identifier
-        )
+        await self._prompt_normalizer.hash_and_persist_message_async(message=user_message)
+        await self._prompt_normalizer.hash_and_persist_message_async(message=assistant_message)
         return assistant_message
 
     # ---- Wire helpers -------------------------------------------------------

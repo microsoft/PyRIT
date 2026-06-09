@@ -477,9 +477,7 @@ class AttackService:
 
         # --- Branch via duplication (preferred for tracking) ---------------
         if request.source_conversation_id is not None and request.cutoff_index is not None:
-            source_metadata = self._memory.get_conversation_metadata(
-                conversation_id=request.source_conversation_id
-            )
+            source_metadata = self._memory.get_conversation_metadata(conversation_id=request.source_conversation_id)
             new_conversation_id = self._duplicate_conversation_up_to(
                 source_conversation_id=request.source_conversation_id,
                 cutoff_index=request.cutoff_index,
@@ -877,9 +875,10 @@ class AttackService:
                 piece.role = "simulated_assistant"
 
         if all_pieces:
-            self._memory.add_message_pieces_to_memory(
-                message_pieces=list(all_pieces), target_identifier=target_identifier
+            self._memory.add_conversation_to_memory(
+                conversation_id=new_conversation_id, target_identifier=target_identifier
             )
+            self._memory.add_message_pieces_to_memory(message_pieces=list(all_pieces))
 
         return new_conversation_id
 
@@ -970,6 +969,9 @@ class AttackService:
         target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store prepended conversation messages in memory."""
+        if not prepended:
+            return
+        self._memory.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=target_identifier)
         for seq, msg in enumerate(prepended):
             for p in msg.pieces:
                 piece = request_piece_to_pyrit_message_piece(
@@ -979,9 +981,7 @@ class AttackService:
                     sequence=seq,
                     labels=labels,  # deprecated
                 )
-                self._memory.add_message_pieces_to_memory(
-                    message_pieces=[piece], target_identifier=target_identifier
-                )
+                self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
     async def _send_and_store_message_async(
         self,
@@ -1031,6 +1031,7 @@ class AttackService:
     ) -> None:
         """Store message without sending (send=False)."""
         await self._persist_base64_pieces_async(request)
+        self._memory.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=target_identifier)
         for p in request.pieces:
             piece = request_piece_to_pyrit_message_piece(
                 piece=p,
@@ -1039,9 +1040,7 @@ class AttackService:
                 sequence=sequence,
                 labels=labels,  # deprecated
             )
-            self._memory.add_message_pieces_to_memory(
-                message_pieces=[piece], target_identifier=target_identifier
-            )
+            self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
     def _resolve_video_remix_metadata(self, request: AddMessageRequest) -> None:
         """
