@@ -110,6 +110,7 @@ def mock_all_registries(mock_memory):
 
     mock_sr = MagicMock()
     mock_sr.get_class.return_value = mock_scenario_class
+    mock_sr.create_instance.return_value = mock_scenario_instance
 
     mock_tr = MagicMock()
     mock_tr.get_instance_by_name.return_value = MagicMock()
@@ -452,23 +453,25 @@ class TestScenarioRunServiceStartRun:
         assert mock_init_instance.initialize_async.await_count == 2
 
     async def test_start_run_passes_scenario_result_id_for_resume(self, mock_all_registries) -> None:
-        """Test that scenario_result_id is passed to the scenario constructor for resumption."""
+        """Test that scenario_result_id is passed to the registry constructor for resumption."""
         service = ScenarioRunService()
-        mock_scenario_class = mock_all_registries["scenario_class"]
+        mock_sr = mock_all_registries["scenario_registry"]
 
         response = await service.start_run_async(request=_make_request(scenario_result_id="existing-result-uuid"))
 
         assert response.status == ScenarioRunStatus.IN_PROGRESS
-        mock_scenario_class.assert_called_once_with(scenario_result_id="existing-result-uuid")
+        mock_sr.create_instance.assert_called_once_with(
+            "foundry.red_team_agent", scenario_result_id="existing-result-uuid"
+        )
 
     async def test_start_run_omits_scenario_result_id_when_none(self, mock_all_registries) -> None:
-        """Test that scenario_result_id is not passed to constructor when not provided."""
+        """Test that scenario_result_id is not passed to the registry constructor when not provided."""
         service = ScenarioRunService()
-        mock_scenario_class = mock_all_registries["scenario_class"]
+        mock_sr = mock_all_registries["scenario_registry"]
 
         await service.start_run_async(request=_make_request())
 
-        mock_scenario_class.assert_called_once_with()
+        mock_sr.create_instance.assert_called_once_with("foundry.red_team_agent")
 
 
 class TestScenarioRunServiceGetRun:

@@ -18,6 +18,10 @@ const PIECE_TYPE_LABELS: Record<string, string> = {
   video: 'Video',
 }
 
+// Converter classes the backend can build but that aren't useful to offer in the
+// picker (base/helper classes).
+const HIDDEN_CONVERTER_TYPES = new Set<string>(['SelectiveTextConverter'])
+
 interface ConverterPanelProps {
   onClose: () => void
   previewText?: string
@@ -51,7 +55,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
 
     try {
       const response = await convertersApi.listConverterCatalog()
-      setConverters(response.items)
+      setConverters(response.items.filter((c) => !HIDDEN_CONVERTER_TYPES.has(c.converter_type)))
     } catch (err) {
       setConverters([])
       setSelectedConverterType('')

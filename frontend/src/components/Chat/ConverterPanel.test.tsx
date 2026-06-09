@@ -149,6 +149,29 @@ describe('ConverterPanel loading', () => {
     renderPanel()
     await waitFor(() => expect(screen.getByTestId('converter-panel-empty')).toBeInTheDocument())
   })
+
+  it('hides base/helper converters that should not be offered', async () => {
+    const catalogWithHidden = {
+      items: [
+        ...MOCK_CATALOG.items,
+        {
+          converter_type: 'SelectiveTextConverter',
+          supported_input_types: ['text'],
+          supported_output_types: ['text'],
+          parameters: [],
+          is_llm_based: false,
+          description: 'Base/helper converter.',
+        },
+      ],
+    }
+    mockedConvertersApi.listConverterCatalog.mockResolvedValueOnce(catalogWithHidden as ConverterCatalogResponse)
+    renderPanel()
+    await waitForList()
+
+    fireEvent.click(getComboboxInput())
+    await waitFor(() => expect(screen.getByTestId('converter-option-Base64Converter')).toBeInTheDocument())
+    expect(screen.queryByTestId('converter-option-SelectiveTextConverter')).not.toBeInTheDocument()
+  })
 })
 
 // ─── Close button ────────────────────────────────────────────────

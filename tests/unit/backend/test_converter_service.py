@@ -14,31 +14,31 @@ from pyrit.backend.models.converters import (
     ConverterPreviewRequest,
     CreateConverterRequest,
 )
-from pyrit.backend.services.converter_service import ConverterService, _is_llm_based, get_converter_service
+from pyrit.backend.services.converter_service import (
+    ConverterService,
+    _serialize_type,
+    get_converter_service,
+)
 from pyrit.models import ComponentIdentifier
 from pyrit.prompt_converter import (
     Base64Converter,
     CaesarConverter,
-    LLMGenericTextConverter,
-    NoiseConverter,
-    PersuasionConverter,
     RepeatTokenConverter,
     SuffixAppendConverter,
-    TenseConverter,
-    ToneConverter,
-    TranslationConverter,
-    VariationConverter,
 )
 from pyrit.prompt_converter.prompt_converter import get_converter_modalities
+from pyrit.registry.class_registries import ConverterClassRegistry
 from pyrit.registry.object_registries import ConverterRegistry
 
 
 @pytest.fixture(autouse=True)
 def reset_registry():
-    """Reset the ConverterRegistry singleton before each test."""
+    """Reset the converter registries before each test."""
     ConverterRegistry.reset_instance()
+    ConverterClassRegistry.reset_instance()
     yield
     ConverterRegistry.reset_instance()
+    ConverterClassRegistry.reset_instance()
 
 
 class TestListConverters:
@@ -103,6 +103,60 @@ class TestListConverterCatalog:
         base64_entry = next(item for item in result.items if item.converter_type == "Base64Converter")
         assert "text" in base64_entry.supported_input_types
         assert "text" in base64_entry.supported_output_types
+
+    async def test_catalog_includes_all_constructible_converters(self) -> None:
+        """The catalog surfaces every constructible converter, including base/helper classes.
+
+        Whether to display a given converter is left to the caller (e.g. the frontend),
+        so the service no longer hides anything.
+        """
+        service = ConverterService()
+
+        result = await service.list_converter_catalog_async()
+
+        converter_types = [item.converter_type for item in result.items]
+        assert "Base64Converter" in converter_types
+        assert "SelectiveTextConverter" in converter_types
+
+    async def test_catalog_serializes_parameter_type(self) -> None:
+        """Catalog renders the raw annotation into a human-readable type_name."""
+        service = ConverterService()
+
+        result = await service.list_converter_catalog_async()
+
+        caesar_entry = next(item for item in result.items if item.converter_type == "CaesarConverter")
+        caesar_param = next(p for p in caesar_entry.parameters if p.name == "caesar_offset")
+        assert caesar_param.type_name == "int"
+
+    async def test_catalog_excludes_non_coercible_params(self) -> None:
+        """Catalog only surfaces params that can be set from a string (e.g. not the LLM target)."""
+        service = ConverterService()
+
+        result = await service.list_converter_catalog_async()
+
+        persuasion_entry = next(item for item in result.items if item.converter_type == "PersuasionConverter")
+        assert persuasion_entry.is_llm_based is True
+        assert all("Target" not in p.type_name for p in persuasion_entry.parameters)
+
+
+class TestSerializeType:
+    """Tests for the _serialize_type presentation helper."""
+
+    def test_empty_annotation(self) -> None:
+        import inspect
+
+        assert _serialize_type(inspect.Parameter.empty) == "Any"
+
+    def test_plain_type(self) -> None:
+        assert _serialize_type(int) == "int"
+
+    def test_optional_pep604(self) -> None:
+        assert _serialize_type(str | None) == "Optional[str]"
+
+    def test_literal(self) -> None:
+        from typing import Literal
+
+        assert _serialize_type(Literal["a", "b"]) == "Literal['a', 'b']"
 
 
 class TestGetConverter:
@@ -607,25 +661,3 @@ class TestConverterParamsExtraction:
         # Verify type info is populated from identifier
         assert isinstance(result.supported_input_types, list)
         assert isinstance(result.supported_output_types, list)
-
-
-class TestIsLlmBased:
-    """Tests for the _is_llm_based introspection helper"""
-
-    def test_detects_llm_text_converter(self) -> None:
-        # Test that _is_llm_based correctly identifies converters that use LLMS as LLM-based.
-        for cls in (
-            LLMGenericTextConverter,
-            NoiseConverter,
-            PersuasionConverter,
-            ToneConverter,
-            TenseConverter,
-            TranslationConverter,
-            VariationConverter,
-        ):
-            assert _is_llm_based(cls) is True, f"{cls.__name__} should be detected as LLM-based"
-
-    def test_does_not_flag_non_target_converters(self) -> None:
-        # Test that _is_llm_based does not incorrectly flag non-LLM converters.
-        assert _is_llm_based(Base64Converter) is False
-        assert _is_llm_based(CaesarConverter) is False

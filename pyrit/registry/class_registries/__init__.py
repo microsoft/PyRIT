@@ -14,6 +14,11 @@ from pyrit.registry.class_registries.base_class_registry import (
     BaseClassRegistry,
     ClassEntry,
 )
+from pyrit.registry.class_registries.converter_class_registry import (
+    ConverterClassRegistry,
+    ConverterMetadata,
+    ConverterParameterMetadata,
+)
 from pyrit.registry.class_registries.initializer_registry import (
     InitializerMetadata,
     InitializerRegistry,
@@ -27,6 +32,9 @@ from pyrit.registry.class_registries.scenario_registry import (
 __all__ = [
     "BaseClassRegistry",
     "ClassEntry",
+    "ConverterClassRegistry",
+    "ConverterMetadata",
+    "ConverterParameterMetadata",
     "ScenarioRegistry",
     "ScenarioMetadata",
     "ScenarioParameterMetadata",
