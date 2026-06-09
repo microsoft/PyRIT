@@ -160,6 +160,54 @@ class ScriptInit(PyRITInitializer):
         with pytest.raises(ValueError, match="is not a supported type"):
             await initialize_pyrit_async(memory_db_type="InvalidType")  # type: ignore[arg-type]
 
+    @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
+    @mock.patch("pyrit.setup.initialization._load_environment_files")
+    @mock.patch("pyrit.setup.initialization._load_env_from_akv_async", new_callable=mock.AsyncMock)
+    async def test_initialize_with_env_akv_ref(self, mock_load_akv, mock_load_env, mock_set_memory):
+        """Test that env_akv_ref triggers AKV env loading."""
+        refs = ["https://vault.vault.azure.net/secrets/test-secret"]
+
+        await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_akv_ref=refs)
+
+        mock_load_akv.assert_awaited_once()
+        assert mock_load_akv.await_args.kwargs["secret_urls"] == refs
+        assert mock_load_akv.await_args.kwargs["silent"] is False
+        mock_load_env.assert_called_once()
+        mock_set_memory.assert_called_once()
+
+    @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
+    @mock.patch("pyrit.setup.initialization._load_environment_files")
+    @mock.patch("pyrit.setup.initialization._load_env_from_akv_async", new_callable=mock.AsyncMock)
+    async def test_initialize_with_empty_env_akv_ref_does_not_load_akv(self, mock_load_akv, mock_load_env, mock_set_memory):
+        """Test that empty env_akv_ref does not invoke AKV loading."""
+        await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_akv_ref=[])
+
+        mock_load_akv.assert_not_called()
+        mock_load_env.assert_called_once()
+        mock_set_memory.assert_called_once()
+
+    @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
+    async def test_initialize_loads_akv_before_env_files(self, mock_set_memory):
+        """Test that AKV refs are loaded before env_files so env_files can override values."""
+        call_order: list[str] = []
+
+        async def _record_akv_call(*, secret_urls, silent=False):
+            call_order.append("akv")
+
+        def _record_env_file_call(*, env_files, silent=False):
+            call_order.append("env_files")
+
+        refs = ["https://vault.vault.azure.net/secrets/test-secret"]
+
+        with (
+            mock.patch("pyrit.setup.initialization._load_env_from_akv_async", side_effect=_record_akv_call),
+            mock.patch("pyrit.setup.initialization._load_environment_files", side_effect=_record_env_file_call),
+        ):
+            await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_akv_ref=refs)
+
+        assert call_order == ["akv", "env_files"]
+        mock_set_memory.assert_called_once()
+
 
 @pytest.fixture
 def reset_memory_singletons():
