@@ -566,17 +566,22 @@ class ConversationManager:
             if hasattr(context, "executed_turns"):
                 context.executed_turns = state.turn_count  # type: ignore[ty:invalid-assignment]
 
-            # Extract scores on final prepended assistant message if it exists and are relavent
-            # Multi-part messages (e.g., text + image) may have scores on multiple pieces
-            # only extract true_false scores with score_value=False. This allows attacks
-            # to use the score's rationale for feedback without re-scoring.
-            for piece in final_prepended_message.message_pieces:
-                for score in piece.scores:
-                    if score.score_type == "true_false" and score.get_value() is False:
-                        state.last_assistant_message_scores.append(score)
-                        # context.last_score gets the first matching score for single-score use cases.
-                        if hasattr(context, "last_score") and context.last_score is None:
-                            context.last_score = score  # type: ignore[ty:invalid-assignment]
+            # Extract scores on final prepended assistant message if it exists and are relevant.
+            # The prepended pieces were re-keyed with new ids when added to memory, so look
+            # them up by conversation_id and filter to the last assistant turn. Only extract
+            # true_false scores with score_value=False so attacks can use the rationale for
+            # feedback without re-scoring.
+            memory_pieces = self._memory.get_message_pieces(conversation_id=conversation_id)
+            assistant_piece_ids = [str(piece.id) for piece in memory_pieces if piece.api_role == "assistant"]
+            existing_scores = (
+                self._memory.get_prompt_scores(prompt_ids=assistant_piece_ids) if assistant_piece_ids else []
+            )
+            for score in existing_scores:
+                if score.score_type == "true_false" and score.get_value() is False:
+                    state.last_assistant_message_scores.append(score)
+                    # context.last_score gets the first matching score for single-score use cases.
+                    if hasattr(context, "last_score") and context.last_score is None:
+                        context.last_score = score  # type: ignore[ty:invalid-assignment]
 
         return state
 

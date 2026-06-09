@@ -12,7 +12,7 @@ This guide covers how to work with PyRIT's memory models — where they live, ho
 | Migration revisions | `pyrit/memory/alembic/versions/` |
 | Migration helpers | `pyrit/memory/migration.py` |
 | CLI migration tool | `build_scripts/memory_migrations.py` |
-| Schema diagram | `doc/code/memory/10_schema_diagram.md` |
+| Schema diagram | `doc/code/memory/9_schema_diagram.md` |
 
 ## Current Models
 
@@ -56,7 +56,7 @@ This verifies the schema produced by running all migrations matches the current 
 
 ### 4. Update the schema diagram
 
-If you changed the schema in a meaningful way (added a table, added a foreign key, etc.), update the Mermaid diagram in `doc/code/memory/10_schema_diagram.md`.
+If you changed the schema in a meaningful way (added a table, added a foreign key, etc.), update the Mermaid diagram in `doc/code/memory/9_schema_diagram.md`.
 
 ## How Migrations Run at Startup
 
