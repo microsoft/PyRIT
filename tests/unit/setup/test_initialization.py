@@ -182,7 +182,9 @@ class ScriptInit(PyRITInitializer):
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
     @mock.patch("pyrit.setup.initialization._load_environment_files")
     @mock.patch("pyrit.setup.initialization._load_env_from_akv_async", new_callable=mock.AsyncMock)
-    async def test_initialize_with_empty_env_akv_ref_does_not_load_akv(self, mock_load_akv, mock_load_env, mock_set_memory):
+    async def test_initialize_with_empty_env_akv_ref_does_not_load_akv(
+        self, mock_load_akv, mock_load_env, mock_set_memory
+    ):
         """Test that empty env_akv_ref does not invoke AKV loading."""
         await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_akv_ref=[])
 
@@ -403,20 +405,6 @@ class TestAkvEnvironmentLoading:
     async def test_load_env_from_akv_async_empty_urls_noop(self, mock_load_dotenv):
         await _load_env_from_akv_async(secret_urls=[])
         mock_load_dotenv.assert_not_called()
-
-    async def test_load_env_from_akv_async_missing_azure_dependency_raises(self):
-        real_import = __import__
-
-        def _import_side_effect(name, globals=None, locals=None, fromlist=(), level=0):
-            if name.startswith("azure.identity") or name.startswith("azure.keyvault"):
-                raise ImportError("missing azure dependencies")
-            return real_import(name, globals, locals, fromlist, level)
-
-        with mock.patch("builtins.__import__", side_effect=_import_side_effect):
-            with pytest.raises(ImportError, match="azure-keyvault-secrets is required"):
-                await _load_env_from_akv_async(
-                    secret_urls=["https://myvault.vault.azure.net/secrets/my-secret"]
-                )
 
     async def test_load_env_from_akv_async_loads_secret_content(self):
         class FakeCredential:

@@ -234,14 +234,8 @@ async def _load_env_from_akv_async(*, secret_urls: Sequence[str], silent: bool =
     """
     if not secret_urls:
         return
-
-    try:
-        from azure.identity.aio import DefaultAzureCredential
-        from azure.keyvault.secrets.aio import SecretClient
-    except ImportError as exc:
-        raise ImportError(
-            "azure-keyvault-secrets is required to use env_akv_ref. Install it with: pip install azure-keyvault-secrets"
-        ) from exc
+    from azure.identity.aio import DefaultAzureCredential
+    from azure.keyvault.secrets.aio import SecretClient
 
     credential = DefaultAzureCredential()
     for secret_url in secret_urls:
