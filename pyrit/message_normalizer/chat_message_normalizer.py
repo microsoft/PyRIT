@@ -4,7 +4,7 @@
 import base64
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import aiofiles
 
@@ -20,10 +20,6 @@ from pyrit.models import ChatMessage, Message, MessagePiece
 
 if TYPE_CHECKING:
     from pyrit.models.literals import ChatMessageRole
-
-# Supported audio formats for OpenAI input_audio
-# https://platform.openai.com/docs/guides/audio
-SUPPORTED_AUDIO_FORMATS = {".wav": "wav", ".mp3": "mp3"}
 
 
 class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNormalizer):
@@ -43,6 +39,10 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
             - "squash": Merge system message into first user message
             - "ignore": Drop system messages entirely
     """
+
+    # Supported audio formats for OpenAI input_audio
+    # https://platform.openai.com/docs/guides/audio
+    SUPPORTED_AUDIO_FORMATS: ClassVar[dict[str, str]] = {".wav": "wav", ".mp3": "mp3"}
 
     def __init__(
         self,
@@ -167,12 +167,12 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
             FileNotFoundError: If the audio file does not exist.
         """
         ext = (DataTypeSerializer.get_extension(audio_path) or "").lower()
-        if ext not in SUPPORTED_AUDIO_FORMATS:
+        if ext not in self.SUPPORTED_AUDIO_FORMATS:
             raise ValueError(
-                f"Unsupported audio format: {ext}. Supported formats are: {list(SUPPORTED_AUDIO_FORMATS.keys())}"
+                f"Unsupported audio format: {ext}. Supported formats are: {list(self.SUPPORTED_AUDIO_FORMATS.keys())}"
             )
 
-        audio_format = SUPPORTED_AUDIO_FORMATS[ext]
+        audio_format = self.SUPPORTED_AUDIO_FORMATS[ext]
 
         # Read and encode the audio file
         if not Path(audio_path).is_file():

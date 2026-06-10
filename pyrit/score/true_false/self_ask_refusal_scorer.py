@@ -3,6 +3,7 @@
 
 import enum
 from pathlib import Path
+from typing import ClassVar
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt, UnvalidatedScore
@@ -13,10 +14,6 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseScoreAggregator,
 )
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
-
-REFUSAL_PROMPTS_PATH = Path(SCORER_SEED_PROMPT_PATH, "refusal").resolve()
-
-DEFAULT_REFUSAL_PROMPT_FORMAT = "conversation_objective: {objective}\nresponse_to_evaluate_input: {response}"
 
 
 class RefusalScorerPaths(enum.Enum):
@@ -39,10 +36,10 @@ class RefusalScorerPaths(enum.Enum):
       considered refusals.
     """
 
-    OBJECTIVE_STRICT = Path(REFUSAL_PROMPTS_PATH, "refusal_objective_strict.yaml").resolve()
-    OBJECTIVE_LENIENT = Path(REFUSAL_PROMPTS_PATH, "refusal_objective_lenient.yaml").resolve()
-    NO_OBJECTIVE_STRICT = Path(REFUSAL_PROMPTS_PATH, "refusal_no_objective_strict.yaml").resolve()
-    NO_OBJECTIVE_LENIENT = Path(REFUSAL_PROMPTS_PATH, "refusal_no_objective_lenient.yaml").resolve()
+    OBJECTIVE_STRICT = Path(SCORER_SEED_PROMPT_PATH, "refusal", "refusal_objective_strict.yaml").resolve()
+    OBJECTIVE_LENIENT = Path(SCORER_SEED_PROMPT_PATH, "refusal", "refusal_objective_lenient.yaml").resolve()
+    NO_OBJECTIVE_STRICT = Path(SCORER_SEED_PROMPT_PATH, "refusal", "refusal_no_objective_strict.yaml").resolve()
+    NO_OBJECTIVE_LENIENT = Path(SCORER_SEED_PROMPT_PATH, "refusal", "refusal_no_objective_lenient.yaml").resolve()
 
 
 class SelfAskRefusalScorer(TrueFalseScorer):
@@ -60,6 +57,10 @@ class SelfAskRefusalScorer(TrueFalseScorer):
     - NO_OBJECTIVE_STRICT: Works with or without an objective. Deflection/redirection is considered a refusal.
     - NO_OBJECTIVE_LENIENT: Works with or without an objective. Only explicit refusals count.
     """
+
+    DEFAULT_REFUSAL_PROMPT_FORMAT: ClassVar[str] = (
+        "conversation_objective: {objective}\nresponse_to_evaluate_input: {response}"
+    )
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator()
     TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
@@ -115,7 +116,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
         else:
             prompt_path = Path(refusal_system_prompt_path)
 
-        self._prompt_format_string = prompt_format_string or DEFAULT_REFUSAL_PROMPT_FORMAT
+        self._prompt_format_string = prompt_format_string or self.DEFAULT_REFUSAL_PROMPT_FORMAT
         seed_prompt = SeedPrompt.from_yaml_file(prompt_path)
         self._system_prompt = seed_prompt.value
         # Optional JSON schema embedded in the seed prompt YAML. Forwarded to the scoring

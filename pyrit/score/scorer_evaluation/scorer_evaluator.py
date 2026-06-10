@@ -43,13 +43,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Standard column names for evaluation datasets
-STANDARD_HUMAN_LABEL_COL = "human_score"
-STANDARD_OBJECTIVE_COL = "objective"
-STANDARD_HARM_COL = "harm_category"
-STANDARD_ASSISTANT_RESPONSE_COL = "assistant_response"
-STANDARD_DATA_TYPE_COL = "data_type"
-
 
 @dataclass
 class ScorerEvalDatasetFiles:

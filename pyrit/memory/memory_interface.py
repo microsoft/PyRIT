@@ -10,7 +10,7 @@ import weakref
 from collections.abc import MutableSequence, Sequence
 from contextlib import closing
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
 
 from sqlalchemy import MetaData, and_, not_, or_
 from sqlalchemy.engine.base import Engine
@@ -60,13 +60,6 @@ logger = logging.getLogger(__name__)
 
 Model = TypeVar("Model")
 
-# Label keys are interpolated into backend-specific JSON path expressions
-# (e.g. ``$.key``) in the per-backend label-filter helpers. We restrict keys
-# to a conservative allowlist so a crafted key cannot break out of the JSON
-# path literal and inject SQL. Values are always passed as bound parameters
-# and do not need this restriction.
-_LABEL_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_.\-]+$")
-
 
 class MemoryInterface(abc.ABC):
     """
@@ -81,6 +74,13 @@ class MemoryInterface(abc.ABC):
     # Conservative default based on SQLite's limit of 999. Subclasses can override
     # for backends with higher limits (e.g., Azure SQL supports 2100).
     _MAX_BIND_VARS: int = 500
+
+    # Label keys are interpolated into backend-specific JSON path expressions
+    # (e.g. ``$.key``) in the per-backend label-filter helpers. We restrict keys
+    # to a conservative allowlist so a crafted key cannot break out of the JSON
+    # path literal and inject SQL. Values are always passed as bound parameters
+    # and do not need this restriction.
+    _LABEL_KEY_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
     memory_embedding: "MemoryEmbedding | None" = None
     results_storage_io: StorageIO | None = None
@@ -1786,10 +1786,10 @@ class MemoryInterface(abc.ABC):
             # interpolate keys into JSON path expressions (e.g. ``$.key``),
             # so a key with quotes or SQL punctuation could otherwise break
             # out and inject SQL.
-            invalid_keys = [k for k in effective_labels if not _LABEL_KEY_PATTERN.match(k)]
+            invalid_keys = [k for k in effective_labels if not self._LABEL_KEY_PATTERN.match(k)]
             if invalid_keys:
                 raise ValueError(
-                    f"Invalid label key(s) {invalid_keys!r}: keys must match {_LABEL_KEY_PATTERN.pattern}."
+                    f"Invalid label key(s) {invalid_keys!r}: keys must match {self._LABEL_KEY_PATTERN.pattern}."
                 )
             if effective_labels:
                 # Use database-specific JSON query method
