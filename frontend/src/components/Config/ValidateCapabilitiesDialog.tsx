@@ -200,18 +200,6 @@ export default function ValidateCapabilitiesDialog({
             )}
             {result && !loading && !error && (
               <>
-                <MessageBar intent="warning" style={{ marginBottom: 12 }}>
-                  <MessageBarBody>
-                    <strong>Treat results as a spot-check, not ground truth.</strong> Each row
-                    reports whether a probe request was <em>accepted</em>, not whether the
-                    capability is correctly enforced. Known engine issues can also cause false
-                    negatives — currently: <em>image</em> probes are affected by a packaged-asset
-                    bug, and the OpenAI Responses API image payload format has a known engine
-                    mismatch. A red <strong>mismatch</strong> may mean the target genuinely lacks
-                    the capability, or it may mean the probe itself is misbehaving. When in
-                    doubt, re-run or test manually before relying on the result.
-                  </MessageBarBody>
-                </MessageBar>
                 {(target.inner_targets ?? []).length > 0 && (
                   <MessageBar intent="warning" style={{ marginBottom: 12 }}>
                     <MessageBarBody>

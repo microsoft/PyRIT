@@ -381,7 +381,9 @@ class TargetService:
             (
                 "Capability probes confirm request acceptance, not semantic enforcement "
                 "(e.g., a target that accepts a JSON-schema request may not actually "
-                "enforce the schema)."
+                "enforce the schema). Image probes can also currently false-negative on "
+                "some targets due to known probe-asset and payload-format issues; re-run "
+                "or verify manually before relying on a red image result."
             ),
             # The per-target lock above serializes Validate-vs-Validate but NOT
             # Validate-vs-attack: the engine briefly mutates target._configuration,
