@@ -77,6 +77,43 @@ class TargetListResponse(BaseModel):
     pagination: PaginationInfo = Field(..., description="Pagination metadata")
 
 
+class ValidateCapabilitiesResponse(BaseModel):
+    """
+    Response from validating a target's declared capabilities against observed behavior.
+
+    Surfaces what the target class declares versus what live probing observed,
+    so users can spot drift caused by gateways stripping features, model
+    deployments lacking capabilities, or misconfiguration.
+    """
+
+    target_registry_name: str = Field(..., description="Target registry key the validation ran against")
+    declared: TargetCapabilitiesInfo = Field(..., description="Capabilities as declared by the target class")
+    observed: TargetCapabilitiesInfo = Field(..., description="Capabilities as observed by live probing")
+    # Drives the frontend "Not probed (no asset)" row beneath the input-modalities
+    # row. Without this field, the engine's `queried | (declared - test_modalities)`
+    # math at discover_target_capabilities.py:778 ORs non-probeable combinations
+    # back into observed, making observed == declared, and the frontend has no way
+    # to distinguish "genuinely confirmed" from "not probed".
+    non_probeable_input_modalities: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Sorted list of declared input-modality combinations that could NOT be probed "
+            "because the engine has no packaged test asset for the contained types. Each "
+            "entry is a '+'-joined sorted combination (e.g., 'function_call' or 'image_path+url'). "
+            "The frontend renders the union of these as a single 'Not probed (no asset)' row "
+            "beneath the input-modalities row."
+        ),
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Operational notes for the user (e.g., 'this validation wrote test prompts to memory', "
+            "'output modalities are not probed and fall through to declared values', "
+            "'do not validate while an attack is actively running against this target')."
+        ),
+    )
+
+
 class CreateTargetRequest(BaseModel):
     """Request to create a new target instance."""
 

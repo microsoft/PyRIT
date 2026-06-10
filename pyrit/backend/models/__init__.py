@@ -63,6 +63,7 @@ from pyrit.backend.models.targets import (
     TargetCapabilitiesInfo,
     TargetInstance,
     TargetListResponse,
+    ValidateCapabilitiesResponse,
 )
 
 __all__ = [
@@ -117,4 +118,5 @@ __all__ = [
     "TargetCapabilitiesInfo",
     "TargetInstance",
     "TargetListResponse",
+    "ValidateCapabilitiesResponse",
 ]
