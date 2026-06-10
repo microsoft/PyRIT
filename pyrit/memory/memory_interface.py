@@ -39,7 +39,6 @@ from pyrit.memory.storage import (
 )
 from pyrit.models import (
     AttackResult,
-    ComponentIdentifier,
     Conversation,
     ConversationStats,
     IdentifierFilter,
@@ -334,38 +333,42 @@ class MemoryInterface(abc.ABC):
     @abc.abstractmethod
     def _get_seed_metadata_conditions(self, *, metadata: dict[str, str | int]) -> Any:
         """
-        Return a condition for filtering seed prompt entries based on prompt metadata.
-
-        Args:
-            metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
-                This includes information that is useful for the specific target you're probing, such as encoding data.
+                Return a condition for filtering seed prompt entries based on prompt metadata.
+        s
+                Args:
+                    metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
+                        This includes information that is useful for the specific target you're probing, such as encoding data.
 
         Returns:
-            Any: A SQLAlchemy condition for filtering memory entries based on prompt metadata.
+                    Any: A SQLAlchemy condition for filtering memory entries based on prompt metadata.
         """
 
-    def add_conversation_to_memory(
-        self, *, conversation_id: str, target_identifier: ComponentIdentifier | None = None
-    ) -> None:
+    def add_conversation_to_memory(self, *, conversation: Conversation) -> None:
         """
         Register a conversation in memory, recording its conversation-scoped metadata.
 
-        A conversation is a first-class entity held with a single target. Call this once
-        when a conversation is created (before, or independently of, adding its messages)
-        to record the target it is held with. Message writes (``add_message_to_memory`` /
-        ``add_message_pieces_to_memory``) deliberately do not take a target, so that
-        conversation ownership is expressed in a single place rather than threaded through
-        every write.
+        A conversation is a first-class entity held with a single target. Build a
+        ``Conversation`` when it is created and call this once (before, or independently
+        of, adding its messages) to record the target it is held with. Message writes
+        (``add_message_to_memory`` / ``add_message_pieces_to_memory``) deliberately do
+        not take a target, so that conversation ownership is expressed in a single place
+        rather than threaded through every write.
 
-        Registration is idempotent: a non-``None`` ``target_identifier`` is recorded, and
-        a ``None`` value never overwrites a target already recorded for the conversation.
+        Registration is idempotent only for an identical conversation: re-registering the
+        same ``conversation_id`` with the same target is a no-op (so repeated per-turn
+        registration is safe). Re-registering an existing ``conversation_id`` with a
+        different target is a conflict and raises ``ValueError`` -- a conversation is held
+        with exactly one target and is never re-targeted.
 
         Args:
-            conversation_id (str): The caller-owned conversation identifier.
-            target_identifier (ComponentIdentifier | None): The target the conversation is
-                held with, if known.
+            conversation (Conversation): The conversation metadata to record, carrying the
+                ``conversation_id`` and the target it is held with (if known).
+
+        Raises:
+            ValueError: If ``conversation_id`` is empty, or if a conversation with the same
+                id already exists with a different target.
         """
-        self._upsert_conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+        self._insert_conversation(conversation=conversation)
 
     def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
@@ -433,40 +436,45 @@ class MemoryInterface(abc.ABC):
                     "the caller before a piece is persisted; the memory layer does not generate one."
                 )
 
-    def _upsert_conversation(self, *, conversation_id: str, target_identifier: ComponentIdentifier | None) -> None:
+    def _insert_conversation(self, *, conversation: Conversation) -> None:
         """
-        Insert or update the ``Conversations`` row for ``conversation_id``.
+        Insert the ``Conversations`` row for a conversation, never updating an existing one.
 
-        A non-``None`` ``target_identifier`` is written; a ``None`` value never
-        overwrites a target already recorded for the conversation (so re-registration
-        and copy/duplicate flows cannot clobber it).
+        A conversation is held with exactly one target, so this is insert-only with
+        idempotent-on-identical semantics: if no row exists it is inserted; if a row
+        already exists with the same target it is left untouched; if a row exists with a
+        different target it is a conflict and raises.
 
         Args:
-            conversation_id (str): The conversation to record.
-            target_identifier (ComponentIdentifier | None): The target the conversation
-                is held with, if known.
+            conversation (Conversation): The conversation metadata to record.
 
         Raises:
-            ValueError: If ``conversation_id`` is empty.
-            SQLAlchemyError: If the upsert fails.
+            ValueError: If ``conversation.conversation_id`` is empty, or if a conversation
+                with the same id already exists with a different target.
+            SQLAlchemyError: If the insert fails.
         """
-        if not conversation_id:
+        if not conversation.conversation_id:
             raise ValueError("Cannot register a conversation without a conversation_id.")
-        entry = ConversationEntry(
-            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
-        )
+        entry = ConversationEntry(conversation=conversation)
         with closing(self.get_session()) as session:
             try:
-                existing = session.get(ConversationEntry, conversation_id)
+                existing = session.get(ConversationEntry, conversation.conversation_id)
                 if existing is None:
                     session.add(entry)
-                elif target_identifier is not None:
-                    existing.target_identifier = entry.target_identifier
-                    existing.pyrit_version = entry.pyrit_version
+                elif (
+                    entry.target_identifier is not None
+                    and existing.target_identifier is not None
+                    and existing.target_identifier != entry.target_identifier
+                ):
+                    raise ValueError(
+                        f"Conversation {conversation.conversation_id} is already registered with a different "
+                        f"target ({existing.target_identifier!r}); a conversation is held with exactly one "
+                        f"target and cannot be re-registered with {entry.target_identifier!r}."
+                    )
                 session.commit()
             except SQLAlchemyError as e:
                 session.rollback()
-                logger.exception(f"Error upserting conversation {conversation_id}: {e}")
+                logger.exception(f"Error registering conversation {conversation.conversation_id}: {e}")
                 raise
 
     @abc.abstractmethod
@@ -1234,7 +1242,9 @@ class MemoryInterface(abc.ABC):
         source_target = source_metadata.target_identifier if source_metadata else None
         new_conversation_id, all_pieces = self.duplicate_messages(messages=messages)
         if all_pieces:
-            self.add_conversation_to_memory(conversation_id=new_conversation_id, target_identifier=source_target)
+            self.add_conversation_to_memory(
+                conversation=Conversation(conversation_id=new_conversation_id, target_identifier=source_target)
+            )
             self.add_message_pieces_to_memory(message_pieces=all_pieces)
         return new_conversation_id
 
@@ -1271,7 +1281,9 @@ class MemoryInterface(abc.ABC):
         source_target = source_metadata.target_identifier if source_metadata else None
         new_conversation_id, all_pieces = self.duplicate_messages(messages=messages_to_duplicate)
         if all_pieces:
-            self.add_conversation_to_memory(conversation_id=new_conversation_id, target_identifier=source_target)
+            self.add_conversation_to_memory(
+                conversation=Conversation(conversation_id=new_conversation_id, target_identifier=source_target)
+            )
             self.add_message_pieces_to_memory(message_pieces=all_pieces)
 
         return new_conversation_id

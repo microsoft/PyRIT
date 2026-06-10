@@ -30,6 +30,7 @@ from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    Conversation,
     ConversationReference,
     ConversationType,
     Message,
@@ -273,8 +274,10 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             )
 
             self._memory.add_conversation_to_memory(
-                conversation_id=context.session.adversarial_chat_conversation_id,
-                target_identifier=self._adversarial_chat.get_identifier(),
+                conversation=Conversation(
+                    conversation_id=context.session.adversarial_chat_conversation_id,
+                    target_identifier=self._adversarial_chat.get_identifier(),
+                )
             )
             for msg in adversarial_messages:
                 self._memory.add_message_to_memory(request=msg)

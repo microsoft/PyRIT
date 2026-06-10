@@ -38,6 +38,7 @@ def mock_memory():
     memory.get_conversation.return_value = []
     memory.get_message_pieces.return_value = []
     memory.get_conversation_stats.return_value = {}
+    memory.get_conversation_metadata.return_value = None
 
     return memory
 

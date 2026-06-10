@@ -22,6 +22,7 @@ from pyrit.exceptions import (
 from pyrit.memory import CentralMemory, MemoryInterface, set_message_piece_sha256_async
 from pyrit.models import (
     ComponentIdentifier,
+    Conversation,
     Message,
     MessagePiece,
     construct_response_from_request,
@@ -119,7 +120,9 @@ class PromptNormalizer:
         request = copy.deepcopy(message)
         conversation_id = conversation_id if conversation_id else str(uuid4())
         target_identifier = target.get_identifier()
-        self.memory.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=target_identifier)
+        self.memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+        )
 
         for piece in request.message_pieces:
             piece.conversation_id = conversation_id
@@ -438,7 +441,9 @@ class PromptNormalizer:
 
         # Create a deep copy of the prepended conversation to avoid modifying the original
         prepended_conversation = copy.deepcopy(prepended_conversation)
-        self.memory.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=target_identifier)
+        self.memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+        )
 
         for request in prepended_conversation:
             if should_convert and converter_configurations:

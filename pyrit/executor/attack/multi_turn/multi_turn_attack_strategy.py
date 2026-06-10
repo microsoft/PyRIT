@@ -17,7 +17,7 @@ from pyrit.executor.attack.core.attack_strategy import (
     AttackStrategyResultT,
 )
 from pyrit.memory import CentralMemory
-from pyrit.models import ConversationReference, ConversationType
+from pyrit.models import Conversation, ConversationReference, ConversationType
 from pyrit.prompt_target import CapabilityName
 
 if TYPE_CHECKING:
@@ -142,7 +142,9 @@ class MultiTurnAttackStrategy(AttackStrategy[MultiTurnAttackStrategyContextT, At
         if system_messages:
             new_conversation_id, pieces = memory.duplicate_messages(messages=system_messages)
             memory.add_conversation_to_memory(
-                conversation_id=new_conversation_id, target_identifier=self._objective_target.get_identifier()
+                conversation=Conversation(
+                    conversation_id=new_conversation_id, target_identifier=self._objective_target.get_identifier()
+                )
             )
             memory.add_message_pieces_to_memory(message_pieces=pieces)
             context.session.conversation_id = new_conversation_id

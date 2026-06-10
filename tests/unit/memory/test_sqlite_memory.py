@@ -19,7 +19,7 @@ from sqlalchemy.sql.sqltypes import NullType
 from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import INITIAL_METADATA
 from pyrit.memory.memory_models import EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.memory.migration import run_schema_migrations
-from pyrit.models import MessagePiece
+from pyrit.models import Conversation, MessagePiece
 from pyrit.prompt_converter.base64_converter import Base64Converter
 from pyrit.prompt_target.text_target import TextTarget
 from unit.mocks import get_sample_conversation_entries
@@ -529,7 +529,7 @@ def test_get_memories_with_json_properties(sqlite_instance):
     )
 
     sqlite_instance.add_conversation_to_memory(
-        conversation_id=specific_conversation_id, target_identifier=target.get_identifier()
+        conversation=Conversation(conversation_id=specific_conversation_id, target_identifier=target.get_identifier())
     )
     sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
 
@@ -572,7 +572,7 @@ def test_register_conversation_none_target_does_not_clobber(sqlite_instance):
         original_value="hello",
     )
     sqlite_instance.add_conversation_to_memory(
-        conversation_id=conversation_id, target_identifier=target.get_identifier()
+        conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())
     )
     sqlite_instance.add_message_pieces_to_memory(message_pieces=[request_piece])
 
@@ -582,7 +582,9 @@ def test_register_conversation_none_target_does_not_clobber(sqlite_instance):
         sequence=2,
         original_value="world",
     )
-    sqlite_instance.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=None)
+    sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id=conversation_id, target_identifier=None)
+    )
     sqlite_instance.add_message_pieces_to_memory(message_pieces=[response_piece])
 
     metadata = sqlite_instance.get_conversation_metadata(conversation_id=conversation_id)

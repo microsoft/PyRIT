@@ -16,6 +16,7 @@ from pyrit.memory import MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
     AttackResult,
     ComponentIdentifier,
+    Conversation,
     IdentifierFilter,
     IdentifierType,
     Message,
@@ -596,7 +597,9 @@ def test_add_conversation_to_memory_records_target_for_plain_message_writes(sqli
         params={"endpoint": "https://api.openai.com", "model_name": "gpt-4"},
     )
     conversation_id = "conv-registered"
-    sqlite_instance.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=target_id)
+    sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id=conversation_id, target_identifier=target_id)
+    )
     sqlite_instance.add_message_pieces_to_memory(
         message_pieces=[MessagePiece(role="user", original_value="hi", conversation_id=conversation_id)]
     )
@@ -632,9 +635,30 @@ def test_message_writes_without_registration_create_no_conversation_row(sqlite_i
     assert len(sqlite_instance.get_message_pieces(conversation_id=conversation_id)) == 1
 
 
-def test_add_conversation_to_memory_updates_existing_target_on_reregister(sqlite_instance: MemoryInterface):
-    # Re-registering a conversation with a new non-null target overwrites the previously
-    # recorded one. (A None re-registration never clobbers -- covered separately.)
+def test_add_conversation_to_memory_same_target_reregister_is_noop(sqlite_instance: MemoryInterface):
+    # A conversation is held with exactly one target. Re-registering the same
+    # conversation with the same target is idempotent (no error, no change) so that
+    # per-turn registration during a multi-turn conversation is safe.
+    conversation_id = "conv-reregister-same"
+    target = ComponentIdentifier(
+        class_name="OpenAIChatTarget", class_module="pyrit.prompt_target", params={"endpoint": "a"}
+    )
+    sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id=conversation_id, target_identifier=target)
+    )
+    sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id=conversation_id, target_identifier=target)
+    )
+
+    metadata = sqlite_instance.get_conversation_metadata(conversation_id=conversation_id)
+    assert metadata is not None
+    assert metadata.target_identifier.hash == target.hash
+
+
+def test_add_conversation_to_memory_different_target_reregister_raises(sqlite_instance: MemoryInterface):
+    # A conversation is held with exactly one target, so re-registering an existing
+    # conversation_id with a different target is a conflict and must raise rather than
+    # silently re-targeting the conversation.
     conversation_id = "conv-retarget"
     target_a = ComponentIdentifier(
         class_name="OpenAIChatTarget", class_module="pyrit.prompt_target", params={"endpoint": "a"}
@@ -642,16 +666,22 @@ def test_add_conversation_to_memory_updates_existing_target_on_reregister(sqlite
     target_b = ComponentIdentifier(
         class_name="OpenAIChatTarget", class_module="pyrit.prompt_target", params={"endpoint": "b"}
     )
-    sqlite_instance.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=target_a)
-    sqlite_instance.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=target_b)
+    sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id=conversation_id, target_identifier=target_a)
+    )
+    with pytest.raises(ValueError, match="already registered with a different target"):
+        sqlite_instance.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_b)
+        )
 
+    # The originally recorded target is left untouched.
     metadata = sqlite_instance.get_conversation_metadata(conversation_id=conversation_id)
     assert metadata is not None
-    assert metadata.target_identifier.hash == target_b.hash
+    assert metadata.target_identifier.hash == target_a.hash
 
 
-def test_upsert_conversation_rolls_back_and_reraises_on_db_error(sqlite_instance: MemoryInterface):
-    # A DB failure during the upsert rolls back the session and propagates the error
+def test_insert_conversation_rolls_back_and_reraises_on_db_error(sqlite_instance: MemoryInterface):
+    # A DB failure during registration rolls back the session and propagates the error
     # rather than leaving a half-written Conversations row.
     from sqlalchemy.exc import SQLAlchemyError
 
@@ -660,7 +690,7 @@ def test_upsert_conversation_rolls_back_and_reraises_on_db_error(sqlite_instance
 
     with patch.object(sqlite_instance, "get_session", return_value=session):
         with pytest.raises(SQLAlchemyError, match="boom"):
-            sqlite_instance._upsert_conversation(conversation_id="conv-fail", target_identifier=None)
+            sqlite_instance._insert_conversation(conversation=Conversation(conversation_id="conv-fail"))
 
     session.rollback.assert_called_once()
     session.commit.assert_not_called()
@@ -1452,7 +1482,9 @@ def test_get_message_pieces_by_target_identifier_filter(sqlite_instance: MemoryI
         params={"endpoint": "https://azure.com", "model_name": "gpt-3.5"},
     )
 
-    sqlite_instance.add_conversation_to_memory(conversation_id="conv-openai", target_identifier=target_id_1)
+    sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id="conv-openai", target_identifier=target_id_1)
+    )
     sqlite_instance.add_message_pieces_to_memory(
         message_pieces=[
             MessagePiece(
@@ -1462,7 +1494,9 @@ def test_get_message_pieces_by_target_identifier_filter(sqlite_instance: MemoryI
             ),
         ],
     )
-    sqlite_instance.add_conversation_to_memory(conversation_id="conv-azure", target_identifier=target_id_2)
+    sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id="conv-azure", target_identifier=target_id_2)
+    )
     sqlite_instance.add_message_pieces_to_memory(
         message_pieces=[
             MessagePiece(

@@ -55,6 +55,7 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    Conversation,
     ConversationStats,
     ConversationType,
     MessagePiece,
@@ -876,7 +877,7 @@ class AttackService:
 
         if all_pieces:
             self._memory.add_conversation_to_memory(
-                conversation_id=new_conversation_id, target_identifier=target_identifier
+                conversation=Conversation(conversation_id=new_conversation_id, target_identifier=target_identifier)
             )
             self._memory.add_message_pieces_to_memory(message_pieces=list(all_pieces))
 
@@ -971,7 +972,9 @@ class AttackService:
         """Store prepended conversation messages in memory."""
         if not prepended:
             return
-        self._memory.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=target_identifier)
+        self._memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+        )
         for seq, msg in enumerate(prepended):
             for p in msg.pieces:
                 piece = request_piece_to_pyrit_message_piece(
@@ -1031,7 +1034,9 @@ class AttackService:
     ) -> None:
         """Store message without sending (send=False)."""
         await self._persist_base64_pieces_async(request)
-        self._memory.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=target_identifier)
+        self._memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+        )
         for p in request.pieces:
             piece = request_piece_to_pyrit_message_piece(
                 piece=p,

@@ -14,7 +14,14 @@ from pyrit.executor.attack.component.prepended_conversation_config import (
 )
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
-from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import (
+    ChatMessageRole,
+    ComponentIdentifier,
+    Conversation,
+    Message,
+    MessagePiece,
+    Score,
+)
 from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
 )
@@ -465,7 +472,9 @@ class ConversationManager:
         if not valid_messages:
             return 0
 
-        self._memory.add_conversation_to_memory(conversation_id=conversation_id, target_identifier=target_identifier)
+        self._memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+        )
 
         # Get roles that should have converters applied
         apply_to_roles = (

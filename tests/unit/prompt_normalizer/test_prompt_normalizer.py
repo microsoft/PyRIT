@@ -193,6 +193,7 @@ async def test_send_prompt_async_empty_response_exception_handled(mock_memory_in
 async def test_send_prompt_async_request_response_added_to_memory(mock_memory_instance, seed_group):
     # Use MagicMock with send_prompt_async as AsyncMock to avoid coroutine warnings
     prompt_target = MagicMock()
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
 
     response = MessagePiece(role="assistant", original_value="test_response").to_message()
 
@@ -281,6 +282,7 @@ async def test_send_prompt_async_mixed_sequence_types(mock_memory_instance):
 
 async def test_send_prompt_async_adds_memory_twice(mock_memory_instance, seed_group, response: Message):
     prompt_target = MagicMock()
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
     prompt_target.send_prompt_async = AsyncMock(return_value=[response])
 
     normalizer = PromptNormalizer()
@@ -292,6 +294,7 @@ async def test_send_prompt_async_adds_memory_twice(mock_memory_instance, seed_gr
 
 async def test_send_prompt_async_no_converters_response(mock_memory_instance, seed_group, response: Message):
     prompt_target = MagicMock()
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
     prompt_target.send_prompt_async = AsyncMock(return_value=[response])
 
     normalizer = PromptNormalizer()
@@ -304,6 +307,7 @@ async def test_send_prompt_async_no_converters_response(mock_memory_instance, se
 
 async def test_send_prompt_async_converters_response(mock_memory_instance, seed_group, response: Message):
     prompt_target = MagicMock()
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
     prompt_target.send_prompt_async = AsyncMock(return_value=[response])
 
     response_converter = PromptConverterConfiguration(converters=[Base64Converter()], indexes_to_apply=[0])
@@ -322,6 +326,7 @@ async def test_send_prompt_async_converters_response(mock_memory_instance, seed_
 
 async def test_send_prompt_async_image_converter(mock_memory_instance):
     prompt_target = MagicMock(PromptTarget)
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
     prompt_target.send_prompt_async = AsyncMock(
         return_value=[MessagePiece(role="assistant", original_value="response").to_message()]
     )

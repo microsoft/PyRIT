@@ -7,7 +7,7 @@ from typing import Any, final
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import ComponentIdentifier, Identifiable, Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Conversation, Identifiable, Message, MessagePiece
 from pyrit.models.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -328,7 +328,7 @@ class PromptTarget(Identifiable):
             raise RuntimeError("Conversation already exists, system prompt needs to be set at the beginning")
 
         self._memory.add_conversation_to_memory(
-            conversation_id=conversation_id, target_identifier=self.get_identifier()
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=self.get_identifier())
         )
         self._memory.add_message_to_memory(
             request=MessagePiece(

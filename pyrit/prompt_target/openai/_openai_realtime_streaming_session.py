@@ -13,7 +13,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Conversation, Message, MessagePiece
 from pyrit.prompt_target.common.realtime_audio import (
     STREAMING_INTERRUPTED_KEY,
     RealtimeTargetResult,
@@ -403,7 +403,7 @@ class _OpenAIRealtimeStreamingSession:
 
         target_identifier = target.get_identifier()
         target._memory.add_conversation_to_memory(
-            conversation_id=self._conversation_id, target_identifier=target_identifier
+            conversation=Conversation(conversation_id=self._conversation_id, target_identifier=target_identifier)
         )
         user_piece = MessagePiece(
             role="user",

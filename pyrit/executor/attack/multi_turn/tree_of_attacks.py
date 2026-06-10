@@ -43,6 +43,7 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    Conversation,
     ConversationReference,
     ConversationType,
     Message,
@@ -822,7 +823,9 @@ class _TreeOfAttacksNode:
             if system_messages:
                 new_id, pieces = self._memory.duplicate_messages(messages=system_messages)
                 self._memory.add_conversation_to_memory(
-                    conversation_id=new_id, target_identifier=self._objective_target.get_identifier()
+                    conversation=Conversation(
+                        conversation_id=new_id, target_identifier=self._objective_target.get_identifier()
+                    )
                 )
                 self._memory.add_message_pieces_to_memory(message_pieces=pieces)
                 duplicate_node.objective_target_conversation_id = new_id

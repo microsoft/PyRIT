@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import IO
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Conversation, Message, MessagePiece
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
@@ -102,7 +102,7 @@ class TextTarget(PromptTarget):
         # This is post validation, so the message_pieces should be okay and normalized
         for conversation_id in {piece.conversation_id for piece in message_pieces if piece.conversation_id}:
             self._memory.add_conversation_to_memory(
-                conversation_id=conversation_id, target_identifier=self.get_identifier()
+                conversation=Conversation(conversation_id=conversation_id, target_identifier=self.get_identifier())
             )
         self._memory.add_message_pieces_to_memory(message_pieces=message_pieces)
         return message_pieces
