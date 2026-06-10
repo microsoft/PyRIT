@@ -1,11 +1,20 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import TargetTable from './TargetTable'
 import type { TargetInstance } from '../../types'
+import { targetsApi } from '@/services/api'
 
 jest.mock('./TargetTable.styles', () => ({
   useTargetTableStyles: () => new Proxy({}, { get: () => '' }),
 }))
+
+jest.mock('@/services/api', () => ({
+  targetsApi: {
+    validateCapabilities: jest.fn(),
+  },
+}))
+
+const mockedApi = targetsApi as jest.Mocked<typeof targetsApi>
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
@@ -396,5 +405,98 @@ describe('TargetTable', () => {
     )
 
     expect(screen.queryByLabelText('Expand inner targets')).not.toBeInTheDocument()
+  })
+
+  // --- F5: Validate button wiring ---
+
+  it('renders a Validate button on every top-level row', () => {
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>,
+    )
+    const validateButtons = screen.getAllByRole('button', { name: /^Validate$/ })
+    // 3 sample targets, 1 button each (no active target → no extra active-row button)
+    expect(validateButtons).toHaveLength(3)
+  })
+
+  it('also renders a Validate button on the active-target summary row', () => {
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} activeTarget={sampleTargets[0]} />
+      </TestWrapper>,
+    )
+    const validateButtons = screen.getAllByRole('button', { name: /^Validate$/ })
+    // 3 list rows + 1 active-row summary = 4
+    expect(validateButtons).toHaveLength(4)
+  })
+
+  it('does NOT render Validate buttons on inner-target rows (composite expansion)', () => {
+    const rrTarget: TargetInstance = {
+      target_registry_name: 'rr_gpt4o',
+      target_type: 'RoundRobinTarget',
+      model_name: 'gpt-4o',
+      target_specific_params: { weights: [1, 1] },
+      inner_targets: [
+        {
+          target_registry_name: 'inner_a',
+          target_type: 'OpenAIChatTarget',
+          endpoint: 'https://a.openai.azure.com',
+          model_name: 'gpt-4o',
+        },
+        {
+          target_registry_name: 'inner_b',
+          target_type: 'OpenAIChatTarget',
+          endpoint: 'https://b.openai.azure.com',
+          model_name: 'gpt-4o',
+        },
+      ],
+    }
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[rrTarget]} />
+      </TestWrapper>,
+    )
+    // Before expanding: 1 top-level row → 1 Validate button
+    expect(screen.getAllByRole('button', { name: /^Validate$/ })).toHaveLength(1)
+    // Expand
+    fireEvent.click(screen.getByLabelText('Expand inner targets'))
+    expect(screen.getByText('https://a.openai.azure.com')).toBeInTheDocument()
+    // After expanding: still only 1 Validate button (inner rows don't get one)
+    expect(screen.getAllByRole('button', { name: /^Validate$/ })).toHaveLength(1)
+  })
+
+  it('opens the validation dialog when a Validate button is clicked', async () => {
+    // Pending promise so the dialog stays in the loading state we can detect.
+    mockedApi.validateCapabilities.mockReturnValue(new Promise(() => {}))
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>,
+    )
+    const validateButtons = screen.getAllByRole('button', { name: /^Validate$/ })
+    fireEvent.click(validateButtons[0])
+    await waitFor(() => {
+      expect(mockedApi.validateCapabilities).toHaveBeenCalledWith('openai_chat_gpt4')
+    })
+    expect(screen.getByText(/Validate capabilities: openai_chat_gpt4/i)).toBeInTheDocument()
+  })
+
+  it('disables the Validate button for the row whose dialog is currently open', async () => {
+    mockedApi.validateCapabilities.mockReturnValue(new Promise(() => {}))
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>,
+    )
+    const validateButtons = screen.getAllByRole('button', { name: /^Validate$/ })
+    fireEvent.click(validateButtons[0])
+    await waitFor(() => {
+      // The first row's Validate button is now disabled.
+      const stillButtons = screen.getAllByRole('button', { name: /^Validate$/ })
+      expect(stillButtons[0]).toBeDisabled()
+      // The other rows' buttons remain enabled.
+      expect(stillButtons[1]).not.toBeDisabled()
+    })
   })
 })
