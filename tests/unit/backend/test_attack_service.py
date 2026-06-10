@@ -2619,3 +2619,227 @@ class TestResolveVideoRemixMetadata:
         attack_service._resolve_video_remix_metadata(request)
 
         assert request.pieces[0].prompt_metadata is None
+
+
+# ============================================================================
+# Operator Validation Tests (PR1: relocate to AttackResult.labels)
+# ============================================================================
+#
+# Per design doc doc/gui/design/01_tree_primitives.md §9.4.5: the V1.0 tree-UI
+# requires `_validate_operator_match` to read the operator label from
+# `AttackResult.labels["operator"]` (the relocation), because the piece-label
+# write path in `attack_mappers.py` is `removed_in="0.16.0"`. Without the
+# relocation, the server-side operator-isolation check silently no-ops after
+# 0.16.0 ships and operator isolation reduces to a UI-only posture.
+#
+# The new signature is `_validate_operator_match(ar=, request=)`: passing the
+# AttackResult directly avoids a duplicate lookup (the caller already has it)
+# and makes the function's dependency explicit.
+#
+# Per Q.S.2 (DECIDED V1.0: operator-as-tag, honor-system): the no-labels
+# early-return is preserved — anonymous requests pass unchallenged.
+#
+# Backward-compat clause from §9.4.5: when the AR has no operator label
+# (legacy ARs created before AR-level labeling was the default), fall back to
+# reading from existing piece labels — matches the pre-relocation behavior.
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestValidateOperatorMatch:
+    """Direct unit tests for `_validate_operator_match` after the PR1 relocation.
+
+    The function now takes `ar` instead of `conversation_id`. AR-label is the
+    primary source of truth; piece-label is the backward-compat fallback.
+    """
+
+    def _make_request(self, *, labels: dict[str, str] | None) -> AddMessageRequest:
+        return AddMessageRequest(
+            role="user",
+            target_conversation_id="conv-1",
+            pieces=[MessagePieceRequest(original_value="hi", data_type="text")],
+            labels=labels,
+        )
+
+    # ---- Honor-system early-returns (Q.S.2 contract) ----
+
+    def test_no_request_labels_passes(self, attack_service, mock_memory) -> None:
+        """request.labels=None short-circuits even when AR has an operator label."""
+        ar = make_attack_result(conversation_id="conv-1")
+        ar.labels = {"operator": "alice"}
+        request = self._make_request(labels=None)
+
+        # No raise; no memory lookup needed.
+        attack_service._validate_operator_match(ar=ar, request=request)
+        mock_memory.get_message_pieces.assert_not_called()
+
+    def test_empty_request_labels_passes(self, attack_service, mock_memory) -> None:
+        """request.labels={} short-circuits even when AR has an operator label."""
+        ar = make_attack_result(conversation_id="conv-1")
+        ar.labels = {"operator": "alice"}
+        request = self._make_request(labels={})
+
+        attack_service._validate_operator_match(ar=ar, request=request)
+        mock_memory.get_message_pieces.assert_not_called()
+
+    def test_no_operator_key_in_request_passes(self, attack_service, mock_memory) -> None:
+        """request.labels has other keys but no 'operator' key → no enforcement."""
+        ar = make_attack_result(conversation_id="conv-1")
+        ar.labels = {"operator": "alice"}
+        request = self._make_request(labels={"operation": "red", "env": "prod"})
+
+        attack_service._validate_operator_match(ar=ar, request=request)
+
+    # ---- AR-first relocation contract (PR1 core behavior) ----
+
+    def test_operator_match_from_ar_labels_passes(self, attack_service, mock_memory) -> None:
+        """AR-label is the source of truth: matching operator → no raise.
+
+        No piece labels in scope; the function reads `ar.labels['operator']` directly.
+        """
+        ar = make_attack_result(conversation_id="conv-1")
+        ar.labels = {"operator": "alice"}
+        # Pieces have NO operator label — proves we're reading from AR, not pieces.
+        piece = make_mock_piece(conversation_id="conv-1")
+        piece.labels = None
+        mock_memory.get_message_pieces.return_value = [piece]
+
+        request = self._make_request(labels={"operator": "alice"})
+
+        attack_service._validate_operator_match(ar=ar, request=request)
+
+    def test_operator_mismatch_from_ar_labels_raises(self, attack_service, mock_memory) -> None:
+        """AR-label is the source of truth: mismatched operator → raise.
+
+        THE V1.0 relocation test. Pieces have no operator label; the only way
+        this can raise is by reading from `ar.labels['operator']`.
+        """
+        ar = make_attack_result(conversation_id="conv-1")
+        ar.labels = {"operator": "alice"}
+        piece = make_mock_piece(conversation_id="conv-1")
+        piece.labels = None
+        mock_memory.get_message_pieces.return_value = [piece]
+
+        request = self._make_request(labels={"operator": "bob"})
+
+        with pytest.raises(ValueError, match=r"Operator mismatch.*alice.*bob"):
+            attack_service._validate_operator_match(ar=ar, request=request)
+
+    # ---- Backward-compat fallback to piece labels ----
+
+    def test_operator_mismatch_from_piece_labels_raises_when_ar_has_none(
+        self, attack_service, mock_memory
+    ) -> None:
+        """Legacy AR with no operator label → fall back to piece labels, enforce mismatch.
+
+        Backward-compat clause per §9.4.5: 'existing-piece-label behavior preserved
+        when the AR-level label is absent.' Without this, every pre-relocation AR
+        would silently lose its operator-lock enforcement.
+        """
+        ar = make_attack_result(conversation_id="conv-1")
+        ar.labels = {}  # legacy AR: no operator label
+        piece = make_mock_piece(conversation_id="conv-1")
+        piece.labels = {"operator": "alice"}
+        mock_memory.get_message_pieces.return_value = [piece]
+
+        request = self._make_request(labels={"operator": "bob"})
+
+        with pytest.raises(ValueError, match=r"Operator mismatch.*alice.*bob"):
+            attack_service._validate_operator_match(ar=ar, request=request)
+
+    def test_operator_match_from_piece_labels_passes_when_ar_has_none(
+        self, attack_service, mock_memory
+    ) -> None:
+        """Legacy AR + matching piece operator → no raise."""
+        ar = make_attack_result(conversation_id="conv-1")
+        ar.labels = {}
+        piece = make_mock_piece(conversation_id="conv-1")
+        piece.labels = {"operator": "alice"}
+        mock_memory.get_message_pieces.return_value = [piece]
+
+        request = self._make_request(labels={"operator": "alice"})
+
+        attack_service._validate_operator_match(ar=ar, request=request)
+
+    # ---- AR-first precedence (the rule when both sources disagree) ----
+
+    def test_ar_label_wins_over_piece_label_when_both_present(
+        self, attack_service, mock_memory
+    ) -> None:
+        """When AR.labels and piece.labels disagree, AR wins (no fallback consulted).
+
+        This is the precedence rule: the AR is the canonical owner. A legacy AR
+        that's been re-tagged at the AR level should authoritatively show its new
+        owner even if old piece labels still carry the original.
+        """
+        ar = make_attack_result(conversation_id="conv-1")
+        ar.labels = {"operator": "alice"}  # AR says alice
+        piece = make_mock_piece(conversation_id="conv-1")
+        piece.labels = {"operator": "bob"}  # piece says bob (legacy)
+        mock_memory.get_message_pieces.return_value = [piece]
+
+        # Request from alice matches AR. If the function fell through to pieces
+        # it would raise on bob-vs-alice mismatch. Should NOT raise.
+        request = self._make_request(labels={"operator": "alice"})
+
+        attack_service._validate_operator_match(ar=ar, request=request)
+
+    # ---- No-enforcement passes ----
+
+    def test_no_existing_operator_anywhere_passes(self, attack_service, mock_memory) -> None:
+        """No AR operator, no piece operator → nothing to enforce, request passes."""
+        ar = make_attack_result(conversation_id="conv-1")
+        ar.labels = {}
+        piece = make_mock_piece(conversation_id="conv-1")
+        piece.labels = None
+        mock_memory.get_message_pieces.return_value = [piece]
+
+        request = self._make_request(labels={"operator": "alice"})
+
+        attack_service._validate_operator_match(ar=ar, request=request)
+
+    def test_no_existing_operator_only_empty_labels_passes(self, attack_service, mock_memory) -> None:
+        """AR has labels with other keys but no operator; pieces same → no enforcement."""
+        ar = make_attack_result(conversation_id="conv-1")
+        ar.labels = {"operation": "red"}  # no 'operator' key
+        piece = make_mock_piece(conversation_id="conv-1")
+        piece.labels = {"env": "prod"}  # no 'operator' key
+        mock_memory.get_message_pieces.return_value = [piece]
+
+        request = self._make_request(labels={"operator": "alice"})
+
+        attack_service._validate_operator_match(ar=ar, request=request)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAddMessageOperatorIntegration:
+    """Integration test: cross-operator add_message raises through the full call path.
+
+    Complements the direct unit tests in TestValidateOperatorMatch with one
+    smoke test that exercises the real call-site wiring from add_message_async.
+    """
+
+    async def test_add_message_raises_on_operator_mismatch_via_ar_labels(
+        self, attack_service, mock_memory
+    ) -> None:
+        """add_message_async should reject a mismatched operator via AR labels.
+
+        Proves the relocated `_validate_operator_match` is wired into the
+        add_message_async call path with the AR (not just the conversation_id).
+        """
+        ar = make_attack_result(conversation_id="conv-1")
+        ar.labels = {"operator": "alice"}
+        mock_memory.get_attack_results.return_value = [ar]
+        # Pieces have no operator label — the only thing that can raise is the AR-label read.
+        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_conversation.return_value = []
+
+        request = AddMessageRequest(
+            role="user",
+            pieces=[MessagePieceRequest(original_value="Hello")],
+            target_conversation_id="conv-1",
+            send=False,
+            labels={"operator": "bob"},
+        )
+
+        with pytest.raises(ValueError, match=r"Operator mismatch.*alice.*bob"):
+            await attack_service.add_message_async(attack_result_id="ar-conv-1", request=request)

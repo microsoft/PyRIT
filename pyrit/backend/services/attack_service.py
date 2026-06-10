@@ -591,7 +591,7 @@ class AttackService:
         main_conversation_id = ar.conversation_id
 
         self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), request=request)
-        self._validate_operator_match(conversation_id=main_conversation_id, request=request)
+        self._validate_operator_match(ar=ar, request=request)
 
         msg_conversation_id = request.target_conversation_id
 
@@ -686,26 +686,50 @@ class AttackService:
                 f"Create a new attack to use a different target."
             )
 
-    def _validate_operator_match(self, *, conversation_id: str, request: AddMessageRequest) -> None:
+    def _validate_operator_match(self, *, ar: AttackResult, request: AddMessageRequest) -> None:
         """
-        Validate that the request operator matches existing messages' operator.
+        Validate that the request operator matches the attack's operator.
+
+        Reads ``ar.labels["operator"]`` first (the V1.0 tree-UI relocation per
+        ``doc/gui/design/01_tree_primitives.md`` §9.4.5). Falls back to existing
+        piece labels for backward compatibility with legacy attacks whose
+        operator was only stamped on pieces — that write path
+        (``attack_mappers.py``) is ``removed_in="0.16.0"``, so the fallback is
+        bounded and will be removed when the deprecated piece-label path is.
+
+        Per Q.S.2 (DECIDED V1.0: operator-as-tag, honor-system): the no-labels
+        early-return is preserved — anonymous requests pass unchallenged.
 
         Raises:
-            ValueError: If the operator in the request doesn't match existing messages.
+            ValueError: If the operator in the request doesn't match the
+                attack's stored operator.
         """
         if not request.labels:
             return
+        request_operator = request.labels.get("operator")
+        if not request_operator:
+            return
 
-        existing_pieces = self._memory.get_message_pieces(conversation_id=conversation_id)
-        existing_operator = next(
-            (p.labels.get("operator") for p in existing_pieces if p.labels and p.labels.get("operator")),
-            None,
-        )
+        # AR-level operator is the canonical source (post-relocation). When set,
+        # it wins over any piece-level operator (e.g. legacy pieces that were
+        # tagged before the AR was re-attributed).
+        existing_operator = (ar.labels or {}).get("operator")
+
+        # Backward-compat fallback: legacy ARs without an AR-level operator
+        # label may still have piece-level labels written by the deprecated
+        # mapper path. Read them so enforcement survives until that path is
+        # removed in 0.16.0.
+        if not existing_operator:
+            existing_pieces = self._memory.get_message_pieces(conversation_id=ar.conversation_id)
+            existing_operator = next(
+                (p.labels.get("operator") for p in existing_pieces if p.labels and p.labels.get("operator")),
+                None,
+            )
+
         if not existing_operator:
             return
 
-        request_operator = request.labels.get("operator")
-        if request_operator and request_operator != existing_operator:
+        if request_operator != existing_operator:
             raise ValueError(
                 f"Operator mismatch: attack belongs to operator '{existing_operator}' "
                 f"but request is from '{request_operator}'. "
