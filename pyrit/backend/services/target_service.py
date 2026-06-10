@@ -12,6 +12,7 @@ Targets can be:
 - Retrieved from registry (pre-registered at startup or created earlier)
 """
 
+import asyncio
 import logging
 import os
 from functools import lru_cache
@@ -20,20 +21,35 @@ from urllib.parse import urlparse
 
 from pyrit import prompt_target
 from pyrit.auth import get_azure_async_token_provider, get_azure_openai_auth
-from pyrit.backend.mappers.target_mappers import target_object_to_instance
+from pyrit.backend.mappers.target_mappers import target_capabilities_to_info, target_object_to_instance
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
     TargetInstance,
     TargetListResponse,
+    ValidateCapabilitiesResponse,
 )
-from pyrit.prompt_target import PromptTarget
+from pyrit.models import PromptDataType
+from pyrit.prompt_target import PromptTarget, discover_target_capabilities_async
 from pyrit.prompt_target.azure_ml_chat_target import AzureMLChatTarget
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 from pyrit.prompt_target.round_robin_target import RoundRobinTarget
 from pyrit.registry.object_registries import TargetRegistry
 
 logger = logging.getLogger(__name__)
+
+# Module-level allowlist of input modalities that the discovery engine actually
+# has probe assets for. See `discover_target_capabilities.py:DEFAULT_TEST_ASSETS`
+# (image_path, audio_path) and `_create_test_message` (text is synthetic).
+#
+# Any combination containing a modality outside this set will raise ValueError
+# inside the engine, be silently skipped, and — when test_modalities is set
+# explicitly — be DROPPED from the resolved input_modalities
+# (`queried | (declared - frozenset(test_modalities))`). Filtering here prevents
+# false red mismatches against real targets like OpenAIResponseTarget
+# (declares function_call, tool_call, reasoning) and AzureBlobStorageTarget
+# (declares url).
+_PROBEABLE_INPUT_MODALITIES: frozenset[PromptDataType] = frozenset({"text", "image_path", "audio_path"})
 
 # Recognised Azure OpenAI / AI Foundry hostname suffixes. Used for strict
 # endpoint validation when Entra ID auth is requested, so a bearer token is
@@ -139,9 +155,53 @@ class TargetService:
     # Scope for Azure Machine Learning managed online endpoints.
     _AZURE_ML_SCOPE: ClassVar[str] = "https://ml.azure.com/.default"
 
+    # Per-probe timeout for the GUI validation flow. The engine default is
+    # 30 s, which compounded across 5+ probes can exceed 2 min; 5 s keeps
+    # the GUI snappy while still catching real rejections.
+    _GUI_VALIDATE_TIMEOUT_S: ClassVar[float] = 5.0
+
     def __init__(self) -> None:
         """Initialize the target service."""
         self._registry = TargetRegistry.get_registry_singleton()
+        # Per-target asyncio locks for capability validation. The discovery
+        # engine mutates `target._configuration` in place
+        # (discover_target_capabilities.py:_permissive_configuration) and the
+        # registry returns a singleton instance, so two concurrent validations
+        # on the same target can race on the restore. The lock dict is an
+        # INSTANCE attribute (not ClassVar): an asyncio.Lock lazy-binds to
+        # the running event loop on first await, and pytest gives each test a
+        # fresh event loop (pyproject.toml: asyncio_default_fixture_loop_scope
+        # = "function"). A ClassVar dict would leak locks from one test's
+        # loop into the next and raise RuntimeError. Instance dict = fresh
+        # per TargetService() = matches existing per-test pattern.
+        # Lock-map cardinality is bounded by registry size (one entry per
+        # registered target), not by call volume, so no eviction is needed
+        # for typical PyRIT workloads.
+        self._validate_locks: dict[str, asyncio.Lock] = {}
+
+    def _get_validate_lock(self, *, target_registry_name: str) -> asyncio.Lock:
+        """
+        Get-or-create the per-target validation lock.
+
+        Kept synchronous on purpose: there is no ``await`` between the dict
+        ``get`` and the assignment, so two coroutines cannot interleave
+        between them and no extra guard lock is needed. Staying sync also
+        sidesteps the ``check-async-suffix`` hook (no ``_async`` suffix
+        needed for non-async methods). The returned ``asyncio.Lock`` binds
+        lazily to the running event loop on the caller's first
+        ``await lock.acquire()``.
+
+        Args:
+            target_registry_name: The registry key of the target whose lock to fetch.
+
+        Returns:
+            The per-target ``asyncio.Lock`` (created on first access).
+        """
+        lock = self._validate_locks.get(target_registry_name)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._validate_locks[target_registry_name] = lock
+        return lock
 
     def _get_target_class(self, *, target_type: str) -> type:
         """
@@ -240,6 +300,116 @@ class TargetService:
             The PromptTarget object if found, None otherwise.
         """
         return self._registry.get_instance_by_name(target_registry_name)
+
+    async def validate_target_capabilities_async(
+        self,
+        *,
+        target_registry_name: str,
+        per_probe_timeout_s: float | None = None,
+    ) -> ValidateCapabilitiesResponse | None:
+        """
+        Probe a target's live capabilities and return both declared and observed views.
+
+        The probe writes test prompts to memory (existing behavior of the
+        discovery engine). Output modalities are not probed and fall through
+        to declared values. Probeable input modalities (text, image_path,
+        audio_path) listed in the target's declared capabilities are probed
+        explicitly so that rejections surface as drift; non-probeable
+        declared modalities (function_call, tool_call, reasoning, url,
+        video_path, binary_path, etc.) are reported as declared without
+        being probed and listed in ``non_probeable_input_modalities`` so
+        the frontend can render a single "Not probed (no asset)" row.
+
+        Args:
+            target_registry_name: The registry key of the target to validate.
+            per_probe_timeout_s: Per-probe timeout in seconds. Defaults to
+                ``_GUI_VALIDATE_TIMEOUT_S`` (5.0) for interactive use.
+
+        Returns:
+            ValidateCapabilitiesResponse, or None if the target is not in the registry.
+        """
+        timeout_s = per_probe_timeout_s if per_probe_timeout_s is not None else self._GUI_VALIDATE_TIMEOUT_S
+
+        target_obj = self.get_target_object(target_registry_name=target_registry_name)
+        if target_obj is None:
+            return None
+
+        declared = target_capabilities_to_info(target_obj.capabilities)
+
+        # CRITICAL: pass only the *probeable* declared modality combinations as
+        # ``test_modalities``. Without this filter, a combination like
+        # ``frozenset(["function_call"])`` raises ValueError inside
+        # ``_create_test_message`` (engine: discover_target_capabilities.py),
+        # the combo is silently skipped, and the result line
+        # ``queried | (declared - frozenset(test_modalities))`` drops it —
+        # producing a false red mismatch in the UI. The non-probeable combos
+        # are surfaced via ``non_probeable_input_modalities`` so the frontend
+        # can render them as "Not probed (no asset)" rather than mismatched.
+        declared_combinations: set[frozenset[PromptDataType]] = set(target_obj.capabilities.input_modalities)
+        probeable_combinations: set[frozenset[PromptDataType]] = {
+            combo for combo in declared_combinations if combo <= _PROBEABLE_INPUT_MODALITIES
+        }
+        non_probeable: set[frozenset[PromptDataType]] = declared_combinations - probeable_combinations
+
+        # Per-target lock guards against the ``target._configuration`` race
+        # documented above. Helper is sync (see its docstring). Pass
+        # ``test_modalities=probeable_combinations`` even when empty: the engine
+        # short-circuits cleanly on empty set (logs "nothing to probe", returns
+        # empty) before entering ``_permissive_configuration``, avoiding an
+        # unnecessary configuration mutate+restore round-trip. Passing ``None``
+        # would default the engine to all declared modalities and trigger
+        # ValueError-and-skip-log noise on every non-probeable combo.
+        lock = self._get_validate_lock(target_registry_name=target_registry_name)
+        async with lock:
+            observed_domain = await discover_target_capabilities_async(
+                target=target_obj,
+                per_probe_timeout_s=timeout_s,
+                test_modalities=probeable_combinations,
+                apply=False,
+                # retries left at the engine default (1) so cold-start targets
+                # don't false-negative; worst-case wait per probe is ~10 s.
+            )
+        observed = target_capabilities_to_info(observed_domain)
+
+        warnings = [
+            (
+                "Validation sent live requests to the target; this may incur cost "
+                "and produce real side effects (logs, billing, content policy hits)."
+            ),
+            "Test prompts written to memory are tagged with `capability_probe`.",
+            "Output modalities are reported as declared (not actively probed).",
+            (
+                "Capability probes confirm request acceptance, not semantic enforcement "
+                "(e.g., a target that accepts a JSON-schema request may not actually "
+                "enforce the schema)."
+            ),
+            # The per-target lock above serializes Validate-vs-Validate but NOT
+            # Validate-vs-attack: the engine briefly mutates target._configuration,
+            # so an active attack on this target during validation may briefly
+            # observe permissive probe config. Surface as a user-visible warning.
+            (
+                "Do not run Validate while an attack or scenario is actively using "
+                "this target — validation temporarily changes target configuration "
+                "during probing."
+            ),
+        ]
+
+        # Format non-probeable combinations as a stable, '+'-joined sorted list
+        # so the frontend gets a typed, explicit signal (no warning-string parsing).
+        non_probeable_combos_pretty: list[str] = sorted("+".join(sorted(combo)) for combo in non_probeable)
+        if non_probeable_combos_pretty:
+            warnings.append(
+                "Some declared input modalities are reported as declared/not-probed "
+                f"(no packaged probe asset): {', '.join(non_probeable_combos_pretty)}."
+            )
+
+        return ValidateCapabilitiesResponse(
+            target_registry_name=target_registry_name,
+            declared=declared,
+            observed=observed,
+            non_probeable_input_modalities=non_probeable_combos_pretty,
+            warnings=warnings,
+        )
 
     async def create_target_async(self, *, request: CreateTargetRequest) -> TargetInstance:
         """
