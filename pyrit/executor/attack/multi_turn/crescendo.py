@@ -27,6 +27,7 @@ from pyrit.executor.attack.core import (
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
+    resolve_adversarial_system_prompt,
 )
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
@@ -219,12 +220,9 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         except ValueError as exc:
             raise ValueError(f"CrescendoAttack {exc}") from exc
 
-        system_prompt_template_path = (
-            attack_adversarial_config.system_prompt_path
-            or CrescendoAttack.DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH
-        )
-        self._adversarial_chat_system_prompt_template = SeedPrompt.from_yaml_with_required_parameters(
-            template_path=system_prompt_template_path,
+        self._adversarial_chat_system_prompt_template = resolve_adversarial_system_prompt(
+            config=attack_adversarial_config,
+            default_system_prompt_path=CrescendoAttack.DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH,
             required_parameters=["objective", "max_turns"],
             error_message="Crescendo system prompt must have 'objective' and 'max_turns' parameters",
         )
@@ -262,6 +260,23 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             auxiliary_scorers=self._auxiliary_scorers,
             refusal_scorer=self._refusal_scorer,
             use_score_as_feedback=self._use_score_as_feedback,
+        )
+
+    def get_attack_adversarial_config(self) -> AttackAdversarialConfig | None:
+        """
+        Get the effective adversarial configuration used by this strategy.
+
+        Returns:
+            AttackAdversarialConfig | None: The adversarial target and its resolved system prompt.
+                Crescendo does not use a configurable first-message seed prompt.
+        """
+        adversarial_chat = getattr(self, "_adversarial_chat", None)
+        if adversarial_chat is None:
+            return None
+        return AttackAdversarialConfig(
+            target=adversarial_chat,
+            system_prompt=self._adversarial_chat_system_prompt_template,
+            seed_prompt=None,
         )
 
     def _validate_context(self, *, context: CrescendoAttackContext) -> None:

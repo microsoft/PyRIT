@@ -209,6 +209,7 @@ class TestAtomicAttackEvaluationIdentifier:
         rule = AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES["adversarial_chat"]
         assert rule.included_params == frozenset({"underlying_model_name", "temperature", "top_p"})
         assert rule.param_fallbacks == {"underlying_model_name": "model_name"}
+        assert rule.inner_child_name == "targets"
         assert not rule.exclude
 
     def test_scorer_only_keys_absent(self):
@@ -295,6 +296,25 @@ class TestAtomicAttackEvaluationIdentifier:
         c1 = build_atomic_attack_identifier(attack_identifier=a1)
         c2 = build_atomic_attack_identifier(attack_identifier=a2)
         assert AtomicAttackEvaluationIdentifier(c1).eval_hash == AtomicAttackEvaluationIdentifier(c2).eval_hash
+
+    def test_adversarial_chat_wrapper_unwrapped_via_inner_child_name(self):
+        """A wrapper adversarial target is looked through to its inner 'targets' child,
+        so a bare target and the same target wrapped collapse to the same eval hash."""
+        inner = ComponentIdentifier(class_name="OpenAIChatTarget", class_module="m", params={"model_name": "gpt-4o"})
+        bare = ComponentIdentifier(class_name="OpenAIChatTarget", class_module="m", params={"model_name": "gpt-4o"})
+        wrapper = ComponentIdentifier(
+            class_name="RoundRobinTarget",
+            class_module="m",
+            params={"strategy": "round_robin"},
+            children={"targets": [inner]},
+        )
+        a_bare = _make_attack(children={"adversarial_chat": bare})
+        a_wrapped = _make_attack(children={"adversarial_chat": wrapper})
+        c_bare = build_atomic_attack_identifier(attack_identifier=a_bare)
+        c_wrapped = build_atomic_attack_identifier(attack_identifier=a_wrapped)
+        assert (
+            AtomicAttackEvaluationIdentifier(c_bare).eval_hash == AtomicAttackEvaluationIdentifier(c_wrapped).eval_hash
+        )
 
     # -- objective_scorer exclusion ----------------------------------------
 

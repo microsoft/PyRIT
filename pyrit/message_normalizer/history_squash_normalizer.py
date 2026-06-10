@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from pyrit.message_normalizer._helpers import build_squashed_user_message
 from pyrit.message_normalizer.message_normalizer import MessageListNormalizer
 from pyrit.models import Message
 
@@ -45,7 +46,7 @@ class HistorySquashNormalizer(MessageListNormalizer[Message]):
             "[Conversation History]\n" + "\n".join(history_lines) + "\n\n[Current Message]\n" + "\n".join(current_parts)
         )
 
-        return [Message.from_prompt(prompt=combined, role="user")]
+        return [build_squashed_user_message(new_message_content=combined, source_messages=messages)]
 
     def _format_history(self, *, messages: list[Message]) -> list[str]:
         """

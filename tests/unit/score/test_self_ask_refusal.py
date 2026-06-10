@@ -12,7 +12,8 @@ from unit.mocks import get_mock_target_identifier
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import Message, MessagePiece
+from pyrit.models import COMMON_JSON_SCHEMAS, JSON_SCHEMA_METADATA_KEY, Message, MessagePiece
+from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.score import RefusalScorerPaths, SelfAskRefusalScorer
 
 
@@ -251,6 +252,90 @@ class TestRefusalScorerSystemPromptPath:
         score = await scorer.score_text_async("some response", objective="generate harmful content")
         assert len(score) == 1
         assert score[0].get_value() is True
+
+
+EXPECTED_REFUSAL_RESPONSE_JSON_SCHEMA = COMMON_JSON_SCHEMAS["true_false_with_rationale"]
+
+
+@pytest.mark.parametrize("scorer_path", list(RefusalScorerPaths))
+async def test_refusal_scorer_loads_response_json_schema(scorer_path: RefusalScorerPaths, patch_central_database):
+    """Test that each refusal YAML populates _response_json_schema with the expected schema."""
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    scorer = SelfAskRefusalScorer(chat_target=chat_target, refusal_system_prompt_path=scorer_path)
+
+    assert scorer._response_json_schema is not None
+    assert scorer._response_json_schema == EXPECTED_REFUSAL_RESPONSE_JSON_SCHEMA
+
+
+async def test_refusal_scorer_passes_response_json_schema_to_target(
+    scorer_true_false_response: Message, patch_central_database
+):
+    """Test that response_json_schema is forwarded to the prompt target via prompt_metadata."""
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
+
+    scorer = SelfAskRefusalScorer(chat_target=chat_target)
+
+    await scorer.score_text_async("some response", objective="test objective")
+
+    _, kwargs = chat_target.send_prompt_async.call_args
+    message_piece = kwargs["message"].message_pieces[0]
+    assert message_piece.prompt_metadata["json_schema"] == EXPECTED_REFUSAL_RESPONSE_JSON_SCHEMA
+
+
+async def test_refusal_scorer_omits_json_schema_when_seed_has_none(
+    scorer_true_false_response: Message, patch_central_database
+):
+    """When the seed prompt has no schema, prompt_metadata must NOT include the json_schema key."""
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
+
+    scorer = SelfAskRefusalScorer(chat_target=chat_target)
+    # Simulate a scorer constructed from a YAML without a schema.
+    scorer._response_json_schema = None
+
+    await scorer.score_text_async("some response", objective="test objective")
+
+    _, kwargs = chat_target.send_prompt_async.call_args
+    message_piece = kwargs["message"].message_pieces[0]
+    assert JSON_SCHEMA_METADATA_KEY not in message_piece.prompt_metadata
+    # response_format must still be set so the target returns JSON.
+    assert message_piece.prompt_metadata.get("response_format") == "json"
+
+
+@pytest.mark.parametrize("scorer_path", list(RefusalScorerPaths))
+async def test_refusal_scorer_identifier_includes_schema(scorer_path: RefusalScorerPaths, patch_central_database):
+    """The scorer identifier must carry the schema so identical-config scorers hash the same."""
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    scorer = SelfAskRefusalScorer(chat_target=chat_target, refusal_system_prompt_path=scorer_path)
+
+    identifier = scorer.get_identifier()
+    assert identifier.params["response_json_schema"] == EXPECTED_REFUSAL_RESPONSE_JSON_SCHEMA
+
+
+async def test_refusal_scorer_metadata_round_trips_through_json_response_config(
+    scorer_true_false_response: Message, patch_central_database
+):
+    """The prompt_metadata produced by the scorer must be consumable by _JsonResponseConfig."""
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
+
+    scorer = SelfAskRefusalScorer(chat_target=chat_target)
+    await scorer.score_text_async("some response", objective="test objective")
+
+    _, kwargs = chat_target.send_prompt_async.call_args
+    metadata = kwargs["message"].message_pieces[0].prompt_metadata
+
+    config = _JsonResponseConfig.from_metadata(metadata=metadata)
+    assert config.enabled is True
+    assert config.json_schema == EXPECTED_REFUSAL_RESPONSE_JSON_SCHEMA
 
 
 class TestRefusalScorerPromptFormatString:

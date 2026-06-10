@@ -185,3 +185,28 @@ class TestPAIRAttackInit:
         result = attack.get_attack_scoring_config()
         assert isinstance(result, TAPAttackScoringConfig)
         assert result.threshold == 0.85
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestPAIRAdversarialIdentity:
+    """PAIR inherits TAP's adversarial identity wiring."""
+
+    def test_get_attack_adversarial_config_includes_target(self, objective_target, adversarial_config):
+        attack = PAIRAttack(
+            objective_target=objective_target,
+            attack_adversarial_config=adversarial_config,
+        )
+        config = attack.get_attack_adversarial_config()
+        assert config is not None
+        assert config.target is adversarial_config.target
+        assert config.system_prompt is attack._adversarial_chat_system_seed_prompt
+        assert config.seed_prompt is None
+
+    def test_identifier_includes_adversarial_chat_child(self, objective_target, adversarial_config):
+        attack = PAIRAttack(
+            objective_target=objective_target,
+            attack_adversarial_config=adversarial_config,
+        )
+        identifier = attack.get_identifier()
+        assert "adversarial_chat" in identifier.children
+        assert identifier.children["adversarial_chat"] == adversarial_config.target.get_identifier.return_value

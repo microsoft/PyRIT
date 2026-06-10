@@ -3,7 +3,7 @@
 
 import logging
 import pathlib
-from typing import Literal, get_args
+from typing import ClassVar, Literal, get_args
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
@@ -16,18 +16,6 @@ logger = logging.getLogger(__name__)
 
 # Supported translation modes
 TranslationMode = Literal["academic", "technical", "smiles", "math", "research", "reaction", "combined"]
-TRANSLATION_MODES = set(get_args(TranslationMode))
-
-# Mapping from mode to YAML file name
-MODE_YAML_FILES: dict[str, str] = {
-    "academic": "academic_science_converter.yaml",
-    "technical": "technical_science_converter.yaml",
-    "smiles": "smiles_science_converter.yaml",
-    "math": "math_science_converter.yaml",
-    "research": "research_science_converter.yaml",
-    "reaction": "reaction_science_converter.yaml",
-    "combined": "combined_science_converter.yaml",
-}
 
 
 class ScientificTranslationConverter(LLMGenericTextConverter):
@@ -39,6 +27,19 @@ class ScientificTranslationConverter(LLMGenericTextConverter):
     whether safety filters can be bypassed through scientific translation.
 
     """
+
+    TRANSLATION_MODES: ClassVar[set[str]] = set(get_args(TranslationMode))
+
+    # Mapping from mode to YAML file name
+    MODE_YAML_FILES: ClassVar[dict[str, str]] = {
+        "academic": "academic_science_converter.yaml",
+        "technical": "technical_science_converter.yaml",
+        "smiles": "smiles_science_converter.yaml",
+        "math": "math_science_converter.yaml",
+        "research": "research_science_converter.yaml",
+        "reaction": "reaction_science_converter.yaml",
+        "combined": "combined_science_converter.yaml",
+    }
 
     @apply_defaults
     def __init__(
@@ -75,13 +76,13 @@ class ScientificTranslationConverter(LLMGenericTextConverter):
         # Resolve template: use provided, or load from mode, or error
         if prompt_template is not None:
             resolved_template = prompt_template
-        elif mode in TRANSLATION_MODES:
-            yaml_file = MODE_YAML_FILES[mode]
+        elif mode in self.TRANSLATION_MODES:
+            yaml_file = self.MODE_YAML_FILES[mode]
             resolved_template = SeedPrompt.from_yaml_file(pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / yaml_file)
         else:
             raise ValueError(
                 f"Custom mode '{mode}' requires a prompt_template. "
-                f"Either use a built-in mode from {sorted(TRANSLATION_MODES)} or provide a prompt_template."
+                f"Either use a built-in mode from {sorted(self.TRANSLATION_MODES)} or provide a prompt_template."
             )
 
         super().__init__(
