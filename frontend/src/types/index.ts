@@ -166,6 +166,14 @@ export interface CreateAttackRequest {
   labels?: Record<string, string>
   source_conversation_id?: string
   cutoff_index?: number
+  /**
+   * Tree-UI V1.0 (per doc/gui/design/01_tree_primitives.md §7 + §9.4.4 (a)):
+   * the runner sends per-leaf clean-prefix history here as one bulk insert,
+   * avoiding the N round-trip cost of using `add_message` for context turns.
+   * Backend caps the list at 200 messages; the runner short-circuits before
+   * dispatch if the resolved clean prefix would exceed the cap.
+   */
+  prepended_conversation?: PrependedMessageRequest[]
 }
 
 export interface CreateAttackResponse {
@@ -202,6 +210,23 @@ export interface BackendMessagePiece {
   scores: BackendScore[]
   response_error: string // 'none' | 'blocked' | 'processing' | 'empty' | 'unknown'
   response_error_description?: string | null
+  /**
+   * Lineage-root piece id (per doc/gui/design/01_tree_primitives.md §9.4.4 (b)).
+   * Defaults to the piece's own id for fresh pieces; preserved across
+   * `Message.duplicate()` so descendants share the same lineage root. Required
+   * on every PR2-or-newer payload (the field is `null` when the source piece
+   * had no original_prompt_id, which never occurs for persisted pieces but
+   * is the safe defensive shape).
+   */
+  original_prompt_id: string | null
+  /**
+   * Sequential converter pipeline applied to produce `converted_value`
+   * (per doc/gui/design/01_tree_primitives.md §9.4.4 (b)). Empty list = no
+   * converter applied (distinguishable from "field missing" by being present).
+   * The tree-UI reload-reconstruction path (§9.4.1) and `Fan(axis='converter')`
+   * variant-payload reconstruction (§9.3.1) both read this.
+   */
+  converter_identifiers: ComponentIdentifier[]
 }
 
 export interface BackendMessage {
@@ -223,6 +248,42 @@ export interface MessagePieceRequest {
   mime_type?: string
   original_prompt_id?: string
   prompt_metadata?: Record<string, unknown>
+}
+
+/**
+ * Frontend mirror of the backend's `ComponentIdentifier.model_dump()` wire shape
+ * (per pyrit/models/identifiers/component_identifier.py). Used by the tree-UI
+ * V1.0 to read each `BackendMessagePiece.converter_identifiers` entry; the
+ * runner's `Fan(axis='converter')` variant-payload reconstruction (§9.3.1)
+ * builds a `ConverterRef` from the (class_name, class_module, params) triple.
+ *
+ * `hash`, `pyrit_version`, `eval_hash`, and `children` are emitted by the
+ * backend but are not consumed by V1.0 frontend code paths — declared optional
+ * so the wire payload type-checks regardless of which optional fields are
+ * populated, and so the V1.x additions don't require a frontend bump.
+ */
+export interface ComponentIdentifier {
+  class_name: string
+  class_module: string
+  params: Record<string, unknown>
+  hash?: string | null
+  pyrit_version?: string
+  eval_hash?: string | null
+  children?: Record<string, ComponentIdentifier | ComponentIdentifier[]>
+}
+
+/**
+ * Frontend mirror of the backend's `PrependedMessageRequest` wire shape (per
+ * pyrit/backend/models/attacks.py). Used inside `CreateAttackRequest.prepended_conversation`
+ * by the tree-UI V1.0 runner to inject clean-prefix history when creating a
+ * per-leaf `AttackResult` (per doc/gui/design/03_runner.md §3.3 / §4.1).
+ *
+ * Multimodal turns bundle multiple pieces into one message; the backend caps
+ * pieces per message at 50.
+ */
+export interface PrependedMessageRequest {
+  role: 'user' | 'assistant' | 'system' | 'simulated_assistant'
+  pieces: MessagePieceRequest[]
 }
 
 export interface AddMessageRequest {

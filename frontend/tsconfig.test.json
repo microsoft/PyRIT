@@ -8,5 +8,11 @@
     "noEmit": true,
     "ignoreDeprecations": "6.0"
   },
+  // Override the inherited `exclude` from tsconfig.json (which strips *.test.* files);
+  // without this override, the `include` patterns below are no-ops and `tsc -p
+  // tsconfig.test.json` compiles only jest.config.ts. ts-jest doesn't type-check at
+  // run time, so silent type drift in tests went uncaught until the tree-UI contract
+  // tests needed real validation.
+  "exclude": [],
   "include": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/setupTests.ts", "jest.config.ts"]
 }
