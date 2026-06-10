@@ -150,10 +150,21 @@ export default function ValidateCapabilitiesDialog({
 
   const declared = result?.declared
   const observed = result?.observed
-  const inputMatch = modalitiesEqual(
-    declared?.supported_input_modalities,
-    observed?.supported_input_modalities,
+  // Types that appear ONLY inside non-probeable combinations. The engine ORs
+  // these back into observed.input_modalities (line 778), making them appear
+  // confirmed in the cells even though they were never tested. Hide them from
+  // the Input modalities row so the cells show only what was actually probed;
+  // the "Not probed (no asset)" row below already lists them separately.
+  const nonProbeableTypes = new Set(
+    (result?.non_probeable_input_modalities ?? []).flatMap(combo => combo.split('+')),
   )
+  const declaredProbeableInputs = (declared?.supported_input_modalities ?? []).filter(
+    t => !nonProbeableTypes.has(t),
+  )
+  const observedProbeableInputs = (observed?.supported_input_modalities ?? []).filter(
+    t => !nonProbeableTypes.has(t),
+  )
+  const inputMatch = modalitiesEqual(declaredProbeableInputs, observedProbeableInputs)
 
   return (
     <Dialog
@@ -224,8 +235,8 @@ export default function ValidateCapabilitiesDialog({
                     })}
                     <TableRow>
                       <TableCell>Input modalities</TableCell>
-                      <TableCell>{formatModalities(declared?.supported_input_modalities)}</TableCell>
-                      <TableCell>{formatModalities(observed?.supported_input_modalities)}</TableCell>
+                      <TableCell>{formatModalities(declaredProbeableInputs)}</TableCell>
+                      <TableCell>{formatModalities(observedProbeableInputs)}</TableCell>
                       <TableCell>
                         <MatchIndicator kind={inputMatch ? 'match' : 'mismatch'} />
                       </TableCell>

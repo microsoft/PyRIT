@@ -266,6 +266,14 @@ describe('ValidateCapabilitiesDialog', () => {
     await waitFor(() => expect(screen.getByTestId('not-probed-row')).toBeInTheDocument())
     expect(screen.getByText(/Not probed \(no asset\)/i)).toBeInTheDocument()
     expect(screen.getByText('function_call, reasoning, tool_call')).toBeInTheDocument()
+    // Non-probeable types must NOT appear in the Input modalities cells —
+    // otherwise the user sees the same types in both Observed and Not-probed,
+    // which is contradictory. function_call should appear exactly twice on
+    // screen: once in the Not-probed row, once in the warning bar text.
+    // (Before the fix this would have been 3 — the third occurrence was the
+    // Input modalities Observed cell, which is the regression we're guarding.)
+    const functionCallOccurrences = screen.getAllByText(/function_call/)
+    expect(functionCallOccurrences).toHaveLength(2)
   })
 
   it('does NOT render the "Not probed" row when non_probeable_input_modalities is empty', async () => {
