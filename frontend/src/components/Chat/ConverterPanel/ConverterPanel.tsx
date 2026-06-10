@@ -45,26 +45,28 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
   const [panelWidth, setPanelWidth] = useState(320)
   const isDragging = useRef(false)
 
-  const loadConverters = useCallback(async () => {
-    setIsLoading(true)
-    setError(null)
-
-    try {
-      const response = await convertersApi.listConverterCatalog()
-      setConverters(response.items)
-    } catch (err) {
-      setConverters([])
-      setSelectedConverterType('')
-      setQuery('')
-      setError(toApiError(err).detail)
-    } finally {
-      setIsLoading(false)
+  useEffect(() => {
+    let cancelled = false
+    convertersApi.listConverterCatalog()
+      .then((response) => {
+        if (cancelled) return
+        setConverters(response.items)
+        setError(null)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setConverters([])
+        setSelectedConverterType('')
+        setQuery('')
+        setError(toApiError(err).detail)
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false)
+      })
+    return () => {
+      cancelled = true
     }
   }, [])
-
-  useEffect(() => {
-    void loadConverters()
-  }, [loadConverters])
 
   // Tabs: always show Text, plus one for each attachment type
   const tabs = useMemo(() => {
@@ -79,15 +81,14 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     return result
   }, [activeInputTypes])
 
-  // Reset to text tab when tabs change and active tab is no longer available
-  useEffect(() => {
-    if (!tabs.includes(activeTab)) {
-      setActiveTab('text')
-    }
-  }, [tabs, activeTab])
+  // If the selected tab disappears (e.g. user removes an attachment), fall back
+  // to 'text' for any derivation that depends on the active tab. The actual
+  // `activeTab` state is only updated on user click; deriving the effective
+  // value avoids a setState-in-effect that react-hooks/set-state-in-effect would flag.
+  const effectiveActiveTab = tabs.includes(activeTab) ? activeTab : 'text'
 
   // Filter converters by the active tab's input type
-  const activeDataType = PIECE_TYPE_TO_DATA_TYPE[activeTab] ?? 'text'
+  const activeDataType = PIECE_TYPE_TO_DATA_TYPE[effectiveActiveTab] ?? 'text'
 
   const filteredConverters = useMemo(() => {
     let filtered = converters.filter((c) => {
@@ -194,7 +195,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
   }, [])
 
   const handlePreview = useCallback(async () => {
-    const previewValue = activeTab === 'text' ? previewText : (attachmentData[activeTab] ?? '')
+    const previewValue = effectiveActiveTab === 'text' ? previewText : (attachmentData[effectiveActiveTab] ?? '')
     if (!selectedConverterType || !previewValue.trim()) {
       return
     }
@@ -224,7 +225,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     } finally {
       setIsPreviewing(false)
     }
-  }, [activeTab, previewText, attachmentData, selectedConverterType, missingRequiredParams, paramValues, activeDataType, getOrCreateConverterInstance])
+  }, [effectiveActiveTab, previewText, attachmentData, selectedConverterType, missingRequiredParams, paramValues, activeDataType, getOrCreateConverterInstance])
 
   // Auto-preview is only safe for converters that:
   //   - aren't LLM-based (network cost)
@@ -239,26 +240,31 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
   }, [selectedConverter])
 
   const autoPreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Clear preview when input is emptied (e.g. after sending). Uses the "adjust
+  // state during render" pattern keyed off the *first* empty observation so we
+  // don't trigger react-hooks/set-state-in-effect.
+  const currentInput = effectiveActiveTab === 'text' ? previewText : (attachmentData[effectiveActiveTab] ?? '')
+  const [clearedForKey, setClearedForKey] = useState('')
+  const clearKey = `${effectiveActiveTab}:${currentInput}`
+  if (!currentInput.trim() && clearedForKey !== clearKey) {
+    setClearedForKey(clearKey)
+    setPreviewOutput('')
+    setPreviewOutputType('text')
+    setPreviewConverterInstanceId(null)
+    setPreviewError(null)
+  }
+
   useEffect(() => {
     if (autoPreviewTimer.current) {
       clearTimeout(autoPreviewTimer.current)
       autoPreviewTimer.current = null
     }
 
-    const currentPreviewValue = activeTab === 'text' ? previewText : (attachmentData[activeTab] ?? '')
-
-    // Clear preview when input is emptied (e.g. after sending)
-    if (!currentPreviewValue.trim()) {
-      setPreviewOutput('')
-      setPreviewOutputType('text')
-      setPreviewConverterInstanceId(null)
-      setPreviewError(null)
-    }
-
     if (
       !selectedConverter ||
       !supportsAutoPreview ||
-      !currentPreviewValue.trim() ||
+      !currentInput.trim() ||
       missingRequiredParams.length
     ) {
       return
@@ -273,7 +279,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
         clearTimeout(autoPreviewTimer.current)
       }
     }
-    }, [activeTab, previewText, attachmentData, missingRequiredParams, selectedConverter, supportsAutoPreview, handlePreview])
+    }, [currentInput, missingRequiredParams, selectedConverter, supportsAutoPreview, handlePreview])
   const handleMouseDown = useCallback(() => {
     isDragging.current = true
     document.body.style.cursor = 'col-resize'
@@ -320,7 +326,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
       </div>
       {tabs.length > 1 && (
         <TabList
-          selectedValue={activeTab}
+          selectedValue={effectiveActiveTab}
           onTabSelect={handleTabSelect}
           size="small"
           className={styles.tabBar}
@@ -409,7 +415,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
             )}
 
             <ConverterPreview
-              activeTab={activeTab}
+              activeTab={effectiveActiveTab}
               previewText={previewText}
               attachmentData={attachmentData}
               selectedConverterType={selectedConverterType}
