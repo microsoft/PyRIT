@@ -27,7 +27,7 @@ classifiers = [
 ]
 requires-python = ">=3.10, <3.15"
 dependencies = [
-    "aiofiles>=24,<25",
+    "aiofiles>=24,<26",
     "alembic>=1.16.0",
     "appdirs>=1.4.0",
     "art>=6.5.0",
