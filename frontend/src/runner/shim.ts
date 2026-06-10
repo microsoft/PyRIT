@@ -138,13 +138,11 @@ export function createRunnerShim(deps: ShimDependencies): RunnerShim {
     // 2. Cross-tab lock acquire. 'busy' returns BEFORE the try block so no
     //    release fires (we don't hold the lock).
     const lockResult = await deps.lockManager.acquire(treeId)
-    if (lockResult === 'busy') {
+    if (!lockResult.acquired) {
       deps.sink.emitWaveEvent({
         kind: 'busy',
         treeId,
-        // The real BroadcastChannel manager (PR4f) fills this in with the
-        // sender tab's id; the mock returns an empty string.
-        holderTabId: '',
+        holderTabId: lockResult.holderTabId,
         emittedAt: nowIso(),
       })
       return

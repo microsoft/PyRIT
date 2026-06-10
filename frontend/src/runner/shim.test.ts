@@ -47,6 +47,7 @@ import type {
   ConversationTreeId,
   CostGuardrail,
   CrossTabLockManager,
+  LockAcquireResult,
   WaveEvent,
   WaveTriggerKind,
 } from './treeTypes'
@@ -124,7 +125,7 @@ interface ControllableLockManager {
 }
 
 function mkControllableLockManager(
-  options: { acquireResults?: ReadonlyArray<'acquired' | 'busy'> } = {},
+  options: { acquireResults?: ReadonlyArray<LockAcquireResult> } = {},
 ): ControllableLockManager {
   const acquireCalls: ConversationTreeId[] = []
   const releaseCalls: ConversationTreeId[] = []
@@ -133,7 +134,7 @@ function mkControllableLockManager(
   const mgr: CrossTabLockManager = {
     acquire: async (treeId) => {
       acquireCalls.push(treeId)
-      return results[cursor++] ?? 'acquired'
+      return results[cursor++] ?? ({ acquired: true, holderTabId: null } as const)
     },
     release: (treeId) => {
       releaseCalls.push(treeId)
@@ -324,10 +325,12 @@ describe('shim — tag-hygiene gate (step 1)', () => {
 // ============================================================================
 
 describe('shim — cross-tab lock (step 2)', () => {
-  it('lock busy: emits busy event, no cost modal, no starter, no release call', async () => {
+  it('lock busy: emits busy event with holderTabId, no cost modal, no starter, no release call', async () => {
     const tree = mkStandardTree()
     const { sink, callsOf } = mkMockSink()
-    const lock = mkControllableLockManager({ acquireResults: ['busy'] })
+    const lock = mkControllableLockManager({
+      acquireResults: [{ acquired: false, holderTabId: 'other-tab-7' }],
+    })
     const cost = mkControllableCostGuardrail()
     const starter = mkControllableRunWaveStarter()
     const shim = createRunnerShim({
@@ -347,6 +350,9 @@ describe('shim — cross-tab lock (step 2)', () => {
     expect(events[0].kind).toBe('busy')
     if (events[0].kind === 'busy') {
       expect(events[0].treeId).toBe(treeId('t-1'))
+      // holderTabId from the busy reply is forwarded to the busy event so the
+      // operator-facing modal can render *"another tab (id: …)"*.
+      expect(events[0].holderTabId).toBe('other-tab-7')
     }
     expect(cost.calls).toHaveLength(0)
     expect(starter.calls).toHaveLength(0)
@@ -584,6 +590,79 @@ describe('shim — wave queue (step 4)', () => {
     starter.resolveNext()
     await Promise.all([first, second])
   })
+
+  it('drained re-entry recomputes S from the LATEST tree state, not the snapshot at enqueue', async () => {
+    // 03 §10.3: stale-set is recomputed at wave-start, not at enqueue-time.
+    // If the operator edits the tree between enqueue and dispatch, the drained
+    // wave dispatches against the current state. This test mutates the tree
+    // (by swapping which tree the treeProvider returns) between enqueue and
+    // drain to prove the drained wave reads the post-edit tree.
+    const treeV1 = mkTree(
+      'r',
+      [
+        mkRoot('r', undefined, { state: 'clean' }),
+        mkUserTurn('u', 'r', undefined, { state: 'clean' }),
+        mkSend('s_orig', 'u', undefined, { state: 'stale' }),
+      ],
+      { id: 't-evolve' },
+    )
+    // Same id but a different stale set — operator edited s_orig to clean and
+    // added a new stale Send `s_new` between enqueue and drain.
+    const treeV2 = mkTree(
+      'r',
+      [
+        mkRoot('r', undefined, { state: 'clean' }),
+        mkUserTurn('u', 'r', undefined, { state: 'clean' }),
+        mkSend('s_orig', 'u', undefined, { state: 'clean' }),
+        mkUserTurn('u2', 's_orig', undefined, { state: 'clean' }),
+        mkSend('s_new', 'u2', undefined, { state: 'stale' }),
+      ],
+      { id: 't-evolve' },
+    )
+    let activeTree = treeV1
+    const treeProvider: ShimDependencies['treeProvider'] = (id) =>
+      id === treeId('t-evolve') ? activeTree : undefined
+
+    const { sink, callsOf } = mkMockSink()
+    const lock = mkControllableLockManager()
+    const cost = mkControllableCostGuardrail()
+    const starter = mkControllableRunWaveStarter()
+    const shim = createRunnerShim({
+      operatorProvider: () => 'alice',
+      treeProvider,
+      sink,
+      lockManager: lock.mgr,
+      costGuardrail: cost.cg,
+      runWaveStarter: starter.starter,
+      uuid: mkUuidStub(),
+    })
+
+    const first = shim.refreshTree(treeId('t-evolve'))
+    await waitFor(() => starter.pendingCount() === 1, 'first wave running')
+    // First wave sees treeV1's stale set.
+    expect([...starter.calls[0].S]).toEqual([nodeId('s_orig')])
+
+    const second = shim.refreshTree(treeId('t-evolve'))
+    await waitFor(
+      () => callsOf('emitWaveEvent').some((c) => c.event.kind === 'queued'),
+      'second enqueued',
+    )
+
+    // Operator edits the tree between enqueue and drain — flip to v2.
+    activeTree = treeV2
+
+    starter.resolveNext()
+    await waitFor(() => starter.calls.length === 2, 'second drained')
+
+    // Drained wave's S was computed AT DRAIN TIME from treeV2 — not from v1
+    // (which only had s_orig stale).
+    expect([...starter.calls[1].S]).toEqual([nodeId('s_new')])
+    // The drained call also received the v2 tree object directly.
+    expect(starter.calls[1].tree).toBe(treeV2)
+
+    starter.resolveNext()
+    await Promise.all([first, second])
+  })
 })
 
 // ============================================================================
@@ -788,7 +867,9 @@ describe('shim — lock release', () => {
   it('busy abort: no release (acquire returned busy, nothing to release)', async () => {
     const tree = mkStandardTree()
     const { sink } = mkMockSink()
-    const lock = mkControllableLockManager({ acquireResults: ['busy'] })
+    const lock = mkControllableLockManager({
+      acquireResults: [{ acquired: false, holderTabId: 'other' }],
+    })
     const cost = mkControllableCostGuardrail()
     const starter = mkControllableRunWaveStarter()
     const shim = createRunnerShim({

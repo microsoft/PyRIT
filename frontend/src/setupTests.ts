@@ -1,4 +1,13 @@
 import "@testing-library/jest-dom";
+import { BroadcastChannel as PolyfillBroadcastChannel, enforceOptions } from "broadcast-channel";
+
+// jsdom does not implement BroadcastChannel; register the broadcast-channel
+// polyfill globally (per doc/gui/design/01 §9.4.3). `simulate` mode keeps the
+// transport in-process — required for jest's parallel test workers, which
+// would otherwise step on each other via the polyfill's file-RPC default.
+enforceOptions({ type: "simulate" });
+(globalThis as unknown as { BroadcastChannel: typeof PolyfillBroadcastChannel }).BroadcastChannel =
+  PolyfillBroadcastChannel;
 
 // Set Vite-equivalent env vars for tests (the AST transformer rewrites
 // import.meta.env.X → process.env.X, so these must exist as process.env).

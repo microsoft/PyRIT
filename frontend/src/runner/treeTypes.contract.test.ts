@@ -276,7 +276,7 @@ describe('treeTypes — type-level contracts', () => {
   it('CostGuardrail + CrossTabLockManager stubs satisfy the interfaces', () => {
     const guardrail: CostGuardrail = { approve: async () => true }
     const lock: CrossTabLockManager = {
-      acquire: async () => 'acquired',
+      acquire: async () => ({ acquired: true, holderTabId: null }),
       release: () => undefined,
     }
     expect([typeof guardrail.approve, typeof lock.acquire, typeof lock.release]).toEqual([

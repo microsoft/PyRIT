@@ -609,11 +609,19 @@ export interface CostGuardrail {
  * `conversation_tree_id` so two browser tabs viewing the same tree cannot
  * concurrently rebase it (the dominant fork-bomb risk).
  *
- * `acquire` returns 'acquired' (lock is ours now) or 'busy' (another tab
- * holds it). `release` is unconditional; the §2.1 shim's outer try/finally
- * guarantees it runs on every exit path.
+ * `acquire` returns a discriminated union: `{ acquired: true }` when the
+ * lock is ours, `{ acquired: false; holderTabId }` when another tab holds
+ * it. `holderTabId` is the responding tab's id so the UI can render
+ * *"another tab (id: …) is refreshing"* in the busy modal.
+ *
+ * `release` is unconditional; the §2.1 shim's outer try/finally guarantees
+ * it runs on every exit path.
  */
+export type LockAcquireResult =
+  | { acquired: true; holderTabId: null }
+  | { acquired: false; holderTabId: string }
+
 export interface CrossTabLockManager {
-  acquire(treeId: ConversationTreeId): Promise<'acquired' | 'busy'>
+  acquire(treeId: ConversationTreeId): Promise<LockAcquireResult>
   release(treeId: ConversationTreeId): void
 }
