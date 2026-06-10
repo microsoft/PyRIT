@@ -22,6 +22,7 @@
 import type { ConversationTree, ConversationTreeNodeId, NodeState } from './treeTypes'
 import {
   buildSForNode,
+  buildSForRetry,
   buildSForSubtree,
   buildSForTree,
   computeReady,
@@ -540,5 +541,228 @@ describe('fan-slot-aware traversal', () => {
     expect(computeReady(tree, S).map((n) => n.id).sort()).toEqual(
       [nodeId('s0'), nodeId('s1')].sort(),
     )
+  })
+})
+
+// ============================================================================
+// demoteRetryFailedNodes — returned tree
+// ============================================================================
+
+describe('demoteRetryFailedNodes — returned tree', () => {
+  it('returns a tree whose demoted nodes are flipped to stale with null execution + lastError', () => {
+    // The shim (03 §2.1 entry-point shim) consumes the returned tree as the
+    // input to runWave; computeReady inside runWave reads node.state from
+    // that tree, so the returned shape MUST reflect the demotion. The sink
+    // calls handle the React-state side; the returned tree handles the
+    // pure-data side.
+    const failedExec = mkExecution({ executionId: 'old', outcome: 'failure' })
+    const tree = mkTree('r', [
+      mkRoot('r', undefined, { state: 'clean' }),
+      mkUserTurn('u', 'r', undefined, { state: 'clean' }),
+      mkSend('s', 'u', undefined, {
+        state: 'failed',
+        execution: failedExec,
+        lastError: { message: 'old failure', failure_class: 'transient' },
+      }),
+    ])
+    const S = new Set([nodeId('s')])
+    const { sink } = mkMockSink()
+
+    const out = demoteRetryFailedNodes(tree, S, sink)
+
+    const demoted = out.nodes.find((n) => n.id === nodeId('s'))
+    expect(demoted?.state).toBe<NodeState>('stale')
+    expect(demoted?.execution).toBeNull()
+    expect(demoted?.lastError).toBeNull()
+  })
+
+  it('returns the original tree reference when nothing was demoted (cheap no-op identity)', () => {
+    // Allocating a new tree for a no-op demotion would invalidate any
+    // identity-based memoization the caller layered on top.
+    const tree = mkTree('r', [
+      mkRoot('r', undefined, { state: 'clean' }),
+      mkUserTurn('u', 'r', undefined, { state: 'edited' }),
+      mkSend('s', 'u', undefined, { state: 'stale' }),
+    ])
+    const S = new Set([nodeId('u'), nodeId('s')])
+    const { sink } = mkMockSink()
+
+    const out = demoteRetryFailedNodes(tree, S, sink)
+    expect(out).toBe(tree)
+  })
+
+  it('leaves non-demoted nodes untouched by identity (only the demoted node is replaced)', () => {
+    const tree = mkTree('r', [
+      mkRoot('r', undefined, { state: 'clean' }),
+      mkUserTurn('u', 'r', undefined, { state: 'edited' }),
+      mkSend('s_failed', 'u', undefined, { state: 'failed' }),
+    ])
+    const S = new Set([nodeId('s_failed')])
+    const { sink } = mkMockSink()
+
+    const out = demoteRetryFailedNodes(tree, S, sink)
+    // The userTurn node should be the same reference (not replaced).
+    const originalU = tree.nodes.find((n) => n.id === nodeId('u'))!
+    const outU = out.nodes.find((n) => n.id === nodeId('u'))!
+    expect(outU).toBe(originalU)
+  })
+
+  it('composes with computeReady directly via the returned tree', () => {
+    // The shim's actual flow: pass `out` to runWave, runWave calls
+    // computeReady(out, S). Without the returned-tree shape, this test would
+    // need projectStateChanges (above). With it, the composition is direct.
+    const tree = mkTree('r', [
+      mkRoot('r', undefined, { state: 'clean' }),
+      mkUserTurn('u1', 'r', undefined, { state: 'clean' }),
+      mkSend('s_mid', 'u1', undefined, { state: 'failed' }),
+      mkUserTurn('u2', 's_mid', undefined, { state: 'stale' }),
+      mkSend('s_leaf', 'u2', undefined, { state: 'failed' }),
+    ])
+    const S = new Set([nodeId('s_mid'), nodeId('s_leaf')])
+    const { sink } = mkMockSink()
+
+    const out = demoteRetryFailedNodes(tree, S, sink)
+    expect(computeReady(out, S).map((n) => n.id)).toEqual([nodeId('s_leaf')])
+  })
+})
+
+// ============================================================================
+// buildSForRetry — 03 §2.1 / §5.3 retry-failed scope
+// ============================================================================
+
+describe('buildSForRetry', () => {
+  it('returns {nodeIds} when no ancestors on the path are failed/cancelled', () => {
+    // A path with only clean Send ancestors — S = just the input ids.
+    const tree = mkTree('r', [
+      mkRoot('r', undefined, { state: 'clean' }),
+      mkUserTurn('u1', 'r', undefined, { state: 'clean' }),
+      mkSend('s1', 'u1', undefined, { state: 'clean' }),
+      mkUserTurn('u2', 's1', undefined, { state: 'clean' }),
+      mkSend('s_leaf', 'u2', undefined, { state: 'failed' }),
+    ])
+    const out = buildSForRetry(tree, [nodeId('s_leaf')])
+    expect([...out]).toEqual([nodeId('s_leaf')])
+  })
+
+  it('walks every Send ancestor on the path; adds failed ones', () => {
+    // s_mid is a failed Send ancestor on s_leaf's path. Retry must include it.
+    const tree = mkTree('r', [
+      mkRoot('r', undefined, { state: 'clean' }),
+      mkUserTurn('u1', 'r', undefined, { state: 'clean' }),
+      mkSend('s_mid', 'u1', undefined, { state: 'failed' }),
+      mkUserTurn('u2', 's_mid', undefined, { state: 'stale' }),
+      mkSend('s_leaf', 'u2', undefined, { state: 'failed' }),
+    ])
+    const out = buildSForRetry(tree, [nodeId('s_leaf')])
+    expect([...out].sort()).toEqual([nodeId('s_leaf'), nodeId('s_mid')].sort())
+  })
+
+  it('adds cancelled Send ancestors too', () => {
+    const tree = mkTree('r', [
+      mkRoot('r', undefined, { state: 'clean' }),
+      mkUserTurn('u1', 'r', undefined, { state: 'clean' }),
+      mkSend('s_mid', 'u1', undefined, { state: 'cancelled' }),
+      mkUserTurn('u2', 's_mid', undefined, { state: 'stale' }),
+      mkSend('s_leaf', 'u2', undefined, { state: 'failed' }),
+    ])
+    const out = buildSForRetry(tree, [nodeId('s_leaf')])
+    expect([...out].sort()).toEqual([nodeId('s_leaf'), nodeId('s_mid')].sort())
+  })
+
+  it('skips clean / edited / stale / running Send ancestors (only failed/cancelled count)', () => {
+    // s_mid is stale (in S for refreshes, but not in retry-failed scope —
+    // retry only re-admits the SPECIFIC ancestors that failed).
+    const tree = mkTree('r', [
+      mkRoot('r', undefined, { state: 'clean' }),
+      mkUserTurn('u1', 'r', undefined, { state: 'clean' }),
+      mkSend('s_mid', 'u1', undefined, { state: 'stale' }),
+      mkUserTurn('u2', 's_mid', undefined, { state: 'stale' }),
+      mkSend('s_leaf', 'u2', undefined, { state: 'failed' }),
+    ])
+    const out = buildSForRetry(tree, [nodeId('s_leaf')])
+    expect([...out]).toEqual([nodeId('s_leaf')])
+  })
+
+  it('handles multiple input nodeIds and deduplicates shared ancestors', () => {
+    // Two leaves sharing a failed interior Send — that ancestor should
+    // appear ONCE in S.
+    const tree = mkTree('r', [
+      mkRoot('r', undefined, { state: 'clean' }),
+      mkUserTurn('u', 'r', undefined, { state: 'clean' }),
+      mkSend('s_shared', 'u', undefined, { state: 'failed' }),
+      mkUserTurn('u_fan', 's_shared', undefined, { state: 'stale' }),
+      mkFan('f', 'u_fan', {
+        axis: 'attempt',
+        variants: [
+          { axis: 'attempt', payload: {} },
+          { axis: 'attempt', payload: {} },
+        ],
+      }),
+      mkSend('s_a', 'f', undefined, { state: 'failed' }),
+      mkSend('s_b', 'f', undefined, { state: 'failed' }),
+    ])
+    const out = buildSForRetry(tree, [nodeId('s_a'), nodeId('s_b')])
+    expect([...out].sort()).toEqual(
+      [nodeId('s_a'), nodeId('s_b'), nodeId('s_shared')].sort(),
+    )
+  })
+
+  it('walks transparently through UserTurn / Fan / Score ancestors (only Send state counts)', () => {
+    // s_failed is a failed Send 2 hops up through a UserTurn and a Fan.
+    const tree = mkTree('r', [
+      mkRoot('r', undefined, { state: 'clean' }),
+      mkUserTurn('u1', 'r', undefined, { state: 'clean' }),
+      mkSend('s_failed', 'u1', undefined, { state: 'failed' }),
+      mkUserTurn('u2', 's_failed', undefined, { state: 'stale' }),
+      mkFan('f', 'u2', { axis: 'attempt', variants: [{ axis: 'attempt', payload: {} }] }),
+      mkSend('s_leaf', 'f', undefined, { state: 'failed' }),
+    ])
+    const out = buildSForRetry(tree, [nodeId('s_leaf')])
+    expect([...out].sort()).toEqual(
+      [nodeId('s_leaf'), nodeId('s_failed')].sort(),
+    )
+  })
+
+  it('returns empty when input is empty', () => {
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r'),
+      mkSend('s', 'u'),
+    ])
+    expect(buildSForRetry(tree, []).size).toBe(0)
+  })
+
+  it('silently skips nodeIds that do not exist in the tree (UI race tolerance)', () => {
+    // Operator may delete a node between the [Retry failed] toast and the
+    // click; the captured nodeIds outlive the tree state. Tolerate the
+    // missing id rather than throwing.
+    const tree = mkTree('r', [
+      mkRoot('r', undefined, { state: 'clean' }),
+      mkUserTurn('u', 'r', undefined, { state: 'clean' }),
+      mkSend('s', 'u', undefined, { state: 'failed' }),
+    ])
+    const out = buildSForRetry(tree, [nodeId('s'), nodeId('ghost-id')])
+    expect([...out]).toEqual([nodeId('s')])
+  })
+
+  it('does NOT add ancestors of nodes not in the input set', () => {
+    // s_x is failed, but its descendant s_leaf is NOT in the retry input.
+    // s_x should NOT appear in S (the toast captured only the input leaves;
+    // siblings get their own retry waves).
+    const tree = mkTree('r', [
+      mkRoot('r', undefined, { state: 'clean' }),
+      mkUserTurn('u', 'r', undefined, { state: 'clean' }),
+      mkFan('f', 'u', {
+        axis: 'attempt',
+        variants: [
+          { axis: 'attempt', payload: {} },
+          { axis: 'attempt', payload: {} },
+        ],
+      }),
+      mkSend('s_a', 'f', undefined, { state: 'failed' }),
+      mkSend('s_b', 'f', undefined, { state: 'failed' }),
+    ])
+    const out = buildSForRetry(tree, [nodeId('s_a')])
+    expect([...out]).toEqual([nodeId('s_a')])
   })
 })

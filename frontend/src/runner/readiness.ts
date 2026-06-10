@@ -233,6 +233,41 @@ export function buildSForNode(
   return S
 }
 
+/**
+ * `S` for a retry-failed wave per 03 §2.1 / §5.3:
+ * `S = {nodeIds} ∪ {failed/cancelled Send ancestors on each nodeId's path}`.
+ *
+ * Walks root-to-leaf for each input nodeId; admits every Send ancestor whose
+ * state is in {failed, cancelled} (the specific ancestors the [Retry failed]
+ * wave is recovering). Clean / edited / stale / running ancestors are not
+ * added — they're not the failure the retry is recovering, and admitting
+ * them would widen the retry scope beyond what the toast captured.
+ *
+ * Missing input nodeIds are silently skipped (operator may delete a node
+ * between the toast click-capture and the click itself).
+ */
+export function buildSForRetry(
+  tree: ConversationTree,
+  nodeIds: ReadonlyArray<ConversationTreeNodeId>,
+): Set<ConversationTreeNodeId> {
+  const S = new Set<ConversationTreeNodeId>()
+  if (nodeIds.length === 0) return S
+  const idx = indexTree(tree)
+  for (const id of nodeIds) {
+    const node = idx.byId.get(id)
+    if (node === undefined) continue
+    S.add(id)
+    let cursor = node.parentId === null ? undefined : idx.byId.get(node.parentId)
+    while (cursor !== undefined) {
+      if (cursor.kind === 'send' && (cursor.state === 'failed' || cursor.state === 'cancelled')) {
+        S.add(cursor.id)
+      }
+      cursor = cursor.parentId === null ? undefined : idx.byId.get(cursor.parentId)
+    }
+  }
+  return S
+}
+
 // ============================================================================
 // Retry-failed pre-readiness demotion (§3.1 step 2b)
 // ============================================================================
@@ -248,19 +283,37 @@ export function buildSForNode(
  * weakening the readiness rule, because the rule's exclusion is what
  * prevents same-wave retry amplification (§5.3).
  *
- * The demotion writes through the sink (state transitions + execution clears
- * are observable side effects); per 03 §2.2 the `null` reason sentinel clears
- * `lastError` so the previous failure's error message doesn't linger.
+ * Two outputs in one call:
+ *   - sink writes (state + execution clear) so React state mirrors the
+ *     demotion (the UI surface).
+ *   - a returned `ConversationTree` with the demoted nodes flipped to
+ *     `stale` + `execution=null` + `lastError=null`, so the caller's
+ *     subsequent `computeReady` / `runWave` reads see the demoted state
+ *     (the pure-data surface).
+ *
+ * Returns the input tree by identity when nothing was demoted, so callers
+ * that layered identity-based memoization aren't perturbed by no-op retries.
  */
 export function demoteRetryFailedNodes(
   tree: ConversationTree,
   S: ReadonlySet<ConversationTreeNodeId>,
   sink: RunnerStateSink,
-): void {
+): ConversationTree {
+  const demotedIds = new Set<ConversationTreeNodeId>()
   for (const node of tree.nodes) {
     if (!S.has(node.id)) continue
     if (node.state !== 'failed' && node.state !== 'cancelled') continue
     sink.setNodeState(tree.id, node.id, 'stale', { reason: null })
     sink.clearExecution(tree.id, node.id)
+    demotedIds.add(node.id)
+  }
+  if (demotedIds.size === 0) return tree
+  return {
+    ...tree,
+    nodes: tree.nodes.map((n) =>
+      demotedIds.has(n.id)
+        ? { ...n, state: 'stale' as NodeState, execution: null, lastError: null }
+        : n,
+    ),
   }
 }
