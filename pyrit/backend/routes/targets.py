@@ -15,6 +15,7 @@ from pyrit.backend.models.targets import (
     CreateTargetRequest,
     TargetInstance,
     TargetListResponse,
+    ValidateCapabilitiesResponse,
 )
 from pyrit.backend.services.target_service import get_target_service
 
@@ -104,3 +105,50 @@ async def get_target(target_registry_name: str) -> TargetInstance:  # pyrit-asyn
         )
 
     return target
+
+
+@router.post(
+    "/{target_registry_name}/validate",
+    response_model=ValidateCapabilitiesResponse,
+    responses={
+        404: {"model": ProblemDetail, "description": "Target not found"},
+        500: {"model": ProblemDetail, "description": "Validation failed"},
+    },
+)
+async def validate_target_capabilities(  # pyrit-async-suffix-exempt
+    target_registry_name: str,
+) -> ValidateCapabilitiesResponse:
+    """
+    Validate a target by probing its live capabilities against declarations.
+
+    The probe sends a small set of test requests to the target and reports
+    the declared vs observed capability flags and input modalities. Output
+    modalities are reported as declared (not actively probed). Test prompts
+    are written to memory.
+
+    Returns:
+        ValidateCapabilitiesResponse: Declared and observed capabilities, plus
+        a list of declared input-modality combinations that could not be
+        probed because no test asset is packaged for them, plus operational
+        warnings (live-call cost, memory tagging, semantic-enforcement caveat,
+        validate-vs-active-attack caveat).
+    """
+    service = get_target_service()
+
+    try:
+        result = await service.validate_target_capabilities_async(
+            target_registry_name=target_registry_name,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to validate target: {str(e)}",
+        ) from e
+
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Target '{target_registry_name}' not found",
+        )
+
+    return result
