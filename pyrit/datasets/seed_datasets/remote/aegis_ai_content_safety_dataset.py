@@ -105,7 +105,6 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
         if harm_categories is not None:
             self._validate_enums(harm_categories, AegisHarmCategory, "harm category")
 
-        self.harm_categories_filter = harm_categories
         self._selected_category_values = {c.value for c in harm_categories} if harm_categories is not None else None
         self.source = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
 
