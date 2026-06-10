@@ -1,0 +1,337 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
+/**
+ * Shared test helpers for the tree-UI runner test suite.
+ *
+ * Intentionally low-magic: a small set of builder functions for nodes / edges /
+ * trees, plus a recording mock implementation of `RunnerStateSink`. Tests stay
+ * readable by composing these directly rather than reaching for fixture files.
+ *
+ * The helpers fill in the boilerplate fields every node carries (timestamps,
+ * empty execution history, default state) so tests can name only the fields
+ * they care about for the property under test.
+ */
+
+import type {
+  ApiErrorReason,
+  ConversationTree,
+  ConversationTreeEdge,
+  ConversationTreeId,
+  ConversationTreeNode,
+  ConversationTreeNodeId,
+  ExecutionRecord,
+  FanNode,
+  ImportMessageNode,
+  NodeState,
+  RootPromptNode,
+  RunnerStateSink,
+  ScoreNode,
+  SendNode,
+  UndoOp,
+  UserTurnNode,
+  WaveEvent,
+  WaveTriggerKind,
+} from './treeTypes'
+
+// ----------------------------------------------------------------------------
+// Branded id casts (the brand exists only at the type level; values are strings)
+// ----------------------------------------------------------------------------
+
+export const treeId = (s: string): ConversationTreeId => s as ConversationTreeId
+export const nodeId = (s: string): ConversationTreeNodeId => s as ConversationTreeNodeId
+
+// ----------------------------------------------------------------------------
+// Node builders (one per kind). Each fills boilerplate fields with sensible
+// defaults so tests can override only what they care about.
+// ----------------------------------------------------------------------------
+
+const ISO_FIXED = '2026-06-10T00:00:00.000Z'
+
+interface BaseOverrides {
+  state?: NodeState
+  execution?: ExecutionRecord | null
+  resolvedInputHash?: string
+  lastError?: ApiErrorReason | null
+}
+
+function base(id: string, parentId: string | null, overrides: BaseOverrides = {}) {
+  return {
+    id: nodeId(id),
+    parentId: parentId === null ? null : nodeId(parentId),
+    resolvedInputHash: overrides.resolvedInputHash ?? `sha256:${id}`,
+    state: overrides.state ?? ('clean' as NodeState),
+    execution: overrides.execution ?? null,
+    executionHistory: [] as ConversationTreeNode['executionHistory'],
+    lastError: overrides.lastError ?? null,
+    labels: {} as Record<string, string>,
+    createdAt: ISO_FIXED,
+    updatedAt: ISO_FIXED,
+    version: 1,
+  }
+}
+
+export function mkRoot(
+  id: string,
+  params?: Partial<RootPromptNode['params']>,
+  overrides: BaseOverrides = {},
+): RootPromptNode {
+  return {
+    ...base(id, null, overrides),
+    kind: 'root_prompt',
+    params: {
+      text: params?.text ?? 'root prompt',
+      attachments: params?.attachments ?? [],
+      systemPrompt: params?.systemPrompt,
+      targetRegistryName: params?.targetRegistryName ?? 'gpt-4o',
+    },
+  }
+}
+
+export function mkImport(
+  id: string,
+  params?: Partial<ImportMessageNode['params']>,
+  overrides: BaseOverrides = {},
+): ImportMessageNode {
+  return {
+    ...base(id, null, overrides),
+    kind: 'import_message',
+    params: {
+      sourceConversationId: params?.sourceConversationId ?? 'src-conv-1',
+      cutoffIndex: params?.cutoffIndex ?? 0,
+    },
+  }
+}
+
+export function mkUserTurn(
+  id: string,
+  parentId: string,
+  params?: Partial<UserTurnNode['params']>,
+  overrides: BaseOverrides = {},
+): UserTurnNode {
+  return {
+    ...base(id, parentId, overrides),
+    kind: 'user_turn',
+    params: {
+      role: params?.role ?? 'user',
+      text: params?.text ?? `text ${id}`,
+      attachments: params?.attachments ?? [],
+      converterPipeline: params?.converterPipeline,
+    },
+  }
+}
+
+export function mkSend(
+  id: string,
+  parentId: string,
+  params?: Partial<SendNode['params']>,
+  overrides: BaseOverrides = {},
+): SendNode {
+  return {
+    ...base(id, parentId, overrides),
+    kind: 'send',
+    params: {
+      targetRegistryName: params?.targetRegistryName,
+      converterPipeline: params?.converterPipeline,
+    },
+  }
+}
+
+export function mkFan(
+  id: string,
+  parentId: string,
+  params?: Partial<FanNode['params']>,
+  overrides: BaseOverrides = {},
+): FanNode {
+  return {
+    ...base(id, parentId, overrides),
+    kind: 'fan',
+    params: {
+      axis: params?.axis ?? 'attempt',
+      variants: params?.variants ?? [],
+      mode: params?.mode,
+      promotedChildSlotIndex: params?.promotedChildSlotIndex ?? null,
+      deletedSlotIndices: params?.deletedSlotIndices ?? [],
+    },
+  }
+}
+
+export function mkScore(
+  id: string,
+  parentId: string,
+  params?: Partial<ScoreNode['params']>,
+  overrides: BaseOverrides = {},
+): ScoreNode {
+  return {
+    ...base(id, parentId, overrides),
+    kind: 'score',
+    params: {
+      scorerType: params?.scorerType ?? 'truthfulness',
+      scorerParams: params?.scorerParams,
+    },
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Edge builder
+// ----------------------------------------------------------------------------
+
+export function mkEdge(parentId: string, childId: string, slotIndex = 0): ConversationTreeEdge {
+  return {
+    id: `e-${parentId}-${childId}-${slotIndex}`,
+    parentId: nodeId(parentId),
+    childId: nodeId(childId),
+    slotIndex,
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Tree builder. Derives edges from `parentId` if not supplied explicitly.
+// ----------------------------------------------------------------------------
+
+interface TreeOverrides {
+  id?: string
+  displayName?: string
+  parentConversationTreeId?: string | null
+  parentSourceConversationId?: string | null
+  undoStack?: UndoOp[]
+  edges?: ConversationTreeEdge[]
+}
+
+export function mkTree(rootId: string, nodes: ConversationTreeNode[], overrides: TreeOverrides = {}): ConversationTree {
+  // Default edges: one per child node (slotIndex = 0). Tests that need fan
+  // slotIndices supply explicit edges via overrides.edges.
+  const derivedEdges: ConversationTreeEdge[] =
+    overrides.edges ??
+    nodes
+      .filter((n) => n.parentId !== null)
+      .map((n) => mkEdge(n.parentId as string, n.id as string))
+  return {
+    id: treeId(overrides.id ?? 't-1'),
+    nodes,
+    edges: derivedEdges,
+    rootId: nodeId(rootId),
+    displayName: overrides.displayName ?? 'Test tree',
+    createdAt: ISO_FIXED,
+    parentConversationTreeId:
+      overrides.parentConversationTreeId == null
+        ? null
+        : treeId(overrides.parentConversationTreeId),
+    parentSourceConversationId: overrides.parentSourceConversationId ?? null,
+    undoStack: overrides.undoStack ?? [],
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Mock ExecutionRecord
+// ----------------------------------------------------------------------------
+
+export function mkExecution(overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
+  return {
+    executionId: overrides.executionId ?? 'exec-1',
+    attemptedAt: overrides.attemptedAt ?? ISO_FIXED,
+    attackResultId: overrides.attackResultId ?? 'ar-1',
+    conversationId: overrides.conversationId ?? 'conv-1',
+    pieceIds: overrides.pieceIds ?? [],
+    outcome: overrides.outcome ?? 'success',
+    errorMessage: overrides.errorMessage,
+    resolvedInputHashAtExecution: overrides.resolvedInputHashAtExecution ?? 'sha256:00',
+    waveId: overrides.waveId ?? 'w-1',
+    waveTriggerKind: overrides.waveTriggerKind ?? 'refresh_node',
+    dispatchedAt: overrides.dispatchedAt ?? ISO_FIXED,
+    targetFirstByteAt: overrides.targetFirstByteAt ?? ISO_FIXED,
+    completedAt: overrides.completedAt ?? ISO_FIXED,
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Recording mock `RunnerStateSink`
+// ----------------------------------------------------------------------------
+
+export type SinkCall =
+  | {
+      method: 'setNodeState'
+      treeId: ConversationTreeId
+      nodeId: ConversationTreeNodeId
+      state: NodeState
+      reason?: string | ApiErrorReason | null
+    }
+  | {
+      method: 'recordExecution'
+      treeId: ConversationTreeId
+      nodeId: ConversationTreeNodeId
+      execution: ExecutionRecord
+    }
+  | {
+      method: 'clearExecution'
+      treeId: ConversationTreeId
+      nodeId: ConversationTreeNodeId
+    }
+  | {
+      method: 'setReflogPinned'
+      treeId: ConversationTreeId
+      nodeId: ConversationTreeNodeId
+      executionId: string
+      pinned: boolean
+    }
+  | {
+      method: 'emitWaveEvent'
+      event: WaveEvent
+    }
+
+export interface MockSink {
+  sink: RunnerStateSink
+  calls: SinkCall[]
+  callsOf<M extends SinkCall['method']>(method: M): Extract<SinkCall, { method: M }>[]
+  events(): WaveEvent[]
+  stateChanges(nodeId: ConversationTreeNodeId): NodeState[]
+}
+
+export function mkMockSink(): MockSink {
+  const calls: SinkCall[] = []
+  const sink: RunnerStateSink = {
+    setNodeState: (treeId, nodeId, state, opts) => {
+      calls.push({ method: 'setNodeState', treeId, nodeId, state, reason: opts?.reason })
+    },
+    recordExecution: (treeId, nodeId, execution) => {
+      calls.push({ method: 'recordExecution', treeId, nodeId, execution })
+    },
+    clearExecution: (treeId, nodeId) => {
+      calls.push({ method: 'clearExecution', treeId, nodeId })
+    },
+    setReflogPinned: (treeId, nodeId, executionId, pinned) => {
+      calls.push({ method: 'setReflogPinned', treeId, nodeId, executionId, pinned })
+    },
+    emitWaveEvent: (event) => {
+      calls.push({ method: 'emitWaveEvent', event })
+    },
+  }
+  return {
+    sink,
+    calls,
+    callsOf: <M extends SinkCall['method']>(method: M) =>
+      calls.filter((c): c is Extract<SinkCall, { method: M }> => c.method === method),
+    events: () =>
+      calls
+        .filter((c): c is Extract<SinkCall, { method: 'emitWaveEvent' }> => c.method === 'emitWaveEvent')
+        .map((c) => c.event),
+    stateChanges: (id) =>
+      calls
+        .filter((c): c is Extract<SinkCall, { method: 'setNodeState' }> => c.method === 'setNodeState' && c.nodeId === id)
+        .map((c) => c.state),
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Sanity export to keep TypeScript happy about unused `WaveTriggerKind` import
+// when consumers want to construct one. Not used at runtime.
+// ----------------------------------------------------------------------------
+
+export const ALL_WAVE_TRIGGER_KINDS: readonly WaveTriggerKind[] = [
+  'refresh_node',
+  'refresh_subtree',
+  'refresh_tree',
+  'retry_failed',
+  'synced_peer_add',
+  'cross_tree_rebase',
+] as const
