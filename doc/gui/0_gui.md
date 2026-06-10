@@ -136,7 +136,21 @@ The Configuration view manages the targets available for attacks.
 
 #### Target Table
 
-Lists all registered targets with their type, endpoint, and model name. Click "Set Active" to select a target for use in the Chat view. The active target is highlighted with an "Active" badge.
+Lists all registered targets with their type, endpoint, and model name. Click "Set Active" to select a target for use in the Chat view. The active target is highlighted with an "Active" badge. Click "Validate" on any top-level row to probe a target's live capabilities and see a declared-vs-observed diff (see [Validating Targets](#validating-targets) below).
+
+#### Validating Targets
+
+Each row in the target table has a **Validate** button that runs PyRIT's `discover_target_capabilities_async` engine against the selected target and opens a modal showing declared-vs-observed capability flags and input modalities. Use this when you want to confirm that a target actually accepts the request shapes its class declares (for example, when an Azure OpenAI gateway strips a feature, or when a multimodal class is pointed at a text-only deployment) before launching a long attack run.
+
+The dialog:
+
+- Sends real requests to the target — this may incur cost and produce side effects (logs, billing, content-policy hits). Test prompts are written to memory tagged `capability_probe`.
+- Caps per-probe timeout at 5 seconds for GUI responsiveness.
+- Reports output modalities as declared (those are not actively probed) and renders an amber em-dash for them.
+- Reports declared input-modality combinations the engine has no packaged test asset for (e.g., `function_call`, `tool_call`, `reasoning`, `url`) in a separate "Not probed (no asset)" row rather than as false red mismatches.
+- Should NOT be run while an attack or scenario is actively using the same target — validation temporarily changes the target's runtime configuration during probing.
+
+Only top-level registered targets get a Validate button; inner targets of composite wrappers (e.g., `RoundRobinTarget` children) are reachable only through the wrapper.
 
 #### Creating Targets
 
