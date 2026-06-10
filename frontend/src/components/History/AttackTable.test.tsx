@@ -145,6 +145,30 @@ describe('AttackTable', () => {
     expect(onOpenAttack).toHaveBeenCalledWith('ar-1')
   })
 
+  it('should call onOpenAttack when Enter or Space is pressed on a row', () => {
+    const onOpenAttack = jest.fn()
+
+    render(
+      <TestWrapper>
+        <AttackTable {...defaultProps} onOpenAttack={onOpenAttack} />
+      </TestWrapper>
+    )
+
+    const row = screen.getByTestId('attack-row-ar-1')
+    expect(row).toHaveAttribute('tabindex', '0')
+
+    fireEvent.keyDown(row, { key: 'Enter' })
+    expect(onOpenAttack).toHaveBeenCalledWith('ar-1')
+
+    onOpenAttack.mockClear()
+    fireEvent.keyDown(row, { key: ' ' })
+    expect(onOpenAttack).toHaveBeenCalledWith('ar-1')
+
+    onOpenAttack.mockClear()
+    fireEvent.keyDown(row, { key: 'a' })
+    expect(onOpenAttack).not.toHaveBeenCalled()
+  })
+
   it('should call onOpenAttack when open button is clicked', () => {
     const onOpenAttack = jest.fn()
 
