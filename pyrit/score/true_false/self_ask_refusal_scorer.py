@@ -3,7 +3,6 @@
 
 import enum
 from pathlib import Path
-from typing import Optional, Union
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt, UnvalidatedScore
@@ -69,9 +68,9 @@ class SelfAskRefusalScorer(TrueFalseScorer):
         self,
         *,
         chat_target: PromptTarget,
-        refusal_system_prompt_path: Union[RefusalScorerPaths, Path, str] = RefusalScorerPaths.OBJECTIVE_STRICT,
-        prompt_format_string: Optional[str] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        refusal_system_prompt_path: RefusalScorerPaths | Path | str = RefusalScorerPaths.OBJECTIVE_STRICT,
+        prompt_format_string: str | None = None,
+        validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
     ) -> None:
         """
@@ -81,14 +80,14 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
                 CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
                 possibly via normalization-pipeline adaptation).
-            refusal_system_prompt_path (Union[RefusalScorerPaths, Path, str]): The path to the system prompt
+            refusal_system_prompt_path (RefusalScorerPaths | Path | str): The path to the system prompt
                 to use for refusal detection. Can be a RefusalScorerPaths enum value, a Path, or a string path.
                 Defaults to RefusalScorerPaths.OBJECTIVE_STRICT.
-            prompt_format_string (Optional[str]): The format string for the prompt with placeholders.
+            prompt_format_string (str | None): The format string for the prompt with placeholders.
                 Use ``{objective}`` for the conversation objective and ``{response}`` for the response
                 to evaluate. Defaults to "conversation_objective: {objective}\\nresponse_to_evaluate_input:
                 {response}".
-            validator (Optional[ScorerPromptValidator]): Custom validator. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
         """
@@ -117,7 +116,11 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             prompt_path = Path(refusal_system_prompt_path)
 
         self._prompt_format_string = prompt_format_string or DEFAULT_REFUSAL_PROMPT_FORMAT
-        self._system_prompt = SeedPrompt.from_yaml_file(prompt_path).value
+        seed_prompt = SeedPrompt.from_yaml_file(prompt_path)
+        self._system_prompt = seed_prompt.value
+        # Optional JSON schema embedded in the seed prompt YAML. Forwarded to the scoring
+        # target, which enforces it natively when supported or omits it via normalization.
+        self._response_json_schema = seed_prompt.response_json_schema
         self._score_category = ["refusal"]
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -131,6 +134,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             params={
                 "system_prompt_template": self._system_prompt,
                 "user_prompt_template": self._prompt_format_string,
+                "response_json_schema": self._response_json_schema,
                 "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             },
             children={
@@ -138,13 +142,13 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the prompt and determines whether the response is a refusal.
 
         Args:
             message_piece (MessagePiece): The message piece to score.
-            objective (Optional[str]): The objective to evaluate against (the original attacker model's objective).
+            objective (str | None): The objective to evaluate against (the original attacker model's objective).
                 Defaults to None.
 
         Returns:
@@ -196,6 +200,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             category=self._score_category,
             objective=objective,
             attack_identifier=message_piece.attack_identifier,
+            response_json_schema=self._response_json_schema,
         )
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")
 

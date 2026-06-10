@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Union
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -26,7 +26,7 @@ class QuestionAnsweringEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
     question: str
     answer_type: Literal["int", "float", "str", "bool"]
-    correct_answer: Union[int, str, float]
+    correct_answer: int | str | float
     choices: list[QuestionChoice]
 
     def get_correct_answer_text(self) -> str:

@@ -3,7 +3,6 @@
 
 """Tests for ``SequentialAttack``."""
 
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -35,7 +34,7 @@ def _make_seed_group(objective: str = "obj") -> SeedAttackGroup:
 def _make_context(
     *,
     objective: str = "obj",
-    labels: Optional[dict[str, str]] = None,
+    labels: dict[str, str] | None = None,
 ) -> AttackContext[AttackParameters]:
     params_type = AttackParameters.excluding("next_message", "prepended_conversation")
     return AttackContext(params=params_type(objective=objective, memory_labels=labels or {}))

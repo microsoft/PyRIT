@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 from collections.abc import Generator
-from typing import Optional
 
 from sqlalchemy import inspect
 
@@ -57,8 +56,8 @@ class MockPromptTarget(PromptTarget):
         *,
         system_prompt: str,
         conversation_id: str,
-        attack_identifier: Optional[ComponentIdentifier] = None,
-        labels: Optional[dict[str, str]] = None,
+        attack_identifier: ComponentIdentifier | None = None,
+        labels: dict[str, str] | None = None,
     ) -> None:
         self.system_prompt = system_prompt
         if self._memory:

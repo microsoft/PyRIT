@@ -134,7 +134,7 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
 
     @pytest.fixture
     def mock_simulated_result(self) -> list:
-        """Create a mock simulated conversation result (List[SeedPrompt])."""
+        """Create a mock simulated conversation result (list[SeedPrompt])."""
         return [
             SeedPrompt(value="Simulated user message", data_type="text", role="user", sequence=0),
             SeedPrompt(value="Simulated assistant response", data_type="text", role="assistant", sequence=1),

@@ -14,7 +14,8 @@ from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt, data_serializer_factory
+from pyrit.memory import data_serializer_factory
+from pyrit.models import SeedDataset, SeedPrompt
 
 if TYPE_CHECKING:
     from PIL.Image import Image as PILImage

@@ -21,7 +21,6 @@ import sys
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
 
 from pyrit.cli._banner_assets import BRAILLE_RACCOON, PYRIT_LETTERS, PYRIT_WIDTH, RACCOON_TAIL
 
@@ -199,7 +198,7 @@ def _build_static_banner() -> StaticBannerData:
     color_map: dict[int, ColorRole] = {}
     segment_colors: dict[int, list[tuple[int, int, ColorRole]]] = {}
 
-    def add(line: str, role: ColorRole, segments: Optional[list[tuple[int, int, ColorRole]]] = None) -> None:
+    def add(line: str, role: ColorRole, segments: list[tuple[int, int, ColorRole]] | None = None) -> None:
         idx = len(lines)
         color_map[idx] = role
         if segments:
@@ -559,14 +558,14 @@ def _render_line_with_segments(
     """
     reset = _get_color(ColorRole.RESET, theme)
     # Build per-character color map (later segments override earlier ones)
-    char_roles: list[Optional[ColorRole]] = [None] * len(line)
+    char_roles: list[ColorRole | None] = [None] * len(line)
     for start, end, role in segments:
         for pos in range(start, min(end, len(line))):
             char_roles[pos] = role
 
     # Group consecutive same-role characters for efficient rendering
     result: list[str] = []
-    current_role: Optional[ColorRole] = None
+    current_role: ColorRole | None = None
     for pos, ch in enumerate(line):
         char_role = char_roles[pos]
         if char_role != current_role:

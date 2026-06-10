@@ -6,7 +6,7 @@ import logging
 import re
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 from openai import (
@@ -61,7 +61,7 @@ class OpenAITarget(PromptTarget):
     endpoint_environment_variable: str
     api_key_environment_variable: str
 
-    _async_client: Optional[AsyncOpenAI] = None
+    _async_client: AsyncOpenAI | None = None
 
     @property
     def _client(self) -> AsyncOpenAI:
@@ -78,14 +78,14 @@ class OpenAITarget(PromptTarget):
     def __init__(
         self,
         *,
-        model_name: Optional[str] = None,
-        endpoint: Optional[str] = None,
-        api_key: Optional[str | Callable[[], str | Awaitable[str]]] = None,
-        headers: Optional[str] = None,
-        max_requests_per_minute: Optional[int] = None,
-        httpx_client_kwargs: Optional[dict[str, Any]] = None,
-        underlying_model: Optional[str] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        model_name: str | None = None,
+        endpoint: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        headers: str | None = None,
+        max_requests_per_minute: int | None = None,
+        httpx_client_kwargs: dict[str, Any] | None = None,
+        underlying_model: str | None = None,
+        custom_configuration: TargetConfiguration | None = None,
     ) -> None:
         """
         Initialize an instance of OpenAITarget.
@@ -583,7 +583,7 @@ class OpenAITarget(PromptTarget):
 
         return error_message
 
-    def _extract_partial_content(self, response: Any) -> Optional[str]:
+    def _extract_partial_content(self, response: Any) -> str | None:
         """
         Extract any partial content the model generated before the content filter triggered.
 
@@ -598,7 +598,7 @@ class OpenAITarget(PromptTarget):
         """
         return None
 
-    def _validate_response(self, response: Any, request: MessagePiece) -> Optional[Message]:
+    def _validate_response(self, response: Any, request: MessagePiece) -> Message | None:
         """
         Validate the response and return error Message if needed.
 
@@ -610,7 +610,7 @@ class OpenAITarget(PromptTarget):
             request: The original request MessagePiece.
 
         Returns:
-            Optional[Message]: Error Message if validation fails, None otherwise.
+            Message | None: Error Message if validation fails, None otherwise.
 
         Raises:
             Various exceptions for validation failures.

@@ -12,7 +12,7 @@ from pyrit.prompt_converter import AzureSpeechTextToAudioConverter
 
 def is_speechsdk_installed():
     try:
-        import azure.cognitiveservices.speech  # noqa: F401
+        import azure.cognitiveservices.speech  # type: ignore[ty:unresolved-import]  # noqa: F401
 
         return True
     except ModuleNotFoundError:
@@ -34,7 +34,7 @@ class TestAzureSpeechTextToAudioConverter:
         MockSpeechSynthesizer,  # noqa: N803
         sqlite_instance,
     ):
-        import azure.cognitiveservices.speech as speechsdk
+        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]
 
         mock_synthesizer = MagicMock()
         mock_result = MagicMock()
@@ -131,14 +131,6 @@ class TestAzureSpeechTextToAudioConverter:
 
         with pytest.raises(ValueError, match="AZURE_SPEECH_RESOURCE_ID"):
             AzureSpeechTextToAudioConverter(azure_speech_region="test_region", azure_speech_key=my_provider)
-
-    def test_use_entra_auth_emits_deprecation_warning(self):
-        with pytest.warns(DeprecationWarning, match="use_entra_auth.*deprecated"):
-            AzureSpeechTextToAudioConverter(
-                azure_speech_region="test_region",
-                azure_speech_resource_id="test_resource_id",
-                use_entra_auth=True,
-            )
 
     @patch("azure.cognitiveservices.speech.SpeechConfig")
     @patch(

@@ -4,7 +4,7 @@
 import logging
 import uuid
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal
 
 from typing_extensions import override
 
@@ -84,8 +84,8 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         *,
         source: str = METADATA_URL,
         source_type: Literal["public_url", "file"] = "public_url",
-        categories: Optional[list[VisualLeakBenchCategory]] = None,
-        pii_types: Optional[list[VisualLeakBenchPIIType]] = None,
+        categories: list[VisualLeakBenchCategory] | None = None,
+        pii_types: list[VisualLeakBenchPIIType] | None = None,
     ) -> None:
         """
         Initialize the VisualLeakBench dataset loader.

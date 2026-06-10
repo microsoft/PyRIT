@@ -338,7 +338,7 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
         if not is_in_ipython_session():
             return
 
-        from pyrit.models.data_type_serializer import ImagePathDataTypeSerializer
+        from pyrit.memory import ImagePathDataTypeSerializer
 
         try:
             serializer = ImagePathDataTypeSerializer(category="", prompt_text=piece.converted_value)

@@ -4,7 +4,6 @@
 import os
 import tempfile
 import uuid
-from typing import Optional
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -29,7 +28,7 @@ class MockTextTrueFalseScorer(TrueFalseScorer):
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier()
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         return [
             Score(
                 score_type="true_false",
@@ -56,7 +55,7 @@ class MockTextFloatScaleScorer(FloatScaleScorer):
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier()
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         return [
             Score(
                 score_type="float_scale",
@@ -225,15 +224,7 @@ class TestAudioFloatScaleScorer:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAudioTranscriptHelper:
-    """Tests for AudioTranscriptHelper deprecation and transcription."""
-
-    def test_use_entra_auth_emits_deprecation_warning(self):
-        """Test that passing use_entra_auth to AudioTranscriptHelper emits DeprecationWarning."""
-        from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
-
-        text_scorer = MockTextTrueFalseScorer()
-        with pytest.warns(DeprecationWarning, match="use_entra_auth.*deprecated"):
-            AudioTranscriptHelper(text_capable_scorer=text_scorer, use_entra_auth=True)
+    """Tests for AudioTranscriptHelper transcription."""
 
     async def test_transcribe_audio_async_creates_converter(self, audio_message_piece):
         """Test that _transcribe_audio_async creates AzureSpeechAudioToTextConverter and calls convert_async."""

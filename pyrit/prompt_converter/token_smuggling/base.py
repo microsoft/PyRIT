@@ -114,7 +114,7 @@ class SmugglerConverter(PromptConverter, abc.ABC):
             message (str): The message to encode.
 
         Returns:
-            Tuple[str, str]: A tuple containing a summary and the encoded message.
+            tuple[str, str]: A tuple containing a summary and the encoded message.
         """
         raise NotImplementedError
 

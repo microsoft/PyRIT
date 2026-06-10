@@ -3,7 +3,7 @@
 
 import ast
 import logging
-from typing import Literal, Optional
+from typing import Literal
 
 from typing_extensions import override
 
@@ -64,22 +64,21 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
         language: Literal[
             "English", "Hindi", "French", "Spanish", "Arabic", "Russian", "Serbian", "Tagalog"
         ] = "English",
-        harm_categories: Optional[
-            list[
-                Literal[
-                    "Bullying & Harassment",
-                    "Discrimination & Injustice",
-                    "Graphic material",
-                    "Harms of Representation Allocation and Quality of Service",
-                    "Hate Speech",
-                    "Non-consensual sexual content",
-                    "Profanity",
-                    "Self-Harm",
-                    "Violence, Threats & Incitement",
-                ]
+        harm_categories: list[
+            Literal[
+                "Bullying & Harassment",
+                "Discrimination & Injustice",
+                "Graphic material",
+                "Harms of Representation Allocation and Quality of Service",
+                "Hate Speech",
+                "Non-consensual sexual content",
+                "Profanity",
+                "Self-Harm",
+                "Violence, Threats & Incitement",
             ]
-        ] = None,
-        harm_scope: Optional[Literal["global", "local"]] = None,
+        ]
+        | None = None,
+        harm_scope: Literal["global", "local"] | None = None,
     ) -> None:
         """
         Initialize the Aya Red-teaming dataset loader.

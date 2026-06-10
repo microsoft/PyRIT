@@ -20,7 +20,7 @@ import hashlib
 import json
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, Optional, Union
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, SerializationInfo, model_serializer, model_validator
 
@@ -56,7 +56,7 @@ def config_hash(config_dict: dict[str, Any]) -> str:
     ensure determinism.
 
     Args:
-        config_dict (Dict[str, Any]): A JSON-serializable dictionary.
+        config_dict (dict[str, Any]): A JSON-serializable dictionary.
 
     Returns:
         str: Hex-encoded SHA256 hash string.
@@ -85,11 +85,11 @@ def _build_hash_dict(
     Args:
         class_name (str): The component's class name.
         class_module (str): The component's module path.
-        params (Dict[str, Any]): Behavioral parameters (non-None values only).
-        children (Dict[str, Any]): Child name to ComponentIdentifier or list of ComponentIdentifier.
+        params (dict[str, Any]): Behavioral parameters (non-None values only).
+        children (dict[str, Any]): Child name to ComponentIdentifier or list of ComponentIdentifier.
 
     Returns:
-        Dict[str, Any]: The canonical dictionary for hashing.
+        dict[str, Any]: The canonical dictionary for hashing.
     """
     hash_dict: dict[str, Any] = {
         ComponentIdentifier.KEY_CLASS_NAME: class_name,
@@ -162,16 +162,16 @@ class ComponentIdentifier(BaseModel):
     #: Behavioral parameters that affect output.
     params: dict[str, Any] = Field(default_factory=dict)
     #: Named child identifiers for compositional identity (e.g., a scorer's target).
-    children: dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]] = Field(default_factory=dict)
+    children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] = Field(default_factory=dict)
     #: Content-addressed SHA256 hash. Computed automatically when ``None``;
     #: pass an explicit value to preserve a hash from DB storage where params
     #: may have been truncated.
-    hash: Optional[str] = None
+    hash: str | None = None
     #: Version tag for storage. Not included in the content hash.
     pyrit_version: str = Field(default=pyrit.__version__)
     #: Evaluation hash. Computed by EvaluationIdentifier subclasses and attached
     #: to the identifier so it survives DB round-trips with truncated params.
-    eval_hash: Optional[str] = None
+    eval_hash: str | None = None
 
     # ------------------------------------------------------------------
     # Validators
@@ -435,8 +435,8 @@ class ComponentIdentifier(BaseModel):
         cls,
         obj: object,
         *,
-        params: Optional[dict[str, Any]] = None,
-        children: Optional[dict[str, Union[ComponentIdentifier, list[ComponentIdentifier]]]] = None,
+        params: dict[str, Any] | None = None,
+        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
     ) -> ComponentIdentifier:
         """
         Build a ComponentIdentifier from a live object instance.
@@ -464,7 +464,7 @@ class ComponentIdentifier(BaseModel):
             children=clean_children,
         )
 
-    def get_child(self, key: str) -> Optional[ComponentIdentifier]:
+    def get_child(self, key: str) -> ComponentIdentifier | None:
         """
         Get a single child by key.
 
@@ -519,7 +519,7 @@ class ComponentIdentifier(BaseModel):
         return hashes
 
     @staticmethod
-    def _truncate_value(*, value: Any, max_length: Optional[int]) -> Any:
+    def _truncate_value(*, value: Any, max_length: int | None) -> Any:
         """
         Truncate string values longer than ``max_length`` with a ``...`` suffix.
 
@@ -538,7 +538,7 @@ class ComponentIdentifier(BaseModel):
     # Deprecated shims — kept for one release cycle
     # ------------------------------------------------------------------
 
-    def to_dict(self, *, max_value_length: Optional[int] = None) -> dict[str, Any]:
+    def to_dict(self, *, max_value_length: int | None = None) -> dict[str, Any]:
         """
         Return the flat storage dict (deprecated; use ``model_dump`` instead).
 
@@ -584,7 +584,7 @@ class Identifiable(ABC):
     component's lifetime.
     """
 
-    _identifier: Optional[ComponentIdentifier] = None
+    _identifier: ComponentIdentifier | None = None
 
     @abstractmethod
     def _build_identifier(self) -> ComponentIdentifier:

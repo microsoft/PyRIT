@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, Optional, get_origin
+from typing import TYPE_CHECKING, Any, NamedTuple, get_origin
 
 from pyrit.models import class_name_to_snake_case
 from pyrit.registry.base import ClassRegistryEntry
@@ -53,7 +53,7 @@ class ScenarioMetadata(ClassRegistryEntry):
     default_datasets: tuple[str, ...] = field(kw_only=True)
 
     # Maximum number of items per dataset.
-    max_dataset_size: Optional[int] = field(kw_only=True)
+    max_dataset_size: int | None = field(kw_only=True)
 
     # Scenario-declared custom parameters.
     supported_parameters: tuple[ScenarioParameterMetadata, ...] = field(kw_only=True, default=())
@@ -71,7 +71,7 @@ class ScenarioParameterMetadata(NamedTuple):
     description: str
     default: Any
     param_type: str
-    choices: Optional[list[str]]
+    choices: list[str] | None
     is_list: bool = False
 
 

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from pyrit.message_normalizer._helpers import build_squashed_user_message
 from pyrit.message_normalizer.message_normalizer import MessageListNormalizer
 from pyrit.models import Message, MessagePiece
 
@@ -39,8 +40,12 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
             return list(messages)
 
         if len(messages) == 1:
-            # Only system message, convert to user message
-            return [Message.from_prompt(prompt=first_piece.converted_value, role="user")]
+            # Only system message, convert to user message.
+            return [
+                build_squashed_user_message(
+                    new_message_content=first_piece.converted_value, source_messages=messages[:1]
+                )
+            ]
 
         user_message_index = next(
             (i for i, message in enumerate(messages[1:], start=1) if message.api_role == "user"),
@@ -48,11 +53,18 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
         )
         if user_message_index == -1:
             # Preserve the instruction content without rewriting non-user messages.
-            return [Message.from_prompt(prompt=first_piece.converted_value, role="user")] + list(messages[1:])
+            return [
+                build_squashed_user_message(
+                    new_message_content=first_piece.converted_value, source_messages=messages[:1]
+                )
+            ] + list(messages[1:])
 
         # Combine system with the first user message, preserving non-text pieces (e.g. images) and their order.
         system_content = first_piece.converted_value
         user_message = messages[user_message_index]
+        # Propagate prompt_metadata from the user message's first piece so downstream normalizers
+        # (e.g. JsonSchemaNormalizer) still see request-level metadata after squashing.
+        propagated_metadata = dict(user_message.message_pieces[0].prompt_metadata)
         text_piece_index = next(
             (i for i, piece in enumerate(user_message.message_pieces) if piece.converted_value_data_type == "text"),
             -1,
@@ -66,6 +78,7 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
                 original_value=f"### Instructions ###\n\n{system_content}\n\n######",
                 conversation_id=template_piece.conversation_id,
                 sequence=template_piece.sequence,
+                prompt_metadata=propagated_metadata,
             )
             squashed_pieces = [instruction_piece] + list(user_message.message_pieces)
         else:
@@ -75,6 +88,7 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
                 original_value=f"### Instructions ###\n\n{system_content}\n\n######\n\n{text_piece.converted_value}",
                 conversation_id=text_piece.conversation_id,
                 sequence=text_piece.sequence,
+                prompt_metadata=propagated_metadata,
             )
             squashed_pieces = (
                 list(user_message.message_pieces[:text_piece_index])

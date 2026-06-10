@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging  # noqa: TC003
 from abc import ABC
 from dataclasses import dataclass
-from typing import Optional, TypeVar
+from typing import TypeVar
 
 from pyrit.common.logger import logger
 from pyrit.executor.core.strategy import (
@@ -109,7 +109,7 @@ class WorkflowStrategy(Strategy[WorkflowContextT, WorkflowResultT], ABC):
         *,
         context_type: type[WorkflowContextT],
         logger: logging.Logger = logger,
-        event_handler: Optional[StrategyEventHandler[WorkflowContextT, WorkflowResultT]] = None,
+        event_handler: StrategyEventHandler[WorkflowContextT, WorkflowResultT] | None = None,
     ) -> None:
         """
         Initialize the workflow strategy with a specific context type and logger.

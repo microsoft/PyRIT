@@ -11,7 +11,7 @@ objects directly (e.g., ``ScorerRegistry``, ``ConverterRegistry``,
 ``TargetRegistry``).
 
 For the shared base class, see ``base_instance_registry``.
-For registries that store classes (Type[T]), see ``class_registries/``.
+For registries that store classes (type[T]), see ``class_registries/``.
 """
 
 from __future__ import annotations

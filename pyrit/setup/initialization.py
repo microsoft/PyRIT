@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+import io
 import logging
 import pathlib
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Literal, Optional, Union, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import dotenv
 
@@ -27,7 +28,7 @@ AZURE_SQL = "AzureSQL"
 MemoryDatabaseType = Literal["InMemory", "SQLite", "AzureSQL"]
 
 
-def _load_environment_files(env_files: Optional[Sequence[pathlib.Path]], *, silent: bool = False) -> None:
+def _load_environment_files(env_files: Sequence[pathlib.Path] | None, *, silent: bool = False) -> None:
     """
     Load environment files in the order they are provided.
     Later files override values from earlier files.
@@ -95,9 +96,7 @@ def _print_msg(message: str, quiet: bool, log: bool) -> None:
         logger.info(message)
 
 
-def _load_initializers_from_scripts(
-    *, script_paths: Sequence[Union[str, pathlib.Path]]
-) -> Sequence["PyRITInitializer"]:
+def _load_initializers_from_scripts(*, script_paths: Sequence[str | pathlib.Path]) -> Sequence["PyRITInitializer"]:
     """
     Load PyRITInitializer instances from external Python files.
 
@@ -105,7 +104,7 @@ def _load_initializers_from_scripts(
     that inherit from PyRITInitializer will be automatically discovered and instantiated.
 
     Args:
-        script_paths (Sequence[Union[str, pathlib.Path]]): Sequence of file paths to Python scripts to load.
+        script_paths (Sequence[str | pathlib.Path]): Sequence of file paths to Python scripts to load.
 
     Returns:
         Sequence[PyRITInitializer]: List of PyRITInitializer instances loaded from the scripts.
@@ -186,6 +185,69 @@ def _load_initializers_from_scripts(
     return loaded_initializers
 
 
+def _parse_akv_secret_url(secret_url: str) -> tuple[str, str, str | None]:
+    """
+    Parse an AKV secret URL into vault URL, secret name, and optional version.
+
+    Args:
+        secret_url (str): Full AKV secret URL in the format
+            ``https://{vault}.vault.azure.net/secrets/{name}[/{version}]``.
+
+    Returns:
+        tuple[str, str, str | None]: (vault_url, secret_name, secret_version)
+
+    Raises:
+        ValueError: If the URL does not match the expected format.
+    """
+    parts = secret_url.split("/secrets/")
+    if len(parts) != 2:
+        raise ValueError(
+            f"Invalid AKV secret URL: '{secret_url}'. "
+            "Expected format: https://{{vault}}.vault.azure.net/secrets/{{name}}[/{{version}}]"
+        )
+    vault_url = parts[0]
+    name_parts = parts[1].rstrip("/").split("/")
+    secret_name = name_parts[0]
+    secret_version = name_parts[1] if len(name_parts) > 1 else None
+    return vault_url, secret_name, secret_version
+
+
+async def _load_env_from_akv_async(*, secret_urls: Sequence[str], silent: bool = False) -> None:
+    """
+    Load environment variables from Azure Key Vault secrets.
+
+    Each secret's value is treated as the full contents of a ``.env`` file and
+    parsed accordingly. Later secrets override values from earlier ones.
+
+    Authentication uses ``DefaultAzureCredential``, which silently tries managed
+    identity, Azure CLI, VS Code credentials, etc., and falls back to interactive
+    browser authentication when running locally.
+
+    Args:
+        secret_urls (Sequence[str]): Sequence of AKV secret URLs to load, each in
+            the format ``https://{vault}.vault.azure.net/secrets/{name}[/{version}]``.
+        silent (bool): If True, suppresses print statements. Defaults to False.
+
+    Raises:
+        ImportError: If ``azure-keyvault-secrets`` is not installed.
+        ValueError: If a secret URL is malformed.
+    """
+    if not secret_urls:
+        return
+    from azure.identity.aio import DefaultAzureCredential
+    from azure.keyvault.secrets.aio import SecretClient
+
+    credential = DefaultAzureCredential()
+    for secret_url in secret_urls:
+        _print_msg(f"Loading environment from AKV secret: {secret_url}", quiet=silent, log=True)
+        vault_url, secret_name, secret_version = _parse_akv_secret_url(secret_url)
+        client = SecretClient(vault_url=vault_url, credential=credential)
+        secret = await client.get_secret(secret_name, version=secret_version)
+        if secret.value:
+            dotenv.load_dotenv(stream=io.StringIO(secret.value), override=True)
+            _print_msg(f"Loaded environment from AKV secret: {secret_url}", quiet=silent, log=True)
+
+
 async def _execute_initializers_async(*, initializers: Sequence["PyRITInitializer"]) -> None:
     """
     Execute PyRITInitializer instances in the order provided.
@@ -228,11 +290,12 @@ async def _execute_initializers_async(*, initializers: Sequence["PyRITInitialize
 
 
 async def initialize_pyrit_async(
-    memory_db_type: Union[MemoryDatabaseType, str],
+    memory_db_type: MemoryDatabaseType | str,
     *,
-    initialization_scripts: Optional[Sequence[Union[str, pathlib.Path]]] = None,
-    initializers: Optional[Sequence["PyRITInitializer"]] = None,
-    env_files: Optional[Sequence[pathlib.Path]] = None,
+    initialization_scripts: Sequence[str | pathlib.Path] | None = None,
+    initializers: Sequence["PyRITInitializer"] | None = None,
+    env_files: Sequence[pathlib.Path] | None = None,
+    env_akv_ref: Sequence[str] | None = None,
     silent: bool = False,
     **memory_instance_kwargs: Any,
 ) -> None:
@@ -242,21 +305,27 @@ async def initialize_pyrit_async(
     Args:
         memory_db_type (MemoryDatabaseType): The MemoryDatabaseType string literal which indicates the memory
             instance to use for central memory. Options include "InMemory", "SQLite", and "AzureSQL".
-        initialization_scripts (Optional[Sequence[Union[str, pathlib.Path]]]): Optional sequence of Python script paths
+        initialization_scripts (Sequence[str | pathlib.Path] | None): Optional sequence of Python script paths
             that contain PyRITInitializer classes. Each script must define either a get_initializers() function
             or an 'initializers' variable that returns/contains a list of PyRITInitializer instances.
-        initializers (Optional[Sequence[PyRITInitializer]]): Optional sequence of PyRITInitializer instances
+        initializers (Sequence[PyRITInitializer] | None): Optional sequence of PyRITInitializer instances
             to execute directly. These provide type-safe, validated configuration with clear documentation.
-        env_files (Optional[Sequence[pathlib.Path]]): Optional sequence of environment file paths to load
+        env_files (Sequence[pathlib.Path] | None): Optional sequence of environment file paths to load
             in order. If not provided, will load default .env and .env.local files from PyRIT home if they exist.
             All paths must be valid pathlib.Path objects.
+        env_akv_ref (Sequence[str] | None): Optional sequence of Azure Key Vault secret URLs to load.
+            Each secret's value must be the full contents of a .env file. Loaded before ``env_files``
+            so local files take precedence over AKV. Requires ``azure-keyvault-secrets``.
         silent (bool): If True, suppresses print statements about environment file loading and
             schema migration. Defaults to False.
-        **memory_instance_kwargs (Optional[Any]): Additional keyword arguments to pass to the memory instance.
+        **memory_instance_kwargs (Any | None): Additional keyword arguments to pass to the memory instance.
 
     Raises:
         ValueError: If an unsupported memory_db_type is provided or if env_files contains non-existent files.
     """
+    if env_akv_ref:
+        await _load_env_from_akv_async(secret_urls=env_akv_ref, silent=silent)
+
     _load_environment_files(env_files=env_files, silent=silent)
 
     # Reset all default values before executing initialization scripts

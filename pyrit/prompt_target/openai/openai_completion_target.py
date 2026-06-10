@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from pyrit.exceptions.exception_classes import (
     pyrit_target_retry,
@@ -30,13 +30,13 @@ class OpenAICompletionTarget(OpenAITarget):
 
     def __init__(
         self,
-        max_tokens: Optional[int] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        presence_penalty: Optional[float] = None,
-        frequency_penalty: Optional[float] = None,
-        n: Optional[int] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        presence_penalty: float | None = None,
+        frequency_penalty: float | None = None,
+        n: int | None = None,
+        custom_configuration: TargetConfiguration | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:

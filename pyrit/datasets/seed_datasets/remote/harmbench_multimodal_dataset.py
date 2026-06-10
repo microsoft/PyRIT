@@ -4,7 +4,7 @@
 import logging
 import uuid
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal
 
 from typing_extensions import override
 
@@ -81,7 +81,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
             "harmbench_behaviors_multimodal_all.csv"
         ),
         source_type: Literal["public_url", "file"] = "public_url",
-        categories: Optional[list[SemanticCategory]] = None,
+        categories: list[SemanticCategory] | None = None,
     ) -> None:
         """
         Initialize the HarmBench multimodal dataset loader.
