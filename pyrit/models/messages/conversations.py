@@ -158,7 +158,7 @@ def group_message_pieces_into_conversations(
         return []
 
     # Group pieces by conversation ID
-    conversations: dict[str, list[MessagePiece]] = {}
+    conversations: dict[str | None, list[MessagePiece]] = {}
     for piece in message_pieces:
         conv_id = piece.conversation_id
         if conv_id not in conversations:
