@@ -38,6 +38,7 @@ def mock_memory():
     memory.get_conversation.return_value = []
     memory.get_message_pieces.return_value = []
     memory.get_conversation_stats.return_value = {}
+    memory.get_prompt_scores.return_value = []
 
     return memory
 
@@ -131,7 +132,9 @@ def make_mock_piece(
     piece.original_value_data_type = "text"
     piece.response_error = "none"
     piece.timestamp = timestamp or datetime.now(timezone.utc)
-    piece.scores = []
+    # MessagePiece no longer carries scores — they are fetched from memory.
+    # Pin original_prompt_id so the mapper's score-lookup key is deterministic.
+    piece.original_prompt_id = None
     return piece
 
 
@@ -1447,7 +1450,7 @@ class TestMessageBuilding:
         mock_piece.sequence = 0
         mock_piece.role = "user"
         mock_piece.timestamp = datetime.now(timezone.utc)
-        mock_piece.scores = None
+        mock_piece.original_prompt_id = None
 
         mock_msg = MagicMock()
         mock_msg.message_pieces = [mock_piece]

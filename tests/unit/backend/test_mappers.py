@@ -102,7 +102,10 @@ def _make_mock_piece(
     p.response_error = "none"
     p.role = "user"
     p.timestamp = datetime.now(timezone.utc)
-    p.scores = []
+    # MessagePiece no longer carries scores — they are fetched from memory.
+    # Set original_prompt_id explicitly so the lookup key is deterministic
+    # (otherwise the auto-generated MagicMock attr is truthy and unpredictable).
+    p.original_prompt_id = None
     return p
 
 
@@ -466,6 +469,16 @@ class TestAttackResultToSummary:
 class TestPyritMessagesToDto:
     """Tests for pyrit_messages_to_dto_async function."""
 
+    @pytest.fixture(autouse=True)
+    def _stub_central_memory(self):
+        """Stub CentralMemory so the mapper's score lookup is a no-op for mock-based tests."""
+        from pyrit.memory import CentralMemory
+
+        stub = MagicMock()
+        stub.get_prompt_scores = MagicMock(return_value=[])
+        with patch.object(CentralMemory, "get_memory_instance", return_value=stub):
+            yield stub
+
     async def test_maps_single_message(self) -> None:
         """Test mapping a single message with one piece."""
         piece = _make_mock_piece(original_value="hi", converted_value="hi")
@@ -646,6 +659,101 @@ class TestPyritMessagesToDto:
 
         assert result[0].pieces[0].original_value == "/tmp/nonexistent.png"
         assert result[0].pieces[0].converted_value == "/tmp/nonexistent.png"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestPyritMessagesToDtoRealObjects:
+    """Regression tests for pyrit_messages_to_dto_async using real domain objects.
+
+    The mock-based ``TestPyritMessagesToDto`` suite above sets ``p.scores = []``
+    directly on a ``MagicMock``, which masks the fact that ``MessagePiece`` no
+    longer carries a ``scores`` attribute. These tests round-trip real
+    ``MessagePiece`` / ``Score`` instances through a real ``SQLiteMemory`` so
+    that any regression to ``p.scores``-style access on the piece (or other
+    drift between the Pydantic model and the mapper) is caught.
+    """
+
+    async def test_scores_are_fetched_from_memory_and_attached(self, sqlite_instance) -> None:
+        """A real MessagePiece + Score round-trips through the mapper with scores attached."""
+        from pyrit.models import Message as RealPyritMessage
+        from pyrit.models import MessagePiece as RealPyritMessagePiece
+        from pyrit.models import Score as RealPyritScore
+
+        piece = RealPyritMessagePiece(role="user", original_value="hi")
+        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[piece]))
+
+        score = RealPyritScore(
+            score_value="0.75",
+            score_type="float_scale",
+            score_category=["bias"],
+            score_rationale="example rationale",
+            message_piece_id=piece.id,
+        )
+        sqlite_instance.add_scores_to_memory(scores=[score])
+
+        reloaded = sqlite_instance.get_conversation(conversation_id=piece.conversation_id)
+        result = await pyrit_messages_to_dto_async(list(reloaded), memory=sqlite_instance)
+
+        assert len(result) == 1
+        dto_pieces = result[0].pieces
+        assert len(dto_pieces) == 1
+        attached = dto_pieces[0].scores
+        assert len(attached) == 1
+        assert attached[0].score_value == "0.75"
+        assert attached[0].score_type == "float_scale"
+        assert attached[0].score_category == ["bias"]
+        assert attached[0].score_rationale == "example rationale"
+
+    async def test_empty_scores_when_none_recorded(self, sqlite_instance) -> None:
+        """A real piece with no scores in memory maps to an empty scores list."""
+        from pyrit.models import Message as RealPyritMessage
+        from pyrit.models import MessagePiece as RealPyritMessagePiece
+
+        piece = RealPyritMessagePiece(role="user", original_value="hi")
+        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[piece]))
+
+        reloaded = sqlite_instance.get_conversation(conversation_id=piece.conversation_id)
+        result = await pyrit_messages_to_dto_async(list(reloaded), memory=sqlite_instance)
+
+        assert result[0].pieces[0].scores == []
+
+    async def test_scores_are_grouped_per_piece_across_multiple_pieces(self, sqlite_instance) -> None:
+        """Scores from a batched fetch are routed to the correct originating piece."""
+        from pyrit.models import Message as RealPyritMessage
+        from pyrit.models import MessagePiece as RealPyritMessagePiece
+        from pyrit.models import Score as RealPyritScore
+
+        conv_id = "real-conv-1"
+        user_piece = RealPyritMessagePiece(role="user", original_value="ask", conversation_id=conv_id)
+        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[user_piece]))
+        assistant_piece = RealPyritMessagePiece(role="assistant", original_value="reply", conversation_id=conv_id)
+        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[assistant_piece]))
+
+        sqlite_instance.add_scores_to_memory(
+            scores=[
+                RealPyritScore(
+                    score_value="true",
+                    score_type="true_false",
+                    score_rationale="refusal detected",
+                    message_piece_id=assistant_piece.id,
+                ),
+                RealPyritScore(
+                    score_value="0.1",
+                    score_type="float_scale",
+                    score_rationale="low severity",
+                    message_piece_id=assistant_piece.id,
+                ),
+            ]
+        )
+
+        reloaded = sqlite_instance.get_conversation(conversation_id=conv_id)
+        result = await pyrit_messages_to_dto_async(list(reloaded), memory=sqlite_instance)
+
+        by_role = {msg.role: msg for msg in result}
+        assert by_role["user"].pieces[0].scores == []
+        assistant_scores = by_role["assistant"].pieces[0].scores
+        assert len(assistant_scores) == 2
+        assert {s.score_value for s in assistant_scores} == {"true", "0.1"}
 
 
 class TestIsAzureBlobUrl:

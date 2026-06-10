@@ -267,7 +267,7 @@ class AttackService:
 
         # Get messages for this conversation
         pyrit_messages = self._memory.get_conversation(conversation_id=conversation_id)
-        backend_messages = await pyrit_messages_to_dto_async(list(pyrit_messages))
+        backend_messages = await pyrit_messages_to_dto_async(list(pyrit_messages), memory=self._memory)
 
         return ConversationMessagesResponse(
             conversation_id=conversation_id,
