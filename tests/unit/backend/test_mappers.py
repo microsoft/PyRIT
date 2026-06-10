@@ -706,6 +706,140 @@ class TestPyritMessagesToDto:
         assert view.original_value_url is None
         assert view.converted_value_url is None
 
+    # ------------------------------------------------------------------
+    # PR2: original_prompt_id + converter_identifiers exposure
+    # ------------------------------------------------------------------
+    #
+    # Per doc/gui/design/01_tree_primitives.md §9.4.4 (b): the V1.0 tree-UI
+    # reload-reconstruction path (§9.4.1) and the `Fan(axis='converter')`
+    # variant-payload reconstruction (§9.3.1) both depend on these two fields
+    # being exposed on the response DTO. The mapper previously dropped them.
+
+    async def test_exposes_original_prompt_id(self) -> None:
+        """Mapper exposes domain piece's original_prompt_id as a stringified UUID."""
+        piece = _make_mock_piece(original_value="hi", converted_value="hi")
+        lineage_root = uuid.uuid4()
+        piece.original_prompt_id = lineage_root
+        msg = MagicMock()
+        msg.message_pieces = [piece]
+
+        result = await pyrit_messages_to_dto_async([msg])
+
+        assert result[0].pieces[0].original_prompt_id == str(lineage_root)
+
+    async def test_original_prompt_id_none_serializes_as_none(self) -> None:
+        """Defensive: a domain piece whose original_prompt_id is None maps to None on the DTO.
+
+        Persisted pieces never have a null original_prompt_id (the
+        _set_original_prompt_id_default validator defaults it to self.id), but
+        the mapper must not crash on a defensive-test piece that explicitly
+        sets it to None.
+        """
+        piece = _make_mock_piece(original_value="hi", converted_value="hi")
+        piece.original_prompt_id = None
+        msg = MagicMock()
+        msg.message_pieces = [piece]
+
+        result = await pyrit_messages_to_dto_async([msg])
+
+        assert result[0].pieces[0].original_prompt_id is None
+
+    async def test_exposes_converter_identifiers(self) -> None:
+        """Mapper exposes domain piece's converter_identifiers as DTO list.
+
+        Load-bearing for V1.0 reload-reconstruction: without this, a
+        reconstructed UserTurnNode renders with an empty converter pipeline
+        indistinguishable from 'no converter ever applied', and the next
+        Refresh silently fires without the operator's authored converters.
+        """
+        rot13 = ComponentIdentifier(
+            class_name="ROT13Converter",
+            class_module="pyrit.prompt_converter",
+            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+        )
+        base64 = ComponentIdentifier(
+            class_name="Base64Converter",
+            class_module="pyrit.prompt_converter",
+            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+        )
+        piece = _make_mock_piece(original_value="hi", converted_value="aGk=")
+        piece.original_prompt_id = uuid.uuid4()
+        piece.converter_identifiers = [rot13, base64]
+        msg = MagicMock()
+        msg.message_pieces = [piece]
+
+        result = await pyrit_messages_to_dto_async([msg])
+
+        converters = result[0].pieces[0].converter_identifiers
+        assert len(converters) == 2
+        assert converters[0].class_name == "ROT13Converter"
+        assert converters[0].class_module == "pyrit.prompt_converter"
+        assert converters[1].class_name == "Base64Converter"
+        # Round-trip: applying model_dump should produce the same flat shape
+        # the runner reads at reload time (per §4.1 _load_piece_as_request).
+        dumped = converters[0].model_dump()
+        assert dumped["class_name"] == "ROT13Converter"
+        assert dumped["class_module"] == "pyrit.prompt_converter"
+
+    async def test_converter_identifiers_empty_defaults_to_list(self) -> None:
+        """Mapper exposes an empty list (not None) when domain piece has no converters.
+
+        Per §9.4.4 (b) DTO field defaults: `default=[]` so 'no converter ever
+        applied' is distinguishable from 'DTO missing the field' (which would
+        fail at the TypeScript boundary on the frontend).
+        """
+        piece = _make_mock_piece(original_value="hi", converted_value="hi")
+        piece.original_prompt_id = uuid.uuid4()
+        piece.converter_identifiers = []
+        msg = MagicMock()
+        msg.message_pieces = [piece]
+
+        result = await pyrit_messages_to_dto_async([msg])
+
+        assert result[0].pieces[0].converter_identifiers == []
+
+
+class TestMessagePieceDtoDefaults:
+    """Direct DTO instantiation tests for the PR2 fields.
+
+    Independent of the mapper: proves the DTO field declarations themselves
+    have the right shape + defaults the frontend types will rely on.
+    """
+
+    def test_defaults_for_new_fields(self) -> None:
+        """A minimally-constructed MessagePiece has the V1.0 fields with their declared defaults."""
+        from pyrit.backend.models.attacks import MessagePiece as MessagePieceDto
+
+        dto = MessagePieceDto(piece_id="p1", converted_value="hello")
+
+        # PR2 contract: list[ComponentIdentifierField] defaulting to [].
+        assert dto.converter_identifiers == []
+        # PR2 contract: str | None defaulting to None.
+        assert dto.original_prompt_id is None
+
+    def test_serializes_converter_identifiers_to_flat_dict_shape(self) -> None:
+        """ComponentIdentifierField round-trips through JSON as the flat shape the frontend reads."""
+        from pyrit.backend.models.attacks import MessagePiece as MessagePieceDto
+
+        ci = ComponentIdentifier(
+            class_name="Base64Converter",
+            class_module="pyrit.prompt_converter",
+            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+        )
+        dto = MessagePieceDto(
+            piece_id="p1",
+            converted_value="hi",
+            converter_identifiers=[ci],
+            original_prompt_id="0c1b9c7d-0000-0000-0000-000000000000",
+        )
+
+        # The frontend reads JSON; model_dump() is what FastAPI calls under the hood.
+        dumped = dto.model_dump()
+        assert dumped["original_prompt_id"] == "0c1b9c7d-0000-0000-0000-000000000000"
+        assert isinstance(dumped["converter_identifiers"], list)
+        assert dumped["converter_identifiers"][0]["class_name"] == "Base64Converter"
+        assert dumped["converter_identifiers"][0]["class_module"] == "pyrit.prompt_converter"
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPyritMessagesToDtoRealObjects:

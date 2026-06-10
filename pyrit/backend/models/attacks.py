@@ -28,6 +28,7 @@ from pyrit.models import (
 class TargetInfo(BaseModel):
     """Target information extracted from the stored attack-strategy identifier."""
 
+    target_registry_name: str | None = Field(None, description="Backend registry key for the target, when recoverable")
     target_type: str = Field(..., description="Target class name (e.g., 'OpenAIChatTarget')")
     endpoint: str | None = Field(None, description="Target endpoint URL")
     model_name: str | None = Field(None, description="Model or deployment name")
@@ -262,6 +263,7 @@ class AttackSummary(AttackResult):
         if not target_id:
             return None
         return TargetInfo(
+            target_registry_name=target_id.unique_name,
             target_type=target_id.class_name,
             endpoint=target_id.params.get("endpoint") or None,
             model_name=target_id.params.get("model_name") or None,
