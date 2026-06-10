@@ -3,7 +3,9 @@
 
 import os
 import pathlib
+import sys
 import tempfile
+import types
 from unittest import mock
 
 import pytest
@@ -12,8 +14,10 @@ from pyrit.common.apply_defaults import reset_default_values
 from pyrit.common.singleton import Singleton
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initialization import (
+    _load_env_from_akv_async,
     _load_environment_files,
     _load_initializers_from_scripts,
+    _parse_akv_secret_url,
 )
 
 
@@ -159,6 +163,56 @@ class ScriptInit(PyRITInitializer):
         """Test that invalid memory type raises ValueError."""
         with pytest.raises(ValueError, match="is not a supported type"):
             await initialize_pyrit_async(memory_db_type="InvalidType")  # type: ignore[arg-type]
+
+    @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
+    @mock.patch("pyrit.setup.initialization._load_environment_files")
+    @mock.patch("pyrit.setup.initialization._load_env_from_akv_async", new_callable=mock.AsyncMock)
+    async def test_initialize_with_env_akv_ref(self, mock_load_akv, mock_load_env, mock_set_memory):
+        """Test that env_akv_ref triggers AKV env loading."""
+        refs = ["https://vault.vault.azure.net/secrets/test-secret"]
+
+        await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_akv_ref=refs)
+
+        mock_load_akv.assert_awaited_once()
+        assert mock_load_akv.await_args.kwargs["secret_urls"] == refs
+        assert mock_load_akv.await_args.kwargs["silent"] is False
+        mock_load_env.assert_called_once()
+        mock_set_memory.assert_called_once()
+
+    @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
+    @mock.patch("pyrit.setup.initialization._load_environment_files")
+    @mock.patch("pyrit.setup.initialization._load_env_from_akv_async", new_callable=mock.AsyncMock)
+    async def test_initialize_with_empty_env_akv_ref_does_not_load_akv(
+        self, mock_load_akv, mock_load_env, mock_set_memory
+    ):
+        """Test that empty env_akv_ref does not invoke AKV loading."""
+        await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_akv_ref=[])
+
+        mock_load_akv.assert_not_called()
+        mock_load_env.assert_called_once()
+        mock_set_memory.assert_called_once()
+
+    @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
+    async def test_initialize_loads_akv_before_env_files(self, mock_set_memory):
+        """Test that AKV refs are loaded before env_files so env_files can override values."""
+        call_order: list[str] = []
+
+        async def _record_akv_call(*, secret_urls, silent=False):
+            call_order.append("akv")
+
+        def _record_env_file_call(*, env_files, silent=False):
+            call_order.append("env_files")
+
+        refs = ["https://vault.vault.azure.net/secrets/test-secret"]
+
+        with (
+            mock.patch("pyrit.setup.initialization._load_env_from_akv_async", side_effect=_record_akv_call),
+            mock.patch("pyrit.setup.initialization._load_environment_files", side_effect=_record_env_file_call),
+        ):
+            await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_akv_ref=refs)
+
+        assert call_order == ["akv", "env_files"]
+        mock_set_memory.assert_called_once()
 
 
 @pytest.fixture
@@ -320,3 +374,88 @@ class TestLoadEnvironmentFiles:
             # Verify only custom file was loaded, not the default ones
             assert mock_load_dotenv.call_count == 1
             assert mock_load_dotenv.call_args[0][0] == custom_env
+
+
+class TestAkvEnvironmentLoading:
+    """Tests for AKV URL parsing and env loading helpers."""
+
+    def test_parse_akv_secret_url_with_version(self):
+        url = "https://myvault.vault.azure.net/secrets/my-secret/abc123"
+
+        vault_url, secret_name, secret_version = _parse_akv_secret_url(url)
+
+        assert vault_url == "https://myvault.vault.azure.net"
+        assert secret_name == "my-secret"
+        assert secret_version == "abc123"
+
+    def test_parse_akv_secret_url_without_version(self):
+        url = "https://myvault.vault.azure.net/secrets/my-secret"
+
+        vault_url, secret_name, secret_version = _parse_akv_secret_url(url)
+
+        assert vault_url == "https://myvault.vault.azure.net"
+        assert secret_name == "my-secret"
+        assert secret_version is None
+
+    def test_parse_akv_secret_url_invalid_raises(self):
+        with pytest.raises(ValueError, match="Invalid AKV secret URL"):
+            _parse_akv_secret_url("https://myvault.vault.azure.net/not-secrets/my-secret")
+
+    @mock.patch("pyrit.setup.initialization.dotenv.load_dotenv")
+    async def test_load_env_from_akv_async_empty_urls_noop(self, mock_load_dotenv):
+        await _load_env_from_akv_async(secret_urls=[])
+        mock_load_dotenv.assert_not_called()
+
+    async def test_load_env_from_akv_async_loads_secret_content(self):
+        class FakeCredential:
+            pass
+
+        client_calls: list[tuple[str, object, object]] = []
+
+        class FakeSecretClient:
+            def __init__(self, *, vault_url, credential):
+                client_calls.append(("init", vault_url, credential))
+
+            async def get_secret(self, name, version=None):
+                client_calls.append(("get_secret", name, version))
+                return types.SimpleNamespace(value="AKV_VAR=from_secret\n")
+
+        azure_module = types.ModuleType("azure")
+        identity_module = types.ModuleType("azure.identity")
+        identity_aio_module = types.ModuleType("azure.identity.aio")
+        keyvault_module = types.ModuleType("azure.keyvault")
+        keyvault_secrets_module = types.ModuleType("azure.keyvault.secrets")
+        keyvault_secrets_aio_module = types.ModuleType("azure.keyvault.secrets.aio")
+
+        identity_aio_module.DefaultAzureCredential = FakeCredential
+        keyvault_secrets_aio_module.SecretClient = FakeSecretClient
+
+        with (
+            mock.patch.dict(
+                sys.modules,
+                {
+                    "azure": azure_module,
+                    "azure.identity": identity_module,
+                    "azure.identity.aio": identity_aio_module,
+                    "azure.keyvault": keyvault_module,
+                    "azure.keyvault.secrets": keyvault_secrets_module,
+                    "azure.keyvault.secrets.aio": keyvault_secrets_aio_module,
+                },
+            ),
+            mock.patch("pyrit.setup.initialization.dotenv.load_dotenv") as mock_load_dotenv,
+            mock.patch("pyrit.setup.initialization._print_msg") as mock_print_msg,
+        ):
+            await _load_env_from_akv_async(
+                secret_urls=["https://myvault.vault.azure.net/secrets/my-secret/v1"],
+                silent=True,
+            )
+
+        assert client_calls[0][0] == "init"
+        assert client_calls[0][1] == "https://myvault.vault.azure.net"
+        assert isinstance(client_calls[0][2], FakeCredential)
+        assert client_calls[1] == ("get_secret", "my-secret", "v1")
+
+        stream = mock_load_dotenv.call_args.kwargs["stream"]
+        assert stream.getvalue() == "AKV_VAR=from_secret\n"
+        assert mock_load_dotenv.call_args.kwargs["override"] is True
+        assert mock_print_msg.call_count == 2

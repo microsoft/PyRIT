@@ -56,6 +56,7 @@ class CapabilityHandlingPolicy:
         default_factory=lambda: {
             CapabilityName.MULTI_TURN: UnsupportedCapabilityBehavior.RAISE,
             CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.RAISE,
+            CapabilityName.JSON_SCHEMA: UnsupportedCapabilityBehavior.ADAPT,
         }
     )
 

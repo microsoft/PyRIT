@@ -91,6 +91,11 @@ class RolePlayAttack(PromptSendingAttack):
             ValueError: If the objective scorer is not a true/false scorer.
             FileNotFoundError: If the role_play_definition_path does not exist.
         """
+        # Store the adversarial chat for role-play rephrasing BEFORE super().__init__(), because
+        # the base PromptSendingAttack builds and caches the attack identifier during init and the
+        # identifier must include the adversarial chat target.
+        self._adversarial_chat = attack_adversarial_config.target
+
         # Initialize the parent class first
         super().__init__(
             objective_target=objective_target,
@@ -100,9 +105,6 @@ class RolePlayAttack(PromptSendingAttack):
             max_attempts_on_failure=max_attempts_on_failure,
             params_type=RolePlayAttackParameters,
         )
-
-        # Store the adversarial chat for role-play rephrasing
-        self._adversarial_chat = attack_adversarial_config.target
 
         # Load role-play definitions
         role_play_definition = SeedDataset.from_yaml_file(role_play_definition_path)
@@ -119,6 +121,19 @@ class RolePlayAttack(PromptSendingAttack):
                 )
             ]
         )
+
+    def get_attack_adversarial_config(self) -> AttackAdversarialConfig | None:
+        """
+        Get the effective adversarial configuration used by this strategy.
+
+        Returns:
+            AttackAdversarialConfig | None: The adversarial target used for role-play rephrasing.
+                The system/seed prompts are not used (role-play uses its own definition files).
+        """
+        adversarial_chat = getattr(self, "_adversarial_chat", None)
+        if adversarial_chat is None:
+            return None
+        return AttackAdversarialConfig(target=adversarial_chat, seed_prompt=None)
 
     async def _setup_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """

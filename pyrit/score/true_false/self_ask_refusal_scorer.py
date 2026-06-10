@@ -117,7 +117,11 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             prompt_path = Path(refusal_system_prompt_path)
 
         self._prompt_format_string = prompt_format_string or self.DEFAULT_REFUSAL_PROMPT_FORMAT
-        self._system_prompt = SeedPrompt.from_yaml_file(prompt_path).value
+        seed_prompt = SeedPrompt.from_yaml_file(prompt_path)
+        self._system_prompt = seed_prompt.value
+        # Optional JSON schema embedded in the seed prompt YAML. Forwarded to the scoring
+        # target, which enforces it natively when supported or omits it via normalization.
+        self._response_json_schema = seed_prompt.response_json_schema
         self._score_category = ["refusal"]
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -131,6 +135,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             params={
                 "system_prompt_template": self._system_prompt,
                 "user_prompt_template": self._prompt_format_string,
+                "response_json_schema": self._response_json_schema,
                 "score_aggregator": self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             },
             children={
@@ -196,6 +201,7 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             category=self._score_category,
             objective=objective,
             attack_identifier=message_piece.attack_identifier,
+            response_json_schema=self._response_json_schema,
         )
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")
 
