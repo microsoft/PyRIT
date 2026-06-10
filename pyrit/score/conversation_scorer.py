@@ -126,10 +126,7 @@ class ConversationScorer(Scorer, ABC):
         wrapped_scorer = self._get_wrapped_scorer()
         # Call the wrapped scorer's protected ``_score_async`` rather than the public
         # ``score_async`` so the wrapped scorer does not persist its own copy of the
-        # scores. The outer ``Scorer.score_async`` that invoked this method will persist
-        # the returned scores exactly once. The synthetic ``conversation_message`` we
-        # built above is pure text with ``response_error="none"``, so skipping the public
-        # method's validation / role-filter / blocked-content substitution is safe.
+        # scores.
         return await wrapped_scorer._score_async(message=conversation_message, objective=objective)
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
