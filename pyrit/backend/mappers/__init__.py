@@ -20,6 +20,7 @@ from pyrit.backend.mappers.converter_mappers import (
     converter_object_to_instance,
 )
 from pyrit.backend.mappers.target_mappers import (
+    target_capabilities_to_info,
     target_object_to_instance,
 )
 
@@ -31,5 +32,6 @@ __all__ = [
     "pyrit_scores_to_dto",
     "request_piece_to_pyrit_message_piece",
     "request_to_pyrit_message",
+    "target_capabilities_to_info",
     "target_object_to_instance",
 ]
