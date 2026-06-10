@@ -38,6 +38,7 @@ from pyrit.backend.models.targets import (
     TargetCapabilitiesInfo,
     TargetInstance,
     TargetListResponse,
+    ValidateCapabilitiesResponse,
 )
 from pyrit.backend.routes.labels import get_label_options
 
@@ -953,6 +954,64 @@ class TestTargetRoutes:
             assert data["target_specific_params"]["frequency_penalty"] == 0.5
             assert data["target_specific_params"]["presence_penalty"] == 0.3
             assert data["target_specific_params"]["seed"] == 42
+
+    def test_validate_target_returns_200_with_declared_and_observed(self, client: TestClient) -> None:
+        """Happy path: validate route returns 200 with full ValidateCapabilitiesResponse shape."""
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.validate_target_capabilities_async = AsyncMock(
+                return_value=ValidateCapabilitiesResponse(
+                    target_registry_name="target-1",
+                    declared=TargetCapabilitiesInfo(
+                        supports_json_schema=True,
+                        supported_input_modalities=["image_path", "text"],
+                    ),
+                    observed=TargetCapabilitiesInfo(
+                        supports_json_schema=False,
+                        supported_input_modalities=["text"],
+                    ),
+                    non_probeable_input_modalities=["function_call"],
+                    warnings=["Validation sent live requests to the target; ..."],
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.post("/api/targets/target-1/validate")
+
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["target_registry_name"] == "target-1"
+            assert data["declared"]["supports_json_schema"] is True
+            assert data["observed"]["supports_json_schema"] is False
+            assert data["non_probeable_input_modalities"] == ["function_call"]
+            assert isinstance(data["warnings"], list) and data["warnings"]
+
+    def test_validate_target_returns_404_when_target_missing(self, client: TestClient) -> None:
+        """Unknown target → service returns None → 404 with FastAPI's default {'detail': ...} body."""
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.validate_target_capabilities_async = AsyncMock(return_value=None)
+            mock_get_service.return_value = mock_service
+
+            response = client.post("/api/targets/missing/validate")
+
+            assert response.status_code == status.HTTP_404_NOT_FOUND
+            # Backend has no HTTPException → ProblemDetail handler; default shape applies.
+            assert response.json() == {"detail": "Target 'missing' not found"}
+
+    def test_validate_target_returns_500_when_probe_fails(self, client: TestClient) -> None:
+        """Engine raises → 500 with default {'detail': 'Failed to validate target: ...'} body."""
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.validate_target_capabilities_async = AsyncMock(side_effect=RuntimeError("network blew up"))
+            mock_get_service.return_value = mock_service
+
+            response = client.post("/api/targets/target-1/validate")
+
+            assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+            body = response.json()
+            assert "Failed to validate target" in body["detail"]
+            assert "network blew up" in body["detail"]
 
 
 # ============================================================================

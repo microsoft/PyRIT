@@ -823,3 +823,410 @@ class TestFrontendBackendCompatibilitySync:
             f"Update effectiveUnderlyingModel() in CreateTargetDialog.tsx to match, "
             f"then update this test's expected dict."
         )
+
+
+# ============================================================================
+# Capability Validation Tests
+# ============================================================================
+
+
+def _fake_target_with_capabilities(
+    *,
+    input_modalities: frozenset[frozenset[str]] | None = None,
+    supports_json_schema: bool = True,
+) -> MagicMock:
+    """
+    Build a MagicMock target whose ``capabilities`` attribute is a real
+    ``TargetCapabilities`` object. The discovery engine is mocked separately,
+    so we don't need a real PromptTarget subclass — just the ``.capabilities``
+    attribute that ``validate_target_capabilities_async`` reads.
+    """
+    from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+
+    caps = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_multi_message_pieces=True,
+        supports_json_schema=supports_json_schema,
+        supports_json_output=True,
+        supports_editable_history=True,
+        supports_system_prompt=True,
+        input_modalities=(input_modalities if input_modalities is not None else frozenset({frozenset(["text"])})),
+    )
+    target = MagicMock()
+    target.capabilities = caps
+    return target
+
+
+def _fake_observed_capabilities(
+    *,
+    declared,  # TargetCapabilities
+    drop_input_modalities: set[frozenset[str]] | None = None,
+    flip_json_schema_to_false: bool = False,
+):
+    """
+    Build a fake "observed" TargetCapabilities for the mock engine to return.
+
+    Mirrors what the real engine produces: starts from ``declared`` and
+    selectively drops/flips fields to simulate drift.
+    """
+    from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+
+    observed_input = declared.input_modalities
+    if drop_input_modalities:
+        observed_input = frozenset(c for c in observed_input if c not in drop_input_modalities)
+    return TargetCapabilities(
+        supports_multi_turn=declared.supports_multi_turn,
+        supports_multi_message_pieces=declared.supports_multi_message_pieces,
+        supports_json_schema=False if flip_json_schema_to_false else declared.supports_json_schema,
+        supports_json_output=declared.supports_json_output,
+        supports_editable_history=declared.supports_editable_history,
+        supports_system_prompt=declared.supports_system_prompt,
+        input_modalities=observed_input,
+        output_modalities=declared.output_modalities,
+    )
+
+
+class TestValidateTargetCapabilities:
+    """Tests for TargetService.validate_target_capabilities_async."""
+
+    async def test_returns_none_for_unknown_target(self) -> None:
+        """Unknown registry name returns None; engine is NOT called."""
+        from unittest.mock import AsyncMock
+
+        service = TargetService()
+        with patch(
+            "pyrit.backend.services.target_service.discover_target_capabilities_async",
+            new_callable=AsyncMock,
+        ) as mock_probe:
+            result = await service.validate_target_capabilities_async(target_registry_name="missing")
+        assert result is None
+        mock_probe.assert_not_called()
+
+    async def test_returns_response_for_known_target(self) -> None:
+        """Happy path: declared + observed populated, warnings present, no non-probeable."""
+        from unittest.mock import AsyncMock
+
+        service = TargetService()
+        fake_target = _fake_target_with_capabilities()
+        observed = _fake_observed_capabilities(declared=fake_target.capabilities)
+        with (
+            patch.object(service, "get_target_object", return_value=fake_target),
+            patch(
+                "pyrit.backend.services.target_service.discover_target_capabilities_async",
+                new_callable=AsyncMock,
+            ) as mock_probe,
+        ):
+            mock_probe.return_value = observed
+            result = await service.validate_target_capabilities_async(target_registry_name="t1")
+
+        assert result is not None
+        assert result.target_registry_name == "t1"
+        assert result.declared.supports_json_schema is True
+        assert result.observed.supports_json_schema is True
+        assert result.non_probeable_input_modalities == []
+        # 5 base warnings, no 6th (no non-probeable)
+        assert len(result.warnings) == 5
+
+    async def test_passes_timeout_override(self) -> None:
+        """Caller-supplied per_probe_timeout_s reaches the discovery call."""
+        from unittest.mock import AsyncMock
+
+        service = TargetService()
+        fake_target = _fake_target_with_capabilities()
+        observed = _fake_observed_capabilities(declared=fake_target.capabilities)
+        with (
+            patch.object(service, "get_target_object", return_value=fake_target),
+            patch(
+                "pyrit.backend.services.target_service.discover_target_capabilities_async",
+                new_callable=AsyncMock,
+            ) as mock_probe,
+        ):
+            mock_probe.return_value = observed
+            await service.validate_target_capabilities_async(target_registry_name="t1", per_probe_timeout_s=10.0)
+        assert mock_probe.call_args.kwargs["per_probe_timeout_s"] == 10.0
+
+    async def test_uses_gui_default_timeout_when_not_overridden(self) -> None:
+        """When per_probe_timeout_s is None, the GUI default (5.0) is passed."""
+        from unittest.mock import AsyncMock
+
+        service = TargetService()
+        fake_target = _fake_target_with_capabilities()
+        observed = _fake_observed_capabilities(declared=fake_target.capabilities)
+        with (
+            patch.object(service, "get_target_object", return_value=fake_target),
+            patch(
+                "pyrit.backend.services.target_service.discover_target_capabilities_async",
+                new_callable=AsyncMock,
+            ) as mock_probe,
+        ):
+            mock_probe.return_value = observed
+            await service.validate_target_capabilities_async(target_registry_name="t1")
+        assert mock_probe.call_args.kwargs["per_probe_timeout_s"] == TargetService._GUI_VALIDATE_TIMEOUT_S
+        assert mock_probe.call_args.kwargs["per_probe_timeout_s"] == 5.0
+
+    async def test_passes_probeable_modalities_only(self) -> None:
+        """
+        CRITICAL regression guard: only probeable modality combinations
+        reach the engine. Non-probeable combos appear in the response's
+        ``non_probeable_input_modalities`` list and in a warning.
+        """
+        from unittest.mock import AsyncMock
+
+        service = TargetService()
+        fake_target = _fake_target_with_capabilities(
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["text", "image_path"]),
+                    frozenset(["function_call"]),
+                    frozenset(["url"]),
+                }
+            )
+        )
+        observed = _fake_observed_capabilities(declared=fake_target.capabilities)
+        with (
+            patch.object(service, "get_target_object", return_value=fake_target),
+            patch(
+                "pyrit.backend.services.target_service.discover_target_capabilities_async",
+                new_callable=AsyncMock,
+            ) as mock_probe,
+        ):
+            mock_probe.return_value = observed
+            result = await service.validate_target_capabilities_async(target_registry_name="t1")
+
+        # (a) only the two probeable combos reach the engine
+        passed = mock_probe.call_args.kwargs["test_modalities"]
+        assert passed == {frozenset(["text"]), frozenset(["text", "image_path"])}
+
+        # (b) non-probeable types appear in the warnings list
+        assert result is not None
+        non_probed_warning = [w for w in result.warnings if "no packaged probe asset" in w]
+        assert len(non_probed_warning) == 1
+        assert "function_call" in non_probed_warning[0]
+        assert "url" in non_probed_warning[0]
+
+        # (c) typed field has the sorted, '+'-joined list
+        assert result.non_probeable_input_modalities == ["function_call", "url"]
+
+    async def test_passes_empty_set_when_no_probeable_modalities(self) -> None:
+        """
+        Declared modalities are all non-probeable. Method passes
+        ``test_modalities=set()`` (NOT None) so the engine short-circuits
+        cleanly without entering ``_permissive_configuration``. Warnings
+        still include the not-probed entry, and the typed field lists every
+        declared combo.
+        """
+        from unittest.mock import AsyncMock
+
+        service = TargetService()
+        fake_target = _fake_target_with_capabilities(
+            input_modalities=frozenset(
+                {
+                    frozenset(["function_call"]),
+                    frozenset(["url"]),
+                    frozenset(["video_path"]),
+                }
+            )
+        )
+        observed = _fake_observed_capabilities(declared=fake_target.capabilities)
+        with (
+            patch.object(service, "get_target_object", return_value=fake_target),
+            patch(
+                "pyrit.backend.services.target_service.discover_target_capabilities_async",
+                new_callable=AsyncMock,
+            ) as mock_probe,
+        ):
+            mock_probe.return_value = observed
+            result = await service.validate_target_capabilities_async(target_registry_name="t1")
+
+        passed = mock_probe.call_args.kwargs["test_modalities"]
+        assert passed == set()
+        assert isinstance(passed, set)
+        assert result is not None
+        assert result.non_probeable_input_modalities == ["function_call", "url", "video_path"]
+        assert any("no packaged probe asset" in w for w in result.warnings)
+
+    async def test_propagates_probe_exceptions(self) -> None:
+        """Engine raises → method raises. Lock is released even on exception."""
+        from unittest.mock import AsyncMock
+
+        service = TargetService()
+        fake_target = _fake_target_with_capabilities()
+        with (
+            patch.object(service, "get_target_object", return_value=fake_target),
+            patch(
+                "pyrit.backend.services.target_service.discover_target_capabilities_async",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("engine boom"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="engine boom"):
+                await service.validate_target_capabilities_async(target_registry_name="t1")
+
+        # Lock must be released (the dict entry stays, but the lock isn't held).
+        lock = service._validate_locks["t1"]
+        assert not lock.locked(), "lock leaked after engine raised"
+
+    async def test_serializes_concurrent_calls_on_same_target(self) -> None:
+        """
+        Two concurrent calls on the same registry name within the same service
+        instance + same event loop serialize via the per-target lock.
+        """
+        import asyncio
+
+        service = TargetService()
+        fake_target = _fake_target_with_capabilities()
+        observed = _fake_observed_capabilities(declared=fake_target.capabilities)
+
+        first_running = asyncio.Event()
+        release_first = asyncio.Event()
+        order: list[str] = []
+
+        async def slow_first(**_kwargs):
+            order.append("first-enter")
+            first_running.set()
+            await release_first.wait()
+            order.append("first-exit")
+            return observed
+
+        async def fast_second(**_kwargs):
+            order.append("second-enter")
+            order.append("second-exit")
+            return observed
+
+        call_count = {"n": 0}
+
+        async def dispatch(**kwargs):
+            call_count["n"] += 1
+            return await (slow_first(**kwargs) if call_count["n"] == 1 else fast_second(**kwargs))
+
+        with (
+            patch.object(service, "get_target_object", return_value=fake_target),
+            patch(
+                "pyrit.backend.services.target_service.discover_target_capabilities_async",
+                new=dispatch,
+            ),
+        ):
+            task_first = asyncio.create_task(service.validate_target_capabilities_async(target_registry_name="t1"))
+            await first_running.wait()
+            task_second = asyncio.create_task(service.validate_target_capabilities_async(target_registry_name="t1"))
+            # Give scheduler a tick — second must NOT have started.
+            await asyncio.sleep(0.05)
+            assert "second-enter" not in order, f"second leaked through: {order}"
+            release_first.set()
+            await asyncio.gather(task_first, task_second)
+
+        assert order == ["first-enter", "first-exit", "second-enter", "second-exit"]
+
+    async def test_allows_concurrent_calls_on_different_targets(self) -> None:
+        """Two concurrent calls on different targets do NOT serialize."""
+        import asyncio
+
+        service = TargetService()
+        fake_a = _fake_target_with_capabilities()
+        fake_b = _fake_target_with_capabilities()
+        observed_a = _fake_observed_capabilities(declared=fake_a.capabilities)
+        observed_b = _fake_observed_capabilities(declared=fake_b.capabilities)
+
+        a_running = asyncio.Event()
+        b_started = asyncio.Event()
+
+        async def dispatch_a(**_kwargs):
+            a_running.set()
+            await b_started.wait()  # must NOT block on B if locks are per-target
+            return observed_a
+
+        async def dispatch_b(**_kwargs):
+            b_started.set()
+            return observed_b
+
+        def get_target(*, target_registry_name: str):
+            return fake_a if target_registry_name == "a" else fake_b
+
+        # Per-target dispatch via call_args inspection
+        async def probe(*, target, **kwargs):
+            if target is fake_a:
+                return await dispatch_a(**kwargs)
+            return await dispatch_b(**kwargs)
+
+        with (
+            patch.object(service, "get_target_object", side_effect=get_target),
+            patch(
+                "pyrit.backend.services.target_service.discover_target_capabilities_async",
+                new=probe,
+            ),
+        ):
+            task_a = asyncio.create_task(service.validate_target_capabilities_async(target_registry_name="a"))
+            await a_running.wait()
+            task_b = asyncio.create_task(service.validate_target_capabilities_async(target_registry_name="b"))
+            # If locks were shared, task_a would deadlock waiting on b_started.
+            result_a, result_b = await asyncio.wait_for(asyncio.gather(task_a, task_b), timeout=2.0)
+        assert result_a is not None and result_b is not None
+
+    async def test_creates_fresh_lock_per_service_instance(self) -> None:
+        """
+        Two TargetService() instances have independent _validate_locks dicts.
+        Guards the R5 instance-attribute fix against accidental re-promotion
+        to ClassVar (which would leak locks across pytest event loops).
+        """
+        from unittest.mock import AsyncMock
+
+        service_a = TargetService()
+        service_b = TargetService()
+        fake_target_a = _fake_target_with_capabilities()
+        fake_target_b = _fake_target_with_capabilities()
+        observed_a = _fake_observed_capabilities(declared=fake_target_a.capabilities)
+        observed_b = _fake_observed_capabilities(declared=fake_target_b.capabilities)
+
+        # Trigger lock creation in both services for the same registry name
+        with (
+            patch.object(service_a, "get_target_object", return_value=fake_target_a),
+            patch(
+                "pyrit.backend.services.target_service.discover_target_capabilities_async",
+                new_callable=AsyncMock,
+                return_value=observed_a,
+            ),
+        ):
+            await service_a.validate_target_capabilities_async(target_registry_name="shared")
+
+        with (
+            patch.object(service_b, "get_target_object", return_value=fake_target_b),
+            patch(
+                "pyrit.backend.services.target_service.discover_target_capabilities_async",
+                new_callable=AsyncMock,
+                return_value=observed_b,
+            ),
+        ):
+            await service_b.validate_target_capabilities_async(target_registry_name="shared")
+
+        assert "shared" in service_a._validate_locks
+        assert "shared" in service_b._validate_locks
+        # Different lock objects per service instance.
+        assert service_a._validate_locks["shared"] is not service_b._validate_locks["shared"]
+
+    async def test_includes_expected_warnings(self) -> None:
+        """All five base warnings are present, in the documented order."""
+        from unittest.mock import AsyncMock
+
+        service = TargetService()
+        fake_target = _fake_target_with_capabilities()
+        observed = _fake_observed_capabilities(declared=fake_target.capabilities)
+        with (
+            patch.object(service, "get_target_object", return_value=fake_target),
+            patch(
+                "pyrit.backend.services.target_service.discover_target_capabilities_async",
+                new_callable=AsyncMock,
+                return_value=observed,
+            ),
+        ):
+            result = await service.validate_target_capabilities_async(target_registry_name="t1")
+
+        assert result is not None
+        # Five base warnings (no 6th because no non-probeable modalities).
+        assert len(result.warnings) == 5
+        joined = " | ".join(result.warnings)
+        assert "live requests" in joined  # cost/side-effects
+        assert "capability_probe" in joined  # memory tagging
+        assert "Output modalities are reported as declared" in joined
+        assert "semantic enforcement" in joined  # request-vs-enforcement caveat
+        assert "Do not run Validate while an attack" in joined  # validate-vs-attack
