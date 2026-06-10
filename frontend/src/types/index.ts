@@ -98,6 +98,25 @@ export interface CreateTargetRequest {
   auth_mode?: 'api_key' | 'entra'
 }
 
+export interface ValidateCapabilitiesResponse {
+  target_registry_name: string
+  declared: TargetCapabilitiesInfo
+  observed: TargetCapabilitiesInfo
+  /**
+   * Sorted '+'-joined declared input-modality combinations that the engine
+   * could not probe because no packaged test asset exists (e.g.,
+   * 'function_call', 'image_path+url'). Used by ValidateCapabilitiesDialog to
+   * render a single "Not probed (no asset)" row beneath the input-modalities
+   * row, distinguishing "not probed" from "probed and confirmed".
+   */
+  non_probeable_input_modalities: string[]
+  /**
+   * Operational notes for the user (live-call cost, memory tagging, output
+   * modalities not probed, semantic-enforcement caveat, validate-vs-active-attack).
+   */
+  warnings: string[]
+}
+
 // --- Converters ---
 
 export interface ConverterInstance {

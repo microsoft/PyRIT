@@ -20,6 +20,7 @@ import type {
   CreateConversationRequest,
   CreateConversationResponse,
   ChangeMainConversationResponse,
+  ValidateCapabilitiesResponse,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -160,6 +161,18 @@ export const targetsApi = {
 
   createTarget: async (request: CreateTargetRequest): Promise<TargetInstance> => {
     const response = await apiClient.post('/targets', request)
+    return response.data
+  },
+
+  validateCapabilities: async (
+    targetRegistryName: string,
+  ): Promise<ValidateCapabilitiesResponse> => {
+    // POST is appropriate here: the call sends live requests to the target
+    // and writes probe rows to memory (side effects), even though the response
+    // shape is a read-only diff.
+    const response = await apiClient.post(
+      `/targets/${encodeURIComponent(targetRegistryName)}/validate`,
+    )
     return response.data
   },
 }
