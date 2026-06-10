@@ -4,17 +4,26 @@
 /**
  * Path-partition resolver for the tree-UI runner.
  *
- * Given a leaf {@link SendNode} in a {@link ConversationTree}, produces a
- * plan the dispatcher can execute as one `create_attack` + N `add_message`
- * calls: a clean prefix (whose stored pieces load into
- * `prepended_conversation` as historical context) and a fresh suffix (whose
- * Sends each become a sequential `add_message`).
+ * Given a leaf {@link SendNode} in a {@link ConversationTree}, walks the
+ * root-to-leaf path and produces a dispatch plan the wave loop turns into
+ * one `create_attack` + N `add_message` calls.
+ *
+ * V1.0 implementation note: every Send on the path enters `freshSuffix`.
+ * The design's clean-prefix-into-`prepended_conversation` optimization
+ * (loading prior assistant pieces as historical context) needs a per-wave
+ * piece cache the runner does not yet build; without that cache, the
+ * resolver has no honest way to populate the prepended assistant turns
+ * (placeholder strings would feed fabricated history to the target). The
+ * V1.0 ship is dumb-but-correct: re-fire the full chain every wave. V1.x
+ * will add the piece cache and restore the clean-prefix branch. The cost
+ * regression is bounded by the cost-guardrail modal and documented in the
+ * V1.0 known-limitations.
  *
  * Pure: no I/O, no React. Builds and discards an index per call; callers in
  * the hot dispatch path will memoize at their own layer.
  */
 
-import type { PrependedMessageRequest, MessagePieceRequest } from '../types'
+import type { PrependedMessageRequest } from '../types'
 import type {
   ConversationTree,
   ConversationTreeNode,
@@ -71,13 +80,14 @@ export interface PathPartition {
 // ============================================================================
 
 /**
- * A Send is "stale" for the resolver's purposes (and thus belongs in the
- * fresh suffix) when its state demands re-dispatch OR it has no execution
- * to load into prepended_conversation.
+ * Predicate retained from the V1 design's resolver model: a Send is "stale"
+ * when its state demands re-dispatch OR it has no execution to reuse.
  *
- * The `execution === null` clause is the safety net: failed/cancelled Sends
- * null their execution by contract; freshly-added Sends in `draft` also
- * have no execution. Either way there's nothing to load — re-dispatch.
+ * In V1.0 the resolver pushes every Send into `freshSuffix` regardless
+ * (see file header), so this predicate is not on the resolver's hot path.
+ * Kept for defensive callers that want to ask "would the eventual
+ * clean-prefix optimization treat this Send as stale?" — useful in UI
+ * surfaces that preview cost or in the V1.x cache layer.
  */
 export function isStaleForResolver(send: SendNode): boolean {
   if (send.execution === null) return true
@@ -159,7 +169,6 @@ export function resolvePathPartition(
   const treePathSegments: Array<[FanAxis, number]> = []
   let pendingUserTurn: UserTurnNode | SyntheticUserTurnFromRoot | null = null
   let pendingFanVariant: FanVariantOnPath | null = null
-  let seenFirstStale = false
   let target: string | null = null
   // `target` resolves to the leaf's own override if present; otherwise the root prompt's.
 
@@ -202,24 +211,23 @@ export function resolvePathPartition(
       }
       case 'send': {
         if (pendingUserTurn === null) {
-          // Impossible under the §5.1 #5 invariant; defensive guard.
+          // Impossible under the tree-shape invariant (every Send has a UserTurn
+          // or Root ancestor with Fan/Score transparent); defensive guard.
           throw new Error(
             `resolvePathPartition: Send '${node.id}' has no input UserTurn on its path`,
           )
         }
-        const stale = isStaleForResolver(node)
-        if (!seenFirstStale && !stale) {
-          // Clean prefix: load this Send's input UT + its assistant response.
-          prepended.push(userTurnMessage(pendingUserTurn, pendingFanVariant))
-          prepended.push(assistantResponseMessage(node))
-        } else {
-          seenFirstStale = true
-          freshSuffix.push({
-            userTurn: pendingUserTurn,
-            fanVariant: pendingFanVariant,
-            sendNode: node,
-          })
-        }
+        // V1.0: every Send on the path enters freshSuffix. The clean-prefix
+        // optimization would require a piece cache the runner does not yet
+        // build (see the partition module's file-header note); shipping that
+        // optimization without the cache means sending fabricated assistant
+        // history to the target. Fresh-dispatch is correct; cost regression is
+        // documented and bounded by the cost-guardrail modal.
+        freshSuffix.push({
+          userTurn: pendingUserTurn,
+          fanVariant: pendingFanVariant,
+          sendNode: node,
+        })
         // Per-Send target override takes precedence; root's value is the fallback already in `target`.
         if (node.params.targetRegistryName !== undefined) {
           target = node.params.targetRegistryName
@@ -298,48 +306,4 @@ function systemMessageOf(systemPrompt: string): PrependedMessageRequest {
       },
     ],
   }
-}
-
-function userTurnMessage(
-  userTurn: UserTurnNode | SyntheticUserTurnFromRoot,
-  fanVariant: FanVariantOnPath | null,
-): PrependedMessageRequest {
-  const role = isSynthetic(userTurn) ? 'user' : userTurn.params.role
-  const text = isSynthetic(userTurn) ? userTurn.text : userTurn.params.text
-  const attachments = isSynthetic(userTurn) ? userTurn.attachments : userTurn.params.attachments
-  void fanVariant // V1.0: prompt-axis text overrides are V1.1; converter-axis affects converter_ids on add_message, not the piece content here.
-  const pieces: MessagePieceRequest[] = []
-  for (const a of attachments) {
-    pieces.push({
-      data_type: a.dataType,
-      original_value: a.value,
-      mime_type: a.mimeType,
-      original_prompt_id: a.originalPromptId,
-    })
-  }
-  pieces.push({ data_type: 'text', original_value: text })
-  return { role, pieces }
-}
-
-function assistantResponseMessage(send: SendNode): PrependedMessageRequest {
-  // The execution is guaranteed non-null here by the clean-prefix branch.
-  const exec = send.execution
-  if (exec === null) {
-    throw new Error(`assistantResponseMessage: Send '${send.id}' has no execution`)
-  }
-  // V1.0 carries the piece IDs through `original_prompt_id` so the dispatcher's
-  // piece cache (PR4c) can resolve the full piece content at request-build time.
-  // We do not have the piece text here; that's loaded from cache in PR4c.
-  const pieces: MessagePieceRequest[] = exec.pieceIds.map((pid) => ({
-    data_type: 'text',
-    original_value: '<deferred: resolved from piece cache>',
-    original_prompt_id: pid,
-  }))
-  return { role: 'assistant', pieces }
-}
-
-function isSynthetic(
-  ut: UserTurnNode | SyntheticUserTurnFromRoot,
-): ut is SyntheticUserTurnFromRoot {
-  return (ut as SyntheticUserTurnFromRoot).synthetic === true
 }

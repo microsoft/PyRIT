@@ -184,34 +184,27 @@ describe('resolvePathPartition', () => {
   // Clean / fresh boundary detection
   // --------------------------------------------------------------------------
 
-  it('all-clean upstream + edited leaf: prepends every upstream turn + assistant; leaf alone in fresh suffix', () => {
-    // Chain: r → u1 → s1(clean) → u2 → s2(edited)
-    // s1 is clean with a stored execution; its input UserTurn (u1) +
-    // assistant response (from s1's execution) both load into prepended.
-    // s2 (the leaf) is edited → in fresh suffix.
-    const s1Exec = mkExecution({ executionId: 'exec-s1', pieceIds: ['piece-asst-1'] })
+  it('all-clean upstream + edited leaf (V1.0): every Send re-fires; prepended carries only system if any', () => {
+    // V1.0 has no clean-prefix optimization (see partition.ts file header).
+    // Even Sends in `clean` state with stored executions enter freshSuffix.
+    // prepended is empty (no system prompt in this fixture).
+    const cleanExec = mkExecution({
+      executionId: 'exec-s1',
+      pieceIds: ['piece-asst-1'],
+      attackResultId: 'ar-old',
+    })
     const tree = mkTree('r', [
       mkRoot('r', { text: 'root', targetRegistryName: 'gpt-4o' }),
       mkUserTurn('u1', 'r', { text: 'turn 1' }),
-      mkSend('s1', 'u1', undefined, { state: 'clean', execution: s1Exec }),
+      mkSend('s1', 'u1', undefined, { state: 'clean', execution: cleanExec }),
       mkUserTurn('u2', 's1', { text: 'turn 2' }),
       mkSend('s2', 'u2', undefined, { state: 'edited' }),
     ])
     const { prepended, freshSuffix } = resolvePathPartition(tree, nodeId('s2'))
 
-    // Two prepended turns: user u1 + assistant response of s1.
-    expect(prepended).toHaveLength(2)
-    expect(prepended[0].role).toBe('user')
-    expect(prepended[0].pieces[0].original_value).toBe('turn 1')
-    expect(prepended[1].role).toBe('assistant')
-    // The assistant message carries a reference to s1's execution pieceIds —
-    // the dispatcher resolves piece content via the piece cache (PR4c).
-    expect(prepended[1].pieces.map((p) => p.original_prompt_id)).toContain('piece-asst-1')
-
-    // Leaf alone in fresh suffix.
-    expect(freshSuffix).toHaveLength(1)
-    expect(freshSuffix[0].userTurn.id).toBe(nodeId('u2'))
-    expect(freshSuffix[0].sendNode.id).toBe(nodeId('s2'))
+    expect(prepended).toEqual([])
+    expect(freshSuffix.map((p) => p.sendNode.id)).toEqual([nodeId('s1'), nodeId('s2')])
+    expect(freshSuffix.map((p) => p.userTurn.id)).toEqual([nodeId('u1'), nodeId('u2')])
   })
 
   it('stale interior Send: prefix ends at the stale Send; fresh suffix is the interior + leaf', () => {
@@ -231,8 +224,9 @@ describe('resolvePathPartition', () => {
     expect(freshSuffix.map((p) => p.userTurn.id)).toEqual([nodeId('u1'), nodeId('u2')])
   })
 
-  it('clean prefix + stale interior + leaf: prefix loaded, both stales in fresh suffix', () => {
+  it('clean Send + stale interior + leaf (V1.0): every Send in fresh suffix; system prompt is the only prepended', async () => {
     // r → u1 → s1(clean) → u2 → s2(stale) → u3 → s3(edited)
+    // V1.0 contract: the clean s1 still enters freshSuffix (no prefix optimization).
     const s1Exec = mkExecution({ executionId: 'exec-s1', pieceIds: ['p1'] })
     const tree = mkTree('r', [
       mkRoot('r'),
@@ -245,14 +239,18 @@ describe('resolvePathPartition', () => {
     ])
     const { prepended, freshSuffix } = resolvePathPartition(tree, nodeId('s3'))
 
-    expect(prepended).toHaveLength(2) // u1 + s1 assistant response
-    expect(freshSuffix.map((p) => p.sendNode.id)).toEqual([nodeId('s2'), nodeId('s3')])
+    expect(prepended).toEqual([])
+    expect(freshSuffix.map((p) => p.sendNode.id)).toEqual([
+      nodeId('s1'),
+      nodeId('s2'),
+      nodeId('s3'),
+    ])
   })
 
-  it('a clean Send with state=failed (defensive: per §6.4.1, failed has execution=null) goes to fresh suffix', () => {
-    // Defensive: even if some buggy path left execution set on a failed Send,
-    // the resolver treats failed as fresh (the predicate's state-set check).
-    // This guarantees retries always re-dispatch failed nodes.
+  it('failed Send goes to fresh suffix regardless of (defensive) execution state', async () => {
+    // V1.0 contract: every Send goes to fresh suffix; this case used to test
+    // the resolver's state-trumps-execution rule but it's now defended-in-
+    // depth by the always-fresh policy. Kept for the per-leaf behavior pin.
     const stale = mkExecution({ executionId: 'old' })
     const tree = mkTree('r', [
       mkRoot('r'),

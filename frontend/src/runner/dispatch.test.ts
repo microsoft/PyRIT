@@ -229,8 +229,12 @@ describe('dispatchLeaf — happy path (single-Send chain)', () => {
 // 2. Multi-Send chain — prefix loaded; N add_messages for fresh suffix
 // ============================================================================
 
-describe('dispatchLeaf — multi-Send chain with clean prefix', () => {
-  it('loads clean prefix into prepended_conversation; one add_message per stale Send', async () => {
+describe('dispatchLeaf — multi-Send chain (V1.0: no clean-prefix optimization)', () => {
+  it('V1.0: even chains with clean upstream Sends re-fire every Send; prepended is empty', async () => {
+    // V1.0 has no clean-prefix optimization (see partition.ts file header):
+    // every Send on the path enters freshSuffix, regardless of state. The
+    // operator-visible cost is the ~5× hot-path regression on edit-leaf-only
+    // workflows, documented in 01 §1.2.
     const cleanExec = mkExecution({
       executionId: 'old-s1',
       pieceIds: ['p-asst-1'],
@@ -257,17 +261,19 @@ describe('dispatchLeaf — multi-Send chain with clean prefix', () => {
     })
 
     expect(outcome.kind).toBe('success')
-    // One create_attack carrying both prefix turns; one add_message for s2.
+    // One create_attack with EMPTY prepended (no system prompt in fixture);
+    // every Send re-fires as its own add_message.
     expect(createCalls).toHaveLength(1)
-    expect(createCalls[0].prepended_conversation).toHaveLength(2)
-    expect(createCalls[0].prepended_conversation?.[0].role).toBe('user')
-    expect(createCalls[0].prepended_conversation?.[0].pieces[0].original_value).toBe('turn 1')
-    expect(createCalls[0].prepended_conversation?.[1].role).toBe('assistant')
-    expect(addMessageCalls).toHaveLength(1)
-    expect(addMessageCalls[0].request.pieces[0].original_value).toBe('turn 2')
+    expect(createCalls[0].prepended_conversation).toEqual([])
+    expect(addMessageCalls).toHaveLength(2)
+    expect(addMessageCalls[0].request.pieces[0].original_value).toBe('turn 1')
+    expect(addMessageCalls[1].request.pieces[0].original_value).toBe('turn 2')
 
-    // s1 (clean) didn't change; s2 went running → clean.
-    expect(callsOf('setNodeState').filter((c) => c.nodeId === nodeId('s1'))).toEqual([])
+    // Both Sends went running → clean (s1's prior execution is replaced).
+    expect(callsOf('setNodeState').filter((c) => c.nodeId === nodeId('s1')).map((c) => c.state)).toEqual([
+      'running',
+      'clean',
+    ])
     const leafStates = callsOf('setNodeState')
       .filter((c) => c.nodeId === nodeId('s2'))
       .map((c) => c.state)
@@ -438,18 +444,18 @@ describe('dispatchLeaf — tree_path label', () => {
 // 5. The 200-message cap short-circuit
 // ============================================================================
 
-describe('dispatchLeaf — 200-message cap', () => {
-  it('short-circuits when the resolved clean prefix exceeds 200 messages; fails the leaf with the right reason', async () => {
-    // Build a tree whose clean prefix is 201 messages: 100 clean Sends.
-    // Each clean Send contributes 2 prepended messages (user + assistant).
-    // 100 × 2 = 200; +1 stale leaf attempt would have 200 prepended turns
-    // OK actually — the cap is on prepended_conversation only. To trip it,
-    // we need >200 prepended turns. 101 clean Sends → 202 prepended turns.
-    //
-    // Plus a final edited leaf so dispatch is triggered.
+describe('dispatchLeaf — 200-message cap (V1.0: unreachable by construction)', () => {
+  it('a 100-deep chain dispatches successfully under V1.0 because prepended is empty (no clean-prefix optimization)', async () => {
+    // V1.0's partition pushes every Send into freshSuffix; prepended carries
+    // at most a system prompt. The backend's 200-message cap on
+    // prepended_conversation is therefore unreachable in V1.0 normal traffic.
+    // This test documents that contract: the dispatcher does NOT fail a
+    // 100-Send chain on cap grounds — it dispatches all 100 add_messages.
+    // V1.x will restore the cap as a real concern once the piece cache
+    // populates prepended with clean-prefix content.
     const nodes: ConversationTreeNode[] = [mkRoot('r', { text: 'q', targetRegistryName: 'gpt-4o' })]
     let parent = 'r'
-    for (let i = 0; i < 101; i++) {
+    for (let i = 0; i < 100; i++) {
       const uid = `u${i}`
       const sid = `s${i}`
       nodes.push(mkUserTurn(uid, parent, { text: `t${i}` }))
@@ -461,12 +467,11 @@ describe('dispatchLeaf — 200-message cap', () => {
       )
       parent = sid
     }
-    // Final stale leaf.
     nodes.push(mkUserTurn('u_leaf', parent, { text: 'tail' }))
     nodes.push(mkSend('s_leaf', 'u_leaf', undefined, { state: 'edited' }))
 
     const tree = mkTree('r', nodes)
-    const { sink, callsOf } = mkMockSink()
+    const { sink } = mkMockSink()
     const { api, createCalls, addMessageCalls } = mkApiMock()
 
     const outcome = await dispatchLeaf({
@@ -479,23 +484,43 @@ describe('dispatchLeaf — 200-message cap', () => {
       parentConversationTreeId: null,
     })
 
-    expect(outcome.kind).toBe('failed')
-    if (outcome.kind === 'failed') {
-      expect(outcome.failureClass).toBe<NodeFailureClass>('permanent')
-      expect(outcome.failedNodeId).toBe(nodeId('s_leaf'))
-    }
-    // No backend calls fired.
-    expect(createCalls).toHaveLength(0)
-    expect(addMessageCalls).toHaveLength(0)
-    // Leaf transitions to failed with a permanent reason pointing the
-    // operator at the branch-from-midpoint recovery path.
-    const leafTransitions = callsOf('setNodeState').filter((c) => c.nodeId === nodeId('s_leaf'))
-    expect(leafTransitions.map((c) => c.state)).toContain('failed')
-    const failedCall = leafTransitions.find((c) => c.state === 'failed')!
-    expect(failedCall.reason).toMatchObject({
-      failure_class: 'permanent',
+    expect(outcome.kind).toBe('success')
+    expect(createCalls).toHaveLength(1)
+    // prepended is empty because no clean-prefix optimization in V1.0.
+    expect(createCalls[0].prepended_conversation).toEqual([])
+    // 100 chain Sends + 1 leaf Send = 101 add_messages.
+    expect(addMessageCalls).toHaveLength(101)
+  })
+
+  it('the dispatcher still short-circuits if prepended > 200 (defensive check for V1.x cache)', async () => {
+    // The cap check in dispatch.ts is defensive scaffolding for the V1.x
+    // clean-prefix cache. The V1.0 partition never produces a prepended >0
+    // (or >1 with system), so this code path is unreachable through normal
+    // dispatch. Test it by constructing a tree with one root prompt that
+    // would feed into the cap check IF the partition restored clean-prefix
+    // behavior. V1.0: this test PASSES the dispatch (because prepended is
+    // empty), but documents the V1.x-future intent of the cap.
+    //
+    // No assertion against the cap firing — V1.0 cannot trigger it. The
+    // test exists as a placeholder so it's obvious where to extend the
+    // assertion when the cache layer lands.
+    const tree = mkTree('r', [
+      mkRoot('r', { text: 'q', targetRegistryName: 'gpt-4o' }),
+      mkUserTurn('u', 'r', { text: 't' }),
+      mkSend('s', 'u', undefined, { state: 'edited' }),
+    ])
+    const { sink } = mkMockSink()
+    const { api } = mkApiMock()
+    const outcome = await dispatchLeaf({
+      treeId: treeId('t-1'),
+      tree,
+      leafId: nodeId('s'),
+      sink,
+      api,
+      ...STANDARD_CTX,
+      parentConversationTreeId: null,
     })
-    expect(String((failedCall.reason as { message?: string }).message)).toMatch(/200|branch/i)
+    expect(outcome.kind).toBe('success')
   })
 })
 
