@@ -31,6 +31,7 @@ import {
 } from '@fluentui/react-icons'
 import type { TargetInstance } from '../../types'
 import { useTargetTableStyles } from './TargetTable.styles'
+import ValidateCapabilitiesDialog from './ValidateCapabilitiesDialog'
 
 interface TargetTableProps {
   targets: TargetInstance[]
@@ -244,6 +245,10 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
   // We use a Set of target_registry_name strings — when a name is in the set,
   // that row's sub-rows are visible.
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
+  // The target whose Validate dialog is currently open, or null.
+  // Inner-target rows (composite expansion) do NOT get a Validate button —
+  // they aren't registered by name in the backend TargetRegistry.
+  const [validateTarget, setValidateTarget] = useState<TargetInstance | null>(null)
 
   const toggleExpanded = (registryName: string) => {
     setExpandedRows((prev) => {
@@ -280,7 +285,17 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
           <TableBody>
             <TableRow className={styles.activeRow}>
               <TableCell style={{ width: '120px' }}>
-                <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>Active</Badge>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+                  <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>Active</Badge>
+                  <Button
+                    appearance="subtle"
+                    size="small"
+                    disabled={validateTarget?.target_registry_name === activeTarget.target_registry_name}
+                    onClick={() => setValidateTarget(activeTarget)}
+                  >
+                    Validate
+                  </Button>
+                </div>
               </TableCell>
               <TableCell style={{ width: '140px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -401,19 +416,29 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                   className={isActive(target) ? styles.activeRow : undefined}
                 >
                   <TableCell>
-                    {isActive(target) ? (
-                      <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>
-                        Active
-                      </Badge>
-                    ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+                      {isActive(target) ? (
+                        <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>
+                          Active
+                        </Badge>
+                      ) : (
+                        <Button
+                          appearance="primary"
+                          size="small"
+                          onClick={() => onSetActiveTarget(target)}
+                        >
+                          Set Active
+                        </Button>
+                      )}
                       <Button
-                        appearance="primary"
+                        appearance="subtle"
                         size="small"
-                        onClick={() => onSetActiveTarget(target)}
+                        disabled={validateTarget?.target_registry_name === target.target_registry_name}
+                        onClick={() => setValidateTarget(target)}
                       >
-                        Set Active
+                        Validate
                       </Button>
-                    )}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -465,6 +490,12 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
           })}
         </TableBody>
       </Table>
+
+      <ValidateCapabilitiesDialog
+        open={validateTarget != null}
+        target={validateTarget}
+        onClose={() => setValidateTarget(null)}
+      />
     </div>
   )
 }
