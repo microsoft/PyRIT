@@ -140,6 +140,7 @@ class ConfigurationLoader(YamlLoadable):
     initializers: list[str | dict[str, Any]] = field(default_factory=list)
     initialization_scripts: list[str] | None = None
     env_files: list[str] | None = None
+    env_akv_ref: list[str] | None = None
     silent: bool = False
     operator: str | None = None
     operation: str | None = None
@@ -319,6 +320,7 @@ class ConfigurationLoader(YamlLoadable):
         initializers: Sequence[str | dict[str, Any]] | None = None,
         initialization_scripts: Sequence[str] | None = None,
         env_files: Sequence[str] | None = None,
+        env_akv_ref: Sequence[str] | None = None,
     ) -> "ConfigurationLoader":
         """
         Load configuration with optional overrides.
@@ -338,6 +340,7 @@ class ConfigurationLoader(YamlLoadable):
             initializers: Override for initializer list.
             initialization_scripts: Override for initialization script paths.
             env_files: Override for environment file paths.
+            env_akv_ref: Override for Azure Key Vault secret URLs.
 
         Returns:
             A merged ConfigurationLoader instance.
@@ -356,6 +359,7 @@ class ConfigurationLoader(YamlLoadable):
             "initializers": [],
             "initialization_scripts": None,  # None = use defaults
             "env_files": None,  # None = use defaults
+            "env_akv_ref": None,
             "silent": False,
         }
 
@@ -374,6 +378,7 @@ class ConfigurationLoader(YamlLoadable):
                 # Preserve None vs [] distinction from config file
                 config_data["initialization_scripts"] = default_config.initialization_scripts
                 config_data["env_files"] = default_config.env_files
+                config_data["env_akv_ref"] = default_config.env_akv_ref
                 config_data["silent"] = default_config.silent
                 if default_config.operator:
                     config_data["operator"] = default_config.operator
@@ -399,6 +404,7 @@ class ConfigurationLoader(YamlLoadable):
             # Preserve None vs [] distinction from config file
             config_data["initialization_scripts"] = explicit_config.initialization_scripts
             config_data["env_files"] = explicit_config.env_files
+            config_data["env_akv_ref"] = explicit_config.env_akv_ref
             config_data["silent"] = explicit_config.silent
             if explicit_config.operator:
                 config_data["operator"] = explicit_config.operator
@@ -430,6 +436,9 @@ class ConfigurationLoader(YamlLoadable):
 
         if env_files is not None:
             config_data["env_files"] = list(env_files)
+
+        if env_akv_ref is not None:
+            config_data["env_akv_ref"] = list(env_akv_ref)
 
         return ConfigurationLoader.from_dict(config_data)
 
@@ -537,6 +546,15 @@ class ConfigurationLoader(YamlLoadable):
 
         return resolved
 
+    def resolve_env_akv_ref(self) -> list[str] | None:
+        """
+        Return the list of AKV secret URLs, or ``None`` when not configured.
+
+        Returns:
+            list[str] | None: The configured AKV secret URLs, or ``None``.
+        """
+        return self.env_akv_ref
+
     async def initialize_pyrit_async(self) -> None:
         """
         Initialize PyRIT with the loaded configuration.
@@ -559,6 +577,7 @@ class ConfigurationLoader(YamlLoadable):
             initialization_scripts=resolved_scripts,
             initializers=resolved_initializers if resolved_initializers else None,
             env_files=resolved_env_files,
+            env_akv_ref=self.env_akv_ref,
             silent=self.silent,
         )
 

@@ -330,6 +330,7 @@ class AtomicAttackEvaluationIdentifier(EvaluationIdentifier):
         "adversarial_chat": ChildEvalRule(
             included_params=TARGET_EVAL_PARAMS,
             param_fallbacks=TARGET_EVAL_PARAM_FALLBACKS,
+            inner_child_name="targets",
         ),
         "objective_scorer": ChildEvalRule(exclude=True),
         "seed_identifiers": ChildEvalRule(exclude=True),

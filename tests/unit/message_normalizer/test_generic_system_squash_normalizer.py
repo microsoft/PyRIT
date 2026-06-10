@@ -67,3 +67,46 @@ async def test_generic_squash_normalize_to_dicts_async():
     assert "### Instructions ###" in result[0]["pieces"][0]["converted_value"]
     assert "System message" in result[0]["pieces"][0]["converted_value"]
     assert "User message" in result[0]["pieces"][0]["converted_value"]
+
+
+async def test_generic_squash_propagates_user_piece_metadata():
+    """
+    Regression: when squashing system + user, the squashed piece must carry the
+    user piece's prompt_metadata so downstream normalizers (e.g.
+    JsonSchemaNormalizer) still see request-level metadata. Without propagation,
+    the schema would be silently dropped when both SYSTEM_PROMPT and JSON_SCHEMA
+    need adaptation.
+    """
+    schema = {"type": "object", "properties": {"x": {"type": "string"}}}
+    user_piece = MessagePiece(
+        role="user",
+        original_value="please score",
+        prompt_metadata={"json_schema": schema, "scenario": "regression"},
+    )
+    messages = [
+        _make_message("system", "system prompt"),
+        Message(message_pieces=[user_piece]),
+    ]
+    result = await GenericSystemSquashNormalizer().normalize_async(messages)
+
+    assert len(result) == 1
+    squashed_piece = result[0].message_pieces[0]
+    assert squashed_piece.prompt_metadata == {"json_schema": schema, "scenario": "regression"}
+
+
+async def test_generic_squash_single_system_propagates_metadata():
+    """
+    When only a system message is present it is converted to a user message; its
+    prompt_metadata must be preserved for the same reason as the squash case.
+    """
+    schema = {"type": "object"}
+    system_piece = MessagePiece(
+        role="system",
+        original_value="system prompt",
+        prompt_metadata={"json_schema": schema},
+    )
+    result = await GenericSystemSquashNormalizer().normalize_async([Message(message_pieces=[system_piece])])
+
+    assert len(result) == 1
+    converted_piece = result[0].message_pieces[0]
+    assert converted_piece.prompt_metadata == {"json_schema": schema}

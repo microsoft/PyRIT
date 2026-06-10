@@ -8,7 +8,7 @@ from typing import Any, final
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, Identifiable, Message, MessagePiece
-from pyrit.models.json_response_config import _JsonResponseConfig
+from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
@@ -250,13 +250,26 @@ class PromptTarget(Identifiable):
         metadata so that the response built from the normalized message stays part of the
         correct conversation and retains traceability.
 
+        ``prompt_metadata`` is handled by provenance so that metadata-editing normalizers
+        are honored. A piece that shares the source piece's ``id`` is the same logical piece
+        (possibly a copy whose metadata a normalizer intentionally edited or stripped, e.g.
+        ``JsonSchemaNormalizer``) — its metadata is kept as-is. A piece with a different
+        ``id`` is brand-new (e.g. a squashed message), so the source's request metadata is
+        restored, with any keys the normalizer set on the new piece taking precedence.
+
         Args:
             source: The original (pre-normalization) message whose metadata is authoritative.
             target_message: The normalized message whose pieces will be updated in place.
         """
         source_piece = source.message_pieces[0]
         for piece in target_message.message_pieces:
+            normalized_metadata = dict(piece.prompt_metadata)
+            is_new_piece = piece.id != source_piece.id
             piece.copy_lineage_from(source=source_piece)
+            if is_new_piece:
+                piece.prompt_metadata = {**dict(source_piece.prompt_metadata), **normalized_metadata}
+            else:
+                piece.prompt_metadata = normalized_metadata
 
     def set_model_name(self, *, model_name: str) -> None:
         """

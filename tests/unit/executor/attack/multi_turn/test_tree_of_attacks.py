@@ -1813,17 +1813,16 @@ class TestTreeOfAttacksPromptLoading:
         """Test loading prompts with default paths."""
         attack = attack_builder.with_default_mocks().build()
 
-        # Mock SeedPrompt loading
-        mock_system = MagicMock(spec=SeedPrompt)
+        # Mock SeedPrompt loading. The system seed prompt is resolved in __init__
+        # (via resolve_adversarial_system_prompt); _load_adversarial_prompts only
+        # loads the prompt template and the first-message seed prompt.
         mock_template = MagicMock(spec=SeedPrompt)
         mock_seed = MagicMock(spec=SeedPrompt)
 
-        with patch.object(SeedPrompt, "from_yaml_with_required_parameters", return_value=mock_system):
-            with patch.object(SeedPrompt, "from_yaml_file", side_effect=[mock_template, mock_seed]):
-                attack._load_adversarial_prompts()
+        with patch.object(SeedPrompt, "from_yaml_file", side_effect=[mock_template, mock_seed]):
+            attack._load_adversarial_prompts()
 
         # Verify prompts were loaded and stored
-        assert attack._adversarial_chat_system_seed_prompt == mock_system
         assert attack._adversarial_chat_prompt_template == mock_template
         assert attack._adversarial_chat_seed_prompt == mock_seed
 
@@ -2125,6 +2124,7 @@ def test_tap_init_raises_when_objective_scorer_is_none():
             objective_target=MagicMock(spec=PromptTarget),
             attack_adversarial_config=MagicMock(
                 target=MagicMock(spec=PromptTarget),
+                system_prompt=None,
                 system_prompt_path=None,
             ),
             attack_scoring_config=scoring_config,
@@ -2480,3 +2480,43 @@ class TestTAPScenarios:
             assert abs(context.best_objective_score.get_value() - expected_best_score) < 0.01, (
                 f"Expected best score ~{expected_best_score}, got {context.best_objective_score.get_value()}"
             )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestTAPAdversarialIdentity:
+    """Tests for adversarial config in the TAP attack identity and inline system prompt."""
+
+    def test_get_attack_adversarial_config_includes_target_and_system_seed_only(self):
+        builder = AttackBuilder().with_default_mocks()
+        attack = builder.build()
+        config = attack.get_attack_adversarial_config()
+        assert config is not None
+        assert config.target is builder.adversarial_chat
+        assert config.system_prompt is attack._adversarial_chat_system_seed_prompt
+        # TAP's first-message seed prompt is a fixed default and is excluded from identity.
+        assert config.seed_prompt is None
+
+    def test_get_attack_adversarial_config_returns_none_without_target(self):
+        builder = AttackBuilder().with_default_mocks()
+        attack = builder.build()
+        attack._adversarial_chat = None
+        assert attack.get_attack_adversarial_config() is None
+
+    def test_identifier_includes_adversarial_chat_child(self):
+        builder = AttackBuilder().with_default_mocks()
+        attack = builder.build()
+        identifier = attack.get_identifier()
+        assert "adversarial_chat" in identifier.children
+        assert identifier.children["adversarial_chat"] == builder.adversarial_chat.get_identifier.return_value
+
+    def test_inline_system_prompt_string_resolved_and_in_identity(self):
+        objective_target = AttackBuilder._create_mock_target()
+        adversarial_chat = AttackBuilder._create_mock_chat()
+        attack = TreeOfAttacksWithPruningAttack(
+            objective_target=objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(
+                target=adversarial_chat, system_prompt="tap persona {{ desired_prefix }}"
+            ),
+        )
+        assert attack._adversarial_chat_system_seed_prompt.value == "tap persona {{ desired_prefix }}"
+        assert attack.get_identifier().params["adversarial_system_prompt"] == "tap persona {{ desired_prefix }}"

@@ -489,31 +489,6 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                 default = f" DEFAULT {column.default}" if column.default else ""
                 print(f"  {column.name}: {column.type} {nullable}{default}")
 
-    def _get_attack_result_harm_category_condition(self, *, targeted_harm_categories: Sequence[str]) -> Any:
-        """
-        SQLite implementation for filtering AttackResults by targeted harm categories.
-        Uses json_extract() function specific to SQLite.
-
-        Returns:
-            Any: A SQLAlchemy subquery for filtering by targeted harm categories.
-        """
-        targeted_harm_categories_subquery = exists().where(
-            and_(
-                PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
-                # Exclude empty strings, None, and empty lists
-                PromptMemoryEntry.targeted_harm_categories.isnot(None),
-                PromptMemoryEntry.targeted_harm_categories != "",
-                PromptMemoryEntry.targeted_harm_categories != "[]",
-                and_(
-                    *[
-                        func.json_extract(PromptMemoryEntry.targeted_harm_categories, "$").like(f'%"{category}"%')
-                        for category in targeted_harm_categories
-                    ]
-                ),
-            )
-        )
-        return targeted_harm_categories_subquery  # noqa: RET504
-
     def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
         """
         SQLite implementation for filtering AttackResults by labels.

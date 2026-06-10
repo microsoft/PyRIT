@@ -8,10 +8,14 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from pyrit.models.json_schema_definition import (
+    JSON_SCHEMA_METADATA_KEY,  # noqa: TC001  (runtime-required by Pydantic field annotations)
+)
+
 # Would prefer StrEnum, but.... Python 3.10
 _METADATAKEYS = {
     "RESPONSE_FORMAT": "response_format",
-    "JSON_SCHEMA": "json_schema",
+    "JSON_SCHEMA": JSON_SCHEMA_METADATA_KEY,
     "JSON_SCHEMA_NAME": "json_schema_name",
     "JSON_SCHEMA_STRICT": "json_schema_strict",
 }
@@ -19,7 +23,15 @@ _METADATAKEYS = {
 
 class _JsonResponseConfig(BaseModel):
     """
-    Configuration for JSON responses (with OpenAI).
+    Configuration for JSON responses (OpenAI request-format vocabulary).
+
+    Parses an OpenAI-shaped ``response_format`` / ``text.format`` block out of
+    a ``MessagePiece.prompt_metadata`` dict. Lives in the ``pyrit.prompt_target``
+    layer because the keys it speaks (``"response_format"``, ``"json_schema_name"``,
+    ``"json_schema_strict"``) are OpenAI request-shape vocabulary, not
+    framework-wide concepts. The framework-wide pieces (the
+    ``JsonSchemaDefinition`` alias and the ``JSON_SCHEMA_METADATA_KEY`` contract)
+    stay in ``pyrit.models``.
 
     For more details, see:
     https://platform.openai.com/docs/api-reference/chat/create#chat_create-response_format-json_schema
