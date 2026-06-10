@@ -19,7 +19,7 @@
  *     computeReady runs, so the ancestor allowlist admits them per §5.3.
  */
 
-import type { ConversationTreeNodeId, NodeState } from './treeTypes'
+import type { ConversationTree, ConversationTreeNodeId, NodeState } from './treeTypes'
 import {
   buildSForNode,
   buildSForSubtree,
@@ -28,6 +28,7 @@ import {
   demoteRetryFailedNodes,
   findLeafSends,
 } from './readiness'
+import type { SinkCall } from './testHelpers'
 import {
   mkEdge,
   mkExecution,
@@ -449,14 +450,12 @@ describe('demoteRetryFailedNodes', () => {
     expect(stateCalls.map((c) => c.nodeId)).toEqual([nodeId('s')])
   })
 
-  it('after demotion, computeReady admits leaves whose ancestors were previously failed', () => {
-    // Integration check: the rev-15 anti-amplification rule is what
-    // demoteRetryFailedNodes exists to invert. After demotion, an originally-
-    // failed interior Send is `stale`, in the §3.1 allowlist, so its leaf
-    // descendant enters ready.
-    //
-    // We model the state transition in-test (the helper would normally apply
-    // it via the sink, but here we want to compose with computeReady).
+  it('composes with computeReady: leaves blocked by failed ancestors become ready after demotion', () => {
+    // Honest composition test: build one tree, run demoteRetryFailedNodes,
+    // then project the sink's setNodeState calls back onto a fresh tree copy
+    // and run computeReady on the result. Without the projection step, this
+    // would just be testing computeReady against a hand-rolled tree — the
+    // demoter could write nonsense and the test would still pass.
     const tree = mkTree('r', [
       mkRoot('r', undefined, { state: 'clean' }),
       mkUserTurn('u1', 'r', undefined, { state: 'clean' }),
@@ -466,23 +465,46 @@ describe('demoteRetryFailedNodes', () => {
     ])
     const S = new Set([nodeId('s_mid'), nodeId('s_leaf')])
 
-    // Before demotion: s_leaf blocked by s_mid (failed ancestor).
+    // Pre-condition: s_leaf is blocked by s_mid's failed state.
     expect(computeReady(tree, S)).toEqual([])
 
-    // Simulate demotion having been applied by the sink (state transition in
-    // the real flow), by reconstructing the tree with the demoted states.
-    const demoted = mkTree('r', [
-      mkRoot('r', undefined, { state: 'clean' }),
-      mkUserTurn('u1', 'r', undefined, { state: 'clean' }),
-      mkSend('s_mid', 'u1', undefined, { state: 'stale' }),
-      mkUserTurn('u2', 's_mid', undefined, { state: 'stale' }),
-      mkSend('s_leaf', 'u2', undefined, { state: 'stale' }),
-    ])
-    // After demotion: s_leaf now enters ready (s_mid's stale state is in
-    // the allowlist), and the leaf's stale state is also admissible per §3.1.
-    expect(computeReady(demoted, S).map((n) => n.id)).toEqual([nodeId('s_leaf')])
+    // Run the demoter against a recording sink, then project its state changes
+    // back onto a copy of the tree.
+    const { sink, callsOf } = mkMockSink()
+    demoteRetryFailedNodes(tree, S, sink)
+
+    const projected = projectStateChanges(tree, callsOf('setNodeState'))
+
+    // Post-condition: composing the two surfaces the V1.0 contract — after
+    // demotion runs, computeReady admits s_leaf. If the demoter wrote anything
+    // other than 'stale' (typo'd state, wrong nodes), s_leaf would still be
+    // blocked and the assertion would fail.
+    expect(computeReady(projected, S).map((n) => n.id)).toEqual([nodeId('s_leaf')])
   })
 })
+
+/**
+ * Apply a sequence of recorded setNodeState calls to a copy of the tree,
+ * producing the tree the runner would see after the demoter's writes. Only
+ * touches `state` — sufficient for readiness composition tests; not a general
+ * projection (it doesn't clone execution or other fields touched by the sink).
+ */
+function projectStateChanges(
+  tree: ConversationTree,
+  calls: Extract<SinkCall, { method: 'setNodeState' }>[],
+): ConversationTree {
+  const overrides = new Map<string, NodeState>()
+  for (const c of calls) {
+    overrides.set(c.nodeId as string, c.state)
+  }
+  return {
+    ...tree,
+    nodes: tree.nodes.map((n) => {
+      const o = overrides.get(n.id as string)
+      return o === undefined ? n : { ...n, state: o }
+    }),
+  }
+}
 
 // ============================================================================
 // Defensive cases: a tree with explicit fan slotIndex edges

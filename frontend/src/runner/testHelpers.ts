@@ -31,7 +31,6 @@ import type {
   UndoOp,
   UserTurnNode,
   WaveEvent,
-  WaveTriggerKind,
 } from './treeTypes'
 
 // ----------------------------------------------------------------------------
@@ -199,13 +198,25 @@ interface TreeOverrides {
 }
 
 export function mkTree(rootId: string, nodes: ConversationTreeNode[], overrides: TreeOverrides = {}): ConversationTree {
-  // Default edges: one per child node (slotIndex = 0). Tests that need fan
-  // slotIndices supply explicit edges via overrides.edges.
+  // Default edges: one per child node. Children of FanNode parents are
+  // auto-numbered by ordinal so attempt-fan tests get distinct slotIndices
+  // (slotIndex feeds the resolved-input hash; sharing it across siblings
+  // makes fixtures lie about the tree's identity rule).
+  const fanCounters = new Map<string, number>()
+  const isFanParent = new Set(nodes.filter((n) => n.kind === 'fan').map((n) => n.id as string))
   const derivedEdges: ConversationTreeEdge[] =
     overrides.edges ??
     nodes
       .filter((n) => n.parentId !== null)
-      .map((n) => mkEdge(n.parentId as string, n.id as string))
+      .map((n) => {
+        const parent = n.parentId as string
+        if (isFanParent.has(parent)) {
+          const next = fanCounters.get(parent) ?? 0
+          fanCounters.set(parent, next + 1)
+          return mkEdge(parent, n.id as string, next)
+        }
+        return mkEdge(parent, n.id as string)
+      })
   return {
     id: treeId(overrides.id ?? 't-1'),
     nodes,
@@ -283,8 +294,6 @@ export interface MockSink {
   sink: RunnerStateSink
   calls: SinkCall[]
   callsOf<M extends SinkCall['method']>(method: M): Extract<SinkCall, { method: M }>[]
-  events(): WaveEvent[]
-  stateChanges(nodeId: ConversationTreeNodeId): NodeState[]
 }
 
 export function mkMockSink(): MockSink {
@@ -311,27 +320,5 @@ export function mkMockSink(): MockSink {
     calls,
     callsOf: <M extends SinkCall['method']>(method: M) =>
       calls.filter((c): c is Extract<SinkCall, { method: M }> => c.method === method),
-    events: () =>
-      calls
-        .filter((c): c is Extract<SinkCall, { method: 'emitWaveEvent' }> => c.method === 'emitWaveEvent')
-        .map((c) => c.event),
-    stateChanges: (id) =>
-      calls
-        .filter((c): c is Extract<SinkCall, { method: 'setNodeState' }> => c.method === 'setNodeState' && c.nodeId === id)
-        .map((c) => c.state),
   }
 }
-
-// ----------------------------------------------------------------------------
-// Sanity export to keep TypeScript happy about unused `WaveTriggerKind` import
-// when consumers want to construct one. Not used at runtime.
-// ----------------------------------------------------------------------------
-
-export const ALL_WAVE_TRIGGER_KINDS: readonly WaveTriggerKind[] = [
-  'refresh_node',
-  'refresh_subtree',
-  'refresh_tree',
-  'retry_failed',
-  'synced_peer_add',
-  'cross_tree_rebase',
-] as const
