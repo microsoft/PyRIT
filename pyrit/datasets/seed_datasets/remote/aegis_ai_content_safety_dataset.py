@@ -96,8 +96,8 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
         Initialize the NVIDIA Aegis AI Content Safety Dataset loader.
 
         Args:
-            harm_categories (list[AegisHarmCategory] | None): List of AegisHarmCategory values to filter by. Defaults to None (all categories).
-                Only prompts with at least one matching category are included.
+            harm_categories: List of AegisHarmCategory values to filter by. Defaults to None
+                (all categories). Only prompts with at least one matching category are included.
 
         Raises:
             ValueError: If any provided harm category is not an ``AegisHarmCategory``.
