@@ -62,7 +62,7 @@ class ConversationScorer(Scorer, ABC):
         conversation_id = message.message_pieces[0].conversation_id
 
         # Retrieve the full conversation from memory using the conversation_id
-        conversation = self._memory.get_conversation(conversation_id=conversation_id)
+        conversation = self._memory.get_conversation(conversation_id=conversation_id) if conversation_id else []
 
         if not conversation:
             raise ValueError(f"Conversation with ID {conversation_id} not found in memory.")
@@ -105,7 +105,6 @@ class ConversationScorer(Scorer, ABC):
                     original_value_data_type="text",
                     converted_value_data_type="text",
                     response_error="none",
-                    originator=original_piece.originator,
                     original_prompt_id=(
                         cast("UUID", original_piece.original_prompt_id)
                         if isinstance(original_piece.original_prompt_id, str)

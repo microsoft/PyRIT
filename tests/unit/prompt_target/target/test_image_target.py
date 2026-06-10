@@ -3,7 +3,6 @@
 
 import os
 import uuid
-import warnings
 from collections.abc import MutableSequence
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -400,54 +399,6 @@ async def test_send_prompt_async_bad_request_content_policy_violation(
         assert result[0].message_pieces[0].converted_value_data_type == "error"
 
 
-async def test_send_prompt_async_url_response_downloads_image(
-    image_target: OpenAIImageTarget,
-    sample_conversations: MutableSequence[MessagePiece],
-):
-    """Test that when model returns URL instead of base64, the image is downloaded from URL."""
-    request = sample_conversations[0]
-    request.conversation_id = str(uuid.uuid4())
-
-    # Response returns URL (no b64_json)
-    mock_response_url = MagicMock()
-    mock_image_url = MagicMock()
-    mock_image_url.b64_json = None
-    mock_image_url.url = "https://example.com/image.png"
-    mock_response_url.data = [mock_image_url]
-
-    # Mock httpx response for URL download
-    mock_http_response = MagicMock()
-    mock_http_response.content = b"hello"
-    mock_http_response.raise_for_status = MagicMock()
-
-    with patch.object(image_target._async_client.images, "generate", new_callable=AsyncMock) as mock_generate:
-        mock_generate.return_value = mock_response_url
-
-        with patch("pyrit.prompt_target.openai.openai_image_target.httpx.AsyncClient") as mock_httpx:
-            mock_client_instance = AsyncMock()
-            mock_client_instance.get = AsyncMock(return_value=mock_http_response)
-            mock_httpx.return_value.__aenter__.return_value = mock_client_instance
-
-            resp = await image_target.send_prompt_async(message=Message([request]))
-
-            # Should have called generate once
-            assert mock_generate.call_count == 1
-
-            # Should have downloaded from the URL
-            mock_client_instance.get.assert_called_once_with("https://example.com/image.png")
-
-            # Should have successfully returned the image
-            assert len(resp) == 1
-            path = resp[0].message_pieces[0].original_value
-            assert os.path.isfile(path)
-
-            with open(path, "rb") as file:
-                data = file.read()
-                assert data == b"hello"
-
-            os.remove(path)
-
-
 async def test_validate_no_text_piece(image_target: OpenAIImageTarget):
     image_piece = get_image_message_piece()
 
@@ -554,101 +505,6 @@ async def test_validate_previous_conversations(
         " custom_configuration parameter accordingly",
     ):
         await image_target.send_prompt_async(message=request)
-
-
-def test_style_param_emits_deprecation_warning(patch_central_database):
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        target = OpenAIImageTarget(
-            model_name="gpt-image-1",
-            endpoint="test",
-            api_key="test",
-            style="vivid",
-        )
-    deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    style_warnings = [w for w in deprecation_warnings if "style" in str(w.message)]
-    assert len(style_warnings) == 1
-    assert "0.15.0" in str(style_warnings[0].message)
-    assert "2026-05-12" in str(style_warnings[0].message)
-    assert target.style == "vivid"
-
-
-def test_no_style_does_not_emit_deprecation_warning(patch_central_database):
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        OpenAIImageTarget(
-            model_name="gpt-image-1",
-            endpoint="test",
-            api_key="test",
-        )
-    style_warnings = [
-        w for w in caught if issubclass(w.category, DeprecationWarning) and "OpenAIImageTarget(style" in str(w.message)
-    ]
-    assert len(style_warnings) == 0
-
-
-@pytest.mark.parametrize("deprecated_size", ["256x256", "512x512", "1792x1024", "1024x1792"])
-def test_deprecated_image_size_emits_warning(patch_central_database, deprecated_size):
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        target = OpenAIImageTarget(
-            model_name="gpt-image-1",
-            endpoint="test",
-            api_key="test",
-            image_size=deprecated_size,
-        )
-    deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    size_warnings = [w for w in deprecation_warnings if "image_size" in str(w.message)]
-    assert len(size_warnings) == 1
-    assert "0.15.0" in str(size_warnings[0].message)
-    assert "2026-05-12" in str(size_warnings[0].message)
-    assert target.image_size == deprecated_size
-
-
-@pytest.mark.parametrize("valid_size", ["auto", "1024x1024", "1536x1024", "1024x1536"])
-def test_valid_image_size_does_not_emit_warning(patch_central_database, valid_size):
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        OpenAIImageTarget(
-            model_name="gpt-image-1",
-            endpoint="test",
-            api_key="test",
-            image_size=valid_size,
-        )
-    size_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning) and "image_size" in str(w.message)]
-    assert len(size_warnings) == 0
-
-
-@pytest.mark.parametrize("deprecated_quality", ["standard", "hd"])
-def test_deprecated_quality_emits_warning(patch_central_database, deprecated_quality):
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        target = OpenAIImageTarget(
-            model_name="gpt-image-1",
-            endpoint="test",
-            api_key="test",
-            quality=deprecated_quality,
-        )
-    deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    quality_warnings = [w for w in deprecation_warnings if "quality" in str(w.message)]
-    assert len(quality_warnings) == 1
-    assert "0.15.0" in str(quality_warnings[0].message)
-    assert "2026-05-12" in str(quality_warnings[0].message)
-    assert target.quality == deprecated_quality
-
-
-@pytest.mark.parametrize("valid_quality", ["auto", "low", "medium", "high"])
-def test_valid_quality_does_not_emit_warning(patch_central_database, valid_quality):
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        OpenAIImageTarget(
-            model_name="gpt-image-1",
-            endpoint="test",
-            api_key="test",
-            quality=valid_quality,
-        )
-    quality_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning) and "quality" in str(w.message)]
-    assert len(quality_warnings) == 0
 
 
 def test_background_param_stored(patch_central_database):

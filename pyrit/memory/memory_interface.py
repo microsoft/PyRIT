@@ -10,7 +10,7 @@ import weakref
 from collections.abc import MutableSequence, Sequence
 from contextlib import closing
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
 
 from sqlalchemy import MetaData, and_, not_, or_, select
 from sqlalchemy.engine.base import Engine
@@ -63,13 +63,6 @@ logger = logging.getLogger(__name__)
 
 Model = TypeVar("Model")
 
-# Label keys are interpolated into backend-specific JSON path expressions
-# (e.g. ``$.key``) in the per-backend label-filter helpers. We restrict keys
-# to a conservative allowlist so a crafted key cannot break out of the JSON
-# path literal and inject SQL. Values are always passed as bound parameters
-# and do not need this restriction.
-_LABEL_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_.\-]+$")
-
 
 class MemoryInterface(abc.ABC):
     """
@@ -84,6 +77,13 @@ class MemoryInterface(abc.ABC):
     # Conservative default based on SQLite's limit of 999. Subclasses can override
     # for backends with higher limits (e.g., Azure SQL supports 2100).
     _MAX_BIND_VARS: int = 500
+
+    # Label keys are interpolated into backend-specific JSON path expressions
+    # (e.g. ``$.key``) in the per-backend label-filter helpers. We restrict keys
+    # to a conservative allowlist so a crafted key cannot break out of the JSON
+    # path literal and inject SQL. Values are always passed as bound parameters
+    # and do not need this restriction.
+    _LABEL_KEY_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
     memory_embedding: "MemoryEmbedding | None" = None
     results_storage_io: StorageIO | None = None
@@ -333,14 +333,14 @@ class MemoryInterface(abc.ABC):
     @abc.abstractmethod
     def _get_seed_metadata_conditions(self, *, metadata: dict[str, str | int]) -> Any:
         """
-                Return a condition for filtering seed prompt entries based on prompt metadata.
-        s
-                Args:
-                    metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
-                        This includes information that is useful for the specific target you're probing, such as encoding data.
+        Return a condition for filtering seed prompt entries based on prompt metadata.
+
+        Args:
+            metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
+                This includes information that is useful for the specific target you're probing, such as encoding data.
 
         Returns:
-                    Any: A SQLAlchemy condition for filtering memory entries based on prompt metadata.
+            Any: A SQLAlchemy condition for filtering memory entries based on prompt metadata.
         """
 
     def add_conversation_to_memory(self, *, conversation: Conversation) -> None:
@@ -720,19 +720,6 @@ class MemoryInterface(abc.ABC):
         """
 
     @abc.abstractmethod
-    def _get_attack_result_harm_category_condition(self, *, targeted_harm_categories: Sequence[str]) -> Any:
-        """
-        Return a database-specific condition for filtering AttackResults by targeted harm categories
-        in the associated PromptMemoryEntry records.
-
-        Args:
-            targeted_harm_categories: List of harm categories that must ALL be present.
-
-        Returns:
-            Database-specific SQLAlchemy condition.
-        """
-
-    @abc.abstractmethod
     def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
         """
         Return a database-specific condition for filtering AttackResults by labels.
@@ -952,21 +939,19 @@ class MemoryInterface(abc.ABC):
             converted_value_sha256=converted_value_sha256,
         )
 
-        # Deduplicate message pieces by original_prompt_id to avoid duplicate scores
-        # since duplicated pieces share scores with their originals
-        seen_original_ids = set()
-        unique_pieces = []
-        for piece in message_pieces:
-            if piece.original_prompt_id not in seen_original_ids:
-                seen_original_ids.add(piece.original_prompt_id)
-                unique_pieces.append(piece)
+        # Deduplicate by original_prompt_id since duplicated pieces share scores
+        # with their originals.
+        original_ids = {piece.original_prompt_id for piece in message_pieces if piece.original_prompt_id is not None}
+        if not original_ids:
+            return []
 
-        scores = []
-        for piece in unique_pieces:
-            if piece.scores:
-                scores.extend(piece.scores)
-
-        return list(scores)
+        score_entries = self._execute_batched_query(
+            ScoreEntry,
+            batch_column=ScoreEntry.prompt_request_response_id,
+            batch_values=list(original_ids),
+            other_conditions=[],
+        )
+        return [entry.get_score() for entry in score_entries]
 
     def get_conversation(self, *, conversation_id: str) -> MutableSequence[Message]:
         """
@@ -1872,13 +1857,11 @@ class MemoryInterface(abc.ABC):
         objective: str | None = None,
         objective_sha256: Sequence[str] | None = None,
         outcome: str | None = None,
-        attack_class: str | None = None,
         attack_classes: Sequence[str] | None = None,
         atomic_attack_eval_hashes: Sequence[str] | None = None,
         converter_classes: Sequence[str] | None = None,
         converter_classes_match: Literal["all", "any"] = "all",
         has_converters: bool | None = None,
-        targeted_harm_categories: Sequence[str] | None = None,
         labels: dict[str, str | Sequence[str]] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         scenario_result_id: str | None = None,
@@ -1894,9 +1877,6 @@ class MemoryInterface(abc.ABC):
                 Defaults to None.
             outcome (str | None, optional): The outcome to filter by (success, failure, undetermined).
                 Defaults to None.
-            attack_class (str | None, optional): Deprecated. Filter by a single exact attack
-                class_name in attack_identifier. Equivalent to passing ``attack_classes=[attack_class]``.
-                Cannot be combined with ``attack_classes``. Defaults to None.
             attack_classes (Sequence[str] | None, optional): Filter by exact attack class_name in
                 attack_identifier. Returns attacks matching ANY of the listed class names (OR logic,
                 case-sensitive). An empty sequence applies no filter. Defaults to None.
@@ -1918,13 +1898,6 @@ class MemoryInterface(abc.ABC):
             has_converters (bool | None, optional): Filter by converter presence.
                 ``True`` returns only attacks that used at least one converter. ``False`` returns
                 only attacks that used no converters. ``None`` applies no filter. Defaults to None.
-            targeted_harm_categories (Sequence[str] | None, optional):
-                A list of targeted harm categories to filter results by.
-                These targeted harm categories are associated with the prompts themselves,
-                meaning they are harm(s) we're trying to elicit with the prompt,
-                not necessarily one(s) that were found in the response.
-                By providing a list, this means ALL categories in the list must be present.
-                Defaults to None.
             labels (dict[str, str | Sequence[str]] | None, optional): Filter results
                 by attack labels. Entries are AND-combined across label names; within a
                 single entry, a string value is an equality match and a sequence value is
@@ -1945,25 +1918,14 @@ class MemoryInterface(abc.ABC):
             Sequence[AttackResult]: A list of AttackResult objects that match the specified filters.
 
         Raises:
-            ValueError: If both ``attack_class`` (deprecated) and ``attack_classes`` are provided.
+            ValueError: If any label key contains characters outside the allowlist
+                ``[A-Za-z0-9_.-]+``.
         """
         # Handle empty list cases
         if attack_result_ids is not None and len(attack_result_ids) == 0:
             return []
         if objective_sha256 is not None and len(objective_sha256) == 0:
             return []
-
-        if attack_class is not None and attack_classes is not None:
-            raise ValueError(
-                "Pass either `attack_class` (deprecated, singular) or `attack_classes` (plural), not both."
-            )
-        if attack_class is not None and attack_classes is None:
-            print_deprecation_message(
-                old_item="get_attack_results(attack_class=...)",
-                new_item="get_attack_results(attack_classes=...)",
-                removed_in="0.15.0",
-            )
-            attack_classes = [attack_class]
 
         # Build non-list conditions
         conditions: list[ColumnElement[bool]] = []
@@ -2040,15 +2002,6 @@ class MemoryInterface(abc.ABC):
             )
             conditions.append(not_(empty_condition) if has_converters else empty_condition)
 
-        if targeted_harm_categories:
-            print_deprecation_message(
-                old_item="get_attack_results(targeted_harm_categories=...)",
-                new_item="get_attack_results(labels={'harm_category': [...]})",
-                removed_in="0.15.0",
-            )
-            conditions.append(
-                self._get_attack_result_harm_category_condition(targeted_harm_categories=targeted_harm_categories)
-            )
         if labels:
             # Strip keys whose value is an empty sequence — an empty sequence means
             # "no OR-candidates", and per the docstring applies no filter for that
@@ -2060,10 +2013,10 @@ class MemoryInterface(abc.ABC):
             # interpolate keys into JSON path expressions (e.g. ``$.key``),
             # so a key with quotes or SQL punctuation could otherwise break
             # out and inject SQL.
-            invalid_keys = [k for k in effective_labels if not _LABEL_KEY_PATTERN.match(k)]
+            invalid_keys = [k for k in effective_labels if not self._LABEL_KEY_PATTERN.match(k)]
             if invalid_keys:
                 raise ValueError(
-                    f"Invalid label key(s) {invalid_keys!r}: keys must match {_LABEL_KEY_PATTERN.pattern}."
+                    f"Invalid label key(s) {invalid_keys!r}: keys must match {self._LABEL_KEY_PATTERN.pattern}."
                 )
             if effective_labels:
                 # Use database-specific JSON query method

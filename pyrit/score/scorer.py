@@ -24,9 +24,11 @@ from pyrit.exceptions import (
 )
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
+    JSON_SCHEMA_METADATA_KEY,
     ChatMessageRole,
     ComponentIdentifier,
     Identifiable,
+    JsonSchemaDefinition,
     Message,
     MessagePiece,
     PromptDataType,
@@ -674,6 +676,7 @@ class Scorer(Identifiable, abc.ABC):
         description_output_key: str = "description",
         metadata_output_key: str = "metadata",
         category_output_key: str = "category",
+        response_json_schema: JsonSchemaDefinition | None = None,
     ) -> UnvalidatedScore:
         """
         Send a request to a target, and take care of retries.
@@ -707,6 +710,10 @@ class Scorer(Identifiable, abc.ABC):
                 Defaults to "metadata".
             category_output_key (str): The key in the JSON response that contains the category.
                 Defaults to "category".
+            response_json_schema (JsonSchemaDefinition | None): An optional JSON schema constraining
+                the scoring response. When provided, it is written to the request metadata; targets
+                that natively support JSON schemas enforce it, while others have it omitted by the
+                normalization pipeline. Defaults to None.
 
         Returns:
             UnvalidatedScore: The score object containing the response from the target LLM.
@@ -723,7 +730,11 @@ class Scorer(Identifiable, abc.ABC):
             system_prompt=system_prompt,
             conversation_id=conversation_id,
         )
-        prompt_metadata: dict[str, str | int] = {"response_format": "json"}
+        prompt_metadata: dict[str, Any] = {"response_format": "json"}
+        if response_json_schema is not None:
+            # Always forward the schema; the target's normalization pipeline omits it
+            # when the target cannot natively enforce a JSON schema.
+            prompt_metadata[JSON_SCHEMA_METADATA_KEY] = response_json_schema
 
         # Build message pieces - prepended text context first (if provided), then the main message being scored
         message_pieces: list[MessagePiece] = []

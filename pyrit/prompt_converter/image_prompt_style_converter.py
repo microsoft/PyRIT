@@ -4,7 +4,7 @@
 import logging
 import random
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import yaml
 
@@ -21,9 +21,6 @@ from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
-IMAGE_PROMPT_STYLE_DIR = Path(CONVERTER_SEED_PROMPT_PATH) / "image_prompt_style"
-SYSTEM_PROMPT_FILENAME = "image_prompt_style_system_prompt.yaml"
-
 
 class ImagePromptStyleConverter(LLMGenericTextConverter):
     """
@@ -33,6 +30,9 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
     The converter loads a filter YAML file containing style_instructions and a list of variations,
     then uses an LLM to expand the user's objective into a fully styled image generation prompt.
     """
+
+    IMAGE_PROMPT_STYLE_DIR: ClassVar[Path] = Path(CONVERTER_SEED_PROMPT_PATH) / "image_prompt_style"
+    SYSTEM_PROMPT_FILENAME: ClassVar[str] = "image_prompt_style_system_prompt.yaml"
 
     @apply_defaults
     def __init__(
@@ -73,7 +73,7 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
         self._variation = variation
 
         # Load the shared system prompt template
-        system_prompt_path = IMAGE_PROMPT_STYLE_DIR / SYSTEM_PROMPT_FILENAME
+        system_prompt_path = self.IMAGE_PROMPT_STYLE_DIR / self.SYSTEM_PROMPT_FILENAME
         system_prompt_template = SeedPrompt.from_yaml_file(system_prompt_path)
 
         # Resolve the filter YAML file
@@ -83,7 +83,7 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
                 raise ValueError(f"Filter path '{filter_path}' does not exist.")
             self._filter_name = resolved_path.stem
         elif filter_name is not None:
-            resolved_path = IMAGE_PROMPT_STYLE_DIR / f"{filter_name}.yaml"
+            resolved_path = self.IMAGE_PROMPT_STYLE_DIR / f"{filter_name}.yaml"
             if not resolved_path.exists():
                 available = self.list_available_filters()
                 raise ValueError(f"Filter '{filter_name}' not found. Available filters: {available}")
@@ -92,7 +92,7 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
             # No filter specified — pick a random built-in filter
             available = self.list_available_filters()
             self._filter_name = random.choice(available)
-            resolved_path = IMAGE_PROMPT_STYLE_DIR / f"{self._filter_name}.yaml"
+            resolved_path = self.IMAGE_PROMPT_STYLE_DIR / f"{self._filter_name}.yaml"
 
         with open(resolved_path, encoding="utf-8") as f:
             filter_data = yaml.safe_load(f)
@@ -208,7 +208,7 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
         Returns:
             List of filter names (YAML filenames without extension), excluding the system prompt.
         """
-        return sorted(p.stem for p in IMAGE_PROMPT_STYLE_DIR.glob("*.yaml") if p.name != SYSTEM_PROMPT_FILENAME)
+        return sorted(p.stem for p in cls.IMAGE_PROMPT_STYLE_DIR.glob("*.yaml") if p.name != cls.SYSTEM_PROMPT_FILENAME)
 
     @classmethod
     def list_available_variations(cls, *, filter_name: str) -> list[str]:
@@ -225,7 +225,7 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
             ValueError: If filter_name does not correspond to an existing YAML file, or if the
                 filter file is malformed.
         """
-        resolved_path = IMAGE_PROMPT_STYLE_DIR / f"{filter_name}.yaml"
+        resolved_path = cls.IMAGE_PROMPT_STYLE_DIR / f"{filter_name}.yaml"
         if not resolved_path.exists():
             available = cls.list_available_filters()
             raise ValueError(f"Filter '{filter_name}' not found. Available filters: {available}")

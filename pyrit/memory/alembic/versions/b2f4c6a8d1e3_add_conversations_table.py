@@ -27,7 +27,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b2f4c6a8d1e3"
-down_revision: str | None = "9c8b7a6d5e4f"
+down_revision: str | None = "f1a2b3c4d5e6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -80,16 +80,14 @@ def _backfill_conversations() -> None:
     """
     bind = op.get_bind()
 
-    existing_ids = {
-        row[0] for row in bind.execute(sa.text('SELECT conversation_id FROM "Conversations"')).fetchall()
-    }
+    existing_ids = {row[0] for row in bind.execute(sa.text('SELECT conversation_id FROM "Conversations"')).fetchall()}
 
     targets_by_conversation: dict[str, str | None] = {}
     conflict_warnings = 0
 
     prompt_rows = bind.execute(
         sa.text(
-            'SELECT conversation_id, prompt_target_identifier '
+            "SELECT conversation_id, prompt_target_identifier "
             'FROM "PromptMemoryEntries" '
             "WHERE conversation_id IS NOT NULL "
             "ORDER BY sequence"
@@ -137,6 +135,5 @@ def _backfill_conversations() -> None:
 
     if inserted or conflict_warnings:
         logger.info(
-            f"Conversations backfill: inserted {inserted} row(s); "
-            f"{conflict_warnings} target-conflict warning(s)."
+            f"Conversations backfill: inserted {inserted} row(s); {conflict_warnings} target-conflict warning(s)."
         )

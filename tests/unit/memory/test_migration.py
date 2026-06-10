@@ -273,6 +273,23 @@ def _seed_pre_migration_attack_result(connection, *, attack_id, conversation_id)
     )
 
 
+def _seed_post_drop_attack_result(connection, *, attack_id, conversation_id):
+    """Insert an AttackResultEntry row at the Conversations pre-migration revision.
+
+    By this revision the deprecated ``AttackResultEntries.attack_identifier`` column
+    has already been dropped, so it is omitted from the insert.
+    """
+    connection.execute(
+        text(
+            'INSERT INTO "AttackResultEntries" '
+            "(id, conversation_id, objective, objective_sha256, executed_turns, "
+            "execution_time_ms, outcome, timestamp) "
+            "VALUES (:id, :conv, 'obj', 'sha', 1, 0, 'success', '2026-05-18')"
+        ),
+        {"id": attack_id, "conv": conversation_id},
+    )
+
+
 def _config_for(connection):
     pyrit_root = Path(__file__).resolve().parent.parent.parent.parent / "pyrit"
     script_location = pyrit_root / "memory" / "alembic"
@@ -593,7 +610,7 @@ def test_check_schema_migrations_not_silent_prints_output(capsys):
 
 
 _CONVERSATIONS_REV = "b2f4c6a8d1e3"
-_CONVERSATIONS_PREV_REV = "9c8b7a6d5e4f"
+_CONVERSATIONS_PREV_REV = "f1a2b3c4d5e6"
 
 _TARGET_A = '{"name": "target-a"}'
 _TARGET_B = '{"name": "target-b"}'
@@ -670,7 +687,7 @@ def test_conversations_backfill_populates_targets_and_handles_conflicts(caplog):
                     target_identifier=_TARGET_B,
                 )
                 # A conversation referenced only by an AttackResultEntry (no prompt rows).
-                _seed_pre_migration_attack_result(
+                _seed_post_drop_attack_result(
                     connection, attack_id=str(uuid.uuid4()), conversation_id="conv-attack-only"
                 )
 

@@ -9,15 +9,12 @@ from typing import cast
 from PIL import Image, ImageFont
 from PIL.ImageFont import FreeTypeFont
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import data_serializer_factory
 from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_converter.base_image_text_converter import _BaseImageTextConverter
 from pyrit.prompt_converter.prompt_converter import ConverterResult
 
 logger = logging.getLogger(__name__)
-
-_UNSET = object()
 
 
 class AddImageTextConverter(_BaseImageTextConverter):
@@ -39,13 +36,11 @@ class AddImageTextConverter(_BaseImageTextConverter):
 
     def __init__(
         self,
-        *args: str,
-        img_to_add: str = "",
+        *,
+        img_to_add: str,
         font_name: str | None = None,
         color: tuple[int, int, int] = (0, 0, 0),
         font_size: int | tuple[int, int] = 15,
-        x_pos: int = _UNSET,  # type: ignore[ty:invalid-parameter-default]
-        y_pos: int = _UNSET,  # type: ignore[ty:invalid-parameter-default]
         bounding_box: tuple[int, int, int, int] | None = None,
         rotation: float = 0.0,
         center_text: bool = False,
@@ -54,16 +49,12 @@ class AddImageTextConverter(_BaseImageTextConverter):
         Initialize the converter with the image file path and text properties.
 
         Args:
-            *args: Deprecated positional argument for img_to_add. Use img_to_add=... instead.
-                Will be removed in version 0.15.0.
             img_to_add (str): File path of image to add text to.
             font_name (str | None): Path of font to use. Must be a TrueType font (.ttf).
                 Defaults to None which uses Pillow's built-in default font.
             color (tuple[int, int, int]): Color to print text in, using RGB values. Defaults to (0, 0, 0).
             font_size (int | tuple[int, int]): Font size as a fixed int, or a (min, max) tuple for automatic
                 sizing that shrinks from max down to min to fit text in the bounding box. Defaults to 15.
-            x_pos (int): Deprecated. Use bounding_box instead. Will be removed in version 0.15.0.
-            y_pos (int): Deprecated. Use bounding_box instead. Will be removed in version 0.15.0.
             bounding_box (tuple[int, int, int, int] | None): Optional (x1, y1, x2, y2) region to constrain
                 text within. When not set, the full image is used with a default margin.
                 Defaults to None.
@@ -72,38 +63,9 @@ class AddImageTextConverter(_BaseImageTextConverter):
                 Defaults to False.
 
         Raises:
-            TypeError: If more than one positional argument is passed, or if img_to_add
-                is passed as both positional and keyword argument.
             ValueError: If img_to_add is empty, font_name doesn't end with ".ttf",
-                font_size tuple is invalid, bounding_box coordinates are invalid,
-                or x_pos/y_pos are used together with bounding_box.
+                font_size tuple is invalid, or bounding_box coordinates are invalid.
         """
-        if args:
-            if len(args) > 1:
-                raise TypeError(f"AddImageTextConverter takes at most 1 positional argument, got {len(args)}")
-            if img_to_add:
-                raise TypeError("Cannot pass img_to_add as both positional and keyword argument")
-            print_deprecation_message(
-                old_item="Passing img_to_add as a positional argument to AddImageTextConverter",
-                new_item="AddImageTextConverter(img_to_add=...) keyword argument",
-                removed_in="0.15.0",
-            )
-            img_to_add = args[0]
-        if x_pos is not _UNSET or y_pos is not _UNSET:
-            if bounding_box is not None:
-                raise ValueError(
-                    "Cannot pass x_pos/y_pos together with bounding_box. Use bounding_box=(x, y, x2, y2) instead."
-                )
-            print_deprecation_message(
-                old_item="AddImageTextConverter(x_pos=..., y_pos=...)",
-                new_item="AddImageTextConverter(bounding_box=(x1, y1, x2, y2))",
-                removed_in="0.15.0",
-            )
-        # Resolve defaults after deprecation check
-        if x_pos is _UNSET:
-            x_pos = 10
-        if y_pos is _UNSET:
-            y_pos = 10
         if not img_to_add:
             raise ValueError("Please provide valid image path")
         if font_name is not None and not font_name.endswith(".ttf"):
@@ -119,8 +81,6 @@ class AddImageTextConverter(_BaseImageTextConverter):
         self._font_load_failed = font_name is None
         self._font = self._load_font()
         self._color = color
-        self._x_pos = x_pos
-        self._y_pos = y_pos
         self._bounding_box = bounding_box
         self._rotation = rotation
         self._center_text = center_text
@@ -252,7 +212,7 @@ class AddImageTextConverter(_BaseImageTextConverter):
         else:
             # Default to full image with margin to preserve backward-compatible behavior
             margin = self._DEFAULT_MARGIN
-            bounding_box = (self._x_pos, self._y_pos, image.width - margin, image.height - margin)
+            bounding_box = (10, 10, image.width - margin, image.height - margin)
 
         if self._auto_font_size:
             x1, y1, x2, y2 = bounding_box

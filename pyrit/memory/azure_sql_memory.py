@@ -445,43 +445,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         combined = joiner.join(conditions)
         return text(f"""ISJSON("{table_name}".{column_name}) = 1 AND ({combined})""").bindparams(**bindparams_dict)
 
-    def _get_attack_result_harm_category_condition(self, *, targeted_harm_categories: Sequence[str]) -> Any:
-        """
-        Get the SQL Azure implementation for filtering AttackResults by targeted harm categories.
-
-        Uses JSON_QUERY() function specific to SQL Azure to check if categories exist in the JSON array.
-
-        Args:
-            targeted_harm_categories (Sequence[str]): List of harm category strings to filter by.
-
-        Returns:
-            Any: SQLAlchemy exists subquery condition with bound parameters.
-        """
-        # For SQL Azure, we need to use JSON_QUERY to check if a value exists in a JSON array
-        # OPENJSON can parse the array and we check if the category exists
-        # Using parameterized queries for safety
-        harm_conditions = []
-        bindparams_dict = {}
-        for i, category in enumerate(targeted_harm_categories):
-            param_name = f"harm_cat_{i}"
-            # Check if the JSON array contains the category value
-            harm_conditions.append(
-                f"EXISTS(SELECT 1 FROM OPENJSON(targeted_harm_categories) WHERE value = :{param_name})"
-            )
-            bindparams_dict[param_name] = category
-
-        combined_conditions = " AND ".join(harm_conditions)
-
-        return exists().where(
-            and_(
-                PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
-                PromptMemoryEntry.targeted_harm_categories.isnot(None),
-                PromptMemoryEntry.targeted_harm_categories != "",
-                PromptMemoryEntry.targeted_harm_categories != "[]",
-                text(f"ISJSON(targeted_harm_categories) = 1 AND {combined_conditions}").bindparams(**bindparams_dict),
-            )
-        )
-
     def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
         """
         Azure SQL implementation for filtering AttackResults by labels.

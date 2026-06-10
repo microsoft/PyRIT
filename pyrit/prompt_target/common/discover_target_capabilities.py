@@ -45,7 +45,13 @@ from dataclasses import replace
 from pathlib import Path
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.models import Conversation, Message, MessagePiece, PromptDataType
+from pyrit.models import (
+    JSON_SCHEMA_METADATA_KEY,
+    Conversation,
+    Message,
+    MessagePiece,
+    PromptDataType,
+)
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityName,
@@ -505,7 +511,7 @@ async def _probe_json_schema_async(target: PromptTarget, timeout_s: float, retri
         prompt_metadata=_probe_metadata(
             {
                 "response_format": "json",
-                "json_schema": json.dumps(schema),
+                JSON_SCHEMA_METADATA_KEY: json.dumps(schema),
             }
         ),
     )

@@ -19,7 +19,7 @@ import re
 import uuid
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, Union, get_args, get_origin
+from typing import Any, ClassVar, Literal, Union, get_args, get_origin
 from urllib.parse import parse_qs, urlparse
 
 from pyrit import prompt_converter
@@ -41,13 +41,6 @@ from pyrit.models import PromptDataType
 from pyrit.prompt_converter import PromptConverter
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.object_registries import ConverterRegistry
-
-_DATA_TYPE_EXTENSION: dict[str, str] = {
-    "image_path": ".png",
-    "audio_path": ".wav",
-    "video_path": ".mp4",
-    "binary_path": ".bin",
-}
 
 
 def _build_converter_class_registry() -> dict[str, type]:
@@ -221,6 +214,13 @@ class ConverterService:
     API metadata is derived from the converter objects.
     """
 
+    _DATA_TYPE_EXTENSION: ClassVar[dict[str, str]] = {
+        "image_path": ".png",
+        "audio_path": ".wav",
+        "video_path": ".mp4",
+        "binary_path": ".bin",
+    }
+
     def __init__(self) -> None:
         """Initialize the converter service."""
         self._registry = ConverterRegistry.get_registry_singleton()
@@ -375,7 +375,7 @@ class ConverterService:
             elif original_value.startswith("data:"):
                 _, _, value = original_value.partition(",")
 
-                ext = _DATA_TYPE_EXTENSION.get(str(data_type), ".bin")
+                ext = self._DATA_TYPE_EXTENSION.get(str(data_type), ".bin")
 
                 serializer = data_serializer_factory(
                     category="prompt-memory-entries",
@@ -389,7 +389,7 @@ class ConverterService:
                 pass
             else:
                 # Treat as raw base64
-                ext = _DATA_TYPE_EXTENSION.get(str(data_type), ".bin")
+                ext = self._DATA_TYPE_EXTENSION.get(str(data_type), ".bin")
 
                 serializer = data_serializer_factory(
                     category="prompt-memory-entries",
