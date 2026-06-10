@@ -242,17 +242,20 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
   const autoPreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Clear preview when input is emptied (e.g. after sending). Uses the "adjust
-  // state during render" pattern keyed off the *first* empty observation so we
-  // don't trigger react-hooks/set-state-in-effect.
+  // state during render" pattern with a prev-value comparison so the reset
+  // fires exactly once per input transition, even if the input has been empty
+  // before (e.g. user types, clears, types, clears again). Avoids
+  // react-hooks/set-state-in-effect.
   const currentInput = effectiveActiveTab === 'text' ? previewText : (attachmentData[effectiveActiveTab] ?? '')
-  const [clearedForKey, setClearedForKey] = useState('')
-  const clearKey = `${effectiveActiveTab}:${currentInput}`
-  if (!currentInput.trim() && clearedForKey !== clearKey) {
-    setClearedForKey(clearKey)
-    setPreviewOutput('')
-    setPreviewOutputType('text')
-    setPreviewConverterInstanceId(null)
-    setPreviewError(null)
+  const [prevInput, setPrevInput] = useState(currentInput)
+  if (currentInput !== prevInput) {
+    setPrevInput(currentInput)
+    if (!currentInput.trim()) {
+      setPreviewOutput('')
+      setPreviewOutputType('text')
+      setPreviewConverterInstanceId(null)
+      setPreviewError(null)
+    }
   }
 
   useEffect(() => {
