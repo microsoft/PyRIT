@@ -179,7 +179,7 @@ AttackTechniqueFactory(
     attack_class=PromptSendingAttack,
     strategy_tags=["core", "single_turn", "default"],
     attack_kwargs={"max_turns": 5},
-    adversarial_config=None,
+    adversarial_chat=None,                  # None = resolve adversarial target lazily at create()
     seed_technique=None,
     uses_adversarial=None,                  # None = auto-derive from attack signature/seeds
     scorer_override_policy=ScorerOverridePolicy.WARN,

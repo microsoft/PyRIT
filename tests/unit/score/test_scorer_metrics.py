@@ -5,8 +5,6 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from pyrit.models import ComponentIdentifier
 from pyrit.score import (
     HarmScorerMetrics,
@@ -64,24 +62,6 @@ class TestScorerMetricsSerialization:
         with open(file_path, "w") as f:
             f.write(json_str)
         loaded = ObjectiveScorerMetrics.from_json_file(str(file_path))
-        assert loaded == metrics
-
-    def test_from_json_is_deprecated_alias_for_from_json_file(self, tmp_path):
-        metrics = ObjectiveScorerMetrics(
-            num_responses=10,
-            num_human_raters=3,
-            accuracy=0.9,
-            accuracy_standard_error=0.05,
-            f1_score=0.8,
-            precision=0.85,
-            recall=0.75,
-        )
-        file_path = tmp_path / "metrics.json"
-        with open(file_path, "w") as f:
-            f.write(metrics.to_json())
-
-        with pytest.warns(DeprecationWarning, match="ObjectiveScorerMetrics.from_json"):
-            loaded = ObjectiveScorerMetrics.from_json(str(file_path))
         assert loaded == metrics
 
 

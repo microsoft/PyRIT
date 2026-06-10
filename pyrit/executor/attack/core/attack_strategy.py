@@ -32,11 +32,15 @@ from pyrit.models import (
     ConversationReference,
     Identifiable,
     Message,
+    SeedPrompt,
 )
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
-    from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+    from pyrit.executor.attack.core.attack_config import (
+        AttackAdversarialConfig,
+        AttackScoringConfig,
+    )
     from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
     from pyrit.prompt_target import PromptTarget
 
@@ -432,10 +436,27 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             "objective_target": self.get_objective_target().get_identifier(),
         }
 
+        merged_params: dict[str, Any] = dict(params) if params else {}
+
         # Add scorer if present
         scoring_config = self.get_attack_scoring_config()
         if scoring_config and scoring_config.objective_scorer:
             all_children["objective_scorer"] = scoring_config.objective_scorer.get_identifier()
+
+        # Add adversarial chat target and its effective prompts if present. The adversarial
+        # target becomes a child (filtered to model params by the eval rule), while the
+        # effective system/seed prompts land on the attack-strategy node so they are included
+        # in both the full component hash and the eval hash. None-valued params are dropped by
+        # ComponentIdentifier.of, so strategies that do not use a given prompt simply omit it.
+        adversarial_config = self.get_attack_adversarial_config()
+        if adversarial_config is not None and getattr(adversarial_config, "target", None) is not None:
+            all_children["adversarial_chat"] = adversarial_config.target.get_identifier()
+            merged_params["adversarial_system_prompt"] = self._extract_adversarial_prompt_text(
+                adversarial_config.system_prompt
+            )
+            merged_params["adversarial_seed_prompt"] = self._extract_adversarial_prompt_text(
+                adversarial_config.seed_prompt
+            )
 
         # Add request converter identifiers if present
         if self._request_converters:
@@ -452,7 +473,24 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         if children:
             all_children.update(children)
 
-        return ComponentIdentifier.of(self, params=params, children=all_children)
+        return ComponentIdentifier.of(self, params=merged_params or None, children=all_children)
+
+    @staticmethod
+    def _extract_adversarial_prompt_text(value: str | SeedPrompt | None) -> str | None:
+        """
+        Extract a stable text representation of an adversarial prompt for identity.
+
+        Args:
+            value: The adversarial system or seed prompt (string, SeedPrompt, or None).
+
+        Returns:
+            The prompt text, or None when no prompt is set.
+        """
+        if value is None:
+            return None
+        if isinstance(value, SeedPrompt):
+            return value.value
+        return value
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -495,6 +533,21 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Note:
             Subclasses that use scoring should override this method to return their
             scoring configuration. The default implementation returns None.
+        """
+        return None
+
+    def get_attack_adversarial_config(self) -> AttackAdversarialConfig | None:
+        """
+        Get the attack adversarial configuration used by this strategy.
+
+        Returns:
+            AttackAdversarialConfig | None: The adversarial configuration, or None if not applicable.
+
+        Note:
+            Subclasses that use an adversarial chat target should override this method to return
+            the effective adversarial configuration (resolved target plus the system/seed prompts
+            actually used), so the adversarial target and prompts are reflected in the attack
+            identity. The default implementation returns None.
         """
         return None
 

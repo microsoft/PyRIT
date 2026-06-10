@@ -19,9 +19,8 @@ class SelectorScope:
     queries when estimating technique success rates.
 
     All fields default to "no restriction"; combine fields to narrow the
-    scope (e.g. current run only, same harm category). Filter values flow
-    through ``compute_technique_stats`` to
-    ``MemoryInterface.get_attack_results``.
+    scope (e.g. current run only). Filter values flow through
+    ``compute_technique_stats`` to ``MemoryInterface.get_attack_results``.
 
     The scope is held by the selector at construction time. The per-call
     ``scenario_result_id`` is supplied by the dispatcher and is forwarded
@@ -37,10 +36,6 @@ class SelectorScope:
     current_run_only: bool = False
     """Restrict to the dispatcher-supplied ``scenario_result_id`` for the
     in-flight run. When ``False`` (default), query across all runs."""
-
-    targeted_harm_categories: Sequence[str] | None = None
-    """Filter to results whose prompts targeted these harm categories.
-    ``None`` means no harm-category filter."""
 
     @classmethod
     def all_runs(cls) -> SelectorScope:

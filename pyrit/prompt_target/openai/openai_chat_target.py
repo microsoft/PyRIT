@@ -14,8 +14,14 @@ from pyrit.exceptions import (
     pyrit_target_retry,
 )
 from pyrit.memory import DataTypeSerializer, data_serializer_factory
-from pyrit.models import ChatMessage, ComponentIdentifier, Message, MessagePiece, construct_response_from_request
-from pyrit.models.json_response_config import _JsonResponseConfig
+from pyrit.models import (
+    ChatMessage,
+    ComponentIdentifier,
+    Message,
+    MessagePiece,
+    construct_response_from_request,
+)
+from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p

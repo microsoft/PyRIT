@@ -35,6 +35,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
+    resolve_adversarial_system_prompt,
 )
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
@@ -1102,9 +1103,9 @@ class _TreeOfAttacksNode:
             list. It takes the first score if multiple scores are associated with the response,
             which is typically the objective score in the TAP algorithm context.
         """
-        pieces = self._memory.get_message_pieces(prompt_ids=[str(response_id)])
-        if pieces and pieces[0].scores:
-            return str(normalize_score_to_float(pieces[0].scores[0]))
+        scores = self._memory.get_prompt_scores(prompt_ids=[str(response_id)])
+        if scores:
+            return str(normalize_score_to_float(scores[0]))
         return "unavailable"
 
     async def _send_to_adversarial_chat_async(self, prompt_text: str) -> str:
@@ -1383,12 +1384,13 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         except ValueError as exc:
             raise ValueError(f"TreeOfAttacksWithPruningAttack {exc}") from exc
 
-        # Load system prompts
-        self._adversarial_chat_system_prompt_path = (
-            attack_adversarial_config.system_prompt_path
-            or
-            # default to the predefined system prompt path
-            TreeOfAttacksWithPruningAttack.DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH
+        # Load system prompts. The adversarial system prompt may be supplied inline (string or
+        # SeedPrompt) via the config, or fall back to the configured/default YAML path.
+        self._adversarial_chat_system_seed_prompt = resolve_adversarial_system_prompt(
+            config=attack_adversarial_config,
+            default_system_prompt_path=TreeOfAttacksWithPruningAttack.DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH,
+            required_parameters=["desired_prefix"],
+            error_message="Adversarial seed prompt must have a desired_prefix",
         )
         self._load_adversarial_prompts()
 
@@ -1464,16 +1466,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self._prepended_conversation_config = prepended_conversation_config
 
     def _load_adversarial_prompts(self) -> None:
-        """Load the adversarial chat prompts from the configured paths."""
-        # Load system prompt
-        self._adversarial_chat_system_seed_prompt = SeedPrompt.from_yaml_with_required_parameters(
-            template_path=self._adversarial_chat_system_prompt_path,
-            required_parameters=["desired_prefix"],
-            error_message=(
-                f"Adversarial seed prompt must have a desired_prefix: '{self._adversarial_chat_system_prompt_path}'"
-            ),
-        )
-
+        """Load the adversarial chat prompt template and seed prompt from the default paths."""
         # Load prompt template
         self._adversarial_chat_prompt_template = SeedPrompt.from_yaml_file(
             TreeOfAttacksWithPruningAttack.DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE_PATH
@@ -1492,6 +1485,23 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             TAPAttackScoringConfig: The TAP-specific scoring configuration.
         """
         return self._attack_scoring_config
+
+    def get_attack_adversarial_config(self) -> AttackAdversarialConfig | None:
+        """
+        Get the effective adversarial configuration used by this strategy.
+
+        Returns:
+            AttackAdversarialConfig | None: The adversarial target with its resolved system prompt.
+                The first-message seed prompt is a fixed default and is not part of the identity.
+        """
+        adversarial_chat = getattr(self, "_adversarial_chat", None)
+        if adversarial_chat is None:
+            return None
+        return AttackAdversarialConfig(
+            target=adversarial_chat,
+            system_prompt=self._adversarial_chat_system_seed_prompt,
+            seed_prompt=None,
+        )
 
     def _validate_context(self, *, context: TAPAttackContext) -> None:
         """

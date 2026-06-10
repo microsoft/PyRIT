@@ -3,7 +3,7 @@
 
 import logging
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from typing_extensions import override
 
@@ -65,7 +65,7 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
     License: ODC-BY 1.0.
     """
 
-    _AUTHORS: list[str] = [
+    _AUTHORS: ClassVar[list[str]] = [
         "Faeze Brahman",
         "Sachin Kumar",
         "Vidhisha Balachandran",
@@ -82,7 +82,7 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         "Hannaneh Hajishirzi",
     ]
 
-    _GROUPS: list[str] = ["Allen Institute for AI"]
+    _GROUPS: ClassVar[list[str]] = ["Allen Institute for AI"]
 
     HF_DATASET_NAME: str = "allenai/coconot"
 
