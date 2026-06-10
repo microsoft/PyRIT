@@ -534,7 +534,7 @@ def test_get_memories_with_json_properties(sqlite_instance):
     sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
 
     # Use the get_memories_with_conversation_id method to retrieve entries with the specific conversation_id
-    retrieved_entries = sqlite_instance.get_conversation(conversation_id=specific_conversation_id)
+    retrieved_entries = sqlite_instance.get_conversation_messages(conversation_id=specific_conversation_id)
 
     # Verify that the retrieved entry matches the inserted entry
     assert len(retrieved_entries) == 1
@@ -550,7 +550,7 @@ def test_get_memories_with_json_properties(sqlite_instance):
     assert converter_identifiers[0].class_name == "Base64Converter"
 
     # The target identifier is conversation-scoped and stored in the Conversations table.
-    metadata = sqlite_instance.get_conversation_metadata(conversation_id=specific_conversation_id)
+    metadata = sqlite_instance._get_conversation(conversation_id=specific_conversation_id)
     assert metadata is not None
     assert metadata.target_identifier.class_name == "TextTarget"
 
@@ -587,7 +587,7 @@ def test_register_conversation_none_target_does_not_clobber(sqlite_instance):
     )
     sqlite_instance.add_message_pieces_to_memory(message_pieces=[response_piece])
 
-    metadata = sqlite_instance.get_conversation_metadata(conversation_id=conversation_id)
+    metadata = sqlite_instance._get_conversation(conversation_id=conversation_id)
     assert metadata is not None
     assert metadata.target_identifier is not None
     assert metadata.target_identifier.class_name == "TextTarget"

@@ -237,7 +237,7 @@ async def test_history_squash_preserves_metadata_on_normalized_message():
     user_msg = _make_lineage_message(role="user", content="follow-up question")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = [history_msg]
+    mock_memory.get_conversation_messages.return_value = [history_msg]
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -282,7 +282,7 @@ async def test_response_preserves_metadata_after_history_squash():
     user_msg = _make_lineage_message(role="user", content="follow-up question")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = [history_msg]
+    mock_memory.get_conversation_messages.return_value = [history_msg]
     target._memory = mock_memory
 
     mock_completion = _make_mock_chat_completion("target response")
@@ -328,7 +328,7 @@ async def test_system_squash_preserves_metadata():
     user_msg = _make_lineage_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = [system_msg]
+    mock_memory.get_conversation_messages.return_value = [system_msg]
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -379,7 +379,7 @@ async def test_history_squash_propagates_lineage_to_all_pieces():
     )
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = [history_msg]
+    mock_memory.get_conversation_messages.return_value = [history_msg]
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -414,7 +414,7 @@ async def test_conversation_id_stamped_on_all_but_full_lineage_only_on_last():
     user_msg = _make_lineage_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = [history_msg]
+    mock_memory.get_conversation_messages.return_value = [history_msg]
     target._memory = mock_memory
 
     # Simulate a normalizer that inserts a new message with a random conversation_id.
@@ -484,7 +484,7 @@ async def test_json_schema_stripped_for_non_schema_target_survives_lineage():
     user_msg = Message(message_pieces=[piece])
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -519,7 +519,7 @@ async def test_json_schema_only_metadata_fully_stripped_survives_lineage():
     user_msg = Message(message_pieces=[piece])
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -542,7 +542,7 @@ async def test_no_warning_when_message_count_unchanged():
     user_msg = _make_lineage_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     target._memory = mock_memory
 
     with patch.object(target.configuration, "normalize_async", new_callable=AsyncMock) as mock_normalize:

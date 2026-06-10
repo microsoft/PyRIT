@@ -267,7 +267,7 @@ class AttackService:
             raise ValueError(f"Conversation '{conversation_id}' is not part of attack '{attack_result_id}'")
 
         # Get messages for this conversation
-        pyrit_messages = self._memory.get_conversation(conversation_id=conversation_id)
+        pyrit_messages = self._memory.get_conversation_messages(conversation_id=conversation_id)
         backend_messages = await pyrit_messages_to_dto_async(list(pyrit_messages))
 
         return ConversationMessagesResponse(
@@ -478,7 +478,7 @@ class AttackService:
 
         # --- Branch via duplication (preferred for tracking) ---------------
         if request.source_conversation_id is not None and request.cutoff_index is not None:
-            source_metadata = self._memory.get_conversation_metadata(conversation_id=request.source_conversation_id)
+            source_metadata = self._memory._get_conversation(conversation_id=request.source_conversation_id)
             new_conversation_id = self._duplicate_conversation_up_to(
                 source_conversation_id=request.source_conversation_id,
                 cutoff_index=request.cutoff_index,
@@ -627,7 +627,7 @@ class AttackService:
                 labels=attack_labels,  # deprecated
             )
         else:
-            existing_metadata = self._memory.get_conversation_metadata(conversation_id=msg_conversation_id)
+            existing_metadata = self._memory._get_conversation(conversation_id=msg_conversation_id)
             await self._store_message_only_async(
                 conversation_id=msg_conversation_id,
                 request=request,
@@ -860,7 +860,7 @@ class AttackService:
         Returns:
             The new conversation ID containing the duplicated messages.
         """
-        messages = self._memory.get_conversation(conversation_id=source_conversation_id)
+        messages = self._memory.get_conversation_messages(conversation_id=source_conversation_id)
         messages_to_copy = [m for m in messages if m.sequence <= cutoff_index]
 
         new_conversation_id, all_pieces = self._memory.duplicate_messages(messages=messages_to_copy)

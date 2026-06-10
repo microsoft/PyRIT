@@ -819,7 +819,7 @@ class _TreeOfAttacksNode:
                 conversation_id=self.objective_target_conversation_id
             )
         else:
-            messages = self._memory.get_conversation(conversation_id=self.objective_target_conversation_id)
+            messages = self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id)
             system_messages = [m for m in messages if m.api_role == "system"]
             if system_messages:
                 new_id, pieces = self._memory.duplicate_messages(messages=system_messages)
@@ -987,7 +987,7 @@ class _TreeOfAttacksNode:
             bool: True if no messages exist in the objective target conversation (first turn),
                 False if the conversation already contains messages (subsequent turns).
         """
-        target_messages = self._memory.get_conversation(conversation_id=self.objective_target_conversation_id)
+        target_messages = self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id)
         return not target_messages
 
     async def _generate_first_turn_prompt_async(self, objective: str) -> str:
@@ -1059,7 +1059,7 @@ class _TreeOfAttacksNode:
                 one prior exchange.
         """
         # Get conversation history
-        target_messages = self._memory.get_conversation(conversation_id=self.objective_target_conversation_id)
+        target_messages = self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id)
 
         # Extract the last assistant response
         assistant_responses = [r for r in target_messages if r.get_piece().api_role == "assistant"]

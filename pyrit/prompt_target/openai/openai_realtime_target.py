@@ -362,7 +362,7 @@ class RealtimeTarget(OpenAITarget):
         resolved_conversation = (
             conversation
             if conversation is not None
-            else list(self._memory.get_conversation(conversation_id=conversation_id))
+            else list(self._memory.get_conversation_messages(conversation_id=conversation_id))
         )
         system_prompt = self._get_system_prompt_from_conversation(conversation=resolved_conversation)
         config_variables = self._set_system_prompt_and_config_vars(system_prompt=system_prompt)
@@ -425,6 +425,9 @@ class RealtimeTarget(OpenAITarget):
         message = normalized_conversation[-1]
         conversation_id = message.message_pieces[0].conversation_id
         request = message.message_pieces[0]
+
+        if not conversation_id:
+            raise ValueError("RealtimeTarget requires a conversation_id on the message being sent.")
 
         if conversation_id not in self._existing_conversation:
             connection = await self._connect_async(conversation_id=conversation_id)

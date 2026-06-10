@@ -136,7 +136,7 @@ class MultiTurnAttackStrategy(AttackStrategy[MultiTurnAttackStrategyContextT, At
         # Duplicate system messages (e.g., system prompt from prepended conversation)
         # into the new conversation so the target retains its configuration.
         memory = CentralMemory.get_memory_instance()
-        messages = memory.get_conversation(conversation_id=old_conversation_id)
+        messages = memory.get_conversation_messages(conversation_id=old_conversation_id)
         system_messages = [m for m in messages if m.api_role == "system"]
 
         if system_messages:

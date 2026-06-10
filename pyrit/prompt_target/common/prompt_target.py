@@ -216,7 +216,7 @@ class PromptTarget(Identifiable):
         """
         conversation_id = message.message_pieces[0].conversation_id
         conversation = (
-            list(self._memory.get_conversation(conversation_id=conversation_id)) if conversation_id else []
+            list(self._memory.get_conversation_messages(conversation_id=conversation_id)) if conversation_id else []
         )
         conversation.append(message)
         normalized = await self.configuration.normalize_async(messages=conversation)
@@ -337,7 +337,7 @@ class PromptTarget(Identifiable):
                 "It must support both multi-turn conversations and editable history."
             )
 
-        messages = self._memory.get_conversation(conversation_id=conversation_id)
+        messages = self._memory.get_conversation_messages(conversation_id=conversation_id)
 
         if messages:
             raise RuntimeError("Conversation already exists, system prompt needs to be set at the beginning")

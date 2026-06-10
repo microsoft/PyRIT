@@ -953,7 +953,7 @@ class MemoryInterface(abc.ABC):
         )
         return [entry.get_score() for entry in score_entries]
 
-    def get_conversation(self, *, conversation_id: str) -> MutableSequence[Message]:
+    def get_conversation_messages(self, *, conversation_id: str) -> MutableSequence[Message]:
         """
         Retrieve a list of Message objects that have the specified conversation ID.
 
@@ -966,7 +966,29 @@ class MemoryInterface(abc.ABC):
         message_pieces = self.get_message_pieces(conversation_id=conversation_id)
         return group_conversation_message_pieces_by_sequence(message_pieces=message_pieces)
 
-    def get_conversation_metadata(self, *, conversation_id: str) -> Conversation | None:
+    def get_conversation(self, *, conversation_id: str) -> MutableSequence[Message]:
+        """
+        Retrieve the messages for a conversation (deprecated alias).
+
+        .. deprecated::
+            Use ``get_conversation_messages`` instead. The ``get_conversation`` name is
+            being freed so it can return the conversation entity (currently exposed as
+            ``_get_conversation``) in a future release.
+
+        Args:
+            conversation_id (str): The conversation ID to match.
+
+        Returns:
+            MutableSequence[Message]: A list of chat memory entries with the specified conversation ID.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_conversation",
+            new_item="MemoryInterface.get_conversation_messages",
+            removed_in="0.17.0",
+        )
+        return self.get_conversation_messages(conversation_id=conversation_id)
+
+    def _get_conversation(self, *, conversation_id: str) -> Conversation | None:
         """
         Return the conversation-scoped metadata stored for ``conversation_id``.
 
@@ -977,6 +999,11 @@ class MemoryInterface(abc.ABC):
             Conversation | None: The conversation metadata (including the target
                 identifier), or ``None`` if no row exists for the conversation.
         """
+        # NOTE: The leading underscore is temporary. This method returns the conversation
+        # entity (metadata) and will be promoted to the public ``get_conversation`` once the
+        # deprecated, messages-returning ``get_conversation`` above is removed in 0.17.0. The
+        # underscore exists only to avoid colliding with that still-public method during the
+        # deprecation window.
         entries = self._query_entries(
             ConversationEntry,
             conditions=ConversationEntry.conversation_id == str(conversation_id),
@@ -1003,7 +1030,7 @@ class MemoryInterface(abc.ABC):
         if response.sequence < 1:
             raise ValueError("The provided request does not have a preceding request (sequence < 1).")
 
-        conversation = self.get_conversation(conversation_id=response.conversation_id)
+        conversation = self.get_conversation_messages(conversation_id=response.conversation_id)
         return conversation[response.sequence - 1]
 
     def _resolve_attack_id_to_conversation_condition(self, *, attack_id: str | uuid.UUID) -> Any:
@@ -1222,8 +1249,8 @@ class MemoryInterface(abc.ABC):
         Returns:
             The uuid for the new conversation.
         """
-        messages = self.get_conversation(conversation_id=conversation_id)
-        source_metadata = self.get_conversation_metadata(conversation_id=conversation_id)
+        messages = self.get_conversation_messages(conversation_id=conversation_id)
+        source_metadata = self._get_conversation(conversation_id=conversation_id)
         source_target = source_metadata.target_identifier if source_metadata else None
         new_conversation_id, all_pieces = self.duplicate_messages(messages=messages)
         if all_pieces:
@@ -1246,7 +1273,7 @@ class MemoryInterface(abc.ABC):
         Returns:
             The uuid for the new conversation.
         """
-        messages = self.get_conversation(conversation_id=conversation_id)
+        messages = self.get_conversation_messages(conversation_id=conversation_id)
 
         # remove the final turn from the conversation
         if len(messages) == 0:
@@ -1262,7 +1289,7 @@ class MemoryInterface(abc.ABC):
             message for message in messages if message.sequence <= last_message.sequence - length_of_sequence_to_remove
         ]
 
-        source_metadata = self.get_conversation_metadata(conversation_id=conversation_id)
+        source_metadata = self._get_conversation(conversation_id=conversation_id)
         source_target = source_metadata.target_identifier if source_metadata else None
         new_conversation_id, all_pieces = self.duplicate_messages(messages=messages_to_duplicate)
         if all_pieces:

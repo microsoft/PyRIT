@@ -604,7 +604,7 @@ def test_add_conversation_to_memory_records_target_for_plain_message_writes(sqli
         message_pieces=[MessagePiece(role="user", original_value="hi", conversation_id=conversation_id)]
     )
 
-    metadata = sqlite_instance.get_conversation_metadata(conversation_id=conversation_id)
+    metadata = sqlite_instance._get_conversation(conversation_id=conversation_id)
     assert metadata is not None
     assert metadata.target_identifier.hash == target_id.hash
 
@@ -630,7 +630,7 @@ def test_message_writes_without_registration_create_no_conversation_row(sqlite_i
         message_pieces=[MessagePiece(role="user", original_value="hi", conversation_id=conversation_id)]
     )
 
-    assert sqlite_instance.get_conversation_metadata(conversation_id=conversation_id) is None
+    assert sqlite_instance._get_conversation(conversation_id=conversation_id) is None
     # The messages themselves still persist.
     assert len(sqlite_instance.get_message_pieces(conversation_id=conversation_id)) == 1
 
@@ -650,7 +650,7 @@ def test_add_conversation_to_memory_same_target_reregister_is_noop(sqlite_instan
         conversation=Conversation(conversation_id=conversation_id, target_identifier=target)
     )
 
-    metadata = sqlite_instance.get_conversation_metadata(conversation_id=conversation_id)
+    metadata = sqlite_instance._get_conversation(conversation_id=conversation_id)
     assert metadata is not None
     assert metadata.target_identifier.hash == target.hash
 
@@ -675,7 +675,7 @@ def test_add_conversation_to_memory_different_target_reregister_raises(sqlite_in
         )
 
     # The originally recorded target is left untouched.
-    metadata = sqlite_instance.get_conversation_metadata(conversation_id=conversation_id)
+    metadata = sqlite_instance._get_conversation(conversation_id=conversation_id)
     assert metadata is not None
     assert metadata.target_identifier.hash == target_a.hash
 
@@ -1348,7 +1348,7 @@ def test_get_request_from_response_success(sqlite_instance: MemoryInterface):
     sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
 
     # Get the conversation and extract the response
-    conversation = sqlite_instance.get_conversation(conversation_id=conversation_id)
+    conversation = sqlite_instance.get_conversation_messages(conversation_id=conversation_id)
     response = conversation[1]
 
     # Retrieve the request that produced this response
@@ -1358,6 +1358,35 @@ def test_get_request_from_response_success(sqlite_instance: MemoryInterface):
     assert request.sequence == 0
     assert request.get_value() == "What is the weather?"
     assert request.conversation_id == conversation_id
+
+
+def test_get_conversation_is_deprecated_and_delegates_to_messages(sqlite_instance: MemoryInterface):
+    """get_conversation warns and returns the same result as get_conversation_messages."""
+    conversation_id = str(uuid4())
+    pieces = [
+        MessagePiece(
+            role="user",
+            original_value="Hello",
+            converted_value="Hello",
+            conversation_id=conversation_id,
+            sequence=0,
+        ),
+        MessagePiece(
+            role="assistant",
+            original_value="Hi there",
+            converted_value="Hi there",
+            conversation_id=conversation_id,
+            sequence=1,
+        ),
+    ]
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
+
+    with pytest.warns(DeprecationWarning, match="get_conversation_messages"):
+        deprecated_result = sqlite_instance.get_conversation(conversation_id=conversation_id)
+
+    expected = sqlite_instance.get_conversation_messages(conversation_id=conversation_id)
+    assert [m.get_value() for m in deprecated_result] == [m.get_value() for m in expected]
+    assert len(deprecated_result) == 2
 
 
 def test_get_request_from_response_multi_turn_conversation(sqlite_instance: MemoryInterface):
@@ -1397,7 +1426,7 @@ def test_get_request_from_response_multi_turn_conversation(sqlite_instance: Memo
     ]
     sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
 
-    conversation = sqlite_instance.get_conversation(conversation_id=conversation_id)
+    conversation = sqlite_instance.get_conversation_messages(conversation_id=conversation_id)
 
     # Test getting request for the second response
     second_response = conversation[3]
@@ -1423,7 +1452,7 @@ def test_get_request_from_response_raises_error_for_non_assistant_role(sqlite_in
     ]
     sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
 
-    conversation = sqlite_instance.get_conversation(conversation_id=conversation_id)
+    conversation = sqlite_instance.get_conversation_messages(conversation_id=conversation_id)
     user_message = conversation[0]
 
     with pytest.raises(ValueError, match="The provided request is not a response \\(role must be 'assistant'\\)."):
@@ -1446,7 +1475,7 @@ def test_get_request_from_response_raises_error_for_sequence_less_than_one(sqlit
     ]
     sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
 
-    conversation = sqlite_instance.get_conversation(conversation_id=conversation_id)
+    conversation = sqlite_instance.get_conversation_messages(conversation_id=conversation_id)
     response_without_request = conversation[0]
 
     with pytest.raises(ValueError, match="The provided request does not have a preceding request \\(sequence < 1\\)."):

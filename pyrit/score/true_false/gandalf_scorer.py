@@ -108,7 +108,7 @@ class GandalfScorer(TrueFalseScorer):
             conversation_id=scoring_conversation_id,
         )
 
-        conversation = self._memory.get_conversation(conversation_id=conversation_id)
+        conversation = self._memory.get_conversation_messages(conversation_id=conversation_id)
         if not conversation:
             raise ValueError(f"Conversation with ID {conversation_id} not found in memory.")
 

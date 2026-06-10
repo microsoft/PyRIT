@@ -70,7 +70,7 @@ async def test_openai_chat_target_calls_normalize_async():
     user_msg = _make_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     target._memory = mock_memory
 
     mock_completion = _create_mock_chat_completion("world")
@@ -99,7 +99,7 @@ async def test_openai_chat_target_sends_normalized_to_construct_request():
     adapted_msg = _make_message(role="user", content="adapted")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     target._memory = mock_memory
 
     mock_completion = _create_mock_chat_completion("response")
@@ -152,7 +152,7 @@ async def test_openai_chat_target_memory_not_mutated():
     memory_conversation: MutableSequence[Message] = [system_msg]
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = memory_conversation
+    mock_memory.get_conversation_messages.return_value = memory_conversation
     target._memory = mock_memory
 
     mock_completion = _create_mock_chat_completion("response")
@@ -181,7 +181,7 @@ async def test_openai_response_target_calls_normalize_async():
     user_msg = _make_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     target._memory = mock_memory
 
     # Mock the API to return a simple response (no tool calls)
@@ -222,7 +222,7 @@ async def test_azure_ml_target_calls_normalize_async():
     user_msg = _make_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     target._memory = mock_memory
 
     with (
@@ -247,7 +247,7 @@ async def test_azure_ml_target_sends_normalized_to_complete_chat():
     adapted_msg = _make_message(role="user", content="adapted")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     target._memory = mock_memory
 
     with (
@@ -289,7 +289,7 @@ async def test_azure_ml_target_memory_not_mutated():
     memory_conversation: MutableSequence[Message] = [system_msg]
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = memory_conversation
+    mock_memory.get_conversation_messages.return_value = memory_conversation
     target._memory = mock_memory
 
     with patch.object(target, "_complete_chat_async", new_callable=AsyncMock, return_value="response"):
@@ -326,7 +326,7 @@ async def test_azure_ml_system_squash_via_configuration_pipeline():
     user_msg = _make_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = [system_msg]
+    mock_memory.get_conversation_messages.return_value = [system_msg]
     target._memory = mock_memory
 
     with patch.object(target, "_complete_chat_async", new_callable=AsyncMock, return_value="response") as mock_chat:
@@ -359,12 +359,12 @@ async def test_get_normalized_conversation_fetches_history_and_appends_message()
     user_msg = _make_message(role="user", content="new question")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = [history_msg]
+    mock_memory.get_conversation_messages.return_value = [history_msg]
     target._memory = mock_memory
 
     result = await target._get_normalized_conversation_async(message=user_msg)
 
-    mock_memory.get_conversation.assert_called_once_with(conversation_id="conv1")
+    mock_memory.get_conversation_messages.assert_called_once_with(conversation_id="conv1")
     assert len(result) == 2
     assert result[0].get_value() == "previous answer"
     assert result[1].get_value() == "new question"
@@ -382,7 +382,7 @@ async def test_get_normalized_conversation_empty_history():
     user_msg = _make_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     target._memory = mock_memory
 
     result = await target._get_normalized_conversation_async(message=user_msg)
@@ -405,7 +405,7 @@ async def test_get_normalized_conversation_does_not_mutate_memory():
 
     memory_list: MutableSequence[Message] = [history_msg]
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = memory_list
+    mock_memory.get_conversation_messages.return_value = memory_list
     target._memory = mock_memory
 
     await target._get_normalized_conversation_async(message=user_msg)
@@ -441,7 +441,7 @@ async def test_get_normalized_conversation_runs_pipeline():
     user_msg = _make_message(role="user", content="hi")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = [system_msg]
+    mock_memory.get_conversation_messages.return_value = [system_msg]
     target._memory = mock_memory
 
     result = await target._get_normalized_conversation_async(message=user_msg)
@@ -467,7 +467,7 @@ async def test_get_normalized_conversation_passthrough_when_no_adaptation_needed
     user_msg = _make_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation.return_value = [system_msg]
+    mock_memory.get_conversation_messages.return_value = [system_msg]
     target._memory = mock_memory
 
     result = await target._get_normalized_conversation_async(message=user_msg)

@@ -157,7 +157,7 @@ from pyrit.memory import CentralMemory
 
 num_turns_to_remove = 2
 memory = CentralMemory.get_memory_instance()
-conversation_history = memory.get_conversation(conversation_id=result.conversation_id)[:-num_turns_to_remove*2]
+conversation_history = memory.get_conversation_messages(conversation_id=result.conversation_id)[:-num_turns_to_remove*2]
 prepended_conversation = conversation_history
 """
 
