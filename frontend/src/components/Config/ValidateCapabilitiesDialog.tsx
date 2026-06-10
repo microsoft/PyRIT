@@ -176,7 +176,7 @@ export default function ValidateCapabilitiesDialog({
                   padding: '24px 0',
                 }}
               >
-                <Spinner label="Probing target — this can take up to a minute..." />
+                <Spinner label="Probing target — this can take up to a couple of minutes..." />
                 <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
                   Sending live test requests; results may take a few seconds.
                 </Text>

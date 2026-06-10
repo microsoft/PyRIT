@@ -158,7 +158,7 @@ class TargetService:
     # Per-probe timeout for the GUI validation flow. The engine default is
     # 30 s, which compounded across 5+ probes can exceed 2 min; 5 s keeps
     # the GUI snappy while still catching real rejections.
-    _GUI_VALIDATE_TIMEOUT_S: ClassVar[float] = 5.0
+    _GUI_VALIDATE_TIMEOUT_S: ClassVar[float] = 15.0
 
     def __init__(self) -> None:
         """Initialize the target service."""
@@ -323,7 +323,7 @@ class TargetService:
         Args:
             target_registry_name: The registry key of the target to validate.
             per_probe_timeout_s: Per-probe timeout in seconds. Defaults to
-                ``_GUI_VALIDATE_TIMEOUT_S`` (5.0) for interactive use.
+                ``_GUI_VALIDATE_TIMEOUT_S`` (15.0) for interactive use.
 
         Returns:
             ValidateCapabilitiesResponse, or None if the target is not in the registry.

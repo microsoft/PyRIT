@@ -962,7 +962,7 @@ class TestValidateTargetCapabilities:
             mock_probe.return_value = observed
             await service.validate_target_capabilities_async(target_registry_name="t1")
         assert mock_probe.call_args.kwargs["per_probe_timeout_s"] == TargetService._GUI_VALIDATE_TIMEOUT_S
-        assert mock_probe.call_args.kwargs["per_probe_timeout_s"] == 5.0
+        assert mock_probe.call_args.kwargs["per_probe_timeout_s"] == 15.0
 
     async def test_passes_probeable_modalities_only(self) -> None:
         """
