@@ -35,6 +35,12 @@ export interface ApiError {
  * - Anything else (`unknown`)
  */
 export function toApiError(err: unknown): ApiError {
+  // Already-normalized ApiError pass-through. Upstream layers (the tree-UI
+  // runner, tests, future middleware) may re-throw a previously normalized
+  // ApiError; recognizing that shape here preserves the original status code
+  // and flags rather than collapsing them into the "unknown throw" branch.
+  if (isAlreadyApiError(err)) return err
+
   // Axios errors carry an `isAxiosError` flag.
   if (isAxiosError(err)) {
     // Timeout
@@ -112,6 +118,32 @@ export function toApiError(err: unknown): ApiError {
 /** Type-guard for Axios errors. */
 function isAxiosError(err: unknown): err is AxiosError {
   return typeof err === 'object' && err !== null && (err as AxiosError).isAxiosError === true
+}
+
+/**
+ * Type-guard for an already-normalized ApiError. Duck-checks the shape so
+ * upstream layers (tests, the runner's re-thrown errors) can hand
+ * `toApiError` a previously-normalized value and get an idempotent result.
+ *
+ * Checks just enough fields to disambiguate from arbitrary objects:
+ * - `status` is `number | null`
+ * - `detail`, `isNetworkError`, `isTimeout` are all present
+ * - the object is not an Axios error (which has its own dedicated path)
+ */
+function isAlreadyApiError(err: unknown): err is ApiError {
+  if (err === null || typeof err !== 'object') return false
+  if (isAxiosError(err)) return false
+  const r = err as Record<string, unknown>
+  return (
+    'detail' in r &&
+    'isNetworkError' in r &&
+    'isTimeout' in r &&
+    'status' in r &&
+    (typeof r.status === 'number' || r.status === null) &&
+    typeof r.detail === 'string' &&
+    typeof r.isNetworkError === 'boolean' &&
+    typeof r.isTimeout === 'boolean'
+  )
 }
 
 /**

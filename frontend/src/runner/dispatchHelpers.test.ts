@@ -16,7 +16,7 @@
  */
 
 import type { ApiError } from '../services/errors'
-import { buildLabels, formatApiError, isTreePathLabelValid, parseTreePathLabel } from './dispatchHelpers'
+import { buildLabels, formatApiError } from './dispatchHelpers'
 import { treeId } from './testHelpers'
 
 // ============================================================================
@@ -159,8 +159,21 @@ describe('buildLabels', () => {
 // tree_path JSON encoding round-trip
 // ============================================================================
 
-describe('tree_path encoding', () => {
-  it('round-trips through parseTreePathLabel', () => {
+describe('tree_path encoding (buildLabels output shape)', () => {
+  it('produces "[]" (not absent) for fan-less leaves', () => {
+    const label = buildLabels({
+      operator: 'a',
+      operation: '',
+      treeId: treeId('t'),
+      waveId: 'w',
+      waveTriggerKind: 'refresh_node',
+      treePathSegments: [],
+      parentConversationTreeId: null,
+    }).tree_path
+    expect(label).toBe('[]')
+  })
+
+  it('JSON-encodes the segments in topo order', () => {
     const segments: Array<[string, number]> = [
       ['prompt', 0],
       ['attempt', 7],
@@ -174,36 +187,7 @@ describe('tree_path encoding', () => {
       treePathSegments: segments,
       parentConversationTreeId: null,
     }).tree_path
-    expect(parseTreePathLabel(label)).toEqual(segments)
-  })
-
-  it('produces "[]" (not absent) for fan-less leaves', () => {
-    const label = buildLabels({
-      operator: 'a',
-      operation: '',
-      treeId: treeId('t'),
-      waveId: 'w',
-      waveTriggerKind: 'refresh_node',
-      treePathSegments: [],
-      parentConversationTreeId: null,
-    }).tree_path
-    expect(label).toBe('[]')
-    expect(parseTreePathLabel(label)).toEqual([])
-  })
-
-  it('parseTreePathLabel returns [] for absent / empty / malformed input (fail-soft)', () => {
-    expect(parseTreePathLabel(undefined)).toEqual([])
-    expect(parseTreePathLabel('')).toEqual([])
-    expect(parseTreePathLabel('not json')).toEqual([])
-    expect(parseTreePathLabel('{"not":"array"}')).toEqual([])
-    expect(parseTreePathLabel('[[1, "string-instead-of-number"]]')).toEqual([])
-  })
-
-  it('isTreePathLabelValid distinguishes valid empty from malformed', () => {
-    expect(isTreePathLabelValid('[]')).toBe(true)
-    expect(isTreePathLabelValid('[["axis", 0]]')).toBe(true)
-    expect(isTreePathLabelValid('not json')).toBe(false)
-    expect(isTreePathLabelValid('[[1, 1]]')).toBe(false) // axis must be string
+    expect(JSON.parse(label)).toEqual(segments)
   })
 })
 

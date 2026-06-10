@@ -25,7 +25,6 @@ import type {
   CreateAttackResponse,
   MessagePieceRequest,
 } from '../types'
-import type { ApiError } from '../services/errors'
 import { toApiError } from '../services/errors'
 import { buildLabels, formatApiError } from './dispatchHelpers'
 import { resolvePathPartition } from './partition'
@@ -85,37 +84,7 @@ export type LeafDispatchOutcome =
 /** Backend `CreateAttackRequest.prepended_conversation` cap (Pydantic max_length=200). */
 const PREPENDED_CAP = 200
 
-/**
- * Coerce a thrown value into an ApiError. The shared `toApiError` from
- * services/errors normalizes axios + Error + string throws, but treats an
- * already-normalized ApiError as a plain object (falling into the "unknown"
- * branch). The runner accepts ApiError throws directly from the mock client
- * in tests and from upstream layers that re-throw normalized errors; this
- * helper passes them through without re-stringification.
- */
-function asApiError(raw: unknown): ApiError {
-  if (isAlreadyApiError(raw)) return raw
-  return toApiError(raw)
-}
-
-function isAlreadyApiError(raw: unknown): raw is ApiError {
-  if (raw === null || typeof raw !== 'object') return false
-  const r = raw as Record<string, unknown>
-  return (
-    'detail' in r &&
-    'isNetworkError' in r &&
-    'isTimeout' in r &&
-    ('status' in r) &&
-    (typeof r.status === 'number' || r.status === null)
-  )
-}
-
 export async function dispatchLeaf(args: DispatchLeafArgs): Promise<LeafDispatchOutcome> {
-  // Defense-in-depth (the entry-point shim's tag-hygiene gate is upstream).
-  if (!args.operator) {
-    throw new Error('dispatchLeaf: operator is required; the tag-hygiene gate must run before dispatch')
-  }
-
   const partition = resolvePathPartition(args.tree, args.leafId)
 
   // 200-cap short-circuit. The cap is on prepended_conversation only; the
@@ -166,7 +135,7 @@ export async function dispatchLeaf(args: DispatchLeafArgs): Promise<LeafDispatch
     }
     createResp = await args.api.createAttack(req)
   } catch (raw) {
-    const reason = formatApiError(asApiError(raw), 'create_attack')
+    const reason = formatApiError(toApiError(raw), 'create_attack')
     failRemaining({
       sink: args.sink,
       treeId: args.treeId,
@@ -201,7 +170,7 @@ export async function dispatchLeaf(args: DispatchLeafArgs): Promise<LeafDispatch
     try {
       resp = await args.api.addMessage(createResp.attack_result_id, req)
     } catch (raw) {
-      const reason = formatApiError(asApiError(raw), 'add_message')
+      const reason = formatApiError(toApiError(raw), 'add_message')
       // The failing Send → failed; later Sends → stale (roll-back).
       args.sink.setNodeState(args.treeId, entry.sendNode.id, 'failed', { reason })
       args.sink.clearExecution(args.treeId, entry.sendNode.id)
@@ -267,17 +236,11 @@ function failRemaining(args: {
 
 function piecesForUserTurn(entry: FreshSuffixEntry): MessagePieceRequest[] {
   const ut = entry.userTurn
-  const isSynthetic = (ut as { synthetic?: boolean }).synthetic === true
-  const text = isSynthetic
-    ? (ut as { text: string }).text
-    : (ut as { params: { text: string } }).params.text
-  const attachments = isSynthetic
-    ? (ut as { attachments: Array<{ dataType: string; value: string; mimeType?: string; originalPromptId?: string }> }).attachments
-    : (ut as {
-        params: {
-          attachments: Array<{ dataType: string; value: string; mimeType?: string; originalPromptId?: string }>
-        }
-      }).params.attachments
+  // Discriminated narrowing via the `kind` field (synthetic vs real UserTurnNode).
+  // Both shapes expose role/text/attachments uniformly to the request builder.
+  const text = ut.kind === 'synthetic_user_turn_from_root' ? ut.text : ut.params.text
+  const attachments =
+    ut.kind === 'synthetic_user_turn_from_root' ? ut.attachments : ut.params.attachments
 
   const pieces: MessagePieceRequest[] = attachments.map((a) => ({
     data_type: a.dataType,
@@ -291,10 +254,10 @@ function piecesForUserTurn(entry: FreshSuffixEntry): MessagePieceRequest[] {
 
 function resolvedConverterIds(entry: FreshSuffixEntry): string[] {
   const ut = entry.userTurn
-  const isSynthetic = (ut as { synthetic?: boolean }).synthetic === true
-  if (isSynthetic) return []
-  const pipeline = (ut as { params: { converterPipeline?: Array<{ converterId?: string }> } }).params
-    .converterPipeline
+  // Synthetic root-as-user-turn has no converter pipeline (root prompt's
+  // params don't carry one in V1.0). Real UserTurnNodes read their pipeline.
+  if (ut.kind === 'synthetic_user_turn_from_root') return []
+  const pipeline = ut.params.converterPipeline
   if (!pipeline) return []
   const ids: string[] = []
   for (const ref of pipeline) {
@@ -347,17 +310,7 @@ function buildExecutionRecord(args: {
 // that want to assert against the resolver's intermediate shape).
 export type { PathPartition }
 
-// jsdom has crypto.randomUUID; production has it too. Defensive fallback for
-// environments where it's missing (very old browsers).
+// jsdom and modern Node both have crypto.randomUUID. No fallback needed.
 function cryptoRandomUuid(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-  // RFC4122 v4 fallback. Not cryptographically strong; only reached when
-  // crypto.randomUUID is unavailable.
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0
-    const v = c === 'x' ? r : (r & 0x3) | 0x8
-    return v.toString(16)
-  })
+  return crypto.randomUUID()
 }

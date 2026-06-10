@@ -40,12 +40,13 @@ import type {
 
 /**
  * Synthetic "user turn" form used when a SendNode's input is the root prompt
- * itself (no operator-authored UserTurn between root and Send). The
- * dispatcher and labels-builder both treat this identically to a real
- * UserTurnNode for the fields they read.
+ * itself (no operator-authored UserTurn between root and Send). Has a real
+ * `kind` discriminator so consumers can narrow via TS rather than duck-checks.
+ * The dispatcher reads role/text/attachments uniformly across both shapes via
+ * `if (ut.kind === 'synthetic_user_turn_from_root') ...` narrowing.
  */
 export interface SyntheticUserTurnFromRoot {
-  readonly synthetic: true
+  readonly kind: 'synthetic_user_turn_from_root'
   readonly id: ConversationTreeNodeId
   readonly role: 'user'
   readonly text: string
@@ -287,7 +288,7 @@ function nextOnPathChildOf(
 
 function promoteRootToUserTurn(root: RootPromptNode): SyntheticUserTurnFromRoot {
   return {
-    synthetic: true,
+    kind: 'synthetic_user_turn_from_root',
     id: root.id,
     role: 'user',
     text: root.params.text,

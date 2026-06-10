@@ -189,4 +189,30 @@ describe('toApiError', () => {
     expect(result.detail).toBe('Field "name" is required.')
     expect(result.type).toBe('validation_error')
   })
+
+  // 13. Already-normalized ApiError pass-through (idempotency).
+  // Upstream layers (the runner, tests, future middleware) may re-throw a
+  // previously-normalized ApiError. toApiError(prev) must return prev verbatim
+  // rather than collapsing into the "unknown throw" branch.
+  it('passes through an already-normalized ApiError unchanged', () => {
+    const original: ApiError = {
+      status: 429,
+      detail: 'rate_limit_exceeded',
+      isNetworkError: false,
+      isTimeout: false,
+      raw: { upstream: 'detail' },
+    }
+    const result = toApiError(original)
+    expect(result).toBe(original) // referential equality — no re-wrap
+  })
+
+  it('still normalizes plain objects that lack the ApiError shape', () => {
+    // A plain-object throw with `detail` but no `isNetworkError`/`isTimeout`
+    // is NOT an ApiError and falls into the "unknown throw" branch.
+    const notAnApiError = { detail: 'something happened' }
+    const result = toApiError(notAnApiError)
+    expect(result.status).toBeNull()
+    expect(result.detail).toBe('An unexpected error occurred.')
+    expect(result.isNetworkError).toBe(false)
+  })
 })

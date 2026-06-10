@@ -197,8 +197,12 @@ export async function runWave(args: RunWaveArgs): Promise<WaveSummary> {
   // gate.)
   if (ctrl.isCancelled()) {
     for (const leafId of remaining) {
+      // Plain string reason: the sink normalizes it to transient internally,
+      // but state='cancelled' is what consumers actually read. Avoids encoding
+      // the awkward "failure_class for a not-failed node" question in the
+      // structured form.
       args.sink.setNodeState(args.treeId, leafId, 'cancelled', {
-        reason: { message: 'wave cancelled by operator', failure_class: 'transient' },
+        reason: 'wave cancelled by operator',
       })
       args.sink.clearExecution(args.treeId, leafId)
       outcomes.set(leafId, 'cancelled')
@@ -266,6 +270,11 @@ function buildSummary(
     failed: { transient: 0, rate_limited: 0, permanent: 0 },
     blocked: 0,
     cancelled: 0,
+    // TODO(reflog): the reflog-eviction count is hardcoded 0 until the reflog
+    // GC layer lands. When it does, the runner will sum eviction events fired
+    // by sink.recordExecution and surface them here. Tests using
+    // toMatchObject({ reflog_evicted: 0 }) will need to switch to expect.any
+    // (Number) or the more specific count.
     reflog_evicted: 0,
   }
   for (const bucket of outcomes.values()) {

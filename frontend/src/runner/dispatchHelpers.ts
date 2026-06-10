@@ -65,47 +65,6 @@ export function buildLabels(args: BuildLabelsArgs): Record<string, string> {
   return labels
 }
 
-/**
- * Parse the `tree_path` label back into its (axis, slotIndex) tuple list.
- * Fail-soft: absent / empty / malformed input returns `[]` so older clients
- * encountering a future encoding don't hard-crash.
- */
-export function parseTreePathLabel(label: string | undefined): Array<[string, number]> {
-  if (label === undefined || label === '') return []
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(label)
-  } catch {
-    return []
-  }
-  if (!Array.isArray(parsed)) return []
-  const out: Array<[string, number]> = []
-  for (const item of parsed) {
-    if (!Array.isArray(item) || item.length !== 2) return []
-    const [axis, slot] = item
-    if (typeof axis !== 'string' || typeof slot !== 'number') return []
-    out.push([axis, slot])
-  }
-  return out
-}
-
-/** True iff `label` parses to a well-formed `tree_path` array. */
-export function isTreePathLabelValid(label: string | undefined): boolean {
-  if (label === undefined || label === '') return false
-  try {
-    const parsed: unknown = JSON.parse(label)
-    if (!Array.isArray(parsed)) return false
-    for (const item of parsed) {
-      if (!Array.isArray(item) || item.length !== 2) return false
-      const [axis, slot] = item
-      if (typeof axis !== 'string' || typeof slot !== 'number') return false
-    }
-    return true
-  } catch {
-    return false
-  }
-}
-
 // ============================================================================
 // formatApiError — failure-class classification
 // ============================================================================
