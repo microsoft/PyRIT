@@ -1,9 +1,22 @@
 # Tree-Based UI — Foundational Primitives
 
-> Status: **DRAFT for review (revision 3)** — design + vocabulary only, no implementation.
+> Status: **DRAFT for review (revision 18)** — design + vocabulary only, no implementation.
 > Scope: foundational layer (data model, lifecycle, mapping to backend).
 > Out of scope: rendering details, layout algorithm, UI affordances, telemetry.
 > **V1 decision (§12.0): conversation tree persistence is client-only React state.** The persistence spike from revision 2 is deferred to V2 (preserved in §11 as future work). One consequence flows down: V1 deliberately does NOT write `conversation_tree_node_id` into `MessagePiece.prompt_metadata`, eliminating the orphaned-pointer concern that motivated the spike (see §7.3).
+
+## 0. Rolling revision history
+
+This preamble summarizes the rolling rationale across the doc set ([01_tree_primitives.md](01_tree_primitives.md), [02_tree_ui_affordances.md](02_tree_ui_affordances.md), [03_runner.md](03_runner.md)) so a new reader can see what changed across review cycles without diffing. Each revision absorbed a principal-engineer reviewer pass; closures are referenced from inline `(rev N, per reviewer Finding X)` notes throughout the docs.
+
+| Rev | Dominant theme | Headline closures |
+|---|---|---|
+| **15** | Anti-amplification + entry-point hygiene | Q.6 intra-wave memoization cut; §3.1 step 2b retry-failed pre-readiness demotion; 5-step entry-point shim formalized; tag-hygiene gate moved out of the dispatch loop into the shim; §6.4.1 `node.execution = null` on failure made load-bearing for the resolver's `is_stale` predicate. |
+| **16** | Undo correctness + wave-summary fidelity | §6.9 `UndoOp` discriminated union with state-snapshot widening (closes the silent half-broken-undo class from Findings 6+7); `complete.summary.failed` bucketed as `{transient, rate_limited, permanent}`; `legacy single-int helper` migration spelled out. |
+| **17** | Surface-area cleanup (Nits U–Z) | §9.4.1 reload hoists `parent_conversation_tree_id` from leaf labels; `undoStack` carried into `branchToNewTree` clone alongside `edited` state; `refreshNode(fan_id)` aliased to `refreshSubtree(id)`; `operator: ''` defense-in-depth fallback deleted, replaced with hard assert at the `_build_labels` callsite. |
+| **18** | Citation refresh + dimension-B + 4th-pass closures + rubber-duck cheap wins + Q.S.1/Q.S.2 decisions | F7 mechanical sweep updates ~16 `.py:L<n>` citations; dimension-B closes 7 deferred items (`NodeParams` union, `path.edge_slot_for`, lockManager unification, `recordExecution` null-prior semantics, two §5.x operator edge-cases, anchor sweep verified clean); 4th-pass reviewer closes 11 findings including the `cancelWave` execution-clobber gate, the `skipped` wave-summary bucket, the queue-drain-interleaving V1.0 documented limitation, the Picked-state `↻×N` exception, the `CrossTabLockManager` interface-block deletion, the `lastError` auto-clear-on-running rule, and four nit-level fixes. Rubber-duck rev-18 cheap wins: per-leaf `ExecutionRecord` timing fields + per-`WaveEvent` `emittedAt`, `version: number` on `ConversationTreeNodeBase` for V2 last-write-wins forward-compat, i18n string-registry V1.0 commitment, FanNode polymorphism honest naming + axis-addition checklist, `↻` tooltip cost-preview, `permanent` failure class surfaced distinctly in the wave-complete toast, client-side telemetry-vs-privacy line in §15. **Q.S.1 DECIDED:** accept-and-disclose — V1.0 ships without intra-wave memoization; Crescendo cost cliff documented in §1.2; revisit V1.x with [Q.S.4](03_runner.md#12-open-questions) experiment data. **Q.S.2 DECIDED:** operator-as-tag (honor-system) — §9.4.5 scaled back to relocation-only (no anonymous-rejection); the no-labels early-return preserved; V1.1 multi-operator collab revisits. **Q.S.3 remains a V1.0 gate item** pending the Q.S.4 Crescendo experiment outcome. Q.S.5–Q.S.9 are PR-sized follow-ups. |
+
+The net architectural commitment surface (ConversationTree vs AttackResult split, AR-per-leaf, two-function branching, labels-round-trip contract, failure-class trichotomy + skipped bucket, 5-step entry-point shim, schema-versioned sessionStorage, per-tree `UndoOp[]` with state-snapshot widening, operator-as-tag honor-system per Q.S.2) has been stable since rev 15 and survived four reviewer passes plus a rubber-duck pass. The freshest rubber-duck assessment was *"substantive revisions, not back to the drawing board ... with three landed and the §E Crescendo experiment run, this is a ship-it document"* — of those three, [Q.S.1](03_runner.md#12-open-questions) (DECIDED: accept-and-disclose) and [Q.S.2](03_runner.md#12-open-questions) (DECIDED: operator-as-tag) have landed; only [Q.S.3](03_runner.md#12-open-questions) (per-target rate-limit circuit breaker) remains, gated on the [Q.S.4](03_runner.md#12-open-questions) Crescendo experiment.
 
 ### Version-scope legend
 
@@ -61,6 +74,8 @@ Distinct from §1.1 (deferred features). These are limits of features that V1.0 
 - **ScoreNode is render-only in V1.0** ([§4.5](#45-observational-nodes-no-side-effect-on-the-conversation)). It displays `MessagePiece.scores` already attached to upstream pieces (e.g., from a Scenario-orchestrated import) but cannot author new scores. The `✏ Configure scorer + params` action rail icon is a disabled stub per [02 §2.2](02_tree_ui_affordances.md#22-per-node-action-rail) — V1.0 operators who want to score a leaf whose upstream has no scores must wait for V1.1's `runScorer(node_id)` operation. `📊 View score distribution` stays enabled (pure read-side aggregation).
 - **sessionStorage wipe on schema-version mismatch.** A V1.0 → V1.1 upgrade that changes any persisted sessionStorage shape wipes all `pyrit.*` keys on boot per [§13.1 Schema versioning](#131-v10-minimal-workspace). Operator-visible effect: one toast (*"Saved settings were from a different version and have been reset."*), MRU empty, settings revert to defaults. Trees themselves are not affected — they reconstruct from backend leaves via §9.4.1. The only loss is a pre-V1.0 AR session opened via `openTreeFromAttackResult` but never refreshed (sessionStorage held the `parentSourceConversationId` link; wipe loses it; operator re-opens from History to recover). **Origin-shared sessionStorage collision risk:** if another app at the same browser origin uses `pyrit.*` keys for unrelated purposes, the schema-version-mismatch wipe is a collateral cost; bounded for the internal-tool PyRIT deployment context but worth naming for future shared-origin hosting scenarios.
 - **Undo is in-memory and per-tree, capped at 20 entries.** Ctrl-Z within a tree undoes the last 20 structural edits ([§6.9](#69-node-editor-undo-v10)); tree-swap clears the stack and reload loses it. No redo in V1.0 (Ctrl-Shift-Z lands V1.x). No undo for refresh waves themselves — backend `AttackResult`s are append-only; operators recover via reflog `makeCurrent` (§6.7) instead.
+- **No tree export / import primitive in V1.0** (per rubber-duck Finding C.6). Sharing a tree definition with a teammate is *only* via the source AR id + the recipient's `openTreeFromAttackResult` (auto-reverse path, §13.1) — which loses authoring state (unrefreshed nodes, `promotedChildSlotIndex`, `displayName`, undoStack). V1.x adds a JSON-export / import affordance scoped to the `ConversationTree` shape (no `ExecutionRecord` snapshot — the recipient re-fires Refresh against the source ARs they already have). Operators wanting reproducibility today should rely on the V1.0 auto-reverse path and accept the authoring-state loss.
+- **i18n is V1.x; V1.0 makes one cheap commitment to keep migration tractable.** All operator-visible strings (toasts, modal copy, action-rail tooltips, action-row labels) live in a single registry at `frontend/src/strings/tree.en.ts` from day 1 — not scattered across 50 components. The registry is a flat `Record<string, string>` keyed by stable identifier; component code reads `t('wave.complete.toast')` rather than embedding the English string. V1.0 ships English-only; V1.x adds a sibling `tree.<locale>.ts` file and a locale-resolver. Without this commitment, V1.x i18n becomes a 2-week refactor instead of a translation-file PR.
 
 ## 2. Vocabulary
 
@@ -188,6 +203,17 @@ export interface ConversationTreeNodeBase {
   // V1.0 had no Stack-`+` so nothing was operator-stacked).
   createdAt: string
   updatedAt: string
+  /**
+   * Monotonic counter bumped on every `editParams` / `regenerateFanChildren` /
+   * `makeCurrent` mutation. **V1.0** reads this only for telemetry / debug logs.
+   * **V2** uses it as the last-write-wins key for the server-side collaborative-tree
+   * concurrency model ([§13.8](#138-multi-operator-collaboration-v2)). Carrying it in V1.0
+   * costs nothing at the data-model layer and makes V2 a non-migration: V2 reads
+   * `version` directly off V1.0-authored nodes loaded from sessionStorage with no
+   * defaulting needed (default 1 for newly-minted nodes; the V1.0 mutators that
+   * already bump `updatedAt` also bump `version`).
+   */
+  version: number
 }
 
 export type ConversationTreeNodeKind =
@@ -282,9 +308,11 @@ export interface SendNode extends ConversationTreeNodeBase {
 
 A `SendNode` is the **only** node that mutates external state (one `POST /attacks/{id}/messages`, [routes/attacks.py#L440-L478](../../../pyrit/backend/routes/attacks.py#L440-L478)). Its `execution` field records the assistant response. Refreshing it is the only operation that incurs token cost.
 
-### 4.4 Structural nodes — the single fan-out primitive
+### 4.4 Structural nodes — the uniform FanNode shape (per-axis dispatch)
 
-The previous revision had four `*Fan` kinds (`AttemptFan`, `ConverterFan`, `PromptFan`, `TargetFan`). They differed only in *which dimension is varied per child*. Collapsed to one node with a typed axis:
+The previous revision had four `*Fan` kinds (`AttemptFan`, `ConverterFan`, `PromptFan`, `TargetFan`). They differed only in *which dimension is varied per child*. Collapsed to one node with a typed axis.
+
+> **Honest framing (rev 18, per rubber-duck Finding D.2).** The FanNode *type* is uniform; the *behavior* across axes is a polymorphic dispatch table. "Adding a new axis is a registration" (§1 goal #2) is aspirational — the actual work is a 4-tuple per axis: (a) extend the `FanVariant` discriminated union with the new payload shape; (b) add a resolver case in [03 §3.3a](03_runner.md#33a-helpers-referenced-by-the-dispatch-step) that maps the payload into per-piece `MessagePieceRequest` overrides and/or per-attack request fields; (c) decide the persistence story — some axes (e.g., `temperature`) are not recoverable from current backend state and need a new label round-tripped per [03 §4.3](03_runner.md#43-label-writes-the-round-trip-fidelity-contract); (d) add a reconstruction case in [§9.3.1 variant-payload reconstruction](#931-fan-grouping-algorithms). Use this checklist when adding `prompt` / `target` / `system_prompt` / `temperature` in V1.1+. The uniform shape is what makes the dispatch table *small* and *centralized* (one resolver, one reconstruction file); without that uniformity the runner would carry four per-axis code paths instead of one parametric one.
 
 > **Version scope.** The `FanAxis` type below enumerates the full design surface. **V1.0 ships `attempt` and `converter` axes only.** `prompt`, `target`, `system_prompt`, and `temperature` are scoped for V1.1+. The runner branches and DTO mappings differ per axis; V1.0's two-axis surface is enough to exercise every runner primitive (single-target re-execution, converter-pipeline mutation, AR-per-leaf materialization). V1.1 adds the remaining axes without changing the type.
 >
@@ -409,6 +437,23 @@ export interface ExecutionRecord {
   errorMessage?: string
   /** For replay / debugging — the hash that was current when this execution started. */
   resolvedInputHashAtExecution: string
+  /**
+   * **Per-leaf timing fields (rev 18, per rubber-duck Finding C.1).** All three are
+   * ISO-8601 UTC strings; all three are nullable to cover failures that never reached
+   * the target. The runner writes these inline with state transitions — `dispatchedAt`
+   * at the `running` transition, `targetFirstByteAt` when the first response chunk
+   * arrives (or on `add_message`'s response for non-streaming targets), `completedAt`
+   * at the terminal `clean` / `failed` / `cancelled` transition. Implementers MUST
+   * populate all three on successful dispatches; UI surfaces (the [02 §8.2 Recent waves
+   * drawer](../../../doc/gui/design/02_tree_ui_affordances.md#82-the-v1-drawer-a-recent-waves-tab))
+   * compute `target_latency_ms = completedAt - dispatchedAt` for per-leaf rows. This
+   * is what makes the [03 §11.1](03_runner.md#111-unit-testable-in-isolation-no-backend)
+   * `inflight.size <= maxParallel` invariant validatable in production rather than
+   * only in unit tests.
+   */
+  dispatchedAt: string | null
+  targetFirstByteAt: string | null
+  completedAt: string | null
 }
 
 /**
@@ -916,7 +961,7 @@ These all return as live options when V2 (server-side conversation tree) is desi
 
 **One backend ask is not deferrable** — it's a soft dependency for the operator-isolation posture (§9.1):
 
-- **`_validate_operator_match` must read from `AttackResult.labels["operator"]`, not `piece.labels["operator"]`.** Today the check reads the operator label from existing message pieces ([attack_service.py:L693-L694](../../../pyrit/backend/services/attack_service.py#L693)). The path that writes those piece labels ([attack_mappers.py:L476](../../../pyrit/backend/mappers/attack_mappers.py#L476)) is `removed_in="0.16.0"`. When it goes, the piece-label check silently no-ops and the server-side operator-isolation check disappears for tree-UI traffic — reducing operator isolation to a UI-only posture. The fix: relocate the check to read `AttackResult.labels["operator"]` for the AR the conversation belongs to. **Revision 9 brings this into the V1.0 PR set** — see §9.4.5 for the elevation rationale and PR sequencing. Earlier revisions treated this as a deferred PyRIT-core ask; that gamble ("someone else will fix it before 0.16.0") was too fragile for V1.0's defense-in-depth story.
+- **`_validate_operator_match` must read from `AttackResult.labels["operator"]`, not `piece.labels["operator"]`.** Today the check reads the operator label from existing message pieces ([attack_service.py:L693-L694](../../../pyrit/backend/services/attack_service.py#L693)). The path that writes those piece labels ([attack_mappers.py:L502](../../../pyrit/backend/mappers/attack_mappers.py#L502)) is `removed_in="0.16.0"`. When it goes, the piece-label check silently no-ops and the server-side operator-isolation check disappears for tree-UI traffic — reducing operator isolation to a UI-only posture. The fix: relocate the check to read `AttackResult.labels["operator"]` for the AR the conversation belongs to. **Revision 9 brings this into the V1.0 PR set** — see §9.4.5 for the elevation rationale and PR sequencing. Earlier revisions treated this as a deferred PyRIT-core ask; that gamble ("someone else will fix it before 0.16.0") was too fragile for V1.0's defense-in-depth story.
 
 ### 7.5 Storage cost - what AR-per-leaf actually costs
 
@@ -1027,18 +1072,18 @@ The reviewer of revision 1 correctly flagged three blockers that the original do
 
 ### 9.1 Operator isolation posture
 
-> **What ships in V1.0 (read this first).** Operator isolation in V1.0 is a **three-layer posture**: (1) the visual 🔒 lock + mutating-affordance disablement on nodes whose latest AR carries a different operator tag (UI); (2) the runner's pre-wave **tag-hygiene gate** ([03 §2.1 entry-point shim step 1](../doc/gui/design/03_runner.md#entry-point-shim-ordering-v10)) that aborts any refresh whose `currentOperator()` is null/empty so no untagged AR ever reaches the backend; (3) the server-side `_validate_operator_match` check (relocated/tightened per [§9.4.5](#945-hard-backend-dependency-relocate-and-tighten-_validate_operator_match)) as defense-in-depth against non-tree-UI clients (a second browser tab using the API directly, a Python script). Under AR-per-leaf the server-side check **rarely fires by construction** for tree-UI traffic, because the runner always creates its own AR with its own tag. Point 5 below spells out why. Reframing note (rev 15): `operator` is a tag the operator picks for History grouping + per-operator AR isolation, not an auth claim; earlier text in this section conflated the two, and the tag-hygiene gate is the runner's contribution to keeping the tag honest.
+> **What ships in V1.0 (read this first).** Operator isolation in V1.0 is a **three-layer posture**: (1) the visual 🔒 lock + mutating-affordance disablement on nodes whose latest AR carries a different operator tag (UI); (2) the runner's pre-wave **tag-hygiene gate** ([03 §2.1 entry-point shim step 1](../doc/gui/design/03_runner.md#entry-point-shim-ordering-v10)) that aborts any refresh whose `currentOperator()` is null/empty so no untagged AR ever reaches the backend; (3) the server-side `_validate_operator_match` check (relocated per [§9.4.5](#945-hard-backend-dependency-relocate-_validate_operator_match)) as defense-in-depth against non-tree-UI clients (a second browser tab using the API directly, a Python script). Under AR-per-leaf the server-side check **rarely fires by construction** for tree-UI traffic, because the runner always creates its own AR with its own tag. Point 5 below spells out why. **Reframing note (Q.S.2 DECIDED V1.0: operator-as-tag, rev 18 per rubber-duck Finding B.2):** `operator` is a tag the operator picks for History grouping + per-operator AR isolation, **not an auth claim**. The tag is honor-system — a determined operator can set it to any value, including impersonating another operator's tag; the V1.0 posture defends against accidental mis-attribution and casual cross-operator extensions, not against motivated bypass. The "Branch from here is the escape hatch" framing in point 3 below is the consequence: any operator can branch any tree they can read (the source AR was already visible to them in History), creating a fresh AR under their own tag with no auth gate. V1.1 multi-operator collaboration ([§13.8](#138-multi-operator-collaboration-v2)) revisits whether the tag should become a claim; V1.0 ships honor-system.
 
 The existing GUI enforces operator isolation in two places:
 
 - **Frontend** ([ChatWindow.tsx#L494-L498](../../../frontend/src/components/Chat/ChatWindow.tsx#L494-L498)): when the loaded attack's `labels.operator` differs from the current user's operator, the entire conversation is read-only.
-- **Backend** ([`_validate_operator_match` at attack_service.py#L682](../../../pyrit/backend/services/attack_service.py#L682)): `add_message` raises if the request operator does not match the operator label on existing message pieces in the conversation. **§9.4.5 elevates the relocation + tightening of this check to the V1.0 PR set** — once those land, the check reads from `AttackResult.labels["operator"]` (survives 0.16.0 deprecation) and rejects anonymous requests against operator-owned ARs.
+- **Backend** ([`_validate_operator_match` at attack_service.py#L682](../../../pyrit/backend/services/attack_service.py#L682)): `add_message` raises if the request operator does not match the operator label on existing message pieces in the conversation. **§9.4.5 elevates the relocation of this check to the V1.0 PR set** — once it lands, the check reads from `AttackResult.labels["operator"]` (survives 0.16.0 deprecation). The check retains its existing no-labels early-return behavior: anonymous requests (no `operator` key in `request.labels`) pass through unchallenged, consistent with the operator-as-tag framing — the tag is honor-system, not an auth claim.
 
 The tree view must respect both. Under AR-per-leaf (§7.2):
 
 1. **Visual lock (primary line of defense under V1.0 runner).** When a conversation tree node's most recent `ExecutionRecord.attackResultId` resolves to an AR with `labels.operator != currentOperator`, render that node with a "locked" badge and disable mutating affordances (`Refresh`, `Edit`, `Add child`, `Delete`). `Branch from here` / `Clone tree` is still allowed — it creates a fresh AR owned by the current operator under a new `conversation_tree_id`. **The visual lock is the only lock that fires for typical V1.0 traffic** — see #5 below for why.
-2. **API-level lock (defends against non-tree-UI clients).** The runner catches the 400 from the §9.4.5-tightened `_validate_operator_match` and surfaces it gracefully as "node failed - operator mismatch". The main consumers of this defense are *not* the V1.0 runner itself — they are non-tree-UI callers (a second browser tab using direct API access, a Python script, a malicious request) that try to extend a tree-UI-owned AR.
-3. **Branch-into-own-tree as the escape hatch.** Matches the existing "Continue with your target" affordance ([ChatWindow.tsx#L519-L546](../../../frontend/src/components/Chat/ChatWindow.tsx#L519-L546)).
+2. **API-level lock (defends against non-tree-UI clients with `operator` labels set).** The runner catches the 400 from the §9.4.5-relocated `_validate_operator_match` and surfaces it gracefully as "node failed - operator mismatch". This fires when a non-tree-UI caller (a second browser tab using direct API access, a Python script) sends a request whose `labels.operator` is *non-empty AND mismatched* against the existing AR's tag. Anonymous callers (no `operator` label) bypass the check by design per the operator-as-tag framing — the tag is honor-system; the API does not pretend to enforce identity. The main value of this layer is defending against operators who set their tag *correctly* but reach for a tree another operator owns.
+3. **Branch-into-own-tree as the escape hatch.** Matches the existing "Continue with your target" affordance ([ChatWindow.tsx#L519-L546](../../../frontend/src/components/Chat/ChatWindow.tsx#L519-L546)). **Consistent with operator-as-tag (Q.S.2 rev 18):** any operator who can read the source AR can branch it under their own tag — no auth gate, no confirmation modal naming the cross-operator boundary. If V1.1 promotes `operator` to a claim, this primitive needs a confirmation step; V1.0 ships escape-hatch-as-default.
 4. **AR-per-leaf simplifies the lock granularity.** Each leaf is its own AR; mixed-operator trees are possible (e.g., the operator imported one leaf from operator A but added their own siblings). The visual lock applies node-by-node, not tree-wide.
 5. **The V1.0 runner's API-level lock rarely fires by construction.** Under AR-per-leaf, every `add_message` the runner sends targets an AR the runner *just created* with its own labels — the AR's operator and the request's operator always match. The server-side check therefore never produces a rejection along the runner's normal dispatch path. The check's value under V1.0 is bounded to (a) detecting tree-UI bugs that violate the labeling invariant, and (b) blocking non-tree-UI clients per #2. **Operators must understand that the visual 🔒 badge is purely client-side under V1.0** — it derives from `AttackResult.labels["operator"]` read locally, and a determined non-runner caller with API access could ignore it. Server-side enforcement only fires if the offender bypasses the runner.
 6. **The runner sets `request.labels["operator"]` on every `add_message` call** (invariant). This costs nothing today (the existing chat already does it), provides a clean post-0.16.0 path once the backend reads from `AttackResult.labels`, and means the visual lock and the server-side check agree on the same identity. Auto-reverse migration (§9.3) inherits each historical AR's `labels.operator` unchanged.
@@ -1423,21 +1468,20 @@ Three type-system changes ship in V1.0 to support the runner's dispatch and the 
 - `converter_identifiers: list[ComponentIdentifierField]` — default `[]` (empty list, not None). Pieces that never had a converter applied carry an empty list, distinguishable from "DTO missing the field" (which fails at the TypeScript boundary). The mapper copies directly from `piece.converter_identifiers`; the field is non-null on the domain side.
 - `original_prompt_id: string` — default not applicable; per the [`_set_original_prompt_id_default` validator at message_piece.py:L182-L190](../../../pyrit/models/messages/message_piece.py#L182), persisted pieces *always* have a non-null `original_prompt_id` (the validator defaults it to `self.id` for fresh pieces). The DTO field is declared as `string` (not `string | null`) and the mapper copies directly; no defaulting needed in the mapper.
 
-#### 9.4.5 Hard backend dependency: relocate AND tighten `_validate_operator_match`
+#### 9.4.5 Hard backend dependency: relocate `_validate_operator_match`
 
-The V1.0 PR set carries both the relocation and a tightening of the no-labels case. Today's check has two problems:
+The V1.0 PR set carries the relocation only (Q.S.2 DECIDED V1.0: operator-as-tag, rev 18). Today's check has one problem the V1.0 PR closes; a second issue that earlier revisions wanted to "tighten" is now intentionally left as-is per the operator-as-tag framing.
 
-- **Today's check at [`attack_service.py:L693`](../../../pyrit/backend/services/attack_service.py#L693) reads from `piece.labels["operator"]`**, which is written by an `attack_mappers.py:L476` path that is `removed_in="0.16.0"`. After removal, the piece-label check silently no-ops; the server-side operator-isolation check disappears for tree-UI traffic, leaving only the UI posture.
-- **Today's check returns early when `request.labels` is absent or empty** (the `if not request.labels: return` at the top of the function). Combined with the AR-per-leaf model (where most leaves are written by the same operator who created the AR), the check rarely fires today; under the V1.0 runner that ALWAYS sets `request.labels["operator"]` it would fire correctly, but the no-labels early-return makes the check inadvertently bypass-able by any caller that omits labels — a gap that bites the moment a non-tree-UI client invokes add_message against a tree-UI-owned AR.
+- **Today's check at [`attack_service.py:L693`](../../../pyrit/backend/services/attack_service.py#L693) reads from `piece.labels["operator"]`**, which is written by an `attack_mappers.py:L502` path that is `removed_in="0.16.0"`. After removal, the piece-label check silently no-ops; the server-side operator-isolation check disappears for tree-UI traffic, leaving only the UI posture. **This is the bug V1.0 closes.**
+- **Today's check returns early when `request.labels` is absent or empty** (the `if not request.labels: return` at the top of the function). Earlier revisions proposed tightening this to reject anonymous requests against operator-owned ARs. **Rev 18 (per Q.S.2) keeps the early-return**: the operator tag is honor-system, not an auth claim, so anonymous requests pass through unchallenged. Tightening this would promote the tag to a claim, which V1.0 is not chartered to do; V1.1 multi-operator collaboration ([§13.8](#138-multi-operator-collaboration-v2)) revisits whether the tag should become a claim.
 
-**The V1.0 fix is two-part:**
+**The V1.0 fix is single-part:**
 
 1. **Relocate** the source of the operator check from `piece.labels["operator"]` to `AttackResult.labels["operator"]` (resolved once per request via the AR id the conversation belongs to). Survives the 0.16.0 piece-label-write deprecation.
-2. **Tighten** the no-labels early-return: if `request.labels` is absent or has no `operator` key AND the AR carries an `operator` label, raise the same operator-mismatch error as if the request operator had been set to an empty string. Anonymous requests cannot extend operator-owned ARs.
 
-The combined change is ~30 LOC plus tests. The V1.0 GUI PR set carries it because it's the GUI's lock-correctness story; running V1.0 without the tightening leaves a silent bypass that contradicts the §9.1 "visual lock + API lock" framing.
+The relocation is ~15 LOC plus tests. The V1.0 GUI PR set carries it because it's the only operator-lock-correctness story that survives 0.16.0; running V1.0 without the relocation leaves the server-side layer silently disabled and contradicts the §9.1 "visual lock + API lock" framing for the mismatched-tag case.
 
-**Sequencing enforcement.** The relocation/tightening PR targets `pyrit/backend/services/attack_service.py` and must merge **before** the V1.0 GUI PR. Two enforcement mechanisms ship together so the gate is not a manual coordination promise:
+**Sequencing enforcement.** The relocation PR targets `pyrit/backend/services/attack_service.py` and must merge **before** the V1.0 GUI PR. Two enforcement mechanisms ship together so the gate is not a manual coordination promise:
 
 1. **Backend version gate in the GUI.** The V1.0 GUI's startup health check ([App.tsx](../../../frontend/src/App.tsx) bootstrap) calls `GET /api/version` and parses a `min_compat` field; if `min_compat > installed_pyrit_version` (a constant baked into the GUI build), the GUI renders a maintenance banner: *"Tree view requires PyRIT 0.16.0+ with the updated operator-lock check. Detected: {version}. Update PyRIT to continue."* The backend PR bumps `min_compat` as part of its diff. Without the backend PR merged, the gate fires and the tree tab is unavailable — visible enforcement, not silent regression.
 2. **PR review checklist.** The GUI PR's description carries three checkboxes:
@@ -1447,21 +1491,21 @@ The combined change is ~30 LOC plus tests. The V1.0 GUI PR set carries it becaus
 
   Reviewers don't approve the GUI PR without all three links. Belt and suspenders; redundant with mechanism 1 (build-time check) but cheap.
 
-**PR sequencing enforcement.** The backend relocation+tightening PR ships **before** the GUI PR that enables the tree-UI flag. Sequence:
+**PR sequencing enforcement.** The backend relocation PR ships **before** the GUI PR that enables the tree-UI flag. Sequence:
 
-1. **PR 1 (PyRIT core, backend):** relocate `_validate_operator_match` to read from `AttackResult.labels["operator"]` AND tighten the no-labels case to reject anonymous requests against operator-owned ARs. Includes unit tests covering both the relocation and the tightening.
+1. **PR 1 (PyRIT core, backend):** relocate `_validate_operator_match` to read from `AttackResult.labels["operator"]`. Includes unit tests covering the relocation (existing-piece-label behavior preserved when the AR-level label is absent for backward compat). **Does NOT tighten the no-labels early-return** — anonymous requests continue to pass through unchallenged per the operator-as-tag framing (Q.S.2).
 2. **PR 2 (PyRIT core, DTO):** the §9.4.4 (b) `BackendMessagePiece` extension (`converter_identifiers`, `original_prompt_id` exposed on the DTO).
-3. **PR 3 (PyRIT GUI):** the V1.0 tree-UI behind the `enableTreeUI` feature flag, with frontend types pulling in the new DTO fields (PR 2) and labeling its requests with `operator` (defended by PR 1).
+3. **PR 3 (PyRIT GUI):** the V1.0 tree-UI behind the `enableTreeUI` feature flag, with frontend types pulling in the new DTO fields (PR 2) and labeling its requests with `operator` (defended by PR 1 against same-shape mismatches).
 
 **Enforcement mechanism, in priority order:**
 
 - *Build-time check (mandatory):* PR 3's frontend types reference `BackendMessagePiece.converter_identifiers` directly; TypeScript fails the build if PR 2 hasn't landed. This catches the DTO dependency at compile time.
-- *Startup assertion (mandatory):* the tree-UI module includes a one-time startup probe that calls `GET /api/version` (or any read endpoint) and inspects the returned API version. If the version is below the one that includes PR 1's tightening, the tree-UI **disables itself with a banner** ("Tree UI requires PyRIT core ≥ X.Y.Z — current Z is older; falling back to chat tab. Update PyRIT core to enable."). This catches the operator-lock dependency at runtime, defending against operators who somehow run a mismatched GUI/backend pair (dev env, partial rollout).
+- *Startup assertion (mandatory):* the tree-UI module includes a one-time startup probe that calls `GET /api/version` (or any read endpoint) and inspects the returned API version. If the version is below the one that includes PR 1's relocation, the tree-UI **disables itself with a banner** ("Tree UI requires PyRIT core ≥ X.Y.Z — current Z is older; falling back to chat tab. Update PyRIT core to enable."). This catches the operator-lock dependency at runtime, defending against operators who somehow run a mismatched GUI/backend pair (dev env, partial rollout).
 - *PR description (advisory):* PR 3's description explicitly lists PR 1 and PR 2 as merge-before-this dependencies. Reviewers can use the link to verify both have shipped.
 
 The build-time check is sufficient for PR 2 (compile failure can't be ignored). The startup assertion is what defends against PR 1's silent-no-op failure mode (the backend would still accept requests; the GUI just wouldn't be safely deployable). Both must land in the V1.0 PR set, not as follow-ups.
 
-**One caveat for V1.0 design accounting:** under the V1.0 runner's AR-per-leaf model, every `add_message` targets an AR the runner *just created* with its own labels. The relocated check never rejects this — the AR's operator label matches the request's operator label by construction. So the server-side check fires correctly but rarely produces actual rejections under V1.0 runner traffic; its main value is defending against non-tree-UI clients (e.g., a malicious second tab, an API caller) reaching for tree-UI-owned ARs. See [§9.1 V1.0 isolation-posture clarification](#91-operator-isolation-posture) for the operator-facing implications.
+**One caveat for V1.0 design accounting:** under the V1.0 runner's AR-per-leaf model, every `add_message` targets an AR the runner *just created* with its own labels. The relocated check never rejects this — the AR's operator label matches the request's operator label by construction. So the server-side check fires correctly but rarely produces actual rejections under V1.0 runner traffic; its main value is defending against non-tree-UI clients (e.g., another GUI session, an API caller) that set their `operator` label *correctly* but reach for tree-UI-owned ARs under a mismatched tag. Anonymous callers (no `operator` label) are out of scope by design per Q.S.2 (operator-as-tag). See [§9.1 V1.0 isolation-posture clarification](#91-operator-isolation-posture) for the operator-facing implications.
 
 #### 9.4.6 Remaining limitations (post-revision-9, V1.0)
 
@@ -1975,6 +2019,8 @@ Every wave the operator triggers produces one `AttackResult` per leaf `Send` (pe
 - **Lineage:** `prepended_conversation` pieces carry `original_prompt_id` chains so the auditor can trace every leaf back to its source. `labels.conversation_tree_id` groups all ARs from one tree; `labels.parent_conversation_tree_id` chains cloned trees back to their parent.
 
 **Net audit posture vs. today's chat:** strictly better. Today's chat has operator/target/lineage labels but no wave grouping (every `add_message` looks isolated). V1 adds wave grouping and tree grouping at zero cost to the audit story.
+
+**Client-side telemetry policy (V1.0, per rubber-duck Finding C.7).** V1.0 emits **no operator-behavior telemetry from the client** — no hover events, no modal-dismissal counters, no draft-abandon tracking, no `Switch tree` invocation counts, no debounce-drop logs. The only client-emitted observability is the per-leaf `ExecutionRecord` timing fields ([§4.6](#46-shared-types)) and the [03 §6.3 WaveEvent](03_runner.md#63-wave-events) stream, both of which describe *target interactions* (audit-relevant) rather than *operator UI behavior* (not audit-relevant for V1.0's red-teaming-tool context). V1.x adds opt-in operator-behavior telemetry via a Workspace settings toggle once the V1.x telemetry surface lands per [03 §12 Q.5](03_runner.md#12-open-questions); the V1.0 commitment to no-tracking-by-default removes the *"is the tree-UI watching me?"* question from internal-deployment threat models.
 
 ### 15.2 What V1 does NOT audit (conversation tree structure is ephemeral)
 
