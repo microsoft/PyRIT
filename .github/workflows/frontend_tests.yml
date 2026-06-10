@@ -150,3 +150,10 @@ jobs:
 
       - name: Run TypeScript type check
         run: npx tsc --noEmit
+
+      # Tree-UI contract tests rely on `satisfies` clauses that ts-jest does
+      # not enforce at runtime. tsconfig.contract.json scopes a type-check
+      # narrowly to the contract files + their type dependencies so backend
+      # wire-shape drift is caught at build time.
+      - name: Run tree-UI contract type check
+        run: npx tsc --noEmit -p tsconfig.contract.json

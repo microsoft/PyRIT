@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "allowImportingTsExtensions": false,
+    "types": ["jest", "node", "@testing-library/jest-dom"],
+    "noEmit": true,
+    "ignoreDeprecations": "6.0"
+  },
+  // Narrowly scoped to the tree-UI contract test surface. The default
+  // tsconfig.json excludes *.test.* files (good — production builds don't
+  // need them); this overlay includes ONLY the contract tests and their
+  // dependency files so `npx tsc -p tsconfig.contract.json` is a fast CI
+  // gate that proves the `satisfies` clauses still hold against the types.
+  //
+  // tsconfig.test.json exists alongside this one but pulls in the entire
+  // test surface (incl. component tests with pre-existing type drift); we
+  // don't gate on that — only on the contract files this team owns.
+  "exclude": [],
+  "include": [
+    "src/types/treeUi.contract.test.ts",
+    "src/types/index.ts",
+    "src/runner/treeTypes.contract.test.ts",
+    "src/runner/treeTypes.ts",
+    "src/runner/testHelpers.ts"
+  ]
+}

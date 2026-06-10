@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "type-check": "tsc --noEmit",
+    "type-check:contract": "tsc --noEmit -p tsconfig.contract.json",
     "start": "python dev.py start",
     "restart": "python dev.py restart",
     "stop": "python dev.py stop",

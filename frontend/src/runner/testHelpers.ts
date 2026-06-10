@@ -238,20 +238,22 @@ export function mkTree(rootId: string, nodes: ConversationTreeNode[], overrides:
 // ----------------------------------------------------------------------------
 
 export function mkExecution(overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
+  // Spread-merge rather than per-field `??` so an explicit `null` override
+  // (e.g. dispatchedAt: null for a pre-target-call failure) survives.
   return {
-    executionId: overrides.executionId ?? 'exec-1',
-    attemptedAt: overrides.attemptedAt ?? ISO_FIXED,
-    attackResultId: overrides.attackResultId ?? 'ar-1',
-    conversationId: overrides.conversationId ?? 'conv-1',
-    pieceIds: overrides.pieceIds ?? [],
-    outcome: overrides.outcome ?? 'success',
-    errorMessage: overrides.errorMessage,
-    resolvedInputHashAtExecution: overrides.resolvedInputHashAtExecution ?? 'sha256:00',
-    waveId: overrides.waveId ?? 'w-1',
-    waveTriggerKind: overrides.waveTriggerKind ?? 'refresh_node',
-    dispatchedAt: overrides.dispatchedAt ?? ISO_FIXED,
-    targetFirstByteAt: overrides.targetFirstByteAt ?? ISO_FIXED,
-    completedAt: overrides.completedAt ?? ISO_FIXED,
+    executionId: 'exec-1',
+    attemptedAt: ISO_FIXED,
+    attackResultId: 'ar-1',
+    conversationId: 'conv-1',
+    pieceIds: [],
+    outcome: 'success',
+    resolvedInputHashAtExecution: 'sha256:00',
+    waveId: 'w-1',
+    waveTriggerKind: 'refresh_node',
+    dispatchedAt: ISO_FIXED,
+    targetFirstByteAt: ISO_FIXED,
+    completedAt: ISO_FIXED,
+    ...overrides,
   }
 }
 
