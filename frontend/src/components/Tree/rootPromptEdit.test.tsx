@@ -148,6 +148,70 @@ describe('RootPromptCard — inline edit affordance (spec §2.2)', () => {
     expect(systemField.value).toBe('')
   })
 
+  it('Cmd-Enter on the SYSTEM PROMPT textarea saves (uniform keyboard contract across fields)', () => {
+    const onEditRootPromptParams = jest.fn()
+    const tree = mkTree('r', [
+      mkRoot('r', { text: 'a', systemPrompt: 'b', targetRegistryName: 'c' }),
+    ])
+    const callbacks: ActionCallbacks = { onEditRootPromptParams }
+    const { container } = render(<TreeCanvas tree={tree} actionCallbacks={callbacks} />)
+    const card = findRootCard(container, 'r')
+    fireEvent.click(within(card).getByRole('button', { name: /edit root/i }))
+    const systemField = within(card).getByRole('textbox', { name: /system prompt/i }) as HTMLTextAreaElement
+    fireEvent.change(systemField, { target: { value: 'system-edited' } })
+    fireEvent.keyDown(systemField, { key: 'Enter', ctrlKey: true })
+    expect(onEditRootPromptParams).toHaveBeenCalledWith(nodeId('r'), {
+      text: 'a',
+      systemPrompt: 'system-edited',
+      targetRegistryName: 'c',
+    })
+  })
+
+  it('Cmd-Enter on the TARGET input saves', () => {
+    const onEditRootPromptParams = jest.fn()
+    const tree = mkTree('r', [
+      mkRoot('r', { text: 'a', systemPrompt: 'b', targetRegistryName: 'c' }),
+    ])
+    const callbacks: ActionCallbacks = { onEditRootPromptParams }
+    const { container } = render(<TreeCanvas tree={tree} actionCallbacks={callbacks} />)
+    const card = findRootCard(container, 'r')
+    fireEvent.click(within(card).getByRole('button', { name: /edit root/i }))
+    const targetField = within(card).getByRole('textbox', { name: /target/i }) as HTMLInputElement
+    fireEvent.change(targetField, { target: { value: 'target-edited' } })
+    fireEvent.keyDown(targetField, { key: 'Enter', ctrlKey: true })
+    expect(onEditRootPromptParams).toHaveBeenCalledWith(nodeId('r'), {
+      text: 'a',
+      systemPrompt: 'b',
+      targetRegistryName: 'target-edited',
+    })
+  })
+
+  it('Esc on the SYSTEM PROMPT textarea cancels', () => {
+    const onEditRootPromptParams = jest.fn()
+    const tree = mkTree('r', [mkRoot('r', { text: 'esc' })])
+    const callbacks: ActionCallbacks = { onEditRootPromptParams }
+    const { container } = render(<TreeCanvas tree={tree} actionCallbacks={callbacks} />)
+    const card = findRootCard(container, 'r')
+    fireEvent.click(within(card).getByRole('button', { name: /edit root/i }))
+    const systemField = within(card).getByRole('textbox', { name: /system prompt/i })
+    fireEvent.keyDown(systemField, { key: 'Escape' })
+    expect(onEditRootPromptParams).not.toHaveBeenCalled()
+    expect(within(card).queryByRole('textbox', { name: /prompt text/i })).toBeNull()
+  })
+
+  it('Esc on the TARGET input cancels', () => {
+    const onEditRootPromptParams = jest.fn()
+    const tree = mkTree('r', [mkRoot('r', { text: 'esc' })])
+    const callbacks: ActionCallbacks = { onEditRootPromptParams }
+    const { container } = render(<TreeCanvas tree={tree} actionCallbacks={callbacks} />)
+    const card = findRootCard(container, 'r')
+    fireEvent.click(within(card).getByRole('button', { name: /edit root/i }))
+    const targetField = within(card).getByRole('textbox', { name: /target/i })
+    fireEvent.keyDown(targetField, { key: 'Escape' })
+    expect(onEditRootPromptParams).not.toHaveBeenCalled()
+    expect(within(card).queryByRole('textbox', { name: /prompt text/i })).toBeNull()
+  })
+
   it('updated node.params re-render the read-mode body after host save', () => {
     const tree1 = mkTree('r', [mkRoot('r', { text: 'before' })])
     const callbacks: ActionCallbacks = { onEditRootPromptParams: jest.fn() }

@@ -52,6 +52,7 @@ import type {
 import { ActionRail } from './actionRail'
 import { useActionCallbacks } from './actionCallbacksContext'
 import { useAvailableConverters } from './availableConvertersContext'
+import { useEditorKeyboard } from './useEditorKeyboard'
 import type { FanChildInfo, TreeFlowNode } from './conversationTreeToReactFlow'
 import type { StackAggregate, StackMember } from './fanStack'
 import { STATE_BADGE_TOKENS, useNodeCardStyles } from './nodeCards.styles'
@@ -263,6 +264,7 @@ function InlineRootPromptEditor({
   const [target, setTarget] = useState(initialTarget)
   const commit = () =>
     onSave({ text, systemPrompt, targetRegistryName: target })
+  const onKeyDown = useEditorKeyboard({ onSave: commit, onCancel })
   return (
     <div className={styles.inlineEditor}>
       <Textarea
@@ -271,15 +273,7 @@ function InlineRootPromptEditor({
         autoFocus
         rows={3}
         aria-label="Prompt text"
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            e.preventDefault()
-            onCancel()
-          } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault()
-            commit()
-          }
-        }}
+        onKeyDown={onKeyDown}
       />
       <Textarea
         value={systemPrompt}
@@ -287,24 +281,14 @@ function InlineRootPromptEditor({
         rows={2}
         placeholder="System prompt (optional)"
         aria-label="System prompt"
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            e.preventDefault()
-            onCancel()
-          }
-        }}
+        onKeyDown={onKeyDown}
       />
       <Input
         value={target}
         onChange={(_e, d) => setTarget(d.value)}
         placeholder="Target registry name"
         aria-label="Target registry name"
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            e.preventDefault()
-            onCancel()
-          }
-        }}
+        onKeyDown={onKeyDown}
       />
       <div className={styles.inlineEditorActions}>
         <Button size="small" appearance="primary" onClick={commit}>
@@ -455,6 +439,10 @@ function InlineTextEditor({
 }) {
   const styles = useNodeCardStyles()
   const [draft, setDraft] = useState(initial)
+  const onKeyDown = useEditorKeyboard({
+    onSave: () => onSave(draft),
+    onCancel,
+  })
   return (
     <div className={styles.inlineEditor}>
       <Textarea
@@ -463,15 +451,7 @@ function InlineTextEditor({
         autoFocus
         rows={3}
         aria-label={ariaLabel}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            e.preventDefault()
-            onCancel()
-          } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault()
-            onSave(draft)
-          }
-        }}
+        onKeyDown={onKeyDown}
       />
       <div className={styles.inlineEditorActions}>
         <Button size="small" appearance="primary" onClick={() => onSave(draft)}>
