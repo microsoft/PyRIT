@@ -43,9 +43,15 @@ export type TreeFlowNode =
 export interface TreeFlowEdgeData extends Record<string, unknown> {
   /** Mirror of the source `ConversationTreeEdge.slotIndex`. */
   slotIndex: number
+  /**
+   * Source node's kind, surfaced on the edge so PR5d's insert-on-edge
+   * `+` chip can pick the kind-aware menu without doing a tree lookup
+   * at render. Adapter computes it once per edge.
+   */
+  parentKind: ConversationTreeNodeKind
 }
 
-export type TreeFlowEdge = Edge<TreeFlowEdgeData, 'smoothstep'>
+export type TreeFlowEdge = Edge<TreeFlowEdgeData, 'smoothstep' | 'insert'>
 
 export interface TreeFlowAdapterResult {
   treeId: ConversationTreeId
@@ -59,11 +65,22 @@ export interface TreeFlowAdapterResult {
 
 const PLACEHOLDER_POSITION = { x: 0, y: 0 } as const
 
+// Placeholder dimensions for every node. react-flow won't render edges
+// until source + target nodes have measured dimensions; in production
+// the cards report their real size on mount, but tests + initial render
+// need defaults so edges (and the PR5d insert chip) appear. PR5g's
+// layout pass overrides positions; the runtime dimensions resolve once
+// the DOM measures the actual card.
+const PLACEHOLDER_WIDTH = 260
+const PLACEHOLDER_HEIGHT = 80
+
 export function conversationTreeToReactFlow(tree: ConversationTree): TreeFlowAdapterResult {
+  const nodeKindById = new Map<string, ConversationTreeNodeKind>()
+  for (const n of tree.nodes) nodeKindById.set(n.id, n.kind)
   return {
     treeId: tree.id,
     nodes: tree.nodes.map(toFlowNode),
-    edges: tree.edges.map(toFlowEdge),
+    edges: tree.edges.map((e) => toFlowEdge(e, nodeKindById)),
   }
 }
 
@@ -75,50 +92,26 @@ function toFlowNode(node: ConversationTreeNode): TreeFlowNode {
   // Per-kind narrowing keeps the result's discriminated union honest. The
   // exhaustive switch will fail at compile time if a new kind lands in
   // ConversationTreeNodeKind without an arm here.
+  const common = {
+    id: node.id,
+    position: { ...PLACEHOLDER_POSITION },
+    width: PLACEHOLDER_WIDTH,
+    height: PLACEHOLDER_HEIGHT,
+  }
   const kind: ConversationTreeNodeKind = node.kind
   switch (kind) {
     case 'root_prompt':
-      return {
-        id: node.id,
-        type: 'root_prompt',
-        position: { ...PLACEHOLDER_POSITION },
-        data: { node: node as RootPromptNode },
-      }
+      return { ...common, type: 'root_prompt', data: { node: node as RootPromptNode } }
     case 'import_message':
-      return {
-        id: node.id,
-        type: 'import_message',
-        position: { ...PLACEHOLDER_POSITION },
-        data: { node: node as ImportMessageNode },
-      }
+      return { ...common, type: 'import_message', data: { node: node as ImportMessageNode } }
     case 'user_turn':
-      return {
-        id: node.id,
-        type: 'user_turn',
-        position: { ...PLACEHOLDER_POSITION },
-        data: { node: node as UserTurnNode },
-      }
+      return { ...common, type: 'user_turn', data: { node: node as UserTurnNode } }
     case 'send':
-      return {
-        id: node.id,
-        type: 'send',
-        position: { ...PLACEHOLDER_POSITION },
-        data: { node: node as SendNode },
-      }
+      return { ...common, type: 'send', data: { node: node as SendNode } }
     case 'fan':
-      return {
-        id: node.id,
-        type: 'fan',
-        position: { ...PLACEHOLDER_POSITION },
-        data: { node: node as FanNode },
-      }
+      return { ...common, type: 'fan', data: { node: node as FanNode } }
     case 'score':
-      return {
-        id: node.id,
-        type: 'score',
-        position: { ...PLACEHOLDER_POSITION },
-        data: { node: node as ScoreNode },
-      }
+      return { ...common, type: 'score', data: { node: node as ScoreNode } }
     default: {
       // Exhaustiveness check: if a new kind lands without an arm above,
       // this assignment fails at compile time.
@@ -128,12 +121,22 @@ function toFlowNode(node: ConversationTreeNode): TreeFlowNode {
   }
 }
 
-function toFlowEdge(edge: ConversationTree['edges'][number]): TreeFlowEdge {
+function toFlowEdge(
+  edge: ConversationTree['edges'][number],
+  nodeKindById: ReadonlyMap<string, ConversationTreeNodeKind>,
+): TreeFlowEdge {
+  const parentKind = nodeKindById.get(edge.parentId) ?? 'root_prompt'
+  // Use the custom 'insert' edge type by default; TreeCanvas's edgeTypes
+  // registry maps 'insert' to the InsertEdge component (which extends
+  // SmoothStepEdge with a midpoint `+` chip). Falls back to the built-in
+  // 'smoothstep' rendering when no edgeTypes entry registers — the chip
+  // is suppressed in that case via the InsertEdge's callback-presence
+  // check at render.
   return {
     id: edge.id,
     source: edge.parentId,
     target: edge.childId,
-    type: 'smoothstep',
-    data: { slotIndex: edge.slotIndex },
+    type: 'insert',
+    data: { slotIndex: edge.slotIndex, parentKind },
   }
 }

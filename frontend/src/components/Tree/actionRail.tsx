@@ -28,6 +28,33 @@ import type { ConversationTreeNodeId } from '../../runner/treeTypes'
 import { useActionRailStyles } from './actionRail.styles'
 
 /**
+ * Discriminant for `onEdgeInsert` — names the operator's chosen insert
+ * action so the host can dispatch the corresponding tree edit without
+ * re-deriving "what would they want here" from the kind alone.
+ *
+ * V1.0 set (per the per-parent menu in PR5d's InsertEdge):
+ *   - `follow_up_user_turn`   — UserTurn(role=user)
+ *   - `inject_assistant_text` — UserTurn(role=simulated_assistant)
+ *   - `send`                  — SendNode
+ *   - `score`                 — ScoreNode
+ *   - `append_converter`      — append to upstream UserTurn's converterPipeline
+ *   - `fan_attempt`           — wrap edge target in FanNode(axis='attempt')
+ *   - `fan_converter`         — wrap edge target in FanNode(axis='converter')
+ *
+ * V1.1 axes (`fan_prompt`, `fan_target`) reserve slot in the menu but
+ * are disabled and not part of this enum; adding them is a non-breaking
+ * V1.1 type extension.
+ */
+export type EdgeInsertKind =
+  | 'follow_up_user_turn'
+  | 'inject_assistant_text'
+  | 'send'
+  | 'score'
+  | 'append_converter'
+  | 'fan_attempt'
+  | 'fan_converter'
+
+/**
  * Callback bag the host wires through TreeCanvas. Each callback is
  * optional — an undefined entry hides its button so PR5c can ship the
  * rail before every runner integration is wired.
@@ -41,6 +68,18 @@ export interface ActionCallbacks {
   onBranch?: (nodeId: ConversationTreeNodeId) => void
   onDelete?: (nodeId: ConversationTreeNodeId) => void
   onOpenLinear?: (nodeId: ConversationTreeNodeId) => void
+  /**
+   * Per-edge insert (PR5d). `parentId` is the source node of the edge,
+   * `childId` the target, `kind` the operator's chosen insert action.
+   * Host decides where in the tree the new node goes (typically:
+   * splice between parent and child, attaching parent → new node →
+   * child). When undefined, the per-edge `+` chip is suppressed.
+   */
+  onEdgeInsert?: (
+    parentId: ConversationTreeNodeId,
+    childId: ConversationTreeNodeId,
+    kind: EdgeInsertKind,
+  ) => void
 }
 
 export interface ActionRailProps {

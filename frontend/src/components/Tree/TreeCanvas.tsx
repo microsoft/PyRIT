@@ -34,6 +34,7 @@ import '@xyflow/react/dist/style.css'
 import type { ActionCallbacks } from './actionRail'
 import { ActionCallbacksContext } from './actionCallbacksContext'
 import { conversationTreeToReactFlow } from './conversationTreeToReactFlow'
+import { treeEdgeTypes } from './treeEdgeTypes'
 import { treeNodeTypes } from './treeNodeTypes'
 import type { ConversationTree } from '../../runner/treeTypes'
 
@@ -68,9 +69,7 @@ export function TreeCanvas({ tree, actionCallbacks }: TreeCanvasProps) {
             nodes={nodes}
             edges={edges}
             nodeTypes={treeNodeTypes}
-            // PR5d adds the edge `+` chip via edgeTypes; default smoothstep
-            // is fine for the scaffold.
-            // edgeTypes={...}
+            edgeTypes={treeEdgeTypes}
             fitView
           />
         </ReactFlowProvider>
