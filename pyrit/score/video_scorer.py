@@ -133,6 +133,7 @@ class VideoHelper:
                 original_prompt_id=original_prompt_id,
                 converted_value=frame,
                 converted_value_data_type="image_path",
+                conversation_id=message_piece.conversation_id,
             )
             response = piece.to_message()
             image_requests.append(response)
@@ -248,6 +249,7 @@ class VideoHelper:
                 original_prompt_id=original_prompt_id,
                 converted_value=audio_path,
                 converted_value_data_type="audio_path",
+                conversation_id=message_piece.conversation_id,
             )
 
             audio_message = audio_piece.to_message()

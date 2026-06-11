@@ -12,14 +12,14 @@ from typing import TYPE_CHECKING, Any
 from docx import Document
 
 from pyrit.common.logger import logger
-from pyrit.models import PromptDataType, SeedPrompt, data_serializer_factory
+from pyrit.memory import data_serializer_factory
 from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from pyrit.models import ComponentIdentifier
-    from pyrit.models.data_type_serializer import DataTypeSerializer
+    from pyrit.memory import DataTypeSerializer
+    from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
 
 
 @dataclass

@@ -19,14 +19,8 @@ from azure.core.credentials import AzureKeyCredential
 
 from pyrit.auth import AsyncTokenProviderCredential, ensure_async_token_provider, get_azure_async_token_provider
 from pyrit.common import default_values
-from pyrit.models import (
-    ComponentIdentifier,
-    DataTypeSerializer,
-    Message,
-    MessagePiece,
-    Score,
-    data_serializer_factory,
-)
+from pyrit.memory import DataTypeSerializer, data_serializer_factory
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScorerByCategory,
 )
@@ -150,7 +144,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
             if callable(self._api_key):
                 # Token provider - create an AsyncTokenCredential wrapper
                 credential = AsyncTokenProviderCredential(self._api_key)  # type: ignore[ty:invalid-argument-type]
-                self._azure_cf_client = ContentSafetyClient(self._endpoint, credential=credential)
+                self._azure_cf_client = ContentSafetyClient(self._endpoint, credential=credential)  # type: ignore[ty:invalid-argument-type]
             else:
                 # String API key
                 if not isinstance(self._api_key, str):

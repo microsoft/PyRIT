@@ -99,7 +99,6 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         self._response_converters = attack_converter_config.response_converters
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
         self._conversation_manager = ConversationManager(
-            attack_identifier=self.get_identifier(),
             prompt_normalizer=self._prompt_normalizer,
         )
 
@@ -163,7 +162,6 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
             prepended_conversation=context.prepended_conversation,
-            attack_identifier=self.get_identifier(),
             persist_prepended_conversation=False,
         )
 

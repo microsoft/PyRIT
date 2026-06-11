@@ -713,8 +713,25 @@ class TargetInitializer(PyRITInitializer):
             if len(members) < 2:
                 continue
 
-            member_names = [name for name, _ in members]
-            member_targets = [target for _, target in members]
+            # Deduplicate: targets with identical ComponentIdentifier hashes have
+            # the exact same config (endpoint, model, api_version, etc.) so including
+            # both in a round-robin just wastes a rotation slot. Keep the first
+            # occurrence of each hash.
+            seen_hashes: set[str | None] = set()
+            unique_members: list[tuple[str, PromptTarget]] = []
+            for name, target in members:
+                target_hash = target.get_identifier().hash
+                if target_hash in seen_hashes:
+                    logger.debug(f"Skipping duplicate target '{name}' (hash {target_hash}) in auto-group for key {key}")
+                    continue
+                seen_hashes.add(target_hash)
+                unique_members.append((name, target))
+
+            if len(unique_members) < 2:
+                continue
+
+            member_names = [name for name, _ in unique_members]
+            member_targets = [target for _, target in unique_members]
 
             try:
                 rr_target = RoundRobinTarget(targets=member_targets)

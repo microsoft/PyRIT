@@ -27,6 +27,7 @@ from pyrit.executor.attack.core import (
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
+    resolve_adversarial_system_prompt,
 )
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
@@ -219,12 +220,9 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         except ValueError as exc:
             raise ValueError(f"CrescendoAttack {exc}") from exc
 
-        system_prompt_template_path = (
-            attack_adversarial_config.system_prompt_path
-            or CrescendoAttack.DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH
-        )
-        self._adversarial_chat_system_prompt_template = SeedPrompt.from_yaml_with_required_parameters(
-            template_path=system_prompt_template_path,
+        self._adversarial_chat_system_prompt_template = resolve_adversarial_system_prompt(
+            config=attack_adversarial_config,
+            default_system_prompt_path=CrescendoAttack.DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH,
             required_parameters=["objective", "max_turns"],
             error_message="Crescendo system prompt must have 'objective' and 'max_turns' parameters",
         )
@@ -232,7 +230,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         # Initialize utilities
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
         self._conversation_manager = ConversationManager(
-            attack_identifier=self.get_identifier(),
             prompt_normalizer=self._prompt_normalizer,
         )
 
@@ -262,6 +259,23 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             auxiliary_scorers=self._auxiliary_scorers,
             refusal_scorer=self._refusal_scorer,
             use_score_as_feedback=self._use_score_as_feedback,
+        )
+
+    def get_attack_adversarial_config(self) -> AttackAdversarialConfig | None:
+        """
+        Get the effective adversarial configuration used by this strategy.
+
+        Returns:
+            AttackAdversarialConfig | None: The adversarial target and its resolved system prompt.
+                Crescendo does not use a configurable first-message seed prompt.
+        """
+        adversarial_chat = getattr(self, "_adversarial_chat", None)
+        if adversarial_chat is None:
+            return None
+        return AttackAdversarialConfig(
+            target=adversarial_chat,
+            system_prompt=self._adversarial_chat_system_prompt_template,
+            seed_prompt=None,
         )
 
     def _validate_context(self, *, context: CrescendoAttackContext) -> None:
@@ -331,7 +345,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         self._adversarial_chat.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=context.session.adversarial_chat_conversation_id,
-            attack_identifier=self.get_identifier(),
             labels=context.memory_labels,  # deprecated
         )
 
@@ -545,7 +558,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         with execution_context(
             component_role=ComponentRole.ADVERSARIAL_CHAT,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._adversarial_chat.get_identifier(),
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
@@ -554,7 +566,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
                 message=message,
                 conversation_id=context.session.adversarial_chat_conversation_id,
                 target=self._adversarial_chat,
-                attack_identifier=self.get_identifier(),
                 labels=context.memory_labels,
             )
 
@@ -649,7 +660,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._objective_target.get_identifier(),
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
@@ -660,7 +670,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
                 conversation_id=context.session.conversation_id,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
-                attack_identifier=self.get_identifier(),
                 labels=context.memory_labels,
             )
 
@@ -689,7 +698,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         with execution_context(
             component_role=ComponentRole.REFUSAL_SCORER,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._refusal_scorer.get_identifier(),
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
@@ -721,7 +729,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_SCORER,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._objective_scorer.get_identifier(),
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,

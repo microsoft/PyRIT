@@ -11,6 +11,7 @@ constructs local media endpoint URLs for media content.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -33,11 +34,21 @@ from pyrit.backend.models.attacks import (
     ScoreView,
 )
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models import MEDIA_PATH_DATA_TYPES, AttackResult, ChatMessageRole, Message, MessagePiece, PromptDataType
+from pyrit.memory import CentralMemory
+from pyrit.models import (
+    MEDIA_PATH_DATA_TYPES,
+    AttackResult,
+    ChatMessageRole,
+    Message,
+    MessagePiece,
+    PromptDataType,
+    Score,
+)
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from pyrit.memory import MemoryInterface
     from pyrit.models.conversation_stats import ConversationStats
 
 # ============================================================================
@@ -274,7 +285,54 @@ async def _resolve_and_sign_media_async(*, value: str | None, data_type: str) ->
     return resolved
 
 
-async def pyrit_messages_to_dto_async(pyrit_messages: list[Message]) -> list[MessageView]:
+def _score_lookup_key(*, piece: MessagePiece) -> str:
+    """
+    Compute the score-lookup key for a piece.
+
+    Scores are linked to the piece's ``original_prompt_id`` (set by
+    ``MemoryInterface.add_scores_to_memory``), which equals ``piece.id``
+    for original pieces and points at the original for duplicates.
+
+    Returns:
+        Stringified piece identifier suitable for matching ``Score.message_piece_id``.
+    """
+    return str(piece.original_prompt_id or piece.id)
+
+
+async def _fetch_scores_by_piece_async(
+    *,
+    pyrit_messages: list[Message],
+    memory: MemoryInterface | None,
+) -> dict[str, list[Score]]:
+    """
+    Batch-fetch scores for every piece in ``pyrit_messages`` and group by piece id.
+
+    Wrapped in ``asyncio.to_thread`` because ``get_prompt_scores`` is a blocking
+    SQLAlchemy call and ``pyrit_messages_to_dto_async`` runs on the event loop.
+
+    Returns:
+        ``{piece_lookup_key: [Score, ...]}``. Missing keys map to an empty list.
+    """
+    score_lookup_ids = sorted({_score_lookup_key(piece=p) for msg in pyrit_messages for p in msg.message_pieces})
+    if not score_lookup_ids:
+        return {}
+
+    if memory is None:
+        memory = CentralMemory.get_memory_instance()
+
+    fetched = await asyncio.to_thread(memory.get_prompt_scores, prompt_ids=score_lookup_ids)
+
+    grouped: dict[str, list[Score]] = {}
+    for score in fetched:
+        grouped.setdefault(str(score.message_piece_id), []).append(score)
+    return grouped
+
+
+async def pyrit_messages_to_dto_async(
+    pyrit_messages: list[Message],
+    *,
+    memory: MemoryInterface | None = None,
+) -> list[MessageView]:
     """
     Translate PyRIT messages to backend MessageView responses.
 
@@ -285,9 +343,16 @@ async def pyrit_messages_to_dto_async(pyrit_messages: list[Message]) -> list[Mes
     - Local files -> ``/api/media?path=...`` (served by the media endpoint)
     - Azure Blob Storage files -> signed URLs with SAS tokens
 
+    Scores are fetched from memory (``MessagePiece`` no longer carries them)
+    via a single batched ``get_prompt_scores`` call and attached to their
+    originating piece. Pass ``memory`` explicitly to avoid the ``CentralMemory``
+    singleton lookup or to inject a fake in tests.
+
     Returns:
         List of MessageView responses for the API.
     """
+    scores_by_piece = await _fetch_scores_by_piece_async(pyrit_messages=pyrit_messages, memory=memory)
+
     messages: list[MessageView] = []
     for msg in pyrit_messages:
         pieces: list[MessagePieceView] = []
@@ -298,9 +363,13 @@ async def pyrit_messages_to_dto_async(pyrit_messages: list[Message]) -> list[Mes
             converted_value_url = await _resolve_and_sign_media_async(
                 value=p.converted_value, data_type=p.converted_value_data_type or "text"
             )
+            piece_scores = scores_by_piece.get(_score_lookup_key(piece=p), [])
             pieces.append(
                 MessagePieceView.from_domain(
-                    p, original_value_url=original_value_url, converted_value_url=converted_value_url
+                    p,
+                    scores=piece_scores,
+                    original_value_url=original_value_url,
+                    converted_value_url=converted_value_url,
                 )
             )
         messages.append(MessageView.model_construct(message_pieces=pieces))
@@ -334,7 +403,10 @@ def request_piece_to_pyrit_message_piece(
     Returns:
         MessagePiece domain object.
     """
-    if labels is not None:
+    # Only a truthy value counts as "passed"; an empty/falsy ``labels`` (e.g. {}
+    # forwarded on the happy path) is treated as not supplied to avoid a spurious
+    # warning. Matches MessagePiece's deprecated-kwarg guard.
+    if labels:
         print_deprecation_message(
             old_item="request_piece_to_pyrit_message_piece(..., labels=...)",
             new_item="request_piece_to_pyrit_message_piece(...)",
@@ -380,7 +452,10 @@ def request_to_pyrit_message(
     Returns:
         Message ready to send to the target.
     """
-    if labels is not None:
+    # Only a truthy value counts as "passed"; an empty/falsy ``labels`` (e.g. {}
+    # forwarded on the happy path) is treated as not supplied to avoid a spurious
+    # warning. Matches MessagePiece's deprecated-kwarg guard.
+    if labels:
         print_deprecation_message(
             old_item="request_to_pyrit_message(..., labels=...)",
             new_item="request_to_pyrit_message(...)",

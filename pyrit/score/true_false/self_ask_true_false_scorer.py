@@ -34,6 +34,7 @@ class TrueFalseQuestionPaths(enum.Enum):
     TASK_ACHIEVED = Path(TRUE_FALSE_QUESTIONS_PATH, "task_achieved.yaml").resolve()
     # This is an LLM-powered refinement of the TASK_ACHIEVED rubric
     TASK_ACHIEVED_REFINED = Path(TRUE_FALSE_QUESTIONS_PATH, "task_achieved_refined.yaml").resolve()
+    CRIMINAL_PERSONA = Path(TRUE_FALSE_QUESTIONS_PATH, "criminal_persona.yaml").resolve()
 
 
 class TrueFalseQuestion:
@@ -229,7 +230,6 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
             prepended_text_message_piece=prepended_text,
             category=self._score_category,
             objective=objective,
-            attack_identifier=message_piece.attack_identifier,
         )
 
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")

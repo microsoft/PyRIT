@@ -158,7 +158,7 @@ def group_message_pieces_into_conversations(
         return []
 
     # Group pieces by conversation ID
-    conversations: dict[str, list[MessagePiece]] = {}
+    conversations: dict[str | None, list[MessagePiece]] = {}
     for piece in message_pieces:
         conv_id = piece.conversation_id
         if conv_id not in conversations:
@@ -205,8 +205,6 @@ def construct_response_from_request(
                 original_value=resp_text,
                 conversation_id=request.conversation_id,
                 labels=request.labels,
-                prompt_target_identifier=request.prompt_target_identifier,
-                attack_identifier=request.attack_identifier,
                 original_value_data_type=response_type,
                 converted_value_data_type=response_type,
                 prompt_metadata=prompt_metadata or {},

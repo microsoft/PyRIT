@@ -42,9 +42,11 @@ def mock_memory():
     """Create a mock memory instance."""
     memory = MagicMock()
     memory.get_attack_results.return_value = []
-    memory.get_conversation.return_value = []
+    memory.get_conversation_messages.return_value = []
     memory.get_message_pieces.return_value = []
     memory.get_conversation_stats.return_value = {}
+    memory._get_conversation.return_value = None
+    memory.get_prompt_scores.return_value = []
 
     return memory
 
@@ -138,7 +140,9 @@ def make_mock_piece(
     piece.original_value_data_type = "text"
     piece.response_error = "none"
     piece.timestamp = timestamp or datetime.now(timezone.utc)
-    piece.scores = []
+    # MessagePiece no longer carries scores — they are fetched from memory.
+    # Pin original_prompt_id so the mapper's score-lookup key is deterministic.
+    piece.original_prompt_id = None
     return piece
 
 
@@ -556,7 +560,7 @@ class TestGetAttack:
             name="My Attack",
         )
         mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         result = await attack_service.get_attack_async(attack_result_id="test-id")
 
@@ -588,7 +592,7 @@ class TestGetConversationMessages:
         """Test that get_conversation_messages returns messages for existing attack."""
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         result = await attack_service.get_conversation_messages_async(
             attack_result_id="test-id", conversation_id="test-id"
@@ -874,7 +878,7 @@ class TestUpdateAttack:
         """Test that update_attack maps 'success' to AttackOutcome.SUCCESS."""
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         await attack_service.update_attack_async(
             attack_result_id="test-id", request=UpdateAttackRequest(outcome="success")
@@ -889,7 +893,7 @@ class TestUpdateAttack:
         """Test that update_attack maps 'failure' to AttackOutcome.FAILURE."""
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         await attack_service.update_attack_async(
             attack_result_id="test-id", request=UpdateAttackRequest(outcome="failure")
@@ -902,7 +906,7 @@ class TestUpdateAttack:
         """Test that update_attack maps 'undetermined' to AttackOutcome.UNDETERMINED."""
         ar = make_attack_result(conversation_id="test-id", outcome=AttackOutcome.SUCCESS)
         mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         await attack_service.update_attack_async(
             attack_result_id="test-id", request=UpdateAttackRequest(outcome="undetermined")
@@ -915,7 +919,7 @@ class TestUpdateAttack:
         """Test that update_attack maps 'error' to AttackOutcome.ERROR."""
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         await attack_service.update_attack_async(
             attack_result_id="test-id", request=UpdateAttackRequest(outcome="error")
@@ -929,7 +933,7 @@ class TestUpdateAttack:
         old_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
         ar = make_attack_result(conversation_id="test-id", updated_at=old_time)
         mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         await attack_service.update_attack_async(
             attack_result_id="test-id", request=UpdateAttackRequest(outcome="success")
@@ -968,7 +972,7 @@ class TestAddMessage:
         existing_piece = make_mock_piece(conversation_id="test-id")
         existing_piece.labels = {"env": "prod"}
         mock_memory.get_message_pieces.return_value = [existing_piece]
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         request = AddMessageRequest(
             role="user",
@@ -991,7 +995,7 @@ class TestAddMessage:
         existing_piece = make_mock_piece(conversation_id="test-id")
         existing_piece.labels = {"env": "staging"}
         mock_memory.get_message_pieces.return_value = [existing_piece]
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         with (
             patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc,
@@ -1036,7 +1040,7 @@ class TestAddMessage:
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         request = AddMessageRequest(
             role="system",
@@ -1053,7 +1057,7 @@ class TestAddMessage:
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         with (
             patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc,
@@ -1105,7 +1109,7 @@ class TestAddMessage:
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         with (
             patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc,
@@ -1150,7 +1154,7 @@ class TestAddMessage:
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         request = AddMessageRequest(
             role="system",
@@ -1168,7 +1172,7 @@ class TestAddMessage:
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         request = AddMessageRequest(
             role="system",
@@ -1190,7 +1194,7 @@ class TestAddMessage:
         ar.metadata = {"created_at": "2026-01-01T00:00:00+00:00"}
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         request = AddMessageRequest(
             role="user",
@@ -1213,7 +1217,7 @@ class TestAddMessage:
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         mock_converter = MagicMock()
         mock_converter.get_identifier.return_value = ComponentIdentifier(
@@ -1263,7 +1267,7 @@ class TestAddMessage:
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_message_pieces.return_value = []  # No existing pieces
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         request = AddMessageRequest(
             role="user",
@@ -1284,7 +1288,7 @@ class TestAddMessage:
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         request = AddMessageRequest(
             role="user",
@@ -1304,7 +1308,7 @@ class TestAddMessage:
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_message_pieces.return_value = []  # No existing pieces
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         request = AddMessageRequest(
             role="user",
@@ -1454,7 +1458,7 @@ class TestMessageBuilding:
         )
         msg = Message(message_pieces=[piece])
 
-        mock_memory.get_conversation.return_value = [msg]
+        mock_memory.get_conversation_messages.return_value = [msg]
 
         result = await attack_service.get_conversation_messages_async(
             attack_result_id="test-id", conversation_id="test-id"
@@ -1954,7 +1958,7 @@ class TestAddMessageTargetConversation:
         }
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         request = AddMessageRequest(
             role="user",
@@ -2176,9 +2180,14 @@ class TestAttackServiceAdditionalCoverage:
     async def test_create_related_conversation_uses_duplicate_branch(self, attack_service, mock_memory):
         """When source_conversation_id and cutoff_index are provided, duplication path is used."""
         from pyrit.backend.models.attacks import CreateConversationRequest
+        from pyrit.models import Conversation
 
         ar = make_attack_result(conversation_id="attack-1")
         mock_memory.get_attack_results.return_value = [ar]
+        expected_target = ComponentIdentifier(class_name="TextTarget", class_module="pyrit.prompt_target")
+        mock_memory._get_conversation.return_value = Conversation(
+            conversation_id="attack-1", target_identifier=expected_target
+        )
 
         with patch.object(attack_service, "_duplicate_conversation_up_to", return_value="branch-dup") as mock_dup:
             result = await attack_service.create_related_conversation_async(
@@ -2188,7 +2197,11 @@ class TestAttackServiceAdditionalCoverage:
 
         assert result is not None
         assert result.conversation_id == "branch-dup"
-        mock_dup.assert_called_once_with(source_conversation_id="attack-1", cutoff_index=2)
+        mock_dup.assert_called_once_with(
+            source_conversation_id="attack-1",
+            cutoff_index=2,
+            target_identifier=expected_target,
+        )
 
     async def test_add_message_merges_converter_identifiers_without_duplicates(self, attack_service, mock_memory):
         """Should merge new converter identifiers with existing attack identifiers by hash."""
@@ -2361,7 +2374,7 @@ class TestAttackServiceAdditionalCoverage:
             make_mock_piece(conversation_id="attack-1", sequence=1),
             make_mock_piece(conversation_id="attack-1", sequence=2),
         ]
-        mock_memory.get_conversation.return_value = source_messages
+        mock_memory.get_conversation_messages.return_value = source_messages
         duplicated_piece = make_mock_piece(conversation_id="branch-1", sequence=0)
         mock_memory.duplicate_messages.return_value = ("branch-1", [duplicated_piece])
 
@@ -2374,7 +2387,7 @@ class TestAttackServiceAdditionalCoverage:
 
     def test_duplicate_conversation_up_to_skips_persist_when_no_duplicated_pieces(self, attack_service, mock_memory):
         """Should not write to memory when duplicate_messages returns no pieces."""
-        mock_memory.get_conversation.return_value = [make_mock_piece(conversation_id="attack-1", sequence=0)]
+        mock_memory.get_conversation_messages.return_value = [make_mock_piece(conversation_id="attack-1", sequence=0)]
         mock_memory.duplicate_messages.return_value = ("branch-empty", [])
 
         new_id = attack_service._duplicate_conversation_up_to(source_conversation_id="attack-1", cutoff_index=10)
@@ -2385,7 +2398,7 @@ class TestAttackServiceAdditionalCoverage:
     def test_duplicate_conversation_remaps_assistant_to_simulated(self, attack_service, mock_memory):
         """Should remap assistant pieces to simulated_assistant when flag is set."""
         source = make_mock_piece(conversation_id="attack-1", role="assistant", sequence=0)
-        mock_memory.get_conversation.return_value = [source]
+        mock_memory.get_conversation_messages.return_value = [source]
         dup_piece = make_mock_piece(conversation_id="branch-1", role="assistant", sequence=0)
         mock_memory.duplicate_messages.return_value = ("branch-1", [dup_piece])
 
@@ -2394,6 +2407,13 @@ class TestAttackServiceAdditionalCoverage:
         )
 
         assert dup_piece.role == "simulated_assistant"
+
+    async def test_store_prepended_messages_noop_when_empty(self, attack_service, mock_memory):
+        """Empty prepended list should be a no-op: no conversation row and no piece writes."""
+        await attack_service._store_prepended_messages_async(conversation_id="conv-1", prepended=[])
+
+        mock_memory.add_conversation_to_memory.assert_not_called()
+        mock_memory.add_message_pieces_to_memory.assert_not_called()
 
 
 class TestAddMessageGuards:
@@ -2432,7 +2452,7 @@ class TestAddMessageGuards:
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         with (
             patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc,
@@ -2484,7 +2504,7 @@ class TestAddMessageGuards:
         existing_piece = make_mock_piece(conversation_id="test-id")
         existing_piece.labels = {"operator": "alice"}
         mock_memory.get_message_pieces.return_value = [existing_piece]
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
 
         request = AddMessageRequest(
             role="user",

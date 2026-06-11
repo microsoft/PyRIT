@@ -178,7 +178,7 @@ print(f"executed_turns: {barge_in_result.executed_turns}")
 
 # Inspect memory to verify the barge-in landed in metadata.
 memory = CentralMemory.get_memory_instance()
-turns = memory.get_conversation(conversation_id=barge_in_result.conversation_id)
+turns = memory.get_conversation_messages(conversation_id=barge_in_result.conversation_id)
 print(f"\nPersisted pieces ({len(turns)} messages):")
 for message in turns:
     for piece in message.message_pieces:

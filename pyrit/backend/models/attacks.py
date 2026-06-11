@@ -131,6 +131,7 @@ class MessagePieceView(MessagePiece):
         cls,
         piece: MessagePiece,
         *,
+        scores: list[Score] | None = None,
         original_value_url: str | None = None,
         converted_value_url: str | None = None,
     ) -> "MessagePieceView":
@@ -138,12 +139,14 @@ class MessagePieceView(MessagePiece):
         Build a ``MessagePieceView`` from a domain piece without re-validating.
 
         The canonical piece fields (``original_value``, ``converted_value``,
-        sha256s, role, ids, etc.) are copied through unchanged. The optional URL
-        kwargs are purely additive — they populate the presentation-only
-        ``*_value_url`` fields the client uses to fetch media.
+        sha256s, role, ids, etc.) are copied through unchanged. The optional
+        kwargs are purely additive: ``scores`` is fetched separately from memory
+        (``MessagePiece`` no longer carries scores) and the ``*_value_url`` fields
+        give the client fetchable media URLs.
 
         Args:
             piece: The domain message piece.
+            scores: Domain scores attached to this piece, fetched from memory.
             original_value_url: Client-fetchable URL for ``piece.original_value``
                 when it's media; ``None`` for text.
             converted_value_url: Client-fetchable URL for ``piece.converted_value``
@@ -156,7 +159,7 @@ class MessagePieceView(MessagePiece):
         orig_dtype = piece.original_value_data_type or "text"
         conv_dtype = piece.converted_value_data_type or "text"
         data.update(
-            scores=[ScoreView.from_domain(score) for score in piece.scores],
+            scores=[ScoreView.from_domain(score) for score in (scores or [])],
             original_value_url=original_value_url,
             converted_value_url=converted_value_url,
             original_value_mime_type=infer_mime_type(value=piece.original_value, data_type=orig_dtype),

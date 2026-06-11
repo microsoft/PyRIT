@@ -9,13 +9,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from pyrit.models import (
-    ComponentIdentifier,
-    Message,
-    MessagePiece,
-    construct_response_from_request,
-    data_serializer_factory,
-)
+from pyrit.memory import data_serializer_factory
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, construct_response_from_request
 from pyrit.models.literals import PromptDataType
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
@@ -241,8 +236,6 @@ class PlaywrightCopilotTarget(PromptTarget):
                     original_value=piece_data,
                     conversation_id=request_piece.conversation_id,
                     labels=request_piece.labels,  # deprecated
-                    prompt_target_identifier=request_piece.prompt_target_identifier,
-                    attack_identifier=request_piece.attack_identifier,
                     original_value_data_type=piece_type,
                     converted_value_data_type=piece_type,
                     prompt_metadata=request_piece.prompt_metadata,

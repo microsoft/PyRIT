@@ -26,7 +26,7 @@ from pyrit.models import (
     PromptDataType,
     PromptResponseError,
 )
-from pyrit.models.json_response_config import _JsonResponseConfig
+from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
@@ -717,8 +717,6 @@ class OpenAIResponseTarget(OpenAITarget):
             original_value=piece_value,
             conversation_id=message_piece.conversation_id,
             labels=message_piece.labels,  # deprecated
-            prompt_target_identifier=message_piece.prompt_target_identifier,
-            attack_identifier=message_piece.attack_identifier,
             original_value_data_type=piece_type,
             response_error=error or "none",
         )
@@ -825,6 +823,4 @@ class OpenAIResponseTarget(OpenAITarget):
             original_value_data_type="function_call_output",
             conversation_id=reference_piece.conversation_id,
             labels={"call_id": call_id},  # deprecated
-            prompt_target_identifier=reference_piece.prompt_target_identifier,
-            attack_identifier=reference_piece.attack_identifier,
         )

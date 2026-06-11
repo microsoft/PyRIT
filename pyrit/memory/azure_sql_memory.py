@@ -26,11 +26,8 @@ from pyrit.memory.memory_models import (
     EmbeddingDataEntry,
     PromptMemoryEntry,
 )
-from pyrit.models import (
-    AzureBlobStorageIO,
-    ConversationStats,
-    MessagePiece,
-)
+from pyrit.memory.storage import AzureBlobStorageIO
+from pyrit.models import ConversationStats, MessagePiece
 
 if TYPE_CHECKING:
     from azure.core.credentials import AccessToken
@@ -448,43 +445,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         combined = joiner.join(conditions)
         return text(f"""ISJSON("{table_name}".{column_name}) = 1 AND ({combined})""").bindparams(**bindparams_dict)
 
-    def _get_attack_result_harm_category_condition(self, *, targeted_harm_categories: Sequence[str]) -> Any:
-        """
-        Get the SQL Azure implementation for filtering AttackResults by targeted harm categories.
-
-        Uses JSON_QUERY() function specific to SQL Azure to check if categories exist in the JSON array.
-
-        Args:
-            targeted_harm_categories (Sequence[str]): List of harm category strings to filter by.
-
-        Returns:
-            Any: SQLAlchemy exists subquery condition with bound parameters.
-        """
-        # For SQL Azure, we need to use JSON_QUERY to check if a value exists in a JSON array
-        # OPENJSON can parse the array and we check if the category exists
-        # Using parameterized queries for safety
-        harm_conditions = []
-        bindparams_dict = {}
-        for i, category in enumerate(targeted_harm_categories):
-            param_name = f"harm_cat_{i}"
-            # Check if the JSON array contains the category value
-            harm_conditions.append(
-                f"EXISTS(SELECT 1 FROM OPENJSON(targeted_harm_categories) WHERE value = :{param_name})"
-            )
-            bindparams_dict[param_name] = category
-
-        combined_conditions = " AND ".join(harm_conditions)
-
-        return exists().where(
-            and_(
-                PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
-                PromptMemoryEntry.targeted_harm_categories.isnot(None),
-                PromptMemoryEntry.targeted_harm_categories != "",
-                PromptMemoryEntry.targeted_harm_categories != "[]",
-                text(f"ISJSON(targeted_harm_categories) = 1 AND {combined_conditions}").bindparams(**bindparams_dict),
-            )
-        )
-
     def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
         """
         Azure SQL implementation for filtering AttackResults by labels.
@@ -698,27 +658,20 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             conditions.append(condition)
         return and_(*conditions)
 
-    def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+    def _add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
-        Insert a list of message pieces into the memory storage.
+        Persist already-validated message pieces to the Azure SQL store.
 
-        Pieces flagged via ``MessagePiece.not_in_memory = True`` are
-        silently filtered out so callers don't need to track persistence policy
-        themselves.
+        ``not_in_memory`` pieces are ephemeral -- typically synthesized inside a
+        scorer to score arbitrary content that never came through a real
+        PromptTarget. They are filtered out upstream in
+        ``add_message_pieces_to_memory`` before this method is called.
 
         Args:
-            message_pieces (Sequence[MessagePiece]): A sequence of MessagePiece instances to be added.
+            message_pieces (Sequence[MessagePiece]): Persistable pieces (filtered and
+                validated by ``add_message_pieces_to_memory``).
         """
-        # ``not_in_memory`` pieces are ephemeral — typically synthesized inside a
-        # scorer to score arbitrary content that never came through a real
-        # PromptTarget. They have no conversation, target, or attack lineage, so
-        # persisting them would pollute the memory store with rows that don't
-        # tie to any real exchange. Filtering here lets every caller share one
-        # policy instead of guarding each call site.
-        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_memory]
-        if not pieces_to_insert:
-            return
-        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in pieces_to_insert])
+        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in message_pieces])
 
     def dispose_engine(self) -> None:
         """
@@ -827,7 +780,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             try:
                 query = session.query(model_class)
                 if join_scores and model_class == PromptMemoryEntry:
-                    query = query.options(joinedload(PromptMemoryEntry.scores))
+                    query = query.options(
+                        joinedload(PromptMemoryEntry.scores),
+                    )
                 elif model_class == AttackResultEntry:
                     query = query.options(
                         joinedload(AttackResultEntry.last_response).joinedload(PromptMemoryEntry.scores),
@@ -871,7 +826,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     # attributes from the (potentially stale) detached object
                     # and silently overwrite concurrent updates to columns
                     # that are NOT in update_fields.
-                    entry_in_session = session.get(type(entry), entry.id)
+                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
                     if entry_in_session is None:
                         entry_in_session = session.merge(entry)
                     for field, value in update_fields.items():

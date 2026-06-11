@@ -94,7 +94,6 @@ class InsecureCodeScorer(FloatScaleScorer):
             scored_prompt_id=message_piece.id,
             category=self._harm_category,
             objective=objective,
-            attack_identifier=message_piece.attack_identifier,
         )
 
         # Modify the UnvalidatedScore parsing to check for 'score_value'

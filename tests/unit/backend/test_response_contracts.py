@@ -111,8 +111,7 @@ class TestMessagePieceViewContract:
     def test_scores_are_score_views(self) -> None:
         """Test that nested scores serialize with the ScoreView computed field."""
         piece = _make_piece()
-        piece.scores = [_make_score()]
-        view = MessagePieceView.from_domain(piece)
+        view = MessagePieceView.from_domain(piece, scores=[_make_score()])
         dumped = view.model_dump(mode="json")
 
         assert dumped["scores"][0]["scorer_type"] == "FloatScaleScorer"
