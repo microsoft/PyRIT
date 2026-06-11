@@ -15,10 +15,12 @@
 
 import type { Edge, Node } from '@xyflow/react'
 
+import { computeStackAggregate, type StackAggregate } from './fanStack'
 import type {
   ConversationTree,
   ConversationTreeId,
   ConversationTreeNode,
+  ConversationTreeNodeId,
   ConversationTreeNodeKind,
   FanNode,
   ImportMessageNode,
@@ -37,7 +39,7 @@ export type TreeFlowNode =
   | Node<{ node: ImportMessageNode }, 'import_message'>
   | Node<{ node: UserTurnNode }, 'user_turn'>
   | Node<{ node: SendNode }, 'send'>
-  | Node<{ node: FanNode }, 'fan'>
+  | Node<{ node: FanNode; stackedSummary?: StackAggregate }, 'fan'>
   | Node<{ node: ScoreNode }, 'score'>
 
 export interface TreeFlowEdgeData extends Record<string, unknown> {
@@ -59,6 +61,21 @@ export interface TreeFlowAdapterResult {
   edges: TreeFlowEdge[]
 }
 
+export interface TreeFlowAdapterOptions {
+  /**
+   * Set of fan-node ids whose children render as a collapsed Fan-Children
+   * Stack. When a fan is in this set, the adapter:
+   *   - drops the fan's descendant subtrees from the result (the
+   *     children + everything below)
+   *   - attaches a `stackedSummary: StackAggregate` to the fan's `data`
+   *     so the FanCard renders the stack body in place of the per-child
+   *     cards.
+   * When omitted or empty, the adapter behaves exactly as in PR5d
+   * (1:1 node + edge mapping, no stack collapse).
+   */
+  collapsedFanIds?: ReadonlySet<ConversationTreeNodeId>
+}
+
 // ============================================================================
 // Adapter
 // ============================================================================
@@ -74,21 +91,44 @@ const PLACEHOLDER_POSITION = { x: 0, y: 0 } as const
 const PLACEHOLDER_WIDTH = 260
 const PLACEHOLDER_HEIGHT = 80
 
-export function conversationTreeToReactFlow(tree: ConversationTree): TreeFlowAdapterResult {
+export function conversationTreeToReactFlow(
+  tree: ConversationTree,
+  options: TreeFlowAdapterOptions = {},
+): TreeFlowAdapterResult {
+  const collapsedFanIds = options.collapsedFanIds ?? EMPTY_SET
   const nodeKindById = new Map<string, ConversationTreeNodeKind>()
   for (const n of tree.nodes) nodeKindById.set(n.id, n.kind)
+
+  // Compute the set of node ids hidden by stack collapse: every
+  // descendant (recursive) of every collapsed fan. The fan node itself
+  // stays visible; only its subtree below disappears.
+  const hiddenNodeIds = collapsedFanIds.size === 0
+    ? EMPTY_SET
+    : collectHiddenDescendants(tree, collapsedFanIds)
+
+  const visibleNodes = tree.nodes.filter((n) => !hiddenNodeIds.has(n.id))
+  const visibleEdges = tree.edges.filter(
+    (e) => !hiddenNodeIds.has(e.parentId) && !hiddenNodeIds.has(e.childId),
+  )
+
   return {
     treeId: tree.id,
-    nodes: tree.nodes.map(toFlowNode),
-    edges: tree.edges.map((e) => toFlowEdge(e, nodeKindById)),
+    nodes: visibleNodes.map((n) => toFlowNode(n, tree, collapsedFanIds)),
+    edges: visibleEdges.map((e) => toFlowEdge(e, nodeKindById)),
   }
 }
+
+const EMPTY_SET: ReadonlySet<ConversationTreeNodeId> = new Set()
 
 // ============================================================================
 // Private mappers
 // ============================================================================
 
-function toFlowNode(node: ConversationTreeNode): TreeFlowNode {
+function toFlowNode(
+  node: ConversationTreeNode,
+  tree: ConversationTree,
+  collapsedFanIds: ReadonlySet<ConversationTreeNodeId>,
+): TreeFlowNode {
   // Per-kind narrowing keeps the result's discriminated union honest. The
   // exhaustive switch will fail at compile time if a new kind lands in
   // ConversationTreeNodeKind without an arm here.
@@ -108,8 +148,15 @@ function toFlowNode(node: ConversationTreeNode): TreeFlowNode {
       return { ...common, type: 'user_turn', data: { node: node as UserTurnNode } }
     case 'send':
       return { ...common, type: 'send', data: { node: node as SendNode } }
-    case 'fan':
-      return { ...common, type: 'fan', data: { node: node as FanNode } }
+    case 'fan': {
+      const fanData: { node: FanNode; stackedSummary?: StackAggregate } = {
+        node: node as FanNode,
+      }
+      if (collapsedFanIds.has(node.id)) {
+        fanData.stackedSummary = computeStackAggregate(tree, node.id)
+      }
+      return { ...common, type: 'fan', data: fanData }
+    }
     case 'score':
       return { ...common, type: 'score', data: { node: node as ScoreNode } }
     default: {
@@ -139,4 +186,37 @@ function toFlowEdge(
     type: 'insert',
     data: { slotIndex: edge.slotIndex, parentKind },
   }
+}
+
+/**
+ * Walk every collapsed fan's subtree and collect all descendant ids
+ * (the fan itself stays visible — only the subtree below disappears).
+ * Returns an empty set on empty input so the caller can skip the
+ * filter entirely.
+ */
+function collectHiddenDescendants(
+  tree: ConversationTree,
+  collapsedFanIds: ReadonlySet<ConversationTreeNodeId>,
+): ReadonlySet<ConversationTreeNodeId> {
+  const childrenOf = new Map<ConversationTreeNodeId, ConversationTreeNodeId[]>()
+  for (const n of tree.nodes) {
+    if (n.parentId === null) continue
+    const siblings = childrenOf.get(n.parentId)
+    if (siblings === undefined) childrenOf.set(n.parentId, [n.id])
+    else siblings.push(n.id)
+  }
+  const hidden = new Set<ConversationTreeNodeId>()
+  const queue: ConversationTreeNodeId[] = []
+  for (const fanId of collapsedFanIds) {
+    const seed = childrenOf.get(fanId)
+    if (seed !== undefined) queue.push(...seed)
+  }
+  while (queue.length > 0) {
+    const id = queue.shift() as ConversationTreeNodeId
+    if (hidden.has(id)) continue
+    hidden.add(id)
+    const grand = childrenOf.get(id)
+    if (grand !== undefined) queue.push(...grand)
+  }
+  return hidden
 }

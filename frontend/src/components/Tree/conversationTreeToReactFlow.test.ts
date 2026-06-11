@@ -281,3 +281,185 @@ describe('conversationTreeToReactFlow — edge cases', () => {
     expect(n.id).toBe(nodeId('r'))
   })
 })
+
+// ============================================================================
+// PR5e — collapsedFanIds option (Fan-Children Stack)
+// ============================================================================
+
+describe('conversationTreeToReactFlow — collapsedFanIds option', () => {
+  it('filters descendants of a collapsed fan (fan itself stays visible)', () => {
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r'),
+      mkFan('f', 'u', {
+        axis: 'attempt',
+        variants: [
+          { axis: 'attempt', payload: {} },
+          { axis: 'attempt', payload: {} },
+          { axis: 'attempt', payload: {} },
+        ],
+      }),
+      mkSend('s_a', 'f'),
+      mkSend('s_b', 'f'),
+      mkSend('s_c', 'f'),
+    ])
+    const { nodes } = conversationTreeToReactFlow(tree, {
+      collapsedFanIds: new Set([nodeId('f')]),
+    })
+    const ids = nodes.map((n) => n.id).sort()
+    expect(ids).toEqual(['f', 'r', 'u'])
+  })
+
+  it('filters edges whose source or target is hidden by collapse', () => {
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r'),
+      mkFan('f', 'u', {
+        axis: 'attempt',
+        variants: [
+          { axis: 'attempt', payload: {} },
+          { axis: 'attempt', payload: {} },
+        ],
+      }),
+      mkSend('s_a', 'f'),
+      mkSend('s_b', 'f'),
+    ])
+    const { edges } = conversationTreeToReactFlow(tree, {
+      collapsedFanIds: new Set([nodeId('f')]),
+    })
+    // r→u and u→f survive; f→s_a, f→s_b are filtered.
+    const pairs = edges.map((e) => `${e.source}->${e.target}`).sort()
+    expect(pairs).toEqual(['r->u', 'u->f'])
+  })
+
+  it('recursively filters nested descendants under the collapsed fan', () => {
+    // r → u → f → s_a → u_a → s_a2. Collapsing f hides s_a, u_a, s_a2.
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r'),
+      mkFan('f', 'u', {
+        axis: 'attempt',
+        variants: [
+          { axis: 'attempt', payload: {} },
+          { axis: 'attempt', payload: {} },
+        ],
+      }),
+      mkSend('s_a', 'f'),
+      mkUserTurn('u_a', 's_a'),
+      mkSend('s_a2', 'u_a'),
+      mkSend('s_b', 'f'),
+      mkUserTurn('u_b', 's_b'),
+      mkSend('s_b2', 'u_b'),
+    ])
+    const { nodes } = conversationTreeToReactFlow(tree, {
+      collapsedFanIds: new Set([nodeId('f')]),
+    })
+    const ids = nodes.map((n) => n.id).sort()
+    expect(ids).toEqual(['f', 'r', 'u'])
+  })
+
+  it("attaches `data.stackedSummary` to the collapsed fan's node", () => {
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r'),
+      mkFan('f', 'u', {
+        axis: 'attempt',
+        variants: [
+          { axis: 'attempt', payload: {} },
+          { axis: 'attempt', payload: {} },
+        ],
+      }),
+      mkSend('s_a', 'f', undefined, { state: 'clean' }),
+      mkSend('s_b', 'f', undefined, { state: 'failed' }),
+    ])
+    const { nodes } = conversationTreeToReactFlow(tree, {
+      collapsedFanIds: new Set([nodeId('f')]),
+    })
+    const fanNode = nodes.find((n) => n.id === nodeId('f'))!
+    if (fanNode.type === 'fan') {
+      expect(fanNode.data.stackedSummary).toBeDefined()
+      expect(fanNode.data.stackedSummary?.total).toBe(2)
+      expect(fanNode.data.stackedSummary?.childKind).toBe('send')
+      expect(fanNode.data.stackedSummary?.byState.clean).toBe(1)
+      expect(fanNode.data.stackedSummary?.byState.failed).toBe(1)
+    }
+  })
+
+  it('does NOT attach `data.stackedSummary` when the fan is NOT in the collapsed set', () => {
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r'),
+      mkFan('f', 'u', {
+        axis: 'attempt',
+        variants: [
+          { axis: 'attempt', payload: {} },
+          { axis: 'attempt', payload: {} },
+        ],
+      }),
+      mkSend('s_a', 'f'),
+      mkSend('s_b', 'f'),
+    ])
+    const { nodes } = conversationTreeToReactFlow(tree, {
+      collapsedFanIds: new Set(), // empty
+    })
+    const fanNode = nodes.find((n) => n.id === nodeId('f'))!
+    if (fanNode.type === 'fan') {
+      expect(fanNode.data.stackedSummary).toBeUndefined()
+    }
+  })
+
+  it('omitted collapsedFanIds option behaves identically to PR5d (no collapse)', () => {
+    // Backwards-compat: existing callers (TreeCanvas without PR5e wiring)
+    // pass no options and get the full tree.
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r'),
+      mkFan('f', 'u', {
+        axis: 'attempt',
+        variants: [
+          { axis: 'attempt', payload: {} },
+          { axis: 'attempt', payload: {} },
+        ],
+      }),
+      mkSend('s_a', 'f'),
+      mkSend('s_b', 'f'),
+    ])
+    const withoutOpts = conversationTreeToReactFlow(tree)
+    const withEmptyOpts = conversationTreeToReactFlow(tree, {})
+    expect(withoutOpts.nodes.map((n) => n.id).sort()).toEqual(
+      withEmptyOpts.nodes.map((n) => n.id).sort(),
+    )
+    expect(withoutOpts.edges).toHaveLength(withEmptyOpts.edges.length)
+  })
+
+  it('multiple collapsed fans hide their respective subtrees independently', () => {
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u1', 'r'),
+      mkFan('f1', 'u1', {
+        axis: 'attempt',
+        variants: [
+          { axis: 'attempt', payload: {} },
+          { axis: 'attempt', payload: {} },
+        ],
+      }),
+      mkSend('s_a', 'f1'),
+      mkSend('s_b', 'f1'),
+      mkUserTurn('u2', 'r'),
+      mkFan('f2', 'u2', {
+        axis: 'attempt',
+        variants: [
+          { axis: 'attempt', payload: {} },
+          { axis: 'attempt', payload: {} },
+        ],
+      }),
+      mkSend('s_c', 'f2'),
+      mkSend('s_d', 'f2'),
+    ])
+    const { nodes } = conversationTreeToReactFlow(tree, {
+      collapsedFanIds: new Set([nodeId('f1'), nodeId('f2')]),
+    })
+    const ids = nodes.map((n) => n.id).sort()
+    expect(ids).toEqual(['f1', 'f2', 'r', 'u1', 'u2'])
+  })
+})

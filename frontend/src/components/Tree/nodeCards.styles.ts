@@ -101,6 +101,30 @@ export const useNodeCardStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
     fontStyle: 'italic',
   },
+  // Fan-Children Stack summary body — shown inside the FanCard when the
+  // fan is in the collapsed state. The two-row layout (kind ×count on
+  // top, status counts below) gives operators the at-a-glance view per
+  // the design.
+  stackSummary: {
+    marginTop: tokens.spacingVerticalXS,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+    backgroundColor: tokens.colorNeutralBackground2,
+    borderRadius: tokens.borderRadiusSmall,
+    border: `1px dashed ${tokens.colorNeutralStroke2}`,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+  },
+  stackKindLabel: {
+    fontWeight: tokens.fontWeightSemibold,
+    fontSize: tokens.fontSizeBase200,
+    textTransform: 'lowercase',
+  },
+  stackStatusLine: {
+    fontFamily: tokens.fontFamilyMonospace,
+    fontSize: tokens.fontSizeBase100,
+    color: tokens.colorNeutralForeground3,
+  },
 })
 
 // ============================================================================

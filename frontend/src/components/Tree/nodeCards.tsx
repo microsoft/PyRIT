@@ -15,7 +15,8 @@
  * applied on every card today via the shared CardFrame.
  */
 
-import { mergeClasses } from '@fluentui/react-components'
+import { Button, Tooltip, mergeClasses } from '@fluentui/react-components'
+import { ArrowMinimizeRegular, ArrowMaximizeRegular } from '@fluentui/react-icons'
 import { Handle, Position } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
 
@@ -31,8 +32,10 @@ import type {
 } from '../../runner/treeTypes'
 import { ActionRail } from './actionRail'
 import { useActionCallbacks } from './actionCallbacksContext'
+import type { StackAggregate } from './fanStack'
 import type { TreeFlowNode } from './conversationTreeToReactFlow'
 import { STATE_BADGE_TOKENS, useNodeCardStyles } from './nodeCards.styles'
+import { useStackCollapse } from './stackCollapseContext'
 
 // ============================================================================
 // Shared building blocks
@@ -225,6 +228,8 @@ type FanProps = NodeProps<Extract<TreeFlowNode, { type: 'fan' }>>
 export function FanCard({ data, selected }: FanProps) {
   const node: FanNode = data.node
   const n = node.params.variants.length
+  const stack = data.stackedSummary
+  const collapseCtx = useStackCollapse()
   return (
     <CardFrame
       kindLabel="Fan"
@@ -238,7 +243,73 @@ export function FanCard({ data, selected }: FanProps) {
       {node.params.promotedChildSlotIndex !== null && (
         <MetaRow label="pick" value={`slot ${node.params.promotedChildSlotIndex}`} />
       )}
+      {stack !== undefined && <StackSummaryBody summary={stack} />}
+      {collapseCtx !== null && (
+        <StackToggleButton
+          collapsed={stack !== undefined}
+          onToggle={() => collapseCtx.toggleStack(node.id)}
+        />
+      )}
     </CardFrame>
+  )
+}
+
+/**
+ * Inline body shown inside the FanCard when the fan is in the collapsed
+ * (stacked) state. Renders the multiplicity ("Send ×10") and aggregate
+ * status ("9 ✓, 1 ⚠") so operators see at a glance how the stacked
+ * children are doing.
+ */
+function StackSummaryBody({ summary }: { summary: StackAggregate }) {
+  const styles = useNodeCardStyles()
+  const successful = summary.byState.clean
+  const running = summary.byState.running
+  const failed = summary.byState.failed + summary.byState.cancelled
+  const pending =
+    summary.byState.draft +
+    summary.byState.edited +
+    summary.byState.stale
+  const parts: string[] = []
+  if (successful > 0) parts.push(`${successful} ✓`)
+  if (running > 0) parts.push(`${running} ●`)
+  if (failed > 0) parts.push(`${failed} ⚠`)
+  if (pending > 0) parts.push(`${pending} ⧖`)
+  const statusLine = parts.length > 0 ? parts.join(', ') : '—'
+  const kindLabel = summary.childKind ?? 'item'
+  return (
+    <div
+      data-tree-stack-summary
+      className={styles.stackSummary}
+      title={`${summary.total} ${kindLabel}${summary.total === 1 ? '' : 's'}: ${statusLine}`}
+    >
+      <span className={styles.stackKindLabel}>
+        {kindLabel} ×{summary.total}
+      </span>
+      <span className={styles.stackStatusLine}>{statusLine}</span>
+    </div>
+  )
+}
+
+function StackToggleButton({
+  collapsed,
+  onToggle,
+}: {
+  collapsed: boolean
+  onToggle: () => void
+}) {
+  const label = collapsed ? 'Expand stack' : 'Collapse to stack'
+  return (
+    <div data-tree-stack-toggle>
+      <Tooltip content={label} relationship="description">
+        <Button
+          size="small"
+          appearance="subtle"
+          icon={collapsed ? <ArrowMaximizeRegular /> : <ArrowMinimizeRegular />}
+          aria-label={label}
+          onClick={onToggle}
+        />
+      </Tooltip>
+    </div>
   )
 }
 
