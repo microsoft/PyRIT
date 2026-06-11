@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { FluentProvider, webLightTheme, webDarkTheme } from '@fluentui/react-components'
 import { useMsal } from '@azure/msal-react'
 import MainLayout from './components/Layout/MainLayout'
@@ -17,6 +18,22 @@ import type { TargetInstance, TargetInfo } from './types'
 import { attacksApi, versionApi } from './services/api'
 
 const AUTO_DISMISS_MS = 5_000
+
+/** Maps each navigable view to its canonical URL path. */
+const VIEW_PATHS: Record<ViewName, string> = {
+  home: '/',
+  chat: '/chat',
+  history: '/history',
+  config: '/config',
+}
+
+/** Resolves the active view from a URL path, defaulting to home for unknown paths. */
+function viewFromPath(pathname: string): ViewName {
+  const match = (Object.entries(VIEW_PATHS) as [ViewName, string][]).find(
+    ([, path]) => path === pathname,
+  )
+  return match ? match[0] : 'home'
+}
 
 function ConnectionBannerContainer() {
   const { status, reconnectCount } = useConnectionHealth()
@@ -39,8 +56,10 @@ function ConnectionBannerContainer() {
 
 function App() {
   const { instance } = useMsal()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const currentView = viewFromPath(location.pathname)
   const [isDarkMode, setIsDarkMode] = useState(true)
-  const [currentView, setCurrentView] = useState<ViewName>('home')
   const [activeTarget, setActiveTarget] = useState<TargetInstance | null>(null)
   const [globalLabels, setGlobalLabels] = useState<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
   /** True while loading a historical attack from the history view */
@@ -119,6 +138,10 @@ function App() {
     setRelatedConversationCount(0)
   }, [])
 
+  const handleNavigate = useCallback((view: ViewName) => {
+    navigate(VIEW_PATHS[view])
+  }, [navigate])
+
   const handleNewAttack = () => {
     clearAttackState()
   }
@@ -158,7 +181,7 @@ function App() {
     }
     setAttackResultId(openAttackResultId)
     setIsLoadingAttack(true)
-    setCurrentView('chat')
+    navigate(VIEW_PATHS.chat)
     // Fetch attack info to get conversation_id and stored labels (for operator locking)
     try {
       const attack = await attacksApi.getAttack(openAttackResultId)
@@ -172,7 +195,7 @@ function App() {
     } finally {
       setIsLoadingAttack(false)
     }
-  }, [attackResultId, clearAttackState])
+  }, [attackResultId, clearAttackState, navigate])
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode)
@@ -185,50 +208,65 @@ function App() {
           <ConnectionBannerContainer />
           <MainLayout
             currentView={currentView}
-            onNavigate={setCurrentView}
+            onNavigate={handleNavigate}
             onToggleTheme={toggleTheme}
             isDarkMode={isDarkMode}
           >
-            {currentView === 'home' && (
-              <Home
-                labels={globalLabels}
-                onLabelsChange={setGlobalLabels}
-                activeTarget={activeTarget}
-                onNavigate={setCurrentView}
-                onOpenAttack={handleOpenAttack}
+            <Routes>
+              <Route
+                path="/"
+                element={
+                  <Home
+                    labels={globalLabels}
+                    onLabelsChange={setGlobalLabels}
+                    activeTarget={activeTarget}
+                    onNavigate={handleNavigate}
+                    onOpenAttack={handleOpenAttack}
+                  />
+                }
               />
-            )}
-            {currentView === 'chat' && (
-              <ChatWindow
-                onNewAttack={handleNewAttack}
-                activeTarget={activeTarget}
-                attackResultId={attackResultId}
-                conversationId={conversationId}
-                activeConversationId={activeConversationId}
-                onConversationCreated={handleConversationCreated}
-                onSelectConversation={handleSelectConversation}
-                labels={globalLabels}
-                onLabelsChange={setGlobalLabels}
-                onNavigate={setCurrentView}
-                attackLabels={attackLabels}
-                attackTarget={attackTarget}
-                isLoadingAttack={isLoadingAttack}
-                relatedConversationCount={relatedConversationCount}
+              <Route
+                path="/chat"
+                element={
+                  <ChatWindow
+                    onNewAttack={handleNewAttack}
+                    activeTarget={activeTarget}
+                    attackResultId={attackResultId}
+                    conversationId={conversationId}
+                    activeConversationId={activeConversationId}
+                    onConversationCreated={handleConversationCreated}
+                    onSelectConversation={handleSelectConversation}
+                    labels={globalLabels}
+                    onLabelsChange={setGlobalLabels}
+                    onNavigate={handleNavigate}
+                    attackLabels={attackLabels}
+                    attackTarget={attackTarget}
+                    isLoadingAttack={isLoadingAttack}
+                    relatedConversationCount={relatedConversationCount}
+                  />
+                }
               />
-            )}
-            {currentView === 'config' && (
-              <TargetConfig
-                activeTarget={activeTarget}
-                onSetActiveTarget={handleSetActiveTarget}
+              <Route
+                path="/config"
+                element={
+                  <TargetConfig
+                    activeTarget={activeTarget}
+                    onSetActiveTarget={handleSetActiveTarget}
+                  />
+                }
               />
-            )}
-            {currentView === 'history' && (
-              <AttackHistory
-                onOpenAttack={handleOpenAttack}
-                filters={historyFilters}
-                onFiltersChange={setHistoryFilters}
+              <Route
+                path="/history"
+                element={
+                  <AttackHistory
+                    onOpenAttack={handleOpenAttack}
+                    filters={historyFilters}
+                    onFiltersChange={setHistoryFilters}
+                  />
+                }
               />
-            )}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
           </MainLayout>
         </FluentProvider>
       </ConnectionHealthProvider>
