@@ -37,6 +37,7 @@ import {
 } from './stackCollapseContext'
 import { treeEdgeTypes } from './treeEdgeTypes'
 import { treeNodeTypes } from './treeNodeTypes'
+import { useMemoizedActionCallbacks } from './useMemoizedActionCallbacks'
 import type {
   ConversationTree,
   ConversationTreeId,
@@ -62,6 +63,10 @@ export interface TreeCanvasProps {
 }
 
 export function TreeCanvas({ tree, actionCallbacks, availableConverters }: TreeCanvasProps) {
+  // PR5h.11: stabilize the actionCallbacks bag reference across renders.
+  // Without this, a host passing a fresh object literal each render forces
+  // every card to re-render through the ActionCallbacksContext.
+  const memoizedCallbacks = useMemoizedActionCallbacks(actionCallbacks)
   // Per-canvas collapse state for the Fan-Children Stack. Seeded from
   // defaultCollapsedFanIds the first time a particular tree id mounts;
   // toggling persists for the canvas's lifetime. Re-keyed on tree.id so
@@ -127,7 +132,7 @@ export function TreeCanvas({ tree, actionCallbacks, availableConverters }: TreeC
       data-tree-id={decorated.treeId}
       style={{ width: '100%', height: '100%' }}
     >
-      <ActionCallbacksContext.Provider value={actionCallbacks ?? null}>
+      <ActionCallbacksContext.Provider value={memoizedCallbacks}>
         <AvailableConvertersContext.Provider value={availableConverters ?? null}>
           <StackCollapseContext.Provider value={stackContextValue}>
             <ReactFlowProvider>
