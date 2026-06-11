@@ -1,0 +1,314 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
+/**
+ * Tests for `useCostGuardrailModal` — the React-state-backed
+ * `CostGuardrail` provider. Owns the modal's pending-decision state
+ * and the per-session suppression flag.
+ *
+ * Per spec §8.1: waves below `confirmThresholdCount` skip the modal
+ * entirely (one-click); waves at or above threshold prompt. "Don't ask
+ * again this session" suppresses subsequent at-threshold prompts; the
+ * 2× safety floor forces the modal back regardless of suppression.
+ */
+
+import { act, fireEvent, render, renderHook, screen } from '@testing-library/react'
+import { useState } from 'react'
+
+import { useCostGuardrailModal } from './useCostGuardrailModal'
+import type { WaveTriggerKind } from '../../runner/treeTypes'
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/**
+ * Renders a real DOM mount of the hook so the modal's portal actually
+ * appears under document.body — Fluent's Dialog primitive portals out,
+ * and renderHook alone gives us the hook's return value but no DOM tree
+ * for the modal to attach to.
+ */
+function mountHook(opts: { confirmThresholdCount: number }) {
+  let latest: ReturnType<typeof useCostGuardrailModal> | null = null
+  function Harness() {
+    latest = useCostGuardrailModal(opts)
+    return <>{latest.modalElement}</>
+  }
+  render(<Harness />)
+  if (latest === null) throw new Error('Harness did not render')
+  return {
+    get current() {
+      if (latest === null) throw new Error('hook unmounted')
+      return latest
+    },
+  }
+}
+
+// ============================================================================
+// Below threshold — one-click
+// ============================================================================
+
+describe('useCostGuardrailModal — below threshold', () => {
+  it('approve() resolves true synchronously when count < threshold (no modal)', async () => {
+    const { result } = renderHook(() =>
+      useCostGuardrailModal({ confirmThresholdCount: 20 }),
+    )
+    const approved = await result.current.guardrail.approve(5, 'refresh_tree')
+    expect(approved).toBe(true)
+    expect(result.current.modalElement).toBeNull()
+  })
+
+  it('approve() resolves true when count exactly equals threshold - 1', async () => {
+    const { result } = renderHook(() =>
+      useCostGuardrailModal({ confirmThresholdCount: 20 }),
+    )
+    const approved = await result.current.guardrail.approve(19, 'refresh_tree')
+    expect(approved).toBe(true)
+  })
+})
+
+// ============================================================================
+// At/above threshold — modal shows
+// ============================================================================
+
+describe('useCostGuardrailModal — at/above threshold', () => {
+  it('approve() at threshold renders the modal and stays pending', async () => {
+    const h = mountHook({ confirmThresholdCount: 20 })
+    let resolved: boolean | null = null
+    await act(async () => {
+      void h.current.guardrail.approve(20, 'refresh_tree').then((v) => {
+        resolved = v
+      })
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(resolved).toBeNull()
+  })
+
+  it('modal shows the estimated call count', async () => {
+    const h = mountHook({ confirmThresholdCount: 20 })
+    await act(async () => {
+      void h.current.guardrail.approve(60, 'refresh_tree')
+      await Promise.resolve()
+    })
+    const dialog = screen.getByRole('dialog')
+    expect(dialog.textContent).toMatch(/60/)
+  })
+
+  it('modal shows the threshold value for operator context', async () => {
+    const h = mountHook({ confirmThresholdCount: 20 })
+    await act(async () => {
+      void h.current.guardrail.approve(60, 'refresh_tree')
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('dialog').textContent).toMatch(/20/)
+  })
+
+  it('modal shows an operator-friendly label for waveTriggerKind=refresh_tree', async () => {
+    const h = mountHook({ confirmThresholdCount: 20 })
+    await act(async () => {
+      void h.current.guardrail.approve(60, 'refresh_tree')
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('dialog').textContent).toMatch(/refresh tree/i)
+  })
+
+  it.each([
+    ['refresh_node', /refresh node|node/i],
+    ['refresh_subtree', /subtree/i],
+    ['retry_failed', /retry/i],
+  ] as Array<[WaveTriggerKind, RegExp]>)(
+    'modal shows trigger label for %s',
+    async (kind, pattern) => {
+      const h = mountHook({ confirmThresholdCount: 20 })
+      await act(async () => {
+        void h.current.guardrail.approve(60, kind)
+        await Promise.resolve()
+      })
+      expect(screen.getByRole('dialog').textContent).toMatch(pattern)
+    },
+  )
+})
+
+// ============================================================================
+// Confirm / Cancel
+// ============================================================================
+
+describe('useCostGuardrailModal — confirm and cancel', () => {
+  it('clicking [Refresh] resolves approve() to true and dismisses the modal', async () => {
+    const h = mountHook({ confirmThresholdCount: 20 })
+    let resolved: boolean | null = null
+    let promise: Promise<void>
+    await act(async () => {
+      promise = h.current.guardrail
+        .approve(60, 'refresh_tree')
+        .then((v) => {
+          resolved = v
+        })
+      await Promise.resolve()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^refresh$/i }))
+    await act(async () => {
+      await promise
+    })
+    expect(resolved).toBe(true)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('clicking [Cancel] resolves approve() to false and dismisses', async () => {
+    const h = mountHook({ confirmThresholdCount: 20 })
+    let resolved: boolean | null = null
+    let promise: Promise<void>
+    await act(async () => {
+      promise = h.current.guardrail
+        .approve(60, 'refresh_tree')
+        .then((v) => {
+          resolved = v
+        })
+      await Promise.resolve()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+    await act(async () => {
+      await promise
+    })
+    expect(resolved).toBe(false)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+// ============================================================================
+// "Don't ask again this session" suppression
+// ============================================================================
+
+describe('useCostGuardrailModal — suppression', () => {
+  it('checkbox + Refresh suppresses subsequent at-threshold approvals', async () => {
+    const h = mountHook({ confirmThresholdCount: 20 })
+    // First call uses count=25 (above threshold 20, below safety floor 40)
+    // so suppression actually takes effect on the second call.
+    let firstResolved: boolean | null = null
+    let first: Promise<void>
+    await act(async () => {
+      first = h.current.guardrail
+        .approve(25, 'refresh_tree')
+        .then((v) => {
+          firstResolved = v
+        })
+      await Promise.resolve()
+    })
+    fireEvent.click(screen.getByRole('checkbox', { name: /don't ask again/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^refresh$/i }))
+    await act(async () => {
+      await first
+    })
+    expect(firstResolved).toBe(true)
+
+    // Second at-threshold call (count=25, below safety floor 40) should
+    // auto-approve without showing the modal.
+    const second = await h.current.guardrail.approve(25, 'refresh_tree')
+    expect(second).toBe(true)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('suppression does NOT survive a Cancel — operator stays prompted', async () => {
+    const h = mountHook({ confirmThresholdCount: 20 })
+    let first: Promise<boolean>
+    await act(async () => {
+      first = h.current.guardrail.approve(25, 'refresh_tree')
+      await Promise.resolve()
+    })
+    fireEvent.click(screen.getByRole('checkbox', { name: /don't ask again/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+    await act(async () => {
+      await first
+    })
+
+    // Second at-threshold call should still prompt — Cancel doesn't commit
+    // the suppression because the operator never agreed to proceed.
+    let secondResolved: boolean | null = null
+    await act(async () => {
+      void h.current.guardrail.approve(25, 'refresh_tree').then((v) => {
+        secondResolved = v
+      })
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(secondResolved).toBeNull()
+  })
+})
+
+// ============================================================================
+// 2× safety floor — modal fires even when suppressed
+// ============================================================================
+
+describe('useCostGuardrailModal — 2× safety floor', () => {
+  it('waves at or above 2× threshold ALWAYS prompt, even when suppression is set', async () => {
+    const h = mountHook({ confirmThresholdCount: 20 })
+    // Suppress via a normal at-threshold confirm.
+    let first: Promise<boolean>
+    await act(async () => {
+      first = h.current.guardrail.approve(25, 'refresh_tree')
+      await Promise.resolve()
+    })
+    fireEvent.click(screen.getByRole('checkbox', { name: /don't ask again/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^refresh$/i }))
+    await act(async () => {
+      await first
+    })
+
+    // 40 is the 2× safety floor (2 * 20). Should re-prompt.
+    let safetyResolved: boolean | null = null
+    await act(async () => {
+      void h.current.guardrail.approve(40, 'refresh_tree').then((v) => {
+        safetyResolved = v
+      })
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(safetyResolved).toBeNull()
+  })
+
+  it('waves at the threshold but below 2× honor suppression', async () => {
+    const h = mountHook({ confirmThresholdCount: 20 })
+    let first: Promise<boolean>
+    await act(async () => {
+      first = h.current.guardrail.approve(25, 'refresh_tree')
+      await Promise.resolve()
+    })
+    fireEvent.click(screen.getByRole('checkbox', { name: /don't ask again/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^refresh$/i }))
+    await act(async () => {
+      await first
+    })
+
+    // 39 is below 2× (40); suppression applies.
+    const second = await h.current.guardrail.approve(39, 'refresh_tree')
+    expect(second).toBe(true)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+// ============================================================================
+// Stability under re-render — guardrail identity
+// ============================================================================
+
+describe('useCostGuardrailModal — referential stability', () => {
+  it('guardrail object identity is stable across re-renders', () => {
+    let renderCount = 0
+    function Harness() {
+      const [, setN] = useState(0)
+      const { guardrail } = useCostGuardrailModal({ confirmThresholdCount: 20 })
+      renderCount += 1
+      ;(Harness as unknown as { latest: typeof guardrail }).latest = guardrail
+      ;(Harness as unknown as { bump: () => void }).bump = () => setN((n) => n + 1)
+      return null
+    }
+    render(<Harness />)
+    const before = (Harness as unknown as { latest: unknown }).latest
+    act(() => {
+      ;(Harness as unknown as { bump: () => void }).bump()
+    })
+    const after = (Harness as unknown as { latest: unknown }).latest
+    expect(after).toBe(before)
+    expect(renderCount).toBeGreaterThanOrEqual(2)
+  })
+})
