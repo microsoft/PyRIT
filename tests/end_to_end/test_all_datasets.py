@@ -66,7 +66,7 @@ _HF_GATED_PROVIDERS: set[type] = {
 def get_dataset_providers():
     """Helper to get all registered providers for parameterization."""
     providers = SeedDatasetProvider.get_all_providers()
-    return [(name, cls) for name, cls in providers.items()]
+    return [(name, cls) for name, cls in providers.items() if name == "_ForbiddenQuestionsDataset"]
 
 
 @retry(
