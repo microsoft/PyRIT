@@ -185,11 +185,14 @@ describe('InsertEdge — menu options per parent kind', () => {
 
   it('V1.1 axes (Fan prompt, Fan target) render disabled', () => {
     const items = openMenu('send')
-    for (const item of items) {
-      const text = (item.textContent ?? '').toLowerCase()
-      if (text.match(/fan.*prompt|fan.*target/)) {
-        expect(item.getAttribute('aria-disabled')).toBe('true')
-      }
+    const v11Items = items.filter((item) =>
+      (item.textContent ?? '').toLowerCase().match(/fan.*prompt|fan.*target/),
+    )
+    // Pin that the disabled stubs actually render — without this guard the
+    // for-loop below passes vacuously if a regression removes the V1.1 items.
+    expect(v11Items.length).toBeGreaterThanOrEqual(2)
+    for (const item of v11Items) {
+      expect(item.getAttribute('aria-disabled')).toBe('true')
     }
   })
 })
@@ -280,10 +283,11 @@ describe('InsertEdge — onEdgeInsert callback', () => {
     const disabledFan = items.find((i) =>
       i.textContent?.match(/fan.*prompt|fan.*target/i),
     ) as HTMLElement | undefined
-    if (disabledFan !== undefined) {
-      fireEvent.click(disabledFan)
-      expect(onEdgeInsert).not.toHaveBeenCalled()
-    }
+    // Pin that the disabled item exists before clicking it — a removed stub
+    // would make the assertion below vacuous-pass without this guard.
+    expect(disabledFan).toBeDefined()
+    fireEvent.click(disabledFan!)
+    expect(onEdgeInsert).not.toHaveBeenCalled()
   })
 })
 
