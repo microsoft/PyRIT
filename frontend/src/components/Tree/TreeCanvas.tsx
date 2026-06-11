@@ -37,6 +37,7 @@ import type { ActionCallbacks } from './actionRail'
 import { ActionCallbacksContext } from './actionCallbacksContext'
 import { conversationTreeToReactFlow } from './conversationTreeToReactFlow'
 import { defaultCollapsedFanIds } from './fanStack'
+import { layoutTree } from './layoutTree'
 import {
   StackCollapseContext,
   type StackCollapseValue,
@@ -96,10 +97,24 @@ export function TreeCanvas({ tree, actionCallbacks }: TreeCanvasProps) {
   // Re-adapt when tree changes OR when the collapse set changes (a
   // toggle hides/shows nodes). React-flow's reconciler keys on node id
   // and the adapter guarantees stable ids.
-  const { treeId, nodes, edges } = useMemo(
+  const { treeId, nodes: rawNodes, edges } = useMemo(
     () => conversationTreeToReactFlow(tree, { collapsedFanIds }),
     [tree, collapsedFanIds],
   )
+
+  // Buchheim-Walker layout via d3-hierarchy (PR5g). Override the
+  // adapter's placeholder (0,0) positions with computed coordinates so
+  // the tree renders top-to-bottom without manual zoom. Re-runs only
+  // when nodes/edges change (memoized on the adapter output), which
+  // happens on tree shape changes + stack-collapse toggles but NOT on
+  // selection or callback-prop changes.
+  const nodes = useMemo(() => {
+    const positions = layoutTree(rawNodes, edges)
+    return rawNodes.map((n) => {
+      const p = positions.get(n.id)
+      return p === undefined ? n : { ...n, position: { x: p.x, y: p.y } }
+    })
+  }, [rawNodes, edges])
 
   return (
     <div

@@ -8,6 +8,12 @@ const config: Config = {
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
     "\\.(css|less|scss|sass)$": "identity-obj-proxy",
+    // d3-hierarchy ships ESM source as `main`. ts-jest's transform
+    // ignores `.js` and jest's CJS require trips on its `import`
+    // statements. Redirect to the UMD bundle at /dist which works
+    // under CJS without any transform. Production keeps the ESM
+    // path (Vite handles it natively).
+    "^d3-hierarchy$": "<rootDir>/node_modules/d3-hierarchy/dist/d3-hierarchy.js",
   },
   setupFilesAfterEnv: ["<rootDir>/src/setupTests.ts"],
   collectCoverageFrom: [
