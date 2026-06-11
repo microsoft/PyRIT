@@ -282,3 +282,30 @@ describe('conversationTreeToReactFlow — edge cases', () => {
   })
 })
 
+// ============================================================================
+// Adapter contract — malformed edge surfaces loudly (PR5h.8 review)
+// ============================================================================
+//
+// PR5h reviewer Finding H: pre-PR5h.8 `toFlowEdge` silently fell back to
+// `parentKind ?? 'root_prompt'` when an edge's parentId wasn't in the tree's
+// node set — steering the InsertEdge menu to the wrong kind-specific options.
+// The adapter's contract is `tree.edges must reference tree.nodes`; violating
+// it is a malformed-tree bug worth crashing for, not silently massaging.
+
+describe('conversationTreeToReactFlow — malformed edge contract', () => {
+  it('throws when an edge references a parentId not present in tree.nodes', () => {
+    const tree = mkTree(
+      'r',
+      [mkRoot('r'), mkUserTurn('u', 'r')],
+      {
+        edges: [
+          mkEdge('r', 'u'),
+          // Synthetic malformed edge: 'ghost' isn't a node in the tree.
+          mkEdge('ghost', 'u'),
+        ],
+      },
+    )
+    expect(() => conversationTreeToReactFlow(tree)).toThrow(/ghost/)
+  })
+})
+

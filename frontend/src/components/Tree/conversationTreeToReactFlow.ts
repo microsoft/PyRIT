@@ -198,7 +198,17 @@ function toFlowEdge(
   edge: ConversationTree['edges'][number],
   nodeKindById: ReadonlyMap<string, ConversationTreeNodeKind>,
 ): TreeFlowEdge {
-  const parentKind = nodeKindById.get(edge.parentId) ?? 'root_prompt'
+  // Adapter contract: tree.edges must reference tree.nodes. A missing
+  // parentId here means the input tree is malformed; throwing surfaces
+  // the bug loudly rather than steering the InsertEdge menu to a
+  // silently-wrong kind via a 'root_prompt' fallback.
+  const parentKind = nodeKindById.get(edge.parentId)
+  if (parentKind === undefined) {
+    throw new Error(
+      `conversationTreeToReactFlow: edge ${edge.id} references parentId ` +
+        `${edge.parentId} which is not present in tree.nodes`,
+    )
+  }
   // Use the custom 'insert' edge type by default; TreeCanvas's edgeTypes
   // registry maps 'insert' to the InsertEdge component (which extends
   // SmoothStepEdge with a midpoint `+` chip). Falls back to the built-in

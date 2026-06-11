@@ -233,6 +233,19 @@ export function mkTree(rootId: string, nodes: ConversationTreeNode[], overrides:
   }
 }
 
+/**
+ * Locate the rendered card wrapper for a given node id. Pinned to the
+ * `[data-tree-node-id="..."][data-selected]` selector that CardFrame
+ * always emits — the `[data-selected]` clause filters out the rail's
+ * own data-tree-node-id (rails carry it for DOM scoping but lack
+ * data-selected).
+ */
+export function findCard(container: HTMLElement, id: string): HTMLElement {
+  const el = container.querySelector(`[data-tree-node-id="${id}"][data-selected]`)
+  if (el === null) throw new Error(`findCard: no card with data-tree-node-id="${id}"`)
+  return el as HTMLElement
+}
+
 // ----------------------------------------------------------------------------
 // Mock ExecutionRecord
 // ----------------------------------------------------------------------------

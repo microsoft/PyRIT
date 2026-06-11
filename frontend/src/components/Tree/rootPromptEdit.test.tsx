@@ -19,11 +19,9 @@ import { fireEvent, render, within } from '@testing-library/react'
 
 import { TreeCanvas } from './TreeCanvas'
 import type { ActionCallbacks } from './actionRail'
-import { mkRoot, mkTree, nodeId } from '../../runner/testHelpers'
+import { findCard, mkRoot, mkTree, nodeId } from '../../runner/testHelpers'
 
-function findRootCard(container: HTMLElement, id: string) {
-  return container.querySelector(`[data-tree-node-id="${id}"][data-selected]`) as HTMLElement
-}
+const findRootCard = (container: HTMLElement, id: string) => findCard(container, id)
 
 describe('RootPromptCard — inline edit affordance (spec §2.2)', () => {
   it('does NOT render ✏ Edit button when onEditRootPromptParams callback is missing', () => {

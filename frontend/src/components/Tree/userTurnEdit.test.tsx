@@ -24,21 +24,19 @@
  *     the new prop after the save handler updates the tree)
  */
 
-import { fireEvent, render, screen, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { fireEvent, render, within } from '@testing-library/react'
 
 import { TreeCanvas } from './TreeCanvas'
 import type { ActionCallbacks } from './actionRail'
 import {
+  findCard,
   mkRoot,
   mkTree,
   mkUserTurn,
   nodeId,
 } from '../../runner/testHelpers'
 
-function findUserTurnCard(container: HTMLElement, id: string) {
-  return container.querySelector(`[data-tree-node-id="${id}"][data-selected]`) as HTMLElement
-}
+const findUserTurnCard = (container: HTMLElement, id: string) => findCard(container, id)
 
 describe('UserTurnCard — inline edit affordance (spec §2.2)', () => {
   it('does NOT render ✏ Edit button when onEditUserTurnText callback is missing', () => {
@@ -132,7 +130,7 @@ describe('UserTurnCard — inline edit affordance (spec §2.2)', () => {
     expect(onEditUserTurnText).toHaveBeenCalledWith(nodeId('u'), 'saved via shortcut')
   })
 
-  it('Edit button tooltip identifies the action for screen readers', async () => {
+  it('Edit button has aria-label identifying the action for screen readers', () => {
     const tree = mkTree('r', [mkRoot('r'), mkUserTurn('u', 'r', { text: 'hi' })])
     const callbacks: ActionCallbacks = { onEditUserTurnText: jest.fn() }
     const { container } = render(<TreeCanvas tree={tree} actionCallbacks={callbacks} />)
@@ -158,9 +156,4 @@ describe('UserTurnCard — inline edit affordance (spec §2.2)', () => {
     const card2 = findUserTurnCard(container, 'u')
     expect(within(card2).getByText('after')).not.toBeNull()
   })
-
-  // `screen` and `userEvent` are imported but used implicitly via
-  // `within(...)` queries; silence the lint unused-imports rule.
-  void screen
-  void userEvent
 })

@@ -24,15 +24,14 @@ import { fireEvent, render, within } from '@testing-library/react'
 import { TreeCanvas } from './TreeCanvas'
 import type { ActionCallbacks } from './actionRail'
 import {
+  findCard,
   mkRoot,
   mkTree,
   mkUserTurn,
   nodeId,
 } from '../../runner/testHelpers'
 
-function findUserTurnCard(container: HTMLElement, id: string) {
-  return container.querySelector(`[data-tree-node-id="${id}"][data-selected]`) as HTMLElement
-}
+const findUserTurnCard = (container: HTMLElement, id: string) => findCard(container, id)
 
 const MOCK_CONVERTERS = [
   { id: 'base64', label: 'Base64 encoder' },
