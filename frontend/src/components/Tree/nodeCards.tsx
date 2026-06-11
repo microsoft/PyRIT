@@ -22,6 +22,7 @@ import {
   MenuList,
   MenuPopover,
   MenuTrigger,
+  Textarea,
   Tooltip,
   mergeClasses,
 } from '@fluentui/react-components'
@@ -30,9 +31,11 @@ import {
   ArrowMinimizeRegular,
   CheckmarkCircleFilled,
   CheckmarkCircleRegular,
+  EditRegular,
 } from '@fluentui/react-icons'
 import { Handle, Position } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
+import { useState } from 'react'
 
 import type {
   ConversationTreeNodeId,
@@ -78,6 +81,13 @@ interface CardFrameProps {
    * Pick toggle has what it needs.
    */
   fanChildInfo?: FanChildInfo
+  /**
+   * Kind-specific action buttons (PR5h.5+). Cards render their own
+   * per-kind icons here; CardFrame forwards them to ActionRail where
+   * they render alongside the common Refresh/Branch/etc. icons. Absent
+   * for cards with no per-kind actions in V1.0.
+   */
+  kindActions?: React.ReactNode
   showTargetHandle?: boolean // top (parent connection)
   showSourceHandle?: boolean // bottom (child connection)
   children: React.ReactNode
@@ -90,6 +100,7 @@ function CardFrame({
   selected = false,
   branchLabel,
   fanChildInfo,
+  kindActions,
   showTargetHandle = true,
   showSourceHandle = true,
   children,
@@ -130,6 +141,7 @@ function CardFrame({
           callbacks={callbacks}
           branchLabel={branchLabel}
           fanChildInfo={fanChildInfo}
+          kindActions={kindActions}
         />
       )}
       {showSourceHandle && <Handle type="source" position={Position.Bottom} />}
@@ -222,6 +234,21 @@ type UserTurnProps = NodeProps<Extract<TreeFlowNode, { type: 'user_turn' }>>
 export function UserTurnCard({ data, selected }: UserTurnProps) {
   const node: UserTurnNode = data.node
   const converters = node.params.converterPipeline ?? []
+  const callbacks = useActionCallbacks()
+  const onEditText = callbacks?.onEditUserTurnText
+  const [isEditing, setIsEditing] = useState(false)
+  const kindActions =
+    onEditText !== undefined && !isEditing ? (
+      <Tooltip content="Edit text inline" relationship="description">
+        <Button
+          size="small"
+          appearance="subtle"
+          icon={<EditRegular />}
+          aria-label="Edit text inline"
+          onClick={() => setIsEditing(true)}
+        />
+      </Tooltip>
+    ) : undefined
   return (
     <CardFrame
       kindLabel="User turn"
@@ -230,13 +257,76 @@ export function UserTurnCard({ data, selected }: UserTurnProps) {
       selected={selected}
       branchLabel="Branch from here"
       fanChildInfo={data.fanChildInfo}
+      kindActions={kindActions}
     >
-      <CardBody text={node.params.text} />
+      {isEditing && onEditText !== undefined ? (
+        <InlineTextEditor
+          initial={node.params.text}
+          ariaLabel="Edit user turn text"
+          onSave={(text) => {
+            onEditText(node.id, text)
+            setIsEditing(false)
+          }}
+          onCancel={() => setIsEditing(false)}
+        />
+      ) : (
+        <CardBody text={node.params.text} />
+      )}
       <MetaRow label="role" value={node.params.role} />
       {converters.length > 0 && (
         <MetaRow label="" value={`${converters.length} converter${converters.length === 1 ? '' : 's'}`} />
       )}
     </CardFrame>
+  )
+}
+
+/**
+ * Inline text editor for the V1.0 edit affordances (UserTurn,
+ * RootPrompt — PR5h.5+). Esc cancels; Cmd/Ctrl-Enter saves (plain
+ * Enter inserts a newline so multi-line prompts work). The host owns
+ * the source of truth — onSave fires `(text)` and the host re-renders
+ * the card with new `node.params.text`.
+ */
+function InlineTextEditor({
+  initial,
+  ariaLabel,
+  onSave,
+  onCancel,
+}: {
+  initial: string
+  ariaLabel: string
+  onSave: (text: string) => void
+  onCancel: () => void
+}) {
+  const styles = useNodeCardStyles()
+  const [draft, setDraft] = useState(initial)
+  return (
+    <div className={styles.inlineEditor}>
+      <Textarea
+        value={draft}
+        onChange={(_e, d) => setDraft(d.value)}
+        autoFocus
+        rows={3}
+        aria-label={ariaLabel}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault()
+            onCancel()
+          } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault()
+            onSave(draft)
+          }
+        }}
+      />
+      <div className={styles.inlineEditorActions}>
+        <Button size="small" appearance="primary" onClick={() => onSave(draft)}>
+          Save
+        </Button>
+        <Button size="small" appearance="subtle" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
   )
 }
 

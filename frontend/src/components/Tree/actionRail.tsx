@@ -97,6 +97,14 @@ export interface ActionCallbacks {
     fanNodeId: ConversationTreeNodeId,
     slotIndex: number | null,
   ) => void
+  /**
+   * Inline edit of a UserTurn's text (PR5h.5; spec §2.2 UserTurn ✏).
+   * The card opens its own inline `<Textarea>` editor on the ✏ click,
+   * then calls this with `(nodeId, draft)` on Save. Host overwrites
+   * `node.params.text`, marks `node.state = 'edited'`, and re-renders.
+   * When undefined, the ✏ Edit button does not render.
+   */
+  onEditUserTurnText?: (nodeId: ConversationTreeNodeId, newText: string) => void
 }
 
 export interface ActionRailProps {
@@ -122,9 +130,17 @@ export interface ActionRailProps {
     slotIndex: number
     promoted: boolean
   }
+  /**
+   * Kind-specific action buttons appended after the common ones
+   * (Refresh / Branch / Branch-as-subtree / Delete / Open + Pick).
+   * Cards render their own per-kind icons here so the rail stays
+   * common-action-only. Spec §2.2 places kind-specific items in the
+   * same rail row as common items, after them.
+   */
+  kindActions?: React.ReactNode
 }
 
-export function ActionRail({ nodeId, callbacks, branchLabel, fanChildInfo }: ActionRailProps) {
+export function ActionRail({ nodeId, callbacks, branchLabel, fanChildInfo, kindActions }: ActionRailProps) {
   const styles = useActionRailStyles()
   const { onRefresh, onBranch, onDelete, onOpenLinear, onPickFanChild } = callbacks
   const showPick = fanChildInfo !== undefined && onPickFanChild !== undefined
@@ -212,6 +228,7 @@ export function ActionRail({ nodeId, callbacks, branchLabel, fanChildInfo }: Act
           />
         </Tooltip>
       )}
+      {kindActions}
     </div>
   )
 }

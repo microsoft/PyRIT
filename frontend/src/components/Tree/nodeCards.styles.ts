@@ -150,6 +150,21 @@ export const useNodeCardStyles = makeStyles({
     fontSize: tokens.fontSizeBase100,
     color: tokens.colorNeutralForeground3,
   },
+  // Inline-edit affordance (PR5h.5+): textarea + Save/Cancel buttons
+  // that replace CardBody while the operator is editing. The wrapper
+  // gives the textarea a hint of vertical room and aligns the action
+  // row below.
+  inlineEditor: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXS,
+    marginTop: tokens.spacingVerticalXXS,
+  },
+  inlineEditorActions: {
+    display: 'flex',
+    gap: tokens.spacingHorizontalXS,
+    justifyContent: 'flex-end',
+  },
 })
 
 // ============================================================================
