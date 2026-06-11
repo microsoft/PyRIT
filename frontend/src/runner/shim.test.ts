@@ -134,7 +134,7 @@ function mkControllableLockManager(
   const mgr: CrossTabLockManager = {
     acquire: async (treeId) => {
       acquireCalls.push(treeId)
-      return results[cursor++] ?? ({ acquired: true, holderTabId: null } as const)
+      return results[cursor++] ?? ({ acquired: true } as const)
     },
     release: (treeId) => {
       releaseCalls.push(treeId)
@@ -1352,6 +1352,172 @@ describe('shim — wave-end reconcile (03 §3.1 step 6)', () => {
 
     starter.resolveNext()
     await Promise.all([first, second])
+  })
+
+  it('reconcile reads POST-WAVE state via the recording sink, not a treeProvider snapshot (rubber-duck Finding D)', async () => {
+    // Tree where Score's parent (the Send) starts stale. The wave's dispatcher
+    // transitions the Send to clean via the (recording) sink. The post-wave
+    // tree built from the recorder's captures shows the Send as clean, so
+    // reconcile flips the Score child.
+    //
+    // The treeProvider in this test returns a FIXED tree object with the Send
+    // still stale — closing the gap with the pre-PR4e+f.1 implementation that
+    // re-read treeProvider for the post-wave snapshot. Under the old code,
+    // reconcile would walk the stale tree and the Score would stay stale; the
+    // dispatcher's sink writes would never reach reconcile. The recorder-based
+    // post-tree is what makes this assertion pass.
+    const tree = mkTree(
+      'r',
+      [
+        mkRoot('r', undefined, { state: 'clean' }),
+        mkUserTurn('u', 'r', undefined, { state: 'clean' }),
+        mkSend('s_to_be_clean', 'u', undefined, { state: 'stale' }),
+        mkScore('score', 's_to_be_clean', undefined, { state: 'stale' }),
+      ],
+      { id: 't-recorder' },
+    )
+    const { sink, callsOf } = mkMockSink()
+    const lock = mkControllableLockManager()
+    const cost = mkControllableCostGuardrail()
+
+    // Custom starter that simulates the dispatcher: writes
+    // setNodeState(s_to_be_clean, clean) through the wave's sink (the
+    // recorder), then resolves.
+    const starter: RunWaveStarter = async (args) => {
+      args.sink.setNodeState(args.treeId, nodeId('s_to_be_clean'), 'clean')
+      return {
+        succeeded: 1,
+        failed: { transient: 0, rate_limited: 0, permanent: 0 },
+        blocked: 0,
+        cancelled: 0,
+        reflog_evicted: 0,
+      }
+    }
+
+    const shim = createRunnerShim({
+      operatorProvider: () => 'alice',
+      treeProvider: mkTreeProvider(tree),
+      sink,
+      lockManager: lock.mgr,
+      costGuardrail: cost.cg,
+      runWaveStarter: starter,
+      uuid: mkUuidStub(),
+    })
+
+    await shim.refreshTree(treeId('t-recorder'))
+
+    // Dispatcher's setNodeState forwarded to the underlying sink (visible
+    // to the React state container).
+    const sCalls = callsOf('setNodeState').filter((c) => c.nodeId === nodeId('s_to_be_clean'))
+    expect(sCalls).toHaveLength(1)
+    expect(sCalls[0].state).toBe('clean')
+
+    // Reconcile saw the post-wave tree (Send=clean) and flipped the Score
+    // sibling. The reconcile call writes to the underlying sink, NOT the
+    // wrapped recorder (the recorder's lifetime is the wave; reconcile fires
+    // after the wave settles).
+    const scoreCalls = callsOf('setNodeState').filter((c) => c.nodeId === nodeId('score'))
+    expect(scoreCalls).toHaveLength(1)
+    expect(scoreCalls[0].state).toBe('clean')
+  })
+
+  it('starter receives a sink that is a wrapper (not the bare deps.sink reference)', async () => {
+    // Defense-in-depth: if a future refactor reverts the recorder wrapping
+    // and passes deps.sink directly to the starter, the wave-end reconcile
+    // would silently fall back to reading treeProvider — losing the Finding D
+    // fix without a test failure. This test pins "the starter's sink is NOT
+    // the bare reference" so the regression would surface immediately.
+    const tree = mkStandardTree()
+    const { sink } = mkMockSink()
+    const lock = mkControllableLockManager()
+    const cost = mkControllableCostGuardrail()
+    const starter = mkControllableRunWaveStarter()
+    const shim = createRunnerShim({
+      operatorProvider: () => 'alice',
+      treeProvider: mkTreeProvider(tree),
+      sink,
+      lockManager: lock.mgr,
+      costGuardrail: cost.cg,
+      runWaveStarter: starter.starter,
+      uuid: mkUuidStub(),
+    })
+
+    const p = shim.refreshTree(treeId('t-1'))
+    await waitFor(() => starter.pendingCount() === 1, 'starter invoked')
+    expect(starter.calls[0].sink).not.toBe(sink)
+    expect(typeof starter.calls[0].sink.setNodeState).toBe('function')
+    starter.resolveNext()
+    await p
+  })
+
+  it('recording sink forwards every sink method to the underlying deps.sink', async () => {
+    // The recorder only INTERCEPTS setNodeState to capture; every other
+    // method must pass through unchanged. Without this, recordExecution /
+    // clearExecution / emitWaveEvent / setReflogPinned calls the dispatcher
+    // makes during the wave would silently no-op against the React state
+    // container.
+    const tree = mkStandardTree()
+    const { sink, callsOf } = mkMockSink()
+    const lock = mkControllableLockManager()
+    const cost = mkControllableCostGuardrail()
+
+    const starter: RunWaveStarter = async (args) => {
+      args.sink.setNodeState(args.treeId, nodeId('s'), 'clean')
+      args.sink.recordExecution(args.treeId, nodeId('s'), {
+        executionId: 'e-1',
+        attemptedAt: '2026-06-10T00:00:00Z',
+        attackResultId: 'ar-1',
+        conversationId: 'conv-1',
+        pieceIds: ['p-1'],
+        outcome: 'success',
+        resolvedInputHashAtExecution: 'sha256:00',
+        waveId: args.waveId,
+        waveTriggerKind: args.waveTriggerKind,
+        dispatchedAt: '2026-06-10T00:00:00Z',
+        targetFirstByteAt: '2026-06-10T00:00:00Z',
+        completedAt: '2026-06-10T00:00:00Z',
+      })
+      args.sink.clearExecution(args.treeId, nodeId('s'))
+      args.sink.setReflogPinned(args.treeId, nodeId('s'), 'e-1', true)
+      // emitWaveEvent is exercised by runWave; the recorder must forward it.
+      args.sink.emitWaveEvent({
+        kind: 'node_complete',
+        waveId: args.waveId,
+        nodeId: nodeId('s'),
+        outcome: 'success',
+        emittedAt: '2026-06-10T00:00:00Z',
+      })
+      return {
+        succeeded: 1,
+        failed: { transient: 0, rate_limited: 0, permanent: 0 },
+        blocked: 0,
+        cancelled: 0,
+        reflog_evicted: 0,
+      }
+    }
+
+    const shim = createRunnerShim({
+      operatorProvider: () => 'alice',
+      treeProvider: mkTreeProvider(tree),
+      sink,
+      lockManager: lock.mgr,
+      costGuardrail: cost.cg,
+      runWaveStarter: starter,
+      uuid: mkUuidStub(),
+    })
+
+    await shim.refreshTree(treeId('t-1'))
+
+    // Every sink method's call landed on the underlying sink.
+    expect(callsOf('recordExecution')).toHaveLength(1)
+    expect(callsOf('clearExecution')).toHaveLength(1)
+    expect(callsOf('setReflogPinned')).toHaveLength(1)
+    // 2 emit: one from the dispatcher (node_complete), one from cancelQueued?
+    // No, that doesn't fire here. Just the dispatcher's. (Plus the shim's
+    // own — there shouldn't be any other shim-level events on the happy path.)
+    const events = callsOf('emitWaveEvent')
+    expect(events.length).toBeGreaterThanOrEqual(1)
+    expect(events.some((c) => c.event.kind === 'node_complete')).toBe(true)
   })
 })
 

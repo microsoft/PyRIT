@@ -611,14 +611,16 @@ export interface CostGuardrail {
  *
  * `acquire` returns a discriminated union: `{ acquired: true }` when the
  * lock is ours, `{ acquired: false; holderTabId }` when another tab holds
- * it. `holderTabId` is the responding tab's id so the UI can render
+ * it. The acquired-true variant carries no `holderTabId` field at all —
+ * the lock is ours, there's nothing meaningful to populate. On busy,
+ * `holderTabId` is the responding tab's id so the UI can render
  * *"another tab (id: …) is refreshing"* in the busy modal.
  *
  * `release` is unconditional; the §2.1 shim's outer try/finally guarantees
  * it runs on every exit path.
  */
 export type LockAcquireResult =
-  | { acquired: true; holderTabId: null }
+  | { acquired: true }
   | { acquired: false; holderTabId: string }
 
 export interface CrossTabLockManager {

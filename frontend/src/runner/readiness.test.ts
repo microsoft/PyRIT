@@ -624,6 +624,41 @@ describe('demoteRetryFailedNodes — returned tree', () => {
     const out = demoteRetryFailedNodes(tree, S, sink)
     expect(computeReady(out, S).map((n) => n.id)).toEqual([nodeId('s_leaf')])
   })
+
+  it('preserves tree-level fields on the returned tree (id, edges, parentConversationTreeId, undoStack, etc.)', () => {
+    // The shim reads `tree.parentConversationTreeId` off the demoted tree and
+    // forwards it to runWaveStarter for label-divergence-invariant compliance.
+    // If demoteRetryFailedNodes ever lost the spread of tree-level fields,
+    // labels would silently lose parent_conversation_tree_id without any
+    // unit test catching it — until the labels round-trip integration test
+    // failed in CI. Pin the contract here.
+    const tree = mkTree(
+      'r',
+      [
+        mkRoot('r', undefined, { state: 'clean' }),
+        mkUserTurn('u', 'r', undefined, { state: 'clean' }),
+        mkSend('s', 'u', undefined, { state: 'failed' }),
+      ],
+      {
+        id: 't-clone',
+        parentConversationTreeId: 'parent-tree-id',
+        parentSourceConversationId: 'src-conv-1',
+        displayName: 'Demote me',
+      },
+    )
+    const S = new Set([nodeId('s')])
+    const { sink } = mkMockSink()
+
+    const out = demoteRetryFailedNodes(tree, S, sink)
+    expect(out.id).toBe(tree.id)
+    expect(out.parentConversationTreeId).toBe(tree.parentConversationTreeId)
+    expect(out.parentSourceConversationId).toBe(tree.parentSourceConversationId)
+    expect(out.displayName).toBe(tree.displayName)
+    expect(out.rootId).toBe(tree.rootId)
+    expect(out.createdAt).toBe(tree.createdAt)
+    expect(out.edges).toBe(tree.edges) // edges array reference preserved (no mutation)
+    expect(out.undoStack).toBe(tree.undoStack)
+  })
 })
 
 // ============================================================================

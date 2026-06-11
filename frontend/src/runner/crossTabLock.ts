@@ -33,9 +33,7 @@ import type { ConversationTreeId, CrossTabLockManager, LockAcquireResult } from 
 interface BroadcastChannelLike {
   postMessage(message: unknown): unknown
   close(): void
-  // Native: MessageEvent; polyfill: raw data. Typed loosely; normalized at the
-  // single dispatcher inside the factory.
-  onmessage: ((eventOrData: unknown) => void) | null
+  onmessage: ((event: MessageEvent) => void) | null
 }
 
 interface BroadcastChannelCtor {
@@ -87,11 +85,17 @@ export function createBroadcastChannelLockManager(
       'BroadcastChannel is not available in this environment; cross-tab lock disabled. ' +
         'Concurrent waves across tabs on the same tree may exceed the maxParallel cap.',
     )
+    let degradedClosed = false
     return {
       tabId,
-      acquire: async () => ({ acquired: true, holderTabId: null }),
+      acquire: async () => {
+        if (degradedClosed) throw new Error('cross-tab lock manager is closed')
+        return { acquired: true }
+      },
       release: () => undefined,
-      close: () => undefined,
+      close: () => {
+        degradedClosed = true
+      },
     }
   }
 
@@ -99,17 +103,10 @@ export function createBroadcastChannelLockManager(
   const heldLocks = new Set<ConversationTreeId>()
   // Subscribers receive every incoming message; both the persistent
   // holder-response handler and the per-acquire busy listener register
-  // here so we have one onmessage dispatcher (matches both native + polyfill).
+  // here so we have one onmessage dispatcher.
   const subscribers = new Set<(data: WireMessage) => void>()
-  // The native BroadcastChannel calls `onmessage(MessageEvent)`; the
-  // `broadcast-channel` npm polyfill calls `onmessage(data)` with the user's
-  // payload directly. Normalize at the dispatcher so subscribers see only
-  // the wire message.
-  channel.onmessage = (eventOrData: unknown) => {
-    const data =
-      typeof MessageEvent !== 'undefined' && eventOrData instanceof MessageEvent
-        ? (eventOrData.data as WireMessage | undefined)
-        : (eventOrData as WireMessage | undefined)
+  channel.onmessage = (event) => {
+    const data = event.data as WireMessage | undefined
     if (data === undefined || typeof data !== 'object') return
     for (const fn of subscribers) fn(data)
   }
@@ -131,11 +128,15 @@ export function createBroadcastChannelLockManager(
   return {
     tabId,
     acquire: async (treeId) => {
-      if (closed) return { acquired: true, holderTabId: null }
+      // Fail loudly on closed-manager use — silent "acquired" would be a
+      // non-functional lock (no holder responses, no peer requests handled);
+      // throwing makes the bug surface at the caller rather than turning
+      // into a phantom cross-tab race.
+      if (closed) throw new Error('cross-tab lock manager is closed')
       // Same-tab reacquire is a no-op: the §9.4.3 protocol explicitly
       // short-circuits because the request would race our own holder-
       // response handler.
-      if (heldLocks.has(treeId)) return { acquired: true, holderTabId: null }
+      if (heldLocks.has(treeId)) return { acquired: true }
 
       const requestId = uuid()
       const result = await new Promise<LockAcquireResult>((resolve) => {
@@ -148,7 +149,7 @@ export function createBroadcastChannelLockManager(
         const timer = setTimeout(() => {
           cleanup()
           // No other tab claimed the lock; it's ours.
-          resolve({ acquired: true, holderTabId: null })
+          resolve({ acquired: true })
         }, acquireTimeoutMs)
         function cleanup() {
           subscribers.delete(listener)

@@ -25,9 +25,11 @@ import type { WaveDispatchController, WaveSummary } from './wave'
 import type {
   ConversationTree,
   ConversationTreeId,
+  ConversationTreeNode,
   ConversationTreeNodeId,
   CostGuardrail,
   CrossTabLockManager,
+  NodeState,
   RunnerStateSink,
   WaveTriggerKind,
 } from './treeTypes'
@@ -51,6 +53,17 @@ export interface RunWaveStarterArgs {
   operator: string
   parentConversationTreeId: ConversationTreeId | null
   controller: WaveDispatchController
+  /**
+   * The sink the dispatcher writes through during this wave. The shim wraps
+   * its `deps.sink` in a recording proxy that captures every `setNodeState`
+   * call into a per-wave map, then constructs the post-wave tree from the
+   * captures so the wave-end `reconcileAllTransforms` walk reads the same
+   * world the dispatcher just produced. The production runWave adapter
+   * forwards this sink directly to `runWave`; do NOT swap it for the
+   * shim's `deps.sink` or the reconcile read-back will race the React
+   * state container's commit timing (rubber-duck Finding D, PR4e+f.1).
+   */
+  sink: RunnerStateSink
 }
 
 /**
@@ -197,6 +210,16 @@ export function createRunnerShim(deps: ShimDependencies): RunnerShim {
 
       // 5. Wave start. The controller is per-wave so cancelWave can find it.
       const controller = createWaveController()
+      // Wrap the sink in a per-wave recorder. The recorder captures every
+      // setNodeState the dispatcher makes during this wave; after settle,
+      // we reconstruct the post-wave tree by overlaying the captured states
+      // onto the input tree. This is the production-correct way to feed
+      // reconcileAllTransforms — the alternative (a fresh treeProvider
+      // lookup) races React's setState commit timing, since `await settled`
+      // resumes on a microtask but React's state container may not have
+      // committed the wave's setState calls by that boundary. Rubber-duck
+      // Finding D, PR4e+f.1.
+      const recorder = createStateRecorder(deps.sink)
       const settled = deps.runWaveStarter({
         treeId,
         tree,
@@ -206,17 +229,18 @@ export function createRunnerShim(deps: ShimDependencies): RunnerShim {
         operator,
         parentConversationTreeId: tree.parentConversationTreeId,
         controller,
+        sink: recorder.sink,
       })
       currentWaveByTree.set(treeId, { waveId, controller, settled })
       try {
         await settled
-        // Wave-end transform reconcile (step 6). Re-snapshot the tree so the
-        // walk reads post-wave state (the dispatcher may have flipped Sends
-        // to clean via the sink during dispatch).
-        const postTree = deps.treeProvider(treeId)
-        if (postTree !== undefined) {
-          reconcileAllTransforms(postTree, treeId, deps.sink)
-        }
+        // Wave-end transform reconcile (step 6). The post-wave tree is built
+        // from the input tree + the recorder's captured state mutations —
+        // every Send the dispatcher transitioned to clean during the wave
+        // shows up here, which is exactly what reconcileAllTransforms needs
+        // to flip sibling transforms whose ancestors are now clean.
+        const postTree = applyStateRecorder(tree, recorder.snapshot())
+        reconcileAllTransforms(postTree, treeId, deps.sink)
       } finally {
         currentWaveByTree.delete(treeId)
       }
@@ -225,10 +249,24 @@ export function createRunnerShim(deps: ShimDependencies): RunnerShim {
     }
 
     // Drain OUTSIDE the lock so each drained wave can acquire its own.
-    // Reached only on the step-5 success path: every early-exit (tag-gate,
-    // busy, missing tree, cost-cancel, enqueue) returns from inside the try
-    // and bypasses this block; an exception from step 5 propagates through
-    // the finally and exits the function before this block runs.
+    // Drain-outside (vs the §2.1 spec's literal drain-inside-the-finally) is
+    // a deliberate divergence for cross-tab fairness: when this shim's queue
+    // is N deep, draining inside the outer lock makes the other tab wait
+    // for N waves' worth of compute time before its own acquire can succeed.
+    // Releasing between drained waves lets the other tab interleave.
+    //
+    // Reachability: this block runs only on the step-5 success path. Every
+    // early-exit branch (tag-gate, busy, missing tree, cost-cancel, enqueue)
+    // uses `return` inside the outer try — the return propagates through
+    // both finallys and exits the function before this block. A step-5
+    // exception likewise propagates through both finallys and exits. The
+    // structural invariant: every early-exit MUST use `return`, not fall
+    // through. A future refactor that replaces a guarded return with an
+    // `if (!cond) { else-branch }` would silently start draining on the
+    // early-exit path; the test "drained re-entry recomputes S from the
+    // LATEST tree state" would catch the most obvious failure modes but
+    // not all of them. If you touch this file, preserve the return-on-
+    // early-exit invariant.
     const q = queueByTree.get(treeId) ?? []
     while (q.length > 0) {
       const next = q.shift() as QueuedWave
@@ -287,4 +325,62 @@ function estimateCalls(
     total += 1 + resolvePathPartition(tree, leaf.id).freshSuffix.length
   }
   return total
+}
+
+// ============================================================================
+// State recorder — captures setNodeState writes so the wave-end reconcile
+// can read a post-wave tree snapshot that doesn't depend on React state
+// batch-commit timing (rubber-duck Finding D, PR4e+f.1).
+// ============================================================================
+
+interface StateRecorder {
+  /** A RunnerStateSink that records setNodeState then forwards everything to the underlying sink. */
+  sink: RunnerStateSink
+  /** Returns the per-wave Map<NodeId, NodeState> captured by sink writes. */
+  snapshot(): ReadonlyMap<ConversationTreeNodeId, NodeState>
+}
+
+function createStateRecorder(underlying: RunnerStateSink): StateRecorder {
+  const states = new Map<ConversationTreeNodeId, NodeState>()
+  const sink: RunnerStateSink = {
+    setNodeState: (treeId, nodeId, state, opts) => {
+      states.set(nodeId, state)
+      underlying.setNodeState(treeId, nodeId, state, opts)
+    },
+    recordExecution: (treeId, nodeId, record) => {
+      underlying.recordExecution(treeId, nodeId, record)
+    },
+    clearExecution: (treeId, nodeId) => {
+      underlying.clearExecution(treeId, nodeId)
+    },
+    setReflogPinned: (treeId, nodeId, executionId, pinned) => {
+      underlying.setReflogPinned(treeId, nodeId, executionId, pinned)
+    },
+    emitWaveEvent: (event) => {
+      underlying.emitWaveEvent(event)
+    },
+  }
+  return {
+    sink,
+    snapshot: () => states,
+  }
+}
+
+/**
+ * Overlay the recorder's per-node state captures onto the input tree's
+ * nodes. Returns the same tree reference when no states were captured (no-op
+ * waves don't perturb downstream caller-side memoization).
+ */
+function applyStateRecorder(
+  tree: ConversationTree,
+  states: ReadonlyMap<ConversationTreeNodeId, NodeState>,
+): ConversationTree {
+  if (states.size === 0) return tree
+  return {
+    ...tree,
+    nodes: tree.nodes.map((n) => {
+      const next = states.get(n.id)
+      return next === undefined ? n : ({ ...n, state: next } as ConversationTreeNode)
+    }),
+  }
 }

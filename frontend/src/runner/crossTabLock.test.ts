@@ -50,14 +50,14 @@ async function settle(): Promise<void> {
 // ============================================================================
 
 describe('createBroadcastChannelLockManager — single instance', () => {
-  it('acquire on a fresh channel returns { acquired: true, holderTabId: null }', async () => {
+  it('acquire on a fresh channel returns { acquired: true }', async () => {
     const mgr = createBroadcastChannelLockManager({
       channelName: nextChannelName(),
       acquireTimeoutMs: 10,
     })
     try {
       const result = await mgr.acquire(treeId('t-1'))
-      expect(result).toEqual({ acquired: true, holderTabId: null })
+      expect(result).toEqual({ acquired: true })
     } finally {
       mgr.close()
     }
@@ -315,6 +315,27 @@ describe('createBroadcastChannelLockManager — close', () => {
     } finally {
       b.close()
     }
+  })
+
+  it('acquire after close throws (fail-loud over silent-lie per rubber-duck Finding J)', async () => {
+    const mgr = createBroadcastChannelLockManager({
+      channelName: nextChannelName(),
+      acquireTimeoutMs: 10,
+    })
+    mgr.close()
+    await expect(mgr.acquire(treeId('t-1'))).rejects.toThrow(/closed/i)
+  })
+
+  it('release after close is a no-op (NOT throw — release is best-effort)', () => {
+    // Release is the cleanup path; throwing here would surface inside the
+    // shim's outer finally and cascade into "the wave settled but the lock
+    // also blew up." Best-effort idempotency is the right semantic.
+    const mgr = createBroadcastChannelLockManager({
+      channelName: nextChannelName(),
+      acquireTimeoutMs: 10,
+    })
+    mgr.close()
+    expect(() => mgr.release(treeId('t-1'))).not.toThrow()
   })
 })
 
