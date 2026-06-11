@@ -93,13 +93,19 @@ class MessagePiece(BaseModel):
         """
         Emit DeprecationWarning for each deprecated kwarg explicitly passed.
 
+        Only a truthy value counts as "passed". An empty/falsy value (e.g.
+        ``labels={}``, the field default) is treated as not supplied, so callers
+        that forward ``labels=<source>.labels`` on the happy path do not trip a
+        spurious warning. This matches the post-construction assignment pattern
+        used elsewhere (``piece.labels = labels`` guarded by ``if labels:``).
+
         Returns:
             The (unchanged) input ``data`` so validation can continue.
         """
         if not isinstance(data, dict):
             return data
         for kwarg, removed_in in _DEPRECATED_KWARGS:
-            if data.get(kwarg) is not None:
+            if data.get(kwarg):
                 print_deprecation_message(
                     old_item=f"MessagePiece(..., {kwarg}=...)",
                     new_item="MessagePiece(...)",

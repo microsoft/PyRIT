@@ -1108,6 +1108,29 @@ class TestMessagePieceDeprecationWarnings:
         msgs = self._emit_deprecation_msgs()
         assert not any("labels" in str(m.message) for m in msgs)
 
+    def test_labels_empty_dict_no_warning(self):
+        """An explicit empty ``labels={}`` (the field default) must not warn.
+
+        Internal call sites forward ``labels=<source>.labels`` which is ``{}`` on
+        the happy path; this regression-guards that such forwarding stays silent.
+        """
+        msgs = self._emit_deprecation_msgs(labels={})
+        assert not any("labels" in str(m.message) for m in msgs)
+
+    def test_construct_response_from_request_default_labels_no_warning(self):
+        """``construct_response_from_request`` on a request with default labels is silent.
+
+        Reproduces the reported false positive: every response construction warned
+        because the request's default ``labels={}`` was forwarded through the
+        ``MessagePiece`` constructor.
+        """
+        request = MessagePiece(role="user", original_value="hello", conversation_id="conv-1")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            construct_response_from_request(request=request, response_text_pieces=["hi"])
+        deprecation_msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert not any("labels" in str(m.message) for m in deprecation_msgs)
+
     def test_memory_load_roundtrip_does_not_emit_deprecation_warnings(self) -> None:
         """Reconstructing a MessagePiece from PromptMemoryEntry must not emit deprecations.
 
