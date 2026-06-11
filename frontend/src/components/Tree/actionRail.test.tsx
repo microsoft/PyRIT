@@ -323,3 +323,45 @@ describe('CardFrame integration — rail does not break the selection contract',
     expect(cards).toHaveLength(2)
   })
 })
+
+// ============================================================================
+// 5. Hover-gate visibility (spec §2.2) — PR5h.4 review
+// ============================================================================
+//
+// Spec contract: rail starts hidden and lifts to opacity 1 when the
+// card is hovered OR contains a focused descendant OR carries
+// data-selected="true". jsdom does NOT fire :hover or :focus-within
+// pseudo-classes from synthetic events (visual-only effects require a
+// real browser), but attribute selectors DO match — the data-selected
+// branch is testable here; :hover and :focus-within are covered by the
+// CSS source + Playwright later.
+
+describe('ActionRail — visibility hover-gate (spec §2.2)', () => {
+  it('rail opacity is 0 by default (card not selected, not hovered)', () => {
+    // Mount via TreeCanvas so the CardFrame's hover-gate CSS applies.
+    const tree = mkTree('r', [mkRoot('r')])
+    const callbacks: ActionCallbacks = { onRefresh: jest.fn(), onBranch: jest.fn() }
+    const { container } = render(<TreeCanvas tree={tree} actionCallbacks={callbacks} />)
+    const rail = container.querySelector('[data-tree-action-rail]') as HTMLElement
+    expect(rail).not.toBeNull()
+    expect(window.getComputedStyle(rail).opacity).toBe('0')
+  })
+
+  it('rail opacity is 1 when the card frame has data-selected="true"', () => {
+    // The cards forward react-flow's `selected` to CardFrame which writes
+    // data-selected. We exercise that path by toggling the attribute on
+    // the wrapper directly — the attribute selector in nodeCards.styles
+    // picks up the visibility flip without needing to drive react-flow's
+    // selection internals.
+    const tree = mkTree('r', [mkRoot('r')])
+    const callbacks: ActionCallbacks = { onRefresh: jest.fn(), onBranch: jest.fn() }
+    const { container } = render(<TreeCanvas tree={tree} actionCallbacks={callbacks} />)
+    const card = container.querySelector(
+      '[data-tree-node-id="r"][data-selected]',
+    ) as HTMLElement
+    expect(card).not.toBeNull()
+    card.setAttribute('data-selected', 'true')
+    const rail = card.querySelector('[data-tree-action-rail]') as HTMLElement
+    expect(window.getComputedStyle(rail).opacity).toBe('1')
+  })
+})

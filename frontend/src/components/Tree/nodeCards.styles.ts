@@ -29,6 +29,13 @@ export const useNodeCardStyles = makeStyles({
     maxWidth: '320px',
     fontFamily: tokens.fontFamilyBase,
     fontSize: tokens.fontSizeBase200,
+    // Spec §2.2 hover-gate for the per-node action rail: rail starts
+    // hidden (opacity 0 in actionRail.styles.ts) and lifts to 1 when
+    // the card is hovered, contains a focused descendant (so a rail
+    // icon stays visible while focused), or carries data-selected.
+    '&:hover [data-tree-action-rail]': { opacity: 1 },
+    '&:focus-within [data-tree-action-rail]': { opacity: 1 },
+    '&[data-selected="true"] [data-tree-action-rail]': { opacity: 1 },
   },
   frameSelected: {
     // Selection visual: a brand-color outline so PR5c's selection state
