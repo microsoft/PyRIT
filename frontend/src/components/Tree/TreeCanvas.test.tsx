@@ -46,11 +46,11 @@ describe('TreeCanvas — scaffold mount', () => {
   it('renders one node card per ConversationTreeNode', () => {
     const tree = mkTree('r', [mkRoot('r'), mkUserTurn('u', 'r'), mkSend('s', 'u')])
     const { container } = render(<TreeCanvas tree={tree} />)
-    // react-flow tags each node card with `data-testid="rf__node-<id>"`; the
-    // connection-handle children also carry `data-id`, so we filter by the
-    // node-specific testid prefix to count cards only.
-    const nodeEls = container.querySelectorAll('[data-testid^="rf__node-"]')
-    const ids = Array.from(nodeEls).map((el) => el.getAttribute('data-id'))
+    // CardFrame emits `data-tree-node-id` on each card's wrapper div.
+    // This selector is under our control, not coupled to react-flow's
+    // internal testid scheme (`rf__node-*` is private API).
+    const nodeEls = container.querySelectorAll('[data-tree-node-id]')
+    const ids = Array.from(nodeEls).map((el) => el.getAttribute('data-tree-node-id'))
     expect(ids.sort()).toEqual(['r', 's', 'u'])
   })
 
@@ -68,9 +68,9 @@ describe('TreeCanvas — scaffold mount', () => {
     const tree1 = mkTree('r', [mkRoot('r'), mkUserTurn('u', 'r')])
     const tree2 = mkTree('r', [mkRoot('r'), mkUserTurn('u', 'r'), mkSend('s', 'u')])
     const { container, rerender } = render(<TreeCanvas tree={tree1} />)
-    expect(container.querySelectorAll('[data-testid^="rf__node-"]')).toHaveLength(2)
+    expect(container.querySelectorAll('[data-tree-node-id]')).toHaveLength(2)
     rerender(<TreeCanvas tree={tree2} />)
-    expect(container.querySelectorAll('[data-testid^="rf__node-"]')).toHaveLength(3)
+    expect(container.querySelectorAll('[data-tree-node-id]')).toHaveLength(3)
   })
 
   it('renders a wide tree with multiple fan-children paths', () => {
@@ -90,6 +90,6 @@ describe('TreeCanvas — scaffold mount', () => {
       mkSend('s_c', 'f'),
     ])
     const { container } = render(<TreeCanvas tree={tree} />)
-    expect(container.querySelectorAll('[data-testid^="rf__node-"]')).toHaveLength(6)
+    expect(container.querySelectorAll('[data-tree-node-id]')).toHaveLength(6)
   })
 })

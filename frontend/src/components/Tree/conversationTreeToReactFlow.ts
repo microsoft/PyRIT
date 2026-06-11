@@ -8,10 +8,9 @@
  * node components register by kind into ReactFlow's `nodeTypes` prop; PR5g
  * wraps this output with `d3-hierarchy` layout to compute final positions.
  *
- * Backed by:
- * - 02 §4.4 — orthogonal edge routing ('smoothstep' is react-flow's
- *   rounded-orthogonal preset and the standard tree-diagram choice
- * - 02 §3.1 / §3.4 — Stack predicates that read edge slotIndex
+ * Edge type 'smoothstep' = orthogonal routing (rounded corners), the
+ * tree-diagram standard. Edge data carries slotIndex so the PR5e Stack
+ * predicate + PR5f Pick/Unpick can read it directly.
  */
 
 import type { Edge, Node } from '@xyflow/react'

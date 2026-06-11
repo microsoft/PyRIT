@@ -166,7 +166,7 @@ describe('conversationTreeToReactFlow — edge mapping', () => {
     expect(fanEdges.map((e) => e.data?.slotIndex)).toEqual([0, 1, 2])
   })
 
-  it('uses smoothstep edge type per 02 §4.4 (orthogonal routing)', () => {
+  it('uses smoothstep edge type (orthogonal routing)', () => {
     const tree = mkTree('r', [mkRoot('r'), mkUserTurn('u', 'r')])
     const { edges } = conversationTreeToReactFlow(tree)
     for (const e of edges) {

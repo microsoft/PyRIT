@@ -37,6 +37,7 @@ import {
   SendCard,
   UserTurnCard,
 } from './nodeCards'
+import { conversationTreeToReactFlow } from './conversationTreeToReactFlow'
 import { treeNodeTypes } from './treeNodeTypes'
 import { TreeCanvas } from './TreeCanvas'
 import {
@@ -64,26 +65,33 @@ function renderCard(ui: React.ReactNode) {
   return render(<ReactFlowProvider>{ui}</ReactFlowProvider>)
 }
 
-// Standard NodeProps stub helpers. react-flow's NodeProps interface is
-// large; the cards only consume `data` + `selected` so we narrow the
-// stub to those fields and cast at the boundary.
-function rootPromptProps(node: RootPromptNode) {
-  return { id: node.id as string, data: { node }, selected: false } as unknown as Parameters<typeof RootPromptCard>[0]
+// Single generic stub builder. The cards only consume `id`, `data`,
+// `selected` from NodeProps; the cast at the function boundary covers
+// the fields react-flow normally passes that we don't.
+function mockNodeProps<T extends { id: string; data: unknown }>(
+  id: string,
+  data: T['data'],
+  selected = false,
+): T {
+  return { id, data, selected } as unknown as T
 }
-function importMessageProps(node: ImportMessageNode) {
-  return { id: node.id as string, data: { node }, selected: false } as unknown as Parameters<typeof ImportMessageCard>[0]
+function rootPromptProps(node: RootPromptNode, selected = false) {
+  return mockNodeProps<Parameters<typeof RootPromptCard>[0]>(node.id, { node }, selected)
 }
-function userTurnProps(node: UserTurnNode) {
-  return { id: node.id as string, data: { node }, selected: false } as unknown as Parameters<typeof UserTurnCard>[0]
+function importMessageProps(node: ImportMessageNode, selected = false) {
+  return mockNodeProps<Parameters<typeof ImportMessageCard>[0]>(node.id, { node }, selected)
 }
-function sendProps(node: SendNode) {
-  return { id: node.id as string, data: { node }, selected: false } as unknown as Parameters<typeof SendCard>[0]
+function userTurnProps(node: UserTurnNode, selected = false) {
+  return mockNodeProps<Parameters<typeof UserTurnCard>[0]>(node.id, { node }, selected)
 }
-function fanProps(node: FanNode) {
-  return { id: node.id as string, data: { node }, selected: false } as unknown as Parameters<typeof FanCard>[0]
+function sendProps(node: SendNode, selected = false) {
+  return mockNodeProps<Parameters<typeof SendCard>[0]>(node.id, { node }, selected)
 }
-function scoreProps(node: ScoreNode) {
-  return { id: node.id as string, data: { node }, selected: false } as unknown as Parameters<typeof ScoreCard>[0]
+function fanProps(node: FanNode, selected = false) {
+  return mockNodeProps<Parameters<typeof FanCard>[0]>(node.id, { node }, selected)
+}
+function scoreProps(node: ScoreNode, selected = false) {
+  return mockNodeProps<Parameters<typeof ScoreCard>[0]>(node.id, { node }, selected)
 }
 
 // ============================================================================
@@ -185,6 +193,15 @@ describe('UserTurnCard', () => {
     expect(getByText(/2 converter/i)).toBeInTheDocument()
   })
 
+  it('uses singular "converter" for a one-converter pipeline', () => {
+    const node = mkUserTurn('u', 'r', {
+      text: 't',
+      converterPipeline: [{ converterId: 'c1' }],
+    })
+    const { getByText } = renderCard(<UserTurnCard {...userTurnProps(node)} />)
+    expect(getByText(/1 converter\b/i)).toBeInTheDocument()
+  })
+
   it('does NOT render the converter chip when pipeline is empty or absent', () => {
     const node = mkUserTurn('u', 'r', { text: 't' })
     const { queryByText } = renderCard(<UserTurnCard {...userTurnProps(node)} />)
@@ -198,13 +215,16 @@ describe('UserTurnCard', () => {
     expect(container.querySelector('.react-flow__handle.source')).not.toBeNull()
   })
 
-  it('truncates long text in the card body but renders it via title attr', () => {
+  it('preserves full text in title attr for hover-discoverability when body truncates', () => {
+    // jsdom does not implement -webkit-line-clamp, so the actual visual
+    // truncation is NOT verified here (that would need a layout-running
+    // renderer like Playwright). What IS pinned: the title-attr fallback
+    // carries the full text so operators can hover-discover the rest in
+    // any environment where the body is clamped.
     const longText = 'a'.repeat(500)
     const node = mkUserTurn('u', 'r', { text: longText })
     const { getByTestId } = renderCard(<UserTurnCard {...userTurnProps(node)} />)
     const body = getByTestId('node-body')
-    // title carries the full text for hover-discoverability; visible text is
-    // truncated by the card's body styling. The cheap pin: title === full text.
     expect(body.getAttribute('title')).toBe(longText)
   })
 })
@@ -247,11 +267,25 @@ describe('SendCard', () => {
     expect(container.querySelector('.react-flow__handle.target')).not.toBeNull()
     expect(container.querySelector('.react-flow__handle.source')).not.toBeNull()
   })
-})
 
-// ============================================================================
-// FanCard
-// ============================================================================
+  it("does NOT render the error panel when state is 'failed' but lastError is null", () => {
+    // The error-panel render guard is `state === 'failed' && lastError !==
+    // null`. The null-lastError branch is the operator-deleted-mid-wave
+    // edge case (the sink's reason-omitted call path); the card should
+    // not crash or render an empty red panel. Pin by checking the
+    // errorPanel class isn't present in the DOM (the state badge does
+    // legitimately contain "failed" text, so a text-search would
+    // false-match).
+    const node = mkSend('s', 'u', undefined, { state: 'failed', lastError: null })
+    const { container } = renderCard(<SendCard {...sendProps(node)} />)
+    // The errorPanel className contains 'errorPanel' substring (makeStyles
+    // names retain the slot key in dev mode for debuggability).
+    const errorPanels = Array.from(container.querySelectorAll('div')).filter((el) =>
+      Array.from(el.classList).some((cls) => cls.includes('errorPanel')),
+    )
+    expect(errorPanels).toHaveLength(0)
+  })
+})
 
 describe('FanCard', () => {
   it('renders the axis', () => {
@@ -283,8 +317,8 @@ describe('FanCard', () => {
   })
 
   it('renders a "Pick" indicator when promotedChildSlotIndex is set', () => {
-    // Per 02 §2.4 / §3.3: a Fan with a promoted child shows the promotion
-    // explicitly so operators see the cherry-pick state at a glance.
+    // A Fan with a promoted child shows the promotion explicitly so
+    // operators see the cherry-pick state at a glance.
     const node = mkFan('f', 'u', {
       axis: 'attempt',
       variants: [
@@ -328,13 +362,15 @@ describe('ScoreCard', () => {
     expect(getByText('Score')).toBeInTheDocument()
   })
 
-  it('renders the V1.0 render-only hint (per 02 §2.2 ScoreNode rail)', () => {
-    // Per the spec, V1.0 ScoreCards are render-only; the configure-scorer
-    // affordance is V1.1. Surface this on the card so operators don't
-    // expect to click and edit.
+  it('renders a muted read-only footer', () => {
+    // ScoreNode is render-only in V1.0; the muted footer tells operators
+    // not to expect interactivity. Operator-facing copy avoids naming
+    // internal release labels (V1.0 / V1.1) — the configure-scorer
+    // tooltip (PR5c, action rail) is where the future-release detail
+    // belongs.
     const node = mkScore('sc', 's')
     const { getByText } = renderCard(<ScoreCard {...scoreProps(node)} />)
-    expect(getByText(/v1\.0|render.only|read.only|displays/i)).toBeInTheDocument()
+    expect(getByText(/read.only/i)).toBeInTheDocument()
   })
 
   it('renders both handles', () => {
@@ -386,5 +422,66 @@ describe('treeNodeTypes registry', () => {
     expect(getByText(/converter/i)).toBeInTheDocument()
     expect(getByText('Score')).toBeInTheDocument()
     expect(getByText(/safety/i)).toBeInTheDocument()
+  })
+
+  it('every kind emitted by the adapter has a registry entry (adapter ↔ registry alignment)', () => {
+    // Defense-in-depth against an adapter type-string drift (e.g., adapter
+    // changes from 'root_prompt' to 'rootPrompt' without updating the
+    // registry key). Round-trip: build a tree with every kind, run the
+    // adapter, check every result node's `type` is a registry key. Pinned
+    // as a runtime test in addition to the `satisfies` compile-time guard
+    // in treeNodeTypes.ts so a bypass via `as any` would still fail.
+    const tree = mkTree('r', [
+      mkImport('imp'),
+      mkRoot('r'),
+      mkUserTurn('u', 'r'),
+      mkSend('s', 'u'),
+      mkFan('f', 's'),
+      mkScore('sc', 'f'),
+    ])
+    const { nodes } = conversationTreeToReactFlow(tree)
+    const registryKeys = new Set(Object.keys(treeNodeTypes))
+    for (const node of nodes) {
+      expect(registryKeys.has(node.type as string)).toBe(true)
+    }
+  })
+
+  it('cards threads the `selected` prop through to data-selected on the wrapper', () => {
+    // PR5c's action rail will key visibility off `selected || hover`. The
+    // card prop is wired today; the visual (frameSelected class) is
+    // applied when selected=true. Test selects via the prop on an isolated
+    // card mount (TreeCanvas selection requires user interaction the
+    // jsdom test cannot drive without a separate playwright step).
+    const node = mkRoot('r')
+    const { container } = renderCard(
+      <RootPromptCard {...rootPromptProps(node, true)} />,
+    )
+    const card = container.querySelector('[data-tree-node-id]')
+    expect(card).not.toBeNull()
+    expect(card?.getAttribute('data-selected')).toBe('true')
+  })
+
+  it('cards thread `selected=false` correctly (no selection visual leak)', () => {
+    const node = mkRoot('r')
+    const { container } = renderCard(
+      <RootPromptCard {...rootPromptProps(node, false)} />,
+    )
+    const card = container.querySelector('[data-tree-node-id]')
+    expect(card?.getAttribute('data-selected')).toBe('false')
+  })
+
+  it('cards default to unselected when `selected` is undefined (react-flow optional prop)', () => {
+    // react-flow's NodeProps types `selected: boolean | undefined`. Cards
+    // default to `false` via `?? false` at destructuring so a missing
+    // prop never produces `data-selected="undefined"` on the wrapper.
+    const node = mkRoot('r')
+    // Build props WITHOUT `selected` so the `?? false` fallback fires.
+    const propsWithoutSelected = mockNodeProps<Parameters<typeof RootPromptCard>[0]>(
+      'r',
+      { node },
+    )
+    const { container } = renderCard(<RootPromptCard {...propsWithoutSelected} />)
+    const card = container.querySelector('[data-tree-node-id]')
+    expect(card?.getAttribute('data-selected')).toBe('false')
   })
 })

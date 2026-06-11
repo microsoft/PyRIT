@@ -2,19 +2,20 @@
 // Licensed under the MIT license.
 
 /**
- * Per-kind node card components + registry for the react-flow canvas.
+ * Per-kind node card components for the react-flow canvas.
  *
  * Each card is the visual representation of one ConversationTreeNode kind.
  * Cards are read-only display in PR5b — the action rail (PR5c), edge `+`
  * chip (PR5d), Stack rendering (PR5e), Pick/Unpick (PR5f), and layout
  * (PR5g) land separately.
  *
- * Backed by:
- * - 02 §2 (per-kind card content)
- * - 02 §2.3 (state badge)
- * - 02 §3.1 (Fan-Children Stack — only the Pick indicator lands here)
+ * Cards thread the `selected` prop react-flow passes to every node
+ * component so PR5c's action-rail visibility can read it; selection
+ * visual (brand-color outline) lives in nodeCards.styles.ts and is
+ * applied on every card today via the shared CardFrame.
  */
 
+import { mergeClasses } from '@fluentui/react-components'
 import { Handle, Position } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
 
@@ -29,6 +30,7 @@ import type {
   UserTurnNode,
 } from '../../runner/treeTypes'
 import type { TreeFlowNode } from './conversationTreeToReactFlow'
+import { STATE_BADGE_TOKENS, useNodeCardStyles } from './nodeCards.styles'
 
 // ============================================================================
 // Shared building blocks
@@ -38,60 +40,41 @@ interface CardFrameProps {
   kindLabel: string
   state: NodeState
   nodeId: ConversationTreeNodeId
+  /**
+   * Selection state from react-flow's NodeProps. Optional because
+   * react-flow types it `boolean | undefined`; CardFrame is the one
+   * place that defaults to `false` so cards don't repeat the fallback.
+   */
+  selected?: boolean
   showTargetHandle?: boolean // top (parent connection)
   showSourceHandle?: boolean // bottom (child connection)
   children: React.ReactNode
-}
-
-const STATE_COLORS: Record<NodeState, { background: string; foreground: string }> = {
-  draft: { background: '#3a3a3a', foreground: '#e0e0e0' },
-  clean: { background: '#1e3a1e', foreground: '#a0e0a0' },
-  edited: { background: '#3a3a1e', foreground: '#e0d080' },
-  stale: { background: '#3a2a1e', foreground: '#e0b080' },
-  running: { background: '#1e2a3a', foreground: '#80b0e0' },
-  failed: { background: '#3a1e1e', foreground: '#e08080' },
-  cancelled: { background: '#2a2a2a', foreground: '#a0a0a0' },
 }
 
 function CardFrame({
   kindLabel,
   state,
   nodeId,
+  selected = false,
   showTargetHandle = true,
   showSourceHandle = true,
   children,
 }: CardFrameProps) {
-  const stateStyle = STATE_COLORS[state]
+  const styles = useNodeCardStyles()
+  const stateTokens = STATE_BADGE_TOKENS[state]
   return (
     <div
-      style={{
-        background: '#1c1c1c',
-        color: '#e0e0e0',
-        border: '1px solid #3a3a3a',
-        borderRadius: 6,
-        padding: '8px 12px',
-        minWidth: 220,
-        maxWidth: 320,
-        fontFamily: 'system-ui, sans-serif',
-        fontSize: 12,
-      }}
+      data-tree-node-id={nodeId}
+      data-selected={selected ? 'true' : 'false'}
+      className={mergeClasses(styles.frame, selected && styles.frameSelected)}
     >
       {showTargetHandle && <Handle type="target" position={Position.Top} />}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-        <span style={{ fontWeight: 600, fontSize: 11, opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-          {kindLabel}
-        </span>
+      <div className={styles.header}>
+        <span className={styles.kindLabel}>{kindLabel}</span>
         <span
           data-testid={`node-state-${nodeId}`}
-          style={{
-            background: stateStyle.background,
-            color: stateStyle.foreground,
-            padding: '1px 6px',
-            borderRadius: 3,
-            fontSize: 10,
-            fontWeight: 500,
-            textTransform: 'lowercase',
-          }}
+          className={styles.stateBadge}
+          style={{ background: stateTokens.background, color: stateTokens.foreground }}
         >
           {state}
         </span>
@@ -102,36 +85,21 @@ function CardFrame({
   )
 }
 
-interface BodyProps {
-  text: string
-  maxLines?: number
-}
-
-function CardBody({ text, maxLines = 4 }: BodyProps) {
+function CardBody({ text }: { text: string }) {
+  const styles = useNodeCardStyles()
   return (
-    <div
-      data-testid="node-body"
-      title={text}
-      style={{
-        display: '-webkit-box',
-        WebkitLineClamp: maxLines,
-        WebkitBoxOrient: 'vertical',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'pre-wrap',
-        lineHeight: 1.35,
-      }}
-    >
+    <div data-testid="node-body" title={text} className={styles.body}>
       {text}
     </div>
   )
 }
 
 function MetaRow({ label, value }: { label: string; value: string }) {
+  const styles = useNodeCardStyles()
   return (
-    <div style={{ display: 'flex', gap: 6, marginTop: 4, fontSize: 11, opacity: 0.85 }}>
-      <span style={{ opacity: 0.6 }}>{label}:</span>
-      <span style={{ fontFamily: 'monospace' }}>{value}</span>
+    <div className={styles.metaRow}>
+      {label !== '' && <span className={styles.metaLabel}>{label}:</span>}
+      <span className={styles.metaValue}>{value}</span>
     </div>
   )
 }
@@ -142,10 +110,16 @@ function MetaRow({ label, value }: { label: string; value: string }) {
 
 type RootPromptProps = NodeProps<Extract<TreeFlowNode, { type: 'root_prompt' }>>
 
-export function RootPromptCard({ data }: RootPromptProps) {
+export function RootPromptCard({ data, selected }: RootPromptProps) {
   const node: RootPromptNode = data.node
   return (
-    <CardFrame kindLabel="Root prompt" state={node.state} nodeId={node.id} showTargetHandle={false}>
+    <CardFrame
+      kindLabel="Root prompt"
+      state={node.state}
+      nodeId={node.id}
+      selected={selected}
+      showTargetHandle={false}
+    >
       <CardBody text={node.params.text} />
       <MetaRow label="target" value={node.params.targetRegistryName} />
     </CardFrame>
@@ -158,10 +132,16 @@ export function RootPromptCard({ data }: RootPromptProps) {
 
 type ImportMessageProps = NodeProps<Extract<TreeFlowNode, { type: 'import_message' }>>
 
-export function ImportMessageCard({ data }: ImportMessageProps) {
+export function ImportMessageCard({ data, selected }: ImportMessageProps) {
   const node: ImportMessageNode = data.node
   return (
-    <CardFrame kindLabel="Imported message" state={node.state} nodeId={node.id} showTargetHandle={false}>
+    <CardFrame
+      kindLabel="Imported message"
+      state={node.state}
+      nodeId={node.id}
+      selected={selected}
+      showTargetHandle={false}
+    >
       <MetaRow label="source" value={node.params.sourceConversationId} />
       <MetaRow label="cutoff" value={String(node.params.cutoffIndex)} />
     </CardFrame>
@@ -174,11 +154,16 @@ export function ImportMessageCard({ data }: ImportMessageProps) {
 
 type UserTurnProps = NodeProps<Extract<TreeFlowNode, { type: 'user_turn' }>>
 
-export function UserTurnCard({ data }: UserTurnProps) {
+export function UserTurnCard({ data, selected }: UserTurnProps) {
   const node: UserTurnNode = data.node
   const converters = node.params.converterPipeline ?? []
   return (
-    <CardFrame kindLabel="User turn" state={node.state} nodeId={node.id}>
+    <CardFrame
+      kindLabel="User turn"
+      state={node.state}
+      nodeId={node.id}
+      selected={selected}
+    >
       <CardBody text={node.params.text} />
       <MetaRow label="role" value={node.params.role} />
       {converters.length > 0 && (
@@ -194,26 +179,21 @@ export function UserTurnCard({ data }: UserTurnProps) {
 
 type SendProps = NodeProps<Extract<TreeFlowNode, { type: 'send' }>>
 
-export function SendCard({ data }: SendProps) {
+export function SendCard({ data, selected }: SendProps) {
   const node: SendNode = data.node
+  const styles = useNodeCardStyles()
   return (
-    <CardFrame kindLabel="Send" state={node.state} nodeId={node.id}>
+    <CardFrame
+      kindLabel="Send"
+      state={node.state}
+      nodeId={node.id}
+      selected={selected}
+    >
       {node.params.targetRegistryName !== undefined && (
         <MetaRow label="target" value={node.params.targetRegistryName} />
       )}
       {node.state === 'failed' && node.lastError !== null && (
-        <div
-          style={{
-            marginTop: 6,
-            padding: '4px 6px',
-            background: '#3a1e1e',
-            color: '#e08080',
-            borderRadius: 3,
-            fontSize: 11,
-          }}
-        >
-          {node.lastError.message}
-        </div>
+        <div className={styles.errorPanel}>{node.lastError.message}</div>
       )}
     </CardFrame>
   )
@@ -225,11 +205,16 @@ export function SendCard({ data }: SendProps) {
 
 type FanProps = NodeProps<Extract<TreeFlowNode, { type: 'fan' }>>
 
-export function FanCard({ data }: FanProps) {
+export function FanCard({ data, selected }: FanProps) {
   const node: FanNode = data.node
   const n = node.params.variants.length
   return (
-    <CardFrame kindLabel="Fan" state={node.state} nodeId={node.id}>
+    <CardFrame
+      kindLabel="Fan"
+      state={node.state}
+      nodeId={node.id}
+      selected={selected}
+    >
       <MetaRow label="axis" value={node.params.axis} />
       <MetaRow label="" value={`${n} variant${n === 1 ? '' : 's'}`} />
       {node.params.promotedChildSlotIndex !== null && (
@@ -245,14 +230,18 @@ export function FanCard({ data }: FanProps) {
 
 type ScoreProps = NodeProps<Extract<TreeFlowNode, { type: 'score' }>>
 
-export function ScoreCard({ data }: ScoreProps) {
+export function ScoreCard({ data, selected }: ScoreProps) {
   const node: ScoreNode = data.node
+  const styles = useNodeCardStyles()
   return (
-    <CardFrame kindLabel="Score" state={node.state} nodeId={node.id}>
+    <CardFrame
+      kindLabel="Score"
+      state={node.state}
+      nodeId={node.id}
+      selected={selected}
+    >
       <MetaRow label="scorer" value={node.params.scorerType} />
-      <div style={{ marginTop: 4, fontSize: 10, opacity: 0.55, fontStyle: 'italic' }}>
-        V1.0: displays scores attached to upstream pieces (configuration is V1.1).
-      </div>
+      <div className={styles.mutedFooter}>Read-only display</div>
     </CardFrame>
   )
 }

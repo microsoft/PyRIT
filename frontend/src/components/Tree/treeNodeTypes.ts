@@ -8,8 +8,15 @@
  * Lives in its own module so eslint's react-refresh/only-export-components
  * rule stays happy (mixing component exports with non-component exports
  * defeats HMR for the components).
+ *
+ * The `satisfies Record<ConversationTreeNodeKind, ...>` clause makes
+ * registry completeness a compile-time guarantee: adding a new kind to
+ * the ConversationTreeNodeKind union without a registry entry fails tsc.
  */
 
+import type { ComponentType } from 'react'
+
+import type { ConversationTreeNodeKind } from '../../runner/treeTypes'
 import {
   FanCard,
   ImportMessageCard,
@@ -26,4 +33,4 @@ export const treeNodeTypes = {
   send: SendCard,
   fan: FanCard,
   score: ScoreCard,
-} as const
+} as const satisfies Record<ConversationTreeNodeKind, ComponentType<never>>
