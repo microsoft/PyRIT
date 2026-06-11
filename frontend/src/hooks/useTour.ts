@@ -123,7 +123,7 @@ export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolea
     } else {
       setStepIndex(nextIndex)
     }
-  }, [onNavigate, currentView])
+  }, [onNavigate, currentView, endTour])
 
   // Wrap TourTooltip so it receives isDarkMode via closure.
   // Uses createElement instead of JSX because this is a .ts file (not .tsx).
