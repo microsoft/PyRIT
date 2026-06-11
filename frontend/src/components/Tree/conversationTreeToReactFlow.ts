@@ -4,18 +4,19 @@
 /**
  * Adapter: ConversationTree → react-flow Node[] + Edge[].
  *
- * Pure function, no react-flow runtime dependency (only types). The PR5b
- * node components register by kind into ReactFlow's `nodeTypes` prop; PR5g
- * wraps this output with `d3-hierarchy` layout to compute final positions.
- *
- * Edge type 'smoothstep' = orthogonal routing (rounded corners), the
- * tree-diagram standard. Edge data carries slotIndex so the PR5e Stack
- * predicate + PR5f Pick/Unpick can read it directly.
+ * Pure shape mapping: 1:1 node + edge translation, with per-edge
+ * `parentKind` and per-fan-child `fanChildInfo` attached. No render-time
+ * policy — collapse filtering and `stackedSummary` attachment live in the
+ * companion `applyStackCollapse` pass so the adapter output stays
+ * reference-stable across UI-state changes that don't alter shape (Pick,
+ * wave-state flips). The TreeCanvas pipeline runs `adapter → collapse →
+ * layout`; layout memoizes on the adapter output, which lets a 60-leaf
+ * wave's per-leaf state flips re-render cards without re-running layout.
  */
 
 import type { Edge, Node } from '@xyflow/react'
 
-import { computeStackAggregate, type StackAggregate } from './fanStack'
+import type { StackAggregate } from './fanStack'
 import type {
   ConversationTree,
   ConversationTreeId,
@@ -79,21 +80,6 @@ export interface TreeFlowAdapterResult {
   edges: TreeFlowEdge[]
 }
 
-export interface TreeFlowAdapterOptions {
-  /**
-   * Set of fan-node ids whose children render as a collapsed Fan-Children
-   * Stack. When a fan is in this set, the adapter:
-   *   - drops the fan's descendant subtrees from the result (the
-   *     children + everything below)
-   *   - attaches a `stackedSummary: StackAggregate` to the fan's `data`
-   *     so the FanCard renders the stack body in place of the per-child
-   *     cards.
-   * When omitted or empty, the adapter behaves exactly as in PR5d
-   * (1:1 node + edge mapping, no stack collapse).
-   */
-  collapsedFanIds?: ReadonlySet<ConversationTreeNodeId>
-}
-
 // ============================================================================
 // Adapter
 // ============================================================================
@@ -111,9 +97,7 @@ const PLACEHOLDER_HEIGHT = 80
 
 export function conversationTreeToReactFlow(
   tree: ConversationTree,
-  options: TreeFlowAdapterOptions = {},
 ): TreeFlowAdapterResult {
-  const collapsedFanIds = options.collapsedFanIds ?? EMPTY_SET
   const nodeKindById = new Map<string, ConversationTreeNodeKind>()
   for (const n of tree.nodes) nodeKindById.set(n.id, n.kind)
 
@@ -135,28 +119,12 @@ export function conversationTreeToReactFlow(
     fanChildIndex.set(edge.childId, { parentFan: parent, slotIndex: edge.slotIndex })
   }
 
-  // Compute the set of node ids hidden by stack collapse: every
-  // descendant (recursive) of every collapsed fan. The fan node itself
-  // stays visible; only its subtree below disappears.
-  const hiddenNodeIds = collapsedFanIds.size === 0
-    ? EMPTY_SET
-    : collectHiddenDescendants(tree, collapsedFanIds)
-
-  const visibleNodes = tree.nodes.filter((n) => !hiddenNodeIds.has(n.id))
-  const visibleEdges = tree.edges.filter(
-    (e) => !hiddenNodeIds.has(e.parentId) && !hiddenNodeIds.has(e.childId),
-  )
-
   return {
     treeId: tree.id,
-    nodes: visibleNodes.map((n) =>
-      toFlowNode(n, tree, collapsedFanIds, fanChildIndex),
-    ),
-    edges: visibleEdges.map((e) => toFlowEdge(e, nodeKindById)),
+    nodes: tree.nodes.map((n) => toFlowNode(n, fanChildIndex)),
+    edges: tree.edges.map((e) => toFlowEdge(e, nodeKindById)),
   }
 }
-
-const EMPTY_SET: ReadonlySet<ConversationTreeNodeId> = new Set()
 
 // ============================================================================
 // Private mappers
@@ -164,8 +132,6 @@ const EMPTY_SET: ReadonlySet<ConversationTreeNodeId> = new Set()
 
 function toFlowNode(
   node: ConversationTreeNode,
-  tree: ConversationTree,
-  collapsedFanIds: ReadonlySet<ConversationTreeNodeId>,
   fanChildIndex: ReadonlyMap<
     ConversationTreeNodeId,
     { parentFan: FanNode; slotIndex: number }
@@ -207,17 +173,12 @@ function toFlowNode(
         type: 'send',
         data: { node: node as SendNode, fanChildInfo },
       }
-    case 'fan': {
-      const fanData: {
-        node: FanNode
-        fanChildInfo?: FanChildInfo
-        stackedSummary?: StackAggregate
-      } = { node: node as FanNode, fanChildInfo }
-      if (collapsedFanIds.has(node.id)) {
-        fanData.stackedSummary = computeStackAggregate(tree, node.id)
+    case 'fan':
+      return {
+        ...common,
+        type: 'fan',
+        data: { node: node as FanNode, fanChildInfo },
       }
-      return { ...common, type: 'fan', data: fanData }
-    }
     case 'score':
       return {
         ...common,
@@ -251,39 +212,6 @@ function toFlowEdge(
     type: 'insert',
     data: { slotIndex: edge.slotIndex, parentKind },
   }
-}
-
-/**
- * Walk every collapsed fan's subtree and collect all descendant ids
- * (the fan itself stays visible — only the subtree below disappears).
- * Returns an empty set on empty input so the caller can skip the
- * filter entirely.
- */
-function collectHiddenDescendants(
-  tree: ConversationTree,
-  collapsedFanIds: ReadonlySet<ConversationTreeNodeId>,
-): ReadonlySet<ConversationTreeNodeId> {
-  const childrenOf = new Map<ConversationTreeNodeId, ConversationTreeNodeId[]>()
-  for (const n of tree.nodes) {
-    if (n.parentId === null) continue
-    const siblings = childrenOf.get(n.parentId)
-    if (siblings === undefined) childrenOf.set(n.parentId, [n.id])
-    else siblings.push(n.id)
-  }
-  const hidden = new Set<ConversationTreeNodeId>()
-  const queue: ConversationTreeNodeId[] = []
-  for (const fanId of collapsedFanIds) {
-    const seed = childrenOf.get(fanId)
-    if (seed !== undefined) queue.push(...seed)
-  }
-  while (queue.length > 0) {
-    const id = queue.shift() as ConversationTreeNodeId
-    if (hidden.has(id)) continue
-    hidden.add(id)
-    const grand = childrenOf.get(id)
-    if (grand !== undefined) queue.push(...grand)
-  }
-  return hidden
 }
 
 /**

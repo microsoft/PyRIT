@@ -93,3 +93,67 @@ describe('TreeCanvas — scaffold mount', () => {
     expect(container.querySelectorAll('[data-tree-node-id]')).toHaveLength(6)
   })
 })
+
+// ============================================================================
+// Layout memoization — PR5h.1
+// ============================================================================
+//
+// The reviewer's bundle B+D: layout must memoize on shape (node ids + edge
+// ids), NOT on the adapter output reference. A PR6-era wave that flips
+// `node.state` from `running` → `clean` creates new tree refs but does not
+// alter shape; layout must NOT re-run, otherwise a 60-leaf wave re-layouts
+// 60 times.
+
+import * as layoutModule from './layoutTree'
+
+describe('TreeCanvas — layout memoization (shape-key cache)', () => {
+  beforeEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  it('layoutTree runs once across multiple state-only re-renders (shape unchanged)', () => {
+    const layoutSpy = jest.spyOn(layoutModule, 'layoutTree')
+    const tree1 = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r'),
+      mkSend('s', 'u', undefined, { state: 'clean' }),
+    ])
+    const { rerender } = render(<TreeCanvas tree={tree1} />)
+    const callsAfterFirstRender = layoutSpy.mock.calls.length
+    expect(callsAfterFirstRender).toBeGreaterThanOrEqual(1)
+
+    // Simulate a state flip: same shape, new tree ref, only the Send's
+    // state changes (clean → running). The cache should return the
+    // previous positions and NOT call layoutTree again.
+    const tree2 = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r'),
+      mkSend('s', 'u', undefined, { state: 'running' }),
+    ], { id: tree1.id })
+    rerender(<TreeCanvas tree={tree2} />)
+    const tree3 = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r'),
+      mkSend('s', 'u', undefined, { state: 'clean' }),
+    ], { id: tree1.id })
+    rerender(<TreeCanvas tree={tree3} />)
+
+    expect(layoutSpy.mock.calls.length).toBe(callsAfterFirstRender)
+  })
+
+  it('layoutTree re-runs when shape changes (a node is added)', () => {
+    const layoutSpy = jest.spyOn(layoutModule, 'layoutTree')
+    const tree1 = mkTree('r', [mkRoot('r'), mkUserTurn('u', 'r')])
+    const { rerender } = render(<TreeCanvas tree={tree1} />)
+    const callsAfterFirstRender = layoutSpy.mock.calls.length
+
+    const tree2 = mkTree(
+      'r',
+      [mkRoot('r'), mkUserTurn('u', 'r'), mkSend('s', 'u')],
+      { id: tree1.id },
+    )
+    rerender(<TreeCanvas tree={tree2} />)
+
+    expect(layoutSpy.mock.calls.length).toBeGreaterThan(callsAfterFirstRender)
+  })
+})

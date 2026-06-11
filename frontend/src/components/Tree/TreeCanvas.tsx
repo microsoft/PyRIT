@@ -4,29 +4,13 @@
 /**
  * TreeCanvas — react-flow scaffold for a single ConversationTree.
  *
- * Wraps `<ReactFlow />` with the adapter's output. Per-node components
- * register in PR5b's `nodeTypes` prop; layout (PR5g) wraps this with a
- * d3-hierarchy positioning pass. Interactivity (action rail, edge `+`
- * chip) lands in PR5b-d.
- *
- * Until PR5b registers concrete node components, react-flow renders each
- * domain node with its default node card (showing the node id). This is
- * enough to verify the scaffold mounts.
- */
-
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
-
-/**
- * TreeCanvas — react-flow scaffold for a single ConversationTree.
- *
- * Wraps `<ReactFlow />` with the adapter's output. Per-node components
- * register in PR5b's `nodeTypes` prop; layout (PR5g) wraps this with a
- * d3-hierarchy positioning pass. Per-node action callbacks (PR5c) ride
- * through the ActionCallbacksContext so cards opt in to rail render
- * without the adapter needing to know about them. PR5e adds the Fan-
- * Children Stack collapse state (per-canvas, seeded from
- * `defaultCollapsedFanIds`) provided via StackCollapseContext.
+ * Pipeline: `conversationTreeToReactFlow(tree)` (pure shape) →
+ * `applyStackCollapse(shape, tree, collapsedFanIds)` (filter +
+ * `stackedSummary` decoration) → `useShapeMemoizedLayout(...)` (cached
+ * Buchheim-Walker layout). Layout is keyed on a derived shape-key so
+ * UI-state changes that don't alter shape (Pick clicks, wave-state
+ * flips) re-render cards without re-running layout. Per-node action
+ * callbacks (PR5c) ride through the ActionCallbacksContext.
  */
 
 import { useCallback, useMemo, useState } from 'react'
@@ -35,9 +19,14 @@ import '@xyflow/react/dist/style.css'
 
 import type { ActionCallbacks } from './actionRail'
 import { ActionCallbacksContext } from './actionCallbacksContext'
-import { conversationTreeToReactFlow } from './conversationTreeToReactFlow'
+import { applyStackCollapse } from './applyStackCollapse'
+import {
+  conversationTreeToReactFlow,
+  type TreeFlowEdge,
+  type TreeFlowNode,
+} from './conversationTreeToReactFlow'
 import { defaultCollapsedFanIds } from './fanStack'
-import { layoutTree } from './layoutTree'
+import { layoutTree, type LayoutNode } from './layoutTree'
 import {
   StackCollapseContext,
   type StackCollapseValue,
@@ -62,18 +51,14 @@ export interface TreeCanvasProps {
 }
 
 export function TreeCanvas({ tree, actionCallbacks }: TreeCanvasProps) {
-  // PR5e: per-canvas collapse state for the Fan-Children Stack. Seeded
-  // from defaultCollapsedFanIds the first time a particular tree id
-  // mounts; toggling persists for the canvas's lifetime. Re-keyed on
-  // tree.id so a swap to a different tree restarts with that tree's
-  // default-collapsed set (not carried over from the prior tree).
+  // Per-canvas collapse state for the Fan-Children Stack. Seeded from
+  // defaultCollapsedFanIds the first time a particular tree id mounts;
+  // toggling persists for the canvas's lifetime. Re-keyed on tree.id so
+  // a swap to a different tree restarts with that tree's default set
+  // (not carried over from the prior tree).
   const [collapsedFanIds, setCollapsedFanIds] = useState<Set<ConversationTreeNodeId>>(
     () => defaultCollapsedFanIds(tree),
   )
-  // When the operator swaps to a different tree, reseed the collapse set.
-  // The previous canvas's collapse decisions don't apply (different node
-  // ids). We watch tree.id rather than the tree reference because the
-  // runner mutates trees in place during waves.
   const [lastTreeId, setLastTreeId] = useState<ConversationTreeId>(tree.id)
   if (lastTreeId !== tree.id) {
     setLastTreeId(tree.id)
@@ -94,32 +79,41 @@ export function TreeCanvas({ tree, actionCallbacks }: TreeCanvasProps) {
     [collapsedFanIds, toggleStack],
   )
 
-  // Re-adapt when tree changes OR when the collapse set changes (a
-  // toggle hides/shows nodes). React-flow's reconciler keys on node id
-  // and the adapter guarantees stable ids.
-  const { treeId, nodes: rawNodes, edges } = useMemo(
-    () => conversationTreeToReactFlow(tree, { collapsedFanIds }),
-    [tree, collapsedFanIds],
+  // Shape pass: pure 1:1 mapping. Recomputes on every tree ref change
+  // (state flips create new tree refs), but the work is cheap O(n) and
+  // we need fresh `data.node` references for cards to re-render.
+  const shape = useMemo(() => conversationTreeToReactFlow(tree), [tree])
+
+  // Decoration pass: filter collapsed-fan descendants + attach
+  // `stackedSummary` (computed from current tree state).
+  const decorated = useMemo(
+    () => applyStackCollapse(shape, tree, collapsedFanIds),
+    [shape, tree, collapsedFanIds],
   )
 
-  // Buchheim-Walker layout via d3-hierarchy (PR5g). Override the
-  // adapter's placeholder (0,0) positions with computed coordinates so
-  // the tree renders top-to-bottom without manual zoom. Re-runs only
-  // when nodes/edges change (memoized on the adapter output), which
-  // happens on tree shape changes + stack-collapse toggles but NOT on
-  // selection or callback-prop changes.
-  const nodes = useMemo(() => {
-    const positions = layoutTree(rawNodes, edges)
-    return rawNodes.map((n) => {
-      const p = positions.get(n.id)
-      return p === undefined ? n : { ...n, position: { x: p.x, y: p.y } }
-    })
-  }, [rawNodes, edges])
+  // Layout: memoized on a shape-key (node ids + edge ids) so state-only
+  // changes (Pick clicks, wave-state flips) don't force a re-layout.
+  // The reviewer's bundle B+D: split adapter from collapse, key layout
+  // on shape rather than reference, so PR6 wave-state churn doesn't
+  // re-layout per leaf.
+  const positions = useShapeMemoizedLayout(decorated.nodes, decorated.edges)
+
+  // Apply positions onto each node. New node refs let react-flow's
+  // reconciler detect changes; positions are the cached map identity,
+  // so node `position` objects are stable when layout didn't re-run.
+  const nodes = useMemo(
+    () =>
+      decorated.nodes.map((n) => {
+        const p = positions.get(n.id)
+        return p === undefined ? n : { ...n, position: { x: p.x, y: p.y } }
+      }),
+    [decorated.nodes, positions],
+  )
 
   return (
     <div
       data-testid="tree-canvas"
-      data-tree-id={treeId}
+      data-tree-id={decorated.treeId}
       style={{ width: '100%', height: '100%' }}
     >
       <ActionCallbacksContext.Provider value={actionCallbacks ?? null}>
@@ -127,7 +121,7 @@ export function TreeCanvas({ tree, actionCallbacks }: TreeCanvasProps) {
           <ReactFlowProvider>
             <ReactFlow
               nodes={nodes}
-              edges={edges}
+              edges={decorated.edges}
               nodeTypes={treeNodeTypes}
               edgeTypes={treeEdgeTypes}
               fitView
@@ -136,5 +130,29 @@ export function TreeCanvas({ tree, actionCallbacks }: TreeCanvasProps) {
         </StackCollapseContext.Provider>
       </ActionCallbacksContext.Provider>
     </div>
+  )
+}
+
+// Layout cache keyed on a derived shape-key string. Returns the same
+// `positions` Map reference across renders where the shape (node ids +
+// edge ids) is unchanged — even when the input arrays are new refs.
+// useMemo keyed on the shape-key is enough: React's cache may be
+// discarded under memory pressure (rare in practice), so a 60-leaf
+// wave whose layout cache is dropped just re-runs d3-hierarchy once
+// per render until the next stable frame. Layout is sub-ms; the perf
+// floor is acceptable.
+function useShapeMemoizedLayout(
+  nodes: ReadonlyArray<TreeFlowNode>,
+  edges: ReadonlyArray<TreeFlowEdge>,
+): Map<string, LayoutNode> {
+  const shapeKey = useMemo(
+    () =>
+      `${nodes.length}:${nodes.map((n) => n.id).join(',')}|${edges.length}:${edges.map((e) => e.id).join(',')}`,
+    [nodes, edges],
+  )
+  return useMemo(
+    () => layoutTree(nodes, edges),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [shapeKey],
   )
 }

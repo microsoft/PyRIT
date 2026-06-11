@@ -27,6 +27,7 @@
  */
 
 import { layoutTree, type LayoutNode } from './layoutTree'
+import { applyStackCollapse } from './applyStackCollapse'
 import { conversationTreeToReactFlow } from './conversationTreeToReactFlow'
 import {
   mkFan,
@@ -63,9 +64,9 @@ describe('layoutTree — coverage', () => {
     }
   })
 
-  it('positions only the visible subset when adapter has filtered collapsed-fan children', () => {
-    // Collapsed fan: adapter filters s_a, s_b, s_c. Layout should NOT
-    // try to position them (they're not in the input).
+  it('positions only the visible subset when collapse has filtered fan children', () => {
+    // Collapsed fan: applyStackCollapse drops s_a, s_b, s_c. Layout
+    // should NOT try to position them (they're not in the input).
     const tree = mkTree('r', [
       mkRoot('r'),
       mkUserTurn('u', 'r'),
@@ -81,9 +82,8 @@ describe('layoutTree — coverage', () => {
       mkSend('s_b', 'f'),
       mkSend('s_c', 'f'),
     ])
-    const { nodes, edges } = conversationTreeToReactFlow(tree, {
-      collapsedFanIds: new Set([nodeId('f')]),
-    })
+    const shape = conversationTreeToReactFlow(tree)
+    const { nodes, edges } = applyStackCollapse(shape, tree, new Set([nodeId('f')]))
     const layout = layoutTree(nodes, edges)
     expect(layout.size).toBe(3) // r, u, f only
     expect(layout.has('s_a')).toBe(false)
