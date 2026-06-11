@@ -184,28 +184,21 @@ describe('UserTurnCard', () => {
     expect(getByText(/simulated_assistant/i)).toBeInTheDocument()
   })
 
-  it('renders a converter-count chip when params.converterPipeline is non-empty', () => {
+  it('renders one chip per converter when params.converterPipeline is non-empty', () => {
     const node = mkUserTurn('u', 'r', {
       text: 't',
       converterPipeline: [{ converterId: 'c1' }, { converterId: 'c2' }],
     })
-    const { getByText } = renderCard(<UserTurnCard {...userTurnProps(node)} />)
-    expect(getByText(/2 converter/i)).toBeInTheDocument()
+    const { container } = renderCard(<UserTurnCard {...userTurnProps(node)} />)
+    const chips = container.querySelectorAll('[data-testid^="converter-chip-"]')
+    expect(chips).toHaveLength(2)
   })
 
-  it('uses singular "converter" for a one-converter pipeline', () => {
-    const node = mkUserTurn('u', 'r', {
-      text: 't',
-      converterPipeline: [{ converterId: 'c1' }],
-    })
-    const { getByText } = renderCard(<UserTurnCard {...userTurnProps(node)} />)
-    expect(getByText(/1 converter\b/i)).toBeInTheDocument()
-  })
-
-  it('does NOT render the converter chip when pipeline is empty or absent', () => {
+  it('does NOT render any converter chip when pipeline is empty or absent', () => {
     const node = mkUserTurn('u', 'r', { text: 't' })
-    const { queryByText } = renderCard(<UserTurnCard {...userTurnProps(node)} />)
-    expect(queryByText(/converter/i)).toBeNull()
+    const { container } = renderCard(<UserTurnCard {...userTurnProps(node)} />)
+    const chips = container.querySelectorAll('[data-testid^="converter-chip-"]')
+    expect(chips).toHaveLength(0)
   })
 
   it('renders both target (top) and source (bottom) handles', () => {

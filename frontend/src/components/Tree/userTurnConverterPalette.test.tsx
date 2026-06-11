@@ -158,3 +158,138 @@ describe('UserTurnCard — ⚡ Converter palette (spec §2.2)', () => {
     ])
   })
 })
+
+// ============================================================================
+// Per-converter remove chips (PR5h.10 review)
+// ============================================================================
+//
+// Spec §2.2 — palette adds; remove is operator-essential per PR5h reviewer
+// Finding F. Without it, an accidentally-added converter requires deleting
+// the entire UserTurn. Per-converter chip with X under the body.
+
+describe('UserTurnCard — per-converter remove chips', () => {
+  it('renders one chip per converter in the pipeline', () => {
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r', {
+        converterPipeline: [
+          { converterId: 'base64' },
+          { converterId: 'rot13' },
+          { converterId: 'leet' },
+        ],
+      }),
+    ])
+    const callbacks: ActionCallbacks = { onSetUserTurnConverterPipeline: jest.fn() }
+    const { container } = render(
+      <TreeCanvas
+        tree={tree}
+        actionCallbacks={callbacks}
+        availableConverters={MOCK_CONVERTERS}
+      />,
+    )
+    const card = findUserTurnCard(container, 'u')
+    const chips = within(card).queryAllByTestId(/converter-chip-/i)
+    expect(chips).toHaveLength(3)
+  })
+
+  it('chip label uses availableConverters.label when the converterId matches', () => {
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r', { converterPipeline: [{ converterId: 'base64' }] }),
+    ])
+    const callbacks: ActionCallbacks = { onSetUserTurnConverterPipeline: jest.fn() }
+    const { container } = render(
+      <TreeCanvas
+        tree={tree}
+        actionCallbacks={callbacks}
+        availableConverters={MOCK_CONVERTERS}
+      />,
+    )
+    const card = findUserTurnCard(container, 'u')
+    expect(within(card).getByText(/base64 encoder/i)).not.toBeNull()
+  })
+
+  it('chip falls back to the converter id when no label is available', () => {
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r', { converterPipeline: [{ converterId: 'unknown-c' }] }),
+    ])
+    const callbacks: ActionCallbacks = { onSetUserTurnConverterPipeline: jest.fn() }
+    const { container } = render(
+      <TreeCanvas
+        tree={tree}
+        actionCallbacks={callbacks}
+        availableConverters={MOCK_CONVERTERS}
+      />,
+    )
+    const card = findUserTurnCard(container, 'u')
+    expect(within(card).getByText(/unknown-c/i)).not.toBeNull()
+  })
+
+  it('chip shows "inline" for converters with no converterId', () => {
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r', {
+        converterPipeline: [{ inline: { type: 'custom', params: {} } }],
+      }),
+    ])
+    const callbacks: ActionCallbacks = { onSetUserTurnConverterPipeline: jest.fn() }
+    const { container } = render(
+      <TreeCanvas
+        tree={tree}
+        actionCallbacks={callbacks}
+        availableConverters={MOCK_CONVERTERS}
+      />,
+    )
+    const card = findUserTurnCard(container, 'u')
+    expect(within(card).getByText(/inline/i)).not.toBeNull()
+  })
+
+  it('clicking the X on a chip fires onSetUserTurnConverterPipeline with the filtered list', () => {
+    const onSetUserTurnConverterPipeline = jest.fn()
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r', {
+        converterPipeline: [
+          { converterId: 'base64' },
+          { converterId: 'rot13' },
+        ],
+      }),
+    ])
+    const callbacks: ActionCallbacks = { onSetUserTurnConverterPipeline }
+    const { container } = render(
+      <TreeCanvas
+        tree={tree}
+        actionCallbacks={callbacks}
+        availableConverters={MOCK_CONVERTERS}
+      />,
+    )
+    const card = findUserTurnCard(container, 'u')
+    const removeBase64 = within(card).getByRole('button', {
+      name: /remove base64/i,
+    })
+    fireEvent.click(removeBase64)
+    expect(onSetUserTurnConverterPipeline).toHaveBeenCalledWith(nodeId('u'), [
+      { converterId: 'rot13' },
+    ])
+  })
+
+  it('X is NOT rendered when onSetUserTurnConverterPipeline is missing (chip is read-only)', () => {
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r', { converterPipeline: [{ converterId: 'base64' }] }),
+    ])
+    const callbacks: ActionCallbacks = { onRefresh: jest.fn() }
+    const { container } = render(
+      <TreeCanvas
+        tree={tree}
+        actionCallbacks={callbacks}
+        availableConverters={MOCK_CONVERTERS}
+      />,
+    )
+    const card = findUserTurnCard(container, 'u')
+    expect(within(card).queryByRole('button', { name: /remove/i })).toBeNull()
+    // Chip itself still renders (visible read-only state).
+    expect(within(card).getByText(/base64 encoder/i)).not.toBeNull()
+  })
+})

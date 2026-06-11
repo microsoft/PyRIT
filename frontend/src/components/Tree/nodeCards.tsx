@@ -32,6 +32,7 @@ import {
   ArrowMinimizeRegular,
   CheckmarkCircleFilled,
   CheckmarkCircleRegular,
+  DismissRegular,
   EditRegular,
   FlashRegular,
 } from '@fluentui/react-icons'
@@ -413,10 +414,77 @@ export function UserTurnCard({ data, selected }: UserTurnProps) {
       )}
       <MetaRow label="role" value={node.params.role} />
       {converters.length > 0 && (
-        <MetaRow label="" value={`${converters.length} converter${converters.length === 1 ? '' : 's'}`} />
+        <ConverterChipRow
+          converters={converters}
+          available={availableConverters}
+          onRemove={
+            onSetPipeline !== undefined
+              ? (index) =>
+                  onSetPipeline(
+                    node.id,
+                    converters.filter((_c, i) => i !== index),
+                  )
+              : undefined
+          }
+        />
       )}
     </CardFrame>
   )
+}
+
+/**
+ * Per-converter chip row under the UserTurn body. Each chip shows the
+ * converter label (looked up in `available`, falling back to its id;
+ * `"inline"` for inline-spec converters). When `onRemove` is provided,
+ * each chip carries an X button that fires `onRemove(index)` so the
+ * card can dispatch the filtered pipeline back to the host. When
+ * `onRemove` is omitted, the chips render read-only — there's nothing
+ * to dispatch.
+ */
+function ConverterChipRow({
+  converters,
+  available,
+  onRemove,
+}: {
+  converters: ReadonlyArray<{ converterId?: string; inline?: { type: string; params: Record<string, unknown> } }>
+  available: ReadonlyArray<{ id: string; label: string }> | null
+  onRemove?: (index: number) => void
+}) {
+  const styles = useNodeCardStyles()
+  return (
+    <div className={styles.converterChips}>
+      {converters.map((c, i) => {
+        const label = converterLabel(c, available)
+        return (
+          <span
+            key={i}
+            data-testid={`converter-chip-${i}`}
+            className={styles.converterChip}
+          >
+            <span className={styles.converterChipLabel}>{label}</span>
+            {onRemove !== undefined && (
+              <Button
+                size="small"
+                appearance="subtle"
+                icon={<DismissRegular />}
+                aria-label={`Remove ${label}`}
+                onClick={() => onRemove(i)}
+              />
+            )}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
+function converterLabel(
+  c: { converterId?: string; inline?: { type: string; params: Record<string, unknown> } },
+  available: ReadonlyArray<{ id: string; label: string }> | null,
+): string {
+  if (c.converterId === undefined) return 'inline'
+  const match = available?.find((a) => a.id === c.converterId)
+  return match?.label ?? c.converterId
 }
 
 /**

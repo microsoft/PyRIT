@@ -165,6 +165,29 @@ export const useNodeCardStyles = makeStyles({
     gap: tokens.spacingHorizontalXS,
     justifyContent: 'flex-end',
   },
+  // Per-converter chip row (PR5h.10). One chip per ConverterRef in the
+  // UserTurn's pipeline; each chip shows the converter's label + an
+  // optional X (rendered when the host wires onSetUserTurnConverterPipeline).
+  converterChips: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalXXS,
+    marginTop: tokens.spacingVerticalXXS,
+  },
+  converterChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXXS,
+    padding: `1px ${tokens.spacingHorizontalXS}`,
+    backgroundColor: tokens.colorNeutralBackground2,
+    color: tokens.colorNeutralForeground2,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusSmall,
+    fontSize: tokens.fontSizeBase100,
+  },
+  converterChipLabel: {
+    fontFamily: tokens.fontFamilyMonospace,
+  },
 })
 
 // ============================================================================
