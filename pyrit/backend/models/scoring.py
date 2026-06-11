@@ -46,6 +46,15 @@ class ScorerSummary(BaseModel):
         default_factory=list,
         description="Registry tags (e.g. 'refusal', 'best_refusal'). Used in the GUI for grouping/badges.",
     )
+    uses_objective: bool = Field(
+        False,
+        description=(
+            "True if this scorer injects the caller-supplied objective into its scoring prompt so the "
+            "judge LLM is conditioned on it. When False, the objective is only stored on the resulting "
+            "Score row as metadata and has no effect on the scorer's verdict. Read off "
+            "``Scorer.uses_objective``. The GUI hides the objective input for scorers where this is False."
+        ),
+    )
 
 
 class ScorerListResponse(BaseModel):

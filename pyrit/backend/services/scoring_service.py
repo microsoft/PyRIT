@@ -85,6 +85,7 @@ class ScoringService:
                 score_type=entry.instance.scorer_type,
                 description=_extract_class_description(entry.instance.__class__),
                 tags=sorted(entry.tags.keys()) if entry.tags else [],
+                uses_objective=bool(entry.instance.uses_objective),
             )
             for entry in self._registry.get_all_instances()
         ]
@@ -113,9 +114,7 @@ class ScoringService:
             ValueError: If the conversation does not belong to the attack, the conversation
                 has no scoreable assistant message, or the scorer registry name is unknown.
         """
-        self._verify_conversation_belongs_to_attack(
-            attack_result_id=attack_result_id, conversation_id=conversation_id
-        )
+        self._verify_conversation_belongs_to_attack(attack_result_id=attack_result_id, conversation_id=conversation_id)
 
         scorer = self._resolve_scorer(request.scorer_registry_name)
         conversation = list(self._memory.get_conversation(conversation_id=conversation_id))
@@ -153,18 +152,14 @@ class ScoringService:
             LookupError: If the attack does not exist, or the piece is not in the conversation.
             ValueError: If the conversation does not belong to the attack or the scorer is unknown.
         """
-        self._verify_conversation_belongs_to_attack(
-            attack_result_id=attack_result_id, conversation_id=conversation_id
-        )
+        self._verify_conversation_belongs_to_attack(attack_result_id=attack_result_id, conversation_id=conversation_id)
 
         scorer = self._resolve_scorer(request.scorer_registry_name)
         conversation = list(self._memory.get_conversation(conversation_id=conversation_id))
 
         target_message = self._find_message_containing_piece(conversation=conversation, piece_id=piece_id)
         if target_message is None:
-            raise LookupError(
-                f"Message piece '{piece_id}' is not part of conversation '{conversation_id}'"
-            )
+            raise LookupError(f"Message piece '{piece_id}' is not part of conversation '{conversation_id}'")
 
         scores = await scorer.score_async(message=target_message, objective=request.objective)
         return ScoreResponse(scores=pyrit_scores_to_dto(list(scores)))
@@ -173,9 +168,7 @@ class ScoringService:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _verify_conversation_belongs_to_attack(
-        self, *, attack_result_id: str, conversation_id: str
-    ) -> None:
+    def _verify_conversation_belongs_to_attack(self, *, attack_result_id: str, conversation_id: str) -> None:
         """
         Raise ``LookupError`` if the attack does not exist, ``ValueError`` if the
         conversation does not belong to it.
@@ -184,9 +177,7 @@ class ScoringService:
         if not results:
             raise LookupError(f"Attack '{attack_result_id}' not found")
         if conversation_id not in results[0].get_active_conversation_ids():
-            raise ValueError(
-                f"Conversation '{conversation_id}' is not part of attack '{attack_result_id}'"
-            )
+            raise ValueError(f"Conversation '{conversation_id}' is not part of attack '{attack_result_id}'")
 
     def _resolve_scorer(self, scorer_registry_name: str) -> Scorer:
         """Resolve a scorer by registry name; raise ``ValueError`` when missing."""
@@ -196,9 +187,7 @@ class ScoringService:
         return scorer
 
     @staticmethod
-    def _select_message_for_scoring(
-        *, conversation: list[Message], mode: ScoreConversationMode
-    ) -> Message:
+    def _select_message_for_scoring(*, conversation: list[Message], mode: ScoreConversationMode) -> Message:
         """
         Pick the message to hand to ``Scorer.score_async``.
 
@@ -220,9 +209,7 @@ class ScoringService:
         raise ValueError("Conversation has no assistant message to score")
 
     @staticmethod
-    def _maybe_wrap_for_conversation_scoring(
-        *, scorer: Scorer, mode: ScoreConversationMode
-    ) -> Scorer:
+    def _maybe_wrap_for_conversation_scoring(*, scorer: Scorer, mode: ScoreConversationMode) -> Scorer:
         """
         Wrap the scorer in a ``ConversationScorer`` when the caller asked for
         whole-conversation scoring. Raises ``ValueError`` if the scorer cannot be wrapped
@@ -243,9 +230,7 @@ class ScoringService:
         return create_conversation_scorer(scorer=scorer)
 
     @staticmethod
-    def _find_message_containing_piece(
-        *, conversation: list[Message], piece_id: str
-    ) -> Message | None:
+    def _find_message_containing_piece(*, conversation: list[Message], piece_id: str) -> Message | None:
         """Return the message in ``conversation`` whose pieces include ``piece_id``."""
         for message in conversation:
             for piece in message.message_pieces:

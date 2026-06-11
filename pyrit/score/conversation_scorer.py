@@ -155,6 +155,11 @@ class ConversationScorer(Scorer, ABC):
         wrapped_scorer = self._get_wrapped_scorer()
         wrapped_scorer.validate_return_scores(scores)
 
+    @property
+    def uses_objective(self) -> bool:  # type: ignore[ty:invalid-overload]
+        """Delegate to the wrapped scorer so the GUI's objective gating reflects the inner scorer."""
+        return self._get_wrapped_scorer().uses_objective
+
 
 def create_conversation_scorer(
     *,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Dialog,
   DialogSurface,
@@ -42,6 +42,28 @@ interface ScoreDialogProps {
   onClose: () => void
   /** Called after a successful score so the caller can refetch messages/conversations. */
   onScored: (scores: BackendScore[]) => void
+  /**
+   * Scorer to pre-select when the dialog opens. The caller (e.g. ChatWindow)
+   * remembers the most recently chosen scorer per conversation so re-opening
+   * the dialog doesn't lose the user's prior pick.
+   */
+  initialScorerName?: string
+  /**
+   * Fired when the user picks a scorer in the combobox. The caller persists
+   * it so the next dialog open can pre-select the same scorer.
+   */
+  onScorerSelected?: (scorerRegistryName: string) => void
+  /**
+   * Objective text to pre-fill when the dialog opens. The caller remembers
+   * the most recently typed objective per conversation. Only honored for
+   * scorers that actually inject the objective into the scoring prompt.
+   */
+  initialObjective?: string
+  /**
+   * Fired whenever the user edits the objective input. The caller persists
+   * it so the next dialog open can pre-fill the same value.
+   */
+  onObjectiveChange?: (value: string) => void
 }
 
 const MODE_LABELS: Record<ScoreConversationMode, string> = {
@@ -83,26 +105,46 @@ function groupScorers(scorers: ScorerSummary[]): { score_type: string; items: Sc
   return ordered
 }
 
-export default function ScoreDialog({ open, target, onClose, onScored }: ScoreDialogProps) {
+export default function ScoreDialog({
+  open,
+  target,
+  onClose,
+  onScored,
+  initialScorerName,
+  onScorerSelected,
+  initialObjective,
+  onObjectiveChange,
+}: ScoreDialogProps) {
   const [scorers, setScorers] = useState<ScorerSummary[]>([])
   const [loadingScorers, setLoadingScorers] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [selectedScorerName, setSelectedScorerName] = useState<string>('')
   const [scorerQuery, setScorerQuery] = useState<string>('')
-  const [mode, setMode] = useState<ScoreConversationMode>('last_message')
+  const [mode, setMode] = useState<ScoreConversationMode>('whole_conversation')
   const [objective, setObjective] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   const isConversationScope = target?.kind === 'conversation'
 
+  // Snapshot of initialScorerName read at open time only. Using a ref means
+  // the reset effect below doesn't re-fire (and wipe user edits) every time
+  // the parent updates the cached scorer name as the user picks options.
+  const initialScorerNameRef = useRef(initialScorerName)
+  const initialObjectiveRef = useRef(initialObjective)
+  useEffect(() => {
+    initialScorerNameRef.current = initialScorerName
+    initialObjectiveRef.current = initialObjective
+  })
+
   // Reset form whenever the dialog re-opens against a new target.
   useEffect(() => {
     if (!open) return
-    setSelectedScorerName('')
-    setScorerQuery('')
-    setMode('last_message')
-    setObjective('')
+    const seed = initialScorerNameRef.current ?? ''
+    setSelectedScorerName(seed)
+    setScorerQuery(seed)
+    setMode('whole_conversation')
+    setObjective(initialObjectiveRef.current ?? '')
     setSubmitError(null)
   }, [open, target])
 
@@ -161,12 +203,20 @@ export default function ScoreDialog({ open, target, onClose, onScored }: ScoreDi
     }
   }, [wholeConversationDisabled, mode])
 
+  // Most scorers don't actually inject the objective into the scoring prompt
+  // (it's only attached to the resulting Score row as metadata). We hide the
+  // input for those scorers but keep the typed value in state so that toggling
+  // back to an injecting scorer (or persisting via onObjectiveChange) doesn't
+  // wipe what the user typed. Submission also gates on this flag so a hidden
+  // stale value can never reach the backend.
+  const scorerUsesObjective = selectedScorer?.uses_objective === true
+
   const handleSubmit = async () => {
     if (!target || !selectedScorerName) return
     setSubmitting(true)
     setSubmitError(null)
     try {
-      const trimmedObjective = objective.trim() || undefined
+      const trimmedObjective = scorerUsesObjective ? objective.trim() || undefined : undefined
       if (target.kind === 'conversation') {
         const response = await attacksApi.scoreConversation(
           target.attackResultId,
@@ -262,8 +312,10 @@ export default function ScoreDialog({ open, target, onClose, onScored }: ScoreDi
                     value={scorerQuery}
                     selectedOptions={selectedScorerName ? [selectedScorerName] : []}
                     onOptionSelect={(_, data) => {
-                      setSelectedScorerName(data.optionValue ?? '')
+                      const name = data.optionValue ?? ''
+                      setSelectedScorerName(name)
                       setScorerQuery(data.optionText ?? '')
+                      if (name) onScorerSelected?.(name)
                     }}
                     onChange={(e) => setScorerQuery((e.target as HTMLInputElement).value)}
                     placeholder="Search scorers..."
@@ -349,28 +401,33 @@ export default function ScoreDialog({ open, target, onClose, onScored }: ScoreDi
                 </Field>
               )}
 
-              <Field
-                label={
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: tokens.spacingHorizontalXS }}>
-                    Objective (optional)
-                    <Tooltip
-                      content="Passed to the scorer as 'objective'. Used by self-ask scorers (refusal, task-achieved, scale) to judge whether the response satisfies this goal."
-                      relationship="description"
-                    >
-                      <span style={{ display: 'inline-flex', color: tokens.colorNeutralForeground3 }}>
-                        <InfoRegular fontSize={14} />
-                      </span>
-                    </Tooltip>
-                  </span>
-                }
-              >
-                <Input
-                  value={objective}
-                  onChange={(_, data) => setObjective(data.value)}
-                  placeholder="e.g. The model agreed to draft a phishing email"
-                  data-testid="score-dialog-objective-input"
-                />
-              </Field>
+              {scorerUsesObjective && (
+                <Field
+                  label={
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: tokens.spacingHorizontalXS }}>
+                      Objective (optional)
+                      <Tooltip
+                        content="Passed to the scorer as 'objective'. Used by self-ask scorers (refusal, task-achieved, scale) to judge whether the response satisfies this goal."
+                        relationship="description"
+                      >
+                        <span style={{ display: 'inline-flex', color: tokens.colorNeutralForeground3 }}>
+                          <InfoRegular fontSize={14} />
+                        </span>
+                      </Tooltip>
+                    </span>
+                  }
+                >
+                  <Input
+                    value={objective}
+                    onChange={(_, data) => {
+                      setObjective(data.value)
+                      onObjectiveChange?.(data.value)
+                    }}
+                    placeholder="e.g. The model agreed to draft a phishing email"
+                    data-testid="score-dialog-objective-input"
+                  />
+                </Field>
+              )}
             </form>
           </DialogContent>
           <DialogActions>

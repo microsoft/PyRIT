@@ -292,6 +292,7 @@ export interface ScorerSummary {
   score_type: ScorerScoreType
   description?: string | null
   tags?: string[]
+  uses_objective?: boolean
 }
 
 export interface ScorerListResponse {

@@ -83,6 +83,17 @@ class Scorer(Identifiable, abc.ABC):
     #: (Chat Completions API) and ``OpenAIResponseTarget`` (Responses API).
     score_blocked_content: bool = False
 
+    #: When True, this scorer injects the caller-supplied ``objective`` into the
+    #: scoring prompt (system or user message) so the judge LLM is conditioned
+    #: on it. When False, the ``objective`` is only attached to the resulting
+    #: ``Score`` row as metadata and does not influence the scorer's verdict.
+    #:
+    #: Surfaced in the GUI (``ScorerSummary.uses_objective``) so the
+    #: scoring dialog can hide the objective input for scorers that ignore it.
+    #: Wrapper scorers (composite, inverter, threshold, conversation, audio/video)
+    #: should override this with a property that delegates to the wrapped scorer.
+    uses_objective: bool = False
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
         Enforce the keyword-only constructor contract on subclasses.

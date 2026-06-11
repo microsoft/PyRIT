@@ -48,7 +48,6 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
 
         if not scorers:
             raise ValueError("At least one scorer must be provided.")
-
         for scorer in scorers:
             if not isinstance(scorer, TrueFalseScorer):
                 raise ValueError("All scorers must be true_false scorers.")
@@ -78,6 +77,11 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             if target is not None:
                 return target
         return None
+
+    @property
+    def uses_objective(self) -> bool:  # type: ignore[ty:invalid-overload]
+        """True if any child scorer injects the objective into its scoring prompt."""
+        return any(s.uses_objective for s in self._scorers)
 
     async def _score_async(
         self,

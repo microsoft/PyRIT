@@ -84,6 +84,11 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         """
         return self._scorer.get_chat_target()
 
+    @property
+    def uses_objective(self) -> bool:  # type: ignore[ty:invalid-overload]
+        """Delegate to the wrapped scorer."""
+        return self._scorer.uses_objective
+
     async def _score_async(
         self,
         message: Message,

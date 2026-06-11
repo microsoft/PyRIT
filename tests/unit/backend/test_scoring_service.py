@@ -45,9 +45,10 @@ def mock_registry():
 
 @pytest.fixture
 def scoring_service(mock_memory, mock_registry):
-    with patch("pyrit.backend.services.scoring_service.CentralMemory") as mock_central, patch(
-        "pyrit.backend.services.scoring_service.ScorerRegistry"
-    ) as mock_registry_cls:
+    with (
+        patch("pyrit.backend.services.scoring_service.CentralMemory") as mock_central,
+        patch("pyrit.backend.services.scoring_service.ScorerRegistry") as mock_registry_cls,
+    ):
         mock_central.get_memory_instance.return_value = mock_memory
         mock_registry_cls.get_registry_singleton.return_value = mock_registry
         # Bypass lru_cache so each test gets a fresh service instance bound to the mocks above.
@@ -167,6 +168,30 @@ class TestListScorers:
         assert result.items[0].description is None
         assert result.items[0].tags == []
 
+    async def test_uses_objective_is_read_from_scorer_instance(self, scoring_service, mock_registry) -> None:
+        injecting = MagicMock(spec=TrueFalseScorer)
+        injecting.scorer_type = "true_false"
+        injecting.uses_objective = True
+        injecting_entry = MagicMock()
+        injecting_entry.name = "refusal"
+        injecting_entry.instance = injecting
+        injecting_entry.tags = {}
+
+        non_injecting = MagicMock(spec=TrueFalseScorer)
+        non_injecting.scorer_type = "true_false"
+        non_injecting.uses_objective = False
+        non_injecting_entry = MagicMock()
+        non_injecting_entry.name = "substring"
+        non_injecting_entry.instance = non_injecting
+        non_injecting_entry.tags = {}
+
+        mock_registry.get_all_instances.return_value = [injecting_entry, non_injecting_entry]
+
+        result = await scoring_service.list_scorers_async()
+        by_name = {item.scorer_registry_name: item for item in result.items}
+        assert by_name["refusal"].uses_objective is True
+        assert by_name["substring"].uses_objective is False
+
 
 # --------------------------------------------------------------------------- #
 # score_conversation_async
@@ -194,9 +219,7 @@ class TestScoreConversation:
                 request=ScoreConversationRequest(scorer_registry_name="x"),
             )
 
-    async def test_raises_when_scorer_missing(
-        self, scoring_service, mock_memory, mock_registry
-    ) -> None:
+    async def test_raises_when_scorer_missing(self, scoring_service, mock_memory, mock_registry) -> None:
         mock_memory.get_attack_results.return_value = [_make_attack_result()]
         mock_registry.get.return_value = None
 
@@ -207,9 +230,7 @@ class TestScoreConversation:
                 request=ScoreConversationRequest(scorer_registry_name="missing-scorer"),
             )
 
-    async def test_raises_when_conversation_empty(
-        self, scoring_service, mock_memory, mock_registry
-    ) -> None:
+    async def test_raises_when_conversation_empty(self, scoring_service, mock_memory, mock_registry) -> None:
         mock_memory.get_attack_results.return_value = [_make_attack_result()]
         mock_memory.get_conversation.return_value = []
         mock_registry.get.return_value = MagicMock(spec=TrueFalseScorer)
@@ -262,9 +283,7 @@ class TestScoreConversation:
         assert len(result.scores) == 1
         assert result.scores[0].score_value == "true"
 
-    async def test_whole_conversation_wraps_scorer(
-        self, scoring_service, mock_memory, mock_registry
-    ) -> None:
+    async def test_whole_conversation_wraps_scorer(self, scoring_service, mock_memory, mock_registry) -> None:
         mock_memory.get_attack_results.return_value = [_make_attack_result()]
         # Whole-conv mode just hands the last message to the wrapped scorer; content doesn't matter.
         last = _make_message([_make_piece(role="assistant")])
@@ -273,9 +292,7 @@ class TestScoreConversation:
         scorer = MagicMock(spec=FloatScaleScorer)
         mock_registry.get.return_value = scorer
 
-        with patch(
-            "pyrit.score.conversation_scorer.create_conversation_scorer"
-        ) as mock_create:
+        with patch("pyrit.score.conversation_scorer.create_conversation_scorer") as mock_create:
             wrapped = MagicMock()
             wrapped.score_async = AsyncMock(return_value=[_make_pyrit_score()])
             mock_create.return_value = wrapped
@@ -283,9 +300,7 @@ class TestScoreConversation:
             await scoring_service.score_conversation_async(
                 attack_result_id="ar-1",
                 conversation_id="conv-1",
-                request=ScoreConversationRequest(
-                    scorer_registry_name="my-scorer", mode="whole_conversation"
-                ),
+                request=ScoreConversationRequest(scorer_registry_name="my-scorer", mode="whole_conversation"),
             )
 
             mock_create.assert_called_once_with(scorer=scorer)
@@ -302,9 +317,7 @@ class TestScoreConversation:
             await scoring_service.score_conversation_async(
                 attack_result_id="ar-1",
                 conversation_id="conv-1",
-                request=ScoreConversationRequest(
-                    scorer_registry_name="my-scorer", mode="whole_conversation"
-                ),
+                request=ScoreConversationRequest(scorer_registry_name="my-scorer", mode="whole_conversation"),
             )
 
 
@@ -338,13 +351,9 @@ class TestScoreMessage:
         assert scorer.score_async.await_args.kwargs["message"] is target_msg
         assert len(result.scores) == 1
 
-    async def test_raises_when_piece_not_in_conversation(
-        self, scoring_service, mock_memory, mock_registry
-    ) -> None:
+    async def test_raises_when_piece_not_in_conversation(self, scoring_service, mock_memory, mock_registry) -> None:
         mock_memory.get_attack_results.return_value = [_make_attack_result()]
-        mock_memory.get_conversation.return_value = [
-            _make_message([_make_piece(role="assistant", piece_id="other")])
-        ]
+        mock_memory.get_conversation.return_value = [_make_message([_make_piece(role="assistant", piece_id="other")])]
         mock_registry.get.return_value = MagicMock(spec=TrueFalseScorer)
 
         with pytest.raises(LookupError, match="not part of conversation"):

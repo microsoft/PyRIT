@@ -73,3 +73,8 @@ class AudioFloatScaleScorer(FloatScaleScorer):
             List of scores from evaluating the transcribed audio.
         """
         return await self._audio_helper._score_audio_async(message_piece=message_piece, objective=objective)
+
+    @property
+    def uses_objective(self) -> bool:  # type: ignore[ty:invalid-overload]
+        """Delegate to the wrapped text scorer."""
+        return self._audio_helper.text_scorer.uses_objective

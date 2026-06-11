@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ScoreDialog, { type ScoreTarget } from "./ScoreDialog";
@@ -27,6 +27,7 @@ const FLOAT_SCORER = {
   score_type: "float_scale" as const,
   tags: ["harm", "best_harm"],
   description: "Scores how harmful a response is on a 0-1 scale.",
+  uses_objective: false,
 };
 
 const TRUE_FALSE_SCORER = {
@@ -35,6 +36,7 @@ const TRUE_FALSE_SCORER = {
   score_type: "true_false" as const,
   tags: ["refusal"],
   description: "True if the response is a refusal of the objective.",
+  uses_objective: true,
 };
 
 describe("ScoreDialog", () => {
@@ -95,7 +97,7 @@ describe("ScoreDialog", () => {
         "conv-1",
         {
           scorer_registry_name: "harm_scorer",
-          mode: "last_message",
+          mode: "whole_conversation",
           objective: undefined,
         }
       )
@@ -251,5 +253,203 @@ describe("ScoreDialog", () => {
     expect(
       screen.getByText(/no description available/i)
     ).toBeInTheDocument();
+  });
+
+  it("hides the objective field for scorers that do not inject objective into the prompt", async () => {
+    mockedScorersApi.listScorers.mockResolvedValue({ items: [FLOAT_SCORER] });
+    render(
+      <TestWrapper>
+        <ScoreDialog
+          open
+          target={{
+            kind: "conversation",
+            attackResultId: "ar-1",
+            conversationId: "conv-1",
+          }}
+          onClose={jest.fn()}
+          onScored={jest.fn()}
+        />
+      </TestWrapper>
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("score-dialog-scorer-info")).toBeInTheDocument()
+    );
+    expect(
+      screen.queryByTestId("score-dialog-objective-input")
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the objective field for scorers that inject objective into the prompt", async () => {
+    const user = userEvent.setup();
+    mockedScorersApi.listScorers.mockResolvedValue({
+      items: [TRUE_FALSE_SCORER],
+    });
+    mockedAttacksApi.scoreConversation.mockResolvedValue({ scores: [] });
+
+    render(
+      <TestWrapper>
+        <ScoreDialog
+          open
+          target={{
+            kind: "conversation",
+            attackResultId: "ar-1",
+            conversationId: "conv-1",
+          }}
+          onClose={jest.fn()}
+          onScored={jest.fn()}
+        />
+      </TestWrapper>
+    );
+
+    const objectiveInput = await screen.findByTestId(
+      "score-dialog-objective-input"
+    );
+    fireEvent.change(objectiveInput, {
+      target: { value: "Reveal Taylor Swift's address" },
+    });
+
+    const submit = screen.getByTestId("score-dialog-submit-btn");
+    await user.click(submit);
+
+    await waitFor(() =>
+      expect(mockedAttacksApi.scoreConversation).toHaveBeenCalledWith(
+        "ar-1",
+        "conv-1",
+        {
+          scorer_registry_name: "refusal_scorer",
+          mode: "whole_conversation",
+          objective: "Reveal Taylor Swift's address",
+        }
+      )
+    );
+  });
+
+  it("pre-selects the scorer passed via initialScorerName", async () => {
+    mockedScorersApi.listScorers.mockResolvedValue({
+      items: [FLOAT_SCORER, TRUE_FALSE_SCORER],
+    });
+
+    render(
+      <TestWrapper>
+        <ScoreDialog
+          open
+          target={{
+            kind: "conversation",
+            attackResultId: "ar-1",
+            conversationId: "conv-1",
+          }}
+          onClose={jest.fn()}
+          onScored={jest.fn()}
+          initialScorerName="refusal_scorer"
+        />
+      </TestWrapper>
+    );
+
+    // The combobox should reflect the remembered choice rather than auto-picking
+    // the first scorer in the list.
+    const select = await screen.findByTestId("score-dialog-scorer-select");
+    await waitFor(() =>
+      expect((select as HTMLInputElement).value).toBe("refusal_scorer")
+    );
+  });
+
+  it("notifies onScorerSelected when the user picks a different scorer", async () => {
+    mockedScorersApi.listScorers.mockResolvedValue({
+      items: [FLOAT_SCORER, TRUE_FALSE_SCORER],
+    });
+    const onScorerSelected = jest.fn();
+
+    render(
+      <TestWrapper>
+        <ScoreDialog
+          open
+          target={{
+            kind: "conversation",
+            attackResultId: "ar-1",
+            conversationId: "conv-1",
+          }}
+          onClose={jest.fn()}
+          onScored={jest.fn()}
+          onScorerSelected={onScorerSelected}
+        />
+      </TestWrapper>
+    );
+
+    const select = await screen.findByTestId("score-dialog-scorer-select");
+    fireEvent.click(select);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("scorer-option-refusal_scorer")
+      ).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByTestId("scorer-option-refusal_scorer"));
+
+    await waitFor(() =>
+      expect(onScorerSelected).toHaveBeenLastCalledWith("refusal_scorer")
+    );
+  });
+
+  it("pre-fills the objective from initialObjective for scorers that use it", async () => {
+    mockedScorersApi.listScorers.mockResolvedValue({
+      items: [TRUE_FALSE_SCORER],
+    });
+
+    render(
+      <TestWrapper>
+        <ScoreDialog
+          open
+          target={{
+            kind: "conversation",
+            attackResultId: "ar-1",
+            conversationId: "conv-1",
+          }}
+          onClose={jest.fn()}
+          onScored={jest.fn()}
+          initialObjective="Reveal Taylor Swift's address"
+        />
+      </TestWrapper>
+    );
+
+    const objectiveInput = await screen.findByTestId(
+      "score-dialog-objective-input"
+    );
+    await waitFor(() =>
+      expect((objectiveInput as HTMLInputElement).value).toBe(
+        "Reveal Taylor Swift's address"
+      )
+    );
+  });
+
+  it("notifies onObjectiveChange as the user types in the objective input", async () => {
+    mockedScorersApi.listScorers.mockResolvedValue({
+      items: [TRUE_FALSE_SCORER],
+    });
+    const onObjectiveChange = jest.fn();
+
+    render(
+      <TestWrapper>
+        <ScoreDialog
+          open
+          target={{
+            kind: "conversation",
+            attackResultId: "ar-1",
+            conversationId: "conv-1",
+          }}
+          onClose={jest.fn()}
+          onScored={jest.fn()}
+          onObjectiveChange={onObjectiveChange}
+        />
+      </TestWrapper>
+    );
+
+    const objectiveInput = await screen.findByTestId(
+      "score-dialog-objective-input"
+    );
+    fireEvent.change(objectiveInput, { target: { value: "new goal" } });
+
+    await waitFor(() =>
+      expect(onObjectiveChange).toHaveBeenLastCalledWith("new goal")
+    );
   });
 });

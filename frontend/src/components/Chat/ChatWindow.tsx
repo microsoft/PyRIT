@@ -76,6 +76,14 @@ export default function ChatWindow({
   const [pieceConversions, setPieceConversions] = useState<Record<string, PieceConversion>>({})
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
   const [scoreTarget, setScoreTarget] = useState<ScoreTarget | null>(null)
+  // Last-used scorer per conversation id. Lets the score dialog pre-select the
+  // scorer the user previously picked for the same conversation. Persists for
+  // the lifetime of the ChatWindow (not across page reloads); the user can
+  // still pick a different scorer at any time.
+  const [scorerByConversation, setScorerByConversation] = useState<Record<string, string>>({})
+  // Last-typed objective per conversation id. Mirrors scorerByConversation so
+  // re-opening the dialog pre-fills the objective the user previously typed.
+  const [objectiveByConversation, setObjectiveByConversation] = useState<Record<string, string>>({})
   const inputBoxRef = useRef<ChatInputAreaHandle>(null)
 
   const handleAttachmentsChange = useCallback((types: string[], data: Record<string, string>) => {
@@ -611,7 +619,7 @@ export default function ChatWindow({
                 data-testid="score-conversation-btn"
                 aria-label="Score conversation"
               >
-                Score
+                Score conversation
               </Button>
             </Tooltip>
             <Tooltip content="Toggle conversations panel" relationship="label">
@@ -722,6 +730,24 @@ export default function ChatWindow({
         target={scoreTarget}
         onClose={() => setScoreTarget(null)}
         onScored={() => { setScoreTarget(null); handleScored() }}
+        initialScorerName={scoreTarget ? scorerByConversation[scoreTarget.conversationId] : undefined}
+        onScorerSelected={(name) => {
+          if (!scoreTarget) return
+          setScorerByConversation((prev) =>
+            prev[scoreTarget.conversationId] === name
+              ? prev
+              : { ...prev, [scoreTarget.conversationId]: name }
+          )
+        }}
+        initialObjective={scoreTarget ? objectiveByConversation[scoreTarget.conversationId] : undefined}
+        onObjectiveChange={(value) => {
+          if (!scoreTarget) return
+          setObjectiveByConversation((prev) =>
+            prev[scoreTarget.conversationId] === value
+              ? prev
+              : { ...prev, [scoreTarget.conversationId]: value }
+          )
+        }}
       />
     </div>
   )

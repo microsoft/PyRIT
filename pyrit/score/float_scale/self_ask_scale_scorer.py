@@ -39,6 +39,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
         is_objective_required=True,
     )
     TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
+    uses_objective: bool = True
 
     def __init__(
         self,

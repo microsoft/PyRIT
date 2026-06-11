@@ -33,6 +33,7 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
         supported_data_types=["text"],
         is_objective_required=True,
     )
+    uses_objective: bool = True
 
     def __init__(
         self,

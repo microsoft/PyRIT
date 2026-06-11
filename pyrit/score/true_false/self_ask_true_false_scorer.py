@@ -105,6 +105,7 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
         supported_data_types=["text", "image_path"],
     )
     TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
+    uses_objective: bool = True
 
     def __init__(
         self,

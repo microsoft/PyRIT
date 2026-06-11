@@ -29,6 +29,7 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
         is_objective_required=False,
     )
     TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
+    uses_objective: bool = True
 
     def __init__(
         self,

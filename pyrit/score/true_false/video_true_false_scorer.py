@@ -93,6 +93,19 @@ class VideoTrueFalseScorer(TrueFalseScorer):
             },
         )
 
+    @property
+    def uses_objective(self) -> bool:  # type: ignore[ty:invalid-overload]
+        """True if either sub-scorer uses the objective AND its template enables objective flow-through."""
+        image_uses = (
+            self._video_helper.image_objective_template is not None and self._video_helper.image_scorer.uses_objective
+        )
+        audio_uses = (
+            self.audio_scorer is not None
+            and self._video_helper.audio_objective_template is not None
+            and self.audio_scorer.uses_objective
+        )
+        return image_uses or audio_uses
+
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score a single video piece by extracting frames and optionally audio, then aggregating their scores.
