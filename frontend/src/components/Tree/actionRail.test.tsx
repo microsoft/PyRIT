@@ -365,3 +365,106 @@ describe('ActionRail — visibility hover-gate (spec §2.2)', () => {
     expect(window.getComputedStyle(rail).opacity).toBe('1')
   })
 })
+
+// ============================================================================
+// 6. Refresh cost-preview tooltip (spec §2.2 Finding D.3) — PR6b
+// ============================================================================
+//
+// `getRefreshCost(nodeId)` returns `{ calls, leaves }` so the operator
+// sees the cost on hover BEFORE clicking the button that pops the
+// cost-guardrail modal. Cures the "dismiss modal once, learn to ignore"
+// failure mode the PR5h.4 reviewer named.
+
+describe('ActionRail — Refresh cost-preview tooltip', () => {
+  it('Refresh button tooltip is plain "Refresh" when getRefreshCost is NOT wired', () => {
+    const callbacks: ActionCallbacks = { onRefresh: jest.fn() }
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="x" />)
+    const btn = screen.getByRole('button', { name: /^refresh$/i })
+    // aria-label is the screen-reader-visible name; matches the tooltip
+    // content in the no-cost-preview case.
+    expect(btn.getAttribute('aria-label')).toBe('Refresh')
+  })
+
+  it('Refresh button aria-label includes call+leaf preview when getRefreshCost returns a non-zero estimate', () => {
+    const callbacks: ActionCallbacks = {
+      onRefresh: jest.fn(),
+      getRefreshCost: () => ({ calls: 60, leaves: 5 }),
+    }
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="x" />)
+    const btn = screen.getByRole('button', { name: /refresh/i })
+    const aria = btn.getAttribute('aria-label') ?? ''
+    expect(aria).toMatch(/refresh/i)
+    expect(aria).toMatch(/60/)
+    expect(aria).toMatch(/5/)
+    expect(aria).toMatch(/leaf|leaves|call/i)
+  })
+
+  it('aria-label uses "1 leaf" (singular) for a single-leaf estimate', () => {
+    const callbacks: ActionCallbacks = {
+      onRefresh: jest.fn(),
+      getRefreshCost: () => ({ calls: 2, leaves: 1 }),
+    }
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="x" />)
+    const btn = screen.getByRole('button', { name: /refresh/i })
+    const aria = btn.getAttribute('aria-label') ?? ''
+    expect(aria).toMatch(/1 leaf\b/i)
+    expect(aria).not.toMatch(/1 leaves/i)
+  })
+
+  it('aria-label uses "1 call" (singular) for a single-call estimate', () => {
+    const callbacks: ActionCallbacks = {
+      onRefresh: jest.fn(),
+      getRefreshCost: () => ({ calls: 1, leaves: 1 }),
+    }
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="x" />)
+    const btn = screen.getByRole('button', { name: /refresh/i })
+    const aria = btn.getAttribute('aria-label') ?? ''
+    expect(aria).toMatch(/1 call\b/i)
+    expect(aria).not.toMatch(/1 calls/i)
+  })
+
+  it('aria-label degrades to plain "Refresh" when estimate is zero (nothing to dispatch)', () => {
+    const callbacks: ActionCallbacks = {
+      onRefresh: jest.fn(),
+      getRefreshCost: () => ({ calls: 0, leaves: 0 }),
+    }
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="x" />)
+    const btn = screen.getByRole('button', { name: /refresh/i })
+    expect(btn.getAttribute('aria-label')).toBe('Refresh (nothing to dispatch)')
+    // Button remains clickable; the modal-gate (PR6a) and runner handle
+    // the no-op gracefully. Hiding the button on cost=0 would lose the
+    // operator's "I want to verify nothing's stale" intent.
+    expect(btn.hasAttribute('disabled')).toBe(false)
+  })
+
+  it('getRefreshCost is invoked with this node id (not a sibling)', () => {
+    const getRefreshCost = jest.fn(() => ({ calls: 5, leaves: 1 }))
+    const callbacks: ActionCallbacks = {
+      onRefresh: jest.fn(),
+      getRefreshCost,
+    }
+    render(<ActionRail nodeId={nodeId('my-node')} callbacks={callbacks} branchLabel="x" />)
+    expect(getRefreshCost).toHaveBeenCalledWith(nodeId('my-node'))
+  })
+
+  it('estimate changes when the host returns a different value on re-render', () => {
+    const callbacks1: ActionCallbacks = {
+      onRefresh: jest.fn(),
+      getRefreshCost: () => ({ calls: 10, leaves: 2 }),
+    }
+    const callbacks2: ActionCallbacks = {
+      onRefresh: callbacks1.onRefresh,
+      getRefreshCost: () => ({ calls: 20, leaves: 4 }),
+    }
+    const { rerender } = render(
+      <ActionRail nodeId={nodeId('r')} callbacks={callbacks1} branchLabel="x" />,
+    )
+    expect(
+      screen.getByRole('button', { name: /refresh/i }).getAttribute('aria-label'),
+    ).toMatch(/10.*2 leaves/)
+    rerender(<ActionRail nodeId={nodeId('r')} callbacks={callbacks2} branchLabel="x" />)
+    expect(
+      screen.getByRole('button', { name: /refresh/i }).getAttribute('aria-label'),
+    ).toMatch(/20.*4 leaves/)
+  })
+})

@@ -18,8 +18,8 @@
  */
 
 import { buildSForNode, buildSForRetry, buildSForSubtree, buildSForTree, computeReady, demoteRetryFailedNodes } from './readiness'
-import { resolvePathPartition } from './partition'
 import { reconcileAllTransforms } from './reconcile'
+import { estimateRefreshCost } from './estimateRefreshCost'
 import { createWaveController } from './wave'
 import type { WaveDispatchController, WaveSummary } from './wave'
 import type {
@@ -181,7 +181,7 @@ export function createRunnerShim(deps: ShimDependencies): RunnerShim {
       }
 
       // 3. Cost guardrail.
-      const estimatedCalls = estimateCalls(tree, S)
+      const { calls: estimatedCalls } = estimateRefreshCost(tree, S)
       const approved = await deps.costGuardrail.approve(estimatedCalls, triggerKind)
       if (!approved) return
 
@@ -316,16 +316,9 @@ export function createRunnerShim(deps: ShimDependencies): RunnerShim {
 // Helpers
 // ============================================================================
 
-function estimateCalls(
-  tree: ConversationTree,
-  S: ReadonlySet<ConversationTreeNodeId>,
-): number {
-  let total = 0
-  for (const leaf of computeReady(tree, S)) {
-    total += 1 + resolvePathPartition(tree, leaf.id).freshSuffix.length
-  }
-  return total
-}
+// estimateCalls was inlined here pre-PR6b. It now lives in
+// `./estimateRefreshCost` so the action rail's cost-preview tooltip and
+// this shim's modal-gate share the same arithmetic.
 
 // ============================================================================
 // State recorder — captures setNodeState writes so the wave-end reconcile

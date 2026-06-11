@@ -132,6 +132,17 @@ export interface ActionCallbacks {
     nodeId: ConversationTreeNodeId,
     pipeline: ConverterRef[],
   ) => void
+  /**
+   * Pre-dispatch cost estimate for the Refresh button's hover-tooltip
+   * (PR6b; spec §2.2 Finding D.3). Host computes via
+   * `estimateRefreshCost(tree, buildSForNode(tree, nodeId))` (or the
+   * subtree/tree variant matching the rail's action). Returns
+   * `{ calls, leaves }` so the tooltip can read "Refresh (≈60 calls,
+   * 5 leaves)". When undefined, the Refresh button shows just
+   * "Refresh" — host opted out of cost preview, or the estimator
+   * isn't wired yet.
+   */
+  getRefreshCost?: (nodeId: ConversationTreeNodeId) => { calls: number; leaves: number }
 }
 
 export interface ActionRailProps {
@@ -169,7 +180,7 @@ export interface ActionRailProps {
 
 export function ActionRail({ nodeId, callbacks, branchLabel, fanChildInfo, kindActions }: ActionRailProps) {
   const styles = useActionRailStyles()
-  const { onRefresh, onBranch, onDelete, onOpenLinear, onPickFanChild } = callbacks
+  const { onRefresh, onBranch, onDelete, onOpenLinear, onPickFanChild, getRefreshCost } = callbacks
   const showPick = fanChildInfo !== undefined && onPickFanChild !== undefined
   const onPickClick = () => {
     if (!showPick) return
@@ -179,15 +190,16 @@ export function ActionRail({ nodeId, callbacks, branchLabel, fanChildInfo, kindA
     const next = fanChildInfo.promoted ? null : fanChildInfo.slotIndex
     onPickFanChild(fanChildInfo.parentFanId, next)
   }
+  const refreshLabel = onRefresh !== undefined ? formatRefreshLabel(getRefreshCost?.(nodeId)) : 'Refresh'
   return (
     <div data-tree-action-rail data-tree-node-id={nodeId} className={styles.rail}>
       {onRefresh !== undefined && (
-        <Tooltip content="Refresh" relationship="description">
+        <Tooltip content={refreshLabel} relationship="description">
           <Button
             size="small"
             appearance="subtle"
             icon={<ArrowSyncRegular />}
-            aria-label="Refresh"
+            aria-label={refreshLabel}
             onClick={() => onRefresh(nodeId)}
           />
         </Tooltip>
@@ -258,4 +270,19 @@ export function ActionRail({ nodeId, callbacks, branchLabel, fanChildInfo, kindA
       {kindActions}
     </div>
   )
+}
+
+/**
+ * Build the Refresh button's tooltip + aria-label from the host's cost
+ * estimate. Spec §2.2 Finding D.3 wants "Refresh subtree (≈60 calls,
+ * 5 leaves)" — V1.0 uses the simpler "Refresh (≈N calls, M leaves)"
+ * since the rail's primary `↻` is per-node + subtree distinction (long-
+ * press) is V1.1.
+ */
+function formatRefreshLabel(cost: { calls: number; leaves: number } | undefined): string {
+  if (cost === undefined) return 'Refresh'
+  if (cost.calls === 0 && cost.leaves === 0) return 'Refresh (nothing to dispatch)'
+  const callsPart = `${cost.calls} ${cost.calls === 1 ? 'call' : 'calls'}`
+  const leavesPart = `${cost.leaves} ${cost.leaves === 1 ? 'leaf' : 'leaves'}`
+  return `Refresh (≈${callsPart}, ${leavesPart})`
 }
