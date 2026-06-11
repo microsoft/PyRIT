@@ -29,6 +29,8 @@ import type {
   SendNode,
   UserTurnNode,
 } from '../../runner/treeTypes'
+import { ActionRail } from './actionRail'
+import { useActionCallbacks } from './actionCallbacksContext'
 import type { TreeFlowNode } from './conversationTreeToReactFlow'
 import { STATE_BADGE_TOKENS, useNodeCardStyles } from './nodeCards.styles'
 
@@ -46,6 +48,12 @@ interface CardFrameProps {
    * place that defaults to `false` so cards don't repeat the fallback.
    */
   selected?: boolean
+  /**
+   * Display text for the action-rail Branch button. "Clone tree" on a
+   * root node, "Branch from here" elsewhere. Required when callbacks
+   * are present; ignored when they're absent (no rail renders).
+   */
+  branchLabel: string
   showTargetHandle?: boolean // top (parent connection)
   showSourceHandle?: boolean // bottom (child connection)
   children: React.ReactNode
@@ -56,11 +64,13 @@ function CardFrame({
   state,
   nodeId,
   selected = false,
+  branchLabel,
   showTargetHandle = true,
   showSourceHandle = true,
   children,
 }: CardFrameProps) {
   const styles = useNodeCardStyles()
+  const callbacks = useActionCallbacks()
   const stateTokens = STATE_BADGE_TOKENS[state]
   return (
     <div
@@ -80,6 +90,9 @@ function CardFrame({
         </span>
       </div>
       {children}
+      {callbacks !== null && (
+        <ActionRail nodeId={nodeId} callbacks={callbacks} branchLabel={branchLabel} />
+      )}
       {showSourceHandle && <Handle type="source" position={Position.Bottom} />}
     </div>
   )
@@ -118,6 +131,7 @@ export function RootPromptCard({ data, selected }: RootPromptProps) {
       state={node.state}
       nodeId={node.id}
       selected={selected}
+      branchLabel="Clone tree"
       showTargetHandle={false}
     >
       <CardBody text={node.params.text} />
@@ -140,6 +154,7 @@ export function ImportMessageCard({ data, selected }: ImportMessageProps) {
       state={node.state}
       nodeId={node.id}
       selected={selected}
+      branchLabel="Branch from here"
       showTargetHandle={false}
     >
       <MetaRow label="source" value={node.params.sourceConversationId} />
@@ -163,6 +178,7 @@ export function UserTurnCard({ data, selected }: UserTurnProps) {
       state={node.state}
       nodeId={node.id}
       selected={selected}
+      branchLabel="Branch from here"
     >
       <CardBody text={node.params.text} />
       <MetaRow label="role" value={node.params.role} />
@@ -188,6 +204,7 @@ export function SendCard({ data, selected }: SendProps) {
       state={node.state}
       nodeId={node.id}
       selected={selected}
+      branchLabel="Branch from here"
     >
       {node.params.targetRegistryName !== undefined && (
         <MetaRow label="target" value={node.params.targetRegistryName} />
@@ -214,6 +231,7 @@ export function FanCard({ data, selected }: FanProps) {
       state={node.state}
       nodeId={node.id}
       selected={selected}
+      branchLabel="Branch from here"
     >
       <MetaRow label="axis" value={node.params.axis} />
       <MetaRow label="" value={`${n} variant${n === 1 ? '' : 's'}`} />
@@ -239,6 +257,7 @@ export function ScoreCard({ data, selected }: ScoreProps) {
       state={node.state}
       nodeId={node.id}
       selected={selected}
+      branchLabel="Branch from here"
     >
       <MetaRow label="scorer" value={node.params.scorerType} />
       <div className={styles.mutedFooter}>Read-only display</div>

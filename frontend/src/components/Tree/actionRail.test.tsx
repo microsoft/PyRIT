@@ -1,0 +1,325 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
+/**
+ * Tests for the per-node ActionRail component + its wiring through
+ * TreeCanvas → cards.
+ *
+ * Scope (PR5c): the common-to-every-node rail (Refresh / Branch /
+ * Branch-subtree-stub / Delete / Open-in-linear). Kind-specific
+ * actions (✏ edit, ⚡ converter, ≡ role, ↻×N re-run, etc.) defer to
+ * later sub-PRs — each needs its own state machine + dialog.
+ *
+ * Pinned contracts:
+ *   - rail renders one button per visible action
+ *   - clicking a button invokes the matching callback with the node id
+ *   - V1.1 actions (Branch-subtree) render disabled with a tooltip
+ *   - rail visibility ties to `[data-selected="true"]` OR `:hover`
+ *     (CSS-level; tested via the data attributes the cards already
+ *     emit, not via simulated hover events — jsdom's hover doesn't
+ *     fire :hover pseudo-class)
+ *   - missing callbacks (undefined) silently disable the affordance
+ *     (operator can mount TreeCanvas without wiring every action)
+ *   - tooltips render the action label on hover-focus
+ */
+
+import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+
+import { TreeCanvas } from './TreeCanvas'
+import type { ActionCallbacks } from './actionRail'
+import { ActionRail } from './actionRail'
+import {
+  mkRoot,
+  mkSend,
+  mkTree,
+  mkUserTurn,
+  nodeId,
+} from '../../runner/testHelpers'
+
+// ============================================================================
+// 1. ActionRail in isolation
+// ============================================================================
+
+describe('ActionRail — isolated render', () => {
+  it('renders Refresh / Branch / Branch-subtree / Delete / Open buttons when callbacks supplied', () => {
+    const callbacks: ActionCallbacks = {
+      onRefresh: jest.fn(),
+      onBranch: jest.fn(),
+      onDelete: jest.fn(),
+      onOpenLinear: jest.fn(),
+    }
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="Branch from here" />)
+    expect(screen.getByRole('button', { name: /refresh/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /branch from here/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /branch as subtree/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /open in linear/i })).toBeInTheDocument()
+  })
+
+  it('uses the supplied branchLabel ("Clone tree" on root, "Branch from here" elsewhere)', () => {
+    const callbacks: ActionCallbacks = {
+      onRefresh: jest.fn(),
+      onBranch: jest.fn(),
+    }
+    const { rerender } = render(
+      <ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="Clone tree" />,
+    )
+    expect(screen.getByRole('button', { name: /clone tree/i })).toBeInTheDocument()
+    rerender(
+      <ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="Branch from here" />,
+    )
+    expect(screen.getByRole('button', { name: /branch from here/i })).toBeInTheDocument()
+  })
+
+  it('Branch-subtree button is disabled (V1.1 placeholder)', () => {
+    const callbacks: ActionCallbacks = { onRefresh: jest.fn(), onBranch: jest.fn() }
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="Clone tree" />)
+    const subtreeBtn = screen.getByRole('button', { name: /branch as subtree/i })
+    expect(subtreeBtn).toBeDisabled()
+  })
+
+  it('clicking Refresh invokes onRefresh(nodeId)', async () => {
+    const onRefresh = jest.fn()
+    const callbacks: ActionCallbacks = { onRefresh, onBranch: jest.fn() }
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="x" />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /refresh/i }))
+    expect(onRefresh).toHaveBeenCalledTimes(1)
+    expect(onRefresh).toHaveBeenCalledWith(nodeId('r'))
+  })
+
+  it('clicking Branch invokes onBranch(nodeId)', async () => {
+    const onBranch = jest.fn()
+    const callbacks: ActionCallbacks = { onRefresh: jest.fn(), onBranch }
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="Clone tree" />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /clone tree/i }))
+    expect(onBranch).toHaveBeenCalledWith(nodeId('r'))
+  })
+
+  it('clicking Delete invokes onDelete(nodeId)', async () => {
+    const onDelete = jest.fn()
+    const callbacks: ActionCallbacks = {
+      onRefresh: jest.fn(),
+      onBranch: jest.fn(),
+      onDelete,
+    }
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="x" />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /delete/i }))
+    expect(onDelete).toHaveBeenCalledWith(nodeId('r'))
+  })
+
+  it('clicking Open-in-linear invokes onOpenLinear(nodeId)', async () => {
+    const onOpenLinear = jest.fn()
+    const callbacks: ActionCallbacks = {
+      onRefresh: jest.fn(),
+      onBranch: jest.fn(),
+      onOpenLinear,
+    }
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="x" />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /open in linear/i }))
+    expect(onOpenLinear).toHaveBeenCalledWith(nodeId('r'))
+  })
+
+  it('omits Delete button when onDelete callback is undefined', () => {
+    const callbacks: ActionCallbacks = {
+      onRefresh: jest.fn(),
+      onBranch: jest.fn(),
+    }
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="x" />)
+    expect(screen.queryByRole('button', { name: /delete/i })).toBeNull()
+  })
+
+  it('omits Open-in-linear button when onOpenLinear is undefined', () => {
+    const callbacks: ActionCallbacks = {
+      onRefresh: jest.fn(),
+      onBranch: jest.fn(),
+    }
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="x" />)
+    expect(screen.queryByRole('button', { name: /open in linear/i })).toBeNull()
+  })
+
+  it('hides Branch button when onBranch is undefined (no clone affordance)', () => {
+    const callbacks: ActionCallbacks = { onRefresh: jest.fn() }
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="Clone tree" />)
+    expect(screen.queryByRole('button', { name: /clone tree/i })).toBeNull()
+  })
+
+  it('hides Refresh button when onRefresh is undefined', () => {
+    const callbacks: ActionCallbacks = {}
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="x" />)
+    expect(screen.queryByRole('button', { name: /refresh/i })).toBeNull()
+  })
+
+  it('renders nothing when all callbacks are undefined (empty rail)', () => {
+    const callbacks: ActionCallbacks = {}
+    const { container } = render(
+      <ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="x" />,
+    )
+    // Branch-subtree is the only always-rendered (disabled) slot. Verify
+    // the rail wrapper itself still renders so PR5d's edge `+` chip has
+    // anchor positioning; but no functional buttons are present.
+    expect(screen.queryByRole('button', { name: /refresh|clone|branch from here|delete|open in linear/i })).toBeNull()
+    expect(container.querySelector('[data-tree-action-rail]')).not.toBeNull()
+  })
+})
+
+// ============================================================================
+// 2. ActionRail wired through TreeCanvas → cards
+// ============================================================================
+
+describe('TreeCanvas — action callbacks wiring', () => {
+  it('renders a rail on every card when callbacks are supplied at the TreeCanvas boundary', () => {
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r'),
+      mkSend('s', 'u'),
+    ])
+    const callbacks: ActionCallbacks = {
+      onRefresh: jest.fn(),
+      onBranch: jest.fn(),
+      onDelete: jest.fn(),
+      onOpenLinear: jest.fn(),
+    }
+    const { container } = render(<TreeCanvas tree={tree} actionCallbacks={callbacks} />)
+    const rails = container.querySelectorAll('[data-tree-action-rail]')
+    expect(rails).toHaveLength(3)
+  })
+
+  it("clicking a card's Refresh button invokes onRefresh with that card's nodeId", async () => {
+    const tree = mkTree('r', [
+      mkRoot('r'),
+      mkUserTurn('u', 'r'),
+      mkSend('s', 'u'),
+    ])
+    const onRefresh = jest.fn()
+    const callbacks: ActionCallbacks = {
+      onRefresh,
+      onBranch: jest.fn(),
+    }
+    const { container } = render(<TreeCanvas tree={tree} actionCallbacks={callbacks} />)
+    // Find the Send card's Refresh button via its DOM-scoped query.
+    const sendCard = container.querySelector('[data-tree-node-id="s"]')
+    expect(sendCard).not.toBeNull()
+    const refreshButtons = sendCard!.querySelectorAll('button')
+    const refreshBtn = Array.from(refreshButtons).find((b) =>
+      b.getAttribute('aria-label')?.match(/refresh/i),
+    )
+    expect(refreshBtn).toBeDefined()
+    // userEvent.click() trips react-flow's pointerdown handler inside
+    // jsdom (the canvas's pointer-event tracking dereferences a null
+    // window owner). fireEvent.click() dispatches a single MouseEvent
+    // that bypasses react-flow's pointer interception while still
+    // triggering the Fluent Button's onClick.
+    fireEvent.click(refreshBtn!)
+    expect(onRefresh).toHaveBeenCalledTimes(1)
+    expect(onRefresh).toHaveBeenCalledWith(nodeId('s'))
+  })
+
+  it('TreeCanvas renders cards WITHOUT rails when actionCallbacks prop is omitted', () => {
+    // Backwards-compat: PR5a/PR5b TreeCanvas use is `<TreeCanvas tree={...} />`
+    // with no callbacks. The rail must opt in; an undefined callbacks prop
+    // means "no actions wired" and the rail is suppressed entirely.
+    const tree = mkTree('r', [mkRoot('r'), mkUserTurn('u', 'r')])
+    const { container } = render(<TreeCanvas tree={tree} />)
+    expect(container.querySelectorAll('[data-tree-action-rail]')).toHaveLength(0)
+  })
+
+  it('root prompt card uses "Clone tree" label; non-root cards use "Branch from here"', () => {
+    const tree = mkTree('r', [mkRoot('r'), mkUserTurn('u', 'r')])
+    const callbacks: ActionCallbacks = {
+      onRefresh: jest.fn(),
+      onBranch: jest.fn(),
+    }
+    const { container } = render(<TreeCanvas tree={tree} actionCallbacks={callbacks} />)
+    // react-flow nodes render with `visibility: hidden` in jsdom (no layout
+    // engine). testing-library's `getByRole` filters by visibility, so we
+    // query the DOM directly via the data-tree-node-id wrappers + their
+    // descendant aria-labels — the same pattern we used for the Refresh
+    // click test above.
+    const rootCard = container.querySelector('[data-tree-node-id="r"][data-selected]')
+    const userTurnCard = container.querySelector('[data-tree-node-id="u"][data-selected]')
+    expect(rootCard).not.toBeNull()
+    expect(userTurnCard).not.toBeNull()
+
+    const rootBranchBtn = Array.from(rootCard!.querySelectorAll('button')).find((b) =>
+      b.getAttribute('aria-label')?.match(/clone tree/i),
+    )
+    const utBranchBtn = Array.from(userTurnCard!.querySelectorAll('button')).find((b) =>
+      b.getAttribute('aria-label')?.match(/branch from here/i),
+    )
+    expect(rootBranchBtn).toBeDefined()
+    expect(utBranchBtn).toBeDefined()
+  })
+})
+
+// ============================================================================
+// 3. Rail position / accessibility surface
+// ============================================================================
+
+describe('ActionRail — accessibility', () => {
+  it('each button carries an accessible name (aria-label) for screen readers', () => {
+    const callbacks: ActionCallbacks = {
+      onRefresh: jest.fn(),
+      onBranch: jest.fn(),
+      onDelete: jest.fn(),
+      onOpenLinear: jest.fn(),
+    }
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="Clone tree" />)
+    const buttons = screen.getAllByRole('button')
+    for (const b of buttons) {
+      const name = b.getAttribute('aria-label')
+      expect(name).toBeTruthy()
+      expect(name!.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('disabled Branch-subtree button has a tooltip explaining the deferral', () => {
+    // Per 02 §2.2: V1.1 placeholders carry a tooltip pointing operators
+    // at the V1.0 fallback. The button itself is disabled; the tooltip
+    // is on the button's title attribute.
+    const callbacks: ActionCallbacks = { onRefresh: jest.fn(), onBranch: jest.fn() }
+    render(<ActionRail nodeId={nodeId('r')} callbacks={callbacks} branchLabel="x" />)
+    const subtreeBtn = screen.getByRole('button', { name: /branch as subtree/i })
+    expect(subtreeBtn.getAttribute('title')).toMatch(/coming|future|available/i)
+  })
+
+  it('rail carries data-tree-action-rail and data-tree-node-id for DOM scoping', () => {
+    const callbacks: ActionCallbacks = { onRefresh: jest.fn(), onBranch: jest.fn() }
+    const { container } = render(
+      <ActionRail nodeId={nodeId('node-42')} callbacks={callbacks} branchLabel="x" />,
+    )
+    const rail = container.querySelector('[data-tree-action-rail]')
+    expect(rail).not.toBeNull()
+    expect(rail?.getAttribute('data-tree-node-id')).toBe(nodeId('node-42'))
+  })
+})
+
+// ============================================================================
+// 4. Wrapping inside the card preserves selection / data-tree-node-id
+// ============================================================================
+
+describe('CardFrame integration — rail does not break the selection contract', () => {
+  it('TreeCanvas with callbacks preserves the data-tree-node-id wrapper attribute', () => {
+    // Defense-in-depth: the PR5a/PR5b TreeCanvas test selector depends
+    // on data-tree-node-id remaining on the outermost wrapper. The rail
+    // sits INSIDE the card, not around it; the wrapper attribute stays
+    // unchanged.
+    const tree = mkTree('r', [mkRoot('r'), mkUserTurn('u', 'r')])
+    const callbacks: ActionCallbacks = {
+      onRefresh: jest.fn(),
+      onBranch: jest.fn(),
+    }
+    const { container } = render(<TreeCanvas tree={tree} actionCallbacks={callbacks} />)
+    const wrappers = container.querySelectorAll('[data-tree-node-id]')
+    // 2 cards + 2 rails (each rail also tags itself for DOM scoping).
+    // Filter to the card wrappers via the presence of data-selected.
+    const cards = Array.from(wrappers).filter((el) =>
+      el.hasAttribute('data-selected'),
+    )
+    expect(cards).toHaveLength(2)
+  })
+})
