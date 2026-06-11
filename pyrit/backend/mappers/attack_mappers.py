@@ -48,7 +48,6 @@ from pyrit.models import (
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from pyrit.memory import MemoryInterface
     from pyrit.models.conversation_stats import ConversationStats
 
 # ============================================================================
@@ -302,7 +301,6 @@ def _score_lookup_key(*, piece: MessagePiece) -> str:
 async def _fetch_scores_by_piece_async(
     *,
     pyrit_messages: list[Message],
-    memory: MemoryInterface | None,
 ) -> dict[str, list[Score]]:
     """
     Batch-fetch scores for every piece in ``pyrit_messages`` and group by piece id.
@@ -317,9 +315,7 @@ async def _fetch_scores_by_piece_async(
     if not score_lookup_ids:
         return {}
 
-    if memory is None:
-        memory = CentralMemory.get_memory_instance()
-
+    memory = CentralMemory.get_memory_instance()
     fetched = await asyncio.to_thread(memory.get_prompt_scores, prompt_ids=score_lookup_ids)
 
     grouped: dict[str, list[Score]] = {}
@@ -330,8 +326,6 @@ async def _fetch_scores_by_piece_async(
 
 async def pyrit_messages_to_dto_async(
     pyrit_messages: list[Message],
-    *,
-    memory: MemoryInterface | None = None,
 ) -> list[MessageView]:
     """
     Translate PyRIT messages to backend MessageView responses.
@@ -343,15 +337,14 @@ async def pyrit_messages_to_dto_async(
     - Local files -> ``/api/media?path=...`` (served by the media endpoint)
     - Azure Blob Storage files -> signed URLs with SAS tokens
 
-    Scores are fetched from memory (``MessagePiece`` no longer carries them)
-    via a single batched ``get_prompt_scores`` call and attached to their
-    originating piece. Pass ``memory`` explicitly to avoid the ``CentralMemory``
-    singleton lookup or to inject a fake in tests.
+    Scores are fetched from ``CentralMemory`` (``MessagePiece`` no longer carries
+    them) via a single batched ``get_prompt_scores`` call and attached to their
+    originating piece.
 
     Returns:
         List of MessageView responses for the API.
     """
-    scores_by_piece = await _fetch_scores_by_piece_async(pyrit_messages=pyrit_messages, memory=memory)
+    scores_by_piece = await _fetch_scores_by_piece_async(pyrit_messages=pyrit_messages)
 
     messages: list[MessageView] = []
     for msg in pyrit_messages:

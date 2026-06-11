@@ -738,7 +738,7 @@ class TestPyritMessagesToDtoRealObjects:
         sqlite_instance.add_scores_to_memory(scores=[score])
 
         reloaded = sqlite_instance.get_conversation_messages(conversation_id=piece.conversation_id)
-        result = await pyrit_messages_to_dto_async(list(reloaded), memory=sqlite_instance)
+        result = await pyrit_messages_to_dto_async(list(reloaded))
 
         assert len(result) == 1
         dto_pieces = result[0].message_pieces
@@ -759,7 +759,7 @@ class TestPyritMessagesToDtoRealObjects:
         sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[piece]))
 
         reloaded = sqlite_instance.get_conversation_messages(conversation_id=piece.conversation_id)
-        result = await pyrit_messages_to_dto_async(list(reloaded), memory=sqlite_instance)
+        result = await pyrit_messages_to_dto_async(list(reloaded))
 
         assert result[0].message_pieces[0].scores == []
 
@@ -793,7 +793,7 @@ class TestPyritMessagesToDtoRealObjects:
         )
 
         reloaded = sqlite_instance.get_conversation_messages(conversation_id=conv_id)
-        result = await pyrit_messages_to_dto_async(list(reloaded), memory=sqlite_instance)
+        result = await pyrit_messages_to_dto_async(list(reloaded))
 
         by_role = {msg.role: msg for msg in result}
         assert by_role["user"].message_pieces[0].scores == []
