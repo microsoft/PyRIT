@@ -104,6 +104,24 @@ class ValidateCapabilitiesResponse(BaseModel):
             "beneath the input-modalities row."
         ),
     )
+    # Distinct from ``non_probeable_input_modalities`` (which carries the
+    # combo display strings). When a target declares both a probeable combo
+    # like ``{text}`` and a non-probeable mixed combo like ``{text,
+    # function_call}``, splitting the combo string on '+' and stripping every
+    # piece from the input-modality cells would incorrectly hide ``text`` —
+    # which *was* probed and confirmed via the singleton combo. This field
+    # lists only the types that never appear in any probeable combo, so the
+    # frontend can safely filter cells without dropping confirmed modalities.
+    non_probeable_only_types: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Sorted list of declared input modality types that appear ONLY in non-probeable "
+            "combinations (never in any probeable combination). The frontend uses this set to "
+            "hide truly unprobed types from the input-modality cells while leaving types that "
+            "were confirmed via a probeable singleton combo visible. Disjoint from the types "
+            "implicit in ``observed.supported_input_modalities`` that came from a probeable probe."
+        ),
+    )
     warnings: list[str] = Field(
         default_factory=list,
         description=(

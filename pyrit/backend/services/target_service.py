@@ -405,11 +405,22 @@ class TargetService:
                 f"(no packaged probe asset): {', '.join(non_probeable_combos_pretty)}."
             )
 
+        # Types that appear ONLY in non-probeable combos (never in a probeable
+        # one). The frontend uses this for cell-filtering: if a type also
+        # belongs to some probeable combo it WAS confirmed, so the cell should
+        # still show it. Splitting the combo strings on '+' and using the union
+        # would incorrectly hide ``text`` for a target declaring both
+        # ``{text}`` and ``{text, function_call}``.
+        probeable_types: set[PromptDataType] = set().union(*probeable_combinations) if probeable_combinations else set()
+        non_probeable_types: set[PromptDataType] = set().union(*non_probeable) if non_probeable else set()
+        non_probeable_only_types: list[str] = sorted(non_probeable_types - probeable_types)
+
         return ValidateCapabilitiesResponse(
             target_registry_name=target_registry_name,
             declared=declared,
             observed=observed,
             non_probeable_input_modalities=non_probeable_combos_pretty,
+            non_probeable_only_types=non_probeable_only_types,
             warnings=warnings,
         )
 

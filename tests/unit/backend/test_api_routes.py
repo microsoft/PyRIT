@@ -971,6 +971,7 @@ class TestTargetRoutes:
                         supported_input_modalities=["text"],
                     ),
                     non_probeable_input_modalities=["function_call"],
+                    non_probeable_only_types=["function_call"],
                     warnings=["Validation sent live requests to the target; ..."],
                 )
             )
@@ -984,6 +985,7 @@ class TestTargetRoutes:
             assert data["declared"]["supports_json_schema"] is True
             assert data["observed"]["supports_json_schema"] is False
             assert data["non_probeable_input_modalities"] == ["function_call"]
+            assert data["non_probeable_only_types"] == ["function_call"]
             assert isinstance(data["warnings"], list) and data["warnings"]
 
     def test_validate_target_returns_404_when_target_missing(self, client: TestClient) -> None:

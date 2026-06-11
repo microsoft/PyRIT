@@ -1008,6 +1008,57 @@ class TestValidateTargetCapabilities:
         # (c) typed field has the sorted, '+'-joined list
         assert result.non_probeable_input_modalities == ["function_call", "url"]
 
+        # (d) function_call and url appear ONLY in non-probeable combos
+        # (each in its own singleton, no probeable combo includes them).
+        assert result.non_probeable_only_types == ["function_call", "url"]
+
+    async def test_non_probeable_only_types_excludes_types_confirmed_via_probeable_combo(self) -> None:
+        """
+        Regression guard for the dialog cell-filter bug: when a target
+        declares both a probeable singleton like ``{text}`` AND a non-probeable
+        mixed combo like ``{text, function_call}``, ``text`` IS confirmed
+        (via the singleton) and must not appear in
+        ``non_probeable_only_types`` — otherwise the frontend would strip
+        ``text`` from the Input modalities cells and show ``— / —`` despite
+        it being probed and confirmed.
+
+        ``non_probeable_input_modalities`` (the combo display list) still
+        contains the mixed combo so the "Not probed (no asset)" row can
+        surface it; the cell-filter logic uses the narrower
+        ``non_probeable_only_types`` set instead.
+        """
+        from unittest.mock import AsyncMock
+
+        service = TargetService()
+        fake_target = _fake_target_with_capabilities(
+            input_modalities=frozenset(
+                {
+                    frozenset(["text"]),
+                    frozenset(["text", "function_call"]),
+                    frozenset(["image_path"]),
+                    frozenset(["image_path", "url"]),
+                }
+            )
+        )
+        observed = _fake_observed_capabilities(declared=fake_target.capabilities)
+        with (
+            patch.object(service, "get_target_object", return_value=fake_target),
+            patch(
+                "pyrit.backend.services.target_service.discover_target_capabilities_async",
+                new_callable=AsyncMock,
+            ) as mock_probe,
+        ):
+            mock_probe.return_value = observed
+            result = await service.validate_target_capabilities_async(target_registry_name="t1")
+
+        assert result is not None
+        # Combo display list keeps the mixed combos (used by the "Not probed" row).
+        assert result.non_probeable_input_modalities == ["function_call+text", "image_path+url"]
+        # Cell-filter list contains only types NOT confirmed by any probeable combo.
+        # `text` is confirmed by {text}; `image_path` is confirmed by {image_path}.
+        # Only `function_call` and `url` are exclusively non-probeable.
+        assert result.non_probeable_only_types == ["function_call", "url"]
+
     async def test_passes_empty_set_when_no_probeable_modalities(self) -> None:
         """
         Declared modalities are all non-probeable. Method passes
@@ -1044,6 +1095,8 @@ class TestValidateTargetCapabilities:
         assert isinstance(passed, set)
         assert result is not None
         assert result.non_probeable_input_modalities == ["function_call", "url", "video_path"]
+        # With no probeable combos, every declared type is exclusively non-probeable.
+        assert result.non_probeable_only_types == ["function_call", "url", "video_path"]
         assert any("no packaged probe asset" in w for w in result.warnings)
 
     async def test_propagates_probe_exceptions(self) -> None:

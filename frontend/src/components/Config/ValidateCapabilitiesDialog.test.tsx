@@ -39,6 +39,7 @@ const allMatchResponse: ValidateCapabilitiesResponse = {
   declared: sampleTarget.capabilities!,
   observed: sampleTarget.capabilities!,
   non_probeable_input_modalities: [],
+  non_probeable_only_types: [],
   warnings: [
     'Validation sent live requests to the target; this may incur cost and produce real side effects.',
     'Test prompts written to memory are tagged with `capability_probe`.',
@@ -61,6 +62,7 @@ const mismatchResponse: ValidateCapabilitiesResponse = {
     supported_input_modalities: ['text'],
   },
   non_probeable_input_modalities: [],
+  non_probeable_only_types: [],
   warnings: ['Validation sent live requests to the target; ...'],
 }
 
@@ -75,6 +77,7 @@ const notProbedResponse: ValidateCapabilitiesResponse = {
     supported_input_modalities: ['function_call', 'reasoning', 'text', 'tool_call'],
   },
   non_probeable_input_modalities: ['function_call', 'reasoning', 'tool_call'],
+  non_probeable_only_types: ['function_call', 'reasoning', 'tool_call'],
   warnings: [
     'Validation sent live requests to the target; ...',
     'Some declared input modalities are reported as declared/not-probed (no packaged probe asset): function_call, reasoning, tool_call.',
@@ -286,6 +289,47 @@ describe('ValidateCapabilitiesDialog', () => {
     await waitFor(() => expect(screen.getByText('Multi-turn')).toBeInTheDocument())
     expect(screen.queryByTestId('not-probed-row')).not.toBeInTheDocument()
     expect(screen.queryByText(/Not probed \(no asset\)/i)).not.toBeInTheDocument()
+  })
+
+  it('keeps probeable-confirmed types in the Input modalities cells even when a sibling combo bundles them with a non-probeable type', async () => {
+    // Regression: a target declaring both {text} and {text, function_call}
+    // sends back non_probeable_input_modalities=['function_call+text'] (the
+    // mixed combo) AND non_probeable_only_types=['function_call'] (only
+    // function_call is exclusively non-probeable; text is confirmed via the
+    // {text} singleton). The cells must hide function_call but keep text —
+    // otherwise the user sees '— / —' for Input modalities and a green
+    // match indicator while text was actually probed and confirmed.
+    const mixedComboResponse: ValidateCapabilitiesResponse = {
+      target_registry_name: 'mixed_combo_target',
+      declared: {
+        ...sampleTarget.capabilities!,
+        supported_input_modalities: ['function_call', 'text'],
+      },
+      observed: {
+        ...sampleTarget.capabilities!,
+        supported_input_modalities: ['function_call', 'text'],
+      },
+      non_probeable_input_modalities: ['function_call+text'],
+      non_probeable_only_types: ['function_call'],
+      warnings: [],
+    }
+    mockedApi.validateCapabilities.mockResolvedValue(mixedComboResponse)
+    render(
+      <TestWrapper>
+        <ValidateCapabilitiesDialog
+          open={true}
+          target={{ ...sampleTarget, target_registry_name: 'mixed_combo_target' }}
+          onClose={jest.fn()}
+        />
+      </TestWrapper>,
+    )
+    await waitFor(() => expect(screen.getByTestId('not-probed-row')).toBeInTheDocument())
+    // The Input modalities row must show 'text' in both cells (probed and
+    // confirmed). The Not-probed row must show the mixed combo.
+    const inputRow = screen.getByTestId('input-modalities-row')
+    expect(inputRow).toHaveTextContent('text')
+    expect(inputRow).not.toHaveTextContent('function_call')
+    expect(screen.getByText('function_call+text')).toBeInTheDocument()
   })
 
   it('shows a warning banner for composite targets', async () => {

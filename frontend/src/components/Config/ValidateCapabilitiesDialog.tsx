@@ -154,10 +154,12 @@ export default function ValidateCapabilitiesDialog({
   // these back into observed.input_modalities (line 778), making them appear
   // confirmed in the cells even though they were never tested. Hide them from
   // the Input modalities row so the cells show only what was actually probed;
-  // the "Not probed (no asset)" row below already lists them separately.
-  const nonProbeableTypes = new Set(
-    (result?.non_probeable_input_modalities ?? []).flatMap(combo => combo.split('+')),
-  )
+  // the "Not probed (no asset)" row below already lists the combos separately.
+  // IMPORTANT: use `non_probeable_only_types` (not splitting
+  // `non_probeable_input_modalities` on '+'), so types confirmed via a
+  // probeable singleton combo aren't dropped when a sibling combo bundles
+  // them with a non-probeable type.
+  const nonProbeableTypes = new Set(result?.non_probeable_only_types ?? [])
   const declaredProbeableInputs = (declared?.supported_input_modalities ?? []).filter(
     t => !nonProbeableTypes.has(t),
   )
@@ -233,7 +235,7 @@ export default function ValidateCapabilitiesDialog({
                         </TableRow>
                       )
                     })}
-                    <TableRow>
+                    <TableRow data-testid="input-modalities-row">
                       <TableCell>Input modalities</TableCell>
                       <TableCell>{formatModalities(declaredProbeableInputs)}</TableCell>
                       <TableCell>{formatModalities(observedProbeableInputs)}</TableCell>

@@ -111,6 +111,15 @@ export interface ValidateCapabilitiesResponse {
    */
   non_probeable_input_modalities: string[]
   /**
+   * Sorted list of declared input-modality types that appear ONLY in
+   * non-probeable combinations (never in any probeable combination). Used
+   * by ValidateCapabilitiesDialog to filter the input-modality cells without
+   * accidentally hiding types confirmed via a probeable singleton combo —
+   * e.g., for a target declaring both `{text}` and `{text, function_call}`,
+   * this list contains only `function_call`, leaving `text` visible.
+   */
+  non_probeable_only_types: string[]
+  /**
    * Operational notes for the user (live-call cost, memory tagging, output
    * modalities not probed, semantic-enforcement caveat, validate-vs-active-attack).
    */
