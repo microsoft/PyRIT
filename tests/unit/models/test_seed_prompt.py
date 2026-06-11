@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import textwrap
 import uuid
 from unittest.mock import MagicMock
 
@@ -157,3 +158,138 @@ def test_seed_prompt_from_messages_with_starting_sequence():
 
     result = SeedPrompt.from_messages([msg], starting_sequence=5)
     assert result[0].sequence == 5
+
+
+# --- response_json_schema resolution (response_json_schema_name is init-only) ---
+
+
+class TestSeedPromptResponseJsonSchemaResolution:
+    """Tests covering how SeedPrompt resolves an embedded JSON schema.
+
+    ``response_json_schema_name`` is accepted as a constructor kwarg / YAML key
+    and resolved by a ``model_validator(mode="before")`` into
+    ``response_json_schema``, but **not** stored as an instance attribute.
+    Downstream readers (scorers, memory, attacks) only see
+    ``response_json_schema``.
+    """
+
+    def test_name_is_not_a_pydantic_field(self):
+        """Regression guard: ``response_json_schema_name`` must stay init-only.
+
+        If a future change converts it into a real Pydantic field, this test
+        breaks loudly so we catch the leak before it propagates into memory
+        persistence or scorer identifier params.
+        """
+        field_names = set(SeedPrompt.model_fields.keys())
+        assert "response_json_schema_name" not in field_names
+        assert "response_json_schema" in field_names
+
+    def test_inline_schema_left_unchanged(self):
+        schema = {"type": "object", "properties": {"x": {"type": "string"}}}
+        sp = SeedPrompt(value="hi", data_type="text", response_json_schema=schema)
+        assert sp.response_json_schema == schema
+        # Init-only kwarg is consumed by the before-validator; it must not land on the instance.
+        assert "response_json_schema_name" not in sp.__dict__
+
+    def test_name_resolves_against_registry(self):
+        sp = SeedPrompt(value="hi", data_type="text", response_json_schema_name="true_false_with_rationale")
+        # Init-only kwarg is not stored on the instance — only the resolved schema is.
+        assert "response_json_schema_name" not in sp.__dict__
+        assert sp.response_json_schema is not None
+        assert sp.response_json_schema["type"] == "object"
+        assert set(sp.response_json_schema["required"]) == {"score_value", "rationale"}
+
+    def test_name_resolution_is_deep_copy(self):
+        sp_a = SeedPrompt(value="a", data_type="text", response_json_schema_name="true_false_with_rationale")
+        sp_a.response_json_schema["properties"]["score_value"]["enum"].append("Maybe")
+
+        sp_b = SeedPrompt(value="b", data_type="text", response_json_schema_name="true_false_with_rationale")
+        assert sp_b.response_json_schema["properties"]["score_value"]["enum"] == ["True", "False"]
+
+    def test_setting_both_inline_and_name_raises(self):
+        with pytest.raises(ValueError, match="Set only one of response_json_schema"):
+            SeedPrompt(
+                value="hi",
+                data_type="text",
+                response_json_schema={"type": "object"},
+                response_json_schema_name="true_false_with_rationale",
+            )
+
+    def test_unknown_schema_name_raises(self):
+        with pytest.raises(ValueError, match="not registered in COMMON_JSON_SCHEMAS"):
+            SeedPrompt(value="hi", data_type="text", response_json_schema_name="definitely_not_real")
+
+    def test_no_schema_set_leaves_field_none(self):
+        sp = SeedPrompt(value="hi", data_type="text")
+        assert sp.response_json_schema is None
+        assert "response_json_schema_name" not in sp.__dict__
+
+    def test_yaml_load_with_inline_schema(self, tmp_path):
+        """A YAML file may inline the full schema body under ``response_json_schema``."""
+        yaml_text = textwrap.dedent(
+            """
+            value: |
+                Score this answer.
+            data_type: text
+            response_json_schema:
+                type: object
+                properties:
+                    score_value:
+                        type: string
+                    rationale:
+                        type: string
+                required:
+                    - score_value
+                    - rationale
+            """
+        ).strip()
+        yaml_file = tmp_path / "inline_schema.yaml"
+        yaml_file.write_text(yaml_text, encoding="utf-8")
+
+        sp = SeedPrompt.from_yaml_file(yaml_file)
+        assert "response_json_schema_name" not in sp.__dict__
+        assert sp.response_json_schema == {
+            "type": "object",
+            "properties": {
+                "score_value": {"type": "string"},
+                "rationale": {"type": "string"},
+            },
+            "required": ["score_value", "rationale"],
+        }
+
+    def test_yaml_load_with_schema_name(self, tmp_path):
+        """A YAML file may reference a named registry schema instead of inlining."""
+        yaml_text = textwrap.dedent(
+            """
+            value: |
+                Score this answer.
+            data_type: text
+            response_json_schema_name: true_false_with_rationale
+            """
+        ).strip()
+        yaml_file = tmp_path / "named_schema.yaml"
+        yaml_file.write_text(yaml_text, encoding="utf-8")
+
+        sp = SeedPrompt.from_yaml_file(yaml_file)
+        # Name is consumed at construction and discarded; only the resolved
+        # body is observable on the instance.
+        assert "response_json_schema_name" not in sp.__dict__
+        assert sp.response_json_schema is not None
+        assert set(sp.response_json_schema["required"]) == {"score_value", "rationale"}
+
+    def test_yaml_load_setting_both_raises(self, tmp_path):
+        """Inline schema + name in the same YAML must raise on construction."""
+        yaml_text = textwrap.dedent(
+            """
+            value: hi
+            data_type: text
+            response_json_schema:
+                type: object
+            response_json_schema_name: true_false_with_rationale
+            """
+        ).strip()
+        yaml_file = tmp_path / "both.yaml"
+        yaml_file.write_text(yaml_text, encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Set only one of response_json_schema"):
+            SeedPrompt.from_yaml_file(yaml_file)

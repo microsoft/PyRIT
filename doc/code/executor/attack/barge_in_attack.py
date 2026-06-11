@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.19.3
 # ---
 
 # %% [markdown]
@@ -188,7 +188,7 @@ for message in turns:
         if piece.converted_value_data_type == "audio_path":
             val = Path(val).name
         value_preview = (val[:80] + "...") if len(val) > 80 else val
-        print(f"  {piece._role} {piece.converted_value_data_type}{marker}: {value_preview}")
+        print(f"  {piece.role} {piece.converted_value_data_type}{marker}: {value_preview}")
 
 await ConsoleAttackResultPrinter(width=200).write_async(result=barge_in_result)  # type: ignore
 await target2.cleanup_target_async()  # type: ignore

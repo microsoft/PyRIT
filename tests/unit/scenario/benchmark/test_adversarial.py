@@ -216,7 +216,21 @@ class TestAdversarialBenchmarkStrategy:
         member_values = {m.value for m in strategy_cls}
         assert "prompt_sending" not in member_values
 
-    def test_strategy_includes_required_aggregates(self):
+    def test_strategy_excludes_factories_with_baked_adversarial_chat(self):
+        """Adversarial factories that bake their own ``adversarial_chat`` are not swept."""
+        baked = MagicMock(spec=AttackTechniqueFactory)
+        baked.name = "pinned_adversary"
+        baked.uses_adversarial = True
+        baked.strategy_tags = ["core", "light"]
+        baked.seed_technique = None
+        baked.attack_class = MagicMock(__name__="pinned_adversary")
+        baked.adversarial_chat = MagicMock()
+        baked.create.return_value = MagicMock()
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories([baked])
+
+        strategy_cls = _build_benchmark_strategy()
+        member_values = {m.value for m in strategy_cls}
+        assert "pinned_adversary" not in member_values
         """The strategy enum exposes ``light``, ``single_turn``, ``multi_turn`` aggregates."""
         strategy_cls = _build_benchmark_strategy()
         aggregates = strategy_cls.get_aggregate_tags()
@@ -472,8 +486,8 @@ class TestGetAtomicAttacksCrossProduct:
         )
         assert atomic.atomic_attack_name == "red_teaming__adv_a_harmbench"
 
-    async def test_factory_create_called_per_target_with_adversarial_config_override(self):
-        """Each (factory, target) pair calls ``factory.create`` with an ``AttackAdversarialConfig`` override."""
+    async def test_factory_create_called_per_target_with_adversarial_chat(self):
+        """Each (factory, target) pair calls ``factory.create`` with an ``adversarial_chat`` target."""
         bench = self._make_bench_with_targets(target_names=["adv_a", "adv_b"])
         factory = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()["red_teaming"]
 
@@ -483,9 +497,7 @@ class TestGetAtomicAttacksCrossProduct:
         assert factory.create.call_count == 2
         target_a = TargetRegistry.get_registry_singleton().get_instance_by_name("adv_a")
         target_b = TargetRegistry.get_registry_singleton().get_instance_by_name("adv_b")
-        injected_targets = {
-            call.kwargs["attack_adversarial_config_override"].target for call in factory.create.call_args_list
-        }
+        injected_targets = {call.kwargs["adversarial_chat"] for call in factory.create.call_args_list}
         assert injected_targets == {target_a, target_b}
 
 
@@ -1138,7 +1150,7 @@ class TestRunAsyncCacheInjection:
         # Base run_async produced only the non-skipped attack's result
         base_scenario_result = MagicMock()
         base_scenario_result.attack_results = {"technique_c__adv_target_harmbench": [result_z]}
-        base_scenario_result._display_group_map = {}
+        base_scenario_result.display_group_map = {}
 
         with patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)):
             result = await bench.run_async()
@@ -1164,12 +1176,12 @@ class TestRunAsyncCacheInjection:
 
         base_scenario_result = MagicMock()
         base_scenario_result.attack_results = {}
-        base_scenario_result._display_group_map = {}
+        base_scenario_result.display_group_map = {}
 
         with patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)):
             result = await bench.run_async()
 
-        assert result._display_group_map["technique_a__adv_target_harmbench"] == "adv_target"
+        assert result.display_group_map["technique_a__adv_target_harmbench"] == "adv_target"
 
     async def test_no_injection_when_no_cached_attacks(self):
         """When all attacks were executed freshly, attack_results is returned unchanged."""
@@ -1181,7 +1193,7 @@ class TestRunAsyncCacheInjection:
         result_z = MagicMock(spec=AttackResult)
         base_scenario_result = MagicMock()
         base_scenario_result.attack_results = {"technique_c__adv_target_harmbench": [result_z]}
-        base_scenario_result._display_group_map = {}
+        base_scenario_result.display_group_map = {}
 
         with patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)):
             result = await bench.run_async()

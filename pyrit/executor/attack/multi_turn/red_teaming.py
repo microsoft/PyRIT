@@ -6,7 +6,7 @@ from __future__ import annotations
 import enum
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
@@ -17,9 +17,11 @@ from pyrit.executor.attack.component import (
     get_adversarial_chat_messages,
 )
 from pyrit.executor.attack.core.attack_config import (
+    DEFAULT_ADVERSARIAL_SEED_PROMPT,
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
+    resolve_adversarial_system_prompt,
 )
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
@@ -100,9 +102,9 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         *,
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
-        attack_converter_config: Optional[AttackConverterConfig] = None,
-        attack_scoring_config: Optional[AttackScoringConfig] = None,
-        prompt_normalizer: Optional[PromptNormalizer] = None,
+        attack_converter_config: AttackConverterConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
+        prompt_normalizer: PromptNormalizer | None = None,
         max_turns: int = 10,
         score_last_turn_only: bool = False,
     ) -> None:
@@ -153,11 +155,9 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         except ValueError as exc:
             raise ValueError(f"RedTeamingAttack {exc}") from exc
 
-        system_prompt_template_path = (
-            attack_adversarial_config.system_prompt_path or RTASystemPromptPaths.TEXT_GENERATION.value
-        )
-        self._adversarial_chat_system_prompt_template = SeedPrompt.from_yaml_with_required_parameters(
-            template_path=system_prompt_template_path,
+        self._adversarial_chat_system_prompt_template = resolve_adversarial_system_prompt(
+            config=attack_adversarial_config,
+            default_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
             required_parameters=["objective"],
             error_message="Adversarial seed prompt must have an objective",
         )
@@ -175,17 +175,34 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         self._max_turns = max_turns
         self._score_last_turn_only = score_last_turn_only
 
-    def get_attack_scoring_config(self) -> Optional[AttackScoringConfig]:
+    def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
         Get the attack scoring configuration used by this strategy.
 
         Returns:
-            Optional[AttackScoringConfig]: The scoring configuration with objective scorer
+            AttackScoringConfig | None: The scoring configuration with objective scorer
                 and use_score_as_feedback.
         """
         return AttackScoringConfig(
             objective_scorer=self._objective_scorer,
             use_score_as_feedback=self._use_score_as_feedback,
+        )
+
+    def get_attack_adversarial_config(self) -> AttackAdversarialConfig | None:
+        """
+        Get the effective adversarial configuration used by this strategy.
+
+        Returns:
+            AttackAdversarialConfig | None: The adversarial target with its resolved system prompt
+                and first-message seed prompt.
+        """
+        adversarial_chat = getattr(self, "_adversarial_chat", None)
+        if adversarial_chat is None:
+            return None
+        return AttackAdversarialConfig(
+            target=adversarial_chat,
+            system_prompt=self._adversarial_chat_system_prompt_template,
+            seed_prompt=self._adversarial_chat_seed_prompt,
         )
 
     def _validate_context(self, *, context: MultiTurnAttackContext[Any]) -> None:
@@ -578,7 +595,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
 
         return response
 
-    async def _score_response_async(self, *, context: MultiTurnAttackContext[Any]) -> Optional[Score]:
+    async def _score_response_async(self, *, context: MultiTurnAttackContext[Any]) -> Score | None:
         """
         Evaluate the objective target's response with the objective scorer.
 
@@ -589,7 +606,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             context (MultiTurnAttackContext): The attack context containing the response to score.
 
         Returns:
-            Optional[Score]: The score of the response if available, otherwise None.
+            Score | None: The score of the response if available, otherwise None.
         """
         if not context.last_response:
             logger.warning("No response available in context to score")
@@ -613,16 +630,19 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         objective_scores = scoring_results
         return objective_scores[0] if objective_scores else None
 
-    def _set_adversarial_chat_seed_prompt(self, *, seed_prompt: Union[str, SeedPrompt]) -> None:
+    def _set_adversarial_chat_seed_prompt(self, *, seed_prompt: str | SeedPrompt | None) -> None:
         """
         Set the seed prompt for the adversarial chat.
 
         Args:
-            seed_prompt (Union[str, SeedPrompt]): The seed prompt to set for the adversarial chat.
+            seed_prompt (str | SeedPrompt | None): The seed prompt to set for the adversarial chat.
+                When None, the default seed prompt is used.
 
         Raises:
-            ValueError: If the seed prompt is not a string or SeedPrompt object.
+            ValueError: If the seed prompt is not a string, SeedPrompt object, or None.
         """
+        if seed_prompt is None:
+            seed_prompt = DEFAULT_ADVERSARIAL_SEED_PROMPT
         if isinstance(seed_prompt, str):
             self._adversarial_chat_seed_prompt = SeedPrompt(value=seed_prompt, data_type="text", is_jinja_template=True)
         elif isinstance(seed_prompt, SeedPrompt):

@@ -9,8 +9,10 @@ import uuid
 import zipfile
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING, ClassVar
 
 from huggingface_hub import hf_hub_download
+from typing_extensions import override
 
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
@@ -18,9 +20,10 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from pyrit.models.seeds.seed_group import SeedUnion
 
-_HF_REPO_ID = "ys-zong/VLGuard"
+logger = logging.getLogger(__name__)
 
 
 class VLGuardCategory(Enum):
@@ -90,9 +93,21 @@ class _VLGuardDataset(_RemoteDatasetLoader):
     https://huggingface.co/datasets/ys-zong/VLGuard before use, and provide
     a HuggingFace token.
 
-    Reference: https://arxiv.org/abs/2402.02207
+    Reference: [@zong2024vlguard]
     Paper: Safety Fine-Tuning at (Almost) No Cost: A Baseline for Vision Large Language Models (ICML 2024)
     """
+
+    _HF_REPO_ID: ClassVar[str] = "ys-zong/VLGuard"
+
+    _AUTHORS = [
+        "Yongshuo Zong",
+        "Ondrej Bohdal",
+        "Tingyang Yu",
+        "Yongxin Yang",
+        "Timothy Hospedales",
+    ]
+
+    _GROUPS = ["University of Edinburgh", "EPFL"]
 
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT, Modality.IMAGE)
@@ -122,7 +137,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
         self.subset = subset
         self.categories = categories
         self.token = token if token is not None else os.environ.get("HUGGINGFACE_TOKEN")
-        self.source = f"https://huggingface.co/datasets/{_HF_REPO_ID}"
+        self.source = f"https://huggingface.co/datasets/{self._HF_REPO_ID}"
 
         if categories is not None:
             valid_categories = {cat.value for cat in VLGuardCategory}
@@ -133,10 +148,12 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 raise ValueError(f"Invalid VLGuard categories: {', '.join(invalid_categories)}")
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "vlguard"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch VLGuard multimodal examples and return as SeedDataset.
@@ -155,7 +172,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
 
         metadata, image_dir = await self._download_dataset_files_async(cache=cache)
 
-        prompts: list[SeedPrompt] = []
+        prompts: list[SeedUnion] = []
 
         for example in metadata:
             image_filename = example.get("image")
@@ -209,6 +226,8 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                     "subset": self.subset.value,
                     "safe_image": is_safe,
                 },
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
 
             image_prompt = SeedPrompt(
@@ -228,6 +247,8 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                     "safe_image": is_safe,
                     "original_filename": image_filename,
                 },
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
 
             prompts.append(text_prompt)
@@ -287,14 +308,14 @@ class _VLGuardDataset(_RemoteDatasetLoader):
 
         def _download_sync() -> tuple[str, str]:
             json_file = hf_hub_download(
-                repo_id=_HF_REPO_ID,
+                repo_id=self._HF_REPO_ID,
                 filename="test.json",
                 repo_type="dataset",
                 local_dir=str(cache_dir),
                 token=self.token,
             )
             zip_file = hf_hub_download(
-                repo_id=_HF_REPO_ID,
+                repo_id=self._HF_REPO_ID,
                 filename="test.zip",
                 repo_type="dataset",
                 local_dir=str(cache_dir),

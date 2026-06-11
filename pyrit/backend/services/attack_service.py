@@ -50,7 +50,7 @@ from pyrit.backend.models.attacks import (
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.target_service import get_target_service
-from pyrit.memory import CentralMemory
+from pyrit.memory import CentralMemory, data_serializer_factory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -60,7 +60,6 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
     build_atomic_attack_identifier,
-    data_serializer_factory,
 )
 from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
 
@@ -268,7 +267,7 @@ class AttackService:
 
         # Get messages for this conversation
         pyrit_messages = self._memory.get_conversation(conversation_id=conversation_id)
-        backend_messages = await pyrit_messages_to_dto_async(list(pyrit_messages))
+        backend_messages = await pyrit_messages_to_dto_async(list(pyrit_messages), memory=self._memory)
 
         return ConversationMessagesResponse(
             conversation_id=conversation_id,
@@ -415,7 +414,7 @@ class AttackService:
         for conv_id in active_conv_ids:
             stats = stats_map.get(conv_id)
             created_at = stats.created_at if stats else None
-            # SQLite returns naive datetimes — normalize to UTC (same pattern as _ensure_utc)
+            # SQLite returns naive datetimes — normalize to UTC (same pattern as the UTCDateTime column type)
             if created_at is not None and created_at.tzinfo is None:
                 created_at = created_at.replace(tzinfo=timezone.utc)
             conversations.append(

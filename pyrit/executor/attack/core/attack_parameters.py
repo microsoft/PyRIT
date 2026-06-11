@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pyrit.models import Message, SeedAttackGroup, SeedGroup
 
@@ -33,13 +33,13 @@ class AttackParameters:
     objective: str
 
     # Optional message to send to the objective target (overrides objective if provided)
-    next_message: Optional[Message] = None
+    next_message: Message | None = None
 
     # Conversation that is automatically prepended to the target model
-    prepended_conversation: Optional[list[Message]] = None
+    prepended_conversation: list[Message] | None = None
 
     # Additional labels that can be applied to the prompts throughout the attack
-    memory_labels: Optional[dict[str, str]] = field(default_factory=dict)
+    memory_labels: dict[str, str] | None = field(default_factory=dict)
 
     def __str__(self) -> str:
         """Return a nicely formatted string representation of the attack parameters."""
@@ -78,8 +78,8 @@ class AttackParameters:
         cls: type[AttackParamsT],
         *,
         seed_group: SeedAttackGroup,
-        adversarial_chat: Optional[PromptTarget] = None,
-        objective_scorer: Optional[TrueFalseScorer] = None,
+        adversarial_chat: PromptTarget | None = None,
+        objective_scorer: TrueFalseScorer | None = None,
         **overrides: Any,
     ) -> AttackParamsT:
         """
@@ -151,7 +151,7 @@ class AttackParameters:
             if objective_scorer is None:
                 raise ValueError("objective_scorer is required when seed_group has a simulated conversation config")
 
-            # Generate the simulated conversation - returns List[SeedPrompt]
+            # Generate the simulated conversation - returns list[SeedPrompt]
             simulated_prompts = await generate_simulated_conversation_async(
                 objective=seed_group.objective.value,
                 adversarial_chat=adversarial_chat,

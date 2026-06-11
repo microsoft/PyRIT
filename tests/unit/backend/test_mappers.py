@@ -30,7 +30,7 @@ from pyrit.backend.mappers.attack_mappers import (
 )
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, build_atomic_attack_identifier
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.prompt_target import PromptTarget, TargetCapabilities
 
@@ -66,13 +66,15 @@ def _make_attack_result(
         conversation_id=conversation_id,
         objective="test",
         attack_result_id=str(uuid.uuid4()),
-        attack_identifier=ComponentIdentifier(
-            class_name=name,
-            class_module="pyrit.backend",
-            params={
-                "source": "gui",
-            },
-            children=children,
+        atomic_attack_identifier=build_atomic_attack_identifier(
+            attack_identifier=ComponentIdentifier(
+                class_name=name,
+                class_module="pyrit.backend",
+                params={
+                    "source": "gui",
+                },
+                children=children,
+            )
         ),
         outcome=outcome,
         metadata={
@@ -100,7 +102,10 @@ def _make_mock_piece(
     p.response_error = "none"
     p.role = "user"
     p.timestamp = datetime.now(timezone.utc)
-    p.scores = []
+    # MessagePiece no longer carries scores — they are fetched from memory.
+    # Set original_prompt_id explicitly so the lookup key is deterministic
+    # (otherwise the auto-generated MagicMock attr is truthy and unpredictable).
+    p.original_prompt_id = None
     return p
 
 
@@ -263,29 +268,31 @@ class TestAttackResultToSummary:
             conversation_id="attack-conv",
             objective="test",
             attack_result_id=str(uuid.uuid4()),
-            attack_identifier=ComponentIdentifier(
-                class_name="TestAttack",
-                class_module="pyrit.backend",
-                children={
-                    "request_converters": [
-                        ComponentIdentifier(
-                            class_name="Base64Converter",
-                            class_module="pyrit.converters",
-                            params={
-                                "supported_input_types": ("text",),
-                                "supported_output_types": ("text",),
-                            },
-                        ),
-                        ComponentIdentifier(
-                            class_name="ROT13Converter",
-                            class_module="pyrit.converters",
-                            params={
-                                "supported_input_types": ("text",),
-                                "supported_output_types": ("text",),
-                            },
-                        ),
-                    ],
-                },
+            atomic_attack_identifier=build_atomic_attack_identifier(
+                attack_identifier=ComponentIdentifier(
+                    class_name="TestAttack",
+                    class_module="pyrit.backend",
+                    children={
+                        "request_converters": [
+                            ComponentIdentifier(
+                                class_name="Base64Converter",
+                                class_module="pyrit.converters",
+                                params={
+                                    "supported_input_types": ("text",),
+                                    "supported_output_types": ("text",),
+                                },
+                            ),
+                            ComponentIdentifier(
+                                class_name="ROT13Converter",
+                                class_module="pyrit.converters",
+                                params={
+                                    "supported_input_types": ("text",),
+                                    "supported_output_types": ("text",),
+                                },
+                            ),
+                        ],
+                    },
+                )
             ),
             outcome=AttackOutcome.UNDETERMINED,
             metadata={"created_at": now.isoformat(), "updated_at": now.isoformat()},
@@ -461,6 +468,16 @@ class TestAttackResultToSummary:
 
 class TestPyritMessagesToDto:
     """Tests for pyrit_messages_to_dto_async function."""
+
+    @pytest.fixture(autouse=True)
+    def _stub_central_memory(self):
+        """Stub CentralMemory so the mapper's score lookup is a no-op for mock-based tests."""
+        from pyrit.memory import CentralMemory
+
+        stub = MagicMock()
+        stub.get_prompt_scores = MagicMock(return_value=[])
+        with patch.object(CentralMemory, "get_memory_instance", return_value=stub):
+            yield stub
 
     async def test_maps_single_message(self) -> None:
         """Test mapping a single message with one piece."""
@@ -642,6 +659,101 @@ class TestPyritMessagesToDto:
 
         assert result[0].pieces[0].original_value == "/tmp/nonexistent.png"
         assert result[0].pieces[0].converted_value == "/tmp/nonexistent.png"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestPyritMessagesToDtoRealObjects:
+    """Regression tests for pyrit_messages_to_dto_async using real domain objects.
+
+    The mock-based ``TestPyritMessagesToDto`` suite above sets ``p.scores = []``
+    directly on a ``MagicMock``, which masks the fact that ``MessagePiece`` no
+    longer carries a ``scores`` attribute. These tests round-trip real
+    ``MessagePiece`` / ``Score`` instances through a real ``SQLiteMemory`` so
+    that any regression to ``p.scores``-style access on the piece (or other
+    drift between the Pydantic model and the mapper) is caught.
+    """
+
+    async def test_scores_are_fetched_from_memory_and_attached(self, sqlite_instance) -> None:
+        """A real MessagePiece + Score round-trips through the mapper with scores attached."""
+        from pyrit.models import Message as RealPyritMessage
+        from pyrit.models import MessagePiece as RealPyritMessagePiece
+        from pyrit.models import Score as RealPyritScore
+
+        piece = RealPyritMessagePiece(role="user", original_value="hi")
+        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[piece]))
+
+        score = RealPyritScore(
+            score_value="0.75",
+            score_type="float_scale",
+            score_category=["bias"],
+            score_rationale="example rationale",
+            message_piece_id=piece.id,
+        )
+        sqlite_instance.add_scores_to_memory(scores=[score])
+
+        reloaded = sqlite_instance.get_conversation(conversation_id=piece.conversation_id)
+        result = await pyrit_messages_to_dto_async(list(reloaded), memory=sqlite_instance)
+
+        assert len(result) == 1
+        dto_pieces = result[0].pieces
+        assert len(dto_pieces) == 1
+        attached = dto_pieces[0].scores
+        assert len(attached) == 1
+        assert attached[0].score_value == "0.75"
+        assert attached[0].score_type == "float_scale"
+        assert attached[0].score_category == ["bias"]
+        assert attached[0].score_rationale == "example rationale"
+
+    async def test_empty_scores_when_none_recorded(self, sqlite_instance) -> None:
+        """A real piece with no scores in memory maps to an empty scores list."""
+        from pyrit.models import Message as RealPyritMessage
+        from pyrit.models import MessagePiece as RealPyritMessagePiece
+
+        piece = RealPyritMessagePiece(role="user", original_value="hi")
+        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[piece]))
+
+        reloaded = sqlite_instance.get_conversation(conversation_id=piece.conversation_id)
+        result = await pyrit_messages_to_dto_async(list(reloaded), memory=sqlite_instance)
+
+        assert result[0].pieces[0].scores == []
+
+    async def test_scores_are_grouped_per_piece_across_multiple_pieces(self, sqlite_instance) -> None:
+        """Scores from a batched fetch are routed to the correct originating piece."""
+        from pyrit.models import Message as RealPyritMessage
+        from pyrit.models import MessagePiece as RealPyritMessagePiece
+        from pyrit.models import Score as RealPyritScore
+
+        conv_id = "real-conv-1"
+        user_piece = RealPyritMessagePiece(role="user", original_value="ask", conversation_id=conv_id)
+        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[user_piece]))
+        assistant_piece = RealPyritMessagePiece(role="assistant", original_value="reply", conversation_id=conv_id)
+        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[assistant_piece]))
+
+        sqlite_instance.add_scores_to_memory(
+            scores=[
+                RealPyritScore(
+                    score_value="true",
+                    score_type="true_false",
+                    score_rationale="refusal detected",
+                    message_piece_id=assistant_piece.id,
+                ),
+                RealPyritScore(
+                    score_value="0.1",
+                    score_type="float_scale",
+                    score_rationale="low severity",
+                    message_piece_id=assistant_piece.id,
+                ),
+            ]
+        )
+
+        reloaded = sqlite_instance.get_conversation(conversation_id=conv_id)
+        result = await pyrit_messages_to_dto_async(list(reloaded), memory=sqlite_instance)
+
+        by_role = {msg.role: msg for msg in result}
+        assert by_role["user"].pieces[0].scores == []
+        assistant_scores = by_role["assistant"].pieces[0].scores
+        assert len(assistant_scores) == 2
+        assert {s.score_value for s in assistant_scores} == {"true", "0.1"}
 
 
 class TestIsAzureBlobUrl:
@@ -1129,6 +1241,11 @@ class TestTargetObjectToInstance:
         assert result.endpoint == "http://test"
         assert result.model_name == "gpt-4"
         assert result.temperature == 0.7
+        # identifier_hash is auto-populated by the ComponentIdentifier validator and
+        # surfaced on the DTO so the frontend can dedupe targets that resolve to the
+        # same underlying configuration.
+        assert result.identifier_hash is not None
+        assert result.identifier_hash == mock_identifier.hash
 
     def test_no_endpoint_returns_none(self) -> None:
         """Test that missing endpoint returns None."""
@@ -1489,6 +1606,134 @@ class TestTargetObjectToInstance:
         assert result.target_specific_params is not None
         assert "target_configuration" not in result.target_specific_params
         assert result.target_specific_params["reasoning_effort"] == "high"
+
+
+class TestTargetObjectToInstanceRoundRobin:
+    """Tests for target_object_to_instance with RoundRobinTarget."""
+
+    def test_round_robin_populates_inner_targets(self) -> None:
+        """Inner targets list is populated for RoundRobinTarget objects."""
+        from pyrit.prompt_target.round_robin_target import RoundRobinTarget
+
+        # Build a mock RoundRobinTarget with two inner targets
+        rr = MagicMock(spec=RoundRobinTarget)
+        rr.capabilities = TargetCapabilities(supports_multi_turn=True)
+
+        inner_a = MagicMock(spec=PromptTarget)
+        inner_a.capabilities = TargetCapabilities()
+        inner_a.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"endpoint": "https://a.openai.azure.com", "model_name": "gpt-4o"},
+        )
+
+        inner_b = MagicMock(spec=PromptTarget)
+        inner_b.capabilities = TargetCapabilities()
+        inner_b.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"endpoint": "https://b.openai.azure.com", "model_name": "gpt-4o"},
+        )
+
+        rr._targets = [inner_a, inner_b]
+        rr.get_identifier.return_value = ComponentIdentifier(
+            class_name="RoundRobinTarget",
+            class_module="pyrit.prompt_target.round_robin_target",
+            params={"weights": [1, 1]},
+        )
+
+        result = target_object_to_instance("rr-1", rr)
+
+        assert result.target_type == "RoundRobinTarget"
+        assert result.inner_targets is not None
+        assert len(result.inner_targets) == 2
+        assert result.inner_targets[0].endpoint == "https://a.openai.azure.com"
+        assert result.inner_targets[1].endpoint == "https://b.openai.azure.com"
+
+    def test_round_robin_hoists_model_name_when_all_inner_targets_match(self) -> None:
+        """model_name is hoisted only when all inner targets share the same deployment name."""
+        from pyrit.prompt_target.round_robin_target import RoundRobinTarget
+
+        rr = MagicMock(spec=RoundRobinTarget)
+        rr.capabilities = TargetCapabilities()
+
+        inner_a = MagicMock(spec=PromptTarget)
+        inner_a.capabilities = TargetCapabilities()
+        inner_a.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"model_name": "gpt-4o", "underlying_model_name": "gpt-4o"},
+        )
+
+        inner_b = MagicMock(spec=PromptTarget)
+        inner_b.capabilities = TargetCapabilities()
+        inner_b.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"model_name": "gpt-4o", "underlying_model_name": "gpt-4o"},
+        )
+
+        rr._targets = [inner_a, inner_b]
+        rr.get_identifier.return_value = ComponentIdentifier(
+            class_name="RoundRobinTarget",
+            class_module="pyrit.prompt_target.round_robin_target",
+            params={"weights": [1, 1]},
+        )
+
+        result = target_object_to_instance("rr-2", rr)
+
+        assert result.model_name == "gpt-4o"
+        assert result.underlying_model_name == "gpt-4o"
+
+    def test_round_robin_omits_model_name_when_inner_targets_differ(self) -> None:
+        """model_name is None when inner targets have different deployment names."""
+        from pyrit.prompt_target.round_robin_target import RoundRobinTarget
+
+        rr = MagicMock(spec=RoundRobinTarget)
+        rr.capabilities = TargetCapabilities()
+
+        inner_a = MagicMock(spec=PromptTarget)
+        inner_a.capabilities = TargetCapabilities()
+        inner_a.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"model_name": "deploy-japan", "underlying_model_name": "gpt-4o"},
+        )
+
+        inner_b = MagicMock(spec=PromptTarget)
+        inner_b.capabilities = TargetCapabilities()
+        inner_b.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"model_name": "deploy-us", "underlying_model_name": "gpt-4o"},
+        )
+
+        rr._targets = [inner_a, inner_b]
+        rr.get_identifier.return_value = ComponentIdentifier(
+            class_name="RoundRobinTarget",
+            class_module="pyrit.prompt_target.round_robin_target",
+            params={"weights": [1, 1]},
+        )
+
+        result = target_object_to_instance("rr-3", rr)
+
+        # model_name should be None since deployments differ
+        assert result.model_name is None
+        # underlying_model_name should still be hoisted (they all share gpt-4o)
+        assert result.underlying_model_name == "gpt-4o"
+
+    def test_non_round_robin_has_no_inner_targets(self) -> None:
+        """Regular targets return None for inner_targets."""
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities()
+        target_obj.get_identifier.return_value = ComponentIdentifier(
+            class_name="TextTarget",
+            class_module="pyrit.prompt_target",
+        )
+
+        result = target_object_to_instance("t-1", target_obj)
+
+        assert result.inner_targets is None
 
 
 # ============================================================================

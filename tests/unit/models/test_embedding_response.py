@@ -45,9 +45,3 @@ def test_save_load_loop_is_idempotent(my_embedding):
         output_file = my_embedding.save_to_file(Path(tmp_dir))
         loaded_embedding = EmbeddingResponse.load_from_file(Path(output_file))
         assert my_embedding == loaded_embedding
-
-
-def test_to_json_is_deprecated_alias_for_model_dump_json(my_embedding: EmbeddingResponse):
-    with pytest.warns(DeprecationWarning, match="EmbeddingResponse.to_json"):
-        result = my_embedding.to_json()
-    assert result == my_embedding.model_dump_json()

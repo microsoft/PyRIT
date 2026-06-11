@@ -51,7 +51,7 @@ def _create_aggregator(
 
     Args:
         name (str): Name of the aggregator variant.
-        result_func (Callable[[List[bool]], bool]): Function applied to the list of boolean values
+        result_func (Callable[[list[bool]], bool]): Function applied to the list of boolean values
             to compute the aggregation result.
         true_msg (str): Description to use when the result is True.
         false_msg (str): Description to use when the result is False.

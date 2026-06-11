@@ -2,11 +2,17 @@
 # Licensed under the MIT license.
 
 import logging
+from typing import TYPE_CHECKING
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+
+if TYPE_CHECKING:
+    from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -35,16 +41,19 @@ class _MICDataset(_RemoteDatasetLoader):
     tags = {"safety", "ethics", "multiturn"}
     VALID_SPLITS = ["train", "dev", "test"]
     AUTHORS = ["Caleb Ziems", "Jane Yu", "Yi-Chia Wang", "Alon Halevy", "Diyi Yang"]
+    GROUPS = ["Georgia Institute of Technology", "Meta AI Research"]
 
     def __init__(self) -> None:
         """Initialize the MIC dataset loader."""
         self.source = "https://huggingface.co/datasets/SALT-NLP/MIC/resolve/main/MIC.zip"
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "moral_integrity_corpus"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the MIC dataset and return as SeedDataset.
@@ -67,7 +76,7 @@ class _MICDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        seed_prompts: list[SeedPrompt] = []
+        seed_prompts: list[SeedUnion] = []
         seen_questions: set[str] = set()
 
         for inner in inner_files:
@@ -91,6 +100,7 @@ class _MICDataset(_RemoteDatasetLoader):
                         source=self.source,
                         harm_categories=categories,
                         authors=self.AUTHORS,
+                        groups=self.GROUPS,
                     )
                 )
 

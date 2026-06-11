@@ -7,7 +7,7 @@ Common response models for the PyRIT API.
 Includes pagination, error handling (RFC 7807), and shared base models.
 """
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -17,8 +17,8 @@ class PaginationInfo(BaseModel):
 
     limit: int = Field(..., description="Maximum items per page")
     has_more: bool = Field(..., description="Whether more items exist")
-    next_cursor: Optional[str] = Field(None, description="Cursor for next page")
-    prev_cursor: Optional[str] = Field(None, description="Cursor for previous page")
+    next_cursor: str | None = Field(None, description="Cursor for next page")
+    prev_cursor: str | None = Field(None, description="Cursor for previous page")
 
 
 class FieldError(BaseModel):
@@ -26,8 +26,8 @@ class FieldError(BaseModel):
 
     field: str = Field(..., description="Field name with path (e.g., 'pieces[0].data_type')")
     message: str = Field(..., description="Error message")
-    code: Optional[str] = Field(None, description="Error code")
-    value: Optional[Any] = Field(None, description="The invalid value")
+    code: str | None = Field(None, description="Error code")
+    value: Any | None = Field(None, description="The invalid value")
 
 
 class ProblemDetail(BaseModel):
@@ -41,8 +41,8 @@ class ProblemDetail(BaseModel):
     title: str = Field(..., description="Short human-readable summary")
     status: int = Field(..., description="HTTP status code")
     detail: str = Field(..., description="Human-readable explanation")
-    instance: Optional[str] = Field(None, description="URI of the specific occurrence")
-    errors: Optional[list[FieldError]] = Field(None, description="Field-level errors for validation")
+    instance: str | None = Field(None, description="URI of the specific occurrence")
+    errors: list[FieldError] | None = Field(None, description="Field-level errors for validation")
 
 
 # Sensitive field patterns to filter from identifiers

@@ -10,7 +10,6 @@ Harm definitions provide the scale descriptions used for evaluating harm categor
 import logging
 import re
 from pathlib import Path
-from typing import Optional, Union
 
 import yaml
 from pydantic import BaseModel, Field
@@ -53,9 +52,9 @@ class HarmDefinition(BaseModel):
     version: str
     category: str
     scale_descriptions: list[ScaleDescription] = Field(default_factory=list)
-    source_path: Optional[str] = None
+    source_path: str | None = None
 
-    def get_scale_description(self, score_value: str) -> Optional[str]:
+    def get_scale_description(self, score_value: str) -> str | None:
         """
         Get the description for a specific score value.
 
@@ -101,7 +100,7 @@ class HarmDefinition(BaseModel):
         return True
 
     @classmethod
-    def from_yaml(cls, harm_definition_path: Union[str, Path]) -> "HarmDefinition":
+    def from_yaml(cls, harm_definition_path: str | Path) -> "HarmDefinition":
         """
         Load and validate a harm definition from a YAML file.
 
@@ -177,7 +176,7 @@ def get_all_harm_definitions() -> dict[str, HarmDefinition]:
     and loads each one as a HarmDefinition.
 
     Returns:
-        Dict[str, HarmDefinition]: A dictionary mapping category names to their
+        dict[str, HarmDefinition]: A dictionary mapping category names to their
             HarmDefinition objects. The keys are the category names from the YAML files
             (e.g., "violence", "hate_speech").
 

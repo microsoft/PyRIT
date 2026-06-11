@@ -22,6 +22,28 @@ interface AttackHistoryProps {
   onFiltersChange: (filters: HistoryFilters) => void
 }
 
+const PAGE_SIZE = 25
+
+type ListParams = Parameters<typeof attacksApi.listAttacks>[0]
+
+function buildListParams(filters: HistoryFilters, pageCursor: string | undefined): ListParams {
+  const labelParams: string[] = []
+  for (const op of filters.operator) { labelParams.push(`operator:${op}`) }
+  for (const op of filters.operation) { labelParams.push(`operation:${op}`) }
+  labelParams.push(...filters.otherLabels)
+
+  const params: ListParams = { limit: PAGE_SIZE }
+  if (pageCursor) params.cursor = pageCursor
+  if (filters.attackTypes.length > 0) params.attack_types = filters.attackTypes
+  if (filters.outcome) params.outcome = filters.outcome
+  if (filters.converter.length > 0) params.converter_types = filters.converter
+  // Match mode is only meaningful with >=2 converters selected.
+  if (filters.converter.length >= 2) params.converter_types_match = filters.converterMatchMode
+  if (filters.hasConverters !== undefined) params.has_converters = filters.hasConverters
+  if (labelParams.length > 0) params.label = labelParams
+  return params
+}
+
 export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }: AttackHistoryProps) {
   const styles = useAttackHistoryStyles()
   const [attacks, setAttacks] = useState<AttackSummary[]>([])
@@ -40,48 +62,15 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
   const [isLastPage, setIsLastPage] = useState(true)
   const [page, setPage] = useState(0)
 
-  const PAGE_SIZE = 25
+  // Bumped from event handlers (Refresh button, pagination) to re-trigger the
+  // fetch effect without calling setState synchronously inside it.
+  const [fetchToken, setFetchToken] = useState({ cursor: undefined as string | undefined, nonce: 0 })
 
-  const fetchAttacks = useCallback(async (pageCursor?: string) => {
+  const fetchAttacks = useCallback((pageCursor?: string) => {
     setLoading(true)
     setError(null)
-    try {
-      const labelParams: string[] = []
-      for (const op of filters.operator) { labelParams.push(`operator:${op}`) }
-      for (const op of filters.operation) { labelParams.push(`operation:${op}`) }
-      labelParams.push(...filters.otherLabels)
-
-      // Build request params; set each field only when the filter is active.
-      const params: Parameters<typeof attacksApi.listAttacks>[0] = { limit: PAGE_SIZE }
-      if (pageCursor) params.cursor = pageCursor
-      if (filters.attackTypes.length > 0) params.attack_types = filters.attackTypes
-      if (filters.outcome) params.outcome = filters.outcome
-      if (filters.converter.length > 0) params.converter_types = filters.converter
-      // Match mode is only meaningful with >=2 converters selected.
-      if (filters.converter.length >= 2) params.converter_types_match = filters.converterMatchMode
-      if (filters.hasConverters !== undefined) params.has_converters = filters.hasConverters
-      if (labelParams.length > 0) params.label = labelParams
-
-      const response = await attacksApi.listAttacks(params)
-      setAttacks(response.items.map(attack => ({ ...attack, labels: attack.labels ?? {} })))
-      setIsLastPage(!response.pagination.has_more)
-      setCursor(response.pagination.next_cursor ?? undefined)
-    } catch (err) {
-      setAttacks([])
-      setError(toApiError(err).detail)
-    } finally {
-      setLoading(false)
-    }
-  }, [
-    filters.attackTypes,
-    filters.outcome,
-    filters.converter,
-    filters.converterMatchMode,
-    filters.hasConverters,
-    filters.operator,
-    filters.operation,
-    filters.otherLabels,
-  ])
+    setFetchToken(prev => ({ cursor: pageCursor, nonce: prev.nonce + 1 }))
+  }, [])
 
   // Load filter options on mount
   useEffect(() => {
@@ -114,12 +103,50 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
       .catch(() => { /* ignore */ })
   }, [])
 
-  // Reload when filters change
+  // Fetch attacks whenever filters change or an event handler bumps fetchToken.
+  // All setState calls live in .then/.catch/.finally so we don't trigger
+  // react-hooks/set-state-in-effect.
   useEffect(() => {
-    setPage(0)
-    setCursor(undefined)
-    fetchAttacks()
-  }, [fetchAttacks])
+    let cancelled = false
+    attacksApi.listAttacks(buildListParams(filters, fetchToken.cursor))
+      .then(response => {
+        if (cancelled) return
+        setAttacks(response.items.map(attack => ({ ...attack, labels: attack.labels ?? {} })))
+        setIsLastPage(!response.pagination.has_more)
+        setCursor(response.pagination.next_cursor ?? undefined)
+        setError(null)
+        // Reset displayed page index when the trigger is a filter change (no
+        // explicit cursor). Pagination handlers pass an explicit cursor and
+        // update `page` themselves.
+        if (!fetchToken.cursor) setPage(0)
+      })
+      .catch(err => {
+        if (cancelled) return
+        setAttacks([])
+        setError(toApiError(err).detail)
+        if (!fetchToken.cursor) setPage(0)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+    // The filter fields are listed individually rather than as `filters` so the
+    // effect only re-runs when a meaningful sub-field changes (the parent
+    // creates a new `filters` object on every render).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    filters.attackTypes,
+    filters.outcome,
+    filters.converter,
+    filters.converterMatchMode,
+    filters.hasConverters,
+    filters.operator,
+    filters.operation,
+    filters.otherLabels,
+    fetchToken,
+  ])
 
   const handleNextPage = () => {
     if (cursor) {

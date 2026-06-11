@@ -11,13 +11,14 @@ constructs local media endpoint URLs for media content.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import mimetypes
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import quote, urlparse
 
 from azure.identity.aio import DefaultAzureCredential
@@ -36,6 +37,7 @@ from pyrit.backend.models.attacks import (
     TargetInfo,
 )
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.memory import CentralMemory
 from pyrit.models import MEDIA_PATH_DATA_TYPES, AttackResult, ChatMessageRole, PromptDataType
 from pyrit.models import Message as PyritMessage
 from pyrit.models import MessagePiece as PyritMessagePiece
@@ -44,6 +46,7 @@ from pyrit.models import Score as PyritScore
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from pyrit.memory import MemoryInterface
     from pyrit.models.conversation_stats import ConversationStats
     from pyrit.models.retry_event import RetryEvent
 
@@ -155,7 +158,7 @@ async def _sign_blob_url_async(*, blob_url: str) -> str:
         return blob_url
 
 
-def _resolve_media_url(*, value: Optional[str], data_type: str) -> Optional[str]:
+def _resolve_media_url(*, value: str | None, data_type: str) -> str | None:
     """
     For media path types, convert a local file path to a ``/api/media`` URL.
 
@@ -311,7 +314,7 @@ def pyrit_scores_to_dto(scores: list[PyritScore]) -> list[Score]:
     ]
 
 
-def _infer_mime_type(*, value: Optional[str], data_type: PromptDataType) -> Optional[str]:
+def _infer_mime_type(*, value: str | None, data_type: PromptDataType) -> str | None:
     """
     Infer MIME type from a value and its data type.
 
@@ -335,9 +338,9 @@ def _infer_mime_type(*, value: Optional[str], data_type: PromptDataType) -> Opti
 def _build_filename(
     *,
     data_type: str,
-    sha256: Optional[str],
-    value: Optional[str],
-) -> Optional[str]:
+    sha256: str | None,
+    value: str | None,
+) -> str | None:
     """
     Build a human-readable download filename from the data type and hash.
 
@@ -355,7 +358,7 @@ def _build_filename(
         value: The original value (path or URL) used to infer file extension.
 
     Returns:
-        Optional[str]: A filename like ``image_a1b2c3d4e5f6.png``, or ``None`` for text-like types.
+        str | None: A filename like ``image_a1b2c3d4e5f6.png``, or ``None`` for text-like types.
     """
     # Map data types to friendly prefixes
     prefix_map = {
@@ -386,7 +389,54 @@ def _build_filename(
     return f"{prefix}_{short_hash}{ext}"
 
 
-async def pyrit_messages_to_dto_async(pyrit_messages: list[PyritMessage]) -> list[Message]:
+def _score_lookup_key(*, piece: PyritMessagePiece) -> str:
+    """
+    Compute the score-lookup key for a piece.
+
+    Scores are linked to the piece's ``original_prompt_id`` (set by
+    ``MemoryInterface.add_scores_to_memory``), which equals ``piece.id``
+    for original pieces and points at the original for duplicates.
+
+    Returns:
+        Stringified piece identifier suitable for matching ``Score.message_piece_id``.
+    """
+    return str(piece.original_prompt_id or piece.id)
+
+
+async def _fetch_scores_by_piece_async(
+    *,
+    pyrit_messages: list[PyritMessage],
+    memory: MemoryInterface | None,
+) -> dict[str, list[PyritScore]]:
+    """
+    Batch-fetch scores for every piece in ``pyrit_messages`` and group by piece id.
+
+    Wrapped in ``asyncio.to_thread`` because ``get_prompt_scores`` is a blocking
+    SQLAlchemy call and ``pyrit_messages_to_dto_async`` runs on the event loop.
+
+    Returns:
+        ``{piece_lookup_key: [Score, ...]}``. Missing keys map to an empty list.
+    """
+    score_lookup_ids = sorted({_score_lookup_key(piece=p) for msg in pyrit_messages for p in msg.message_pieces})
+    if not score_lookup_ids:
+        return {}
+
+    if memory is None:
+        memory = CentralMemory.get_memory_instance()
+
+    fetched = await asyncio.to_thread(memory.get_prompt_scores, prompt_ids=score_lookup_ids)
+
+    grouped: dict[str, list[PyritScore]] = {}
+    for score in fetched:
+        grouped.setdefault(str(score.message_piece_id), []).append(score)
+    return grouped
+
+
+async def pyrit_messages_to_dto_async(
+    pyrit_messages: list[PyritMessage],
+    *,
+    memory: MemoryInterface | None = None,
+) -> list[Message]:
     """
     Translate PyRIT messages to backend Message DTOs.
 
@@ -394,9 +444,16 @@ async def pyrit_messages_to_dto_async(pyrit_messages: list[PyritMessage]) -> lis
     - Local files → ``/api/media?path=...`` (served by the media endpoint)
     - Azure Blob Storage files → signed URLs with SAS tokens
 
+    Scores are fetched from memory (``MessagePiece`` no longer carries them)
+    via a single batched ``get_prompt_scores`` call and attached to their
+    originating piece. Pass ``memory`` explicitly to avoid the
+    ``CentralMemory`` singleton lookup or to inject a fake in tests.
+
     Returns:
         List of Message DTOs for the API.
     """
+    scores_by_piece = await _fetch_scores_by_piece_async(pyrit_messages=pyrit_messages, memory=memory)
+
     messages = []
     for msg in pyrit_messages:
         pieces = []
@@ -413,6 +470,7 @@ async def pyrit_messages_to_dto_async(pyrit_messages: list[PyritMessage]) -> lis
             if conv_val and _is_azure_blob_url(conv_val):
                 conv_val = await _sign_blob_url_async(blob_url=conv_val)
 
+            piece_scores = scores_by_piece.get(_score_lookup_key(piece=p), [])
             pieces.append(
                 MessagePiece(
                     piece_id=str(p.id),
@@ -423,7 +481,7 @@ async def pyrit_messages_to_dto_async(pyrit_messages: list[PyritMessage]) -> lis
                     converted_value=conv_val,
                     converted_value_mime_type=_infer_mime_type(value=p.converted_value, data_type=conv_dtype),
                     prompt_metadata=dict(p.prompt_metadata) if p.prompt_metadata else None,
-                    scores=pyrit_scores_to_dto(p.scores) if p.scores else [],
+                    scores=pyrit_scores_to_dto(piece_scores),
                     response_error=p.response_error or "none",
                     original_filename=_build_filename(
                         data_type=orig_dtype,
@@ -462,7 +520,7 @@ def request_piece_to_pyrit_message_piece(
     role: ChatMessageRole,
     conversation_id: str,
     sequence: int,
-    labels: Optional[dict[str, str]] = None,  # deprecated
+    labels: dict[str, str] | None = None,  # deprecated
 ) -> PyritMessagePiece:
     """
     Convert a single request piece DTO to a PyRIT MessagePiece domain object.
@@ -509,7 +567,7 @@ def request_to_pyrit_message(
     request: AddMessageRequest,
     conversation_id: str,
     sequence: int,
-    labels: Optional[dict[str, str]] = None,  # deprecated
+    labels: dict[str, str] | None = None,  # deprecated
 ) -> PyritMessage:
     """
     Build a PyRIT Message from an AddMessageRequest DTO.

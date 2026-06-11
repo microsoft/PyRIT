@@ -12,7 +12,7 @@ At the beginning of each notebook, make sure to call:
 # Import the specific constant for the MemoryDatabaseType, or provide the literal value
 from pyrit.setup import initialize_pyrit_async, IN_MEMORY, SQLITE, AZURE_SQL
 
-await initialize_pyrit_async(memory_db_type: MemoryDatabaseType, memory_instance_kwargs: Optional[Any])
+await initialize_pyrit_async(memory_db_type: MemoryDatabaseType, memory_instance_kwargs: Any | None)
 ```
 
 The `MemoryDatabaseType` is a `Literal` with 3 options: IN_MEMORY, SQLITE, AZURE_SQL. (Read more below)

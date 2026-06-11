@@ -3,7 +3,6 @@
 
 import logging
 from enum import Enum
-from typing import Optional
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -77,7 +76,7 @@ class _JailbreakVRedteam2KDataset(_RemoteDatasetLoader):
         self,
         *,
         source: str = "JailbreakV-28K/JailBreakV-28k",
-        harm_categories: Optional[list[_HarmCategory]] = None,
+        harm_categories: list[_HarmCategory] | None = None,
     ) -> None:
         """
         Initialize the JailBreakV Redteam_2k dataset loader.
