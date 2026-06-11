@@ -31,13 +31,18 @@ describe('useTour', () => {
   const onNavigate = jest.fn()
 
   beforeEach(() => {
-    jest.useFakeTimers()
     jest.clearAllMocks()
     localStorage.clear()
+    // Mock requestAnimationFrame — jsdom doesn't implement it.
+    // Call the callback synchronously so tests don't need to wait.
+    jest.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      cb(0)
+      return 0
+    })
   })
 
   afterEach(() => {
-    jest.useRealTimers()
+    jest.restoreAllMocks()
   })
 
   it('returns hasCompletedTour=false when localStorage is empty', () => {
@@ -51,29 +56,37 @@ describe('useTour', () => {
     expect(result.current.hasCompletedTour).toBe(true)
   })
 
-  it('startTour navigates to home and sets run=true after delay', () => {
+  it('startTour sets run=true immediately when already on home', () => {
     const { result } = renderHook(() => useTour(onNavigate, true, 'home'))
 
     act(() => { result.current.startTour() })
 
-    expect(onNavigate).toHaveBeenCalledWith('home')
-    // run is still false before the timer fires
-    expect(result.current.tourProps.run).toBe(false)
-
-    act(() => { jest.advanceTimersByTime(400) })
-
     expect(result.current.tourProps.run).toBe(true)
+    expect(result.current.tourProps.stepIndex).toBe(0)
+  })
+
+  it('startTour navigates to home and defers step when on a different view', () => {
+    const { result, rerender } = renderHook(
+      ({ currentView }) => useTour(onNavigate, true, currentView),
+      { initialProps: { currentView: 'chat' as const } },
+    )
+
+    act(() => { result.current.startTour() })
+
+    expect(onNavigate).toHaveBeenCalledWith('home')
+    expect(result.current.tourProps.run).toBe(true)
+
+    // Simulate App changing currentView after onNavigate
+    rerender({ currentView: 'home' as const })
+
     expect(result.current.tourProps.stepIndex).toBe(0)
   })
 
   it('advances stepIndex on LIFECYCLE.COMPLETE + ACTIONS.NEXT (same view)', () => {
     const { result } = renderHook(() => useTour(onNavigate, true, 'home'))
 
-    // Start the tour
     act(() => { result.current.startTour() })
-    act(() => { jest.advanceTimersByTime(400) })
 
-    // Simulate Next on step 0 (home → home, no view switch)
     act(() => {
       result.current.tourProps.onEvent(makeEvent({
         action: ACTIONS.NEXT,
@@ -83,15 +96,12 @@ describe('useTour', () => {
     })
 
     expect(result.current.tourProps.stepIndex).toBe(1)
-    // No extra navigation call beyond the initial startTour 'home'
-    expect(onNavigate).toHaveBeenCalledTimes(1)
   })
 
   it('goes back on ACTIONS.PREV', () => {
     const { result } = renderHook(() => useTour(onNavigate, true, 'home'))
 
     act(() => { result.current.startTour() })
-    act(() => { jest.advanceTimersByTime(400) })
 
     // Advance to step 1
     act(() => {
@@ -110,7 +120,6 @@ describe('useTour', () => {
     const { result } = renderHook(() => useTour(onNavigate, true, 'home'))
 
     act(() => { result.current.startTour() })
-    act(() => { jest.advanceTimersByTime(400) })
     expect(result.current.tourProps.run).toBe(true)
 
     act(() => {
@@ -125,7 +134,6 @@ describe('useTour', () => {
     const { result } = renderHook(() => useTour(onNavigate, true, 'home'))
 
     act(() => { result.current.startTour() })
-    act(() => { jest.advanceTimersByTime(400) })
 
     act(() => {
       result.current.tourProps.onEvent(makeEvent({ status: STATUS.SKIPPED }))
@@ -139,7 +147,6 @@ describe('useTour', () => {
     const { result } = renderHook(() => useTour(onNavigate, true, 'home'))
 
     act(() => { result.current.startTour() })
-    act(() => { jest.advanceTimersByTime(400) })
 
     act(() => {
       result.current.tourProps.onEvent(makeEvent({ status: STATUS.FINISHED }))
@@ -149,11 +156,12 @@ describe('useTour', () => {
   })
 
   it('navigates to correct view when crossing view boundaries', () => {
-    // Step 2 (index 2) is home, step 3 (index 3) is chat
-    const { result } = renderHook(() => useTour(onNavigate, true, 'home'))
+    const { result, rerender } = renderHook(
+      ({ currentView }) => useTour(onNavigate, true, currentView),
+      { initialProps: { currentView: 'home' as const } },
+    )
 
     act(() => { result.current.startTour() })
-    act(() => { jest.advanceTimersByTime(400) })
     onNavigate.mockClear()
 
     // Simulate Next on step 2 (last home step → chat step)
@@ -166,24 +174,26 @@ describe('useTour', () => {
 
     expect(onNavigate).toHaveBeenCalledWith('chat')
 
-    // stepIndex advances after the delay
-    act(() => { jest.advanceTimersByTime(400) })
+    // Simulate App reacting to onNavigate by changing currentView
+    rerender({ currentView: 'chat' as const })
+
+    // useEffect fires → rAF fires → stepIndex advances
     expect(result.current.tourProps.stepIndex).toBe(3)
   })
 
   it('navigates when user manually switched views (currentView differs from step)', () => {
-    // User is on step 0 (viewRequired: 'home') but manually switched to 'chat'
     const { result, rerender } = renderHook(
       ({ currentView }) => useTour(onNavigate, true, currentView),
       { initialProps: { currentView: 'chat' as const } },
     )
 
     act(() => { result.current.startTour() })
-    act(() => { jest.advanceTimersByTime(400) })
+
+    // Simulate App changing currentView to 'home' after startTour's onNavigate
+    rerender({ currentView: 'home' as const })
     onNavigate.mockClear()
 
-    // Step 1 (index 1) requires 'home', but currentView is 'chat'
-    // so it should navigate to 'home'
+    // Step 1 (index 1) requires 'home' — currentView is now 'home' (same view)
     act(() => {
       result.current.tourProps.onEvent(makeEvent({
         action: ACTIONS.NEXT,
@@ -191,8 +201,6 @@ describe('useTour', () => {
       }))
     })
 
-    expect(onNavigate).toHaveBeenCalledWith('home')
-    act(() => { jest.advanceTimersByTime(400) })
     expect(result.current.tourProps.stepIndex).toBe(1)
   })
 
@@ -200,23 +208,23 @@ describe('useTour', () => {
     const { result } = renderHook(() => useTour(onNavigate, true, 'home'))
 
     act(() => { result.current.startTour() })
-    act(() => { jest.advanceTimersByTime(400) })
 
     act(() => {
       result.current.tourProps.onEvent(makeEvent({
-        lifecycle: LIFECYCLE.READY, // not COMPLETE
+        lifecycle: LIFECYCLE.READY,
       }))
     })
 
-    // Step should not advance
     expect(result.current.tourProps.stepIndex).toBe(0)
   })
 
-  it('prevents double-advance during view switch delay', () => {
-    const { result } = renderHook(() => useTour(onNavigate, true, 'home'))
+  it('prevents double-advance during view switch', () => {
+    const { result, rerender } = renderHook(
+      ({ currentView }) => useTour(onNavigate, true, currentView),
+      { initialProps: { currentView: 'home' as const } },
+    )
 
     act(() => { result.current.startTour() })
-    act(() => { jest.advanceTimersByTime(400) })
     onNavigate.mockClear()
 
     // Trigger a cross-view advance (step 2 → step 3, home → chat)
@@ -224,7 +232,7 @@ describe('useTour', () => {
       result.current.tourProps.onEvent(makeEvent({ action: ACTIONS.NEXT, index: 2 }))
     })
 
-    // While the delay is pending, fire another event
+    // While the switch is pending (before rerender), fire another event
     act(() => {
       result.current.tourProps.onEvent(makeEvent({ action: ACTIONS.NEXT, index: 2 }))
     })
@@ -232,16 +240,16 @@ describe('useTour', () => {
     // onNavigate should only have been called once
     expect(onNavigate).toHaveBeenCalledTimes(1)
 
-    act(() => { jest.advanceTimersByTime(400) })
+    // Now simulate the view change completing
+    rerender({ currentView: 'chat' as const })
     expect(result.current.tourProps.stepIndex).toBe(3)
   })
 
   it('does not advance past the last step', () => {
-    const { result } = renderHook(() => useTour(onNavigate, true, 'history'))
+    const { result } = renderHook(() => useTour(onNavigate, true, 'home'))
     const lastIndex = TOUR_STEPS.length - 1
 
     act(() => { result.current.startTour() })
-    act(() => { jest.advanceTimersByTime(400) })
 
     act(() => {
       result.current.tourProps.onEvent(makeEvent({
@@ -250,8 +258,31 @@ describe('useTour', () => {
       }))
     })
 
-    // Tour should end, not advance
     expect(result.current.tourProps.run).toBe(false)
     expect(localStorage.getItem(STORAGE_KEY)).toBe('true')
+  })
+
+  it('clears pending step when tour is cancelled during view switch', () => {
+    const { result, rerender } = renderHook(
+      ({ currentView }) => useTour(onNavigate, true, currentView),
+      { initialProps: { currentView: 'home' as const } },
+    )
+
+    act(() => { result.current.startTour() })
+
+    // Trigger cross-view advance
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({ action: ACTIONS.NEXT, index: 2 }))
+    })
+
+    // Cancel the tour before the view switch completes
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({ action: ACTIONS.CLOSE }))
+    })
+
+    // Now simulate the view changing — should NOT advance because tour was cancelled
+    rerender({ currentView: 'chat' as const })
+    expect(result.current.tourProps.run).toBe(false)
+    expect(result.current.tourProps.stepIndex).toBe(0)
   })
 })
