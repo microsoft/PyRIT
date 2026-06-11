@@ -387,4 +387,32 @@ describe("AuthProvider", () => {
     expect(replaceSpy).not.toHaveBeenCalled();
     expect(window.location.pathname).toBe("/");
   });
+
+  // Test 23: a backslash-prefixed state ("/\evil.com") is rejected, since the
+  // URL parser normalizes "\" to "/" and would otherwise yield "//evil.com".
+  it("ignores a backslash-prefixed redirect state", async () => {
+    window.history.replaceState(null, "", "/");
+    const replaceSpy = jest.spyOn(window.history, "replaceState");
+    mockFetchAuthConfig.mockResolvedValue({
+      clientId: "test-client",
+      tenantId: "test-tenant",
+      allowedGroupIds: "g1",
+    });
+    mockHandleRedirectPromise.mockResolvedValue({
+      account: { username: "user@test.com" },
+      state: "/\\evil.example.com/phish",
+    });
+
+    render(
+      <AuthProvider>
+        <div>Child</div>
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(mockSetActiveAccount).toHaveBeenCalled();
+    });
+    expect(replaceSpy).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/");
+  });
 });

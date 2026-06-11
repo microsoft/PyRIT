@@ -188,3 +188,9 @@ class TestSPAStaticFiles:
         resp = spa_client.get("/api/bogus")
         assert resp.status_code == 404
         assert "spa-index" not in resp.text
+
+    def test_api_prefixed_client_route_serves_index(self, spa_client: TestClient) -> None:
+        """Test that a client route merely starting with "api" (e.g. /apikeys) still falls back to index.html."""
+        resp = spa_client.get("/apikeys")
+        assert resp.status_code == 200
+        assert "spa-index" in resp.text
