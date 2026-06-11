@@ -458,7 +458,7 @@ describe("App", () => {
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
-  it("handles failed attack open gracefully", async () => {
+  it("shows the not-found UX when an attack fails to load", async () => {
     mockGetAttack.mockRejectedValue(new Error("Not found"));
     renderApp();
 
@@ -468,8 +468,9 @@ describe("App", () => {
     // Should switch to chat view even on error
     expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "chat");
     await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-attack-1"));
-    // Conversation should be cleared on error
-    await waitFor(() => expect(screen.getByTestId("conversation-id")).toHaveTextContent("none"));
+    // The chat window is replaced by an inline "attack not found" message
+    await waitFor(() => expect(screen.getByTestId("attack-not-found")).toBeInTheDocument());
+    expect(screen.queryByTestId("chat-window")).not.toBeInTheDocument();
   });
 
   it("clears activeConversationId synchronously before fetching a new attack", async () => {
@@ -503,12 +504,14 @@ describe("App", () => {
     fireEvent.click(screen.getByTestId("open-attack-2"));        // ar-attack-2
 
     // BEFORE getAttack resolves: ChatWindow must NOT see the stale conv id
-    // alongside the new attack id. This is the invariant the fix establishes.
+    // alongside the new attack id. While attack B loads, its data is not yet
+    // ready, so both the attack id and conversation id are withheld — which
+    // gates ChatWindow's /messages fetch and prevents the cross-attack 400.
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "chat"
     );
-    expect(screen.getByTestId("attack-result-id")).toHaveTextContent("ar-attack-2");
+    expect(screen.getByTestId("attack-result-id")).toHaveTextContent("none");
     expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("none");
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
 
@@ -605,5 +608,51 @@ describe("App", () => {
     // Now select a different conversation
     fireEvent.click(screen.getByTestId("select-conversation"));
     // The component re-renders with the new conversation ID
+  });
+
+  it("hydrates attack state when deep-linked to /attacks/:attackId", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: [],
+    });
+    renderApp("/attacks/ar-1");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "chat");
+    await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
+    );
+    expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main");
+  });
+
+  it("uses the conversation from a deep link when it belongs to the attack", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: ["conv-related"],
+    });
+    renderApp("/attacks/ar-1/conversations/conv-related");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-related")
+    );
+  });
+
+  it("falls back to the main conversation when the deep-linked conversation is unknown", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: ["conv-related"],
+    });
+    renderApp("/attacks/ar-1/conversations/bogus");
+
+    // The unknown conversation segment is stripped and we fall back to main.
+    await waitFor(() =>
+      expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main")
+    );
   });
 });

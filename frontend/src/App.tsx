@@ -1,9 +1,10 @@
-import { useState, useCallback, useEffect } from 'react'
-import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { Routes, Route, Navigate, useNavigate, useLocation, matchPath } from 'react-router-dom'
 import { FluentProvider, webLightTheme, webDarkTheme } from '@fluentui/react-components'
 import { useMsal } from '@azure/msal-react'
 import MainLayout from './components/Layout/MainLayout'
 import ChatWindow from './components/Chat/ChatWindow'
+import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
 import AttackHistory from './components/History/AttackHistory'
@@ -35,6 +36,23 @@ function viewFromPath(pathname: string): ViewName {
   return match ? match[0] : 'home'
 }
 
+/** Status of the in-flight attack load for an /attacks/:id route. */
+type AttackLoadStatus = 'loading' | 'success' | 'not-found'
+
+/** Attack data named by the URL; `id` marks which attack the data belongs to. */
+interface LoadedAttack {
+  id: string
+  mainConversationId: string | null
+  labels: Record<string, string> | null
+  target: TargetInfo | null
+  relatedConversationIds: string[]
+  status: AttackLoadStatus
+}
+
+const attackPath = (attackId: string) => `/attacks/${attackId}`
+const conversationPath = (attackId: string, conversationId: string) =>
+  `/attacks/${attackId}/conversations/${conversationId}`
+
 function ConnectionBannerContainer() {
   const { status, reconnectCount } = useConnectionHealth()
   const [showReconnected, setShowReconnected] = useState(false)
@@ -58,14 +76,30 @@ function App() {
   const { instance } = useMsal()
   const navigate = useNavigate()
   const location = useLocation()
-  const currentView = viewFromPath(location.pathname)
+
+  // The URL is the source of truth for which attack/conversation is open.
+  const conversationMatch = matchPath(
+    { path: '/attacks/:attackId/conversations/:conversationId', end: true },
+    location.pathname,
+  )
+  const attackMatch = matchPath({ path: '/attacks/:attackId', end: true }, location.pathname)
+  const routeAttackId = conversationMatch?.params.attackId ?? attackMatch?.params.attackId ?? null
+  const routeConversationId = conversationMatch?.params.conversationId ?? null
+  const currentView: ViewName = routeAttackId !== null ? 'chat' : viewFromPath(location.pathname)
+
   const [isDarkMode, setIsDarkMode] = useState(true)
   const [activeTarget, setActiveTarget] = useState<TargetInstance | null>(null)
   const [globalLabels, setGlobalLabels] = useState<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
-  /** True while loading a historical attack from the history view */
-  const [isLoadingAttack, setIsLoadingAttack] = useState(false)
   /** Persisted filter state for the history view */
   const [historyFilters, setHistoryFilters] = useState<HistoryFilters>({ ...DEFAULT_HISTORY_FILTERS })
+
+  /** Attack named by the URL, hydrated by the loader effect below. */
+  const [loadedAttack, setLoadedAttack] = useState<LoadedAttack | null>(null)
+  // When set, the loader skips exactly one fetch for this id — used after
+  // first-message/branch creation seeds the data, avoiding a redundant getAttack.
+  const skipNextLoadForAttackId = useRef<string | null>(null)
+  // The attack whose deep-linked conversation id we have already validated.
+  const validatedConversationForAttack = useRef<string | null>(null)
 
   // Fetch default labels from backend, then override operator with active account if available
   useEffect(() => {
@@ -116,90 +150,153 @@ function App() {
       return target
     })
   }, [])
-  /** The AttackResult's primary key (set on first message). */
-  const [attackResultId, setAttackResultId] = useState<string | null>(null)
-  /** The attack's primary conversation_id (set on first message). */
-  const [conversationId, setConversationId] = useState<string | null>(null)
-  /** The currently active conversation (may be main or a related conversation). */
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
-  /** Labels that the currently loaded attack was created with (for operator locking). */
-  const [attackLabels, setAttackLabels] = useState<Record<string, string> | null>(null)
-  /** Target info from the currently loaded historical attack (for cross-target guard). */
-  const [attackTarget, setAttackTarget] = useState<TargetInfo | null>(null)
-  /** Number of related conversations for the currently loaded attack. */
-  const [relatedConversationCount, setRelatedConversationCount] = useState(0)
+  // Hydrate loadedAttack from the routed attack id. Depends on routeAttackId
+  // ONLY, so switching conversations within an attack never refetches.
+  useEffect(() => {
+    if (!routeAttackId) {
+      setLoadedAttack(null)
+      validatedConversationForAttack.current = null
+      return
+    }
+    if (skipNextLoadForAttackId.current === routeAttackId) {
+      skipNextLoadForAttackId.current = null
+      return
+    }
+    let cancelled = false
+    setLoadedAttack({
+      id: routeAttackId,
+      status: 'loading',
+      mainConversationId: null,
+      labels: null,
+      target: null,
+      relatedConversationIds: [],
+    })
+    attacksApi
+      .getAttack(routeAttackId)
+      .then(attack => {
+        if (cancelled) return
+        setLoadedAttack({
+          id: routeAttackId,
+          mainConversationId: attack.conversation_id,
+          labels: attack.labels ?? {},
+          target: attack.target ?? null,
+          relatedConversationIds: attack.related_conversation_ids ?? [],
+          status: 'success',
+        })
+      })
+      .catch(() => {
+        if (cancelled) return
+        setLoadedAttack({
+          id: routeAttackId,
+          status: 'not-found',
+          mainConversationId: null,
+          labels: null,
+          target: null,
+          relatedConversationIds: [],
+        })
+      })
+    // Drop a stale response once the route has moved on to another attack.
+    return () => { cancelled = true }
+  }, [routeAttackId])
 
-  const clearAttackState = useCallback(() => {
-    setAttackResultId(null)
-    setConversationId(null)
-    setActiveConversationId(null)
-    setAttackLabels(null)
-    setAttackTarget(null)
-    setRelatedConversationCount(0)
-  }, [])
+  // Only the attack named by the current URL may drive the chat. While a new
+  // attack is loading, loadedAttack still holds the previous one, so this keeps
+  // its data from being mixed with the new route's id (the stale-conv guard).
+  const attackForRoute = loadedAttack && loadedAttack.id === routeAttackId ? loadedAttack : null
+  const readyAttack = attackForRoute?.status === 'success' ? attackForRoute : null
+  const isAttackNotFound = attackForRoute?.status === 'not-found'
+  const isLoadingAttack = routeAttackId !== null && !readyAttack && !isAttackNotFound
+  const activeConversationId = readyAttack
+    ? routeConversationId ?? readyAttack.mainConversationId
+    : null
+
+  // Validate a deep-linked conversation id once per attack load. In-app
+  // conversation navigation is trusted (it targets conversations ChatWindow
+  // just created or listed), so only the initial URL is checked.
+  useEffect(() => {
+    if (!readyAttack) return
+    if (validatedConversationForAttack.current === readyAttack.id) return
+    validatedConversationForAttack.current = readyAttack.id
+    if (routeConversationId) {
+      const isKnown =
+        routeConversationId === readyAttack.mainConversationId ||
+        readyAttack.relatedConversationIds.includes(routeConversationId)
+      if (!isKnown) {
+        navigate(attackPath(readyAttack.id), { replace: true })
+      }
+    }
+  }, [readyAttack, routeConversationId, navigate])
 
   const handleNavigate = useCallback((view: ViewName) => {
     navigate(VIEW_PATHS[view])
   }, [navigate])
 
-  const handleNewAttack = () => {
-    clearAttackState()
-  }
+  const handleNewAttack = useCallback(() => {
+    navigate(VIEW_PATHS.chat)
+  }, [navigate])
 
   const handleConversationCreated = useCallback((arId: string, convId: string) => {
-    setAttackResultId(arId)
-    setConversationId(convId)
-    setActiveConversationId(convId)
-    // New attack was created by the current user — use their global labels
-    setAttackLabels(null)
-    // Record the target used for this attack so the cross-target guard
-    // fires if the user switches targets mid-conversation.
-    if (activeTarget) {
-      const { target_type, endpoint, model_name } = activeTarget
-      setAttackTarget({ target_type, endpoint, model_name })
-    }
-  }, [activeTarget])
+    // Seed the freshly-created attack synchronously and tell the loader to skip
+    // its next fetch for this id, so the attack opens without a redundant load.
+    const target: TargetInfo | null = activeTarget
+      ? {
+          target_type: activeTarget.target_type,
+          endpoint: activeTarget.endpoint,
+          model_name: activeTarget.model_name,
+        }
+      : null
+    skipNextLoadForAttackId.current = arId
+    setLoadedAttack({
+      id: arId,
+      mainConversationId: convId,
+      // New attack uses the current user's labels, so it is never operator-locked.
+      labels: null,
+      target,
+      relatedConversationIds: [],
+      status: 'success',
+    })
+    // Replace when promoting an empty /chat to its attack url (first message);
+    // push when branching from an existing attack so Back returns to the source.
+    navigate(attackPath(arId), { replace: routeAttackId === null })
+  }, [activeTarget, routeAttackId, navigate])
 
   const handleSelectConversation = useCallback((convId: string) => {
-    setActiveConversationId(convId)
-    // Messages will be loaded by ChatWindow's useEffect
-  }, [])
+    if (!routeAttackId) return
+    navigate(conversationPath(routeAttackId, convId))
+  }, [routeAttackId, navigate])
 
-  const handleOpenAttack = useCallback(async (openAttackResultId: string) => {
-    // Synchronously clear per-attack state before flipping attackResultId so
-    // ChatWindow does not fetch /messages with a conv_id that belonged to the
-    // previously loaded attack while getAttack is in flight. The branched-
-    // conversation case (activeConversationId pointing to a related conv of
-    // the old attack) would otherwise produce a 400 from the backend.
-    // Skip clearing when re-opening the same attack to avoid a redundant reload.
-    if (openAttackResultId !== attackResultId) {
-      setConversationId(null)
-      setActiveConversationId(null)
-      setAttackLabels(null)
-      setAttackTarget(null)
-      setRelatedConversationCount(0)
-    }
-    setAttackResultId(openAttackResultId)
-    setIsLoadingAttack(true)
-    navigate(VIEW_PATHS.chat)
-    // Fetch attack info to get conversation_id and stored labels (for operator locking)
-    try {
-      const attack = await attacksApi.getAttack(openAttackResultId)
-      setConversationId(attack.conversation_id)
-      setActiveConversationId(attack.conversation_id)
-      setAttackLabels(attack.labels ?? {})
-      setAttackTarget(attack.target ?? null)
-      setRelatedConversationCount(attack.related_conversation_ids?.length ?? 0)
-    } catch {
-      clearAttackState()
-    } finally {
-      setIsLoadingAttack(false)
-    }
-  }, [attackResultId, clearAttackState, navigate])
+  const handleOpenAttack = useCallback((openAttackResultId: string) => {
+    navigate(attackPath(openAttackResultId))
+  }, [navigate])
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode)
   }
+
+  const chatElement = isAttackNotFound ? (
+    <AttackNotFound
+      attackId={routeAttackId ?? ''}
+      onStartNew={() => navigate(VIEW_PATHS.chat)}
+      onBackToHistory={() => navigate(VIEW_PATHS.history)}
+    />
+  ) : (
+    <ChatWindow
+      onNewAttack={handleNewAttack}
+      activeTarget={activeTarget}
+      attackResultId={readyAttack ? readyAttack.id : null}
+      conversationId={readyAttack ? readyAttack.mainConversationId : null}
+      activeConversationId={activeConversationId}
+      onConversationCreated={handleConversationCreated}
+      onSelectConversation={handleSelectConversation}
+      labels={globalLabels}
+      onLabelsChange={setGlobalLabels}
+      onNavigate={handleNavigate}
+      attackLabels={readyAttack ? readyAttack.labels : null}
+      attackTarget={readyAttack ? readyAttack.target : null}
+      isLoadingAttack={isLoadingAttack}
+      relatedConversationCount={readyAttack ? readyAttack.relatedConversationIds.length : 0}
+    />
+  )
 
   return (
     <ErrorBoundary>
@@ -227,24 +324,15 @@ function App() {
               />
               <Route
                 path="/chat"
-                element={
-                  <ChatWindow
-                    onNewAttack={handleNewAttack}
-                    activeTarget={activeTarget}
-                    attackResultId={attackResultId}
-                    conversationId={conversationId}
-                    activeConversationId={activeConversationId}
-                    onConversationCreated={handleConversationCreated}
-                    onSelectConversation={handleSelectConversation}
-                    labels={globalLabels}
-                    onLabelsChange={setGlobalLabels}
-                    onNavigate={handleNavigate}
-                    attackLabels={attackLabels}
-                    attackTarget={attackTarget}
-                    isLoadingAttack={isLoadingAttack}
-                    relatedConversationCount={relatedConversationCount}
-                  />
-                }
+                element={chatElement}
+              />
+              <Route
+                path="/attacks/:attackId"
+                element={chatElement}
+              />
+              <Route
+                path="/attacks/:attackId/conversations/:conversationId"
+                element={chatElement}
               />
               <Route
                 path="/config"
