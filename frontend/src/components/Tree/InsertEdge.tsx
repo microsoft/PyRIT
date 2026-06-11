@@ -45,13 +45,24 @@ const PARENTS_WITHOUT_INSERT: ReadonlySet<ConversationTreeNodeKind> = new Set([
   'fan',
 ])
 
-interface InsertMenuOption {
-  kind: EdgeInsertKind
-  label: string
-  disabled?: boolean
-  /** When disabled, shown as the button's `title` tooltip. */
-  disabledReason?: string
-}
+/**
+ * Discriminated union: disabled items deliberately have no `kind`
+ * field. A V1.1-disabled item that would otherwise be tempted to
+ * mint a placeholder `kind` (then silently dispatch the wrong axis
+ * once the flag flips) cannot — the type system rejects it. Enabling
+ * the item requires also picking a real `kind` at the same change.
+ */
+export type InsertMenuOption =
+  | {
+      readonly disabled: false
+      readonly kind: EdgeInsertKind
+      readonly label: string
+    }
+  | {
+      readonly disabled: true
+      readonly label: string
+      readonly disabledReason: string
+    }
 
 interface InsertMenu {
   basic: InsertMenuOption[]
@@ -70,34 +81,33 @@ function menuForParent(parentKind: ConversationTreeNodeKind): InsertMenu | null 
     case 'root_prompt':
       return {
         basic: [
-          { kind: 'follow_up_user_turn', label: 'Follow-up user message' },
-          { kind: 'inject_assistant_text', label: 'Inject assistant text' },
-          { kind: 'send', label: 'Send to target' },
+          { disabled: false, kind: 'follow_up_user_turn', label: 'Follow-up user message' },
+          { disabled: false, kind: 'inject_assistant_text', label: 'Inject assistant text' },
+          { disabled: false, kind: 'send', label: 'Send to target' },
         ],
         fanAxes: V1_0_FAN_AXES,
       }
     case 'import_message':
       return {
         basic: [
-          { kind: 'follow_up_user_turn', label: 'Follow-up user message' },
-          { kind: 'inject_assistant_text', label: 'Inject assistant text' },
-          { kind: 'send', label: 'Send to target' },
+          { disabled: false, kind: 'follow_up_user_turn', label: 'Follow-up user message' },
+          { disabled: false, kind: 'inject_assistant_text', label: 'Inject assistant text' },
+          { disabled: false, kind: 'send', label: 'Send to target' },
         ],
         fanAxes: V1_0_FAN_AXES,
       }
     case 'user_turn':
       return {
         basic: [
-          { kind: 'send', label: 'Send to target' },
-          { kind: 'append_converter', label: 'Append converter' },
+          { disabled: false, kind: 'send', label: 'Send to target' },
+          { disabled: false, kind: 'append_converter', label: 'Append converter' },
         ],
         fanAxes: [
-          { kind: 'fan_converter', label: 'Fan out: converter' },
+          { disabled: false, kind: 'fan_converter', label: 'Fan out: converter' },
           // Fan-attempt requires a Send to fan; prompt is V1.1.
           {
-            kind: 'fan_attempt' as const,
-            label: 'Fan out: prompt (coming later)',
             disabled: true,
+            label: 'Fan out: prompt (coming later)',
             disabledReason: V1_1_DISABLED_REASON,
           },
         ],
@@ -105,9 +115,9 @@ function menuForParent(parentKind: ConversationTreeNodeKind): InsertMenu | null 
     case 'send':
       return {
         basic: [
-          { kind: 'follow_up_user_turn', label: 'Follow-up user message' },
-          { kind: 'inject_assistant_text', label: 'Inject assistant text' },
-          { kind: 'score', label: 'Score' },
+          { disabled: false, kind: 'follow_up_user_turn', label: 'Follow-up user message' },
+          { disabled: false, kind: 'inject_assistant_text', label: 'Inject assistant text' },
+          { disabled: false, kind: 'score', label: 'Score' },
         ],
         fanAxes: V1_0_FAN_AXES,
       }
@@ -118,19 +128,18 @@ function menuForParent(parentKind: ConversationTreeNodeKind): InsertMenu | null 
 }
 
 const V1_0_FAN_AXES: ReadonlyArray<InsertMenuOption> = [
-  { kind: 'fan_attempt', label: 'Fan out: attempt' },
-  { kind: 'fan_converter', label: 'Fan out: converter' },
-  // V1.1 axes — reserved slots, always disabled.
+  { disabled: false, kind: 'fan_attempt', label: 'Fan out: attempt' },
+  { disabled: false, kind: 'fan_converter', label: 'Fan out: converter' },
+  // V1.1 axes — reserved slots, always disabled. Disabled items
+  // intentionally do not carry a `kind`; enabling requires picking one.
   {
-    kind: 'fan_attempt' as const, // discriminant is unused on disabled items
-    label: 'Fan out: prompt (coming later)',
     disabled: true,
+    label: 'Fan out: prompt (coming later)',
     disabledReason: V1_1_DISABLED_REASON,
   },
   {
-    kind: 'fan_attempt' as const,
-    label: 'Fan out: target (coming later)',
     disabled: true,
+    label: 'Fan out: target (coming later)',
     disabledReason: V1_1_DISABLED_REASON,
   },
 ]
@@ -226,7 +235,9 @@ export function InsertEdge({
                 key={opt.label}
                 disabled={opt.disabled}
                 title={opt.disabled ? opt.disabledReason : undefined}
-                onClick={() => !opt.disabled && handleSelect(opt.kind)}
+                onClick={() => {
+                  if (opt.disabled === false) handleSelect(opt.kind)
+                }}
               >
                 {opt.label}
               </MenuItem>
@@ -236,7 +247,9 @@ export function InsertEdge({
                 key={opt.label}
                 disabled={opt.disabled}
                 title={opt.disabled ? opt.disabledReason : undefined}
-                onClick={() => !opt.disabled && handleSelect(opt.kind)}
+                onClick={() => {
+                  if (opt.disabled === false) handleSelect(opt.kind)
+                }}
               >
                 {opt.label}
               </MenuItem>
