@@ -4,7 +4,7 @@ extends:
   template: scheduled-test-pipeline-template.yml
   parameters:
     scheduleDisplayName: E2E Tests Daily at 18:00 UTC (10:00 AM PST)
-    scheduleCron: "0 18 * * *"
+    scheduleCron: "0 7 * * *"  # 7 AM UTC = 11 PM PST (UTC-8) - intentionally run at night to reduce throttling
     triggerOnChange: false
     jobName: EndToEndTests
     jobDisplayName: "Run end-to-end scenario tests"
