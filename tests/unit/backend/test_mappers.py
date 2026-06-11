@@ -679,7 +679,7 @@ class TestPyritMessagesToDtoRealObjects:
         from pyrit.models import MessagePiece as RealPyritMessagePiece
         from pyrit.models import Score as RealPyritScore
 
-        piece = RealPyritMessagePiece(role="user", original_value="hi")
+        piece = RealPyritMessagePiece(role="user", original_value="hi", conversation_id="real-conv-scores")
         sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[piece]))
 
         score = RealPyritScore(
@@ -691,7 +691,7 @@ class TestPyritMessagesToDtoRealObjects:
         )
         sqlite_instance.add_scores_to_memory(scores=[score])
 
-        reloaded = sqlite_instance.get_conversation(conversation_id=piece.conversation_id)
+        reloaded = sqlite_instance.get_conversation_messages(conversation_id=piece.conversation_id)
         result = await pyrit_messages_to_dto_async(list(reloaded), memory=sqlite_instance)
 
         assert len(result) == 1
@@ -709,10 +709,10 @@ class TestPyritMessagesToDtoRealObjects:
         from pyrit.models import Message as RealPyritMessage
         from pyrit.models import MessagePiece as RealPyritMessagePiece
 
-        piece = RealPyritMessagePiece(role="user", original_value="hi")
+        piece = RealPyritMessagePiece(role="user", original_value="hi", conversation_id="real-conv-empty")
         sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[piece]))
 
-        reloaded = sqlite_instance.get_conversation(conversation_id=piece.conversation_id)
+        reloaded = sqlite_instance.get_conversation_messages(conversation_id=piece.conversation_id)
         result = await pyrit_messages_to_dto_async(list(reloaded), memory=sqlite_instance)
 
         assert result[0].pieces[0].scores == []
@@ -746,7 +746,7 @@ class TestPyritMessagesToDtoRealObjects:
             ]
         )
 
-        reloaded = sqlite_instance.get_conversation(conversation_id=conv_id)
+        reloaded = sqlite_instance.get_conversation_messages(conversation_id=conv_id)
         result = await pyrit_messages_to_dto_async(list(reloaded), memory=sqlite_instance)
 
         by_role = {msg.role: msg for msg in result}
@@ -928,6 +928,29 @@ class TestRequestToPyritMessage:
 
         assert mock_deprecation.call_count == 2
 
+    def test_empty_labels_no_deprecation_warning(self) -> None:
+        """An explicit empty ``labels={}`` (forwarded on the happy path) must not warn."""
+        request = MagicMock()
+        request.role = "user"
+        piece = MagicMock()
+        piece.data_type = "text"
+        piece.original_value = "hello"
+        piece.converted_value = None
+        piece.prompt_metadata = None
+        piece.mime_type = None
+        piece.original_prompt_id = None
+        request.pieces = [piece]
+
+        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
+            request_to_pyrit_message(
+                request=request,
+                conversation_id="conv-1",
+                sequence=0,
+                labels={},
+            )
+
+        mock_deprecation.assert_not_called()
+
 
 class TestRequestPieceToPyritMessagePiece:
     """Tests for request_piece_to_pyrit_message_piece function."""
@@ -1068,6 +1091,27 @@ class TestRequestPieceToPyritMessagePiece:
             )
 
         mock_deprecation.assert_called_once()
+
+    def test_empty_labels_no_deprecation_warning(self) -> None:
+        """An explicit empty ``labels={}`` (forwarded on the happy path) must not warn."""
+        piece = MagicMock()
+        piece.data_type = "text"
+        piece.original_value = "hello"
+        piece.converted_value = None
+        piece.mime_type = None
+        piece.prompt_metadata = None
+        piece.original_prompt_id = None
+
+        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
+            request_piece_to_pyrit_message_piece(
+                piece=piece,
+                role="user",
+                conversation_id="conv-1",
+                sequence=0,
+                labels={},
+            )
+
+        mock_deprecation.assert_not_called()
 
     def test_labels_default_to_empty_dict(self) -> None:
         """Test that labels default to empty dict when not provided."""

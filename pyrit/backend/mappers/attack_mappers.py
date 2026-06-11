@@ -536,7 +536,10 @@ def request_piece_to_pyrit_message_piece(
     Returns:
         PyritMessagePiece domain object.
     """
-    if labels is not None:
+    # Only a truthy value counts as "passed"; an empty/falsy ``labels`` (e.g. {}
+    # forwarded on the happy path) is treated as not supplied to avoid a spurious
+    # warning. Matches MessagePiece's deprecated-kwarg guard.
+    if labels:
         print_deprecation_message(
             old_item="request_piece_to_pyrit_message_piece(..., labels=...)",
             new_item="request_piece_to_pyrit_message_piece(...)",
@@ -582,7 +585,10 @@ def request_to_pyrit_message(
     Returns:
         PyritMessage ready to send to the target.
     """
-    if labels is not None:
+    # Only a truthy value counts as "passed"; an empty/falsy ``labels`` (e.g. {}
+    # forwarded on the happy path) is treated as not supplied to avoid a spurious
+    # warning. Matches MessagePiece's deprecated-kwarg guard.
+    if labels:
         print_deprecation_message(
             old_item="request_to_pyrit_message(..., labels=...)",
             new_item="request_to_pyrit_message(...)",
