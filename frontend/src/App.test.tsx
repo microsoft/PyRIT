@@ -177,11 +177,16 @@ jest.mock("./components/Config/TargetConfig", () => {
 jest.mock("./components/History/AttackHistory", () => {
   const MockAttackHistory = ({
     onOpenAttack,
+    filters,
+    onFiltersChange,
   }: {
     onOpenAttack: (attackResultId: string) => void;
+    filters: Record<string, unknown>;
+    onFiltersChange: (filters: Record<string, unknown>) => void;
   }) => {
     return (
       <div data-testid="attack-history">
+        <span data-testid="history-filters">{JSON.stringify(filters)}</span>
         <button
           onClick={() => onOpenAttack("ar-attack-1")}
           data-testid="open-attack"
@@ -193,6 +198,12 @@ jest.mock("./components/History/AttackHistory", () => {
           data-testid="open-attack-2"
         >
           Open Attack 2
+        </button>
+        <button
+          onClick={() => onFiltersChange({ ...filters, outcome: "success" })}
+          data-testid="set-outcome-filter"
+        >
+          Filter Outcome
         </button>
       </div>
     );
@@ -654,5 +665,47 @@ describe("App", () => {
     await waitFor(() =>
       expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main")
     );
+  });
+
+  it("hydrates history filters from the URL query string", () => {
+    renderApp("/history?outcome=success&attackType=PromptSendingAttack");
+
+    const filters = JSON.parse(
+      screen.getByTestId("history-filters").textContent ?? "{}"
+    );
+    expect(filters.outcome).toBe("success");
+    expect(filters.attackTypes).toEqual(["PromptSendingAttack"]);
+  });
+
+  it("writes filter changes into the URL", () => {
+    renderApp("/history");
+
+    expect(
+      JSON.parse(screen.getByTestId("history-filters").textContent ?? "{}").outcome
+    ).toBe("");
+
+    fireEvent.click(screen.getByTestId("set-outcome-filter"));
+
+    // The change flows out to the URL and back into the derived filters prop.
+    expect(
+      JSON.parse(screen.getByTestId("history-filters").textContent ?? "{}").outcome
+    ).toBe("success");
+  });
+
+  it("restores history filters when returning via the nav button", () => {
+    renderApp("/history?outcome=success");
+
+    expect(
+      JSON.parse(screen.getByTestId("history-filters").textContent ?? "{}").outcome
+    ).toBe("success");
+
+    // Leave history for another view, then come back via the nav button.
+    fireEvent.click(screen.getByTestId("nav-config"));
+    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("nav-history"));
+    expect(
+      JSON.parse(screen.getByTestId("history-filters").textContent ?? "{}").outcome
+    ).toBe("success");
   });
 });

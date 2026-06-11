@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
-import { Routes, Route, Navigate, useNavigate, useLocation, matchPath } from 'react-router-dom'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { Routes, Route, Navigate, useNavigate, useLocation, useSearchParams, matchPath } from 'react-router-dom'
 import { FluentProvider, webLightTheme, webDarkTheme } from '@fluentui/react-components'
 import { useMsal } from '@azure/msal-react'
 import MainLayout from './components/Layout/MainLayout'
@@ -8,12 +8,12 @@ import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
 import AttackHistory from './components/History/AttackHistory'
-import { DEFAULT_HISTORY_FILTERS } from './components/History/historyFilters'
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnectionHealth'
 import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
+import { filtersFromSearchParams, filtersToSearchParams } from './components/History/historyFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
 import type { TargetInstance, TargetInfo } from './types'
 import { attacksApi, versionApi } from './services/api'
@@ -90,8 +90,22 @@ function App() {
   const [isDarkMode, setIsDarkMode] = useState(true)
   const [activeTarget, setActiveTarget] = useState<TargetInstance | null>(null)
   const [globalLabels, setGlobalLabels] = useState<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
-  /** Persisted filter state for the history view */
-  const [historyFilters, setHistoryFilters] = useState<HistoryFilters>({ ...DEFAULT_HISTORY_FILTERS })
+
+  // History filters live in the URL query string so they are shareable and
+  // survive refresh. The breadcrumb ref remembers the last /history query so
+  // the History nav button can restore filters after visiting another view.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const historyFilters = useMemo(() => filtersFromSearchParams(searchParams), [searchParams])
+  const lastHistorySearch = useRef('')
+  useEffect(() => {
+    if (location.pathname === VIEW_PATHS.history) {
+      lastHistorySearch.current = location.search
+    }
+  }, [location.pathname, location.search])
+
+  const handleFiltersChange = useCallback((filters: HistoryFilters) => {
+    setSearchParams(filtersToSearchParams(filters), { replace: true })
+  }, [setSearchParams])
 
   /** Attack named by the URL, hydrated by the loader effect below. */
   const [loadedAttack, setLoadedAttack] = useState<LoadedAttack | null>(null)
@@ -228,6 +242,11 @@ function App() {
   }, [readyAttack, routeConversationId, navigate])
 
   const handleNavigate = useCallback((view: ViewName) => {
+    // Re-attach the last filter query so returning to history restores filters.
+    if (view === 'history') {
+      navigate(VIEW_PATHS.history + lastHistorySearch.current)
+      return
+    }
     navigate(VIEW_PATHS[view])
   }, [navigate])
 
@@ -349,7 +368,7 @@ function App() {
                   <AttackHistory
                     onOpenAttack={handleOpenAttack}
                     filters={historyFilters}
-                    onFiltersChange={setHistoryFilters}
+                    onFiltersChange={handleFiltersChange}
                   />
                 }
               />
