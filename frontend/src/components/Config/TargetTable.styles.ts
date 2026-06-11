@@ -38,6 +38,10 @@ export const useTargetTableStyles = makeStyles({
     width: '160px',
     textAlign: 'center',
   },
+  validateCell: {
+    width: '70px',
+    textAlign: 'center',
+  },
   modalityRow: {
     display: 'inline-flex',
     alignItems: 'center',

@@ -415,7 +415,7 @@ describe('TargetTable', () => {
         <TargetTable {...defaultProps} />
       </TestWrapper>,
     )
-    const validateButtons = screen.getAllByRole('button', { name: /^Validate$/ })
+    const validateButtons = screen.getAllByRole('button', { name: /^Validate capabilities for / })
     // 3 sample targets, 1 button each (no active target → no extra active-row button)
     expect(validateButtons).toHaveLength(3)
   })
@@ -426,7 +426,7 @@ describe('TargetTable', () => {
         <TargetTable {...defaultProps} activeTarget={sampleTargets[0]} />
       </TestWrapper>,
     )
-    const validateButtons = screen.getAllByRole('button', { name: /^Validate$/ })
+    const validateButtons = screen.getAllByRole('button', { name: /^Validate capabilities for / })
     // 3 list rows + 1 active-row summary = 4
     expect(validateButtons).toHaveLength(4)
   })
@@ -458,12 +458,12 @@ describe('TargetTable', () => {
       </TestWrapper>,
     )
     // Before expanding: 1 top-level row → 1 Validate button
-    expect(screen.getAllByRole('button', { name: /^Validate$/ })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /^Validate capabilities for / })).toHaveLength(1)
     // Expand
     fireEvent.click(screen.getByLabelText('Expand inner targets'))
     expect(screen.getByText('https://a.openai.azure.com')).toBeInTheDocument()
     // After expanding: still only 1 Validate button (inner rows don't get one)
-    expect(screen.getAllByRole('button', { name: /^Validate$/ })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /^Validate capabilities for / })).toHaveLength(1)
   })
 
   it('opens the validation dialog when a Validate button is clicked', async () => {
@@ -474,7 +474,7 @@ describe('TargetTable', () => {
         <TargetTable {...defaultProps} />
       </TestWrapper>,
     )
-    const validateButtons = screen.getAllByRole('button', { name: /^Validate$/ })
+    const validateButtons = screen.getAllByRole('button', { name: /^Validate capabilities for / })
     fireEvent.click(validateButtons[0])
     await waitFor(() => {
       expect(mockedApi.validateCapabilities).toHaveBeenCalledWith('openai_chat_gpt4')
@@ -489,11 +489,11 @@ describe('TargetTable', () => {
         <TargetTable {...defaultProps} />
       </TestWrapper>,
     )
-    const validateButtons = screen.getAllByRole('button', { name: /^Validate$/ })
+    const validateButtons = screen.getAllByRole('button', { name: /^Validate capabilities for / })
     fireEvent.click(validateButtons[0])
     await waitFor(() => {
       // The first row's Validate button is now disabled.
-      const stillButtons = screen.getAllByRole('button', { name: /^Validate$/ })
+      const stillButtons = screen.getAllByRole('button', { name: /^Validate capabilities for / })
       expect(stillButtons[0]).toBeDisabled()
       // The other rows' buttons remain enabled.
       expect(stillButtons[1]).not.toBeDisabled()

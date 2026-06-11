@@ -28,6 +28,7 @@ import {
   ArrowHookUpLeftRegular,
   ChevronRightRegular,
   ChevronDownRegular,
+  BeakerRegular,
 } from '@fluentui/react-icons'
 import type { TargetInstance } from '../../types'
 import { useTargetTableStyles } from './TargetTable.styles'
@@ -73,6 +74,7 @@ const COLUMN_TOOLTIPS = {
   parameters: 'Target-specific configuration parameters (e.g., reasoning_effort, max_output_tokens)',
   inputs: 'Modalities the target accepts as input',
   outputs: 'Modalities the target can produce as output',
+  validate: 'Probe the target live and compare observed capabilities to the declared values shown in this row',
 } as const
 
 /** Composite icon: f(x) with a small return-arrow badge for function call outputs. */
@@ -285,17 +287,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
           <TableBody>
             <TableRow className={styles.activeRow}>
               <TableCell style={{ width: '120px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
-                  <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>Active</Badge>
-                  <Button
-                    appearance="subtle"
-                    size="small"
-                    disabled={validateTarget?.target_registry_name === activeTarget.target_registry_name}
-                    onClick={() => setValidateTarget(activeTarget)}
-                  >
-                    Validate
-                  </Button>
-                </div>
+                <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>Active</Badge>
               </TableCell>
               <TableCell style={{ width: '140px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -324,6 +316,18 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
               </TableCell>
               <TableCell className={styles.modalityCell}>
                 <ModalityCell modalities={activeTarget.capabilities?.supported_output_modalities} />
+              </TableCell>
+              <TableCell className={styles.validateCell}>
+                <Tooltip content={COLUMN_TOOLTIPS.validate} relationship="label">
+                  <Button
+                    appearance="subtle"
+                    size="small"
+                    icon={<BeakerRegular />}
+                    aria-label={`Validate capabilities for ${activeTarget.target_registry_name}`}
+                    disabled={validateTarget?.target_registry_name === activeTarget.target_registry_name}
+                    onClick={() => setValidateTarget(activeTarget)}
+                  />
+                </Tooltip>
               </TableCell>
               <CapabilityCells target={activeTarget} />
               <TableCell style={{ width: '160px' }}>
@@ -389,6 +393,11 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                 <span className={styles.helpHeader}>Outputs</span>
               </Tooltip>
             </TableHeaderCell>
+            <TableHeaderCell className={styles.validateCell}>
+              <Tooltip content={COLUMN_TOOLTIPS.validate} relationship="description">
+                <span className={styles.helpHeader}>Validate</span>
+              </Tooltip>
+            </TableHeaderCell>
             {CAPABILITY_COLUMNS.map(({ key, label, tooltip }) => (
               <TableHeaderCell key={key} className={styles.capabilityCell}>
                 <Tooltip content={tooltip} relationship="description">
@@ -416,29 +425,19 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                   className={isActive(target) ? styles.activeRow : undefined}
                 >
                   <TableCell>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
-                      {isActive(target) ? (
-                        <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>
-                          Active
-                        </Badge>
-                      ) : (
-                        <Button
-                          appearance="primary"
-                          size="small"
-                          onClick={() => onSetActiveTarget(target)}
-                        >
-                          Set Active
-                        </Button>
-                      )}
+                    {isActive(target) ? (
+                      <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>
+                        Active
+                      </Badge>
+                    ) : (
                       <Button
-                        appearance="subtle"
+                        appearance="primary"
                         size="small"
-                        disabled={validateTarget?.target_registry_name === target.target_registry_name}
-                        onClick={() => setValidateTarget(target)}
+                        onClick={() => onSetActiveTarget(target)}
                       >
-                        Validate
+                        Set Active
                       </Button>
-                    </div>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -468,6 +467,18 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                   </TableCell>
                   <TableCell className={styles.modalityCell}>
                     <ModalityCell modalities={target.capabilities?.supported_output_modalities} />
+                  </TableCell>
+                  <TableCell className={styles.validateCell}>
+                    <Tooltip content={COLUMN_TOOLTIPS.validate} relationship="label">
+                      <Button
+                        appearance="subtle"
+                        size="small"
+                        icon={<BeakerRegular />}
+                        aria-label={`Validate capabilities for ${target.target_registry_name}`}
+                        disabled={validateTarget?.target_registry_name === target.target_registry_name}
+                        onClick={() => setValidateTarget(target)}
+                      />
+                    </Tooltip>
                   </TableCell>
                   <CapabilityCells target={target} />
                   <TableCell>
