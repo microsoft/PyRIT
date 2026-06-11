@@ -105,6 +105,19 @@ export interface ActionCallbacks {
    * When undefined, the ✏ Edit button does not render.
    */
   onEditUserTurnText?: (nodeId: ConversationTreeNodeId, newText: string) => void
+  /**
+   * Inline edit of a RootPrompt's params (PR5h.6; spec §2.2 RootPrompt
+   * ✏ Edit prompt + target + system prompt). The card opens a multi-
+   * field editor and fires this with the per-field patch on Save. The
+   * patch always carries all three fields (text + systemPrompt +
+   * targetRegistryName) — partial patches are a V1.0.1 follow-up if
+   * an operator workflow ever needs per-field-only edits. When
+   * undefined, the ✏ Edit button does not render.
+   */
+  onEditRootPromptParams?: (
+    nodeId: ConversationTreeNodeId,
+    patch: { text: string; systemPrompt: string; targetRegistryName: string },
+  ) => void
 }
 
 export interface ActionRailProps {
