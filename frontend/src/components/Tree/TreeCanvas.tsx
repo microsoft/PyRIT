@@ -19,6 +19,7 @@ import { ReactFlow, ReactFlowProvider } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
 import { conversationTreeToReactFlow } from './conversationTreeToReactFlow'
+import { treeNodeTypes } from './treeNodeTypes'
 import type { ConversationTree } from '../../runner/treeTypes'
 
 export interface TreeCanvasProps {
@@ -41,9 +42,7 @@ export function TreeCanvas({ tree }: TreeCanvasProps) {
         <ReactFlow
           nodes={nodes}
           edges={edges}
-          // PR5b registers per-kind node components here. Default node
-          // type renders the id; sufficient for the scaffold.
-          // nodeTypes={...}
+          nodeTypes={treeNodeTypes}
           // PR5d adds the edge `+` chip via edgeTypes; default smoothstep
           // is fine for the scaffold.
           // edgeTypes={...}
