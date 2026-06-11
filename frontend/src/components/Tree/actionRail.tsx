@@ -19,6 +19,8 @@ import {
   ArrowSyncRegular,
   BranchForkRegular,
   BranchRegular,
+  CheckmarkCircleFilled,
+  CheckmarkCircleRegular,
   DeleteRegular,
   OpenRegular,
 } from '@fluentui/react-icons'
@@ -80,6 +82,21 @@ export interface ActionCallbacks {
     childId: ConversationTreeNodeId,
     kind: EdgeInsertKind,
   ) => void
+  /**
+   * Pick / Unpick a fan child (PR5f). `slotIndex` of the chosen child
+   * (or `null` to unpick — clears the fan's promotedChildSlotIndex).
+   * Host writes to `FanNode.params.promotedChildSlotIndex` and is
+   * responsible for the auto-clear-on-child-delete invariant. When
+   * undefined, the per-child Pick toggle AND the collapsed-stack
+   * Pick popover are both suppressed.
+   *
+   * V1.0 is visual only: dim-non-promoted on the canvas. V1.1+ uses
+   * the field to scope Refresh + Stack-edit.
+   */
+  onPickFanChild?: (
+    fanNodeId: ConversationTreeNodeId,
+    slotIndex: number | null,
+  ) => void
 }
 
 export interface ActionRailProps {
@@ -90,11 +107,35 @@ export interface ActionRailProps {
    * "Branch from here" elsewhere. The card chooses; the rail honors.
    */
   branchLabel: string
+  /**
+   * When this card is a fan child, the parent fan id + slot index + the
+   * current promoted state. When supplied AND `onPickFanChild` is wired,
+   * the rail renders a CheckmarkCircle toggle button: outline = pickable,
+   * filled = currently picked. Clicking toggles the slot (own slot when
+   * unpicked → pick; own slot when promoted → unpick by passing null;
+   * other slot promoted → switch to own slot).
+   *
+   * Absent for non-fan-children — no Pick affordance renders.
+   */
+  fanChildInfo?: {
+    parentFanId: ConversationTreeNodeId
+    slotIndex: number
+    promoted: boolean
+  }
 }
 
-export function ActionRail({ nodeId, callbacks, branchLabel }: ActionRailProps) {
+export function ActionRail({ nodeId, callbacks, branchLabel, fanChildInfo }: ActionRailProps) {
   const styles = useActionRailStyles()
-  const { onRefresh, onBranch, onDelete, onOpenLinear } = callbacks
+  const { onRefresh, onBranch, onDelete, onOpenLinear, onPickFanChild } = callbacks
+  const showPick = fanChildInfo !== undefined && onPickFanChild !== undefined
+  const onPickClick = () => {
+    if (!showPick) return
+    // Toggle semantics:
+    //   - promoted (this slot is current pick) → unpick (null)
+    //   - not promoted (no pick OR sibling pick) → switch to this slot
+    const next = fanChildInfo.promoted ? null : fanChildInfo.slotIndex
+    onPickFanChild(fanChildInfo.parentFanId, next)
+  }
   return (
     <div data-tree-action-rail data-tree-node-id={nodeId} className={styles.rail}>
       {onRefresh !== undefined && (
@@ -133,6 +174,22 @@ export function ActionRail({ nodeId, callbacks, branchLabel }: ActionRailProps) 
         title="Branch as subtree (coming in a future release)"
         disabled
       />
+      {showPick && (
+        <Tooltip
+          content={fanChildInfo.promoted ? 'Unpick this attempt' : 'Pick this attempt'}
+          relationship="description"
+        >
+          <Button
+            size="small"
+            appearance="subtle"
+            icon={
+              fanChildInfo.promoted ? <CheckmarkCircleFilled /> : <CheckmarkCircleRegular />
+            }
+            aria-label={fanChildInfo.promoted ? 'Unpick this attempt' : 'Pick this attempt'}
+            onClick={onPickClick}
+          />
+        </Tooltip>
+      )}
       {onDelete !== undefined && (
         <Tooltip content="Delete" relationship="description">
           <Button

@@ -15,8 +15,22 @@
  * applied on every card today via the shared CardFrame.
  */
 
-import { Button, Tooltip, mergeClasses } from '@fluentui/react-components'
-import { ArrowMinimizeRegular, ArrowMaximizeRegular } from '@fluentui/react-icons'
+import {
+  Button,
+  Menu,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
+  Tooltip,
+  mergeClasses,
+} from '@fluentui/react-components'
+import {
+  ArrowMaximizeRegular,
+  ArrowMinimizeRegular,
+  CheckmarkCircleFilled,
+  CheckmarkCircleRegular,
+} from '@fluentui/react-icons'
 import { Handle, Position } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
 
@@ -32,8 +46,8 @@ import type {
 } from '../../runner/treeTypes'
 import { ActionRail } from './actionRail'
 import { useActionCallbacks } from './actionCallbacksContext'
-import type { StackAggregate } from './fanStack'
-import type { TreeFlowNode } from './conversationTreeToReactFlow'
+import type { FanChildInfo, TreeFlowNode } from './conversationTreeToReactFlow'
+import type { StackAggregate, StackMember } from './fanStack'
 import { STATE_BADGE_TOKENS, useNodeCardStyles } from './nodeCards.styles'
 import { useStackCollapse } from './stackCollapseContext'
 
@@ -57,6 +71,13 @@ interface CardFrameProps {
    * are present; ignored when they're absent (no rail renders).
    */
   branchLabel: string
+  /**
+   * PR5f: forwarded from the card's adapter-supplied data. CardFrame
+   * applies the dim/promoted CSS class + emits data-dimmed/data-promoted
+   * attributes, AND threads the fan context into the ActionRail so the
+   * Pick toggle has what it needs.
+   */
+  fanChildInfo?: FanChildInfo
   showTargetHandle?: boolean // top (parent connection)
   showSourceHandle?: boolean // bottom (child connection)
   children: React.ReactNode
@@ -68,6 +89,7 @@ function CardFrame({
   nodeId,
   selected = false,
   branchLabel,
+  fanChildInfo,
   showTargetHandle = true,
   showSourceHandle = true,
   children,
@@ -75,11 +97,20 @@ function CardFrame({
   const styles = useNodeCardStyles()
   const callbacks = useActionCallbacks()
   const stateTokens = STATE_BADGE_TOKENS[state]
+  const dimmed = fanChildInfo?.dimmed ?? false
+  const promoted = fanChildInfo?.promoted ?? false
   return (
     <div
       data-tree-node-id={nodeId}
       data-selected={selected ? 'true' : 'false'}
-      className={mergeClasses(styles.frame, selected && styles.frameSelected)}
+      data-dimmed={dimmed ? 'true' : 'false'}
+      data-promoted={promoted ? 'true' : 'false'}
+      className={mergeClasses(
+        styles.frame,
+        selected && styles.frameSelected,
+        dimmed && styles.frameDimmed,
+        promoted && styles.framePromoted,
+      )}
     >
       {showTargetHandle && <Handle type="target" position={Position.Top} />}
       <div className={styles.header}>
@@ -94,7 +125,12 @@ function CardFrame({
       </div>
       {children}
       {callbacks !== null && (
-        <ActionRail nodeId={nodeId} callbacks={callbacks} branchLabel={branchLabel} />
+        <ActionRail
+          nodeId={nodeId}
+          callbacks={callbacks}
+          branchLabel={branchLabel}
+          fanChildInfo={fanChildInfo}
+        />
       )}
       {showSourceHandle && <Handle type="source" position={Position.Bottom} />}
     </div>
@@ -110,10 +146,19 @@ function CardBody({ text }: { text: string }) {
   )
 }
 
-function MetaRow({ label, value }: { label: string; value: string }) {
+function MetaRow({
+  label,
+  value,
+  title,
+}: {
+  label: string
+  value: string
+  /** Optional hover-discoverable tooltip; surfaces via the row's HTML title attr. */
+  title?: string
+}) {
   const styles = useNodeCardStyles()
   return (
-    <div className={styles.metaRow}>
+    <div className={styles.metaRow} title={title}>
       {label !== '' && <span className={styles.metaLabel}>{label}:</span>}
       <span className={styles.metaValue}>{value}</span>
     </div>
@@ -135,6 +180,7 @@ export function RootPromptCard({ data, selected }: RootPromptProps) {
       nodeId={node.id}
       selected={selected}
       branchLabel="Clone tree"
+      fanChildInfo={data.fanChildInfo}
       showTargetHandle={false}
     >
       <CardBody text={node.params.text} />
@@ -158,6 +204,7 @@ export function ImportMessageCard({ data, selected }: ImportMessageProps) {
       nodeId={node.id}
       selected={selected}
       branchLabel="Branch from here"
+      fanChildInfo={data.fanChildInfo}
       showTargetHandle={false}
     >
       <MetaRow label="source" value={node.params.sourceConversationId} />
@@ -182,6 +229,7 @@ export function UserTurnCard({ data, selected }: UserTurnProps) {
       nodeId={node.id}
       selected={selected}
       branchLabel="Branch from here"
+      fanChildInfo={data.fanChildInfo}
     >
       <CardBody text={node.params.text} />
       <MetaRow label="role" value={node.params.role} />
@@ -208,6 +256,7 @@ export function SendCard({ data, selected }: SendProps) {
       nodeId={node.id}
       selected={selected}
       branchLabel="Branch from here"
+      fanChildInfo={data.fanChildInfo}
     >
       {node.params.targetRegistryName !== undefined && (
         <MetaRow label="target" value={node.params.targetRegistryName} />
@@ -230,6 +279,8 @@ export function FanCard({ data, selected }: FanProps) {
   const n = node.params.variants.length
   const stack = data.stackedSummary
   const collapseCtx = useStackCollapse()
+  const callbacks = useActionCallbacks()
+  const onPickFanChild = callbacks?.onPickFanChild
   return (
     <CardFrame
       kindLabel="Fan"
@@ -237,13 +288,26 @@ export function FanCard({ data, selected }: FanProps) {
       nodeId={node.id}
       selected={selected}
       branchLabel="Branch from here"
+      fanChildInfo={data.fanChildInfo}
     >
       <MetaRow label="axis" value={node.params.axis} />
       <MetaRow label="" value={`${n} variant${n === 1 ? '' : 's'}`} />
       {node.params.promotedChildSlotIndex !== null && (
-        <MetaRow label="pick" value={`slot ${node.params.promotedChildSlotIndex}`} />
+        <MetaRow
+          label="pick"
+          value={`slot ${node.params.promotedChildSlotIndex}`}
+          title="Visual focus only. Future releases will scope Refresh and Stack-edit to the picked attempt."
+        />
       )}
       {stack !== undefined && <StackSummaryBody summary={stack} />}
+      {stack !== undefined && onPickFanChild !== undefined && (
+        <StackPickButton
+          fanNodeId={node.id}
+          members={stack.members}
+          promotedSlot={node.params.promotedChildSlotIndex}
+          onPickFanChild={onPickFanChild}
+        />
+      )}
       {collapseCtx !== null && (
         <StackToggleButton
           collapsed={stack !== undefined}
@@ -313,6 +377,63 @@ function StackToggleButton({
   )
 }
 
+/**
+ * Collapsed-stack Pick popover. The operator-friendly alternative to
+ * "expand the stack first, then click each child's Pick icon" (which
+ * was the four-clicks-per-decision flow the PR5f reviewer flagged as
+ * unusable for the dominant workflow). Lists each member as a Fluent
+ * MenuItem with a per-state glyph + slot number; the currently-promoted
+ * member shows "(picked)" and clicking it unpicks (null).
+ */
+function StackPickButton({
+  fanNodeId,
+  members,
+  promotedSlot,
+  onPickFanChild,
+}: {
+  fanNodeId: ConversationTreeNodeId
+  members: ReadonlyArray<StackMember>
+  promotedSlot: number | null
+  onPickFanChild: (id: ConversationTreeNodeId, slotIndex: number | null) => void
+}) {
+  return (
+    <div data-tree-stack-pick>
+      <Menu positioning="below">
+        <MenuTrigger disableButtonEnhancement>
+          <Tooltip content="Pick best attempt from stack" relationship="description">
+            <Button
+              size="small"
+              appearance="subtle"
+              icon={<CheckmarkCircleRegular />}
+              aria-label="Pick best attempt from stack"
+            >
+              Pick…
+            </Button>
+          </Tooltip>
+        </MenuTrigger>
+        <MenuPopover>
+          <MenuList>
+            {members.map((m) => {
+              const isPromoted = promotedSlot !== null && promotedSlot === m.slotIndex
+              const next = isPromoted ? null : m.slotIndex
+              const label = `slot ${m.slotIndex} (${m.state})${isPromoted ? ' ✓ (picked)' : ''}`
+              return (
+                <MenuItem
+                  key={m.id}
+                  icon={isPromoted ? <CheckmarkCircleFilled /> : <CheckmarkCircleRegular />}
+                  onClick={() => onPickFanChild(fanNodeId, next)}
+                >
+                  {label}
+                </MenuItem>
+              )
+            })}
+          </MenuList>
+        </MenuPopover>
+      </Menu>
+    </div>
+  )
+}
+
 // ============================================================================
 // ScoreCard
 // ============================================================================
@@ -329,6 +450,7 @@ export function ScoreCard({ data, selected }: ScoreProps) {
       nodeId={node.id}
       selected={selected}
       branchLabel="Branch from here"
+      fanChildInfo={data.fanChildInfo}
     >
       <MetaRow label="scorer" value={node.params.scorerType} />
       <div className={styles.mutedFooter}>Read-only display</div>

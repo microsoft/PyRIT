@@ -42,6 +42,24 @@ export const useNodeCardStyles = makeStyles({
     borderLeftColor: tokens.colorBrandStroke1,
     boxShadow: `0 0 0 1px ${tokens.colorBrandStroke1}`,
   },
+  // Per the PR5f V1.0 simplification: dim non-promoted siblings to
+  // ~40% opacity when one fan-child is promoted. Operator-readable
+  // (hover-discoverable) but visually de-emphasized.
+  frameDimmed: {
+    opacity: 0.4,
+  },
+  // The promoted fan-child gets a brand-color outline matching the
+  // selection visual but slightly more emphatic (thicker shadow). The
+  // outline doubles as selection-style affordance even when the card
+  // isn't currently selected — the operator's chosen attempt should
+  // always read as "the one."
+  framePromoted: {
+    borderTopColor: tokens.colorBrandStroke1,
+    borderRightColor: tokens.colorBrandStroke1,
+    borderBottomColor: tokens.colorBrandStroke1,
+    borderLeftColor: tokens.colorBrandStroke1,
+    boxShadow: `0 0 0 2px ${tokens.colorBrandStroke1}`,
+  },
   header: {
     display: 'flex',
     justifyContent: 'space-between',

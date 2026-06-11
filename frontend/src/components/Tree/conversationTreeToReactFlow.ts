@@ -34,13 +34,31 @@ import type {
 // Result types — kind-discriminated so PR5b's node components can narrow
 // ============================================================================
 
+/**
+ * Per-card fan-child context. Attached by the adapter to every node whose
+ * parent is a FanNode; absent when the node is not a fan-child. Cards
+ * read these to render the dim / promoted visual + the per-child Pick
+ * toggle on the action rail (PR5f).
+ */
+export interface FanChildInfo {
+  parentFanId: ConversationTreeNodeId
+  slotIndex: number
+  /** True when the parent fan's promotedChildSlotIndex matches this child. */
+  promoted: boolean
+  /** True when the parent has a promotion AND this child is NOT it. */
+  dimmed: boolean
+}
+
 export type TreeFlowNode =
-  | Node<{ node: RootPromptNode }, 'root_prompt'>
-  | Node<{ node: ImportMessageNode }, 'import_message'>
-  | Node<{ node: UserTurnNode }, 'user_turn'>
-  | Node<{ node: SendNode }, 'send'>
-  | Node<{ node: FanNode; stackedSummary?: StackAggregate }, 'fan'>
-  | Node<{ node: ScoreNode }, 'score'>
+  | Node<{ node: RootPromptNode; fanChildInfo?: FanChildInfo }, 'root_prompt'>
+  | Node<{ node: ImportMessageNode; fanChildInfo?: FanChildInfo }, 'import_message'>
+  | Node<{ node: UserTurnNode; fanChildInfo?: FanChildInfo }, 'user_turn'>
+  | Node<{ node: SendNode; fanChildInfo?: FanChildInfo }, 'send'>
+  | Node<
+      { node: FanNode; fanChildInfo?: FanChildInfo; stackedSummary?: StackAggregate },
+      'fan'
+    >
+  | Node<{ node: ScoreNode; fanChildInfo?: FanChildInfo }, 'score'>
 
 export interface TreeFlowEdgeData extends Record<string, unknown> {
   /** Mirror of the source `ConversationTreeEdge.slotIndex`. */
@@ -99,6 +117,24 @@ export function conversationTreeToReactFlow(
   const nodeKindById = new Map<string, ConversationTreeNodeKind>()
   for (const n of tree.nodes) nodeKindById.set(n.id, n.kind)
 
+  // Build a parent-fan lookup so each fan-child can pick up its parent's
+  // promotedChildSlotIndex without a tree walk per node. Map childId →
+  // { parentFan, slotIndex }. Lookup is O(1) per child; assembly is
+  // O(nodes + edges).
+  const fanChildIndex = new Map<
+    ConversationTreeNodeId,
+    { parentFan: FanNode; slotIndex: number }
+  >()
+  const fansById = new Map<ConversationTreeNodeId, FanNode>()
+  for (const n of tree.nodes) {
+    if (n.kind === 'fan') fansById.set(n.id, n)
+  }
+  for (const edge of tree.edges) {
+    const parent = fansById.get(edge.parentId)
+    if (parent === undefined) continue
+    fanChildIndex.set(edge.childId, { parentFan: parent, slotIndex: edge.slotIndex })
+  }
+
   // Compute the set of node ids hidden by stack collapse: every
   // descendant (recursive) of every collapsed fan. The fan node itself
   // stays visible; only its subtree below disappears.
@@ -113,7 +149,9 @@ export function conversationTreeToReactFlow(
 
   return {
     treeId: tree.id,
-    nodes: visibleNodes.map((n) => toFlowNode(n, tree, collapsedFanIds)),
+    nodes: visibleNodes.map((n) =>
+      toFlowNode(n, tree, collapsedFanIds, fanChildIndex),
+    ),
     edges: visibleEdges.map((e) => toFlowEdge(e, nodeKindById)),
   }
 }
@@ -128,10 +166,15 @@ function toFlowNode(
   node: ConversationTreeNode,
   tree: ConversationTree,
   collapsedFanIds: ReadonlySet<ConversationTreeNodeId>,
+  fanChildIndex: ReadonlyMap<
+    ConversationTreeNodeId,
+    { parentFan: FanNode; slotIndex: number }
+  >,
 ): TreeFlowNode {
   // Per-kind narrowing keeps the result's discriminated union honest. The
   // exhaustive switch will fail at compile time if a new kind lands in
   // ConversationTreeNodeKind without an arm here.
+  const fanChildInfo = computeFanChildInfo(node.id, fanChildIndex)
   const common = {
     id: node.id,
     position: { ...PLACEHOLDER_POSITION },
@@ -141,24 +184,46 @@ function toFlowNode(
   const kind: ConversationTreeNodeKind = node.kind
   switch (kind) {
     case 'root_prompt':
-      return { ...common, type: 'root_prompt', data: { node: node as RootPromptNode } }
-    case 'import_message':
-      return { ...common, type: 'import_message', data: { node: node as ImportMessageNode } }
-    case 'user_turn':
-      return { ...common, type: 'user_turn', data: { node: node as UserTurnNode } }
-    case 'send':
-      return { ...common, type: 'send', data: { node: node as SendNode } }
-    case 'fan': {
-      const fanData: { node: FanNode; stackedSummary?: StackAggregate } = {
-        node: node as FanNode,
+      return {
+        ...common,
+        type: 'root_prompt',
+        data: { node: node as RootPromptNode, fanChildInfo },
       }
+    case 'import_message':
+      return {
+        ...common,
+        type: 'import_message',
+        data: { node: node as ImportMessageNode, fanChildInfo },
+      }
+    case 'user_turn':
+      return {
+        ...common,
+        type: 'user_turn',
+        data: { node: node as UserTurnNode, fanChildInfo },
+      }
+    case 'send':
+      return {
+        ...common,
+        type: 'send',
+        data: { node: node as SendNode, fanChildInfo },
+      }
+    case 'fan': {
+      const fanData: {
+        node: FanNode
+        fanChildInfo?: FanChildInfo
+        stackedSummary?: StackAggregate
+      } = { node: node as FanNode, fanChildInfo }
       if (collapsedFanIds.has(node.id)) {
         fanData.stackedSummary = computeStackAggregate(tree, node.id)
       }
       return { ...common, type: 'fan', data: fanData }
     }
     case 'score':
-      return { ...common, type: 'score', data: { node: node as ScoreNode } }
+      return {
+        ...common,
+        type: 'score',
+        data: { node: node as ScoreNode, fanChildInfo },
+      }
     default: {
       // Exhaustiveness check: if a new kind lands without an arm above,
       // this assignment fails at compile time.
@@ -219,4 +284,30 @@ function collectHiddenDescendants(
     if (grand !== undefined) queue.push(...grand)
   }
   return hidden
+}
+
+/**
+ * Build the per-card FanChildInfo if `node` is a fan-child; return
+ * undefined otherwise. Promoted = this child's slotIndex matches the
+ * parent fan's `promotedChildSlotIndex`; dimmed = a sibling slot is
+ * promoted instead.
+ */
+function computeFanChildInfo(
+  nodeIdToCheck: ConversationTreeNodeId,
+  fanChildIndex: ReadonlyMap<
+    ConversationTreeNodeId,
+    { parentFan: FanNode; slotIndex: number }
+  >,
+): FanChildInfo | undefined {
+  const entry = fanChildIndex.get(nodeIdToCheck)
+  if (entry === undefined) return undefined
+  const promotedSlot = entry.parentFan.params.promotedChildSlotIndex
+  const promoted = promotedSlot !== null && promotedSlot === entry.slotIndex
+  const dimmed = promotedSlot !== null && promotedSlot !== entry.slotIndex
+  return {
+    parentFanId: entry.parentFan.id,
+    slotIndex: entry.slotIndex,
+    promoted,
+    dimmed,
+  }
 }

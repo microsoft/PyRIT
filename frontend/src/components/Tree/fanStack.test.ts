@@ -257,6 +257,11 @@ describe('computeStackAggregate', () => {
       childKind: 'send',
       total: 3,
       byState: { clean: 3, edited: 0, stale: 0, running: 0, failed: 0, cancelled: 0, draft: 0 },
+      members: [
+        { id: nodeId('s_0'), slotIndex: 0, state: 'clean' },
+        { id: nodeId('s_1'), slotIndex: 1, state: 'clean' },
+        { id: nodeId('s_2'), slotIndex: 2, state: 'clean' },
+      ],
     })
   })
 
@@ -279,6 +284,13 @@ describe('computeStackAggregate', () => {
       childKind: 'send',
       total: 5,
       byState: { clean: 2, edited: 0, stale: 1, running: 1, failed: 1, cancelled: 0, draft: 0 },
+      members: [
+        { id: nodeId('s_0'), slotIndex: 0, state: 'clean' },
+        { id: nodeId('s_1'), slotIndex: 1, state: 'clean' },
+        { id: nodeId('s_2'), slotIndex: 2, state: 'running' },
+        { id: nodeId('s_3'), slotIndex: 3, state: 'failed' },
+        { id: nodeId('s_4'), slotIndex: 4, state: 'stale' },
+      ],
     })
   })
 

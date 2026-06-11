@@ -27,11 +27,25 @@ import type {
 // Public types
 // ============================================================================
 
+/** One member of a Fan-Children Stack (used by the FanCard pick popover). */
+export interface StackMember {
+  id: ConversationTreeNodeId
+  slotIndex: number
+  state: NodeState
+}
+
 export interface StackAggregate {
   /** Kind shared by all stacked children (V1.0: always 'send' for attempt-axis). */
   childKind: ConversationTreeNodeKind | null
   total: number
   byState: Record<NodeState, number>
+  /**
+   * Per-member detail in slot-index order. Populated for non-empty fans
+   * so the FanCard's collapsed-stack Pick popover (PR5f) can render an
+   * item per child without doing a tree walk at render time. Empty array
+   * for the orphan-fan / non-fan defensive default.
+   */
+  members: StackMember[]
 }
 
 const AUTO_COLLAPSE_THRESHOLD = 3
@@ -110,6 +124,7 @@ export function computeStackAggregate(
       failed: 0,
       cancelled: 0,
     },
+    members: [],
   }
   const fan = tree.nodes.find((n) => n.id === fanNodeId)
   if (fan === undefined || fan.kind !== 'fan') return empty
@@ -118,10 +133,27 @@ export function computeStackAggregate(
   if (children.length === 0) return empty
   const byState: Record<NodeState, number> = { ...empty.byState }
   for (const c of children) byState[c.state]++
+  // Build a parent→childId → slotIndex map from the tree's edges so the
+  // members list reports the same slot numbers the adapter emits on edges
+  // (and that the runner uses for hashing). Sort members by slot order.
+  const slotByChildId = new Map<ConversationTreeNodeId, number>()
+  for (const edge of tree.edges) {
+    if (edge.parentId === fanNodeId) {
+      slotByChildId.set(edge.childId, edge.slotIndex)
+    }
+  }
+  const members: StackMember[] = children
+    .map((c) => ({
+      id: c.id,
+      slotIndex: slotByChildId.get(c.id) ?? 0,
+      state: c.state,
+    }))
+    .sort((a, b) => a.slotIndex - b.slotIndex)
   return {
     childKind: children[0].kind,
     total: children.length,
     byState,
+    members,
   }
 }
 
