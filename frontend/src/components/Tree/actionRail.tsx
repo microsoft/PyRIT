@@ -26,7 +26,7 @@ import {
 } from '@fluentui/react-icons'
 import { Button, Tooltip } from '@fluentui/react-components'
 
-import type { ConversationTreeNodeId } from '../../runner/treeTypes'
+import type { ConversationTreeNodeId, ConverterRef } from '../../runner/treeTypes'
 import { useActionRailStyles } from './actionRail.styles'
 
 /**
@@ -117,6 +117,20 @@ export interface ActionCallbacks {
   onEditRootPromptParams?: (
     nodeId: ConversationTreeNodeId,
     patch: { text: string; systemPrompt: string; targetRegistryName: string },
+  ) => void
+  /**
+   * Replace a UserTurn's converter pipeline (PR5h.7; spec §2.2
+   * UserTurn ⚡ Open converter palette). The card opens a Fluent Menu
+   * sourced from the host-supplied `availableConverters` (see
+   * `AvailableConvertersContext` / `TreeCanvasProps.availableConverters`).
+   * Clicking a converter fires this with the new full pipeline:
+   * `[...existing, { converterId: pickedId }]`. Host overwrites
+   * `node.params.converterPipeline`. When undefined OR no available
+   * converters are wired, the ⚡ button does not render.
+   */
+  onSetUserTurnConverterPipeline?: (
+    nodeId: ConversationTreeNodeId,
+    pipeline: ConverterRef[],
   ) => void
 }
 

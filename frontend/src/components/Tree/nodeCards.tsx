@@ -33,6 +33,7 @@ import {
   CheckmarkCircleFilled,
   CheckmarkCircleRegular,
   EditRegular,
+  FlashRegular,
 } from '@fluentui/react-icons'
 import { Handle, Position } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
@@ -50,6 +51,7 @@ import type {
 } from '../../runner/treeTypes'
 import { ActionRail } from './actionRail'
 import { useActionCallbacks } from './actionCallbacksContext'
+import { useAvailableConverters } from './availableConvertersContext'
 import type { FanChildInfo, TreeFlowNode } from './conversationTreeToReactFlow'
 import type { StackAggregate, StackMember } from './fanStack'
 import { STATE_BADGE_TOKENS, useNodeCardStyles } from './nodeCards.styles'
@@ -350,19 +352,57 @@ export function UserTurnCard({ data, selected }: UserTurnProps) {
   const node: UserTurnNode = data.node
   const converters = node.params.converterPipeline ?? []
   const callbacks = useActionCallbacks()
+  const availableConverters = useAvailableConverters()
   const onEditText = callbacks?.onEditUserTurnText
+  const onSetPipeline = callbacks?.onSetUserTurnConverterPipeline
   const [isEditing, setIsEditing] = useState(false)
+  const showPalette =
+    onSetPipeline !== undefined &&
+    availableConverters !== null &&
+    availableConverters.length > 0 &&
+    !isEditing
+  const onPickConverter = (id: string) => {
+    if (onSetPipeline === undefined) return
+    onSetPipeline(node.id, [...converters, { converterId: id }])
+  }
   const kindActions =
-    onEditText !== undefined && !isEditing ? (
-      <Tooltip content="Edit text inline" relationship="description">
-        <Button
-          size="small"
-          appearance="subtle"
-          icon={<EditRegular />}
-          aria-label="Edit text inline"
-          onClick={() => setIsEditing(true)}
-        />
-      </Tooltip>
+    !isEditing && (onEditText !== undefined || showPalette) ? (
+      <>
+        {onEditText !== undefined && (
+          <Tooltip content="Edit text inline" relationship="description">
+            <Button
+              size="small"
+              appearance="subtle"
+              icon={<EditRegular />}
+              aria-label="Edit text inline"
+              onClick={() => setIsEditing(true)}
+            />
+          </Tooltip>
+        )}
+        {showPalette && (
+          <Menu>
+            <MenuTrigger disableButtonEnhancement>
+              <Tooltip content="Open converter palette" relationship="description">
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  icon={<FlashRegular />}
+                  aria-label="Open converter palette"
+                />
+              </Tooltip>
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                {availableConverters!.map((c) => (
+                  <MenuItem key={c.id} onClick={() => onPickConverter(c.id)}>
+                    {c.label}
+                  </MenuItem>
+                ))}
+              </MenuList>
+            </MenuPopover>
+          </Menu>
+        )}
+      </>
     ) : undefined
   return (
     <CardFrame

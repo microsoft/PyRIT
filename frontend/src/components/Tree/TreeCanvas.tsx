@@ -21,6 +21,10 @@ import type { ActionCallbacks } from './actionRail'
 import { ActionCallbacksContext } from './actionCallbacksContext'
 import { applyStackCollapse } from './applyStackCollapse'
 import {
+  AvailableConvertersContext,
+  type AvailableConvertersValue,
+} from './availableConvertersContext'
+import {
   conversationTreeToReactFlow,
   type TreeFlowEdge,
   type TreeFlowNode,
@@ -48,9 +52,16 @@ export interface TreeCanvasProps {
    * corresponding button per the per-callback opt-in rules in ActionRail.
    */
   actionCallbacks?: ActionCallbacks
+  /**
+   * Host-supplied list of converters available to UserTurn cards'
+   * `⚡ Converter palette` (spec §2.2; PR5h.7). When omitted or empty,
+   * the ⚡ button does not render. Host typically pre-fetches via
+   * `convertersApi.listConverters` and re-passes here.
+   */
+  availableConverters?: AvailableConvertersValue
 }
 
-export function TreeCanvas({ tree, actionCallbacks }: TreeCanvasProps) {
+export function TreeCanvas({ tree, actionCallbacks, availableConverters }: TreeCanvasProps) {
   // Per-canvas collapse state for the Fan-Children Stack. Seeded from
   // defaultCollapsedFanIds the first time a particular tree id mounts;
   // toggling persists for the canvas's lifetime. Re-keyed on tree.id so
@@ -117,17 +128,19 @@ export function TreeCanvas({ tree, actionCallbacks }: TreeCanvasProps) {
       style={{ width: '100%', height: '100%' }}
     >
       <ActionCallbacksContext.Provider value={actionCallbacks ?? null}>
-        <StackCollapseContext.Provider value={stackContextValue}>
-          <ReactFlowProvider>
-            <ReactFlow
-              nodes={nodes}
-              edges={decorated.edges}
-              nodeTypes={treeNodeTypes}
-              edgeTypes={treeEdgeTypes}
-              fitView
-            />
-          </ReactFlowProvider>
-        </StackCollapseContext.Provider>
+        <AvailableConvertersContext.Provider value={availableConverters ?? null}>
+          <StackCollapseContext.Provider value={stackContextValue}>
+            <ReactFlowProvider>
+              <ReactFlow
+                nodes={nodes}
+                edges={decorated.edges}
+                nodeTypes={treeNodeTypes}
+                edgeTypes={treeEdgeTypes}
+                fitView
+              />
+            </ReactFlowProvider>
+          </StackCollapseContext.Provider>
+        </AvailableConvertersContext.Provider>
       </ActionCallbacksContext.Provider>
     </div>
   )
