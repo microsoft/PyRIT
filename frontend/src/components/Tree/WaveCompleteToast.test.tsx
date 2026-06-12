@@ -185,4 +185,35 @@ describe('WaveCompleteToast — auto-dismiss', () => {
     })
     expect(onDismiss).not.toHaveBeenCalled()
   })
+
+  it('resets the auto-dismiss timer when summary identity changes (PR6.2 fix)', () => {
+    // Without the fix, a host that re-mounts the toast with a fresh
+    // summary but a memoized onDismiss reference inherits the original
+    // 8-second timer — so the second wave's toast auto-dismisses
+    // partway through. Test: mount, advance 6 s, swap summary, advance
+    // 6 s more (12 s total). Total elapsed since the second summary
+    // is 6 s, so onDismiss should NOT have fired yet. Then advance to
+    // 8 s post-swap → onDismiss fires once.
+    const onDismiss = jest.fn()
+    const summaryA: WaveSummary = { ...baseSummary, succeeded: 1 }
+    const summaryB: WaveSummary = { ...baseSummary, succeeded: 2 }
+    const { rerender } = render(
+      <WaveCompleteToast summary={summaryA} onDismiss={onDismiss} />,
+    )
+    act(() => {
+      jest.advanceTimersByTime(6000)
+    })
+    rerender(<WaveCompleteToast summary={summaryB} onDismiss={onDismiss} />)
+    // 6 s elapsed since the swap — original timer was 6 s in, would
+    // have fired in another 2 s if it weren't reset.
+    act(() => {
+      jest.advanceTimersByTime(6000)
+    })
+    expect(onDismiss).not.toHaveBeenCalled()
+    // 8 s since the swap → reset timer fires now.
+    act(() => {
+      jest.advanceTimersByTime(2000)
+    })
+    expect(onDismiss).toHaveBeenCalledTimes(1)
+  })
 })

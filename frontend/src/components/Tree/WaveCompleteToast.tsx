@@ -58,7 +58,11 @@ export function WaveCompleteToast({
     if (onDismiss === undefined || autoDismissMs <= 0) return undefined
     const id = setTimeout(onDismiss, autoDismissMs)
     return () => clearTimeout(id)
-  }, [autoDismissMs, onDismiss])
+    // `summary` is a deliberate dep: a fresh summary reference means the
+    // host swapped in a new wave's toast, so the 8-second timer must
+    // restart from zero. Without this dep, a memoized onDismiss would
+    // inherit the prior wave's timer remainder (PR6.2 fix per PR6 review).
+  }, [autoDismissMs, onDismiss, summary])
 
   const transient = summary.failed.transient
   const retryDisabled = transient === 0
