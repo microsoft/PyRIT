@@ -36,7 +36,11 @@ import { appendWaveEvent } from './waveStatus'
 import { useCostGuardrailModal } from './useCostGuardrailModal'
 import { useDirtyEditModal } from './useDirtyEditModal'
 import { useWorkspacePersistence, type WorkspacePersistenceDeps } from './useWorkspacePersistence'
-import { useReloadReconstruction, type ReloadReconstructionApi } from './useReloadReconstruction'
+import {
+  useReloadReconstruction,
+  type ReloadReconstructionApi,
+  type ReconstructionDegradedInfo,
+} from './useReloadReconstruction'
 import { useTreeRunnerHostStyles } from './TreeRunnerHost.styles'
 import type { ActionCallbacks } from './actionRail'
 import type { AvailableConvertersValue } from './availableConvertersContext'
@@ -111,6 +115,13 @@ export interface TreeRunnerHostProps {
   /** Test-only override for reload reconstruction API (PR7g tests). */
   reloadApi?: ReloadReconstructionApi
   /**
+   * Fired when reload reconstructs a tree that had fan topology as a
+   * linear chain (slice-1 limitation). The host forwards it so App can
+   * surface an operator banner. Removed when PR7g slice 2 lands
+   * fan-aware reload.
+   */
+  onReconstructionDegraded?: (info: ReconstructionDegradedInfo) => void
+  /**
    * Fired once with the dirty-edit `guardedSwap(tree, swap)` (PR7h). The
    * host wires App's openTree / newTree / closeTree through it so an
    * in-app tree swap with unrefreshed edits prompts the confirm modal.
@@ -152,6 +163,7 @@ export function TreeRunnerHost({
   workspaceSettings,
   workspacePersistenceDeps,
   reloadApi,
+  onReconstructionDegraded,
   onGuardedSwapReady,
 }: TreeRunnerHostProps) {
   const styles = useTreeRunnerHostStyles()
@@ -188,6 +200,7 @@ export function TreeRunnerHost({
     fragmentTreeId: boot.treeIdFromFragment,
     currentTree: tree,
     onTreeChange,
+    onReconstructionDegraded,
     reloadApi: reloadApi ?? attacksApi,
   })
 

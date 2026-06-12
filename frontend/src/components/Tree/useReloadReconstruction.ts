@@ -20,7 +20,7 @@
 
 import { useEffect } from 'react'
 
-import { linearChainFromMessages } from '../../runner/autoReverse'
+import { detectFansV10Plus, linearChainFromMessages } from '../../runner/autoReverse'
 import type { ConversationTree, ConversationTreeId } from '../../runner/treeTypes'
 import type { AttackListResponse, AttackSummary, ConversationMessagesResponse } from '../../types'
 
@@ -32,10 +32,24 @@ export interface ReloadReconstructionApi {
   getMessages(attackResultId: string, conversationId: string): Promise<ConversationMessagesResponse>
 }
 
+/** Disclosure payload when slice-1 linear reload drops fan topology. */
+export interface ReconstructionDegradedInfo {
+  /** Number of fans detected in the AR set that the linear reload could not represent. */
+  fanCount: number
+}
+
 export interface UseReloadReconstructionArgs {
   fragmentTreeId: string | null
   currentTree: ConversationTree | null
   onTreeChange?: (tree: ConversationTree) => void
+  /**
+   * Fired when the AR set has fan topology that slice-1's linear-only
+   * reconstruction cannot represent. The host surfaces an operator banner
+   * ("reconstructed as a linear chain; some fan structure isn't shown").
+   * Until PR7g slice 2 lands fan-aware reload, this is the honest
+   * disclosure of the §9.4.1 "fan structure survives reload" gap.
+   */
+  onReconstructionDegraded?: (info: ReconstructionDegradedInfo) => void
   reloadApi: ReloadReconstructionApi
 }
 
@@ -67,6 +81,7 @@ export function useReloadReconstruction({
   fragmentTreeId,
   currentTree,
   onTreeChange,
+  onReconstructionDegraded,
   reloadApi,
 }: UseReloadReconstructionArgs): void {
   useEffect(() => {
@@ -93,11 +108,26 @@ export function useReloadReconstruction({
         parentConversationTreeId: parentId,
       }
       onTreeChange?.(next)
+
+      // Disclose the slice-1 topology gap: if the AR set has fans, the
+      // linear reconstruction above dropped them. Surface it rather than
+      // silently degrading (PR7 review must-fix #3). PR7g slice 2 makes
+      // this path fan-aware and removes the disclosure.
+      const fans = detectFansV10Plus(
+        list.items.map((ar) => ({ attack_result_id: ar.attack_result_id, labels: ar.labels })),
+      )
+      if (fans.length > 0) {
+        console.warn(
+          `useReloadReconstruction: reconstructed tree '${fragmentTreeId}' as a linear chain; ` +
+            `${fans.length} fan(s) in the saved tree are not shown (fan-aware reload lands in PR7g slice 2)`,
+        )
+        onReconstructionDegraded?.({ fanCount: fans.length })
+      }
     })().catch(() => {
       // Fail soft on reload reconstruction errors.
     })
     return () => {
       cancelled = true
     }
-  }, [currentTree, fragmentTreeId, onTreeChange, reloadApi])
+  }, [currentTree, fragmentTreeId, onReconstructionDegraded, onTreeChange, reloadApi])
 }

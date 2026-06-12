@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
-import { FluentProvider, webLightTheme, webDarkTheme } from '@fluentui/react-components'
+import { FluentProvider, webLightTheme, webDarkTheme, MessageBar, MessageBarBody } from '@fluentui/react-components'
 import { useMsal } from '@azure/msal-react'
 import MainLayout from './components/Layout/MainLayout'
 import ChatWindow from './components/Chat/ChatWindow'
@@ -189,6 +189,13 @@ function App() {
   const treeUiEnabled = isTreeUiEnabled()
   /** The foregrounded ConversationTree; null = greenfield. */
   const [currentTree, setCurrentTree] = useState<ConversationTree | null>(null)
+  /**
+   * Set when reload reconstructed a tree that had fan topology as a linear
+   * chain (PR7g slice-1 limitation). Surfaced as a one-line banner so the
+   * operator knows some structure isn't shown. Cleared on the next tree
+   * change. Removed when PR7g slice 2 lands fan-aware reload.
+   */
+  const [treeReloadDegraded, setTreeReloadDegraded] = useState<number | null>(null)
   // Live operator-label mirror so the production runWaveStarter's operation
   // provider re-reads the latest value without rebuilding the shim.
   const globalLabelsRef = useRef(globalLabels)
@@ -262,12 +269,28 @@ function App() {
               />
             )}
             {treeUiEnabled && currentView === 'tree' && (
-              <TreeRunnerHost
-                tree={currentTree}
-                operator={globalLabels.operator ?? null}
-                runWaveStarter={treeRunWaveStarter}
-                onTreeChange={setCurrentTree}
-              />
+              <>
+                {treeReloadDegraded !== null && (
+                  <MessageBar intent="warning">
+                    <MessageBarBody>
+                      This tree was reconstructed as a linear chain on reload;{' '}
+                      {treeReloadDegraded} fan{treeReloadDegraded === 1 ? '' : 's'} from the saved
+                      tree {treeReloadDegraded === 1 ? 'is' : 'are'} not shown. Re-run a refresh to
+                      rebuild the full structure.
+                    </MessageBarBody>
+                  </MessageBar>
+                )}
+                <TreeRunnerHost
+                  tree={currentTree}
+                  operator={globalLabels.operator ?? null}
+                  runWaveStarter={treeRunWaveStarter}
+                  onTreeChange={(next) => {
+                    setTreeReloadDegraded(null)
+                    setCurrentTree(next)
+                  }}
+                  onReconstructionDegraded={(info) => setTreeReloadDegraded(info.fanCount)}
+                />
+              </>
             )}
           </MainLayout>
         </FluentProvider>

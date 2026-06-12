@@ -192,5 +192,71 @@ describe('useReloadReconstruction', () => {
     await waitFor(() => expect(api.listAttacks).toHaveBeenCalled())
     expect(onTreeChange).not.toHaveBeenCalled()
   })
+
+  it('discloses degraded reconstruction when the AR set has fan topology', async () => {
+    // Two leaves under a fan (tree_path with an attempt axis at distinct
+    // slots) — detectFansV10Plus would find a fan, but slice-1 reload only
+    // reconstructs the linear base. The loss must be DISCLOSED, not silent.
+    const onTreeChange = jest.fn()
+    const onReconstructionDegraded = jest.fn()
+    const api = {
+      listAttacks: jest.fn(async () =>
+        mkList([
+          mkAttack({
+            attack_result_id: 'ar-0',
+            labels: { conversation_tree_id: 't-fan', tree_path: '[["attempt",0]]' },
+          }),
+          mkAttack({
+            attack_result_id: 'ar-1',
+            labels: { conversation_tree_id: 't-fan', tree_path: '[["attempt",1]]' },
+          }),
+        ]),
+      ),
+      getMessages: jest.fn(async () => mkMessages('conv-1')),
+    }
+
+    renderHook(() =>
+      useReloadReconstruction({
+        fragmentTreeId: 't-fan',
+        currentTree: null,
+        onTreeChange,
+        onReconstructionDegraded,
+        reloadApi: api,
+      }),
+    )
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    expect(onReconstructionDegraded).toHaveBeenCalledTimes(1)
+    expect(onReconstructionDegraded.mock.calls[0][0]).toMatchObject({ fanCount: 1 })
+  })
+
+  it('does NOT disclose degradation for a purely linear AR set (no fans)', async () => {
+    const onTreeChange = jest.fn()
+    const onReconstructionDegraded = jest.fn()
+    const api = {
+      listAttacks: jest.fn(async () =>
+        mkList([
+          mkAttack({
+            attack_result_id: 'ar-lin',
+            labels: { conversation_tree_id: 't-lin', tree_path: '[]' },
+          }),
+        ]),
+      ),
+      getMessages: jest.fn(async () => mkMessages('conv-1')),
+    }
+
+    renderHook(() =>
+      useReloadReconstruction({
+        fragmentTreeId: 't-lin',
+        currentTree: null,
+        onTreeChange,
+        onReconstructionDegraded,
+        reloadApi: api,
+      }),
+    )
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    expect(onReconstructionDegraded).not.toHaveBeenCalled()
+  })
 }
 )
