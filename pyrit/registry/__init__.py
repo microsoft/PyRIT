@@ -4,18 +4,17 @@
 """Registry module for PyRIT class and object registries."""
 
 from pyrit.registry.base import RegistryProtocol
+from pyrit.registry.buildable_registry import BuildableRegistry
 from pyrit.registry.class_registries import (
     BaseClassRegistry,
     ClassEntry,
-    ConverterClassRegistry,
-    ConverterMetadata,
-    ConverterParameterMetadata,
     InitializerMetadata,
     InitializerRegistry,
     ScenarioMetadata,
     ScenarioParameterMetadata,
     ScenarioRegistry,
 )
+from pyrit.registry.container_registry import ContainerRegistry
 from pyrit.registry.discovery import (
     discover_in_directory,
     discover_in_package,
@@ -24,6 +23,8 @@ from pyrit.registry.discovery import (
 from pyrit.registry.object_registries import (
     AttackTechniqueRegistry,
     BaseInstanceRegistry,
+    ConverterMetadata,
+    ConverterParameterMetadata,
     ConverterRegistry,
     RegistryEntry,
     RetrievableInstanceRegistry,
@@ -36,7 +37,8 @@ __all__ = [
     "AttackTechniqueRegistry",
     "BaseClassRegistry",
     "BaseInstanceRegistry",
-    "ConverterClassRegistry",
+    "BuildableRegistry",
+    "ContainerRegistry",
     "ConverterMetadata",
     "ConverterParameterMetadata",
     "ConverterRegistry",

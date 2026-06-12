@@ -36,13 +36,12 @@ from pyrit.backend.models.converters import (
 )
 from pyrit.memory import data_serializer_factory
 from pyrit.models import PromptDataType
-from pyrit.registry.class_registries import ConverterClassRegistry, ConverterParameterMetadata
 
 # ``get_union_non_none_args`` is a general type-introspection utility used here to
 # render parameter types for the catalog (a presentation concern owned by this
 # service).
-from pyrit.registry.class_registries.converter_class_registry import get_union_non_none_args
-from pyrit.registry.object_registries import ConverterRegistry
+from pyrit.registry.object_registries import ConverterParameterMetadata, ConverterRegistry
+from pyrit.registry.resolution import get_union_non_none_args
 
 _DATA_TYPE_EXTENSION: dict[str, str] = {
     "image_path": ".png",
@@ -88,7 +87,6 @@ class ConverterService:
     def __init__(self) -> None:
         """Initialize the converter service."""
         self._registry = ConverterRegistry.get_registry_singleton()
-        self._class_registry = ConverterClassRegistry.get_registry_singleton()
 
     def _build_instance_from_object(self, *, converter_id: str, converter_obj: Any) -> ConverterInstance:
         """
@@ -138,7 +136,7 @@ class ConverterService:
                 is_llm_based=metadata.is_llm_based,
                 description=metadata.class_description or None,
             )
-            for metadata in self._class_registry.list_metadata()
+            for metadata in self._registry.list_class_metadata()
         ]
 
         return ConverterCatalogResponse(items=items)
@@ -204,11 +202,11 @@ class ConverterService:
 
         # Resolve any converter references in params, persist data-URI params to
         # disk (frontend concern), then delegate construction (incl. param
-        # coercion) to the converter class registry.
+        # coercion) to the converter registry.
         params = self._resolve_converter_params(params=request.params)
-        converter_class = self._class_registry.get_converter_class(converter_type=request.type)
+        converter_class = self._registry.get_converter_class(converter_type=request.type)
         params = await self._persist_data_uri_params_async(converter_class=converter_class, params=params)
-        converter_obj = self._class_registry.create_instance(request.type, **params)
+        converter_obj = self._registry.create_instance(request.type, **params)
         self._registry.register_instance(converter_obj, name=converter_id)
 
         return CreateConverterResponse(

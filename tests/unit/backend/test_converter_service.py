@@ -27,18 +27,15 @@ from pyrit.prompt_converter import (
     SuffixAppendConverter,
 )
 from pyrit.prompt_converter.prompt_converter import get_converter_modalities
-from pyrit.registry.class_registries import ConverterClassRegistry
 from pyrit.registry.object_registries import ConverterRegistry
 
 
 @pytest.fixture(autouse=True)
 def reset_registry():
-    """Reset the converter registries before each test."""
+    """Reset the converter registry before each test."""
     ConverterRegistry.reset_instance()
-    ConverterClassRegistry.reset_instance()
     yield
     ConverterRegistry.reset_instance()
-    ConverterClassRegistry.reset_instance()
 
 
 class TestListConverters:
