@@ -35,12 +35,16 @@ export type WaveStatusState =
 
 export function summarizeWaveEvents(events: ReadonlyArray<WaveEvent>): WaveStatusState {
   let active: Extract<WaveStatusState, { status: 'running' }> | null = null
+  // PR6.1 fix: queueDepth must persist across active-wave swaps. The
+  // runner emits `queued` only on enqueue and `complete` on dequeue
+  // (cancelQueued path) — so the live queue depth is the size of
+  // "queued waves that haven't started or been cancelled yet."
+  const pendingWaveIds = new Set<string>()
   for (const ev of events) {
     switch (ev.kind) {
       case 'start': {
-        // A new start always supersedes any previous active wave; the
-        // PR4e shim emits 'complete' before the queued wave's 'start',
-        // but the reducer doesn't depend on that invariant.
+        // A start pops this wave from the queue (if it was queued).
+        pendingWaveIds.delete(ev.waveId)
         active = {
           status: 'running',
           waveId: ev.waveId,
@@ -62,13 +66,15 @@ export function summarizeWaveEvents(events: ReadonlyArray<WaveEvent>): WaveStatu
       case 'complete': {
         if (active !== null && ev.waveId === active.waveId) {
           active = null
+        } else {
+          // A complete for a non-active wave is cancelQueued's wire —
+          // the wave was in the queue and got dropped without starting.
+          pendingWaveIds.delete(ev.waveId)
         }
         break
       }
       case 'queued': {
-        if (active !== null) {
-          active.queueDepth = ev.queueDepth
-        }
+        pendingWaveIds.add(ev.waveId)
         break
       }
       case 'busy':
@@ -79,5 +85,6 @@ export function summarizeWaveEvents(events: ReadonlyArray<WaveEvent>): WaveStatu
         break
     }
   }
+  if (active !== null) active.queueDepth = pendingWaveIds.size
   return active ?? { status: 'idle' }
 }

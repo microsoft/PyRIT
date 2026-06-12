@@ -199,6 +199,46 @@ describe('summarizeWaveEvents — queued behind a running wave', () => {
       queueDepth: 0,
     })
   })
+
+  it('queueDepth carries the REMAINING queued waves across active-wave swap (PR6.1 fix)', () => {
+    // Spec §2.3 [Cancel queued] surface fires "when the per-tree queue is
+    // non-empty". The reducer used to derive queueDepth from the most
+    // recent `queued` event, which reset to 0 every time a new wave
+    // started — even when the runner's queue still held entries.
+    //
+    // Walk: w1 active, w2/w3/w4 queued. w1 completes; w2 pops to active.
+    // Ribbon should show "2 queued" (w3 + w4 still pending), not "0".
+    const result = summarizeWaveEvents([
+      evStart({ waveId: 'w1', estimatedCalls: 5 }),
+      evQueued({ waveId: 'w2', queueDepth: 1 }),
+      evQueued({ waveId: 'w3', queueDepth: 2 }),
+      evQueued({ waveId: 'w4', queueDepth: 3 }),
+      evComplete({ waveId: 'w1', succeeded: 5 }),
+      evStart({ waveId: 'w2', estimatedCalls: 8 }),
+    ])
+    expect(result).toMatchObject({
+      status: 'running',
+      waveId: 'w2',
+      queueDepth: 2, // w3 + w4 still in the runner's queue
+    })
+  })
+
+  it('cancelling a queued wave drops it from the depth count', () => {
+    // cancelQueued emits a `complete` event for the cancelled wave id
+    // with cancelled=leafCount. The reducer should treat that as "this
+    // wave never popped to active" → remove from pending set.
+    const result = summarizeWaveEvents([
+      evStart({ waveId: 'w1', estimatedCalls: 5 }),
+      evQueued({ waveId: 'w2', queueDepth: 1 }),
+      evQueued({ waveId: 'w3', queueDepth: 2 }),
+      evComplete({ waveId: 'w3', cancelled: 5 }), // cancelQueued for w3
+    ])
+    expect(result).toMatchObject({
+      status: 'running',
+      waveId: 'w1',
+      queueDepth: 1, // only w2 left
+    })
+  })
 })
 
 // ============================================================================
