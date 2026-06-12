@@ -37,8 +37,14 @@ from pyrit.executor.attack import AttackExecutor
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
-from pyrit.models import AttackOutcome, AttackResult, SeedAttackGroup
-from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult, ScenarioRunState
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    ScenarioIdentifier,
+    ScenarioResult,
+    ScenarioRunState,
+    SeedAttackGroup,
+)
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry

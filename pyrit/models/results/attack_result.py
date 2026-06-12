@@ -11,8 +11,8 @@ from typing import Any, TypeVar
 from pydantic import AwareDatetime, Field
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.messages.message_piece import MessagePiece
 from pyrit.models.results.strategy_result import StrategyResult
 from pyrit.models.retry_event import RetryEvent

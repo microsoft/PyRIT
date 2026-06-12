@@ -24,12 +24,13 @@ from pyrit.backend.models.attacks import (
 from pyrit.models import (
     AttackResult,
     ComponentIdentifier,
+    ConversationReference,
+    ConversationType,
     MessagePiece,
     RetryEvent,
     Score,
     build_atomic_attack_identifier,
 )
-from pyrit.models.conversation_reference import ConversationReference, ConversationType
 
 
 def _make_score() -> Score:

@@ -322,7 +322,7 @@ class TestAttackResultToSummary:
 
     async def test_related_conversation_ids_from_related_conversations(self) -> None:
         """Test that related_conversation_ids includes all related conversation IDs."""
-        from pyrit.models.conversation_reference import ConversationReference, ConversationType
+        from pyrit.models import ConversationReference, ConversationType
 
         ar = _make_attack_result()
         ar.related_conversations = {

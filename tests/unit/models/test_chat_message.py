@@ -6,11 +6,8 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models.chat_message import (
-    ChatMessage,
-    ChatMessagesDataset,
-    ToolCall,
-)
+from pyrit.models import ChatMessage, ChatMessagesDataset
+from pyrit.models.messages.chat_message import ToolCall
 
 
 def test_tool_call_init():

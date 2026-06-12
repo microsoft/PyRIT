@@ -5,8 +5,7 @@ import uuid
 
 import pytest
 
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
-from pyrit.models.scenario_result import ScenarioIdentifier, ScenarioResult
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioIdentifier, ScenarioResult
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 
 

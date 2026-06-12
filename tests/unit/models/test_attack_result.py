@@ -8,8 +8,7 @@ from datetime import datetime, timezone
 import pytest
 
 from pyrit.memory.memory_models import AttackResultEntry
-from pyrit.models import ComponentIdentifier
-from pyrit.models.conversation_reference import ConversationReference, ConversationType
+from pyrit.models import ComponentIdentifier, ConversationReference, ConversationType
 from pyrit.models.messages.message_piece import MessagePiece
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult
 from pyrit.models.retry_event import RetryEvent

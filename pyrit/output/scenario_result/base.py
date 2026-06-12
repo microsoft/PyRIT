@@ -4,7 +4,7 @@
 from abc import abstractmethod
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.models.scenario_result import ScenarioResult
+from pyrit.models import ScenarioResult
 from pyrit.output.base import PrinterBase
 
 

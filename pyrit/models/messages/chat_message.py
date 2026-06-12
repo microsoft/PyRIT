@@ -1,6 +1,20 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+"""
+OpenAI-format chat message types.
+
+``ChatMessage`` is the OpenAI Chat Completions wire shape — a ``role`` plus a
+string-or-multipart ``content``, with the OpenAI ``name`` / ``tool_calls`` /
+``tool_call_id`` fields. Prompt targets that speak the OpenAI API (and the many
+providers that mirror it) consume and emit these objects directly.
+
+It is intentionally distinct from the PyRIT domain ``Message`` / ``MessagePiece``
+types in this same package: those model a persisted request/response exchange,
+whereas ``ChatMessage`` is the lightweight OpenAI-shaped transport representation
+handed to a model API.
+"""
+
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -21,9 +35,9 @@ class ToolCall(BaseModel):
 
 class ChatMessage(BaseModel):
     """
-    Represents a chat message for API consumption.
+    Represents a single OpenAI Chat Completions message.
 
-    The content field can be:
+    Mirrors the OpenAI message schema. The content field can be:
     - A simple string for single-part text messages
     - A list of dicts for multipart messages (e.g., text + images)
     """

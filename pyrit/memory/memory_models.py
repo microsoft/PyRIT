@@ -55,7 +55,6 @@ from pyrit.models import (
     SeedSimulatedConversation,
     SeedType,
 )
-from pyrit.models.scenario_result import ScenarioRunState
 
 logger = logging.getLogger(__name__)
 
