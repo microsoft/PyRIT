@@ -1,4 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import AttackTable from './AttackTable'
 import type { AttackSummary } from '../../types'
@@ -145,7 +146,8 @@ describe('AttackTable', () => {
     expect(onOpenAttack).toHaveBeenCalledWith('ar-1')
   })
 
-  it('should call onOpenAttack when Enter or Space is pressed on a row', () => {
+  it('should call onOpenAttack when Enter or Space is pressed on a row', async () => {
+    const user = userEvent.setup()
     const onOpenAttack = jest.fn()
 
     render(
@@ -157,15 +159,18 @@ describe('AttackTable', () => {
     const row = screen.getByTestId('attack-row-ar-1')
     expect(row).toHaveAttribute('tabindex', '0')
 
-    fireEvent.keyDown(row, { key: 'Enter' })
+    row.focus()
+    await user.keyboard('{Enter}')
     expect(onOpenAttack).toHaveBeenCalledWith('ar-1')
 
     onOpenAttack.mockClear()
-    fireEvent.keyDown(row, { key: ' ' })
+    row.focus()
+    await user.keyboard(' ')
     expect(onOpenAttack).toHaveBeenCalledWith('ar-1')
 
     onOpenAttack.mockClear()
-    fireEvent.keyDown(row, { key: 'a' })
+    row.focus()
+    await user.keyboard('a')
     expect(onOpenAttack).not.toHaveBeenCalled()
   })
 
