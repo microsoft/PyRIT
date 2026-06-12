@@ -39,7 +39,7 @@ export const useTargetTableStyles = makeStyles({
     textAlign: 'center',
   },
   validateCell: {
-    width: '70px',
+    width: '90px',
     textAlign: 'center',
   },
   modalityRow: {

@@ -320,7 +320,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
               <TableCell className={styles.validateCell}>
                 <Tooltip content={COLUMN_TOOLTIPS.validate} relationship="label">
                   <Button
-                    appearance="subtle"
+                    appearance="secondary"
                     size="small"
                     icon={<BeakerRegular />}
                     aria-label={`Validate capabilities for ${activeTarget.target_registry_name}`}
@@ -471,7 +471,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                   <TableCell className={styles.validateCell}>
                     <Tooltip content={COLUMN_TOOLTIPS.validate} relationship="label">
                       <Button
-                        appearance="subtle"
+                        appearance="secondary"
                         size="small"
                         icon={<BeakerRegular />}
                         aria-label={`Validate capabilities for ${target.target_registry_name}`}
