@@ -6,53 +6,87 @@
  * layout around TreeCanvas. PR7b ships layout only: 5 named slots
  * (ribbon / canvas / drawer / toast / modal), an always-idle wave-
  * status ribbon, and a greenfield placeholder when `tree === null`.
- * No runner shim, no WaveEvent buffer, no modal hook — those land in
- * PR7c–d.
+ * PR7c.2 adds the runner shim wiring: the shim is instantiated on
+ * mount, its sink writes to an internal WaveEvent buffer (ribbon
+ * reflects it via `summarizeWaveEvents`), and the ribbon's
+ * Cancel buttons fire `shim.cancelWave` / `shim.cancelQueued`.
  */
 
-import { render } from '@testing-library/react'
+import { act, fireEvent, render, waitFor } from '@testing-library/react'
 
 import { TreeRunnerHost } from './TreeRunnerHost'
-import type { ConversationTree, ConversationTreeId } from '../../runner/treeTypes'
-import { treeId, nodeId } from '../../runner/testHelpers'
+import type { ConversationTree } from '../../runner/treeTypes'
+import type { RunnerShim, RunWaveStarter, RunWaveStarterArgs } from '../../runner/shim'
+import type { WaveSummary } from '../../runner/wave'
+import { mkRoot, mkSend, mkTree, nodeId } from '../../runner/testHelpers'
 
 // ============================================================================
-// Fixture
+// Fixtures
 // ============================================================================
 
 function mkEmptyTree(id: string): ConversationTree {
-  const rootId = nodeId(`${id}-root`)
-  return {
-    id: treeId(id) as ConversationTreeId,
-    nodes: [
-      {
-        id: rootId,
-        kind: 'root_prompt',
-        parentId: null,
-        resolvedInputHash: '',
-        state: 'clean',
-        execution: null,
-        executionHistory: [],
-        lastError: null,
-        labels: {},
-        createdAt: '2026-06-11T00:00:00Z',
-        updatedAt: '2026-06-11T00:00:00Z',
-        version: 1,
-        params: { text: 'hi', attachments: [], targetRegistryName: '' },
-      },
-    ],
-    edges: [],
-    rootId,
-    displayName: id,
-    createdAt: '2026-06-11T00:00:00Z',
-    parentConversationTreeId: null,
-    parentSourceConversationId: null,
-    undoStack: [],
+  return mkTree('root', [mkRoot('root'), mkSend('send-1', 'root')], { id })
+}
+
+const emptySummary: WaveSummary = {
+  succeeded: 0,
+  failed: { transient: 0, rate_limited: 0, permanent: 0 },
+  blocked: 0,
+  cancelled: 0,
+  reflog_evicted: 0,
+}
+
+/**
+ * Wraps a starter body in the `start` / `complete` bookend events that
+ * the real `runWave` would emit. Tests only supply the "interesting"
+ * middle.
+ */
+function bookendedStarter(
+  body?: (args: RunWaveStarterArgs) => Promise<WaveSummary>,
+): RunWaveStarter {
+  return async (args: RunWaveStarterArgs) => {
+    args.sink.emitWaveEvent({
+      kind: 'start',
+      waveId: args.waveId,
+      triggerKind: args.waveTriggerKind,
+      estimatedCalls: 1,
+      treeId: args.treeId,
+      emittedAt: '2026-06-11T00:00:00.000Z',
+    })
+    const summary = body !== undefined ? await body(args) : emptySummary
+    args.sink.emitWaveEvent({
+      kind: 'complete',
+      waveId: args.waveId,
+      emittedAt: '2026-06-11T00:00:00.000Z',
+      summary,
+    })
+    return summary
   }
 }
 
+/** Resolves immediately; the shim emits start + complete around it. */
+const noopStarter: RunWaveStarter = bookendedStarter()
+
+/**
+ * Mount harness that captures the shim instance via onShimReady so
+ * tests can trigger flows from outside without clicking through the
+ * canvas's action rail (which jsdom can't reliably exercise).
+ */
+async function mountAndCaptureShim(props: Parameters<typeof TreeRunnerHost>[0]) {
+  let captured: RunnerShim | undefined
+  const onShimReady = (s: RunnerShim) => {
+    captured = s
+  }
+  const view = render(<TreeRunnerHost {...props} onShimReady={onShimReady} />)
+  await waitFor(() => {
+    expect(captured).toBeDefined()
+  })
+  if (captured === undefined) throw new Error('shim not ready')
+  return { view, shim: captured }
+}
+
 // ============================================================================
-// Layout — 5 named slots
+// Layout — 5 named slots (PR7b)
 // ============================================================================
 
 describe('TreeRunnerHost — layout slots', () => {
@@ -68,11 +102,11 @@ describe('TreeRunnerHost — layout slots', () => {
 })
 
 // ============================================================================
-// Idle ribbon — always rendered (in-flight UI absent in PR7b)
+// Idle ribbon (PR7b)
 // ============================================================================
 
 describe('TreeRunnerHost — ribbon', () => {
-  it('renders the wave-status ribbon wrapper in idle state', () => {
+  it('renders the wave-status ribbon wrapper in idle state when no events have fired', () => {
     const { container } = render(<TreeRunnerHost tree={null} />)
     const ribbon = container.querySelector('[data-tree-wave-status]')
     expect(ribbon).not.toBeNull()
@@ -81,7 +115,7 @@ describe('TreeRunnerHost — ribbon', () => {
 })
 
 // ============================================================================
-// Greenfield — tree === null
+// Greenfield (PR7b)
 // ============================================================================
 
 describe('TreeRunnerHost — greenfield placeholder', () => {
@@ -89,8 +123,6 @@ describe('TreeRunnerHost — greenfield placeholder', () => {
     const { container } = render(<TreeRunnerHost tree={null} />)
     const placeholder = container.querySelector('[data-tree-greenfield]')
     expect(placeholder).not.toBeNull()
-    // Operator-friendly message; copy is asserted loosely so PR7c+ can
-    // tighten without re-flowing the test.
     expect(placeholder?.textContent?.toLowerCase()).toMatch(/no tree|empty|open/)
   })
 
@@ -101,7 +133,7 @@ describe('TreeRunnerHost — greenfield placeholder', () => {
 })
 
 // ============================================================================
-// Tree mount + swap re-key
+// Tree mount + swap re-key (PR7b)
 // ============================================================================
 
 describe('TreeRunnerHost — tree mount', () => {
@@ -111,7 +143,6 @@ describe('TreeRunnerHost — tree mount', () => {
     const canvas = container.querySelector('[data-testid="tree-canvas"]')
     expect(canvas).not.toBeNull()
     expect(canvas?.getAttribute('data-tree-id')).toBe('t-1')
-    // No greenfield placeholder when a tree is mounted.
     expect(container.querySelector('[data-tree-greenfield]')).toBeNull()
   })
 
@@ -122,5 +153,182 @@ describe('TreeRunnerHost — tree mount', () => {
     expect(container.querySelector('[data-testid="tree-canvas"]')?.getAttribute('data-tree-id')).toBe('t-A')
     rerender(<TreeRunnerHost tree={treeB} />)
     expect(container.querySelector('[data-testid="tree-canvas"]')?.getAttribute('data-tree-id')).toBe('t-B')
+  })
+})
+
+// ============================================================================
+// PR7c.2 — shim instantiation + WaveEvent buffer
+// ============================================================================
+
+describe('TreeRunnerHost — shim wiring', () => {
+  it('instantiates a runner shim that the parent can capture via onShimReady', async () => {
+    const tree = mkEmptyTree('t-shim')
+    const { shim } = await mountAndCaptureShim({
+      tree,
+      operator: 'alice',
+    })
+    expect(typeof shim.refreshNode).toBe('function')
+    expect(typeof shim.cancelWave).toBe('function')
+  })
+
+  it('refreshNode triggers start + complete WaveEvents that drive the ribbon', async () => {
+    const tree = mkEmptyTree('t-events')
+    const { view, shim } = await mountAndCaptureShim({
+      tree,
+      operator: 'alice',
+      runWaveStarter: noopStarter,
+    })
+
+    await act(async () => {
+      await shim.refreshNode(tree.id, nodeId('send-1'))
+    })
+
+    // After the noop starter resolves the shim emits start + complete in
+    // sequence; the buffer holds both; summarizeWaveEvents returns idle
+    // (active wave completed).
+    const ribbon = view.container.querySelector('[data-tree-wave-status]')
+    expect(ribbon?.getAttribute('data-status')).toBe('idle')
+  })
+
+  it('ribbon shows running while the wave is in flight', async () => {
+    const tree = mkEmptyTree('t-running')
+    // Starter blocks on an external promise so we can observe the
+    // running state mid-flight.
+    let resolveStarter!: (s: WaveSummary) => void
+    const starter: RunWaveStarter = bookendedStarter(
+      () =>
+        new Promise<WaveSummary>((resolve) => {
+          resolveStarter = resolve
+        }),
+    )
+
+    const { view, shim } = await mountAndCaptureShim({
+      tree,
+      operator: 'alice',
+      runWaveStarter: starter,
+    })
+
+    let refreshPromise!: Promise<void>
+    await act(async () => {
+      refreshPromise = shim.refreshNode(tree.id, nodeId('send-1'))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // Mid-flight: ribbon is running.
+    await waitFor(() => {
+      const ribbon = view.container.querySelector('[data-tree-wave-status]')
+      expect(ribbon?.getAttribute('data-status')).toBe('running')
+    })
+
+    // Resolve and let the shim's finally + complete event fire.
+    await act(async () => {
+      resolveStarter(emptySummary)
+      await refreshPromise
+    })
+
+    expect(
+      view.container.querySelector('[data-tree-wave-status]')?.getAttribute('data-status'),
+    ).toBe('idle')
+  })
+
+  it('sink mutations from the runner propagate via onTreeChange', async () => {
+    const tree = mkEmptyTree('t-mutate')
+    const onTreeChange = jest.fn()
+    // Starter that uses args.sink to flip send-1 to running, then resolves.
+    const starter = bookendedStarter(async (args: RunWaveStarterArgs) => {
+      args.sink.setNodeState(args.treeId, nodeId('send-1'), 'running')
+      return emptySummary
+    })
+
+    const { shim } = await mountAndCaptureShim({
+      tree,
+      operator: 'alice',
+      runWaveStarter: starter,
+      onTreeChange,
+    })
+
+    await act(async () => {
+      await shim.refreshNode(tree.id, nodeId('send-1'))
+    })
+
+    expect(onTreeChange).toHaveBeenCalled()
+    const lastCall = onTreeChange.mock.calls[onTreeChange.mock.calls.length - 1][0] as ConversationTree
+    const updatedSend = lastCall.nodes.find((n) => n.id === nodeId('send-1'))
+    expect(updatedSend?.state).toBe('running')
+  })
+
+  it('clicking the ribbon Cancel button calls shim.cancelWave', async () => {
+    const tree = mkEmptyTree('t-cancel')
+    let starterCancelled = false
+    // Polls the controller's flag every 5ms; resolves when cancelled.
+    const starter = bookendedStarter(
+      (args: RunWaveStarterArgs) =>
+        new Promise<WaveSummary>((resolve) => {
+          const tick = () => {
+            if (args.controller.isCancelled()) {
+              starterCancelled = true
+              resolve(emptySummary)
+            } else {
+              setTimeout(tick, 5)
+            }
+          }
+          tick()
+        }),
+    )
+
+    const { view, shim } = await mountAndCaptureShim({
+      tree,
+      operator: 'alice',
+      runWaveStarter: starter,
+    })
+
+    let refreshPromise!: Promise<void>
+    await act(async () => {
+      refreshPromise = shim.refreshNode(tree.id, nodeId('send-1'))
+      // Flush microtasks so the shim can transition to wave-start.
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // Wait for the cancel button to render (ribbon enters running).
+    const cancelBtn = await waitFor(() => {
+      const ribbon = view.container.querySelector('[data-tree-wave-status]')
+      const btn = ribbon?.querySelector('button')
+      if (!btn) throw new Error('cancel button not yet rendered')
+      return btn
+    })
+
+    await act(async () => {
+      fireEvent.click(cancelBtn)
+      await refreshPromise
+    })
+
+    expect(starterCancelled).toBe(true)
+    expect(
+      view.container.querySelector('[data-tree-wave-status]')?.getAttribute('data-status'),
+    ).toBe('idle')
+  })
+
+  it('missing-operator path emits operator_tag_required and does not start a wave', async () => {
+    const tree = mkEmptyTree('t-no-op')
+    const starter = jest.fn<Promise<WaveSummary>, [RunWaveStarterArgs]>(
+      bookendedStarter() as RunWaveStarter,
+    )
+    const { view, shim } = await mountAndCaptureShim({
+      tree,
+      operator: null,
+      runWaveStarter: starter as unknown as RunWaveStarter,
+    })
+
+    await act(async () => {
+      await shim.refreshNode(tree.id, nodeId('send-1'))
+    })
+
+    expect(starter).not.toHaveBeenCalled()
+    // Ribbon stays idle (no start ever fired).
+    expect(
+      view.container.querySelector('[data-tree-wave-status]')?.getAttribute('data-status'),
+    ).toBe('idle')
   })
 })
