@@ -6,12 +6,14 @@ import {
   HomeRegular,
   SettingsRegular,
   HistoryRegular,
+  BranchRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
 } from '@fluentui/react-icons'
 import { useNavigationStyles } from './Navigation.styles'
+import { isTreeUiEnabled } from '../../featureFlags'
 
-export type ViewName = 'home' | 'chat' | 'history' | 'config'
+export type ViewName = 'home' | 'chat' | 'history' | 'config' | 'tree'
 
 interface NavigationProps {
   currentView: ViewName
@@ -22,6 +24,7 @@ interface NavigationProps {
 
 export default function Navigation({ currentView, onNavigate, onToggleTheme, isDarkMode }: NavigationProps) {
   const styles = useNavigationStyles()
+  const treeUiEnabled = isTreeUiEnabled()
 
   return (
     <div className={styles.root}>
@@ -64,6 +67,18 @@ export default function Navigation({ currentView, onNavigate, onToggleTheme, isD
         aria-label="Configuration"
         onClick={() => onNavigate('config')}
       />
+
+      {treeUiEnabled && (
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'tree'}
+          appearance="subtle"
+          icon={<BranchRegular />}
+          title="Tree View"
+          aria-label="Tree View"
+          onClick={() => onNavigate('tree')}
+        />
+      )}
 
       <div className={styles.spacer} />
 

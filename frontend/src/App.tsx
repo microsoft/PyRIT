@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { FluentProvider, webLightTheme, webDarkTheme } from '@fluentui/react-components'
 import { useMsal } from '@azure/msal-react'
 import MainLayout from './components/Layout/MainLayout'
@@ -6,12 +6,16 @@ import ChatWindow from './components/Chat/ChatWindow'
 import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
 import AttackHistory from './components/History/AttackHistory'
+import { TreeRunnerHost } from './components/Tree/TreeRunnerHost'
 import { DEFAULT_HISTORY_FILTERS } from './components/History/historyFilters'
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnectionHealth'
 import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
+import { isTreeUiEnabled } from './featureFlags'
+import { createRunWaveStarter } from './runner/runWaveStarter'
+import type { ConversationTree } from './runner/treeTypes'
 import type { ViewName } from './components/Sidebar/Navigation'
 import type { TargetInstance, TargetInfo } from './types'
 import { attacksApi, versionApi } from './services/api'
@@ -181,6 +185,31 @@ function App() {
     setIsDarkMode(!isDarkMode)
   }
 
+  // --- Tree view (PR7i.2) — gated behind VITE_ENABLE_TREE_UI -----------------
+  const treeUiEnabled = isTreeUiEnabled()
+  /** The foregrounded ConversationTree; null = greenfield. */
+  const [currentTree, setCurrentTree] = useState<ConversationTree | null>(null)
+  // Live operator-label mirror so the production runWaveStarter's operation
+  // provider re-reads the latest value without rebuilding the shim.
+  const globalLabelsRef = useRef(globalLabels)
+  useEffect(() => {
+    globalLabelsRef.current = globalLabels
+  }, [globalLabels])
+  // Production wave dispatcher: bridges the shim to runWave + the real API.
+  // The operation closure reads globalLabelsRef lazily (per wave, in an event
+  // handler) — not during render — so the react-hooks/refs flag is a
+  // false positive here.
+  /* eslint-disable react-hooks/refs */
+  const treeRunWaveStarter = useMemo(
+    () =>
+      createRunWaveStarter({
+        api: attacksApi,
+        operation: () => globalLabelsRef.current.operation,
+      }),
+    [],
+  )
+  /* eslint-enable react-hooks/refs */
+
   return (
     <ErrorBoundary>
       <ConnectionHealthProvider>
@@ -230,6 +259,14 @@ function App() {
                 onOpenAttack={handleOpenAttack}
                 filters={historyFilters}
                 onFiltersChange={setHistoryFilters}
+              />
+            )}
+            {treeUiEnabled && currentView === 'tree' && (
+              <TreeRunnerHost
+                tree={currentTree}
+                operator={globalLabels.operator ?? null}
+                runWaveStarter={treeRunWaveStarter}
+                onTreeChange={setCurrentTree}
               />
             )}
           </MainLayout>

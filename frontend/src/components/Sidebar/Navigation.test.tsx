@@ -130,3 +130,34 @@ describe("Navigation", () => {
     expect(themeButton).not.toBeDisabled();
   });
 });
+
+describe("Navigation — flag-gated Tree View entry", () => {
+  const original = process.env.VITE_ENABLE_TREE_UI;
+  const defaultProps = {
+    currentView: "home" as const,
+    onNavigate: jest.fn(),
+    onToggleTheme: jest.fn(),
+    isDarkMode: false,
+  };
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.VITE_ENABLE_TREE_UI;
+    else process.env.VITE_ENABLE_TREE_UI = original;
+  });
+
+  it("does NOT render the Tree View button when the flag is off", () => {
+    delete process.env.VITE_ENABLE_TREE_UI;
+    renderWithProvider(<Navigation {...defaultProps} />);
+    expect(screen.queryByTitle("Tree View")).toBeNull();
+  });
+
+  it("renders the Tree View button when the flag is on; clicking navigates", () => {
+    process.env.VITE_ENABLE_TREE_UI = "true";
+    const onNavigate = jest.fn();
+    renderWithProvider(<Navigation {...defaultProps} onNavigate={onNavigate} />);
+    const btn = screen.getByTitle("Tree View");
+    expect(btn).toBeInTheDocument();
+    fireEvent.click(btn);
+    expect(onNavigate).toHaveBeenCalledWith("tree");
+  });
+});
