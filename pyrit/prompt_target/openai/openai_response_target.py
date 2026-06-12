@@ -18,9 +18,7 @@ from pyrit.exceptions import (
     PyritException,
     pyrit_target_retry,
 )
-from pyrit.memory.storage.data_url_converter import (
-    convert_local_image_to_data_url_async,
-)
+from pyrit.memory.storage import convert_local_image_to_data_url_async
 from pyrit.models import (
     ComponentIdentifier,
     Message,

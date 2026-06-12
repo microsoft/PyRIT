@@ -9,9 +9,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import aiofiles
 
 from pyrit.memory import DataTypeSerializer
-from pyrit.memory.storage.data_url_converter import (
-    convert_local_image_to_data_url_async,
-)
+from pyrit.memory.storage import convert_local_image_to_data_url_async
 from pyrit.message_normalizer.message_normalizer import (
     MessageListNormalizer,
     MessageStringNormalizer,
