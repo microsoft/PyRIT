@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from pyrit.models import Message, SeedAttackGroup, SeedGroup
 
 if TYPE_CHECKING:
+    from pyrit.models import SeedUnion
     from pyrit.prompt_target import PromptTarget
     from pyrit.score import TrueFalseScorer
 
@@ -171,7 +172,7 @@ class AttackParameters:
             )
 
             # Merge simulated prompts with existing static prompts from the seed_group
-            all_prompts = list(seed_group.prompts) + simulated_prompts
+            all_prompts: list[SeedUnion] = [*seed_group.prompts, *simulated_prompts]
 
             # Create a temporary prompts-only SeedGroup for extraction
             # This group contains only prompts (no objective, no simulated config)
