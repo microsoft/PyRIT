@@ -150,7 +150,6 @@ class SelfAskCategoryScorer(TrueFalseScorer):
             message_data_type=message_piece.converted_value_data_type,
             scored_prompt_id=message_piece.id,
             objective=objective,
-            attack_identifier=message_piece.attack_identifier,
         )
 
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")

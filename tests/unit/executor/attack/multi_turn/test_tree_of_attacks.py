@@ -1321,7 +1321,7 @@ class TestEndToEndExecution:
         mock_result.auxiliary_scores_summary = {}
 
         with patch.object(attack, "_perform_async", return_value=mock_result) as mock_perform:
-            with patch.object(attack._memory, "get_conversation", return_value=[]):
+            with patch.object(attack._memory, "get_conversation_messages", return_value=[]):
                 with patch.object(attack._memory, "get_message_pieces", return_value=[]):
                     with patch.object(attack._memory, "add_attack_results_to_memory", return_value=None):
                         result = await attack.execute_async(
@@ -1367,7 +1367,7 @@ class TestEndToEndExecution:
         mock_result.auxiliary_scores_summary = {}
 
         with patch.object(attack, "_perform_async", return_value=mock_result):
-            with patch.object(attack._memory, "get_conversation", return_value=[]):
+            with patch.object(attack._memory, "get_conversation_messages", return_value=[]):
                 with patch.object(attack._memory, "get_message_pieces", return_value=[]):
                     with patch.object(attack._memory, "add_attack_results_to_memory", return_value=None):
                         result = await attack.execute_async(objective="Test objective", memory_labels={"test": "label"})

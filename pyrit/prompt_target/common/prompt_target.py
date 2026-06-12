@@ -7,7 +7,7 @@ from typing import Any, final
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import ComponentIdentifier, Identifiable, Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Conversation, Identifiable, Message, MessagePiece
 from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -215,7 +215,9 @@ class PromptTarget(Identifiable):
                 history squashed, etc.).
         """
         conversation_id = message.message_pieces[0].conversation_id
-        conversation = list(self._memory.get_conversation(conversation_id=conversation_id))
+        conversation = (
+            list(self._memory.get_conversation_messages(conversation_id=conversation_id)) if conversation_id else []
+        )
         conversation.append(message)
         normalized = await self.configuration.normalize_async(messages=conversation)
         if normalized:
@@ -308,6 +310,7 @@ class PromptTarget(Identifiable):
             system_prompt (str): The system prompt text to set.
             conversation_id (str): The conversation id to attach the prompt to.
             attack_identifier (ComponentIdentifier | None): Optional attack identifier.
+                Deprecated: this parameter is ignored and will be removed in release 0.17.0.
             labels (dict[str, str] | None): Optional labels.
 
         Raises:
@@ -321,27 +324,35 @@ class PromptTarget(Identifiable):
                 removed_in="0.16.0",
             )
 
+        if attack_identifier is not None:
+            print_deprecation_message(
+                old_item="set_system_prompt(..., attack_identifier=...)",
+                new_item="set_system_prompt(...)",
+                removed_in="0.17.0",
+            )
+
         if not self.capabilities.supports_multi_turn or not self.capabilities.supports_editable_history:
             raise ValueError(
                 f"Target {type(self).__name__} does not support setting a system prompt. "
                 "It must support both multi-turn conversations and editable history."
             )
 
-        messages = self._memory.get_conversation(conversation_id=conversation_id)
+        messages = self._memory.get_conversation_messages(conversation_id=conversation_id)
 
         if messages:
             raise RuntimeError("Conversation already exists, system prompt needs to be set at the beginning")
 
+        self._memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=self.get_identifier())
+        )
         self._memory.add_message_to_memory(
             request=MessagePiece(
                 role="system",
                 conversation_id=conversation_id,
                 original_value=system_prompt,
                 converted_value=system_prompt,
-                prompt_target_identifier=self.get_identifier(),
-                attack_identifier=attack_identifier,
                 labels=labels or {},
-            ).to_message()
+            ).to_message(),
         )
 
     def dispose_db_engine(self) -> None:

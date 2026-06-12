@@ -658,27 +658,20 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             conditions.append(condition)
         return and_(*conditions)
 
-    def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+    def _add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
-        Insert a list of message pieces into the memory storage.
+        Persist already-validated message pieces to the Azure SQL store.
 
-        Pieces flagged via ``MessagePiece.not_in_memory = True`` are
-        silently filtered out so callers don't need to track persistence policy
-        themselves.
+        ``not_in_memory`` pieces are ephemeral -- typically synthesized inside a
+        scorer to score arbitrary content that never came through a real
+        PromptTarget. They are filtered out upstream in
+        ``add_message_pieces_to_memory`` before this method is called.
 
         Args:
-            message_pieces (Sequence[MessagePiece]): A sequence of MessagePiece instances to be added.
+            message_pieces (Sequence[MessagePiece]): Persistable pieces (filtered and
+                validated by ``add_message_pieces_to_memory``).
         """
-        # ``not_in_memory`` pieces are ephemeral — typically synthesized inside a
-        # scorer to score arbitrary content that never came through a real
-        # PromptTarget. They have no conversation, target, or attack lineage, so
-        # persisting them would pollute the memory store with rows that don't
-        # tie to any real exchange. Filtering here lets every caller share one
-        # policy instead of guarding each call site.
-        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_memory]
-        if not pieces_to_insert:
-            return
-        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in pieces_to_insert])
+        self._insert_entries(entries=[PromptMemoryEntry(entry=piece) for piece in message_pieces])
 
     def dispose_engine(self) -> None:
         """
@@ -787,7 +780,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             try:
                 query = session.query(model_class)
                 if join_scores and model_class == PromptMemoryEntry:
-                    query = query.options(joinedload(PromptMemoryEntry.scores))
+                    query = query.options(
+                        joinedload(PromptMemoryEntry.scores),
+                    )
                 elif model_class == AttackResultEntry:
                     query = query.options(
                         joinedload(AttackResultEntry.last_response).joinedload(PromptMemoryEntry.scores),

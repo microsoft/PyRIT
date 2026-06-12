@@ -200,7 +200,6 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             scored_prompt_id=message_piece.id,
             category=self._score_category,
             objective=objective,
-            attack_identifier=message_piece.attack_identifier,
             response_json_schema=self._response_json_schema,
         )
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")

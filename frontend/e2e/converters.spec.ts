@@ -242,9 +242,9 @@ async function mockBackendAPIs(page: Page) {
         turn_number: turnNumber,
         role: "user",
         created_at: new Date().toISOString(),
-        pieces: [
+        message_pieces: [
           {
-            piece_id: `piece-u-${turnNumber}`,
+            id: `piece-u-${turnNumber}`,
             original_value_data_type: "text",
             converted_value_data_type: "text",
             original_value: userText,
@@ -258,9 +258,9 @@ async function mockBackendAPIs(page: Page) {
         turn_number: turnNumber,
         role: "assistant",
         created_at: new Date().toISOString(),
-        pieces: [
+        message_pieces: [
           {
-            piece_id: `piece-a-${turnNumber}`,
+            id: `piece-a-${turnNumber}`,
             original_value_data_type: "text",
             converted_value_data_type: "text",
             original_value: `Mock response for: ${displayText}`,

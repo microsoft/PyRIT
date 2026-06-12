@@ -148,7 +148,6 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
             scored_prompt_id=message_piece.id,
             category=self._score_category,
             objective=objective,
-            attack_identifier=message_piece.attack_identifier,
             score_value_output_key=self._score_value_output_key,
             rationale_output_key=self._rationale_output_key,
             description_output_key=self._description_output_key,

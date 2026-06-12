@@ -45,7 +45,13 @@ from dataclasses import replace
 from pathlib import Path
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece, PromptDataType
+from pyrit.models import (
+    JSON_SCHEMA_METADATA_KEY,
+    Conversation,
+    Message,
+    MessagePiece,
+    PromptDataType,
+)
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityName,
@@ -322,6 +328,9 @@ async def _probe_system_prompt_async(target: PromptTarget, timeout_s: float, ret
         prompt_metadata=_probe_metadata(),
     )
     try:
+        target._memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())
+        )
         target._memory.add_message_to_memory(request=Message(message_pieces=[system_piece]))
     except Exception as exc:
         logger.debug("System-prompt probe could not seed system message: %s", exc)
@@ -406,6 +415,9 @@ async def _probe_multi_turn_async(target: PromptTarget, timeout_s: float, retrie
 
     # Seed memory so the second send sees real prior history.
     try:
+        target._memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())
+        )
         target._memory.add_message_to_memory(request=Message(message_pieces=[first]))
         assistant_reply = MessagePiece(
             role="assistant",

@@ -14,7 +14,14 @@ from pyrit.executor.attack.component.prepended_conversation_config import (
 )
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
-from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import (
+    ChatMessageRole,
+    ComponentIdentifier,
+    Conversation,
+    Message,
+    MessagePiece,
+    Score,
+)
 from pyrit.prompt_normalizer.prompt_converter_configuration import (
     PromptConverterConfiguration,
 )
@@ -54,8 +61,6 @@ def get_adversarial_chat_messages(
     prepended_conversation: list[Message],
     *,
     adversarial_chat_conversation_id: str,
-    attack_identifier: ComponentIdentifier,
-    adversarial_chat_target_identifier: ComponentIdentifier,
     labels: dict[str, str] | None = None,  # deprecated
 ) -> list[Message]:
     """
@@ -72,8 +77,6 @@ def get_adversarial_chat_messages(
     Args:
         prepended_conversation: The original conversation messages to transform.
         adversarial_chat_conversation_id: Conversation ID for the adversarial chat.
-        attack_identifier (ComponentIdentifier): Attack identifier to associate with messages.
-        adversarial_chat_target_identifier (ComponentIdentifier): Target identifier for the adversarial chat.
         labels: Optional labels to associate with the messages.
             Deprecated: This parameter will be removed in a release 0.16.0.
 
@@ -114,8 +117,6 @@ def get_adversarial_chat_messages(
                 original_value_data_type=piece.original_value_data_type,
                 converted_value_data_type=piece.converted_value_data_type,
                 conversation_id=adversarial_chat_conversation_id,
-                attack_identifier=attack_identifier,
-                prompt_target_identifier=adversarial_chat_target_identifier,
                 labels=labels or {},  # deprecated
             )
 
@@ -190,20 +191,17 @@ class ConversationManager:
     def __init__(
         self,
         *,
-        attack_identifier: ComponentIdentifier,
         prompt_normalizer: PromptNormalizer | None = None,
     ) -> None:
         """
         Initialize the conversation manager.
 
         Args:
-            attack_identifier (ComponentIdentifier): The identifier of the attack this manager belongs to.
             prompt_normalizer: Optional prompt normalizer for converting prompts.
                 If not provided, a default PromptNormalizer instance will be created.
         """
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
         self._memory = CentralMemory.get_memory_instance()
-        self._attack_identifier = attack_identifier
 
     def get_conversation(self, conversation_id: str) -> list[Message]:
         """
@@ -216,7 +214,7 @@ class ConversationManager:
             A list of messages in the conversation, ordered by creation time.
             Returns empty list if no messages exist.
         """
-        conversation = self._memory.get_conversation(conversation_id=conversation_id)
+        conversation = self._memory.get_conversation_messages(conversation_id=conversation_id)
         return list(conversation)
 
     def get_last_message(self, *, conversation_id: str, role: ChatMessageRole | None = None) -> MessagePiece | None:
@@ -276,7 +274,6 @@ class ConversationManager:
         target.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=conversation_id,
-            attack_identifier=self._attack_identifier,
             labels=labels,  # deprecated
         )
 
@@ -359,6 +356,7 @@ class ConversationManager:
             request_converters=request_converters,
             prepended_conversation_config=prepended_conversation_config,
             max_turns=max_turns,
+            target_identifier=target.get_identifier(),
         )
 
     async def _handle_non_chat_target_async(
@@ -439,6 +437,7 @@ class ConversationManager:
         request_converters: list[PromptConverterConfiguration] | None = None,
         prepended_conversation_config: Optional["PrependedConversationConfig"] = None,
         max_turns: int | None = None,
+        target_identifier: ComponentIdentifier | None = None,
     ) -> int:
         """
         Add prepended conversation messages to memory for a chat target.
@@ -459,6 +458,8 @@ class ConversationManager:
             request_converters: Optional converters to apply to messages.
             prepended_conversation_config: Optional configuration for converter roles.
             max_turns: If provided, validates that turn count doesn't exceed this limit.
+            target_identifier (ComponentIdentifier | None): The target the conversation is held
+                with, if known. Recorded once per conversation.
 
         Returns:
             The number of turns (assistant messages) added.
@@ -470,6 +471,10 @@ class ConversationManager:
         valid_messages = [msg for msg in prepended_conversation if msg and msg.message_pieces]
         if not valid_messages:
             return 0
+
+        self._memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+        )
 
         # Get roles that should have converters applied
         apply_to_roles = (
@@ -485,7 +490,6 @@ class ConversationManager:
 
             for piece in message_copy.message_pieces:
                 piece.conversation_id = conversation_id
-                piece.attack_identifier = self._attack_identifier
 
             # Count turns at message level (only assistant/simulated_assistant messages)
             # A multi-part response still counts as one turn
@@ -520,6 +524,7 @@ class ConversationManager:
         request_converters: list[PromptConverterConfiguration] | None,
         prepended_conversation_config: Optional["PrependedConversationConfig"],
         max_turns: int | None,
+        target_identifier: ComponentIdentifier | None = None,
     ) -> ConversationState:
         """
         Process prepended conversation for a chat target.
@@ -536,6 +541,8 @@ class ConversationManager:
             request_converters: Converters to apply.
             prepended_conversation_config: Configuration for converter roles.
             max_turns: Maximum turns for validation.
+            target_identifier (ComponentIdentifier | None): The objective target the
+                conversation is held with, if known.
 
         Returns:
             ConversationState with turn_count and scores.
@@ -555,6 +562,7 @@ class ConversationManager:
             request_converters=request_converters,
             prepended_conversation_config=prepended_conversation_config,
             max_turns=max_turns,
+            target_identifier=target_identifier,
         )
 
         # Update context for multi-turn attacks to reflect prepended_conversation

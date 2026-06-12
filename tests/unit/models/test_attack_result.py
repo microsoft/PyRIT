@@ -243,11 +243,6 @@ def test_to_dict_from_dict_roundtrip():
         class_name="SelfAskTrueFalseScorer",
         class_module="pyrit.score",
     )
-    target_id = ComponentIdentifier(
-        class_name="OpenAIChatTarget",
-        class_module="pyrit.prompt_target",
-        params={"endpoint": "https://api.example.com"},
-    )
     attack_id = ComponentIdentifier(
         class_name="PromptSendingAttack",
         class_module="pyrit.executor.attack",
@@ -259,8 +254,6 @@ def test_to_dict_from_dict_roundtrip():
         conversation_id="conv-1",
         sequence=1,
         timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
-        prompt_target_identifier=target_id,
-        attack_identifier=attack_id,
     )
     last_score = Score(
         score_value="true",

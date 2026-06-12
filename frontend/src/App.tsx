@@ -20,15 +20,18 @@ const AUTO_DISMISS_MS = 5_000
 
 function ConnectionBannerContainer() {
   const { status, reconnectCount } = useConnectionHealth()
-  const [showReconnected, setShowReconnected] = useState(false)
+  // Track how many reconnects the user has already had the banner dismissed for.
+  // `showReconnected` is derived: the banner is visible whenever there are
+  // un-dismissed reconnects. The auto-dismiss timer bumps `dismissedCount` so
+  // we avoid calling setState synchronously in an effect body.
+  const [dismissedCount, setDismissedCount] = useState(0)
+  const showReconnected = reconnectCount > dismissedCount
 
   useEffect(() => {
-    if (reconnectCount > 0) {
-      setShowReconnected(true)
-      const timer = setTimeout(() => setShowReconnected(false), AUTO_DISMISS_MS)
-      return () => clearTimeout(timer)
-    }
-  }, [reconnectCount])
+    if (!showReconnected) return
+    const timer = setTimeout(() => setDismissedCount(reconnectCount), AUTO_DISMISS_MS)
+    return () => clearTimeout(timer)
+  }, [showReconnected, reconnectCount])
 
   if (status === 'connected' && !showReconnected) {
     return null

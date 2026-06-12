@@ -23,7 +23,7 @@ from pyrit.exceptions.exception_classes import (
     RateLimitException,
 )
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import ComponentIdentifier, Message, MessagePiece
+from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
 from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 
@@ -289,7 +289,7 @@ async def test_send_prompt_async_empty_response_adds_to_memory(
     openai_response_json: dict, target: OpenAIResponseTarget
 ):
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
 
     target._memory = mock_memory
@@ -306,8 +306,6 @@ async def test_send_prompt_async_empty_response_adds_to_memory(
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
             MessagePiece(
@@ -317,8 +315,6 @@ async def test_send_prompt_async_empty_response_adds_to_memory(
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
         ]
@@ -333,7 +329,7 @@ async def test_send_prompt_async_empty_response_adds_to_memory(
     ):
         target._async_client.responses.create = AsyncMock(return_value=mock_response)  # type: ignore[method-assign]
         target._memory = MagicMock(MemoryInterface)
-        target._memory.get_conversation.return_value = []
+        target._memory.get_conversation_messages.return_value = []
 
         with pytest.raises(EmptyResponseException):
             await target.send_prompt_async(message=message)
@@ -346,7 +342,7 @@ async def test_send_prompt_async_rate_limit_exception_adds_to_memory(
     target: OpenAIResponseTarget,
 ):
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
 
     target._memory = mock_memory
@@ -360,13 +356,13 @@ async def test_send_prompt_async_rate_limit_exception_adds_to_memory(
 
     with pytest.raises(RateLimitException):
         await target.send_prompt_async(message=message)
-        target._memory.get_conversation.assert_called_once_with(conversation_id="123")
+        target._memory.get_conversation_messages.assert_called_once_with(conversation_id="123")
         target._memory.add_message_to_memory.assert_called_once_with(request=message)
 
 
 async def test_send_prompt_async_bad_request_error_adds_to_memory(target: OpenAIResponseTarget):
     mock_memory = MagicMock()
-    mock_memory.get_conversation.return_value = []
+    mock_memory.get_conversation_messages.return_value = []
     mock_memory.add_message_to_memory = AsyncMock()
 
     target._memory = mock_memory
@@ -382,7 +378,7 @@ async def test_send_prompt_async_bad_request_error_adds_to_memory(target: OpenAI
 
     with pytest.raises(BadRequestError):
         await target.send_prompt_async(message=message)
-        target._memory.get_conversation.assert_called_once_with(conversation_id="123")
+        target._memory.get_conversation_messages.assert_called_once_with(conversation_id="123")
         target._memory.add_message_to_memory.assert_called_once_with(request=message)
 
 
@@ -399,8 +395,6 @@ async def test_send_prompt_async(openai_response_json: dict, target: OpenAIRespo
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
             MessagePiece(
@@ -410,8 +404,6 @@ async def test_send_prompt_async(openai_response_json: dict, target: OpenAIRespo
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
         ]
@@ -445,8 +437,6 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
             MessagePiece(
@@ -456,8 +446,6 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                prompt_target_identifier=ComponentIdentifier(class_name="target-identifier", class_module="test"),
-                attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
                 labels={"test": "test"},
             ),
         ]
@@ -472,7 +460,7 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
     ):
         target._async_client.responses.create = AsyncMock(return_value=mock_response)  # type: ignore[method-assign]
         target._memory = MagicMock(MemoryInterface)
-        target._memory.get_conversation.return_value = []
+        target._memory.get_conversation_messages.return_value = []
 
         with pytest.raises(EmptyResponseException):
             await target.send_prompt_async(message=message)
@@ -996,7 +984,7 @@ async def test_send_prompt_async_agentic_loop_executes_function_and_returns_fina
 
         # Verify intermediate messages were NOT persisted to memory by the target
         # (The normalizer will handle persistence when messages are returned)
-        all_messages = target._memory.get_conversation(conversation_id=shared_conversation_id)
+        all_messages = target._memory.get_conversation_messages(conversation_id=shared_conversation_id)
         assert len(all_messages) == 0, (
             f"Expected 0 messages in memory (target doesn't persist), got {len(all_messages)}"
         )

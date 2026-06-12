@@ -251,8 +251,6 @@ async def test_conversation_history_scorer_preserves_metadata(patch_central_data
         original_value="Response",
         conversation_id=conversation_id,
         labels={"test": "label"},
-        prompt_target_identifier=ComponentIdentifier(class_name="test", class_module="test"),
-        attack_identifier=ComponentIdentifier(class_name="test", class_module="test"),
         sequence=1,
     )
 
@@ -288,8 +286,6 @@ async def test_conversation_history_scorer_preserves_metadata(patch_central_data
     assert called_piece.id == message_piece.id
     assert called_piece.conversation_id == message_piece.conversation_id
     assert called_piece.labels == message_piece.labels
-    assert called_piece.prompt_target_identifier == message_piece.prompt_target_identifier
-    assert called_piece.attack_identifier == message_piece.attack_identifier
 
 
 async def test_conversation_scorer_regenerates_score_ids_to_prevent_collisions(patch_central_database):
