@@ -100,18 +100,31 @@ export default function ValidateCapabilitiesDialog({
   target,
   onClose,
 }: ValidateCapabilitiesDialogProps) {
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  // Track an in-flight or completed request by the target it was issued for.
+  // Storing the target name alongside the result/error lets the render side
+  // derive `loading` (= request for the current target hasn't completed yet)
+  // without any synchronous setState inside the effect, which the v7
+  // `react-hooks/set-state-in-effect` rule forbids. Switching targets makes
+  // the prior request's `requestedFor` no longer match the current target,
+  // so the display reverts to the spinner until the new request settles.
+  const [requestedFor, setRequestedFor] = useState<string | null>(null)
   const [result, setResult] = useState<ValidateCapabilitiesResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  // Reset state on close (R5): the useEffect below depends on
-  // `target?.target_registry_name`, so re-clicking Validate on the SAME row
-  // would not re-fire without an explicit state reset — and the user would see
-  // stale results with no spinner.
+  const currentName = target?.target_registry_name ?? null
+  const loading = open && currentName != null && requestedFor !== currentName
+  const displayResult = result?.target_registry_name === currentName ? result : null
+  const displayError = requestedFor === currentName ? error : null
+
+  // Reset state on close (R5): re-clicking Validate on the SAME row must
+  // re-fire the probe and show the spinner again, not the prior result. The
+  // useEffect below would not re-run for an identical [open, name] tuple
+  // across a close/reopen cycle, so clearing the tagged state here is what
+  // forces the new request to be issued.
   const handleClose = useCallback(() => {
     setResult(null)
     setError(null)
-    setLoading(false)
+    setRequestedFor(null)
     onClose()
   }, [onClose])
 
@@ -124,20 +137,21 @@ export default function ValidateCapabilitiesDialog({
     if (!open || !target) return
 
     let cancelled = false
-    setLoading(true)
-    setError(null)
-    setResult(null)
+    const name = target.target_registry_name
 
     targetsApi
-      .validateCapabilities(target.target_registry_name)
+      .validateCapabilities(name)
       .then((data) => {
-        if (!cancelled) setResult(data)
+        if (cancelled) return
+        setResult(data)
+        setError(null)
+        setRequestedFor(name)
       })
       .catch((err) => {
-        if (!cancelled) setError(toApiError(err).detail)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
+        if (cancelled) return
+        setResult(null)
+        setError(toApiError(err).detail)
+        setRequestedFor(name)
       })
 
     return () => {
@@ -148,8 +162,8 @@ export default function ValidateCapabilitiesDialog({
 
   if (!target) return null
 
-  const declared = result?.declared
-  const observed = result?.observed
+  const declared = displayResult?.declared
+  const observed = displayResult?.observed
   // Types that appear ONLY inside non-probeable combinations. The engine ORs
   // these back into observed.input_modalities (line 778), making them appear
   // confirmed in the cells even though they were never tested. Hide them from
@@ -159,7 +173,7 @@ export default function ValidateCapabilitiesDialog({
   // `non_probeable_input_modalities` on '+'), so types confirmed via a
   // probeable singleton combo aren't dropped when a sibling combo bundles
   // them with a non-probeable type.
-  const nonProbeableTypes = new Set(result?.non_probeable_only_types ?? [])
+  const nonProbeableTypes = new Set(displayResult?.non_probeable_only_types ?? [])
   const declaredProbeableInputs = (declared?.supported_input_modalities ?? []).filter(
     t => !nonProbeableTypes.has(t),
   )
@@ -195,12 +209,12 @@ export default function ValidateCapabilitiesDialog({
                 </Text>
               </div>
             )}
-            {error && !loading && (
+            {displayError && !loading && (
               <MessageBar intent="error" style={{ marginBottom: 12 }}>
-                <MessageBarBody>{error}</MessageBarBody>
+                <MessageBarBody>{displayError}</MessageBarBody>
               </MessageBar>
             )}
-            {result && !loading && !error && (
+            {displayResult && !loading && !displayError && (
               <>
                 {(target.inner_targets ?? []).length > 0 && (
                   <MessageBar intent="warning" style={{ marginBottom: 12 }}>
@@ -243,7 +257,7 @@ export default function ValidateCapabilitiesDialog({
                         <MatchIndicator kind={inputMatch ? 'match' : 'mismatch'} />
                       </TableCell>
                     </TableRow>
-                    {result.non_probeable_input_modalities.length > 0 && (
+                    {displayResult.non_probeable_input_modalities.length > 0 && (
                       <TableRow data-testid="not-probed-row">
                         <TableCell>
                           <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
@@ -252,7 +266,7 @@ export default function ValidateCapabilitiesDialog({
                         </TableCell>
                         <TableCell colSpan={2}>
                           <Text size={200}>
-                            {result.non_probeable_input_modalities.join(', ')}
+                            {displayResult.non_probeable_input_modalities.join(', ')}
                           </Text>
                         </TableCell>
                         <TableCell>
@@ -270,9 +284,9 @@ export default function ValidateCapabilitiesDialog({
                     </TableRow>
                   </TableBody>
                 </Table>
-                {result.warnings.length > 0 && (
+                {displayResult.warnings.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {result.warnings.map((w, idx) => (
+                    {displayResult.warnings.map((w, idx) => (
                       <MessageBar key={idx} intent="warning" icon={<WarningRegular />}>
                         <MessageBarBody>{w}</MessageBarBody>
                       </MessageBar>
