@@ -41,6 +41,10 @@ class AttackParameters:
     # Additional labels that can be applied to the prompts throughout the attack
     memory_labels: dict[str, str] | None = field(default_factory=dict)
 
+    # Harm categories targeted by this attack, derived from the seed group's
+    # seeds. Stamped onto the produced AttackResult.
+    targeted_harm_categories: list[str] = field(default_factory=list)
+
     def __str__(self) -> str:
         """Return a nicely formatted string representation of the attack parameters."""
         lines = [f"{self.__class__.__name__}:"]
@@ -137,6 +141,9 @@ class AttackParameters:
 
         if "memory_labels" in valid_fields:
             params["memory_labels"] = {}
+
+        if "targeted_harm_categories" in valid_fields:
+            params["targeted_harm_categories"] = list(seed_group.harm_categories)
 
         # Determine which group to use for extracting prepended_conversation/next_message
         extraction_group: SeedGroup = seed_group

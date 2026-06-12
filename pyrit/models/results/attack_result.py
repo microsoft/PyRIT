@@ -94,6 +94,11 @@ class AttackResult(StrategyResult):
     # labels associated with this attack result
     labels: dict[str, str] = Field(default_factory=dict)
 
+    # Harm categories this attack targeted. Auto-populated from the attack's
+    # SeedGroup (the deduplicated union of its seeds' harm_categories) when the
+    # result is produced by an attack strategy.
+    targeted_harm_categories: list[str] = Field(default_factory=list)
+
     # Error information (populated when attack fails with exception)
     error_message: str | None = None
     error_type: str | None = None

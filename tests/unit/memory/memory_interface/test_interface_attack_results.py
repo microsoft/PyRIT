@@ -45,6 +45,7 @@ def create_attack_result(
     objective_num: int,
     outcome: AttackOutcome = AttackOutcome.SUCCESS,
     labels: dict[str, str] | None = None,
+    targeted_harm_categories: list[str] | None = None,
 ):
     """Helper function to create AttackResult."""
     return AttackResult(
@@ -52,6 +53,7 @@ def create_attack_result(
         objective=f"Objective {objective_num}",
         outcome=outcome,
         labels=labels or {},
+        targeted_harm_categories=targeted_harm_categories or [],
     )
 
 
@@ -994,6 +996,62 @@ def test_get_attack_results_by_labels_falls_back_to_conversation_labels(sqlite_i
     # Non-matching label should return nothing
     results = sqlite_instance.get_attack_results(labels={"operation": "missing"})
     assert len(results) == 0
+
+
+# ---------------------------------------------------------------------------
+# targeted_harm_categories tests
+# ---------------------------------------------------------------------------
+
+
+def test_attack_result_targeted_harm_categories_round_trip(sqlite_instance: MemoryInterface):
+    """targeted_harm_categories persists onto AttackResultEntry and round-trips back."""
+    attack_result = create_attack_result(
+        "conv_1", 1, AttackOutcome.SUCCESS, targeted_harm_categories=["violence", "hate"]
+    )
+    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+
+    stored = sqlite_instance.get_attack_results(conversation_id="conv_1")
+    assert len(stored) == 1
+    assert sorted(stored[0].targeted_harm_categories) == ["hate", "violence"]
+
+
+def test_attack_result_targeted_harm_categories_defaults_empty(sqlite_instance: MemoryInterface):
+    """An AttackResult with no harm categories round-trips to an empty list."""
+    attack_result = create_attack_result("conv_1", 1, AttackOutcome.SUCCESS)
+    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+
+    stored = sqlite_instance.get_attack_results(conversation_id="conv_1")
+    assert len(stored) == 1
+    assert stored[0].targeted_harm_categories == []
+
+
+def test_get_attack_results_by_targeted_harm_categories(sqlite_instance: MemoryInterface):
+    """Filtering by targeted_harm_categories matches attacks targeting ANY listed category."""
+    attack_results = [
+        create_attack_result("conv_1", 1, AttackOutcome.SUCCESS, targeted_harm_categories=["violence"]),
+        create_attack_result("conv_2", 2, AttackOutcome.FAILURE, targeted_harm_categories=["hate", "violence"]),
+        create_attack_result("conv_3", 3, AttackOutcome.SUCCESS, targeted_harm_categories=["self_harm"]),
+        create_attack_result("conv_4", 4, AttackOutcome.SUCCESS),
+    ]
+    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+
+    violence = sqlite_instance.get_attack_results(targeted_harm_categories=["violence"])
+    assert {r.conversation_id for r in violence} == {"conv_1", "conv_2"}
+
+    # OR across multiple requested categories.
+    multi = sqlite_instance.get_attack_results(targeted_harm_categories=["self_harm", "hate"])
+    assert {r.conversation_id for r in multi} == {"conv_2", "conv_3"}
+
+    # Case-insensitive match.
+    case = sqlite_instance.get_attack_results(targeted_harm_categories=["VIOLENCE"])
+    assert {r.conversation_id for r in case} == {"conv_1", "conv_2"}
+
+    # No match.
+    assert sqlite_instance.get_attack_results(targeted_harm_categories=["nonexistent"]) == []
+
+    # Empty sequence applies no filter.
+    none_filter = sqlite_instance.get_attack_results(targeted_harm_categories=[])
+    assert {r.conversation_id for r in none_filter} == {"conv_1", "conv_2", "conv_3", "conv_4"}
 
 
 # ---------------------------------------------------------------------------

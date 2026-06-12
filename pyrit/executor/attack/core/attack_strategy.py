@@ -239,6 +239,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         # AttackResultEntry row records its lineage. Outside an orchestrator
         # _attribution is None and both attribution fields stay None.
         self._apply_attribution(context=event_data.context, result=event_data.result)
+        self._apply_targeted_harm_categories(context=event_data.context, result=event_data.result)
 
         self._logger.debug(f"Attack execution completed in {execution_time_ms}ms")
 
@@ -274,6 +275,30 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         if attribution.parent_eval_hash is not None:
             attribution_data["parent_eval_hash"] = attribution.parent_eval_hash
         result.attribution_data = attribution_data
+
+    @staticmethod
+    def _apply_targeted_harm_categories(
+        *,
+        context: AttackStrategyContextT,
+        result: AttackResult,
+    ) -> None:
+        """
+        Copy the attack's targeted harm categories from its parameters onto the result.
+
+        Reads ``context.params.targeted_harm_categories`` (populated in
+        ``AttackParameters.from_seed_group_async`` from the SeedGroup's
+        deduplicated harm categories) and stamps it onto the result so it
+        round-trips into ``AttackResultEntry``. The read is defensive because
+        some ``AttackParameters`` subclasses may exclude the field.
+
+        Args:
+            context: The per-task AttackContext.
+            result: The AttackResult that is about to be persisted.
+        """
+        params = getattr(context, "params", None)
+        harm_categories = getattr(params, "targeted_harm_categories", None)
+        if harm_categories:
+            result.targeted_harm_categories = list(harm_categories)
 
     def _log_attack_outcome(self, result: AttackResult) -> None:
         """
@@ -342,6 +367,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         # Stamp attribution onto the error result so it is locatable via the
         # attribution_parent_id foreign key on resume.
         self._apply_attribution(context=context, result=error_result)
+        self._apply_targeted_harm_categories(context=context, result=error_result)
 
         self._memory.add_attack_results_to_memory(attack_results=[error_result])
 

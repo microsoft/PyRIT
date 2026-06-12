@@ -702,6 +702,80 @@ class TestDefaultAttackStrategyEventHandler:
             "parent_collection": "atomic_err",
         }
 
+    async def test_on_post_execute_stamps_targeted_harm_categories(self, sample_attack_result, mock_memory):
+        """Harm categories from context.params are stamped onto the persisted result."""
+
+        class TestAttackContext(AttackContext):
+            pass
+
+        params = AttackParameters(
+            objective="Test harmful objective",
+            targeted_harm_categories=["violence", "hate"],
+        )
+        context = TestAttackContext(params=params)
+        context.start_time = 100.0
+
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+            event_data = StrategyEventData(
+                event=StrategyEvent.ON_POST_EXECUTE,
+                strategy_name="TestStrategy",
+                strategy_id="test-id",
+                context=context,
+                result=sample_attack_result,
+            )
+            await handler.on_event_async(event_data)
+
+        assert sorted(sample_attack_result.targeted_harm_categories) == ["hate", "violence"]
+
+    async def test_on_post_execute_no_harm_categories_leaves_empty(
+        self, sample_attack_context, sample_attack_result, mock_memory
+    ):
+        """With no harm categories on params, the result's list stays empty."""
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+            sample_attack_context.start_time = 100.0
+
+            event_data = StrategyEventData(
+                event=StrategyEvent.ON_POST_EXECUTE,
+                strategy_name="TestStrategy",
+                strategy_id="test-id",
+                context=sample_attack_context,
+                result=sample_attack_result,
+            )
+            await handler.on_event_async(event_data)
+
+        assert sample_attack_result.targeted_harm_categories == []
+
+    async def test_on_error_stamps_targeted_harm_categories(self, mock_memory):
+        """Error AttackResults must also carry the targeted harm categories."""
+
+        class TestAttackContext(AttackContext):
+            pass
+
+        params = AttackParameters(
+            objective="Test harmful objective",
+            targeted_harm_categories=["self_harm"],
+        )
+        context = TestAttackContext(params=params)
+        context.start_time = 100.0
+
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+            event_data = StrategyEventData(
+                event=StrategyEvent.ON_ERROR,
+                strategy_name="TestStrategy",
+                strategy_id="test-id",
+                context=context,
+                error=RuntimeError("boom"),
+            )
+            await handler.on_event_async(event_data)
+
+        call = mock_memory.add_attack_results_to_memory.call_args
+        persisted = call.kwargs["attack_results"][0]
+        assert persisted.outcome == AttackOutcome.ERROR
+        assert persisted.targeted_harm_categories == ["self_harm"]
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAttackStrategyIntegration:
