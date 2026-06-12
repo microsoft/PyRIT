@@ -20,9 +20,19 @@
 
 import { useEffect } from 'react'
 
-import { reconstructTreeWithFans } from '../../runner/autoReverse'
+import {
+  detectFansV10Plus,
+  reconstructTreeWithFans,
+  type ConverterResolver,
+  type LeafForFanDetection,
+} from '../../runner/autoReverse'
 import type { ConversationTree, ConversationTreeId } from '../../runner/treeTypes'
-import type { AttackListResponse, AttackSummary, ConversationMessagesResponse } from '../../types'
+import type {
+  AttackListResponse,
+  AttackSummary,
+  ComponentIdentifier,
+  ConversationMessagesResponse,
+} from '../../types'
 
 export interface ReloadReconstructionApi {
   listAttacks(params?: {
@@ -100,15 +110,30 @@ export function useReloadReconstruction({
       const msgs = await reloadApi.getMessages(base.attack_result_id, base.conversation_id)
       if (cancelled) return
 
-      // Fan-aware reconstruction (PR7g slice 2): reconstructTreeWithFans
-      // fully rebuilds the no-fan and single root-level attempt-fan cases;
-      // converter/nested/multi-axis fans fall back to a linear chain and
-      // report `fullyReconstructed: false` so we surface the degraded banner.
       const leaves = list.items.map((ar) => ({
         attack_result_id: ar.attack_result_id,
         labels: ar.labels,
       }))
-      const recon = reconstructTreeWithFans({ baseMessages: msgs.messages, leaves })
+
+      // Converter-fan reconstruction (PR7g slice 3) needs each member leaf's
+      // first-user-turn converter pipeline. When the leaf set is a single
+      // root-level converter fan, pre-fetch each member's messages and build
+      // a resolver keyed by AR id. Other shapes (no fan, attempt fan) don't
+      // need it; nested/multi-axis still degrade.
+      const { converterResolver, onConverterDivergence, divergedSlots } =
+        await buildConverterResolver({ leaves, items: list.items, reloadApi })
+      if (cancelled) return
+
+      // Fan-aware reconstruction: reconstructTreeWithFans fully rebuilds the
+      // no-fan, single root-level attempt-fan, and single root-level
+      // converter-fan (with resolver) cases; nested/multi-axis fans fall back
+      // to a linear chain with `fullyReconstructed: false` (degraded banner).
+      const recon = reconstructTreeWithFans({
+        baseMessages: msgs.messages,
+        leaves,
+        converterResolver,
+        onConverterDivergence,
+      })
       const parentId = pickParentConversationTreeId(list.items)
       const next: ConversationTree = {
         ...recon.tree,
@@ -118,17 +143,23 @@ export function useReloadReconstruction({
       onTreeChange?.(next)
 
       // Disclose any topology gap: a fan set that did NOT fully reconstruct
-      // (converter/nested/multi-axis) fell back to a linear chain. Surface it
-      // rather than silently degrading (PR7 review must-fix #3). The handled
-      // cases (no fans, single root-level attempt fan) report
-      // fullyReconstructed=true and skip the banner.
+      // (nested/multi-axis, or a converter fan we couldn't resolve) fell back
+      // to a linear chain. Surface it rather than silently degrading (PR7
+      // review must-fix #3). Fully-reconstructed cases skip the banner.
       if (!recon.fullyReconstructed && recon.fanCount > 0) {
         console.warn(
           `useReloadReconstruction: reconstructed tree '${fragmentTreeId}' as a linear chain; ` +
-            `${recon.fanCount} fan(s) in the saved tree are not shown (converter/nested fan-aware ` +
-            `reload is deferred)`,
+            `${recon.fanCount} fan(s) in the saved tree are not shown (nested / multi-axis ` +
+            `fan-aware reload is deferred)`,
         )
         onReconstructionDegraded?.({ fanCount: recon.fanCount })
+      } else if (recon.fullyReconstructed && divergedSlots.length > 0) {
+        // Reconstructed, but some converter slots had disagreeing leaves.
+        console.warn(
+          `useReloadReconstruction: converter fan in tree '${fragmentTreeId}' had ` +
+            `${divergedSlots.length} slot(s) where member leaves disagreed on the converter ` +
+            `pipeline; showing the most-frequent value per slot`,
+        )
       }
     })().catch(() => {
       // Fail soft on reload reconstruction errors.
@@ -137,4 +168,48 @@ export function useReloadReconstruction({
       cancelled = true
     }
   }, [currentTree, fragmentTreeId, onReconstructionDegraded, onTreeChange, reloadApi])
+}
+
+/**
+ * If the leaf set is a single root-level `converter` fan, pre-fetch each
+ * member leaf's messages and build a resolver over its first user-turn's
+ * `converter_identifiers`. Returns an undefined resolver otherwise (so
+ * non-converter shapes skip the N fetches).
+ */
+async function buildConverterResolver(args: {
+  leaves: LeafForFanDetection[]
+  items: AttackSummary[]
+  reloadApi: ReloadReconstructionApi
+}): Promise<{
+  converterResolver: ConverterResolver | undefined
+  onConverterDivergence: (slotIndex: number) => void
+  divergedSlots: number[]
+}> {
+  const divergedSlots: number[] = []
+  const onConverterDivergence = (slot: number): void => {
+    divergedSlots.push(slot)
+  }
+  const fans = detectFansV10Plus(args.leaves)
+  const single = fans.length === 1 ? fans[0] : null
+  if (single === null || single.parent_path.length !== 0 || single.axis !== 'converter') {
+    return { converterResolver: undefined, onConverterDivergence, divergedSlots }
+  }
+
+  const convIdByArId = new Map(args.items.map((it) => [it.attack_result_id, it.conversation_id]))
+  const convertersByArId = new Map<string, ComponentIdentifier[]>()
+  await Promise.all(
+    single.member_ars.map(async (leaf) => {
+      const conversationId = convIdByArId.get(leaf.attack_result_id)
+      if (conversationId === undefined) return
+      const m = await args.reloadApi.getMessages(leaf.attack_result_id, conversationId)
+      const firstUser = m.messages
+        .slice()
+        .sort((a, b) => a.turn_number - b.turn_number)
+        .find((msg) => msg.role === 'user')
+      convertersByArId.set(leaf.attack_result_id, firstUser?.pieces[0]?.converter_identifiers ?? [])
+    }),
+  )
+  const converterResolver: ConverterResolver = (leaf) =>
+    convertersByArId.get(leaf.attack_result_id) ?? []
+  return { converterResolver, onConverterDivergence, divergedSlots }
 }

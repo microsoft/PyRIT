@@ -415,6 +415,15 @@ export interface ReconstructTreeWithFansArgs {
   baseMessages: BackendMessage[]
   /** All leaf ARs of the tree (carry `labels.tree_path` for fan detection). */
   leaves: ReadonlyArray<LeafForFanDetection>
+  /**
+   * Resolves each leaf's converter pipeline (its first user-turn's
+   * `converter_identifiers`). Required to reconstruct a root-level
+   * `converter` fan; when omitted, converter fans degrade to linear. The
+   * reload host pre-fetches each member leaf's messages to build this.
+   */
+  converterResolver?: ConverterResolver
+  /** Fires per slot when leaves at that slot disagree on converters. */
+  onConverterDivergence?: (slotIndex: number) => void
 }
 
 export interface ReconstructTreeWithFansResult {
@@ -422,8 +431,9 @@ export interface ReconstructTreeWithFansResult {
   /**
    * True when the full topology (including fans) was reconstructed; false when
    * the result fell back to a linear chain (the caller surfaces the degraded
-   * banner). V1.0 slice-2 fully reconstructs the no-fan case and the single
-   * root-level `attempt` fan; converter/nested/multi-axis fans fall back.
+   * banner). V1.0 reconstructs the no-fan case, a single root-level `attempt`
+   * fan, and a single root-level `converter` fan (when a converterResolver is
+   * supplied); nested / multi-axis fans fall back.
    */
   fullyReconstructed: boolean
   /** Fans detected in the leaf set (0 when purely linear). */
@@ -433,12 +443,12 @@ export interface ReconstructTreeWithFansResult {
 /**
  * Assemble a tree from a base conversation + the leaf set's fan topology.
  *
- * V1.0 slice-2 scope: reconstructs the no-fan case (linear) and a single
- * root-level (`parent_path === []`) `attempt` fan. Converter fans, nested
- * fans, and multiple/axis-changed fans at the same position are deferred —
- * they fall back to the linear base (non-corrupting; the base leaf's own
- * converter pipeline survives via linearChainFromMessages) and the caller
- * surfaces the "reconstructed as a linear chain" banner.
+ * V1.0 scope: reconstructs the no-fan case (linear), a single root-level
+ * (`parent_path === []`) `attempt` fan, and a single root-level `converter`
+ * fan (given a `converterResolver`). Nested fans, multiple/axis-changed fans
+ * at the same position, and (for converter) the case with no resolver or
+ * non-contiguous slots fall back to the linear base (non-corrupting) and the
+ * caller surfaces the "reconstructed as a linear chain" banner.
  */
 export function reconstructTreeWithFans(
   args: ReconstructTreeWithFansArgs,
@@ -453,6 +463,22 @@ export function reconstructTreeWithFans(
   const single = fans.length === 1 ? fans[0] : null
   if (single !== null && single.parent_path.length === 0 && single.axis === 'attempt') {
     const assembled = assembleRootAttemptFan(args.baseMessages, single)
+    if (assembled !== null) {
+      return { tree: assembled, fullyReconstructed: true, fanCount: 1 }
+    }
+  }
+  if (
+    single !== null &&
+    single.parent_path.length === 0 &&
+    single.axis === 'converter' &&
+    args.converterResolver !== undefined
+  ) {
+    const assembled = assembleRootConverterFan(
+      args.baseMessages,
+      single,
+      args.converterResolver,
+      args.onConverterDivergence,
+    )
     if (assembled !== null) {
       return { tree: assembled, fullyReconstructed: true, fanCount: 1 }
     }
@@ -528,6 +554,139 @@ function assembleRootAttemptFan(
   }
 
   return { ...spine, nodes, edges }
+}
+
+/**
+ * Reconstruct a single root-level `converter` fan as the flattened topology
+ * `root → fan(converter) → [user_turn(converter) → send] × N` (operator
+ * decision: u_above is not persisted by V1.0 dispatch, so the fan attaches
+ * directly to the root; re-execution is equivalent).
+ *
+ * Returns null (→ caller degrades to linear) when the base lacks a leading
+ * user turn or the slots aren't contiguous 0..N-1 (tombstone semantics are
+ * not guessed in V1.0).
+ */
+function assembleRootConverterFan(
+  baseMessages: BackendMessage[],
+  fan: ImplicitFan,
+  resolver: ConverterResolver,
+  onDivergence: ((slotIndex: number) => void) | undefined,
+): ConversationTree | null {
+  const sorted = [...baseMessages].sort((a, b) => a.turn_number - b.turn_number)
+  const first = sorted[0]
+  if (first === undefined || first.role !== 'user') return null
+  const firstPiece = first.pieces[0]
+  // The authored prompt is the ORIGINAL value (the converter produces the
+  // converted gibberish; the tree shows what the operator typed).
+  const sharedText = firstPiece?.original_value ?? firstPiece?.converted_value ?? ''
+
+  // Slots must be a contiguous 0..N-1 set; gaps imply deleted-slot tombstones
+  // whose reverse semantics V1.0 does not reconstruct.
+  const distinctSlots = [...new Set(fan.member_slot_indices)].sort((a, b) => a - b)
+  if (!distinctSlots.every((s, i) => s === i)) return null
+
+  const variants = reconstructVariantPayloads(fan, resolver, { onDivergence })
+
+  const rootId = mintNodeId()
+  const root: RootPromptNode = {
+    id: rootId,
+    kind: 'root_prompt',
+    parentId: null,
+    resolvedInputHash: emptyHash(),
+    state: 'clean',
+    execution: null,
+    executionHistory: [],
+    lastError: null,
+    labels: {},
+    createdAt: NOW,
+    updatedAt: NOW,
+    version: 1,
+    params: { text: sharedText, attachments: [], targetRegistryName: '' },
+  }
+
+  const fanId = mintNodeId()
+  const fanNode: FanNode = {
+    id: fanId,
+    kind: 'fan',
+    parentId: rootId,
+    resolvedInputHash: emptyHash(),
+    state: 'clean',
+    execution: null,
+    executionHistory: [],
+    lastError: null,
+    labels: {},
+    createdAt: NOW,
+    updatedAt: NOW,
+    version: 1,
+    params: {
+      axis: 'converter',
+      variants,
+      promotedChildSlotIndex: null,
+      deletedSlotIndices: [],
+    },
+  }
+
+  const nodes: ConversationTreeNode[] = [root, fanNode]
+  const edges: ConversationTreeEdge[] = [
+    { id: `${rootId}->${fanId}`, parentId: rootId, childId: fanId, slotIndex: 0 },
+  ]
+  for (let slot = 0; slot < distinctSlots.length; slot += 1) {
+    const variant = variants[slot]
+    const converters = variant !== undefined && variant.axis === 'converter' ? variant.payload.converters : []
+    const userId = mintNodeId()
+    const userTurn: UserTurnNode = {
+      id: userId,
+      kind: 'user_turn',
+      parentId: fanId,
+      resolvedInputHash: emptyHash(),
+      state: 'clean',
+      execution: null,
+      executionHistory: [],
+      lastError: null,
+      labels: {},
+      createdAt: NOW,
+      updatedAt: NOW,
+      version: 1,
+      params: {
+        role: 'user',
+        text: sharedText,
+        attachments: [],
+        ...(converters.length > 0 ? { converterPipeline: converters } : {}),
+      },
+    }
+    nodes.push(userTurn)
+    edges.push({ id: `${fanId}->${userId}`, parentId: fanId, childId: userId, slotIndex: slot })
+    const sendId = mintNodeId()
+    const send: SendNode = {
+      id: sendId,
+      kind: 'send',
+      parentId: userId,
+      resolvedInputHash: emptyHash(),
+      state: 'clean',
+      execution: null,
+      executionHistory: [],
+      lastError: null,
+      labels: {},
+      createdAt: NOW,
+      updatedAt: NOW,
+      version: 1,
+      params: {},
+    }
+    nodes.push(send)
+    edges.push({ id: `${userId}->${sendId}`, parentId: userId, childId: sendId, slotIndex: 0 })
+  }
+
+  return {
+    id: mintTreeId(),
+    nodes,
+    edges,
+    rootId,
+    displayName: sharedText.slice(0, 40),
+    createdAt: NOW,
+    parentConversationTreeId: null,
+    parentSourceConversationId: null,
+    undoStack: [],
+  }
 }
 
 // Re-export FanAxis so the host doesn't need to dual-import.

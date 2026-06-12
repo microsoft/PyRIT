@@ -230,25 +230,28 @@ describe('useReloadReconstruction', () => {
     expect(tree.nodes.some((n) => n.kind === 'fan')).toBe(true)
   })
 
-  it('discloses degraded reconstruction for a converter fan (deferred topology)', async () => {
-    // Converter fans are not yet fan-aware-reconstructed; they fall back to a
-    // linear chain and MUST disclose the loss rather than silently degrade.
+  it('reconstructs a root-level converter fan (no banner) and fetches each member leaf', async () => {
+    // PR7g slice 3: a single root-level converter fan reconstructs fully via
+    // per-leaf converter fetches; the degraded banner must NOT fire.
     const onTreeChange = jest.fn()
     const onReconstructionDegraded = jest.fn()
+    const getMessages = jest.fn(async () => mkMessages('conv-1'))
     const api = {
       listAttacks: jest.fn(async () =>
         mkList([
           mkAttack({
             attack_result_id: 'ar-0',
+            conversation_id: 'conv-0',
             labels: { conversation_tree_id: 't-conv', tree_path: '[["converter",0]]' },
           }),
           mkAttack({
             attack_result_id: 'ar-1',
+            conversation_id: 'conv-1',
             labels: { conversation_tree_id: 't-conv', tree_path: '[["converter",1]]' },
           }),
         ]),
       ),
-      getMessages: jest.fn(async () => mkMessages('conv-1')),
+      getMessages,
     }
 
     renderHook(() =>
@@ -262,8 +265,58 @@ describe('useReloadReconstruction', () => {
     )
 
     await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    expect(onReconstructionDegraded).not.toHaveBeenCalled()
+    const tree = onTreeChange.mock.calls[0][0] as ConversationTree
+    const fan = tree.nodes.find((n) => n.kind === 'fan')
+    expect(fan?.kind).toBe('fan')
+    // Base fetch (pickBaseAttack) + one per member leaf for the converter
+    // resolver — at least the 2 member fetches happened.
+    expect(getMessages).toHaveBeenCalledWith('ar-0', 'conv-0')
+    expect(getMessages).toHaveBeenCalledWith('ar-1', 'conv-1')
+  })
+
+  it('discloses degraded reconstruction for a NESTED fan (deferred topology)', async () => {
+    // Nested fans are not fan-aware-reconstructed; they fall back to a linear
+    // chain and MUST disclose the loss rather than silently degrade.
+    const onTreeChange = jest.fn()
+    const onReconstructionDegraded = jest.fn()
+    const api = {
+      listAttacks: jest.fn(async () =>
+        mkList([
+          mkAttack({
+            attack_result_id: 'n00',
+            labels: { conversation_tree_id: 't-nested', tree_path: '[["prompt",0],["attempt",0]]' },
+          }),
+          mkAttack({
+            attack_result_id: 'n01',
+            labels: { conversation_tree_id: 't-nested', tree_path: '[["prompt",0],["attempt",1]]' },
+          }),
+          mkAttack({
+            attack_result_id: 'n10',
+            labels: { conversation_tree_id: 't-nested', tree_path: '[["prompt",1],["attempt",0]]' },
+          }),
+          mkAttack({
+            attack_result_id: 'n11',
+            labels: { conversation_tree_id: 't-nested', tree_path: '[["prompt",1],["attempt",1]]' },
+          }),
+        ]),
+      ),
+      getMessages: jest.fn(async () => mkMessages('conv-1')),
+    }
+
+    renderHook(() =>
+      useReloadReconstruction({
+        fragmentTreeId: 't-nested',
+        currentTree: null,
+        onTreeChange,
+        onReconstructionDegraded,
+        reloadApi: api,
+      }),
+    )
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
     expect(onReconstructionDegraded).toHaveBeenCalledTimes(1)
-    expect(onReconstructionDegraded.mock.calls[0][0]).toMatchObject({ fanCount: 1 })
+    expect(onReconstructionDegraded.mock.calls[0][0].fanCount).toBeGreaterThanOrEqual(2)
   })
 
   it('does NOT disclose degradation for a purely linear AR set (no fans)', async () => {

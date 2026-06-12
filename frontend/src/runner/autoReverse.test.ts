@@ -557,7 +557,131 @@ describe('reconstructTreeWithFans', () => {
     })
     expect(result.fanCount).toBe(1)
     expect(result.fullyReconstructed).toBe(false)
-    // Linear fallback: no fan node.
+    // Linear fallback: no fan node (no converterResolver supplied).
+    expect(result.tree.nodes.some((n) => n.kind === 'fan')).toBe(false)
+  })
+
+  it('root-level converter fan WITH a resolver → root → fan(converter) → [user_turn(converter) → send]×N', () => {
+    const base64 = mkConverter('Base64Converter')
+    const rot13 = mkConverter('RotConverter')
+    const perLeaf: Record<string, ComponentIdentifier[]> = {
+      c0: [base64],
+      c1: [rot13],
+    }
+    const result = reconstructTreeWithFans({
+      baseMessages: [userMsg(1, 'prompt'), asstMsg(2, 'resp')],
+      leaves: [
+        mkLeaf({ id: 'c0', treePath: '[["converter",0]]' }),
+        mkLeaf({ id: 'c1', treePath: '[["converter",1]]' }),
+      ],
+      converterResolver: (leaf) => perLeaf[leaf.attack_result_id] ?? [],
+    })
+
+    expect(result.fanCount).toBe(1)
+    expect(result.fullyReconstructed).toBe(true)
+
+    const fan = result.tree.nodes.find((n) => n.kind === 'fan')
+    if (fan?.kind !== 'fan') throw new Error('expected a fan node')
+    expect(fan.params.axis).toBe('converter')
+    expect(fan.parentId).toBe(result.tree.rootId)
+    expect(fan.params.variants).toHaveLength(2)
+
+    // Each fan child is a user_turn carrying that slot's converter pipeline,
+    // and each user_turn has a single send child.
+    const fanChildEdges = result.tree.edges
+      .filter((e) => e.parentId === fan.id)
+      .sort((a, b) => a.slotIndex - b.slotIndex)
+    expect(fanChildEdges.map((e) => e.slotIndex)).toEqual([0, 1])
+
+    const slotConverterTypes: string[] = []
+    for (const edge of fanChildEdges) {
+      const child = result.tree.nodes.find((n) => n.id === edge.childId)
+      if (child?.kind !== 'user_turn') throw new Error('expected user_turn fan child')
+      slotConverterTypes.push(child.params.converterPipeline?.[0]?.inline?.type ?? '')
+      // Each user_turn has exactly one send child.
+      const sendEdges = result.tree.edges.filter((e) => e.parentId === child.id)
+      expect(sendEdges).toHaveLength(1)
+      const send = result.tree.nodes.find((n) => n.id === sendEdges[0].childId)
+      expect(send?.kind).toBe('send')
+    }
+    expect(slotConverterTypes).toEqual(['Base64Converter', 'RotConverter'])
+  })
+
+  it('converter fan uses original_value (authored prompt), not the converted gibberish, for node text', () => {
+    const base64 = mkConverter('Base64Converter')
+    // userMsg sets original_value === converted_value === the arg; build a
+    // message where they differ to prove we pick original_value.
+    const convertedFirst: BackendMessage = {
+      turn_number: 1,
+      role: 'user',
+      pieces: [{
+        piece_id: 'p1',
+        original_value_data_type: 'text',
+        converted_value_data_type: 'text',
+        original_value: 'authored prompt',
+        converted_value: 'YXV0aG9yZWQ=',
+        scores: [],
+        response_error: 'none',
+        original_prompt_id: 'p1',
+        converter_identifiers: [base64],
+      }],
+      created_at: '2026-06-11T00:00:00Z',
+    }
+    const result = reconstructTreeWithFans({
+      baseMessages: [convertedFirst, asstMsg(2, 'resp')],
+      leaves: [
+        mkLeaf({ id: 'c0', treePath: '[["converter",0]]' }),
+        mkLeaf({ id: 'c1', treePath: '[["converter",1]]' }),
+      ],
+      converterResolver: () => [base64],
+    })
+    const root = result.tree.nodes.find((n) => n.id === result.tree.rootId)
+    if (root?.kind !== 'root_prompt') throw new Error('expected root')
+    expect(root.params.text).toBe('authored prompt')
+  })
+
+  it('converter fan with per-slot divergence → most-frequent wins + onConverterDivergence fires', () => {
+    const base64 = mkConverter('Base64Converter')
+    const rot13 = mkConverter('RotConverter')
+    // Slot 0 has three member leaves that disagree (2× base64, 1× rot13).
+    const perLeaf: Record<string, ComponentIdentifier[]> = {
+      a: [base64],
+      b: [base64],
+      c: [rot13],
+    }
+    const diverged: number[] = []
+    const result = reconstructTreeWithFans({
+      baseMessages: [userMsg(1, 'prompt'), asstMsg(2, 'resp')],
+      leaves: [
+        mkLeaf({ id: 'a', treePath: '[["converter",0]]' }),
+        mkLeaf({ id: 'b', treePath: '[["converter",0]]' }),
+        mkLeaf({ id: 'c', treePath: '[["converter",0]]' }),
+        mkLeaf({ id: 'd', treePath: '[["converter",1]]' }),
+      ],
+      converterResolver: (leaf) => perLeaf[leaf.attack_result_id] ?? [rot13],
+      onConverterDivergence: (slot) => diverged.push(slot),
+    })
+    expect(result.fullyReconstructed).toBe(true)
+    expect(diverged).toEqual([0])
+    const fan = result.tree.nodes.find((n) => n.kind === 'fan')
+    if (fan?.kind !== 'fan' || fan.params.axis !== 'converter') throw new Error('expected converter fan')
+    // Slot 0 consensus is base64 (2 of 3).
+    expect(fan.params.variants[0].axis).toBe('converter')
+    if (fan.params.variants[0].axis !== 'converter') throw new Error('narrow')
+    expect(fan.params.variants[0].payload.converters[0].inline?.type).toBe('Base64Converter')
+  })
+
+  it('converter fan with NON-contiguous slots → degraded (no tombstone guessing)', () => {
+    const base64 = mkConverter('Base64Converter')
+    const result = reconstructTreeWithFans({
+      baseMessages: [userMsg(1, 'prompt'), asstMsg(2, 'resp')],
+      leaves: [
+        mkLeaf({ id: 'c0', treePath: '[["converter",0]]' }),
+        mkLeaf({ id: 'c2', treePath: '[["converter",2]]' }),
+      ],
+      converterResolver: () => [base64],
+    })
+    expect(result.fullyReconstructed).toBe(false)
     expect(result.tree.nodes.some((n) => n.kind === 'fan')).toBe(false)
   })
 
