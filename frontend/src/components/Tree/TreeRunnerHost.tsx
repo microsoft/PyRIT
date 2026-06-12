@@ -288,6 +288,21 @@ export function TreeRunnerHost({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Auto-cancel the prior tree's in-flight wave when the foregrounded tree
+  // swaps. Without this, a wave running on tree A keeps running after a
+  // swap to tree B — its sink writes silently drop (id mismatch) and the
+  // ribbon Cancel button can no longer reach it (it's bound to B's id).
+  // cancelWave is a clean no-op when the prior tree has no active wave.
+  const prevTreeIdRef = useRef<ConversationTreeId | null>(tree?.id ?? null)
+  useEffect(() => {
+    const prev = prevTreeIdRef.current
+    const curr = tree?.id ?? null
+    if (prev !== null && prev !== curr) {
+      void shim.cancelWave(prev)
+    }
+    prevTreeIdRef.current = curr
+  }, [tree?.id, shim])
+
   // Compose action callbacks: default onRefresh routes to shim.refreshNode
   // for whichever tree is current. Host-supplied callbacks (if any) win.
   const composedActionCallbacks = useMemo<ActionCallbacks | undefined>(() => {

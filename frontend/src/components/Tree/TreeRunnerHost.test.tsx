@@ -385,6 +385,74 @@ describe('TreeRunnerHost — shim wiring', () => {
       view.container.querySelector('[data-tree-wave-status]')?.getAttribute('data-status'),
     ).toBe('idle')
   })
+
+  it('auto-cancels the prior tree\u2019s active wave when the tree id changes (no zombie wave)', async () => {
+    const treeA = mkDispatchableTree('t-swap-a')
+    const treeB = mkEmptyTree('t-swap-b')
+    // Inject in-memory persistence deps so the URL-write effect doesn't
+    // pollute window.location.hash for later tests (which would trigger a
+    // real reload + network call). getHash returns '' so reload no-ops.
+    const { deps: persistDeps } = makePersistenceDeps()
+    let aCancelled = false
+    const starter = bookendedStarter(
+      (args: RunWaveStarterArgs) =>
+        new Promise<WaveSummary>((resolve) => {
+          const tick = () => {
+            if (args.controller.isCancelled()) {
+              aCancelled = true
+              resolve(emptySummary)
+            } else {
+              setTimeout(tick, 5)
+            }
+          }
+          tick()
+        }),
+    )
+
+    let captured: RunnerShim | undefined
+    const view = render(
+      <TreeRunnerHost
+        tree={treeA}
+        operator="alice"
+        runWaveStarter={starter}
+        workspacePersistenceDeps={persistDeps}
+        onShimReady={(s) => {
+          captured = s
+        }}
+      />,
+    )
+    await waitFor(() => expect(captured).toBeDefined())
+
+    // Start a wave on tree A and let it enter the running state.
+    await act(async () => {
+      void captured!.refreshNode(treeA.id, nodeId('send-1'))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(
+        view.container.querySelector('[data-tree-wave-status]')?.getAttribute('data-status'),
+      ).toBe('running')
+    })
+
+    // Swap to tree B while A's wave is in flight.
+    await act(async () => {
+      view.rerender(
+        <TreeRunnerHost
+          tree={treeB}
+          operator="alice"
+          runWaveStarter={starter}
+          workspacePersistenceDeps={persistDeps}
+          onShimReady={(s) => {
+            captured = s
+          }}
+        />,
+      )
+    })
+
+    // The prior tree's wave must be cancelled rather than left running.
+    await waitFor(() => expect(aCancelled).toBe(true))
+  })
 })
 
 // ============================================================================
