@@ -204,7 +204,10 @@ class ConverterService:
         # disk (frontend concern), then delegate construction (incl. param
         # coercion) to the converter registry.
         params = self._resolve_converter_params(params=request.params)
-        converter_class = self._registry.get_converter_class(converter_type=request.type)
+        try:
+            converter_class = self._registry.get_class(request.type)
+        except KeyError as e:
+            raise ValueError(f"Converter type '{request.type}' not found") from e
         params = await self._persist_data_uri_params_async(converter_class=converter_class, params=params)
         converter_obj = self._registry.create_instance(request.type, **params)
         self._registry.register_instance(converter_obj, name=converter_id)

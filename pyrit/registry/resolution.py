@@ -160,10 +160,12 @@ def is_registry_reference(annotation: Any) -> bool:
 
 def coerce_string_to_annotation(*, value: str, annotation: Any) -> Any:
     """
-    Coerce a string value to the annotated scalar type (int/float/bool).
+    Coerce a string value to the annotated scalar type (int/float/bool/Literal).
 
-    ``Optional[X]`` / ``X | None`` is unwrapped to ``X`` first. ``Literal`` and
-    ``str`` values pass through unchanged.
+    ``Optional[X]`` / ``X | None`` is unwrapped to ``X`` first. A ``Literal`` value
+    is validated against the allowed members and returned as the matching member
+    (so an int literal comes back as an ``int``); other ``str`` values pass through
+    unchanged.
 
     Args:
         value (str): The raw string value.
@@ -171,10 +173,11 @@ def coerce_string_to_annotation(*, value: str, annotation: Any) -> Any:
 
     Returns:
         Any: The value coerced to the annotated type, or the original string when
-        no numeric/boolean coercion applies.
+        no numeric/boolean/Literal coercion applies.
 
     Raises:
-        ValueError: If the value cannot be interpreted as the annotated type.
+        ValueError: If the value cannot be interpreted as the annotated type, or is
+            not one of the allowed members of an annotated ``Literal``.
     """
     if annotation is inspect.Parameter.empty:
         return value
@@ -182,6 +185,13 @@ def coerce_string_to_annotation(*, value: str, annotation: Any) -> Any:
     non_none = get_union_non_none_args(annotation)
     if non_none is not None and len(non_none) == 1:
         annotation = non_none[0]
+
+    if get_origin(annotation) is Literal:
+        allowed = get_args(annotation)
+        for member in allowed:
+            if value == str(member):
+                return member
+        raise ValueError(f"expected one of {[str(a) for a in allowed]}, got {value!r}")
 
     if annotation is int:
         return int(value)

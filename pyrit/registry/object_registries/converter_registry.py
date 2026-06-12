@@ -14,7 +14,7 @@ A single registry for ``PromptConverter`` that both:
   backend.
 
 It extends ``ContainerRegistry``: the class catalog is reached through the
-buildable methods (``get_converter_class``, ``list_class_metadata``,
+buildable methods (``get_class``, ``list_class_metadata``,
 ``create_instance``) while the instance container is the primary surface
 (``register_instance``, ``get_instance_by_name``, ``get_all_instances``,
 ``get_names``).
@@ -69,7 +69,7 @@ class ConverterMetadata(ClassRegistryEntry):
     """
     Metadata describing a registered ``PromptConverter`` class.
 
-    Use ``ConverterRegistry.get_converter_class()`` to get the actual class or
+    Use ``ConverterRegistry.get_class()`` to get the actual class or
     ``create_instance()`` to build a configured instance.
     """
 
@@ -266,24 +266,3 @@ class ConverterRegistry(ContainerRegistry["PromptConverter", ConverterMetadata])
             parameters=parameters,
             is_llm_based=any(p.requires_llm for p in parameters),
         )
-
-    def get_converter_class(self, *, converter_type: str) -> type[PromptConverter]:
-        """
-        Resolve a converter class by its exact class name.
-
-        Args:
-            converter_type (str): The exact class name (e.g. ``"Base64Converter"``).
-
-        Returns:
-            type[PromptConverter]: The converter class.
-
-        Raises:
-            ValueError: If the converter type is not registered.
-        """
-        self._ensure_discovered()
-        entry = self._class_entries.get(converter_type)
-        if entry is None:
-            raise ValueError(
-                f"Converter type '{converter_type}' not found. Available types: {sorted(self._class_entries.keys())}"
-            )
-        return entry.registered_class

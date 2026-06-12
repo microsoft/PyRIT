@@ -260,18 +260,18 @@ class TestDiscovery:
         assert "base64_converter" not in names
 
 
-class TestGetConverterClass:
-    """Tests for get_converter_class."""
+class TestGetClass:
+    """Tests for get_class (the inherited class-catalog accessor)."""
 
     def test_returns_class(self, registry: ConverterRegistry):
-        assert registry.get_converter_class(converter_type="Base64Converter") is Base64Converter
+        assert registry.get_class("Base64Converter") is Base64Converter
 
     def test_unknown_type_raises(self, registry: ConverterRegistry):
-        with pytest.raises(ValueError, match="not found"):
-            registry.get_converter_class(converter_type="NotARealConverter")
+        with pytest.raises(KeyError, match="not found"):
+            registry.get_class("NotARealConverter")
 
     def test_is_subclass_relationship(self, registry: ConverterRegistry):
-        assert issubclass(registry.get_converter_class(converter_type="Base64Converter"), PromptConverter)
+        assert issubclass(registry.get_class("Base64Converter"), PromptConverter)
 
 
 class TestCreateInstance:
@@ -286,7 +286,7 @@ class TestCreateInstance:
         assert converter.get_identifier().params.get("caesar_offset") == 13
 
     def test_unknown_type_raises(self, registry: ConverterRegistry):
-        with pytest.raises(ValueError, match="not found"):
+        with pytest.raises(KeyError, match="not found"):
             registry.create_instance("NotARealConverter")
 
     def test_unknown_param_raises(self, registry: ConverterRegistry):

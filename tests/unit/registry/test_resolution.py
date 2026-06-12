@@ -137,6 +137,18 @@ class TestCoerceStringToAnnotation:
     def test_str_passthrough(self) -> None:
         assert coerce_string_to_annotation(value="hello", annotation=str) == "hello"
 
+    def test_literal_valid(self) -> None:
+        assert coerce_string_to_annotation(value="b", annotation=Literal["a", "b"]) == "b"
+
+    def test_literal_invalid_raises(self) -> None:
+        with pytest.raises(ValueError, match="one of"):
+            coerce_string_to_annotation(value="c", annotation=Literal["a", "b"])
+
+    def test_literal_coerces_to_member_type(self) -> None:
+        result = coerce_string_to_annotation(value="2", annotation=Literal[1, 2])
+        assert result == 2
+        assert isinstance(result, int)
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestResolveConstructorArgs:
@@ -149,6 +161,10 @@ class TestResolveConstructorArgs:
     def test_literal_passthrough(self) -> None:
         resolved = resolve_constructor_args(cls=_SimpleOnly, raw_args={"mode": "b"})
         assert resolved == {"mode": "b"}
+
+    def test_literal_invalid_raises(self) -> None:
+        with pytest.raises(ValueError, match="mode"):
+            resolve_constructor_args(cls=_SimpleOnly, raw_args={"mode": "z"})
 
     def test_unknown_param_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown parameter 'nope'"):
