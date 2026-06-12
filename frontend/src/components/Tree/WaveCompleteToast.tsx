@@ -66,6 +66,14 @@ export function WaveCompleteToast({
 
   const transient = summary.failed.transient
   const retryDisabled = transient === 0
+  // PR6.3 fix: when the only failures are rate-limited, the operator
+  // sees a mute disabled Retry. Spec §2.3 instructs them to wait for
+  // the rate-limit window then click Refresh tree manually — surface
+  // that in the title attribute so the disabled button is honest.
+  const retryDisabledHint =
+    retryDisabled && summary.failed.rate_limited > 0
+      ? 'Wait for the rate-limit window to clear, then click Refresh tree.'
+      : undefined
 
   return (
     <div data-tree-wave-toast className={styles.toast} role="status">
@@ -90,6 +98,7 @@ export function WaveCompleteToast({
           size="small"
           appearance="subtle"
           disabled={retryDisabled}
+          title={retryDisabledHint}
           onClick={onRetryFailed}
         >
           Retry failed

@@ -120,6 +120,27 @@ describe('WaveCompleteToast — buttons', () => {
     expect(screen.getByRole('button', { name: /retry failed/i }).hasAttribute('disabled')).toBe(true)
   })
 
+  it('disabled Retry carries a wait-and-refresh tooltip when failures are rate-limited (PR6.3 fix)', () => {
+    const summary: WaveSummary = {
+      ...baseSummary,
+      failed: { transient: 0, rate_limited: 5, permanent: 0 },
+    }
+    render(<WaveCompleteToast summary={summary} onRetryFailed={jest.fn()} />)
+    const btn = screen.getByRole('button', { name: /retry failed/i })
+    expect(btn.getAttribute('title')).toMatch(/rate-limit/i)
+    expect(btn.getAttribute('title')).toMatch(/refresh/i)
+  })
+
+  it('disabled Retry has no tooltip when failures are only permanent (rate-limit hint would mislead)', () => {
+    const summary: WaveSummary = {
+      ...baseSummary,
+      failed: { transient: 0, rate_limited: 0, permanent: 2 },
+    }
+    render(<WaveCompleteToast summary={summary} onRetryFailed={jest.fn()} />)
+    const btn = screen.getByRole('button', { name: /retry failed/i })
+    expect(btn.getAttribute('title')).toBeNull()
+  })
+
   it('hides [Retry failed] entirely when onRetryFailed is not wired', () => {
     render(<WaveCompleteToast summary={baseSummary} />)
     expect(screen.queryByRole('button', { name: /retry failed/i })).toBeNull()
