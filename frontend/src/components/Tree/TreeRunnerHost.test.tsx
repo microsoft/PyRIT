@@ -61,17 +61,19 @@ class MemoryStorage implements Storage {
   }
 }
 
-function makePersistenceDeps(storage = new MemoryStorage()): {
+function makePersistenceDeps(storage = new MemoryStorage(), initialHash = ''): {
   deps: WorkspacePersistenceDeps
   setHashCalls: string[]
   storage: MemoryStorage
 } {
   const setHashCalls: string[] = []
+  const hash = { value: initialHash }
   const deps: WorkspacePersistenceDeps = {
     storage,
-    getHash: () => '',
+    getHash: () => hash.value,
     setHash: (next) => {
       setHashCalls.push(next)
+      hash.value = next
     },
     addBeforeUnloadListener: () => () => undefined,
     setTimeoutFn: ((cb: () => void, ms?: number) => setTimeout(cb, ms)) as unknown as WorkspacePersistenceDeps['setTimeoutFn'],
@@ -528,5 +530,80 @@ describe('TreeRunnerHost — workspace persistence wiring', () => {
       jest.advanceTimersByTime(1)
     })
     expect(JSON.parse(storage.getItem(STORAGE_KEYS.recentTreeIds) ?? '[]')).toEqual(['x'])
+  })
+
+  it('triggers reload reconstruction from fragment tree id when tree is null', async () => {
+    const { deps } = makePersistenceDeps(new MemoryStorage(), '#conversation_tree_id=frag-id')
+    const reloadApi = {
+      listAttacks: jest.fn(async () => ({
+        items: [
+          {
+            attack_result_id: 'ar-1',
+            conversation_id: 'conv-1',
+            attack_type: 'red_teaming',
+            converters: [],
+            message_count: 2,
+            related_conversation_ids: [],
+            labels: { conversation_tree_id: 'frag-id' },
+            created_at: '2026-06-11T00:00:00Z',
+            updated_at: '2026-06-11T00:00:00Z',
+          },
+        ],
+        pagination: { limit: 1, has_more: false, next_cursor: null, prev_cursor: null },
+      })),
+      getMessages: jest.fn(async () => ({
+        conversation_id: 'conv-1',
+        messages: [
+          {
+            turn_number: 1,
+            role: 'user',
+            pieces: [{
+              piece_id: 'p1',
+              original_value_data_type: 'text',
+              converted_value_data_type: 'text',
+              original_value: 'hello',
+              converted_value: 'hello',
+              scores: [],
+              response_error: 'none',
+              original_prompt_id: 'p1',
+              converter_identifiers: [],
+            }],
+            created_at: '2026-06-11T00:00:00Z',
+          },
+          {
+            turn_number: 2,
+            role: 'assistant',
+            pieces: [{
+              piece_id: 'p2',
+              original_value_data_type: 'text',
+              converted_value_data_type: 'text',
+              original_value: 'hi',
+              converted_value: 'hi',
+              scores: [],
+              response_error: 'none',
+              original_prompt_id: 'p2',
+              converter_identifiers: [],
+            }],
+            created_at: '2026-06-11T00:00:00Z',
+          },
+        ],
+      })),
+    }
+    const onTreeChange = jest.fn()
+
+    render(
+      <TreeRunnerHost
+        tree={null}
+        onTreeChange={onTreeChange}
+        workspacePersistenceDeps={deps}
+        reloadApi={reloadApi}
+      />,
+    )
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    expect(reloadApi.listAttacks).toHaveBeenCalledWith({
+      limit: 200,
+      label: ['conversation_tree_id:frag-id'],
+    })
   })
 })

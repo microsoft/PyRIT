@@ -34,6 +34,7 @@ import { WaveStatusRibbon } from './WaveStatusRibbon'
 import { summarizeWaveEvents } from './waveStatus'
 import { useCostGuardrailModal } from './useCostGuardrailModal'
 import { useWorkspacePersistence, type WorkspacePersistenceDeps } from './useWorkspacePersistence'
+import { useReloadReconstruction, type ReloadReconstructionApi } from './useReloadReconstruction'
 import { useTreeRunnerHostStyles } from './TreeRunnerHost.styles'
 import type { ActionCallbacks } from './actionRail'
 import type { AvailableConvertersValue } from './availableConvertersContext'
@@ -58,6 +59,7 @@ import type {
 } from '../../runner/treeTypes'
 import type { WaveSummary } from '../../runner/wave'
 import { DEFAULT_WORKSPACE_SETTINGS } from '../../runner/workspacePersistence'
+import { attacksApi } from '../../services/api'
 
 // ============================================================================
 // Public surface
@@ -104,6 +106,8 @@ export interface TreeRunnerHostProps {
   workspaceSettings?: WorkspaceSettings
   /** Test-only override for persistence browser deps (PR7f.2 tests). */
   workspacePersistenceDeps?: WorkspacePersistenceDeps
+  /** Test-only override for reload reconstruction API (PR7g tests). */
+  reloadApi?: ReloadReconstructionApi
 }
 
 // ============================================================================
@@ -138,6 +142,7 @@ export function TreeRunnerHost({
   workspaceRecentTreeIds,
   workspaceSettings,
   workspacePersistenceDeps,
+  reloadApi,
 }: TreeRunnerHostProps) {
   const styles = useTreeRunnerHostStyles()
   const [waveEvents, setWaveEvents] = useState<WaveEvent[]>([])
@@ -150,11 +155,18 @@ export function TreeRunnerHost({
 
   // PR7f.2: schema-versioned sessionStorage + URL fragment sync +
   // beforeunload dirty-edit guard.
-  useWorkspacePersistence({
+  const { boot } = useWorkspacePersistence({
     tree,
     recentTreeIds: workspaceRecentTreeIds ?? [],
     settings: workspaceSettings ?? DEFAULT_WORKSPACE_SETTINGS,
     deps: workspacePersistenceDeps,
+  })
+
+  useReloadReconstruction({
+    fragmentTreeId: boot.treeIdFromFragment,
+    currentTree: tree,
+    onTreeChange,
+    reloadApi: reloadApi ?? attacksApi,
   })
 
   // Refs hold the latest prop values so the sink + shim deps (constructed
