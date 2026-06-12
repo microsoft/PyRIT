@@ -64,14 +64,8 @@ KNOWN_LAZY_VIOLATIONS: dict[str, dict[str, str]] = {
 # Reverse-guard violations: pyrit.common modules that still reach up into higher
 # layers. These are slated to relocate; the ratchet forces them to shrink.
 KNOWN_COMMON_VIOLATIONS: dict[str, dict[str, str]] = {
-    "pyrit.common.data_url_converter": {
-        "pyrit.memory": "relocate",
-    },
     "pyrit.common.display_response": {
         "pyrit.memory": "relocate",
-        "pyrit.models": "relocate",
-    },
-    "pyrit.common.question_answer_helpers": {
         "pyrit.models": "relocate",
     },
 }

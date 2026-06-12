@@ -173,7 +173,7 @@ async def test_build_input_for_multi_modal(target: OpenAIResponseTarget):
         ),
     ]
     with patch(
-        "pyrit.common.data_url_converter.convert_local_image_to_data_url_async",
+        "pyrit.memory.storage.data_url_converter.convert_local_image_to_data_url_async",
         return_value="data:image/jpeg;base64,encoded_string",
     ):
         messages = await target._build_input_for_multi_modal_async(entries)
@@ -324,7 +324,7 @@ async def test_send_prompt_async_empty_response_adds_to_memory(
     mock_response = create_mock_response(openai_response_json)
 
     with patch(
-        "pyrit.common.data_url_converter.convert_local_image_to_data_url_async",
+        "pyrit.memory.storage.data_url_converter.convert_local_image_to_data_url_async",
         return_value="data:image/jpeg;base64,encoded_string",
     ):
         target._async_client.responses.create = AsyncMock(return_value=mock_response)  # type: ignore[method-assign]
@@ -411,7 +411,7 @@ async def test_send_prompt_async(openai_response_json: dict, target: OpenAIRespo
     mock_response = create_mock_response(openai_response_json)
 
     with patch(
-        "pyrit.common.data_url_converter.convert_local_image_to_data_url_async",
+        "pyrit.memory.storage.data_url_converter.convert_local_image_to_data_url_async",
         return_value="data:image/jpeg;base64,encoded_string",
     ):
         target._async_client.responses.create = AsyncMock(return_value=mock_response)  # type: ignore[method-assign]
@@ -455,7 +455,7 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
     mock_response = create_mock_response(openai_response_json)
 
     with patch(
-        "pyrit.common.data_url_converter.convert_local_image_to_data_url_async",
+        "pyrit.memory.storage.data_url_converter.convert_local_image_to_data_url_async",
         return_value="data:image/jpeg;base64,encoded_string",
     ):
         target._async_client.responses.create = AsyncMock(return_value=mock_response)  # type: ignore[method-assign]
@@ -740,7 +740,7 @@ async def test_build_input_for_multi_modal_async_filters_reasoning(target: OpenA
     ]
 
     # Patch image conversion (should not be called)
-    with patch("pyrit.common.data_url_converter.convert_local_image_to_data_url_async", new_callable=AsyncMock):
+    with patch("pyrit.memory.storage.data_url_converter.convert_local_image_to_data_url_async", new_callable=AsyncMock):
         result = await target._build_input_for_multi_modal_async(conversation)
 
     # Reasoning is now filtered out (not sent to API), so we have 3 items:
