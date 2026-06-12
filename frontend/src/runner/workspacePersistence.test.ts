@@ -15,6 +15,7 @@ import {
   writeWorkspaceToStorage,
   wipeIfSchemaMismatch,
   hasUnrefreshedEdits,
+  countUnrefreshedEdits,
   parseTreeIdFromUrlFragment,
   serializeTreeIdToUrlFragment,
 } from './workspacePersistence'
@@ -205,6 +206,31 @@ describe('hasUnrefreshedEdits', () => {
     ])
     // These are runner-driven failure states, not operator edits.
     expect(hasUnrefreshedEdits(tree)).toBe(false)
+  })
+})
+
+// ============================================================================
+// countUnrefreshedEdits
+// ============================================================================
+
+describe('countUnrefreshedEdits', () => {
+  it('returns 0 when tree is null', () => {
+    expect(countUnrefreshedEdits(null)).toBe(0)
+  })
+
+  it('returns 0 when no node is edited or draft', () => {
+    const tree: ConversationTree = mkTree('root', [mkRoot('root'), mkSend('send-1', 'root')])
+    expect(countUnrefreshedEdits(tree)).toBe(0)
+  })
+
+  it('counts edited + draft nodes only', () => {
+    const tree: ConversationTree = mkTree('root', [
+      mkRoot('root'),
+      mkSend('send-1', 'root', undefined, { state: 'edited' }),
+      mkSend('send-2', 'root', undefined, { state: 'draft' }),
+      mkSend('send-3', 'root', undefined, { state: 'failed' }),
+    ])
+    expect(countUnrefreshedEdits(tree)).toBe(2)
   })
 })
 

@@ -33,6 +33,7 @@ import { TreeCanvas } from './TreeCanvas'
 import { WaveStatusRibbon } from './WaveStatusRibbon'
 import { summarizeWaveEvents } from './waveStatus'
 import { useCostGuardrailModal } from './useCostGuardrailModal'
+import { useDirtyEditModal } from './useDirtyEditModal'
 import { useWorkspacePersistence, type WorkspacePersistenceDeps } from './useWorkspacePersistence'
 import { useReloadReconstruction, type ReloadReconstructionApi } from './useReloadReconstruction'
 import { useTreeRunnerHostStyles } from './TreeRunnerHost.styles'
@@ -108,6 +109,13 @@ export interface TreeRunnerHostProps {
   workspacePersistenceDeps?: WorkspacePersistenceDeps
   /** Test-only override for reload reconstruction API (PR7g tests). */
   reloadApi?: ReloadReconstructionApi
+  /**
+   * Fired once with the dirty-edit `guardedSwap(tree, swap)` (PR7h). The
+   * host wires App's openTree / newTree / closeTree through it so an
+   * in-app tree swap with unrefreshed edits prompts the confirm modal.
+   * `branchToNewTree` is exempt per spec §13.1.
+   */
+  onGuardedSwapReady?: (guardedSwap: (tree: ConversationTree | null, swap: () => void) => void) => void
 }
 
 // ============================================================================
@@ -143,6 +151,7 @@ export function TreeRunnerHost({
   workspaceSettings,
   workspacePersistenceDeps,
   reloadApi,
+  onGuardedSwapReady,
 }: TreeRunnerHostProps) {
   const styles = useTreeRunnerHostStyles()
   const [waveEvents, setWaveEvents] = useState<WaveEvent[]>([])
@@ -152,6 +161,18 @@ export function TreeRunnerHost({
   const { guardrail, modalElement } = useCostGuardrailModal({
     confirmThresholdCount: confirmThresholdCount ?? DEFAULT_CONFIRM_THRESHOLD,
   })
+
+  // PR7h: in-app tree-swap guard (spec §13.1a). The host exposes
+  // guardedSwap to App via onGuardedSwapReady; its modal renders in the
+  // modal slot alongside the cost-guardrail modal.
+  const { guardedSwap, modalElement: dirtyEditModalElement } = useDirtyEditModal()
+  const onGuardedSwapReadyRef = useRef(onGuardedSwapReady)
+  useEffect(() => {
+    onGuardedSwapReadyRef.current = onGuardedSwapReady
+  }, [onGuardedSwapReady])
+  useEffect(() => {
+    onGuardedSwapReadyRef.current?.(guardedSwap)
+  }, [guardedSwap])
 
   // PR7f.2: schema-versioned sessionStorage + URL fragment sync +
   // beforeunload dirty-edit guard.
@@ -328,6 +349,7 @@ export function TreeRunnerHost({
       <div data-slot="toast" className={styles.toast} />
       <div data-slot="modal" className={styles.modal}>
         {modalElement}
+        {dirtyEditModalElement}
       </div>
     </div>
   )

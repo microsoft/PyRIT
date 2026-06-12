@@ -153,6 +153,16 @@ export function hasUnrefreshedEdits(tree: ConversationTree | null): boolean {
   return tree.nodes.some((n) => n.state === 'edited' || n.state === 'draft')
 }
 
+/**
+ * Per spec §13.1a: the count surfaced in the dirty-edit modal body
+ * ("You have N unsaved edits..."). Counts nodes in operator-edit states
+ * ('edited' / 'draft'); runner-driven failure states don't count.
+ */
+export function countUnrefreshedEdits(tree: ConversationTree | null): number {
+  if (tree === null) return 0
+  return tree.nodes.reduce((acc, n) => (n.state === 'edited' || n.state === 'draft' ? acc + 1 : acc), 0)
+}
+
 // ============================================================================
 // URL fragment helpers
 // ============================================================================

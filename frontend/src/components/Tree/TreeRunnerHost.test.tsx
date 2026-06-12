@@ -607,3 +607,53 @@ describe('TreeRunnerHost — workspace persistence wiring', () => {
     })
   })
 })
+
+// ============================================================================
+// PR7h — dirty-edit swap guard wiring
+// ============================================================================
+
+describe('TreeRunnerHost — dirty-edit swap guard', () => {
+  it('exposes guardedSwap via onGuardedSwapReady that runs swap synchronously when clean', () => {
+    let captured: ((tree: ConversationTree | null, swap: () => void) => void) | undefined
+    render(
+      <TreeRunnerHost
+        tree={mkEmptyTree('t-clean')}
+        onGuardedSwapReady={(g) => {
+          captured = g
+        }}
+      />,
+    )
+    expect(captured).toBeDefined()
+    const swap = jest.fn()
+    act(() => {
+      captured?.(mkEmptyTree('t-clean'), swap)
+    })
+    expect(swap).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('shows the dirty-edit modal in the modal slot when swap is guarded against a dirty tree', () => {
+    let captured: ((tree: ConversationTree | null, swap: () => void) => void) | undefined
+    render(
+      <TreeRunnerHost
+        tree={null}
+        onGuardedSwapReady={(g) => {
+          captured = g
+        }}
+      />,
+    )
+    const dirty = mkDispatchableTree('t-dirty')
+    const swap = jest.fn()
+    act(() => {
+      captured?.(dirty, swap)
+    })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(swap).not.toHaveBeenCalled()
+
+    act(() => {
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /discard/i }))
+    })
+    expect(swap).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
