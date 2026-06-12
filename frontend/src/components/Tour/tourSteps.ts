@@ -15,7 +15,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
   {
     target: '[data-tour="sidebar-nav"]',
     content:
-      'Welcome to Co-PyRIT! This is your main navigation panel. Home is your dashboard, Chat is where you send prompts, ' +
+      'Ahoy! Welcome to Co-PyRIT! This is your main navigation panel. Home is your dashboard, Chat is where you send prompts, ' +
       'History tracks past attacks, and Configuration is where you set up targets. Feel free to try clicking between these views!',
     placement: 'right-start',
     skipBeacon: true,

@@ -34,50 +34,55 @@ export default function TourTooltip({
   return (
     <div {...tooltipProps}>
       <FluentProvider theme={isDarkMode ? webDarkTheme : webLightTheme}>
-        <div className={styles.container}>
-          {/* Close (X) button — always available in the top-right until last step */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '-8px', marginTop: '-4px' }}>
-            {!isLastStep && (
-              <Button
-                {...closeProps}
-                appearance="subtle"
-                icon={<DismissRegular />}
-                size="small"
-              />
-            )}
-          </div>
-
-          {/* Step content — the text we defined in tourSteps.ts */}
-          <Text className={styles.content} size={300}>
-            {step.content}
-          </Text>
-
-          {/* Footer: step counter + navigation buttons */}
-          <div className={styles.footer}>
-            <Text className={styles.stepCounter} size={200}>
-              {index + 1} of {size}
-            </Text>
-
-            <div className={styles.actions}>
+        <div className={styles.wrapper}>
+          <div className={styles.container}>
+            {/* Close (X) button — top-right, hidden on last step */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '-8px', marginTop: '-4px' }}>
               {!isLastStep && (
-                <Button {...skipProps} appearance="subtle" size="small">
-                  Skip tour
-                </Button>
-              )}
-
-              {index > 0 && (
-                <Button {...backProps} appearance="outline" size="small">
-                  Back
-                </Button>
-              )}
-
-              {continuous && (
-                <Button {...primaryProps} appearance="primary" size="small">
-                  {isLastStep ? "Let's go!" : 'Next'}
-                </Button>
+                <Button
+                  {...closeProps}
+                  appearance="subtle"
+                  icon={<DismissRegular />}
+                  size="small"
+                />
               )}
             </div>
+
+            {/* Step content */}
+            <Text className={styles.content} size={300}>
+              {step.content}
+            </Text>
+
+            {/* Footer: step counter + buttons, offset right to leave room for mascot */}
+            <div className={styles.footer} style={{ paddingLeft: '72px' }}>
+              <Text className={styles.stepCounter} size={200}>
+                {index + 1} of {size}
+              </Text>
+
+              <div className={styles.actions}>
+                {!isLastStep && (
+                  <Button {...skipProps} appearance="subtle" size="small">
+                    Skip tour
+                  </Button>
+                )}
+
+                {index > 0 && (
+                  <Button {...backProps} appearance="outline" size="small">
+                    Back
+                  </Button>
+                )}
+
+                {continuous && (
+                  <Button {...primaryProps} appearance="primary" size="small">
+                    {isLastStep ? "Anchors Away!" : 'Next'}
+                  </Button>
+                )}
+              </div>
+            </div>
           </div>
+
+          {/* Roakey presenting the content — overlaps bottom-left of the card */}
+          <img src="/roakey_guide.png" alt="" className={styles.mascot} />
         </div>
       </FluentProvider>
     </div>

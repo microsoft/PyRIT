@@ -23,6 +23,12 @@ export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolea
   // Prevents double-advancing if the user clicks rapidly.
   const switchingViewRef = useRef(false)
 
+  // Always-current ref so callbacks read the latest view without needing
+  // currentView in their dependency arrays (which would cause Joyride to
+  // see a new onEvent reference and potentially drop events).
+  const currentViewRef = useRef(currentView)
+  currentViewRef.current = currentView
+
   // Holds the step index to advance to after a view switch completes.
   // null means "nothing pending". The useEffect below reads and clears this.
   const pendingStepRef = useRef<number | null>(null)
@@ -55,7 +61,7 @@ export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolea
     setStepIndex(0)
     // If we're already on home, start immediately.
     // Otherwise navigate and let the useEffect start after the view mounts.
-    if (currentView === 'home') {
+    if (currentViewRef.current === 'home') {
       setRun(true)
     } else {
       pendingStepRef.current = 0
@@ -63,7 +69,7 @@ export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolea
       setRun(true)
       onNavigate('home')
     }
-  }, [onNavigate, currentView])
+  }, [onNavigate])
 
   const endTour = useCallback(() => {
     setRun(false)
@@ -113,7 +119,7 @@ export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolea
 
     const nextStep = TOUR_STEPS[nextIndex]
 
-    if (nextStep.viewRequired !== currentView) {
+    if (nextStep.viewRequired !== currentViewRef.current) {
       // The required view differs from the actual current view.
       // Stash the target step and navigate — the useEffect on currentView
       // will advance once React commits the new view's DOM.
@@ -123,7 +129,7 @@ export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolea
     } else {
       setStepIndex(nextIndex)
     }
-  }, [onNavigate, currentView])
+  }, [onNavigate, endTour])
 
   // Wrap TourTooltip so it receives isDarkMode via closure.
   // Uses createElement instead of JSX because this is a .ts file (not .tsx).
@@ -158,7 +164,7 @@ export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolea
         closeButtonAction: 'skip' as const,
         overlayClickAction: false as const,
       },
-      locale: { back: 'Back', close: 'Close', last: "Let's go!", next: 'Next', skip: 'Skip tour' },
+      locale: { back: 'Back', close: 'Close', last: "Anchors Away!", next: 'Next', skip: 'Skip tour' },
     },
   }
 }

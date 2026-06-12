@@ -67,16 +67,16 @@ describe('TourTooltip', () => {
       isLastStep: true,
       index: 4,
       primaryProps: {
-        'aria-label': "Let's go!",
+        'aria-label': "Anchors Away!",
         'data-action': 'primary',
         onClick: jest.fn(),
         role: 'button',
-        title: "Let's go!",
+        title: "Anchors Away!",
       },
     })
     render(<TestWrapper><TourTooltip {...props} /></TestWrapper>)
 
-    expect(screen.getByRole('button', { name: /let's go/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /anchors away/i })).toBeInTheDocument()
     expect(screen.queryByText('Next')).not.toBeInTheDocument()
   })
 
