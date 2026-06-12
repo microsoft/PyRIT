@@ -238,6 +238,13 @@ function App() {
     [currentView, currentTree],
   )
 
+  /** AR id to auto-reverse into the tree view (spec §5.12 "Open as tree"). */
+  const [openTreeFromArId, setOpenTreeFromArId] = useState<string | null>(null)
+  const handleOpenAttackAsTree = useCallback((arId: string) => {
+    setOpenTreeFromArId(arId)
+    setCurrentView('tree')
+  }, [])
+
   return (
     <ErrorBoundary>
       <ConnectionHealthProvider>
@@ -285,6 +292,7 @@ function App() {
             {currentView === 'history' && (
               <AttackHistory
                 onOpenAttack={handleOpenAttack}
+                onOpenAttackAsTree={treeUiEnabled ? handleOpenAttackAsTree : undefined}
                 filters={historyFilters}
                 onFiltersChange={setHistoryFilters}
               />
@@ -305,6 +313,7 @@ function App() {
                   tree={currentTree}
                   operator={globalLabels.operator ?? null}
                   runWaveStarter={treeRunWaveStarter}
+                  openFromAttackResultId={openTreeFromArId}
                   onTreeChange={(next) => {
                     setTreeReloadDegraded(null)
                     setCurrentTree(next)

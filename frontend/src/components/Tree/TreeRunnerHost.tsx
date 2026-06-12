@@ -41,6 +41,7 @@ import {
   type ReloadReconstructionApi,
   type ReconstructionDegradedInfo,
 } from './useReloadReconstruction'
+import { useAutoReverse, type UseAutoReverseApi } from './useAutoReverse'
 import { useTreeRunnerHostStyles } from './TreeRunnerHost.styles'
 import type { ActionCallbacks } from './actionRail'
 import type { AvailableConvertersValue } from './availableConvertersContext'
@@ -128,6 +129,15 @@ export interface TreeRunnerHostProps {
    * `branchToNewTree` is exempt per spec §13.1.
    */
   onGuardedSwapReady?: (guardedSwap: (tree: ConversationTree | null, swap: () => void) => void) => void
+  /**
+   * One-shot "Open as tree" signal (spec §5.12 / §13.1
+   * openTreeFromAttackResult). When set, the host linearly auto-reverses
+   * that AR into a ConversationTree and emits it via onTreeChange. V1.0
+   * ships linear+converter reconstruction (fanout detection is V1.1).
+   */
+  openFromAttackResultId?: string | null
+  /** Test-only override for the auto-reverse API (PR7i.3b tests). */
+  autoReverseApi?: UseAutoReverseApi
 }
 
 // ============================================================================
@@ -164,6 +174,8 @@ export function TreeRunnerHost({
   reloadApi,
   onReconstructionDegraded,
   onGuardedSwapReady,
+  openFromAttackResultId,
+  autoReverseApi,
 }: TreeRunnerHostProps) {
   const styles = useTreeRunnerHostStyles()
   const [waveEvents, setWaveEvents] = useState<WaveEvent[]>([])
@@ -218,6 +230,13 @@ export function TreeRunnerHost({
     reloadApi: reloadApi ?? attacksApi,
   })
 
+  // PR7i.3b: "Open as tree" (spec §5.12). Linearly auto-reverse the AR; the
+  // result is pushed via onTreeChange in an effect below (after the
+  // onTreeChangeRef mirror is declared), applied once per reconstructed AR id.
+  const autoReversed = useAutoReverse(openFromAttackResultId ?? null, {
+    attacksApi: autoReverseApi ?? attacksApi,
+  })
+
   // Refs hold the latest prop values so the sink + shim deps (constructed
   // once) read live values via .current rather than stale closure captures.
   // Initialized via useRef and updated post-commit via useEffect to comply
@@ -225,6 +244,7 @@ export function TreeRunnerHost({
   const treeRef = useRef(tree)
   const operatorRef = useRef<string | null>(operator ?? null)
   const onTreeChangeRef = useRef(onTreeChange)
+  const lastOpenedTreeIdRef = useRef<string | null>(null)
   // Effective per-node reflog cap: the explicit `reflogCap` override wins
   // (tests), else the host-owned WorkspaceSettings.reflogCapPerNode (§13.1).
   const effectiveReflogCap = reflogCap ?? settings.reflogCapPerNode
@@ -240,6 +260,16 @@ export function TreeRunnerHost({
   useEffect(() => {
     onTreeChangeRef.current = onTreeChange
   }, [onTreeChange])
+  // Push the auto-reversed "Open as tree" result via onTreeChange, once per
+  // reconstructed AR id (the inline onTreeChange re-fires each render, so we
+  // gate on the tree id to avoid re-pushing the same reconstruction).
+  useEffect(() => {
+    const opened = autoReversed.tree
+    if (opened !== null && opened.id !== lastOpenedTreeIdRef.current) {
+      lastOpenedTreeIdRef.current = opened.id
+      onTreeChangeRef.current?.(opened)
+    }
+  }, [autoReversed.tree])
   useEffect(() => {
     reflogCapRef.current = effectiveReflogCap
   }, [effectiveReflogCap])

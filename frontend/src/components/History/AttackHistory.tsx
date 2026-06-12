@@ -18,6 +18,8 @@ import HistoryPagination from './HistoryPagination'
 
 interface AttackHistoryProps {
   onOpenAttack: (attackResultId: string) => void
+  /** Optional "Open as tree" action (spec §5.12); passed through to the table. */
+  onOpenAttackAsTree?: (attackResultId: string) => void
   filters: HistoryFilters
   onFiltersChange: (filters: HistoryFilters) => void
 }
@@ -44,7 +46,7 @@ function buildListParams(filters: HistoryFilters, pageCursor: string | undefined
   return params
 }
 
-export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }: AttackHistoryProps) {
+export default function AttackHistory({ onOpenAttack, onOpenAttackAsTree, filters, onFiltersChange }: AttackHistoryProps) {
   const styles = useAttackHistoryStyles()
   const [attacks, setAttacks] = useState<AttackSummary[]>([])
   const [loading, setLoading] = useState(true)
@@ -232,7 +234,7 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
             </Text>
           </div>
         ) : (
-          <AttackTable attacks={attacks} onOpenAttack={onOpenAttack} formatDate={formatDate} />
+          <AttackTable attacks={attacks} onOpenAttack={onOpenAttack} onOpenAttackAsTree={onOpenAttackAsTree} formatDate={formatDate} />
         )}
       </div>
 

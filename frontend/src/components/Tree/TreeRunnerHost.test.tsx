@@ -824,3 +824,102 @@ describe('TreeRunnerHost — suppression persistence', () => {
     expect(persisted.suppressConfirmModalThisSession).toBe(true)
   })
 })
+
+// ============================================================================
+// PR7i.3b — open-from-history into tree (useAutoReverse seam)
+// ============================================================================
+
+describe('TreeRunnerHost — open from attack result', () => {
+  const fakeAr = {
+    attack_result_id: 'ar-open',
+    conversation_id: 'conv-open',
+    attack_type: 'red_teaming',
+    converters: [],
+    message_count: 2,
+    related_conversation_ids: [],
+    labels: {},
+    created_at: '2026-06-11T00:00:00Z',
+    updated_at: '2026-06-11T00:00:00Z',
+  }
+  const fakeMessages = {
+    conversation_id: 'conv-open',
+    messages: [
+      {
+        turn_number: 1,
+        role: 'user',
+        pieces: [{
+          piece_id: 'p1',
+          original_value_data_type: 'text',
+          converted_value_data_type: 'text',
+          original_value: 'hello',
+          converted_value: 'hello',
+          scores: [],
+          response_error: 'none',
+          original_prompt_id: 'p1',
+          converter_identifiers: [],
+        }],
+        created_at: '2026-06-11T00:00:00Z',
+      },
+      {
+        turn_number: 2,
+        role: 'assistant',
+        pieces: [{
+          piece_id: 'p2',
+          original_value_data_type: 'text',
+          converted_value_data_type: 'text',
+          original_value: 'hi',
+          converted_value: 'hi',
+          scores: [],
+          response_error: 'none',
+          original_prompt_id: 'p2',
+          converter_identifiers: [],
+        }],
+        created_at: '2026-06-11T00:00:00Z',
+      },
+    ],
+  }
+
+  it('auto-reverses the AR and emits the reconstructed tree via onTreeChange', async () => {
+    const onTreeChange = jest.fn()
+    const autoReverseApi = {
+      getAttack: jest.fn(async () => fakeAr),
+      getMessages: jest.fn(async () => fakeMessages),
+    }
+    render(
+      <TreeRunnerHost
+        tree={null}
+        onTreeChange={onTreeChange}
+        openFromAttackResultId="ar-open"
+        autoReverseApi={autoReverseApi}
+      />,
+    )
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    expect(autoReverseApi.getAttack).toHaveBeenCalledWith('ar-open')
+    expect(autoReverseApi.getMessages).toHaveBeenCalledWith('ar-open', 'conv-open')
+    const tree = onTreeChange.mock.calls[0][0] as ConversationTree
+    expect(tree.nodes.find((n) => n.id === tree.rootId)?.kind).toBe('root_prompt')
+  })
+
+  it('does not auto-reverse when openFromAttackResultId is null', async () => {
+    const onTreeChange = jest.fn()
+    const autoReverseApi = {
+      getAttack: jest.fn(async () => fakeAr),
+      getMessages: jest.fn(async () => fakeMessages),
+    }
+    render(
+      <TreeRunnerHost
+        tree={null}
+        onTreeChange={onTreeChange}
+        openFromAttackResultId={null}
+        autoReverseApi={autoReverseApi}
+      />,
+    )
+    // Give any stray effect a chance to fire.
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(autoReverseApi.getAttack).not.toHaveBeenCalled()
+    expect(onTreeChange).not.toHaveBeenCalled()
+  })
+})

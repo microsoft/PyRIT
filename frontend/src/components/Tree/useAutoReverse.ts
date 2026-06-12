@@ -74,7 +74,15 @@ export function useAutoReverse(
         if (cancelled) return
         const msgs = await deps.attacksApi.getMessages(attackResultId, ar.conversation_id)
         if (cancelled) return
-        const next = linearChainFromMessages(msgs.messages)
+        const built = linearChainFromMessages(msgs.messages)
+        // Per spec §13.1: a V1.0+ AR carries `conversation_tree_id`; the
+        // opened tree must keep that id so reload/refresh stay consistent.
+        // A pre-V1.0 AR (no label) keeps the freshly-minted id.
+        const existingTreeId = ar.labels?.conversation_tree_id
+        const next =
+          existingTreeId !== undefined && existingTreeId !== ''
+            ? { ...built, id: existingTreeId as ConversationTree['id'] }
+            : built
         setFetched({ forArId: attackResultId, tree: next, error: null })
       } catch (e) {
         if (cancelled) return

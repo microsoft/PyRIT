@@ -187,6 +187,33 @@ describe('AttackTable', () => {
     expect(onOpenAttack).toHaveBeenCalledWith('ar-2')
   })
 
+  it('does NOT render the "Open as tree" button when onOpenAttackAsTree is absent', () => {
+    render(
+      <TestWrapper>
+        <AttackTable {...defaultProps} />
+      </TestWrapper>
+    )
+    expect(screen.queryByTestId('open-attack-as-tree-ar-1')).toBeNull()
+  })
+
+  it('renders an "Open as tree" button when onOpenAttackAsTree is provided; clicking fires it', () => {
+    const onOpenAttackAsTree = jest.fn()
+    const onOpenAttack = jest.fn()
+    render(
+      <TestWrapper>
+        <AttackTable
+          {...defaultProps}
+          onOpenAttack={onOpenAttack}
+          onOpenAttackAsTree={onOpenAttackAsTree}
+        />
+      </TestWrapper>
+    )
+    fireEvent.click(screen.getByTestId('open-attack-as-tree-ar-2'))
+    expect(onOpenAttackAsTree).toHaveBeenCalledWith('ar-2')
+    // The row-level open (chat) must not also fire.
+    expect(onOpenAttack).not.toHaveBeenCalled()
+  })
+
   it('should render outcome badges with correct text', () => {
     render(
       <TestWrapper>

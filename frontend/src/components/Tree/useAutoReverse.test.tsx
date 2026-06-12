@@ -130,6 +130,32 @@ describe('useAutoReverse — happy path', () => {
     expect(result.current.error).toBeNull()
   })
 
+  it('preserves the AR\u2019s conversation_tree_id as the reconstructed tree id (V1.0+ AR)', async () => {
+    // Per spec §13.1: opening a V1.0+ AR (one carrying conversation_tree_id)
+    // as a tree must keep that id so subsequent reload/refresh stay
+    // consistent — not mint a fresh one.
+    const api = mkMockApi({
+      getAttack: jest.fn(async () => ({
+        ...fakeAr,
+        labels: { conversation_tree_id: 'tree-existing-123' },
+      })),
+    })
+    const { result } = renderHook(() => useAutoReverse('ar-1', { attacksApi: api }))
+    await waitFor(() => expect(result.current.tree).not.toBeNull())
+    expect(result.current.tree?.id).toBe('tree-existing-123')
+  })
+
+  it('mints a fresh tree id when the AR has no conversation_tree_id (pre-V1.0 AR)', async () => {
+    const api = mkMockApi({
+      getAttack: jest.fn(async () => ({ ...fakeAr, labels: {} })),
+    })
+    const { result } = renderHook(() => useAutoReverse('ar-1', { attacksApi: api }))
+    await waitFor(() => expect(result.current.tree).not.toBeNull())
+    // A minted UUID, not empty / not the AR id.
+    expect(result.current.tree?.id).toBeTruthy()
+    expect(result.current.tree?.id).not.toBe('ar-1')
+  })
+
   it('re-fetches when attackResultId changes', async () => {
     const api = mkMockApi({
       getAttack: jest.fn(async (id: string) => ({ ...fakeAr, attack_result_id: id, conversation_id: `conv-${id}` })),

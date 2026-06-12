@@ -13,6 +13,7 @@ import {
 } from '@fluentui/react-components'
 import {
   OpenRegular,
+  BranchRegular,
   CheckmarkCircleRegular,
   DismissCircleRegular,
   QuestionCircleRegular,
@@ -38,10 +39,16 @@ const OUTCOME_COLORS: Record<string, 'success' | 'danger' | 'informative' | 'war
 interface AttackTableProps {
   attacks: AttackSummary[]
   onOpenAttack: (attackResultId: string) => void
+  /**
+   * Optional "Open as tree" action (spec §5.12). Renders a second row
+   * button next to "Open attack" when provided; App only passes it when the
+   * tree-UI feature flag is on, so the button is implicitly flag-gated.
+   */
+  onOpenAttackAsTree?: (attackResultId: string) => void
   formatDate: (dateStr: string) => string
 }
 
-export default function AttackTable({ attacks, onOpenAttack, formatDate }: AttackTableProps) {
+export default function AttackTable({ attacks, onOpenAttack, onOpenAttackAsTree, formatDate }: AttackTableProps) {
   const styles = useAttackHistoryStyles()
 
   return (
@@ -167,18 +174,34 @@ export default function AttackTable({ attacks, onOpenAttack, formatDate }: Attac
               </Text>
             </TableCell>
             <TableCell>
-              <Tooltip content="Open attack" relationship="label">
-                <Button
-                  appearance="subtle"
-                  size="small"
-                  icon={<OpenRegular />}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onOpenAttack(attack.attack_result_id)
-                  }}
-                  data-testid={`open-attack-${attack.attack_result_id}`}
-                />
-              </Tooltip>
+              <div className={styles.badgeGroup}>
+                <Tooltip content="Open attack" relationship="label">
+                  <Button
+                    appearance="subtle"
+                    size="small"
+                    icon={<OpenRegular />}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onOpenAttack(attack.attack_result_id)
+                    }}
+                    data-testid={`open-attack-${attack.attack_result_id}`}
+                  />
+                </Tooltip>
+                {onOpenAttackAsTree && (
+                  <Tooltip content="Open as tree" relationship="label">
+                    <Button
+                      appearance="subtle"
+                      size="small"
+                      icon={<BranchRegular />}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onOpenAttackAsTree(attack.attack_result_id)
+                      }}
+                      data-testid={`open-attack-as-tree-${attack.attack_result_id}`}
+                    />
+                  </Tooltip>
+                )}
+              </div>
             </TableCell>
           </TableRow>
         ))}
