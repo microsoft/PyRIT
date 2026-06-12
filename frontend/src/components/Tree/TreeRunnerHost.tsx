@@ -33,6 +33,7 @@ import { TreeCanvas } from './TreeCanvas'
 import { WaveStatusRibbon } from './WaveStatusRibbon'
 import { summarizeWaveEvents } from './waveStatus'
 import { useCostGuardrailModal } from './useCostGuardrailModal'
+import { useWorkspacePersistence, type WorkspacePersistenceDeps } from './useWorkspacePersistence'
 import { useTreeRunnerHostStyles } from './TreeRunnerHost.styles'
 import type { ActionCallbacks } from './actionRail'
 import type { AvailableConvertersValue } from './availableConvertersContext'
@@ -53,8 +54,10 @@ import type {
   CostGuardrail,
   RunnerStateSink,
   WaveEvent,
+  WorkspaceSettings,
 } from '../../runner/treeTypes'
 import type { WaveSummary } from '../../runner/wave'
+import { DEFAULT_WORKSPACE_SETTINGS } from '../../runner/workspacePersistence'
 
 // ============================================================================
 // Public surface
@@ -95,6 +98,12 @@ export interface TreeRunnerHostProps {
   actionCallbacks?: ActionCallbacks
   /** Pass-through to TreeCanvas. */
   availableConverters?: AvailableConvertersValue
+  /** Recent tree id stack persisted to sessionStorage (PR7f). */
+  workspaceRecentTreeIds?: ConversationTreeId[]
+  /** Workspace settings persisted to sessionStorage (PR7f). */
+  workspaceSettings?: WorkspaceSettings
+  /** Test-only override for persistence browser deps (PR7f.2 tests). */
+  workspacePersistenceDeps?: WorkspacePersistenceDeps
 }
 
 // ============================================================================
@@ -126,6 +135,9 @@ export function TreeRunnerHost({
   onShimReady,
   actionCallbacks,
   availableConverters,
+  workspaceRecentTreeIds,
+  workspaceSettings,
+  workspacePersistenceDeps,
 }: TreeRunnerHostProps) {
   const styles = useTreeRunnerHostStyles()
   const [waveEvents, setWaveEvents] = useState<WaveEvent[]>([])
@@ -134,6 +146,15 @@ export function TreeRunnerHost({
   // session suppression flag. PR7f rewires suppression to sessionStorage.
   const { guardrail, modalElement } = useCostGuardrailModal({
     confirmThresholdCount: confirmThresholdCount ?? DEFAULT_CONFIRM_THRESHOLD,
+  })
+
+  // PR7f.2: schema-versioned sessionStorage + URL fragment sync +
+  // beforeunload dirty-edit guard.
+  useWorkspacePersistence({
+    tree,
+    recentTreeIds: workspaceRecentTreeIds ?? [],
+    settings: workspaceSettings ?? DEFAULT_WORKSPACE_SETTINGS,
+    deps: workspacePersistenceDeps,
   })
 
   // Refs hold the latest prop values so the sink + shim deps (constructed

@@ -17,8 +17,10 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { TreeRunnerHost } from './TreeRunnerHost'
 import type { ConversationTree } from '../../runner/treeTypes'
 import type { RunnerShim, RunWaveStarter, RunWaveStarterArgs } from '../../runner/shim'
+import type { WorkspacePersistenceDeps } from './useWorkspacePersistence'
 import type { WaveSummary } from '../../runner/wave'
-import { mkRoot, mkSend, mkTree, nodeId } from '../../runner/testHelpers'
+import { mkRoot, mkSend, mkTree, nodeId, treeId } from '../../runner/testHelpers'
+import { STORAGE_KEYS } from '../../runner/workspacePersistence'
 
 // ============================================================================
 // Fixtures
@@ -35,6 +37,47 @@ function mkDispatchableTree(id: string): ConversationTree {
     [mkRoot('root'), mkSend('send-1', 'root', undefined, { state: 'edited' })],
     { id },
   )
+}
+
+class MemoryStorage implements Storage {
+  private store = new Map<string, string>()
+  get length(): number {
+    return this.store.size
+  }
+  clear(): void {
+    this.store.clear()
+  }
+  getItem(key: string): string | null {
+    return this.store.get(key) ?? null
+  }
+  key(index: number): string | null {
+    return Array.from(this.store.keys())[index] ?? null
+  }
+  removeItem(key: string): void {
+    this.store.delete(key)
+  }
+  setItem(key: string, value: string): void {
+    this.store.set(key, value)
+  }
+}
+
+function makePersistenceDeps(storage = new MemoryStorage()): {
+  deps: WorkspacePersistenceDeps
+  setHashCalls: string[]
+  storage: MemoryStorage
+} {
+  const setHashCalls: string[] = []
+  const deps: WorkspacePersistenceDeps = {
+    storage,
+    getHash: () => '',
+    setHash: (next) => {
+      setHashCalls.push(next)
+    },
+    addBeforeUnloadListener: () => () => undefined,
+    setTimeoutFn: ((cb: () => void, ms?: number) => setTimeout(cb, ms)) as unknown as WorkspacePersistenceDeps['setTimeoutFn'],
+    clearTimeoutFn: clearTimeout,
+  }
+  return { deps, setHashCalls, storage }
 }
 
 const emptySummary: WaveSummary = {
@@ -421,5 +464,69 @@ describe('TreeRunnerHost — cost-guardrail modal', () => {
 
     expect(starter).not.toHaveBeenCalled()
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+describe('TreeRunnerHost — workspace persistence wiring', () => {
+  beforeEach(() => {
+    jest.useFakeTimers()
+  })
+
+  afterEach(() => {
+    jest.runOnlyPendingTimers()
+    jest.useRealTimers()
+  })
+
+  it('writes URL fragment immediately when tree id changes', () => {
+    const { deps, setHashCalls } = makePersistenceDeps()
+    const treeA = mkEmptyTree('tp-a')
+    const treeB = mkEmptyTree('tp-b')
+
+    const { rerender } = render(
+      <TreeRunnerHost
+        tree={treeA}
+        workspacePersistenceDeps={deps}
+      />,
+    )
+
+    expect(setHashCalls[setHashCalls.length - 1]).toBe('#conversation_tree_id=tp-a')
+
+    rerender(
+      <TreeRunnerHost
+        tree={treeB}
+        workspacePersistenceDeps={deps}
+      />,
+    )
+    expect(setHashCalls[setHashCalls.length - 1]).toBe('#conversation_tree_id=tp-b')
+  })
+
+  it('debounces workspace storage writes by 500ms', () => {
+    const { deps, storage } = makePersistenceDeps()
+
+    const { rerender } = render(
+      <TreeRunnerHost
+        tree={null}
+        workspacePersistenceDeps={deps}
+        workspaceRecentTreeIds={[]}
+      />,
+    )
+
+    rerender(
+      <TreeRunnerHost
+        tree={null}
+        workspacePersistenceDeps={deps}
+        workspaceRecentTreeIds={[treeId('x')]}
+      />,
+    )
+
+    expect(storage.getItem(STORAGE_KEYS.recentTreeIds)).toBeNull()
+    act(() => {
+      jest.advanceTimersByTime(499)
+    })
+    expect(storage.getItem(STORAGE_KEYS.recentTreeIds)).toBeNull()
+    act(() => {
+      jest.advanceTimersByTime(1)
+    })
+    expect(JSON.parse(storage.getItem(STORAGE_KEYS.recentTreeIds) ?? '[]')).toEqual(['x'])
   })
 })
