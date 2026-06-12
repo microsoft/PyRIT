@@ -83,6 +83,18 @@ describe('WaveStatusRibbon — running', () => {
     render(<WaveStatusRibbon state={over} />)
     expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('65')
   })
+
+  it('total === 0 renders a progressbar at 0 instead of dividing by zero', () => {
+    // Pre-start corner case: a wave can be in `running` state with a
+    // pre-computed total of 0 (e.g. an estimateRefreshCost mock that
+    // returned 0 for an empty selection). The ribbon must not crash and
+    // must not produce NaN on the progress bar.
+    const zero: WaveStatusState = { ...running, total: 0, completed: 0 }
+    render(<WaveStatusRibbon state={zero} />)
+    const bar = screen.getByRole('progressbar')
+    expect(bar.getAttribute('aria-valuenow')).toBe('0')
+    expect(bar.getAttribute('aria-valuemax')).toBe('0')
+  })
 })
 
 // ============================================================================

@@ -136,6 +136,26 @@ describe('PastRunsDrawer — render entries', () => {
     expect(text).toMatch(/\u2713/) // ✓
     expect(text).toMatch(/\u26A0/) // ⚠
   })
+
+  it('shows the ⦾ glyph for cancelled outcome', () => {
+    const history: ReflogEntry[] = [
+      { execution: mkExec('e_cancel', '2026-06-11T11:00:00Z', 'cancelled'), pinned: false },
+    ]
+    const { container } = render(
+      <PastRunsDrawer nodeId={N} execution={null} executionHistory={history} />,
+    )
+    expect(container.textContent ?? '').toMatch(/\u29BE/) // ⦾
+  })
+
+  it('shows the ● glyph for pending outcome', () => {
+    const history: ReflogEntry[] = [
+      { execution: mkExec('e_pend', '2026-06-11T11:00:00Z', 'pending'), pinned: false },
+    ]
+    const { container } = render(
+      <PastRunsDrawer nodeId={N} execution={null} executionHistory={history} />,
+    )
+    expect(container.textContent ?? '').toMatch(/\u25CF/) // ●
+  })
 })
 
 // ============================================================================

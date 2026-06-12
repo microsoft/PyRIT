@@ -270,3 +270,50 @@ describe('summarizeWaveEvents — forward-compat', () => {
     })
   })
 })
+
+// ============================================================================
+// Pre-start events — reducer must tolerate node_complete/queued before start
+// ============================================================================
+
+describe('summarizeWaveEvents — pre-start events', () => {
+  it('node_complete before any start event is dropped (active === null)', () => {
+    // Defensive: the runner shouldn't emit node_complete without a
+    // preceding start, but if a stale event arrives the reducer must
+    // ignore it cleanly rather than crash on the active.completed += 1
+    // path.
+    const events: WaveEvent[] = [
+      evNodeComplete({ waveId: 'orphan', outcome: 'success' }),
+    ]
+    expect(summarizeWaveEvents(events)).toEqual({ status: 'idle' })
+  })
+
+  it('queued before any start event still tracks queueDepth for a later start', () => {
+    // queued events can arrive before the first start: the shim queues
+    // wave-2 while wave-1's start event is still racing through the
+    // host's event buffer. After w1 starts, queueDepth must reflect w2.
+    const events: WaveEvent[] = [
+      evQueued({ waveId: 'w2', queueDepth: 1 }),
+      evStart({ waveId: 'w1', estimatedCalls: 5 }),
+    ]
+    expect(summarizeWaveEvents(events)).toMatchObject({
+      status: 'running',
+      waveId: 'w1',
+      queueDepth: 1,
+    })
+  })
+
+  it('queued event for the same wave that later starts does NOT inflate queueDepth', () => {
+    // The reducer pops the wave from pendingWaveIds on its start event
+    // (line: pendingWaveIds.delete(ev.waveId)). Verify that a wave can
+    // be queued then started cleanly with queueDepth=0.
+    const events: WaveEvent[] = [
+      evQueued({ waveId: 'w1', queueDepth: 1 }),
+      evStart({ waveId: 'w1', estimatedCalls: 5 }),
+    ]
+    expect(summarizeWaveEvents(events)).toMatchObject({
+      status: 'running',
+      waveId: 'w1',
+      queueDepth: 0,
+    })
+  })
+})

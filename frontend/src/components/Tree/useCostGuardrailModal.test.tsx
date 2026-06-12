@@ -114,9 +114,12 @@ describe('useCostGuardrailModal — at/above threshold', () => {
   })
 
   it.each([
+    ['refresh_tree', /Refreshing the tree/],
     ['refresh_node', /Refreshing this node/],
     ['refresh_subtree', /Refreshing this subtree/],
     ['retry_failed', /Retrying failed nodes/],
+    ['synced_peer_add', /Adding a synced peer/],
+    ['cross_tree_rebase', /Performing a cross-tree rebase/],
   ] as Array<[WaveTriggerKind, RegExp]>)(
     'modal body uses a gerund clause for %s',
     async (kind, pattern) => {
@@ -129,6 +132,48 @@ describe('useCostGuardrailModal — at/above threshold', () => {
     },
   )
 
+  it.each([
+    ['refresh_tree', /Refresh tree \(60 calls\)/],
+    ['refresh_node', /Refresh node \(60 calls\)/],
+    ['refresh_subtree', /Refresh subtree \(60 calls\)/],
+    ['retry_failed', /Retry failed \(60 calls\)/],
+    ['synced_peer_add', /Add synced peer \(60 calls\)/],
+    ['cross_tree_rebase', /Cross-tree rebase \(60 calls\)/],
+  ] as Array<[WaveTriggerKind, RegExp]>)(
+    'modal title for %s',
+    async (kind, pattern) => {
+      const h = mountHook({ confirmThresholdCount: 20 })
+      await act(async () => {
+        void h.current.guardrail.approve(60, kind)
+        await Promise.resolve()
+      })
+      expect(screen.getByRole('dialog').textContent).toMatch(pattern)
+    },
+  )
+
+  it('uses singular "call" when count === 1 (title and body)', async () => {
+    const h = mountHook({ confirmThresholdCount: 1 })
+    await act(async () => {
+      void h.current.guardrail.approve(1, 'refresh_tree')
+      await Promise.resolve()
+    })
+    const body = screen.getByRole('dialog').textContent ?? ''
+    // Title: "Refresh tree (1 call)?" — no plural s.
+    expect(body).toMatch(/\(1 call\)/)
+    // Body: "will send 1 call to the target" — no plural s.
+    expect(body).toMatch(/send 1 call to the target/)
+  })
+
+  it('uses singular "call" for threshold when threshold === 1', async () => {
+    const h = mountHook({ confirmThresholdCount: 1 })
+    await act(async () => {
+      void h.current.guardrail.approve(5, 'refresh_tree')
+      await Promise.resolve()
+    })
+    const body = screen.getByRole('dialog').textContent ?? ''
+    expect(body).toMatch(/threshold: 1 call per wave/)
+  })
+
   it('modal body uses "per wave" (not "per refresh") for the threshold qualifier', async () => {
     const h = mountHook({ confirmThresholdCount: 20 })
     await act(async () => {
@@ -138,6 +183,30 @@ describe('useCostGuardrailModal — at/above threshold', () => {
     const body = screen.getByRole('dialog').textContent ?? ''
     expect(body).toMatch(/per wave/)
     expect(body).not.toMatch(/per refresh/)
+  })
+})
+
+// ============================================================================
+// Dialog onOpenChange (ESC / overlay dismiss) — routes through onCancel
+// ============================================================================
+
+describe('useCostGuardrailModal — ESC / overlay dismiss', () => {
+  it('pressing Escape on the dialog resolves approve() to false (via onOpenChange)', async () => {
+    const h = mountHook({ confirmThresholdCount: 20 })
+    let resolved: boolean | null = null
+    let promise: Promise<void>
+    await act(async () => {
+      promise = h.current.guardrail.approve(60, 'refresh_tree').then((v) => {
+        resolved = v
+      })
+      await Promise.resolve()
+    })
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    await act(async () => {
+      await promise
+    })
+    expect(resolved).toBe(false)
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
 
