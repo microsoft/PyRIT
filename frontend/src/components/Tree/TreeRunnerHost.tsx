@@ -3,11 +3,17 @@
 
 /**
  * TreeRunnerHost — PR7c.2 wires the runner shim into the layout shell
- * from PR7b. The host now owns:
+ * from PR7b. PR7d adds the cost-guardrail modal — every wave whose
+ * estimated call count meets the threshold (default 20 per spec §13.1)
+ * surfaces the modal in the host's modal slot, gating wave start on
+ * the operator's confirm/cancel.
  *
- *   - the runner shim (instantiated once via useRef)
- *   - the cross-tab lock manager (instantiated once via useRef)
+ * The host now owns:
+ *
+ *   - the runner shim (instantiated once via useState lazy initializer)
+ *   - the cross-tab lock manager (instantiated once via useState lazy init)
  *   - a WaveEvent buffer (useState) that the sink appends to
+ *   - the cost-guardrail hook + modal element (PR7d)
  *   - a stable `RunnerStateSink` implementation that closes over
  *     refs so its identity survives re-renders
  *   - default `actionCallbacks.onRefresh` wired to `shim.refreshNode`
@@ -18,7 +24,7 @@
  * can re-render with the next ConversationTree.
  *
  * Five named slots from PR7b: ribbon / canvas / drawer / toast / modal.
- * Drawer + toast + modal slots stay empty in PR7c.2; PR7d–h fill them.
+ * Drawer + toast slots stay empty in PR7d; PR7e–h fill them.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -26,6 +32,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { TreeCanvas } from './TreeCanvas'
 import { WaveStatusRibbon } from './WaveStatusRibbon'
 import { summarizeWaveEvents } from './waveStatus'
+import { useCostGuardrailModal } from './useCostGuardrailModal'
 import { useTreeRunnerHostStyles } from './TreeRunnerHost.styles'
 import type { ActionCallbacks } from './actionRail'
 import type { AvailableConvertersValue } from './availableConvertersContext'
@@ -74,11 +81,10 @@ export interface TreeRunnerHostProps {
   /** Per-node reflog cap; default 50 per spec §13.1 WorkspaceSettings. */
   reflogCap?: number
   /**
-   * Cost-guardrail provider. PR7d defaults this to the
-   * `useCostGuardrailModal`-backed implementation; PR7c.2 defaults to
-   * always-approve so the wave start path is exercisable from tests.
+   * Cost-guardrail threshold — waves at or above this estimated call count
+   * surface the confirm modal (spec §8.1). Default 20 per spec §13.1.
    */
-  costGuardrail?: CostGuardrail
+  confirmThresholdCount?: number
   /**
    * Fired once after the shim is constructed. Tests use this to capture
    * the shim and trigger flows directly. Production callers usually
@@ -104,7 +110,7 @@ const EMPTY_SUMMARY: WaveSummary = {
 }
 
 const DEFAULT_RUN_WAVE_STARTER: RunWaveStarter = async () => EMPTY_SUMMARY
-const DEFAULT_COST_GUARDRAIL: CostGuardrail = { approve: async () => true }
+const DEFAULT_CONFIRM_THRESHOLD = 20
 
 // ============================================================================
 // Component
@@ -116,13 +122,19 @@ export function TreeRunnerHost({
   runWaveStarter,
   onTreeChange,
   reflogCap,
-  costGuardrail,
+  confirmThresholdCount,
   onShimReady,
   actionCallbacks,
   availableConverters,
 }: TreeRunnerHostProps) {
   const styles = useTreeRunnerHostStyles()
   const [waveEvents, setWaveEvents] = useState<WaveEvent[]>([])
+
+  // Cost-guardrail hook owns the modal's pending-decision state + the
+  // session suppression flag. PR7f rewires suppression to sessionStorage.
+  const { guardrail, modalElement } = useCostGuardrailModal({
+    confirmThresholdCount: confirmThresholdCount ?? DEFAULT_CONFIRM_THRESHOLD,
+  })
 
   // Refs hold the latest prop values so the sink + shim deps (constructed
   // once) read live values via .current rather than stale closure captures.
@@ -132,7 +144,7 @@ export function TreeRunnerHost({
   const operatorRef = useRef<string | null>(operator ?? null)
   const onTreeChangeRef = useRef(onTreeChange)
   const reflogCapRef = useRef(reflogCap)
-  const costGuardrailRef = useRef<CostGuardrail>(costGuardrail ?? DEFAULT_COST_GUARDRAIL)
+  const costGuardrailRef = useRef<CostGuardrail>(guardrail)
   const runWaveStarterRef = useRef<RunWaveStarter>(runWaveStarter ?? DEFAULT_RUN_WAVE_STARTER)
   useEffect(() => {
     treeRef.current = tree
@@ -147,8 +159,8 @@ export function TreeRunnerHost({
     reflogCapRef.current = reflogCap
   }, [reflogCap])
   useEffect(() => {
-    costGuardrailRef.current = costGuardrail ?? DEFAULT_COST_GUARDRAIL
-  }, [costGuardrail])
+    costGuardrailRef.current = guardrail
+  }, [guardrail])
   useEffect(() => {
     runWaveStarterRef.current = runWaveStarter ?? DEFAULT_RUN_WAVE_STARTER
   }, [runWaveStarter])
@@ -281,7 +293,9 @@ export function TreeRunnerHost({
       </div>
       <div data-slot="drawer" className={styles.drawer} />
       <div data-slot="toast" className={styles.toast} />
-      <div data-slot="modal" className={styles.modal} />
+      <div data-slot="modal" className={styles.modal}>
+        {modalElement}
+      </div>
     </div>
   )
 }

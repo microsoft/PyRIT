@@ -12,7 +12,7 @@
  * Cancel buttons fire `shim.cancelWave` / `shim.cancelQueued`.
  */
 
-import { act, fireEvent, render, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 import { TreeRunnerHost } from './TreeRunnerHost'
 import type { ConversationTree } from '../../runner/treeTypes'
@@ -26,6 +26,15 @@ import { mkRoot, mkSend, mkTree, nodeId } from '../../runner/testHelpers'
 
 function mkEmptyTree(id: string): ConversationTree {
   return mkTree('root', [mkRoot('root'), mkSend('send-1', 'root')], { id })
+}
+
+/** A tree whose Send is in `edited` state so it's S-eligible. */
+function mkDispatchableTree(id: string): ConversationTree {
+  return mkTree(
+    'root',
+    [mkRoot('root'), mkSend('send-1', 'root', undefined, { state: 'edited' })],
+    { id },
+  )
 }
 
 const emptySummary: WaveSummary = {
@@ -330,5 +339,87 @@ describe('TreeRunnerHost — shim wiring', () => {
     expect(
       view.container.querySelector('[data-tree-wave-status]')?.getAttribute('data-status'),
     ).toBe('idle')
+  })
+})
+
+// ============================================================================
+// PR7d — cost-guardrail modal wiring
+// ============================================================================
+
+describe('TreeRunnerHost — cost-guardrail modal', () => {
+  it('with default threshold (20), small wave does NOT show the modal', async () => {
+    const tree = mkEmptyTree('t-noprompt')
+    const starter = jest.fn(noopStarter)
+    const { shim } = await mountAndCaptureShim({
+      tree,
+      operator: 'alice',
+      runWaveStarter: starter as unknown as RunWaveStarter,
+    })
+
+    await act(async () => {
+      await shim.refreshNode(tree.id, nodeId('send-1'))
+    })
+
+    expect(starter).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('with confirmThresholdCount=1, refresh surfaces the cost-guardrail dialog', async () => {
+    const tree = mkDispatchableTree('t-prompt')
+    const starter = jest.fn(noopStarter)
+    const { shim } = await mountAndCaptureShim({
+      tree,
+      operator: 'alice',
+      confirmThresholdCount: 1,
+      runWaveStarter: starter as unknown as RunWaveStarter,
+    })
+
+    let refreshPromise!: Promise<void>
+    await act(async () => {
+      refreshPromise = shim.refreshNode(tree.id, nodeId('send-1'))
+    })
+
+    // Lock acquire has a 50ms BroadcastChannel timeout; wait for the
+    // dialog to render after acquire succeeds.
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
+    expect(starter).not.toHaveBeenCalled()
+
+    // Click Refresh to approve → starter runs → wave settles.
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^refresh$/i }))
+      await refreshPromise
+    })
+
+    expect(starter).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('clicking Cancel in the cost-guardrail dialog aborts the wave', async () => {
+    const tree = mkDispatchableTree('t-cancel-modal')
+    const starter = jest.fn(noopStarter)
+    const { shim } = await mountAndCaptureShim({
+      tree,
+      operator: 'alice',
+      confirmThresholdCount: 1,
+      runWaveStarter: starter as unknown as RunWaveStarter,
+    })
+
+    let refreshPromise!: Promise<void>
+    await act(async () => {
+      refreshPromise = shim.refreshNode(tree.id, nodeId('send-1'))
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
+
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^cancel$/i }))
+      await refreshPromise
+    })
+
+    expect(starter).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
