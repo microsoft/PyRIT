@@ -4,10 +4,8 @@
 """
 Add targeted_harm_categories to Attack Results.
 
-Relocates the ``targeted_harm_categories`` field from the per-piece
-``PromptMemoryEntries`` (dropped in ``f1a2b3c4d5e6``) to the attack-scoped
-``AttackResultEntries`` table, where it belongs. No backfill: the source
-per-piece column is already gone and was never populated by production code.
+Adds a nullable JSON ``targeted_harm_categories`` column to the
+``AttackResultEntries`` table. No backfill.
 
 Revision ID: c3d5e7f9a1b2
 Revises: b2f4c6a8d1e3

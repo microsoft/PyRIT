@@ -2057,9 +2057,8 @@ class MemoryInterface(abc.ABC):
                 conditions.append(self._get_attack_result_label_condition(labels=effective_labels))
 
         if targeted_harm_categories:
-            # Attack-scoped harm-category filter (replaces the removed per-piece filter).
-            # Matches attacks whose AttackResultEntry.targeted_harm_categories array contains
-            # ANY of the requested categories.
+            # Match attacks whose targeted_harm_categories array contains ANY of the
+            # requested categories.
             conditions.append(
                 self._get_condition_json_array_match(
                     json_column=AttackResultEntry.targeted_harm_categories,
