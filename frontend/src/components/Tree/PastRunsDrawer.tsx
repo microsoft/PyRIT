@@ -110,7 +110,13 @@ function EntryRow({
       <span className={styles.outcome} title={execution.outcome}>
         {outcomeGlyph}
       </span>
-      <span className={styles.id}>{execution.executionId}</span>
+      <span
+        data-tree-execution-id-display
+        className={styles.id}
+        title={execution.executionId}
+      >
+        {truncateId(execution.executionId)}
+      </span>
       <span className={styles.timestamp}>{execution.attemptedAt}</span>
       {waveSuffix !== '' && <span className={styles.wave}>wave: {waveSuffix}</span>}
       {isCurrent && <span className={styles.currentTag}>current</span>}
@@ -136,6 +142,11 @@ function EntryRow({
       </div>
     </div>
   )
+}
+
+function truncateId(id: string): string {
+  if (id.length <= 12) return id
+  return `${id.slice(0, 8)}\u2026`
 }
 
 function outcomeGlyphFor(outcome: ExecutionRecord['outcome']): string {

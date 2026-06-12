@@ -39,7 +39,7 @@ export function CostGuardrailModal({
   onCancel,
 }: CostGuardrailModalProps) {
   const [dontAskAgain, setDontAskAgain] = useState(false)
-  const triggerLabel = triggerLabelFor(triggerKind)
+  const bodyClause = bodyClauseFor(triggerKind)
   return (
     <Dialog
       open
@@ -52,8 +52,8 @@ export function CostGuardrailModal({
           <DialogTitle>{titleFor(triggerKind, count)}</DialogTitle>
           <DialogContent>
             <p>
-              This {triggerLabel} will send {count} call{count === 1 ? '' : 's'} to the target
-              (threshold: {threshold} call{threshold === 1 ? '' : 's'} per refresh).
+              {bodyClause} will send {count} call{count === 1 ? '' : 's'} to the target
+              (threshold: {threshold} call{threshold === 1 ? '' : 's'} per wave).
             </p>
             <Checkbox
               checked={dontAskAgain}
@@ -92,19 +92,19 @@ function titleFor(kind: WaveTriggerKind, count: number): string {
   }
 }
 
-function triggerLabelFor(kind: WaveTriggerKind): string {
+function bodyClauseFor(kind: WaveTriggerKind): string {
   switch (kind) {
     case 'refresh_tree':
-      return 'refresh tree'
+      return 'Refreshing the tree'
     case 'refresh_subtree':
-      return 'refresh subtree'
+      return 'Refreshing this subtree'
     case 'refresh_node':
-      return 'refresh node'
+      return 'Refreshing this node'
     case 'retry_failed':
-      return 'retry of failed nodes'
+      return 'Retrying failed nodes'
     case 'synced_peer_add':
-      return 'synced peer add'
+      return 'Adding a synced peer'
     case 'cross_tree_rebase':
-      return 'cross-tree rebase'
+      return 'Performing a cross-tree rebase'
   }
 }

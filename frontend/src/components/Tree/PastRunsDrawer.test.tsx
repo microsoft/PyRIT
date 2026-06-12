@@ -247,3 +247,52 @@ describe('PastRunsDrawer — pin marker', () => {
     ).toBe('false')
   })
 })
+
+// ============================================================================
+// Long executionId rendering — truncate visually, full id on title (PR6.5)
+// ============================================================================
+
+describe('PastRunsDrawer — UUID truncation', () => {
+  const LONG_UUID = '7f48f2d2-3c3f-4cf8-aae5-1234567890ab'
+
+  it('renders only a short prefix of a long executionId in the visible text', () => {
+    const history: ReflogEntry[] = [mkEntry(LONG_UUID, '2026-06-11T10:00:00Z')]
+    const { container } = render(
+      <PastRunsDrawer nodeId={N} execution={null} executionHistory={history} />,
+    )
+    const entry = container.querySelector(
+      `[data-execution-id="${LONG_UUID}"]`,
+    ) as HTMLElement
+    // The visible id span should NOT contain the full UUID string.
+    const idSpan = entry.querySelector('[data-tree-execution-id-display]') as HTMLElement
+    expect(idSpan).not.toBeNull()
+    expect(idSpan.textContent ?? '').not.toContain(LONG_UUID)
+    // It should contain the leading 8-hex prefix so the operator can
+    // visually cross-reference logs.
+    expect(idSpan.textContent ?? '').toContain('7f48f2d2')
+  })
+
+  it('exposes the full executionId on the id span title attribute for hover lookup', () => {
+    const history: ReflogEntry[] = [mkEntry(LONG_UUID, '2026-06-11T10:00:00Z')]
+    const { container } = render(
+      <PastRunsDrawer nodeId={N} execution={null} executionHistory={history} />,
+    )
+    const idSpan = container.querySelector(
+      '[data-tree-execution-id-display]',
+    ) as HTMLElement
+    expect(idSpan.getAttribute('title')).toBe(LONG_UUID)
+  })
+
+  it('renders short executionIds (≤12 chars) unchanged — no ellipsis added', () => {
+    const history: ReflogEntry[] = [mkEntry('e_short', '2026-06-11T10:00:00Z')]
+    const { container } = render(
+      <PastRunsDrawer nodeId={N} execution={null} executionHistory={history} />,
+    )
+    const idSpan = container.querySelector(
+      '[data-tree-execution-id-display]',
+    ) as HTMLElement
+    expect(idSpan.textContent).toBe('e_short')
+    // Full id still on title for consistency.
+    expect(idSpan.getAttribute('title')).toBe('e_short')
+  })
+})

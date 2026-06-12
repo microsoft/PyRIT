@@ -104,21 +104,21 @@ describe('useCostGuardrailModal — at/above threshold', () => {
     expect(screen.getByRole('dialog').textContent).toMatch(/20/)
   })
 
-  it('modal shows an operator-friendly label for waveTriggerKind=refresh_tree', async () => {
+  it('modal body uses a gerund clause for waveTriggerKind=refresh_tree', async () => {
     const h = mountHook({ confirmThresholdCount: 20 })
     await act(async () => {
       void h.current.guardrail.approve(60, 'refresh_tree')
       await Promise.resolve()
     })
-    expect(screen.getByRole('dialog').textContent).toMatch(/refresh tree/i)
+    expect(screen.getByRole('dialog').textContent).toMatch(/Refreshing the tree/)
   })
 
   it.each([
-    ['refresh_node', /refresh node|node/i],
-    ['refresh_subtree', /subtree/i],
-    ['retry_failed', /retry/i],
+    ['refresh_node', /Refreshing this node/],
+    ['refresh_subtree', /Refreshing this subtree/],
+    ['retry_failed', /Retrying failed nodes/],
   ] as Array<[WaveTriggerKind, RegExp]>)(
-    'modal shows trigger label for %s',
+    'modal body uses a gerund clause for %s',
     async (kind, pattern) => {
       const h = mountHook({ confirmThresholdCount: 20 })
       await act(async () => {
@@ -128,6 +128,17 @@ describe('useCostGuardrailModal — at/above threshold', () => {
       expect(screen.getByRole('dialog').textContent).toMatch(pattern)
     },
   )
+
+  it('modal body uses "per wave" (not "per refresh") for the threshold qualifier', async () => {
+    const h = mountHook({ confirmThresholdCount: 20 })
+    await act(async () => {
+      void h.current.guardrail.approve(60, 'retry_failed')
+      await Promise.resolve()
+    })
+    const body = screen.getByRole('dialog').textContent ?? ''
+    expect(body).toMatch(/per wave/)
+    expect(body).not.toMatch(/per refresh/)
+  })
 })
 
 // ============================================================================
