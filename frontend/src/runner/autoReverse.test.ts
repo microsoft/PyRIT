@@ -26,6 +26,7 @@ import {
   linearChainFromMessages,
   detectFansV10Plus,
   reconstructVariantPayloads,
+  reconstructTreeWithFans,
   type ImplicitFan,
   type LeafForFanDetection,
 } from './autoReverse'
@@ -466,5 +467,139 @@ describe('reconstructVariantPayloads', () => {
     expect(() => reconstructVariantPayloads(promptFan, testConverterResolver)).toThrow(
       /not.*implement/i,
     )
+  })
+})
+
+// ============================================================================
+// reconstructTreeWithFans (PR7g slice 2) — fan-aware tree assembly
+// ============================================================================
+
+describe('reconstructTreeWithFans', () => {
+  function userMsg(turn: number, value: string): BackendMessage {
+    return mkMessage({ turnNumber: turn, role: 'user', pieces: [mkPiece({ pieceId: `u${turn}`, value })] })
+  }
+  function asstMsg(turn: number, value: string): BackendMessage {
+    return mkMessage({ turnNumber: turn, role: 'assistant', pieces: [mkPiece({ pieceId: `a${turn}`, value })] })
+  }
+
+  it('no fans → linear reconstruction, fullyReconstructed=true, fanCount=0', () => {
+    const result = reconstructTreeWithFans({
+      baseMessages: [userMsg(1, 'hello'), asstMsg(2, 'hi')],
+      leaves: [mkLeaf({ id: 'l1', treePath: '' })],
+    })
+    expect(result.fanCount).toBe(0)
+    expect(result.fullyReconstructed).toBe(true)
+    // root + send, no fan node.
+    expect(result.tree.nodes.some((n) => n.kind === 'fan')).toBe(false)
+    expect(result.tree.nodes.find((n) => n.id === result.tree.rootId)?.kind).toBe('root_prompt')
+  })
+
+  it('root-level attempt fan (base = user→assistant) → root → fan(attempt, N) → send×N', () => {
+    const result = reconstructTreeWithFans({
+      baseMessages: [userMsg(1, 'prompt'), asstMsg(2, 'resp-slot0')],
+      leaves: [
+        mkLeaf({ id: 'a0', treePath: '[["attempt",0]]' }),
+        mkLeaf({ id: 'a1', treePath: '[["attempt",1]]' }),
+        mkLeaf({ id: 'a2', treePath: '[["attempt",2]]' }),
+      ],
+    })
+    expect(result.fanCount).toBe(1)
+    expect(result.fullyReconstructed).toBe(true)
+
+    const root = result.tree.nodes.find((n) => n.id === result.tree.rootId)
+    expect(root?.kind).toBe('root_prompt')
+
+    const fan = result.tree.nodes.find((n) => n.kind === 'fan')
+    if (fan?.kind !== 'fan') throw new Error('expected a fan node')
+    expect(fan.params.axis).toBe('attempt')
+    expect(fan.params.variants).toHaveLength(3)
+    expect(fan.params.variants.every((v) => v.axis === 'attempt')).toBe(true)
+    // Fan attaches directly to the root (2-message base = no intermediate turns).
+    expect(fan.parentId).toBe(result.tree.rootId)
+
+    // Three send children, one per slot, with distinct edge slotIndices.
+    const fanChildEdges = result.tree.edges.filter((e) => e.parentId === fan.id)
+    expect(fanChildEdges).toHaveLength(3)
+    expect(fanChildEdges.map((e) => e.slotIndex).sort()).toEqual([0, 1, 2])
+    for (const edge of fanChildEdges) {
+      const child = result.tree.nodes.find((n) => n.id === edge.childId)
+      expect(child?.kind).toBe('send')
+    }
+  })
+
+  it('root-level attempt fan with an intermediate turn → fan attaches to the spine tip (user_turn)', () => {
+    // base = user → assistant → user → assistant. The LAST assistant is the
+    // fanned divergence; the spine is root → send → user_turn.
+    const result = reconstructTreeWithFans({
+      baseMessages: [userMsg(1, 'q1'), asstMsg(2, 'a1'), userMsg(3, 'q2'), asstMsg(4, 'a2-slot0')],
+      leaves: [
+        mkLeaf({ id: 'b0', treePath: '[["attempt",0]]' }),
+        mkLeaf({ id: 'b1', treePath: '[["attempt",1]]' }),
+      ],
+    })
+    expect(result.fullyReconstructed).toBe(true)
+    const fan = result.tree.nodes.find((n) => n.kind === 'fan')
+    if (fan?.kind !== 'fan') throw new Error('expected a fan node')
+    // Fan's parent is the spine tip — a user_turn (turn 3), not the root.
+    const parent = result.tree.nodes.find((n) => n.id === fan.parentId)
+    expect(parent?.kind).toBe('user_turn')
+    // Two send children.
+    expect(result.tree.edges.filter((e) => e.parentId === fan.id)).toHaveLength(2)
+  })
+
+  it('converter fan → NOT fully reconstructed (degraded), linear fallback, fanCount=1', () => {
+    const result = reconstructTreeWithFans({
+      baseMessages: [userMsg(1, 'prompt'), asstMsg(2, 'resp')],
+      leaves: [
+        mkLeaf({ id: 'c0', treePath: '[["converter",0]]' }),
+        mkLeaf({ id: 'c1', treePath: '[["converter",1]]' }),
+      ],
+    })
+    expect(result.fanCount).toBe(1)
+    expect(result.fullyReconstructed).toBe(false)
+    // Linear fallback: no fan node.
+    expect(result.tree.nodes.some((n) => n.kind === 'fan')).toBe(false)
+  })
+
+  it('nested fans → NOT fully reconstructed (degraded), fanCount reflects detected fans', () => {
+    const result = reconstructTreeWithFans({
+      baseMessages: [userMsg(1, 'prompt'), asstMsg(2, 'resp')],
+      leaves: [
+        mkLeaf({ id: 'n00', treePath: '[["prompt",0],["attempt",0]]' }),
+        mkLeaf({ id: 'n01', treePath: '[["prompt",0],["attempt",1]]' }),
+        mkLeaf({ id: 'n10', treePath: '[["prompt",1],["attempt",0]]' }),
+        mkLeaf({ id: 'n11', treePath: '[["prompt",1],["attempt",1]]' }),
+      ],
+    })
+    expect(result.fullyReconstructed).toBe(false)
+    expect(result.fanCount).toBeGreaterThanOrEqual(2)
+    expect(result.tree.nodes.some((n) => n.kind === 'fan')).toBe(false)
+  })
+
+  it('two distinct-axis fans at the same parent_path → degraded (ambiguous to reconstruct)', () => {
+    const result = reconstructTreeWithFans({
+      baseMessages: [userMsg(1, 'prompt'), asstMsg(2, 'resp')],
+      leaves: [
+        mkLeaf({ id: 'x0', treePath: '[["attempt",0]]' }),
+        mkLeaf({ id: 'x1', treePath: '[["attempt",1]]' }),
+        mkLeaf({ id: 'y0', treePath: '[["converter",0]]' }),
+        mkLeaf({ id: 'y1', treePath: '[["converter",1]]' }),
+      ],
+    })
+    expect(result.fullyReconstructed).toBe(false)
+    expect(result.fanCount).toBe(2)
+  })
+
+  it('empty base messages → empty greenfield tree, not fully reconstructed', () => {
+    const result = reconstructTreeWithFans({
+      baseMessages: [],
+      leaves: [
+        mkLeaf({ id: 'a0', treePath: '[["attempt",0]]' }),
+        mkLeaf({ id: 'a1', treePath: '[["attempt",1]]' }),
+      ],
+    })
+    // No base messages to seed the spine — fall back, don't crash.
+    expect(result.fullyReconstructed).toBe(false)
+    expect(result.tree.nodes.some((n) => n.kind === 'fan')).toBe(false)
   })
 })

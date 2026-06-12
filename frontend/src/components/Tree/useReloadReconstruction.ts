@@ -20,7 +20,7 @@
 
 import { useEffect } from 'react'
 
-import { detectFansV10Plus, linearChainFromMessages } from '../../runner/autoReverse'
+import { reconstructTreeWithFans } from '../../runner/autoReverse'
 import type { ConversationTree, ConversationTreeId } from '../../runner/treeTypes'
 import type { AttackListResponse, AttackSummary, ConversationMessagesResponse } from '../../types'
 
@@ -100,28 +100,35 @@ export function useReloadReconstruction({
       const msgs = await reloadApi.getMessages(base.attack_result_id, base.conversation_id)
       if (cancelled) return
 
-      const reconstructed = linearChainFromMessages(msgs.messages)
+      // Fan-aware reconstruction (PR7g slice 2): reconstructTreeWithFans
+      // fully rebuilds the no-fan and single root-level attempt-fan cases;
+      // converter/nested/multi-axis fans fall back to a linear chain and
+      // report `fullyReconstructed: false` so we surface the degraded banner.
+      const leaves = list.items.map((ar) => ({
+        attack_result_id: ar.attack_result_id,
+        labels: ar.labels,
+      }))
+      const recon = reconstructTreeWithFans({ baseMessages: msgs.messages, leaves })
       const parentId = pickParentConversationTreeId(list.items)
       const next: ConversationTree = {
-        ...reconstructed,
+        ...recon.tree,
         id: fragmentTreeId as ConversationTreeId,
         parentConversationTreeId: parentId,
       }
       onTreeChange?.(next)
 
-      // Disclose the slice-1 topology gap: if the AR set has fans, the
-      // linear reconstruction above dropped them. Surface it rather than
-      // silently degrading (PR7 review must-fix #3). PR7g slice 2 makes
-      // this path fan-aware and removes the disclosure.
-      const fans = detectFansV10Plus(
-        list.items.map((ar) => ({ attack_result_id: ar.attack_result_id, labels: ar.labels })),
-      )
-      if (fans.length > 0) {
+      // Disclose any topology gap: a fan set that did NOT fully reconstruct
+      // (converter/nested/multi-axis) fell back to a linear chain. Surface it
+      // rather than silently degrading (PR7 review must-fix #3). The handled
+      // cases (no fans, single root-level attempt fan) report
+      // fullyReconstructed=true and skip the banner.
+      if (!recon.fullyReconstructed && recon.fanCount > 0) {
         console.warn(
           `useReloadReconstruction: reconstructed tree '${fragmentTreeId}' as a linear chain; ` +
-            `${fans.length} fan(s) in the saved tree are not shown (fan-aware reload lands in PR7g slice 2)`,
+            `${recon.fanCount} fan(s) in the saved tree are not shown (converter/nested fan-aware ` +
+            `reload is deferred)`,
         )
-        onReconstructionDegraded?.({ fanCount: fans.length })
+        onReconstructionDegraded?.({ fanCount: recon.fanCount })
       }
     })().catch(() => {
       // Fail soft on reload reconstruction errors.

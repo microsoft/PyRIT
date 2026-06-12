@@ -193,10 +193,9 @@ describe('useReloadReconstruction', () => {
     expect(onTreeChange).not.toHaveBeenCalled()
   })
 
-  it('discloses degraded reconstruction when the AR set has fan topology', async () => {
-    // Two leaves under a fan (tree_path with an attempt axis at distinct
-    // slots) — detectFansV10Plus would find a fan, but slice-1 reload only
-    // reconstructs the linear base. The loss must be DISCLOSED, not silent.
+  it('fully reconstructs a root-level attempt fan (no degradation banner)', async () => {
+    // PR7g slice 2: a single root-level attempt fan reconstructs fully —
+    // root → fan(attempt) → send×2 — so the degraded banner must NOT fire.
     const onTreeChange = jest.fn()
     const onReconstructionDegraded = jest.fn()
     const api = {
@@ -218,6 +217,43 @@ describe('useReloadReconstruction', () => {
     renderHook(() =>
       useReloadReconstruction({
         fragmentTreeId: 't-fan',
+        currentTree: null,
+        onTreeChange,
+        onReconstructionDegraded,
+        reloadApi: api,
+      }),
+    )
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    expect(onReconstructionDegraded).not.toHaveBeenCalled()
+    const tree = onTreeChange.mock.calls[0][0] as ConversationTree
+    expect(tree.nodes.some((n) => n.kind === 'fan')).toBe(true)
+  })
+
+  it('discloses degraded reconstruction for a converter fan (deferred topology)', async () => {
+    // Converter fans are not yet fan-aware-reconstructed; they fall back to a
+    // linear chain and MUST disclose the loss rather than silently degrade.
+    const onTreeChange = jest.fn()
+    const onReconstructionDegraded = jest.fn()
+    const api = {
+      listAttacks: jest.fn(async () =>
+        mkList([
+          mkAttack({
+            attack_result_id: 'ar-0',
+            labels: { conversation_tree_id: 't-conv', tree_path: '[["converter",0]]' },
+          }),
+          mkAttack({
+            attack_result_id: 'ar-1',
+            labels: { conversation_tree_id: 't-conv', tree_path: '[["converter",1]]' },
+          }),
+        ]),
+      ),
+      getMessages: jest.fn(async () => mkMessages('conv-1')),
+    }
+
+    renderHook(() =>
+      useReloadReconstruction({
+        fragmentTreeId: 't-conv',
         currentTree: null,
         onTreeChange,
         onReconstructionDegraded,

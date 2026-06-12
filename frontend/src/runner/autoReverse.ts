@@ -27,6 +27,7 @@ import type {
   ConversationTreeNodeId,
   ConverterRef,
   FanAxis,
+  FanNode,
   FanVariant,
   RootPromptNode,
   SendNode,
@@ -403,6 +404,130 @@ function mostFrequent<T>(candidates: T[][]): { winner: T[]; divergent: boolean }
     }
   }
   return { winner, divergent: counts.size > 1 }
+}
+
+// ============================================================================
+// reconstructTreeWithFans (PR7g slice 2)
+// ============================================================================
+
+export interface ReconstructTreeWithFansArgs {
+  /** The base leaf's full conversation; seeds the linear spine. */
+  baseMessages: BackendMessage[]
+  /** All leaf ARs of the tree (carry `labels.tree_path` for fan detection). */
+  leaves: ReadonlyArray<LeafForFanDetection>
+}
+
+export interface ReconstructTreeWithFansResult {
+  tree: ConversationTree
+  /**
+   * True when the full topology (including fans) was reconstructed; false when
+   * the result fell back to a linear chain (the caller surfaces the degraded
+   * banner). V1.0 slice-2 fully reconstructs the no-fan case and the single
+   * root-level `attempt` fan; converter/nested/multi-axis fans fall back.
+   */
+  fullyReconstructed: boolean
+  /** Fans detected in the leaf set (0 when purely linear). */
+  fanCount: number
+}
+
+/**
+ * Assemble a tree from a base conversation + the leaf set's fan topology.
+ *
+ * V1.0 slice-2 scope: reconstructs the no-fan case (linear) and a single
+ * root-level (`parent_path === []`) `attempt` fan. Converter fans, nested
+ * fans, and multiple/axis-changed fans at the same position are deferred —
+ * they fall back to the linear base (non-corrupting; the base leaf's own
+ * converter pipeline survives via linearChainFromMessages) and the caller
+ * surfaces the "reconstructed as a linear chain" banner.
+ */
+export function reconstructTreeWithFans(
+  args: ReconstructTreeWithFansArgs,
+): ReconstructTreeWithFansResult {
+  const fans = detectFansV10Plus(args.leaves)
+  const linear = linearChainFromMessages(args.baseMessages)
+
+  if (fans.length === 0) {
+    return { tree: linear, fullyReconstructed: true, fanCount: 0 }
+  }
+
+  const single = fans.length === 1 ? fans[0] : null
+  if (single !== null && single.parent_path.length === 0 && single.axis === 'attempt') {
+    const assembled = assembleRootAttemptFan(args.baseMessages, single)
+    if (assembled !== null) {
+      return { tree: assembled, fullyReconstructed: true, fanCount: 1 }
+    }
+  }
+
+  return { tree: linear, fullyReconstructed: false, fanCount: fans.length }
+}
+
+function assembleRootAttemptFan(
+  baseMessages: BackendMessage[],
+  fan: ImplicitFan,
+): ConversationTree | null {
+  const sorted = [...baseMessages].sort((a, b) => a.turn_number - b.turn_number)
+  // The fanned divergence is the final assistant turn; the spine is every
+  // message before it. A non-assistant tail means a malformed base — bail.
+  const last = sorted[sorted.length - 1]
+  if (last === undefined || last.role !== 'assistant') return null
+
+  const spine = linearChainFromMessages(sorted.slice(0, -1))
+  if (spine.nodes.length === 0) return null // no root seeded → bail
+  const tipId = spine.nodes[spine.nodes.length - 1].id
+
+  // attempt axis: reconstructVariantPayloads returns empty payloads and never
+  // calls the resolver, so a no-op resolver is safe here.
+  const variants = reconstructVariantPayloads(fan, () => [])
+
+  const fanId = mintNodeId()
+  const fanNode: FanNode = {
+    id: fanId,
+    kind: 'fan',
+    parentId: tipId,
+    resolvedInputHash: emptyHash(),
+    state: 'clean',
+    execution: null,
+    executionHistory: [],
+    lastError: null,
+    labels: {},
+    createdAt: NOW,
+    updatedAt: NOW,
+    version: 1,
+    params: {
+      axis: 'attempt',
+      variants,
+      promotedChildSlotIndex: null,
+      deletedSlotIndices: [],
+    },
+  }
+
+  const nodes: ConversationTreeNode[] = [...spine.nodes, fanNode]
+  const edges: ConversationTreeEdge[] = [
+    ...spine.edges,
+    { id: `${tipId}->${fanId}`, parentId: tipId, childId: fanId, slotIndex: 0 },
+  ]
+  for (let slot = 0; slot < variants.length; slot += 1) {
+    const sendId = mintNodeId()
+    const send: SendNode = {
+      id: sendId,
+      kind: 'send',
+      parentId: fanId,
+      resolvedInputHash: emptyHash(),
+      state: 'clean',
+      execution: null,
+      executionHistory: [],
+      lastError: null,
+      labels: {},
+      createdAt: NOW,
+      updatedAt: NOW,
+      version: 1,
+      params: {},
+    }
+    nodes.push(send)
+    edges.push({ id: `${fanId}->${sendId}`, parentId: fanId, childId: sendId, slotIndex: slot })
+  }
+
+  return { ...spine, nodes, edges }
 }
 
 // Re-export FanAxis so the host doesn't need to dual-import.
