@@ -28,7 +28,7 @@ import type { WaveTriggerKind } from '../../runner/treeTypes'
  * and renderHook alone gives us the hook's return value but no DOM tree
  * for the modal to attach to.
  */
-function mountHook(opts: { confirmThresholdCount: number }) {
+function mountHook(opts: Parameters<typeof useCostGuardrailModal>[0]) {
   let latest: ReturnType<typeof useCostGuardrailModal> | null = null
   function Harness() {
     latest = useCostGuardrailModal(opts)
@@ -467,5 +467,72 @@ describe('useCostGuardrailModal — referential stability', () => {
     const after = (Harness as unknown as { latest: unknown }).latest
     expect(after).toBe(before)
     expect(renderCount).toBeGreaterThanOrEqual(2)
+  })
+})
+
+// ============================================================================
+// Controlled suppression (sourced from WorkspaceSettings) — PR6a rewire
+// ============================================================================
+
+describe('useCostGuardrailModal — controlled suppression', () => {
+  it('honors a persisted suppressed=true on mount (at-threshold approve auto-approves, no modal)', async () => {
+    // count=25 is at/above threshold 20 but below the 2x safety floor (40),
+    // so persisted suppression should auto-approve without showing the modal.
+    const h = mountHook({ confirmThresholdCount: 20, suppressed: true })
+    const approved = await h.current.guardrail.approve(25, 'refresh_tree')
+    expect(approved).toBe(true)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('the 2x safety floor overrides persisted suppression (modal still shows)', async () => {
+    const h = mountHook({ confirmThresholdCount: 20, suppressed: true })
+    let resolved: boolean | null = null
+    await act(async () => {
+      void h.current.guardrail.approve(40, 'refresh_tree').then((v) => {
+        resolved = v
+      })
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(resolved).toBeNull()
+  })
+
+  it('checkbox + Refresh notifies onChangeSuppressed(true)', async () => {
+    const onChangeSuppressed = jest.fn()
+    const h = mountHook({ confirmThresholdCount: 20, onChangeSuppressed })
+    await act(async () => {
+      void h.current.guardrail.approve(25, 'refresh_tree')
+      await Promise.resolve()
+    })
+    fireEvent.click(screen.getByRole('checkbox', { name: /don't ask again/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^refresh$/i }))
+    expect(onChangeSuppressed).toHaveBeenCalledWith(true)
+  })
+
+  it('Refresh WITHOUT the checkbox does not notify onChangeSuppressed', async () => {
+    const onChangeSuppressed = jest.fn()
+    const h = mountHook({ confirmThresholdCount: 20, onChangeSuppressed })
+    await act(async () => {
+      void h.current.guardrail.approve(25, 'refresh_tree')
+      await Promise.resolve()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^refresh$/i }))
+    expect(onChangeSuppressed).not.toHaveBeenCalled()
+  })
+
+  it('a later suppressed=true prop (persisted mid-session) is honored by subsequent approvals', async () => {
+    // Drives the controlled prop from a parent so a change to the persisted
+    // setting takes effect without remounting the hook.
+    function Harness({ suppressed }: { suppressed: boolean }) {
+      const r = useCostGuardrailModal({ confirmThresholdCount: 20, suppressed })
+      ;(Harness as unknown as { latest: typeof r }).latest = r
+      return <>{r.modalElement}</>
+    }
+    const view = render(<Harness suppressed={false} />)
+    view.rerender(<Harness suppressed={true} />)
+    const r = (Harness as unknown as { latest: ReturnType<typeof useCostGuardrailModal> }).latest
+    const approved = await r.guardrail.approve(25, 'refresh_tree')
+    expect(approved).toBe(true)
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
