@@ -50,18 +50,16 @@ class ScoreView(Score):
             return identifier.class_name
         return "Unknown"
 
-    @computed_field(deprecated="Use 'id' instead; 'score_id' is removed in 0.17.0.")  # type: ignore[prop-decorator]
+    @computed_field(json_schema_extra={"deprecated": True})  # type: ignore[prop-decorator]
     @property
     def score_id(self) -> str:
-        """Deprecated alias for ``id``."""
+        """Deprecated alias for ``id``; use ``id`` instead (removed in 0.17.0)."""
         return str(self.id)
 
-    @computed_field(  # type: ignore[prop-decorator]
-        deprecated="Use 'timestamp' instead; 'scored_at' is removed in 0.17.0."
-    )
+    @computed_field(json_schema_extra={"deprecated": True})  # type: ignore[prop-decorator]
     @property
     def scored_at(self) -> datetime | None:
-        """Deprecated alias for ``timestamp``."""
+        """Deprecated alias for ``timestamp``; use ``timestamp`` instead (removed in 0.17.0)."""
         return self.timestamp
 
     @classmethod
@@ -93,8 +91,11 @@ class MessagePieceView(MessagePiece):
       populated by the mapper for media pieces (``/api/media?path=...`` for
       local files; SAS-signed URLs for Azure Blob; pass-through for data URIs
       and existing http(s) URLs). ``None`` for plain text and empty values.
-    - MIME types, download filenames and the response-error description are
+    - ``*_mime_type`` / ``*_filename`` — MIME types and download filenames
       derived from the raw values at map time.
+
+    ``response_error_description`` is an optional error detail that defaults to
+    ``None``; the canonical piece carries no separate description.
     """
 
     scores: list[ScoreView] = Field(default_factory=list)
@@ -120,10 +121,10 @@ class MessagePieceView(MessagePiece):
         default=None, description="Description of the error if response_error is not 'none'"
     )
 
-    @computed_field(deprecated="Use 'id' instead; 'piece_id' is removed in 0.17.0.")  # type: ignore[prop-decorator]
+    @computed_field(json_schema_extra={"deprecated": True})  # type: ignore[prop-decorator]
     @property
     def piece_id(self) -> str:
-        """Deprecated alias for ``id``."""
+        """Deprecated alias for ``id``; use ``id`` instead (removed in 0.17.0)."""
         return str(self.id)
 
     @classmethod
