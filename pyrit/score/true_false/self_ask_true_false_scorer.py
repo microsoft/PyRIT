@@ -230,7 +230,6 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
             prepended_text_message_piece=prepended_text,
             category=self._score_category,
             objective=objective,
-            attack_identifier=message_piece.attack_identifier,
         )
 
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")

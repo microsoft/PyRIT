@@ -112,13 +112,12 @@ export default function Home({
 
   useEffect(() => {
     let ignore = false
-    setLoading(true)
-    setError(null)
     attacksApi
       .listAttacks({ limit: RECENT_ATTACKS_LIMIT })
       .then(resp => {
         if (ignore) return
         setAttacks(resp.items.map(item => ({ ...item, labels: item.labels ?? {} })))
+        setError(null)
       })
       .catch(err => {
         if (ignore) return

@@ -12,7 +12,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
 
-from sqlalchemy import MetaData, and_, not_, or_
+from sqlalchemy import MetaData, and_, not_, or_, select
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm.attributes import InstrumentedAttribute
@@ -20,9 +20,11 @@ from sqlalchemy.orm.attributes import InstrumentedAttribute
 if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory.memory_models import (
     AttackResultEntry,
     Base,
+    ConversationEntry,
     EmbeddingDataEntry,
     PromptMemoryEntry,
     ScenarioResultEntry,
@@ -37,6 +39,7 @@ from pyrit.memory.storage import (
 )
 from pyrit.models import (
     AttackResult,
+    Conversation,
     ConversationStats,
     IdentifierFilter,
     IdentifierType,
@@ -340,11 +343,139 @@ class MemoryInterface(abc.ABC):
             Any: A SQLAlchemy condition for filtering memory entries based on prompt metadata.
         """
 
-    @abc.abstractmethod
+    def add_conversation_to_memory(self, *, conversation: Conversation) -> None:
+        """
+        Register a conversation in memory, recording its conversation-scoped metadata.
+
+        A conversation is a first-class entity held with a single target. Build a
+        ``Conversation`` when it is created and call this once (before, or independently
+        of, adding its messages) to record the target it is held with. Message writes
+        (``add_message_to_memory`` / ``add_message_pieces_to_memory``) deliberately do
+        not take a target, so that conversation ownership is expressed in a single place
+        rather than threaded through every write.
+
+        Registration is idempotent only for an identical conversation: re-registering the
+        same ``conversation_id`` with the same target is a no-op (so repeated per-turn
+        registration is safe). Re-registering an existing ``conversation_id`` with a
+        different target is a conflict and raises ``ValueError`` -- a conversation is held
+        with exactly one target and is never re-targeted.
+
+        Args:
+            conversation (Conversation): The conversation metadata to record, carrying the
+                ``conversation_id`` and the target it is held with (if known).
+
+        Raises:
+            ValueError: If ``conversation_id`` is empty, or if a conversation with the same
+                id already exists with a different target.
+        """
+        self._insert_conversation(conversation=conversation)
+
     def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
         Insert a list of message pieces into the memory storage.
+
+        Pieces flagged via ``MessagePiece.not_in_memory = True`` are silently filtered
+        out so callers don't need to track persistence policy themselves. Every
+        remaining piece must carry a non-empty ``conversation_id`` (the memory layer
+        never invents one -- see ``_validate_persistable_conversation_ids``).
+
+        Conversation-scoped metadata (the target a conversation is held with) is not
+        recorded here; register it once via ``add_conversation_to_memory`` when the
+        conversation is created.
+
+        This is a template method: subclasses implement only the backend-specific
+        ``_add_message_pieces_to_memory`` and inherit the filtering and validation
+        steps so no subclass can forget to run them.
+
+        Args:
+            message_pieces (Sequence[MessagePiece]): The pieces to persist.
         """
+        pieces_to_insert = [piece for piece in message_pieces if not piece.not_in_memory]
+        if not pieces_to_insert:
+            return
+        self._validate_persistable_conversation_ids(message_pieces=pieces_to_insert)
+        self._add_message_pieces_to_memory(message_pieces=pieces_to_insert)
+
+    @abc.abstractmethod
+    def _add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+        """
+        Persist already-validated message pieces to the backing store.
+
+        Called by ``add_message_pieces_to_memory`` after ``not_in_memory`` pieces are
+        filtered out and conversation_ids are validated. Implementations only translate
+        the pieces into storage rows and insert them; they must not re-filter or
+        re-validate.
+
+        Args:
+            message_pieces (Sequence[MessagePiece]): Persistable pieces (none flagged
+                ``not_in_memory``), each carrying a non-empty ``conversation_id``.
+        """
+
+    @staticmethod
+    def _validate_persistable_conversation_ids(*, message_pieces: Sequence[MessagePiece]) -> None:
+        """
+        Ensure every persistable piece carries a usable ``conversation_id``.
+
+        A conversation is its own entity, so the caller that starts it owns the id; the
+        memory layer never generates one. Any piece reaching persistence without a
+        non-empty, non-blank ``conversation_id`` is a programming error and raises loudly
+        rather than being silently assigned a throwaway conversation.
+
+        Args:
+            message_pieces (Sequence[MessagePiece]): Pieces about to be persisted
+                (``not_in_memory`` pieces should already be filtered out).
+
+        Raises:
+            ValueError: If any piece has a ``None``, empty, or whitespace-only
+                ``conversation_id``.
+        """
+        for piece in message_pieces:
+            if piece.conversation_id is None or not piece.conversation_id.strip():
+                raise ValueError(
+                    f"MessagePiece {piece.id} has no conversation_id. A conversation_id must be set by "
+                    "the caller before a piece is persisted; the memory layer does not generate one."
+                )
+
+    def _insert_conversation(self, *, conversation: Conversation) -> None:
+        """
+        Insert the ``Conversations`` row for a conversation, never updating an existing one.
+
+        A conversation is held with exactly one target, so this is insert-only with
+        idempotent-on-identical semantics: if no row exists it is inserted; if a row
+        already exists with the same target it is left untouched; if a row exists with a
+        different target it is a conflict and raises.
+
+        Args:
+            conversation (Conversation): The conversation metadata to record.
+
+        Raises:
+            ValueError: If ``conversation.conversation_id`` is empty, or if a conversation
+                with the same id already exists with a different target.
+            SQLAlchemyError: If the insert fails.
+        """
+        if not conversation.conversation_id:
+            raise ValueError("Cannot register a conversation without a conversation_id.")
+        entry = ConversationEntry(conversation=conversation)
+        with closing(self.get_session()) as session:
+            try:
+                existing = session.get(ConversationEntry, conversation.conversation_id)
+                if existing is None:
+                    session.add(entry)
+                elif (
+                    entry.target_identifier is not None
+                    and existing.target_identifier is not None
+                    and existing.target_identifier != entry.target_identifier
+                ):
+                    raise ValueError(
+                        f"Conversation {conversation.conversation_id} is already registered with a different "
+                        f"target ({existing.target_identifier!r}); a conversation is held with exactly one "
+                        f"target and cannot be re-registered with {entry.target_identifier!r}."
+                    )
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error registering conversation {conversation.conversation_id}: {e}")
+                raise
 
     @abc.abstractmethod
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
@@ -822,7 +953,7 @@ class MemoryInterface(abc.ABC):
         )
         return [entry.get_score() for entry in score_entries]
 
-    def get_conversation(self, *, conversation_id: str) -> MutableSequence[Message]:
+    def get_conversation_messages(self, *, conversation_id: str) -> MutableSequence[Message]:
         """
         Retrieve a list of Message objects that have the specified conversation ID.
 
@@ -834,6 +965,52 @@ class MemoryInterface(abc.ABC):
         """
         message_pieces = self.get_message_pieces(conversation_id=conversation_id)
         return group_conversation_message_pieces_by_sequence(message_pieces=message_pieces)
+
+    def get_conversation(self, *, conversation_id: str) -> MutableSequence[Message]:
+        """
+        Retrieve the messages for a conversation (deprecated alias).
+
+        .. deprecated::
+            Use ``get_conversation_messages`` instead. The ``get_conversation`` name is
+            being freed so it can return the conversation entity (currently exposed as
+            ``_get_conversation``) in a future release.
+
+        Args:
+            conversation_id (str): The conversation ID to match.
+
+        Returns:
+            MutableSequence[Message]: A list of chat memory entries with the specified conversation ID.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_conversation",
+            new_item="MemoryInterface.get_conversation_messages",
+            removed_in="0.17.0",
+        )
+        return self.get_conversation_messages(conversation_id=conversation_id)
+
+    def _get_conversation(self, *, conversation_id: str) -> Conversation | None:
+        """
+        Return the conversation-scoped metadata stored for ``conversation_id``.
+
+        Args:
+            conversation_id (str): The conversation to look up.
+
+        Returns:
+            Conversation | None: The conversation metadata (including the target
+                identifier), or ``None`` if no row exists for the conversation.
+        """
+        # NOTE: The leading underscore is temporary. This method returns the conversation
+        # entity (metadata) and will be promoted to the public ``get_conversation`` once the
+        # deprecated, messages-returning ``get_conversation`` above is removed in 0.17.0. The
+        # underscore exists only to avoid colliding with that still-public method during the
+        # deprecation window.
+        entries = self._query_entries(
+            ConversationEntry,
+            conditions=ConversationEntry.conversation_id == str(conversation_id),
+        )
+        if not entries:
+            return None
+        return entries[0].get_conversation()
 
     def get_request_from_response(self, *, response: Message) -> Message:
         """
@@ -853,8 +1030,82 @@ class MemoryInterface(abc.ABC):
         if response.sequence < 1:
             raise ValueError("The provided request does not have a preceding request (sequence < 1).")
 
-        conversation = self.get_conversation(conversation_id=response.conversation_id)
+        conversation = self.get_conversation_messages(conversation_id=response.conversation_id)
         return conversation[response.sequence - 1]
+
+    def _resolve_attack_id_to_conversation_condition(self, *, attack_id: str | uuid.UUID) -> Any:
+        """
+        Build a deprecated ``attack_id`` filter condition for ``get_message_pieces``.
+
+        The attack identifier is no longer stamped on every piece. Instead, resolve the
+        raw attack-strategy hash against persisted ``AttackResult`` rows and constrain
+        the query to those attacks' main conversations.
+
+        Args:
+            attack_id (str | uuid.UUID): The raw attack-strategy identifier hash.
+
+        Returns:
+            Any: A SQLAlchemy condition restricting pieces to the matching attacks'
+                main conversation ids (matches nothing when no attack matches).
+        """
+        print_deprecation_message(
+            old_item="get_message_pieces(attack_id=...) / get_prompt_scores(attack_id=...)",
+            new_item="get_message_pieces(conversation_id=...) resolved via get_attack_results(...)",
+            removed_in="0.17.0",
+        )
+        matching_conversation_ids = {
+            result.conversation_id
+            for result in self.get_attack_results()
+            if (strategy := result.get_attack_strategy_identifier()) is not None and strategy.hash == str(attack_id)
+        }
+        return PromptMemoryEntry.conversation_id.in_(matching_conversation_ids)
+
+    def _build_message_piece_identifier_conditions(
+        self, *, identifier_filters: Sequence[IdentifierFilter]
+    ) -> list[Any]:
+        """
+        Build ``get_message_pieces`` conditions for identifier filters.
+
+        ``CONVERTER`` identifiers remain on the piece. ``TARGET`` identifiers moved to
+        the ``Conversations`` table, so target filters are applied via a subquery on
+        ``ConversationEntry`` correlated by ``conversation_id``. ``ATTACK`` identifiers
+        are no longer stamped on pieces (use ``get_attack_results`` instead) and are
+        rejected by ``_build_identifier_filter_conditions``.
+
+        Args:
+            identifier_filters (Sequence[IdentifierFilter]): The filters to convert.
+
+        Returns:
+            list[Any]: SQLAlchemy conditions for the message-piece query.
+        """
+        conditions: list[Any] = []
+        piece_filters = [f for f in identifier_filters if f.identifier_type != IdentifierType.TARGET]
+        target_filters = [f for f in identifier_filters if f.identifier_type == IdentifierType.TARGET]
+
+        if piece_filters:
+            conditions.extend(
+                self._build_identifier_filter_conditions(
+                    identifier_filters=piece_filters,
+                    identifier_column_map={
+                        IdentifierType.CONVERTER: PromptMemoryEntry.converter_identifiers,
+                    },
+                    caller="get_message_pieces",
+                )
+            )
+        if target_filters:
+            target_conditions = self._build_identifier_filter_conditions(
+                identifier_filters=target_filters,
+                identifier_column_map={
+                    IdentifierType.TARGET: ConversationEntry.target_identifier,
+                },
+                caller="get_message_pieces",
+            )
+            conditions.append(
+                PromptMemoryEntry.conversation_id.in_(
+                    select(ConversationEntry.conversation_id).where(and_(*target_conditions))
+                )
+            )
+        return conditions
 
     def get_message_pieces(
         self,
@@ -911,13 +1162,7 @@ class MemoryInterface(abc.ABC):
         try:
             conditions: list[Any] = []
             if attack_id:
-                conditions.append(
-                    self._get_condition_json_property_match(
-                        json_column=PromptMemoryEntry.attack_identifier,
-                        property_path="$.hash",
-                        value=str(attack_id),
-                    )
-                )
+                conditions.append(self._resolve_attack_id_to_conversation_condition(attack_id=attack_id))
             if role:
                 conditions.append(PromptMemoryEntry.role == role)
             if conversation_id:
@@ -936,15 +1181,7 @@ class MemoryInterface(abc.ABC):
                 conditions.append(PromptMemoryEntry.converted_value_data_type != not_data_type)
             if identifier_filters:
                 conditions.extend(
-                    self._build_identifier_filter_conditions(
-                        identifier_filters=identifier_filters,
-                        identifier_column_map={
-                            IdentifierType.ATTACK: PromptMemoryEntry.attack_identifier,
-                            IdentifierType.TARGET: PromptMemoryEntry.prompt_target_identifier,
-                            IdentifierType.CONVERTER: PromptMemoryEntry.converter_identifiers,
-                        },
-                        caller="get_message_pieces",
-                    )
+                    self._build_message_piece_identifier_conditions(identifier_filters=identifier_filters)
                 )
 
             # Identify list parameters that may need batching
@@ -1012,9 +1249,15 @@ class MemoryInterface(abc.ABC):
         Returns:
             The uuid for the new conversation.
         """
-        messages = self.get_conversation(conversation_id=conversation_id)
+        messages = self.get_conversation_messages(conversation_id=conversation_id)
+        source_metadata = self._get_conversation(conversation_id=conversation_id)
+        source_target = source_metadata.target_identifier if source_metadata else None
         new_conversation_id, all_pieces = self.duplicate_messages(messages=messages)
-        self.add_message_pieces_to_memory(message_pieces=all_pieces)
+        if all_pieces:
+            self.add_conversation_to_memory(
+                conversation=Conversation(conversation_id=new_conversation_id, target_identifier=source_target)
+            )
+            self.add_message_pieces_to_memory(message_pieces=all_pieces)
         return new_conversation_id
 
     def duplicate_conversation_excluding_last_turn(self, *, conversation_id: str) -> str:
@@ -1030,7 +1273,7 @@ class MemoryInterface(abc.ABC):
         Returns:
             The uuid for the new conversation.
         """
-        messages = self.get_conversation(conversation_id=conversation_id)
+        messages = self.get_conversation_messages(conversation_id=conversation_id)
 
         # remove the final turn from the conversation
         if len(messages) == 0:
@@ -1046,8 +1289,14 @@ class MemoryInterface(abc.ABC):
             message for message in messages if message.sequence <= last_message.sequence - length_of_sequence_to_remove
         ]
 
+        source_metadata = self._get_conversation(conversation_id=conversation_id)
+        source_target = source_metadata.target_identifier if source_metadata else None
         new_conversation_id, all_pieces = self.duplicate_messages(messages=messages_to_duplicate)
-        self.add_message_pieces_to_memory(message_pieces=all_pieces)
+        if all_pieces:
+            self.add_conversation_to_memory(
+                conversation=Conversation(conversation_id=new_conversation_id, target_identifier=source_target)
+            )
+            self.add_message_pieces_to_memory(message_pieces=all_pieces)
 
         return new_conversation_id
 
@@ -1059,15 +1308,20 @@ class MemoryInterface(abc.ABC):
         If necessary, generates embedding data for applicable entries
 
         Args:
-            request (MessagePiece): The message piece to add to the memory.
+            request (Message): The message to add to the memory.
         """
         request.validate()
 
         embedding_entries = []
         message_pieces = request.message_pieces
 
+        pieces_to_persist = [piece for piece in message_pieces if not piece.not_in_memory]
+        if not pieces_to_persist:
+            return
+
         self._update_sequence(message_pieces=message_pieces)
 
+        # conversation_id validation happens in add_message_pieces_to_memory, the shared choke point.
         self.add_message_pieces_to_memory(message_pieces=message_pieces)
 
         if self.memory_embedding:

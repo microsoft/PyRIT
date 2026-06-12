@@ -106,7 +106,6 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         # Skip criteria could be set directly in the injected prompt normalizer
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
         self._conversation_manager = ConversationManager(
-            attack_identifier=self.get_identifier(),
             prompt_normalizer=self._prompt_normalizer,
         )
 
@@ -314,7 +313,6 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._objective_target.get_identifier(),
             objective_target_conversation_id=context.conversation_id,
             objective=context.params.objective,
@@ -326,7 +324,6 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
                 labels=context.memory_labels,  # combined with strategy labels at _setup()
-                attack_identifier=self.get_identifier(),
             )
 
     async def _evaluate_response_async(
@@ -353,7 +350,6 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_SCORER,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._objective_scorer.get_identifier() if self._objective_scorer else None,
             objective=objective,
         ):

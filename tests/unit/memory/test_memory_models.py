@@ -53,8 +53,6 @@ def _make_message_piece(**overrides) -> MessagePiece:
         "labels": {"label1": "value1"},
         "prompt_metadata": {"meta": "data"},
         "converter_identifiers": [ComponentIdentifier(class_name="NoOp", class_module="pyrit.converters")],
-        "prompt_target_identifier": ComponentIdentifier(class_name="MockTarget", class_module="tests.mocks"),
-        "attack_identifier": ComponentIdentifier(class_name="MockAttack", class_module="tests.mocks"),
         "original_value_data_type": "text",
         "converted_value_data_type": "text",
         "response_error": "none",
@@ -225,16 +223,6 @@ class TestPromptMemoryEntry:
         assert isinstance(entry.converter_identifiers, list)
         assert isinstance(entry.converter_identifiers[0], dict)
 
-    def test_init_with_no_attack_identifier(self):
-        piece = _make_message_piece(attack_identifier=None)
-        entry = PromptMemoryEntry(entry=piece)
-        assert entry.attack_identifier == {}
-
-    def test_init_with_no_target_identifier(self):
-        piece = _make_message_piece(prompt_target_identifier=None)
-        entry = PromptMemoryEntry(entry=piece)
-        assert entry.prompt_target_identifier == {}
-
     def test_roundtrip_get_message_piece(self):
         piece = _make_message_piece()
         entry = PromptMemoryEntry(entry=piece)
@@ -246,15 +234,8 @@ class TestPromptMemoryEntry:
         assert recovered.conversation_id == piece.conversation_id
         assert isinstance(recovered.converter_identifiers[0], ComponentIdentifier)
 
-    def test_str_with_target_identifier(self):
+    def test_str_renders_role_and_value(self):
         piece = _make_message_piece()
-        entry = PromptMemoryEntry(entry=piece)
-        s = str(entry)
-        assert "MockTarget" in s
-        assert "user" in s
-
-    def test_str_without_target_identifier(self):
-        piece = _make_message_piece(prompt_target_identifier=None)
         entry = PromptMemoryEntry(entry=piece)
         s = str(entry)
         assert "user" in s

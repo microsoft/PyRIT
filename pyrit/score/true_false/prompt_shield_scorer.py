@@ -76,7 +76,6 @@ class PromptShieldScorer(TrueFalseScorer):
                     original_value=body,
                     prompt_metadata=message_piece.prompt_metadata,
                     conversation_id=conversation_id,
-                    prompt_target_identifier=self._prompt_target.get_identifier(),
                 )
             ]
         )

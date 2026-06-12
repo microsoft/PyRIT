@@ -351,8 +351,6 @@ class Scorer(Identifiable, abc.ABC):
             labels=piece.labels,
             prompt_metadata=piece.prompt_metadata,
             converter_identifiers=list(piece.converter_identifiers),  # type: ignore[arg-type]
-            prompt_target_identifier=piece.prompt_target_identifier,
-            attack_identifier=piece.attack_identifier,
             response_error="none",
             timestamp=piece.timestamp,
         )
@@ -678,7 +676,6 @@ class Scorer(Identifiable, abc.ABC):
         description_output_key: str = "description",
         metadata_output_key: str = "metadata",
         category_output_key: str = "category",
-        attack_identifier: ComponentIdentifier | None = None,
         response_json_schema: JsonSchemaDefinition | None = None,
     ) -> UnvalidatedScore:
         """
@@ -713,8 +710,6 @@ class Scorer(Identifiable, abc.ABC):
                 Defaults to "metadata".
             category_output_key (str): The key in the JSON response that contains the category.
                 Defaults to "category".
-            attack_identifier (ComponentIdentifier | None): The attack identifier.
-                Defaults to None.
             response_json_schema (JsonSchemaDefinition | None): An optional JSON schema constraining
                 the scoring response. When provided, it is written to the request metadata; targets
                 that natively support JSON schemas enforce it, while others have it omitted by the
@@ -734,7 +729,6 @@ class Scorer(Identifiable, abc.ABC):
         prompt_target.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=conversation_id,
-            attack_identifier=attack_identifier,
         )
         prompt_metadata: dict[str, Any] = {"response_format": "json"}
         if response_json_schema is not None:
@@ -754,7 +748,6 @@ class Scorer(Identifiable, abc.ABC):
                     original_value_data_type="text",
                     converted_value_data_type="text",
                     conversation_id=conversation_id,
-                    prompt_target_identifier=prompt_target.get_identifier(),
                     prompt_metadata=prompt_metadata,
                 )
             )
@@ -767,7 +760,6 @@ class Scorer(Identifiable, abc.ABC):
                 original_value_data_type=message_data_type,
                 converted_value_data_type=message_data_type,
                 conversation_id=conversation_id,
-                prompt_target_identifier=prompt_target.get_identifier(),
                 prompt_metadata=prompt_metadata,
             )
         )

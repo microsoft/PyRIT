@@ -25,40 +25,52 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  // Counter used to re-trigger the fetch effect from event handlers (Refresh,
+  // dialog close) without invoking setState synchronously in the effect body.
+  const [refetchCount, setRefetchCount] = useState(0)
 
   // Retry fetching targets a few times with backoff. The Vite dev proxy
   // returns 502 while the backend is still starting, so a single failed
   // request on initial page load would show a confusing error to the user.
-  const fetchTargets = useCallback(async () => {
+  useEffect(() => {
     const maxRetries = 3
-    setLoading(true)
-    setError(null)
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    let cancelled = false
+
+    const attempt = async (n: number): Promise<void> => {
       try {
         const response = await targetsApi.listTargets(200)
+        if (cancelled) return
         setTargets(response.items)
+        setError(null)
         setLoading(false)
-        return
       } catch (err) {
-        if (attempt < maxRetries) {
-          // Wait before retrying (1s, 2s, 3s)
-          await new Promise(r => setTimeout(r, (attempt + 1) * 1000))
-        } else {
-          setError(toApiError(err).detail)
+        if (cancelled) return
+        if (n < maxRetries) {
+          await new Promise(r => setTimeout(r, (n + 1) * 1000))
+          if (cancelled) return
+          return attempt(n + 1)
         }
+        setError(toApiError(err).detail)
+        setLoading(false)
       }
     }
-    setLoading(false)
+
+    attempt(0)
+    return () => {
+      cancelled = true
+    }
+  }, [refetchCount])
+
+  const fetchTargets = useCallback(() => {
+    setLoading(true)
+    setError(null)
+    setRefetchCount(c => c + 1)
   }, [])
 
-  useEffect(() => {
+  const handleTargetCreated = useCallback(() => {
+    setDialogOpen(false)
     fetchTargets()
   }, [fetchTargets])
-
-  const handleTargetCreated = async () => {
-    setDialogOpen(false)
-    await fetchTargets()
-  }
 
   return (
     <div className={styles.root}>

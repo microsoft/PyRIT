@@ -242,7 +242,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
         Returns:
             Dict: dictionary with components from experiment parsed and formatted
         """
-        conversation_pieces = self.memory.get_conversation(conversation_id=attack_result.conversation_id)
+        conversation_pieces = self.memory.get_conversation_messages(conversation_id=attack_result.conversation_id)
         response = conversation_pieces[1].get_value() if len(conversation_pieces) >= 2 else ""
         subject_name = self._extract_name(response)
         return {

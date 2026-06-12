@@ -64,7 +64,7 @@ def mock_scorer():
 def mock_memory():
     """Create a mock memory instance"""
     memory = MagicMock()
-    memory.get_conversation.return_value = []
+    memory.get_conversation_messages.return_value = []
     memory.add_message_to_memory = MagicMock()
     return memory
 

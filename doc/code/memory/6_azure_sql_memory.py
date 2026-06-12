@@ -77,7 +77,7 @@ memory.add_message_to_memory(request=Message([message_list[0]]))
 memory.add_message_to_memory(request=Message([message_list[1]]))
 memory.add_message_to_memory(request=Message([message_list[2]]))
 
-entries = memory.get_conversation(conversation_id=conversation_id)
+entries = memory.get_conversation_messages(conversation_id=conversation_id)
 
 for entry in entries:
     print(entry)
