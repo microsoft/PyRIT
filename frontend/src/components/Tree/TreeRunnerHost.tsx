@@ -32,6 +32,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { TreeCanvas } from './TreeCanvas'
 import { WaveStatusRibbon } from './WaveStatusRibbon'
 import { summarizeWaveEvents } from './waveStatus'
+import { appendWaveEvent } from './waveStatus'
 import { useCostGuardrailModal } from './useCostGuardrailModal'
 import { useDirtyEditModal } from './useDirtyEditModal'
 import { useWorkspacePersistence, type WorkspacePersistenceDeps } from './useWorkspacePersistence'
@@ -252,7 +253,7 @@ export function TreeRunnerHost({
       if (next !== current) onTreeChangeRef.current?.(next)
     },
     emitWaveEvent: (event) => {
-      setWaveEvents((prev) => [...prev, event])
+      setWaveEvents((prev) => appendWaveEvent(prev, event))
     },
   }))
 

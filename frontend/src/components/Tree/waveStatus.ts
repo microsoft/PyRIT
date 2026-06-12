@@ -88,3 +88,24 @@ export function summarizeWaveEvents(events: ReadonlyArray<WaveEvent>): WaveStatu
   if (active !== null) active.queueDepth = pendingWaveIds.size
   return active ?? { status: 'idle' }
 }
+
+/**
+ * Append a WaveEvent to the host's buffer, compacting to `[]` once the
+ * stream drains to idle (no active wave). Without this the buffer grows
+ * unbounded across a long session — every wave appends start +
+ * node_complete-per-leaf + complete, and the array is rebuilt on each
+ * render. Compaction only fires on a `complete` event (the only kind
+ * that can transition to idle), so an in-flight wave's `start` is never
+ * dropped mid-wave.
+ */
+export function appendWaveEvent(
+  buffer: ReadonlyArray<WaveEvent>,
+  event: WaveEvent,
+): WaveEvent[] {
+  const next = [...buffer, event]
+  if (event.kind === 'complete' && summarizeWaveEvents(next).status === 'idle') {
+    return []
+  }
+  return next
+}
+

@@ -12,6 +12,7 @@
  */
 
 import { summarizeWaveEvents } from './waveStatus'
+import { appendWaveEvent } from './waveStatus'
 import { treeId, nodeId } from '../../runner/testHelpers'
 import type { WaveEvent } from '../../runner/treeTypes'
 
@@ -315,5 +316,53 @@ describe('summarizeWaveEvents — pre-start events', () => {
       waveId: 'w1',
       queueDepth: 0,
     })
+  })
+})
+
+// ============================================================================
+// appendWaveEvent — bounded buffer (compact-on-idle)
+// ============================================================================
+
+describe('appendWaveEvent', () => {
+  it('appends a start event without compacting (wave now running)', () => {
+    const next = appendWaveEvent([], evStart({ waveId: 'w1', estimatedCalls: 3 }))
+    expect(next).toHaveLength(1)
+    expect(summarizeWaveEvents(next).status).toBe('running')
+  })
+
+  it('keeps the start while node_completes accumulate mid-wave', () => {
+    let buf: WaveEvent[] = []
+    buf = appendWaveEvent(buf, evStart({ waveId: 'w1', estimatedCalls: 3 }))
+    buf = appendWaveEvent(buf, evNodeComplete({ waveId: 'w1', outcome: 'success' }))
+    buf = appendWaveEvent(buf, evNodeComplete({ waveId: 'w1', outcome: 'failure' }))
+    expect(buf).toHaveLength(3)
+    expect(summarizeWaveEvents(buf)).toMatchObject({ status: 'running', completed: 2 })
+  })
+
+  it('compacts to [] when a complete event drains the stream to idle', () => {
+    let buf: WaveEvent[] = []
+    buf = appendWaveEvent(buf, evStart({ waveId: 'w1', estimatedCalls: 2 }))
+    buf = appendWaveEvent(buf, evNodeComplete({ waveId: 'w1', outcome: 'success' }))
+    buf = appendWaveEvent(buf, evComplete({ waveId: 'w1', succeeded: 2 }))
+    expect(buf).toEqual([])
+  })
+
+  it('does NOT compact on complete while another wave is still active', () => {
+    let buf: WaveEvent[] = []
+    buf = appendWaveEvent(buf, evStart({ waveId: 'w1', estimatedCalls: 2 }))
+    // A second concurrent start would be unusual, but a stale complete for
+    // a non-active wave must not wipe the active wave's events.
+    buf = appendWaveEvent(buf, evComplete({ waveId: 'w-other', succeeded: 0 }))
+    // w1 is still active → buffer preserved.
+    expect(buf.length).toBeGreaterThan(0)
+    expect(summarizeWaveEvents(buf)).toMatchObject({ status: 'running', waveId: 'w1' })
+  })
+
+  it('never compacts on non-complete events even when idle', () => {
+    // A lone operator_tag_required (no wave) is idle, but it is not a
+    // complete event so the buffer is not cleared by it.
+    const ev: WaveEvent = { kind: 'operator_tag_required', treeId: T, emittedAt: ISO }
+    const next = appendWaveEvent([], ev)
+    expect(next).toHaveLength(1)
   })
 })
