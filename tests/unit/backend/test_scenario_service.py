@@ -13,8 +13,9 @@ from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse, RegisteredScenario
+from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse
 from pyrit.backend.services.scenario_service import ScenarioService, get_scenario_service
+from pyrit.models.catalog.scenario import RegisteredScenario
 from pyrit.registry import ScenarioMetadata
 from pyrit.registry.class_registries.scenario_registry import ScenarioParameterMetadata
 

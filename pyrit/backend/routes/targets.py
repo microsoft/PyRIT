@@ -13,10 +13,10 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
-    TargetInstance,
     TargetListResponse,
 )
 from pyrit.backend.services.target_service import get_target_service
+from pyrit.models.catalog.target import TargetInstance
 
 router = APIRouter(prefix="/targets", tags=["targets"])
 

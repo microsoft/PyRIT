@@ -14,14 +14,13 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from pyrit.backend.models.scenarios import (
+from pyrit.backend.models.scenarios import ScenarioRunListResponse
+from pyrit.memory import CentralMemory
+from pyrit.models import AttackOutcome, ScenarioResult, ScenarioRunState
+from pyrit.models.catalog.scenario import (
     RunScenarioRequest,
-    ScenarioRunListResponse,
-    ScenarioRunStatus,
     ScenarioRunSummary,
 )
-from pyrit.memory import CentralMemory
-from pyrit.models import AttackOutcome, ScenarioResult
 from pyrit.registry import InitializerRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import DatasetConfiguration
@@ -166,9 +165,9 @@ class ScenarioRunService:
             return None
 
         scenario_result = results[0]
-        db_status = ScenarioRunStatus(scenario_result.scenario_run_state)
+        db_status = ScenarioRunState(scenario_result.scenario_run_state)
 
-        if db_status in (ScenarioRunStatus.COMPLETED, ScenarioRunStatus.FAILED, ScenarioRunStatus.CANCELLED):
+        if db_status in (ScenarioRunState.COMPLETED, ScenarioRunState.FAILED, ScenarioRunState.CANCELLED):
             raise ValueError(f"Cannot cancel run in '{db_status}' state.")
 
         # Cancel the asyncio task if active and wait for it to finish
@@ -475,7 +474,7 @@ class ScenarioRunService:
         if not error and active is not None:
             error = active.error
 
-        status = ScenarioRunStatus(scenario_result.scenario_run_state)
+        status = ScenarioRunState(scenario_result.scenario_run_state)
 
         # Build result fields from DB (always computed so in-progress runs show progress)
         total_attacks = sum(len(results) for results in scenario_result.attack_results.values())
@@ -488,7 +487,7 @@ class ScenarioRunService:
             scenario_version=scenario_result.scenario_identifier.version,
             status=status,
             created_at=scenario_result.creation_time,
-            updated_at=scenario_result.completion_time,
+            updated_at=scenario_result.completion_time or scenario_result.creation_time,
             error=error,
             error_type=error_type,
             strategies_used=strategies_used,
@@ -519,7 +518,7 @@ class ScenarioRunService:
         scenario_result = results[0]
         run_response = self._build_response_from_db(scenario_result=scenario_result)
 
-        if run_response.status != ScenarioRunStatus.COMPLETED:
+        if run_response.status != ScenarioRunState.COMPLETED:
             raise ValueError(f"Results are only available for completed runs. Current status: '{run_response.status}'.")
 
         return scenario_result

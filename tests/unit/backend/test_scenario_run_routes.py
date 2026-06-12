@@ -14,11 +14,9 @@ from fastapi.testclient import TestClient
 
 import pyrit.backend.services.scenario_run_service as _svc_mod
 from pyrit.backend.main import app
-from pyrit.backend.models.scenarios import (
-    ScenarioRunListResponse,
-    ScenarioRunStatus,
-    ScenarioRunSummary,
-)
+from pyrit.backend.models.scenarios import ScenarioRunListResponse
+from pyrit.models import ScenarioRunState
+from pyrit.models.catalog.scenario import ScenarioRunSummary
 
 
 @pytest.fixture
@@ -39,7 +37,7 @@ def _mock_run_response(
     *,
     run_id: str = "test-run-id",
     scenario_name: str = "foundry.red_team_agent",
-    run_status: ScenarioRunStatus = ScenarioRunStatus.CREATED,
+    run_status: ScenarioRunState = ScenarioRunState.CREATED,
 ) -> ScenarioRunSummary:
     """Create a mock ScenarioRunResponse."""
     return ScenarioRunSummary(
@@ -142,7 +140,7 @@ class TestListScenarioRunsRoute:
         """Test that list runs returns all tracked runs."""
         runs = [
             _mock_run_response(run_id="run-1"),
-            _mock_run_response(run_id="run-2", run_status=ScenarioRunStatus.IN_PROGRESS),
+            _mock_run_response(run_id="run-2", run_status=ScenarioRunState.IN_PROGRESS),
         ]
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
@@ -161,7 +159,7 @@ class TestGetScenarioRunRoute:
 
     def test_get_run_returns_200(self, client: TestClient) -> None:
         """Test that getting an existing run returns 200."""
-        mock_response = _mock_run_response(run_status=ScenarioRunStatus.IN_PROGRESS)
+        mock_response = _mock_run_response(run_status=ScenarioRunState.IN_PROGRESS)
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
@@ -190,7 +188,7 @@ class TestCancelScenarioRunRoute:
 
     def test_cancel_run_returns_200(self, client: TestClient) -> None:
         """Test that cancelling a running scenario returns 200."""
-        mock_response = _mock_run_response(run_status=ScenarioRunStatus.CANCELLED)
+        mock_response = _mock_run_response(run_status=ScenarioRunState.CANCELLED)
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()

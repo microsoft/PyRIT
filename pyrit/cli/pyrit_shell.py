@@ -199,8 +199,8 @@ class PyRITShell(cmd.Cmd):
         from pyrit.cli import _output
 
         try:
-            resp = self._run_async(self._api_client.list_scenarios_async())
-            _output.print_scenario_list(items=resp.get("items", []))
+            scenarios = self._run_async(self._api_client.list_scenarios_async())
+            _output.print_scenario_list(items=scenarios)
         except Exception as e:
             print(f"Error listing scenarios: {e}")
 
@@ -214,8 +214,8 @@ class PyRITShell(cmd.Cmd):
         from pyrit.cli import _output
 
         try:
-            resp = self._run_async(self._api_client.list_initializers_async())
-            _output.print_initializer_list(items=resp.get("items", []))
+            initializers = self._run_async(self._api_client.list_initializers_async())
+            _output.print_initializer_list(items=initializers)
         except Exception as e:
             print(f"Error listing initializers: {e}")
 
@@ -229,8 +229,8 @@ class PyRITShell(cmd.Cmd):
         from pyrit.cli import _output
 
         try:
-            resp = self._run_async(self._api_client.list_targets_async())
-            _output.print_target_list(items=resp.get("items", []))
+            targets = self._run_async(self._api_client.list_targets_async())
+            _output.print_target_list(items=targets)
         except Exception as e:
             print(f"Error listing targets: {e}")
 
@@ -308,6 +308,7 @@ class PyRITShell(cmd.Cmd):
             print_scenario_run_progress,
             print_scenario_run_summary,
         )
+        from pyrit.models.catalog import RunScenarioRequest
 
         # Fetch scenario metadata so the parser recognizes scenario-declared flags.
         scenario_name_token = line.split(maxsplit=1)[0]
@@ -319,7 +320,7 @@ class PyRITShell(cmd.Cmd):
         if scenario_meta is None:
             print(f"Error: Scenario '{scenario_name_token}' not found on server.")
             return
-        declared_params = build_parameters_from_api(api_params=scenario_meta.get("supported_parameters") or [])
+        declared_params = build_parameters_from_api(api_params=scenario_meta.supported_parameters)
 
         # Parse arguments
         try:
@@ -330,8 +331,8 @@ class PyRITShell(cmd.Cmd):
 
         scenario_name = args["scenario_name"]
 
-        # Build request
-        request: dict[str, Any] = {
+        # Build typed request
+        request_kwargs: dict[str, Any] = {
             "scenario_name": scenario_name,
             "target_name": args.get("target") or "",
         }
@@ -349,29 +350,31 @@ class PyRITShell(cmd.Cmd):
                     init_names.append(name)
                     if entry.get("args"):
                         init_args[name] = entry["args"]
-            request["initializers"] = init_names
+            request_kwargs["initializers"] = init_names
             if init_args:
-                request["initializer_args"] = init_args
+                request_kwargs["initializer_args"] = init_args
 
         if args.get("scenario_strategies"):
-            request["strategies"] = args["scenario_strategies"]
+            request_kwargs["strategies"] = args["scenario_strategies"]
         if args.get("max_concurrency") is not None:
-            request["max_concurrency"] = args["max_concurrency"]
+            request_kwargs["max_concurrency"] = args["max_concurrency"]
         if args.get("max_retries") is not None:
-            request["max_retries"] = args["max_retries"]
+            request_kwargs["max_retries"] = args["max_retries"]
         if args.get("dataset_names"):
-            request["dataset_names"] = args["dataset_names"]
+            request_kwargs["dataset_names"] = args["dataset_names"]
         if args.get("max_dataset_size") is not None:
-            request["max_dataset_size"] = args["max_dataset_size"]
+            request_kwargs["max_dataset_size"] = args["max_dataset_size"]
         if args.get("memory_labels"):
-            request["labels"] = args["memory_labels"]
+            request_kwargs["labels"] = args["memory_labels"]
 
         scenario_params = extract_scenario_args(parsed=args)
         if scenario_params:
-            request["scenario_params"] = scenario_params
+            request_kwargs["scenario_params"] = scenario_params
+
+        request = RunScenarioRequest(**request_kwargs)
 
         # Start run
-        total_strategies = len(request.get("strategies") or [])
+        total_strategies = len(request.strategies or [])
         print(f"\nRunning scenario: {scenario_name}")
         sys.stdout.flush()
 
@@ -381,7 +384,7 @@ class PyRITShell(cmd.Cmd):
             print(f"Error starting scenario: {exc}")
             return
 
-        scenario_result_id = run.get("scenario_result_id", "")
+        scenario_result_id = run.scenario_result_id
 
         # Poll for completion
         import time
@@ -389,9 +392,8 @@ class PyRITShell(cmd.Cmd):
         try:
             while True:
                 run = self._run_async(self._api_client.get_scenario_run_async(scenario_result_id=scenario_result_id))
-                status = run.get("status", "UNKNOWN")
                 print_scenario_run_progress(run=run, total_strategies=total_strategies)
-                if status in self._TERMINAL_STATUSES:
+                if run.status in self._TERMINAL_STATUSES:
                     break
                 time.sleep(0.5)
         except KeyboardInterrupt:
@@ -405,12 +407,12 @@ class PyRITShell(cmd.Cmd):
             return
 
         # Print results
-        if run.get("status") == "COMPLETED":
+        if run.status == "COMPLETED":
             try:
                 detail = self._run_async(
                     self._api_client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
                 )
-                self._run_async(print_scenario_result_async(result_dict=detail))
+                self._run_async(print_scenario_result_async(result=detail))
             except Exception:
                 print_scenario_run_summary(run=run)
         else:
@@ -443,8 +445,8 @@ class PyRITShell(cmd.Cmd):
         from pyrit.cli._output import print_scenario_runs_list
 
         try:
-            resp = self._run_async(self._api_client.list_scenario_runs_async(limit=limit))
-            print_scenario_runs_list(runs=resp.get("items", []))
+            runs = self._run_async(self._api_client.list_scenario_runs_async(limit=limit))
+            print_scenario_runs_list(runs=runs)
         except Exception as e:
             print(f"Error: {e}")
 
@@ -467,7 +469,7 @@ class PyRITShell(cmd.Cmd):
 
         try:
             detail = self._run_async(self._api_client.get_scenario_run_results_async(scenario_result_id=arg))
-            self._run_async(print_scenario_result_async(result_dict=detail))
+            self._run_async(print_scenario_result_async(result=detail))
         except Exception as e:
             print(f"Error: {e}")
 

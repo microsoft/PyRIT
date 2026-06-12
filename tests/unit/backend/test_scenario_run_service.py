@@ -12,15 +12,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import pyrit.backend.services.scenario_run_service as _svc_mod
-from pyrit.backend.models.scenarios import (
-    RunScenarioRequest,
-    ScenarioRunStatus,
-)
 from pyrit.backend.services.scenario_run_service import (
     _DEFAULT_MAX_CONCURRENT_RUNS,
     ScenarioRunService,
 )
-from pyrit.models import AttackOutcome
+from pyrit.models import AttackOutcome, ScenarioRunState
+from pyrit.models.catalog.scenario import RunScenarioRequest
 from pyrit.scenario.core import DatasetConfiguration
 
 _REGISTRY_PATCH_BASE = "pyrit.registry"
@@ -147,7 +144,7 @@ class TestScenarioRunServiceStartRun:
         response = await service.start_run_async(request=_make_request())
 
         assert response.scenario_result_id == "sr-uuid-1"
-        assert response.status == ScenarioRunStatus.IN_PROGRESS
+        assert response.status == ScenarioRunState.IN_PROGRESS
         assert response.scenario_name == "foundry.red_team_agent"
         assert response.error is None
 
@@ -448,7 +445,7 @@ class TestScenarioRunServiceStartRun:
             request=_make_request(initializers=["target", "load_default_datasets"])
         )
 
-        assert response.status == ScenarioRunStatus.IN_PROGRESS
+        assert response.status == ScenarioRunState.IN_PROGRESS
         assert mock_init_instance.initialize_async.await_count == 2
 
     async def test_start_run_passes_scenario_result_id_for_resume(self, mock_all_registries) -> None:
@@ -458,7 +455,7 @@ class TestScenarioRunServiceStartRun:
 
         response = await service.start_run_async(request=_make_request(scenario_result_id="existing-result-uuid"))
 
-        assert response.status == ScenarioRunStatus.IN_PROGRESS
+        assert response.status == ScenarioRunState.IN_PROGRESS
         mock_scenario_class.assert_called_once_with(scenario_result_id="existing-result-uuid")
 
     async def test_start_run_omits_scenario_result_id_when_none(self, mock_all_registries) -> None:
@@ -492,7 +489,7 @@ class TestScenarioRunServiceGetRun:
         assert fetched is not None
         assert fetched.scenario_result_id == "sr-123"
         assert fetched.scenario_name == "foundry.red_team_agent"
-        assert fetched.status == ScenarioRunStatus.IN_PROGRESS
+        assert fetched.status == ScenarioRunState.IN_PROGRESS
 
     def test_get_run_falls_back_to_persisted_error(self, mock_memory) -> None:
         """Test that get_run extracts error from persisted error AttackResult when no active task.
@@ -585,7 +582,7 @@ class TestScenarioRunServiceCancelRun:
             error_type="CancelledError",
         )
         assert result is not None
-        assert result.status == ScenarioRunStatus.CANCELLED
+        assert result.status == ScenarioRunState.CANCELLED
 
     async def test_cancel_completed_run_raises_value_error(self, mock_memory) -> None:
         """Test that cancelling a completed run raises ValueError."""
@@ -738,7 +735,7 @@ class TestScenarioRunServiceProgressReporting:
         fetched = service.get_run(scenario_result_id="sr-running")
 
         assert fetched is not None
-        assert fetched.status == ScenarioRunStatus.IN_PROGRESS
+        assert fetched.status == ScenarioRunState.IN_PROGRESS
         assert fetched.total_attacks == 3
         assert fetched.completed_attacks == 3
         assert fetched.strategies_used == ["attack_a", "attack_b"]
@@ -757,7 +754,7 @@ class TestScenarioRunServiceProgressReporting:
         fetched = service.get_run(scenario_result_id="sr-new")
 
         assert fetched is not None
-        assert fetched.status == ScenarioRunStatus.CREATED
+        assert fetched.status == ScenarioRunState.CREATED
         assert fetched.total_attacks == 0
         assert fetched.completed_attacks == 0
         assert fetched.strategies_used == []
@@ -782,7 +779,7 @@ class TestScenarioRunServiceProgressReporting:
         fetched = service.get_run(scenario_result_id="sr-done")
 
         assert fetched is not None
-        assert fetched.status == ScenarioRunStatus.COMPLETED
+        assert fetched.status == ScenarioRunState.COMPLETED
         assert fetched.total_attacks == 1
         assert fetched.completed_attacks == 1
         assert fetched.strategies_used == ["attack_a"]

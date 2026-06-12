@@ -17,7 +17,7 @@ import logging
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pyrit.cli._cli_args import (
     ARG_HELP,
@@ -26,6 +26,14 @@ from pyrit.cli._cli_args import (
     positive_int,
     validate_log_level_argparse,
 )
+
+if TYPE_CHECKING:
+    from pyrit.models.catalog import (
+        RegisteredScenario,
+        RunScenarioRequest,
+        ScenarioParameterSummary,
+        ScenarioRunSummary,
+    )
 
 _TERMINAL_STATUSES = {"COMPLETED", "FAILED", "CANCELLED"}
 
@@ -256,13 +264,13 @@ _SCALAR_TYPE_COERCERS: dict[str, Any] = {
 }
 
 
-def _scenario_param_kwargs(*, param: dict[str, Any]) -> dict[str, Any]:
+def _scenario_param_kwargs(*, param: ScenarioParameterSummary) -> dict[str, Any]:
     """
-    Build argparse ``add_argument`` kwargs for a scenario-declared parameter dict.
+    Build argparse ``add_argument`` kwargs for a scenario-declared parameter.
 
-    Uses ``param_type``, ``is_list`` and ``choices`` from the catalog payload
-    so list params accept ``nargs='+'`` and scalar params get client-side
-    type coercion and choice validation.
+    Uses ``param_type``, ``is_list`` and ``choices`` so list params accept
+    ``nargs='+'`` and scalar params get client-side type coercion and choice
+    validation.
 
     Args:
         param: Single entry from ``RegisteredScenario.supported_parameters``.
@@ -271,16 +279,16 @@ def _scenario_param_kwargs(*, param: dict[str, Any]) -> dict[str, Any]:
         dict[str, Any]: kwargs ready to pass to ``ArgumentParser.add_argument``.
     """
     kwargs: dict[str, Any] = {
-        "dest": f"{_SCENARIO_DEST_PREFIX}{param.get('name', '')}",
+        "dest": f"{_SCENARIO_DEST_PREFIX}{param.name}",
         "default": argparse.SUPPRESS,
-        "help": param.get("description", ""),
+        "help": param.description,
     }
-    if param.get("is_list"):
+    if param.is_list:
         kwargs["nargs"] = "+"
     else:
-        coercer = _SCALAR_TYPE_COERCERS.get(param.get("param_type", ""))
+        coercer = _SCALAR_TYPE_COERCERS.get(param.param_type)
         if coercer is not None and coercer is not str:
-            param_name = param.get("name", "")
+            param_name = param.name
 
             def _typed(raw: str) -> Any:
                 try:
@@ -291,24 +299,22 @@ def _scenario_param_kwargs(*, param: dict[str, Any]) -> dict[str, Any]:
                     ) from exc
 
             kwargs["type"] = _typed
-    choices = param.get("choices")
-    if choices:
-        kwargs["choices"] = list(choices)
+    if param.choices:
+        kwargs["choices"] = list(param.choices)
     return kwargs
 
 
-def _add_scenario_params_from_api(*, parser: ArgumentParser, params: list[dict[str, Any]]) -> None:
+def _add_scenario_params_from_api(*, parser: ArgumentParser, params: list[ScenarioParameterSummary]) -> None:
     """
-    Add scenario-declared parameters (from the API response) as CLI flags.
+    Add scenario-declared parameters as CLI flags.
 
     Args:
         parser: Parser to extend.
-        params: List of parameter dicts from ``GET /api/scenarios/catalog/{name}``.
+        params: Scenario-declared parameters from ``GET /api/scenarios/catalog/{name}``.
     """
     seen_flags: set[str] = set(parser._option_string_actions.keys())
     for p in params:
-        name = p.get("name", "")
-        flag = f"--{name.replace('_', '-')}"
+        flag = f"--{p.name.replace('_', '-')}"
         if flag in seen_flags:
             continue
         parser.add_argument(flag, **_scenario_param_kwargs(param=p))
@@ -470,16 +476,16 @@ async def _handle_list_commands_async(*, client: Any, parsed_args: Namespace) ->
     from pyrit.cli import _output
 
     if parsed_args.list_scenarios:
-        resp = await client.list_scenarios_async()
-        _output.print_scenario_list(items=resp.get("items", []))
+        scenarios = await client.list_scenarios_async()
+        _output.print_scenario_list(items=scenarios)
         return 0
     if parsed_args.list_initializers:
-        resp = await client.list_initializers_async()
-        _output.print_initializer_list(items=resp.get("items", []))
+        initializers = await client.list_initializers_async()
+        _output.print_initializer_list(items=initializers)
         return 0
     if parsed_args.list_targets:
-        resp = await client.list_targets_async()
-        _output.print_target_list(items=resp.get("items", []))
+        targets = await client.list_targets_async()
+        _output.print_target_list(items=targets)
         return 0
     return None
 
@@ -512,7 +518,7 @@ async def _handle_add_initializer_async(*, client: Any, parsed_args: Namespace) 
 
 
 def _reparse_with_scenario_params(
-    *, parsed_args: Namespace, supported_params: list[dict[str, Any]]
+    *, parsed_args: Namespace, supported_params: list[ScenarioParameterSummary]
 ) -> Namespace | None:
     """
     Re-parse the original args with scenario-declared flags added to the base parser.
@@ -545,16 +551,17 @@ def _reparse_with_scenario_params(
         return None
 
 
-def _build_run_request(*, parsed_args: Namespace, scenario_name: str) -> dict[str, Any]:
+def _build_run_request(*, parsed_args: Namespace, scenario_name: str) -> RunScenarioRequest:
     """
-    Build the ``RunScenarioRequest`` dict from parsed CLI args.
+    Build the ``RunScenarioRequest`` typed object from parsed CLI args.
 
     Returns:
-        dict[str, Any]: The request payload to send to ``POST /api/scenarios/runs``.
+        RunScenarioRequest: The typed request payload to send to ``POST /api/scenarios/runs``.
     """
     from pyrit.cli._cli_args import parse_memory_labels
+    from pyrit.models.catalog import RunScenarioRequest
 
-    request: dict[str, Any] = {
+    kwargs: dict[str, Any] = {
         "scenario_name": scenario_name,
         "target_name": parsed_args.target or "",
     }
@@ -570,28 +577,28 @@ def _build_run_request(*, parsed_args: Namespace, scenario_name: str) -> dict[st
                 init_names.append(name)
                 if entry.get("args"):
                     init_args[name] = entry["args"]
-        request["initializers"] = init_names
+        kwargs["initializers"] = init_names
         if init_args:
-            request["initializer_args"] = init_args
+            kwargs["initializer_args"] = init_args
 
     if parsed_args.scenario_strategies:
-        request["strategies"] = parsed_args.scenario_strategies
+        kwargs["strategies"] = parsed_args.scenario_strategies
     if parsed_args.max_concurrency is not None:
-        request["max_concurrency"] = parsed_args.max_concurrency
+        kwargs["max_concurrency"] = parsed_args.max_concurrency
     if parsed_args.max_retries is not None:
-        request["max_retries"] = parsed_args.max_retries
+        kwargs["max_retries"] = parsed_args.max_retries
     if parsed_args.dataset_names:
-        request["dataset_names"] = parsed_args.dataset_names
+        kwargs["dataset_names"] = parsed_args.dataset_names
     if parsed_args.max_dataset_size is not None:
-        request["max_dataset_size"] = parsed_args.max_dataset_size
+        kwargs["max_dataset_size"] = parsed_args.max_dataset_size
     if parsed_args.memory_labels:
-        request["labels"] = parse_memory_labels(json_string=parsed_args.memory_labels)
+        kwargs["labels"] = parse_memory_labels(json_string=parsed_args.memory_labels)
 
     scenario_params = _extract_scenario_args(parsed=parsed_args)
     if scenario_params:
-        request["scenario_params"] = scenario_params
+        kwargs["scenario_params"] = scenario_params
 
-    return request
+    return RunScenarioRequest(**kwargs)
 
 
 async def _poll_until_terminal_async(
@@ -599,20 +606,19 @@ async def _poll_until_terminal_async(
     client: Any,
     scenario_result_id: str,
     total_strategies: int,
-) -> dict[str, Any]:
+) -> ScenarioRunSummary:
     """
     Poll the server until the run reaches a terminal status.
 
     Returns:
-        dict[str, Any]: The final run dict.
+        ScenarioRunSummary: The final run summary.
     """
     from pyrit.cli import _output
 
     while True:
         run = await client.get_scenario_run_async(scenario_result_id=scenario_result_id)
-        status = run.get("status", "UNKNOWN")
         _output.print_scenario_run_progress(run=run, total_strategies=total_strategies)
-        if status in _TERMINAL_STATUSES:
+        if run.status in _TERMINAL_STATUSES:
             return run
         await asyncio.sleep(0.5)
 
@@ -621,7 +627,7 @@ async def _run_scenario_async(
     *,
     client: Any,
     parsed_args: Namespace,
-    scenario_meta: dict[str, Any],
+    scenario_meta: RegisteredScenario,
 ) -> int:
     """
     Start a scenario run, poll for completion, and print results.
@@ -634,7 +640,7 @@ async def _run_scenario_async(
     scenario_name = parsed_args.scenario_name
     request = _build_run_request(parsed_args=parsed_args, scenario_name=scenario_name)
 
-    total_strategies = len(request.get("strategies") or scenario_meta.get("all_strategies") or [])
+    total_strategies = len(request.strategies or scenario_meta.all_strategies or [])
     print(f"\nRunning scenario: {scenario_name}")
     sys.stdout.flush()
 
@@ -644,7 +650,7 @@ async def _run_scenario_async(
         print(f"Error starting scenario: {exc}")
         return 1
 
-    scenario_result_id = run.get("scenario_result_id", "")
+    scenario_result_id = run.scenario_result_id
 
     try:
         run = await _poll_until_terminal_async(
@@ -661,16 +667,16 @@ async def _run_scenario_async(
             print("Warning: could not cancel scenario run on server.")
         return 1
 
-    if run.get("status") == "COMPLETED":
+    if run.status == "COMPLETED":
         try:
             detail = await client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
-            await _output.print_scenario_result_async(result_dict=detail)
+            await _output.print_scenario_result_async(result=detail)
         except Exception:
             _output.print_scenario_run_summary(run=run)
     else:
         _output.print_scenario_run_summary(run=run)
 
-    return 0 if run.get("status") == "COMPLETED" else 1
+    return 0 if run.status == "COMPLETED" else 1
 
 
 async def _dispatch_with_client_async(*, client: Any, parsed_args: Namespace) -> int:
@@ -695,15 +701,15 @@ async def _dispatch_with_client_async(*, client: Any, parsed_args: Namespace) ->
     scenario_meta = await client.get_scenario_async(scenario_name=scenario_name)
     if scenario_meta is None:
         print(f"Error: Scenario '{scenario_name}' not found on server.")
-        resp = await client.list_scenarios_async()
-        names = [s.get("scenario_name", "") for s in resp.get("items", [])]
+        scenarios = await client.list_scenarios_async()
+        names = [s.scenario_name for s in scenarios]
         if names:
             print(f"Available scenarios: {', '.join(names)}")
         return 1
 
     reparsed = _reparse_with_scenario_params(
         parsed_args=parsed_args,
-        supported_params=scenario_meta.get("supported_parameters") or [],
+        supported_params=scenario_meta.supported_parameters,
     )
     if reparsed is None:
         return 1

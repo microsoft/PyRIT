@@ -14,11 +14,13 @@ from fastapi.testclient import TestClient
 from pyrit.backend.main import app
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
-    InitializerParameterSummary,
     ListRegisteredInitializersResponse,
-    RegisteredInitializer,
 )
 from pyrit.backend.services.initializer_service import InitializerService, get_initializer_service
+from pyrit.models.catalog.initializer import (
+    InitializerParameterSummary,
+    RegisteredInitializer,
+)
 from pyrit.registry import InitializerMetadata
 
 

@@ -5,7 +5,7 @@
 Target mappers – domain → DTO translation for target-related models.
 """
 
-from pyrit.backend.models.targets import TargetCapabilitiesInfo, TargetInstance
+from pyrit.models.catalog.target import TargetCapabilitiesInfo, TargetInstance
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.round_robin_target import RoundRobinTarget

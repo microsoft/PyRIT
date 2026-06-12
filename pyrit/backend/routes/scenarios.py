@@ -12,18 +12,22 @@ Route structure:
     /api/scenarios/runs          — scenario execution lifecycle
 """
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Query, status
 
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.scenarios import (
     ListRegisteredScenariosResponse,
-    RegisteredScenario,
-    RunScenarioRequest,
     ScenarioRunListResponse,
-    ScenarioRunSummary,
 )
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service
 from pyrit.backend.services.scenario_service import get_scenario_service
+from pyrit.models.catalog.scenario import (
+    RegisteredScenario,
+    RunScenarioRequest,
+    ScenarioRunSummary,
+)
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 
@@ -199,7 +203,7 @@ async def cancel_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:  #
         409: {"model": ProblemDetail, "description": "Run not yet completed"},
     },
 )
-async def get_scenario_run_results(scenario_result_id: str) -> dict:  # pyrit-async-suffix-exempt
+async def get_scenario_run_results(scenario_result_id: str) -> dict[str, Any]:  # pyrit-async-suffix-exempt
     """
     Get detailed results for a completed scenario run.
 
