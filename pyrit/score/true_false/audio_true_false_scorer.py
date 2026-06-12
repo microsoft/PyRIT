@@ -1,10 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -24,8 +22,7 @@ class AudioTrueFalseScorer(TrueFalseScorer):
         self,
         *,
         text_capable_scorer: TrueFalseScorer,
-        validator: Optional[ScorerPromptValidator] = None,
-        use_entra_auth: Optional[bool] = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the AudioTrueFalseScorer.
@@ -34,12 +31,6 @@ class AudioTrueFalseScorer(TrueFalseScorer):
             text_capable_scorer: A TrueFalseScorer capable of processing text.
                 This scorer will be used to evaluate the transcribed audio content.
             validator: Validator for the scorer. Defaults to audio_path data type validator.
-            use_entra_auth: **Deprecated.** Will be removed in 0.15.0.
-                Authentication is now configured on the underlying
-                ``AzureSpeechAudioToTextConverter`` via its ``azure_speech_key`` parameter:
-                pass a string API key (or set ``AZURE_SPEECH_KEY``) for key auth, a callable
-                token provider for Entra ID with a custom token, or omit it to use Entra ID
-                via ``DefaultAzureCredential``.
 
         Raises:
             ValueError: If text_capable_scorer does not support text data type.
@@ -47,7 +38,6 @@ class AudioTrueFalseScorer(TrueFalseScorer):
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
         self._audio_helper = AudioTranscriptHelper(
             text_capable_scorer=text_capable_scorer,
-            use_entra_auth=use_entra_auth,
         )
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -63,7 +53,7 @@ class AudioTrueFalseScorer(TrueFalseScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score an audio file by transcribing it and scoring the transcript.
 

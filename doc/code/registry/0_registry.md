@@ -15,7 +15,7 @@ PyRIT has two registry patterns for different use cases:
 
 | Type | Stores | Use Case |
 |------|--------|----------|
-| **Class Registry** | Classes (Type[T]) | Components instantiated with user-provided parameters |
+| **Class Registry** | Classes (type[T]) | Components instantiated with user-provided parameters |
 | **Instance Registry** | Pre-configured instances | Components requiring complex setup before use |
 
 ## Common API (RegistryProtocol)
@@ -44,7 +44,7 @@ def show_registry_contents(registry: RegistryProtocol) -> None:
 
 | Aspect | Class Registry | Instance Registry |
 |--------|----------------|-------------------|
-| Stores | Classes (Type[T]) | Instances (T) |
+| Stores | Classes (type[T]) | Instances (T) |
 | Registration | Automatic discovery | Explicit via `register()` |
 | Returns | Class to instantiate | Ready-to-use instance |
 | Instantiation | Caller provides parameters | Pre-configured by initializer |

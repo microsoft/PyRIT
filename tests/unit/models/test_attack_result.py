@@ -2,143 +2,18 @@
 # Licensed under the MIT license.
 
 import warnings
+from contextlib import closing
 from datetime import datetime, timezone
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
+import pytest
+
 from pyrit.memory.memory_models import AttackResultEntry
-from pyrit.models.attack_result import AttackOutcome, AttackResult
+from pyrit.models import ComponentIdentifier
 from pyrit.models.conversation_reference import ConversationReference, ConversationType
-from pyrit.models.message_piece import MessagePiece
+from pyrit.models.messages.message_piece import MessagePiece
+from pyrit.models.results.attack_result import AttackOutcome, AttackResult
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import Score
-
-
-class TestAttackResultDeprecation:
-    """Tests for the AttackResult attack_identifier deprecation behaviour."""
-
-    def _make_attack_identifier(self) -> ComponentIdentifier:
-        return ComponentIdentifier(class_name="TestAttack", class_module="tests.unit")
-
-    def _make_atomic_identifier(self) -> ComponentIdentifier:
-        attack_id = self._make_attack_identifier()
-        return build_atomic_attack_identifier(attack_identifier=attack_id)
-
-    # -- property deprecation -------------------------------------------------
-
-    def test_attack_identifier_property_emits_deprecation_warning(self) -> None:
-        """Accessing .attack_identifier should emit a DeprecationWarning."""
-        result = AttackResult(
-            conversation_id="c1",
-            objective="test",
-            atomic_attack_identifier=self._make_atomic_identifier(),
-        )
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            _ = result.attack_identifier
-
-        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert len(deprecation_warnings) >= 1, "Expected a DeprecationWarning from .attack_identifier"
-        assert "attack_identifier" in str(deprecation_warnings[0].message).lower()
-
-    def test_attack_identifier_property_returns_correct_value(self) -> None:
-        """Accessing .attack_identifier should return the attack strategy child."""
-        result = AttackResult(
-            conversation_id="c1",
-            objective="test",
-            atomic_attack_identifier=self._make_atomic_identifier(),
-        )
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            value = result.attack_identifier
-
-        assert value is not None
-        assert value.class_name == "TestAttack"
-
-    def test_attack_identifier_property_returns_none_when_unset(self) -> None:
-        """Property returns None when atomic_attack_identifier is not set."""
-        result = AttackResult(conversation_id="c1", objective="test")
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            assert result.attack_identifier is None
-
-    # -- get_attack_strategy_identifier (non-deprecated) ----------------------
-
-    def test_get_attack_strategy_identifier_no_warning(self) -> None:
-        """get_attack_strategy_identifier() must NOT emit a deprecation warning."""
-        result = AttackResult(
-            conversation_id="c1",
-            objective="test",
-            atomic_attack_identifier=self._make_atomic_identifier(),
-        )
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            value = result.get_attack_strategy_identifier()
-
-        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert len(deprecation_warnings) == 0, "get_attack_strategy_identifier should not warn"
-        assert value is not None
-        assert value.class_name == "TestAttack"
-
-    def test_get_attack_strategy_identifier_returns_none_when_unset(self) -> None:
-        result = AttackResult(conversation_id="c1", objective="test")
-        assert result.get_attack_strategy_identifier() is None
-
-    # -- backward-compat constructor ------------------------------------------
-
-    def test_constructor_with_attack_identifier_kwarg_emits_warning(self) -> None:
-        """Passing attack_identifier= to the constructor should emit DeprecationWarning."""
-        attack_id = self._make_attack_identifier()
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            result = AttackResult(
-                conversation_id="c1",
-                objective="test",
-                attack_identifier=attack_id,
-            )
-
-        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert len(deprecation_warnings) >= 1, "Constructor should warn on attack_identifier="
-        # The value should be promoted to atomic_attack_identifier
-        assert result.atomic_attack_identifier is not None
-        assert result.get_attack_strategy_identifier() == attack_id
-
-    def test_constructor_attack_identifier_does_not_override_atomic(self) -> None:
-        """If both are supplied, atomic_attack_identifier takes precedence."""
-        attack_id = self._make_attack_identifier()
-        atomic_id = self._make_atomic_identifier()
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            result = AttackResult(
-                conversation_id="c1",
-                objective="test",
-                attack_identifier=attack_id,
-                atomic_attack_identifier=atomic_id,
-            )
-
-        assert result.atomic_attack_identifier is atomic_id
-
-    # -- construction without deprecated kwarg --------------------------------
-
-    def test_constructor_with_atomic_attack_identifier_only(self) -> None:
-        """Normal construction with atomic_attack_identifier should work with no warnings."""
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            result = AttackResult(
-                conversation_id="c1",
-                objective="test",
-                atomic_attack_identifier=self._make_atomic_identifier(),
-            )
-
-        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert len(deprecation_warnings) == 0
-        assert result.get_attack_strategy_identifier() is not None
-
-    def test_constructor_with_no_identifier_at_all(self) -> None:
-        """Construction with neither identifier should be fine."""
-        result = AttackResult(conversation_id="c1", objective="test")
-        assert result.atomic_attack_identifier is None
-        assert result.get_attack_strategy_identifier() is None
 
 
 class TestAttackResultTimestamp:
@@ -199,13 +74,20 @@ class TestAttackResultTimestamp:
 
         assert hydrated.timestamp == persisted_ts
 
-    def test_naive_entry_timestamp_is_normalized_to_utc_on_hydration(self) -> None:
-        """SQLite returns naive datetimes; hydration must attach UTC tzinfo."""
+    def test_naive_entry_timestamp_is_normalized_to_utc_on_hydration(self, sqlite_instance) -> None:
+        """SQLite stores datetimes without tzinfo; the UTCDateTime column attaches UTC on read."""
         original = AttackResult(conversation_id="c1", objective="test")
         entry = AttackResultEntry(entry=original)
         entry.timestamp = datetime(2026, 4, 17, 12, 0, 0)  # noqa: DTZ001
 
-        hydrated = entry.get_attack_result()
+        with closing(sqlite_instance.get_session()) as session:
+            session.add(entry)
+            session.commit()
+            entry_id = entry.id
+
+        with closing(sqlite_instance.get_session()) as session:
+            reloaded = session.get(AttackResultEntry, entry_id)
+            hydrated = reloaded.get_attack_result()
 
         assert hydrated.timestamp is not None
         assert hydrated.timestamp.tzinfo is timezone.utc
@@ -361,11 +243,6 @@ def test_to_dict_from_dict_roundtrip():
         class_name="SelfAskTrueFalseScorer",
         class_module="pyrit.score",
     )
-    target_id = ComponentIdentifier(
-        class_name="OpenAIChatTarget",
-        class_module="pyrit.prompt_target",
-        params={"endpoint": "https://api.example.com"},
-    )
     attack_id = ComponentIdentifier(
         class_name="PromptSendingAttack",
         class_module="pyrit.executor.attack",
@@ -377,8 +254,6 @@ def test_to_dict_from_dict_roundtrip():
         conversation_id="conv-1",
         sequence=1,
         timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
-        prompt_target_identifier=target_id,
-        attack_identifier=attack_id,
     )
     last_score = Score(
         score_value="true",
@@ -435,3 +310,107 @@ def test_to_dict_from_dict_roundtrip():
     )
     roundtripped = AttackResult.from_dict(original.to_dict())
     assert original.to_dict() == roundtripped.to_dict()
+
+
+class TestAttackResultValidation:
+    """Tests for the Pydantic validation behaviour introduced by the BaseModel conversion."""
+
+    def test_extra_fields_are_forbidden(self) -> None:
+        """Unknown kwargs must raise (extra='forbid' on the StrategyResult config)."""
+        with pytest.raises(ValueError):
+            AttackResult(conversation_id="c1", objective="test", not_a_field="boom")
+
+    def test_naive_datetime_timestamp_is_rejected(self) -> None:
+        """Naive datetimes are rejected (AwareDatetime), matching Score/MessagePiece.
+
+        SQLite-loaded naive timestamps are normalized to UTC by the memory layer
+        (the ``UTCDateTime`` column type on ``AttackResultEntry.timestamp``) before
+        they ever reach this constructor, so the model itself stays strict.
+        """
+        naive = datetime(2026, 1, 1, 12, 0, 0)  # noqa: DTZ001
+        with pytest.raises(ValueError):
+            AttackResult(conversation_id="c1", objective="test", timestamp=naive)
+
+    def test_aware_iso_string_timestamp_is_preserved(self) -> None:
+        """An ISO string carrying an offset is parsed without altering the instant."""
+        result = AttackResult(conversation_id="c1", objective="test", timestamp="2026-01-01T12:00:00+00:00")
+        assert result.timestamp == datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
+class TestAttackResultLegacyDictDeprecation:
+    """to_dict()/from_dict() are retained as deprecated shims and must warn."""
+
+    def test_to_dict_emits_deprecation_warning(self) -> None:
+        result = AttackResult(conversation_id="c1", objective="test")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result.to_dict()
+
+        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert len(deprecation_warnings) >= 1
+        assert "to_dict" in str(deprecation_warnings[0].message).lower()
+
+    def test_from_dict_emits_deprecation_warning(self) -> None:
+        result = AttackResult(conversation_id="c1", objective="test")
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            payload = result.to_dict()
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            AttackResult.from_dict(payload)
+
+        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert len(deprecation_warnings) >= 1
+        assert "from_dict" in str(deprecation_warnings[0].message).lower()
+
+
+class TestAttackResultDuplicate:
+    """duplicate() must deep-copy so mutations on the copy never touch the original."""
+
+    def test_duplicate_metadata_is_independent(self) -> None:
+        original = AttackResult(
+            conversation_id="c1",
+            objective="test",
+            metadata={"nested": {"key": "value"}},
+        )
+        copy = original.duplicate()
+        copy.metadata["nested"]["key"] = "mutated"
+        copy.metadata["added"] = "new"
+
+        assert original.metadata == {"nested": {"key": "value"}}
+        assert type(copy) is AttackResult
+
+    def test_duplicate_preserves_subclass_type(self) -> None:
+        """duplicate() on a subclass returns the same subclass."""
+        from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttackResult
+
+        original = CrescendoAttackResult(conversation_id="c1", objective="test")
+        original.backtrack_count = 3
+        copy = original.duplicate()
+
+        assert type(copy) is CrescendoAttackResult
+        assert copy.backtrack_count == 3
+        copy.backtrack_count = 9
+        assert original.backtrack_count == 3
+
+
+class TestAttackResultShim:
+    """The relocated module must be importable from the legacy path silently."""
+
+    def test_shim_reexports_same_classes_silently(self) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            from pyrit.models.attack_result import AttackOutcome as ShimOutcome
+            from pyrit.models.attack_result import AttackResult as ShimResult
+
+        assert ShimResult is AttackResult
+        assert ShimOutcome is AttackOutcome
+        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+        assert len(deprecation_warnings) == 0, "Shim import must be silent"
+
+    def test_shim_getattr_reexports_dynamic_names(self) -> None:
+        """The module __getattr__ falls through to the relocated module."""
+        import pyrit.models.attack_result as shim
+
+        assert shim.AttackResultT is not None

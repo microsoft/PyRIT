@@ -4,7 +4,6 @@
 import asyncio
 import os
 from collections.abc import Callable
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -27,7 +26,7 @@ class _ConcreteOpenAITarget(OpenAITarget):
     def _get_provider_examples(self) -> dict[str, str]:
         return {}
 
-    async def _construct_message_from_response(self, response, request):
+    async def _construct_message_from_response_async(self, response, request):
         raise NotImplementedError
 
     def _validate_request(self, *, normalized_conversation) -> None:
@@ -40,8 +39,8 @@ class _ConcreteOpenAITarget(OpenAITarget):
 def _build_target(
     *,
     endpoint: str = "https://test.openai.azure.com/openai/v1",
-    api_key: Optional[str | Callable] = "test-key",
-    env_vars: Optional[dict[str, str]] = None,
+    api_key: str | Callable | None = "test-key",
+    env_vars: dict[str, str] | None = None,
 ) -> _ConcreteOpenAITarget:
     """Helper to build a _ConcreteOpenAITarget with controlled env."""
     env = {"TEST_MODEL": "gpt-4", "TEST_ENDPOINT": endpoint}

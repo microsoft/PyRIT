@@ -3,7 +3,7 @@
  * Licensed under the MIT license.
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import Home from "./Home";
@@ -140,6 +140,96 @@ describe("Home", () => {
     expect(screen.getByTestId("home-operation-op_alpha")).toHaveTextContent(/2 attacks/i);
     // op_beta has 1 attack
     expect(screen.getByTestId("home-operation-op_beta")).toHaveTextContent(/1 attack/);
+  });
+
+  it("updates last-activity for newer attacks and formats hour/day/older timestamps", async () => {
+    const now = Date.now();
+    const HOUR = 60 * 60 * 1000;
+    const DAY = 24 * HOUR;
+    mockListAttacks.mockResolvedValue({
+      items: [
+        // Oldest first, so a later (newer) attack in the same operation updates
+        // the group's last-activity — exercising the "newer than current" branch.
+        makeAttack({
+          attack_result_id: "ar-old",
+          labels: { operator: "alice", operation: "op_time" },
+          last_message_preview: "older than a week",
+          updated_at: new Date(now - 10 * DAY).toISOString(),
+        }),
+        makeAttack({
+          attack_result_id: "ar-hours",
+          labels: { operator: "alice", operation: "op_time" },
+          last_message_preview: "a few hours ago",
+          updated_at: new Date(now - 3 * HOUR).toISOString(),
+        }),
+        makeAttack({
+          attack_result_id: "ar-days",
+          labels: { operator: "alice", operation: "op_time" },
+          last_message_preview: "a few days ago",
+          updated_at: new Date(now - 3 * DAY).toISOString(),
+        }),
+      ],
+      pagination: { has_more: false, next_cursor: null },
+    });
+
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
+
+    const card = await screen.findByTestId("home-operation-op_time");
+    // All three attacks render, exercising the hour/day/older formatting paths.
+    expect(within(card).getByText("a few hours ago")).toBeInTheDocument();
+    expect(within(card).getByText("a few days ago")).toBeInTheDocument();
+    expect(within(card).getByText("older than a week")).toBeInTheDocument();
+    // The newer (3h-ago) attack wins as the group's most recent activity.
+    expect(within(card).getAllByText(/3h ago/).length).toBeGreaterThan(0);
+    expect(within(card).getAllByText(/3d ago/).length).toBeGreaterThan(0);
+  });
+
+  it("caps visible attacks and falls back for missing preview, outcome, and timestamp", async () => {
+    const now = Date.now();
+    mockListAttacks.mockResolvedValue({
+      items: [
+        makeAttack({
+          attack_result_id: "f1",
+          labels: { operator: "alice", operation: "op_full" },
+          outcome: "success",
+          last_message_preview: "first preview",
+          updated_at: new Date(now - 60_000).toISOString(),
+        }),
+        makeAttack({
+          attack_result_id: "f2",
+          labels: { operator: "alice", operation: "op_full" },
+          outcome: null, // unknown outcome -> default icon via the ?? 'undetermined' branch
+          last_message_preview: null, // missing preview -> falls back to attack_type
+          updated_at: new Date(now - 120_000).toISOString(),
+        }),
+        makeAttack({
+          attack_result_id: "f3",
+          labels: { operator: "alice", operation: "op_full" },
+          // Outcome not present in the icon map -> exercises the icon fallback branch.
+          outcome: "mystery" as unknown as AttackSummary["outcome"],
+          last_message_preview: "third preview",
+          updated_at: "not-a-date", // invalid -> empty relative time (NaN guard)
+        }),
+        makeAttack({
+          attack_result_id: "f4",
+          labels: { operator: "alice", operation: "op_full" },
+          last_message_preview: "fourth preview",
+          updated_at: new Date(now - 240_000).toISOString(),
+        }),
+      ],
+      pagination: { has_more: false, next_cursor: null },
+    });
+
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
+
+    const card = await screen.findByTestId("home-operation-op_full");
+    // Only the first three attacks render; the fourth is summarized as overflow.
+    expect(within(card).getByText("first preview")).toBeInTheDocument();
+    expect(within(card).getByText("third preview")).toBeInTheDocument();
+    expect(within(card).queryByText("fourth preview")).not.toBeInTheDocument();
+    expect(within(card).getByText(/\+1 more in history/)).toBeInTheDocument();
+    // f2 has no preview, so its row shows the attack type instead.
+    expect(within(card).getByText("TestAttack")).toBeInTheDocument();
   });
 
   it("groups attacks with no operation label under '(no operation)'", async () => {

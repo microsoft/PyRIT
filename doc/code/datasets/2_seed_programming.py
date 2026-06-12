@@ -34,6 +34,7 @@ from pyrit.executor.attack import (
 )
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score.true_false.self_ask_refusal_scorer import SelfAskRefusalScorer
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
@@ -81,7 +82,7 @@ results = await AttackExecutor().execute_attack_from_seed_groups_async(  # type:
     seed_groups=[seed_group],
 )
 
-await printer.print_result_async(result=results.completed_results[0])  # type: ignore
+await output_attack_async(results.completed_results[0])
 
 # %% [markdown]
 # You can also generate all or part of `prepended_conversation` and `next_message` using an attack model using a `seed_simulated_conversation`. The below example shows how to create these parameters such that the objective target has the following:
@@ -114,7 +115,7 @@ results = await AttackExecutor().execute_attack_from_seed_groups_async(  # type:
     attack=attack, seed_groups=[seed_group], adversarial_chat=target, objective_scorer=objective_scorer
 )
 
-await printer.print_result_async(result=results.completed_results[0])  # type: ignore
+await output_attack_async(results.completed_results[0])
 
 # %% [markdown]
 # ## Defining Seeds through YAML
@@ -155,6 +156,10 @@ print(system_prompt.value)
 # - **Audio/video files** (when supported by TinyTag): bitrate, samplerate, bitdepth, filesize, duration
 #
 # This metadata enables filtering (e.g., "find all WAV files with 24kHz sample rate") to match target system requirements.
+#
+# **Constraining the Response Shape:**
+# - `response_json_schema:` inlines a JSON schema on a seed; `response_json_schema_name:` references one bundled under `pyrit/datasets/json_schemas/` (e.g. `true_false_with_rationale`). Set at most one.
+# - Targets that support structured output (e.g. OpenAI's `json_schema` response format) enforce it natively; other targets get the schema appended to the prompt text automatically by the normalization pipeline.
 #
 # #### YAML Example
 #

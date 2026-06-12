@@ -4,11 +4,11 @@
 import json
 import logging
 from collections.abc import Callable
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pyrit.common import default_values, net_utility
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     construct_response_from_request,
 )
@@ -54,14 +54,20 @@ class PromptShieldTarget(PromptTarget):
     _api_version: str
     _force_entry_field: PromptShieldEntryField
 
+    # Grandfathered: ``endpoint`` and ``api_key`` are part of the public
+    # positional API.
+    # TODO: remove this opt-out and insert ``*,`` after ``self`` in 0.16.0
+    # (this will be a BREAKING CHANGE for callers passing arguments positionally).
+    _brick_legacy_init = True
+
     def __init__(
         self,
-        endpoint: Optional[str] = None,
-        api_key: Optional[str | Callable[[], str]] = None,
-        api_version: Optional[str] = "2024-09-01",
-        field: Optional[PromptShieldEntryField] = None,
-        max_requests_per_minute: Optional[int] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        endpoint: str | None = None,
+        api_key: str | Callable[[], str] | None = None,
+        api_version: str | None = "2024-09-01",
+        field: PromptShieldEntryField | None = None,
+        max_requests_per_minute: int | None = None,
+        custom_configuration: TargetConfiguration | None = None,
     ) -> None:
         """
         Class that initializes an Azure Content Safety Prompt Shield Target.

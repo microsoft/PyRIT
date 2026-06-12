@@ -20,15 +20,18 @@ const AUTO_DISMISS_MS = 5_000
 
 function ConnectionBannerContainer() {
   const { status, reconnectCount } = useConnectionHealth()
-  const [showReconnected, setShowReconnected] = useState(false)
+  // Track how many reconnects the user has already had the banner dismissed for.
+  // `showReconnected` is derived: the banner is visible whenever there are
+  // un-dismissed reconnects. The auto-dismiss timer bumps `dismissedCount` so
+  // we avoid calling setState synchronously in an effect body.
+  const [dismissedCount, setDismissedCount] = useState(0)
+  const showReconnected = reconnectCount > dismissedCount
 
   useEffect(() => {
-    if (reconnectCount > 0) {
-      setShowReconnected(true)
-      const timer = setTimeout(() => setShowReconnected(false), AUTO_DISMISS_MS)
-      return () => clearTimeout(timer)
-    }
-  }, [reconnectCount])
+    if (!showReconnected) return
+    const timer = setTimeout(() => setDismissedCount(reconnectCount), AUTO_DISMISS_MS)
+    return () => clearTimeout(timer)
+  }, [showReconnected, reconnectCount])
 
   if (status === 'connected' && !showReconnected) {
     return null
@@ -143,6 +146,19 @@ function App() {
   }, [])
 
   const handleOpenAttack = useCallback(async (openAttackResultId: string) => {
+    // Synchronously clear per-attack state before flipping attackResultId so
+    // ChatWindow does not fetch /messages with a conv_id that belonged to the
+    // previously loaded attack while getAttack is in flight. The branched-
+    // conversation case (activeConversationId pointing to a related conv of
+    // the old attack) would otherwise produce a 400 from the backend.
+    // Skip clearing when re-opening the same attack to avoid a redundant reload.
+    if (openAttackResultId !== attackResultId) {
+      setConversationId(null)
+      setActiveConversationId(null)
+      setAttackLabels(null)
+      setAttackTarget(null)
+      setRelatedConversationCount(0)
+    }
     setAttackResultId(openAttackResultId)
     setIsLoadingAttack(true)
     setCurrentView('chat')
@@ -159,7 +175,7 @@ function App() {
     } finally {
       setIsLoadingAttack(false)
     }
-  }, [clearAttackState])
+  }, [attackResultId, clearAttackState])
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode)

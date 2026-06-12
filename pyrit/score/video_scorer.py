@@ -2,11 +2,10 @@
 # Licensed under the MIT license.
 
 import logging
-import os
 import random
 import tempfile
 import uuid
-from typing import Optional
+from pathlib import Path
 
 from pyrit.memory import CentralMemory
 from pyrit.models import MessagePiece, Score
@@ -43,9 +42,9 @@ class VideoHelper:
         self,
         *,
         image_capable_scorer: Scorer,
-        num_sampled_frames: Optional[int] = None,
-        image_objective_template: Optional[str] = _DEFAULT_IMAGE_OBJECTIVE_TEMPLATE,
-        audio_objective_template: Optional[str] = None,
+        num_sampled_frames: int | None = None,
+        image_objective_template: str | None = _DEFAULT_IMAGE_OBJECTIVE_TEMPLATE,
+        audio_objective_template: str | None = None,
     ) -> None:
         """
         Initialize the base video scorer.
@@ -95,7 +94,7 @@ class VideoHelper:
                 f"Supported types: {scorer._validator._supported_data_types}"
             )
 
-    async def _score_frames_async(self, *, message_piece: MessagePiece, objective: Optional[str] = None) -> list[Score]:
+    async def _score_frames_async(self, *, message_piece: MessagePiece, objective: str | None = None) -> list[Score]:
         """
         Extract frames from video and score them.
 
@@ -112,7 +111,7 @@ class VideoHelper:
         """
         video_path = message_piece.converted_value
 
-        if not os.path.exists(video_path):
+        if not Path(video_path).exists():
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
         # Extract frames from video
@@ -130,10 +129,11 @@ class VideoHelper:
 
             piece = MessagePiece(
                 original_value=message_piece.converted_value,
-                role=message_piece.get_role_for_storage(),
+                role=message_piece.role,
                 original_prompt_id=original_prompt_id,
                 converted_value=frame,
                 converted_value_data_type="image_path",
+                conversation_id=message_piece.conversation_id,
             )
             response = piece.to_message()
             image_requests.append(response)
@@ -174,7 +174,7 @@ class VideoHelper:
             ModuleNotFoundError: If OpenCV is not installed.
         """
         try:
-            import cv2  # noqa: F401
+            import cv2
         except ModuleNotFoundError as e:
             logger.error("Could not import opencv. You may need to install it via 'pip install pyrit[opencv]'")
             raise e
@@ -211,7 +211,7 @@ class VideoHelper:
         return frame_paths
 
     async def _score_video_audio_async(
-        self, *, message_piece: MessagePiece, audio_scorer: Optional[Scorer] = None, objective: Optional[str] = None
+        self, *, message_piece: MessagePiece, audio_scorer: Scorer | None = None, objective: str | None = None
     ) -> list[Score]:
         """
         Extract and score audio from the video.
@@ -245,10 +245,11 @@ class VideoHelper:
 
             audio_piece = MessagePiece(
                 original_value=audio_path,
-                role=message_piece.get_role_for_storage(),
+                role=message_piece.role,
                 original_prompt_id=original_prompt_id,
                 converted_value=audio_path,
                 converted_value_data_type="audio_path",
+                conversation_id=message_piece.conversation_id,
             )
 
             audio_message = audio_piece.to_message()
@@ -281,5 +282,5 @@ class VideoHelper:
 
         finally:
             # Clean up temporary audio file on success
-            if should_cleanup and audio_path and os.path.exists(audio_path):
-                os.unlink(audio_path)
+            if should_cleanup and audio_path:
+                Path(audio_path).unlink(missing_ok=True)

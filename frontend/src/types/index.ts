@@ -7,7 +7,12 @@ export interface MessageAttachment {
   name: string
   url: string
   mimeType: string
-  size: number
+  /**
+   * Decoded byte count when known. Omitted for path / URL / scheme-prefixed
+   * values (e.g. `/api/media?path=...`) where the value is a reference, not
+   * the payload, so its string length would be meaningless.
+   */
+  size?: number
   file?: File
   /** Backend piece ID — preserved so remix/copy can trace back to the original piece */
   pieceId?: string
@@ -75,6 +80,11 @@ export interface TargetInstance {
   max_requests_per_minute?: number | null
   capabilities?: TargetCapabilitiesInfo | null
   target_specific_params?: Record<string, unknown> | null
+  /** Inner targets for composite targets like RoundRobinTarget. */
+  inner_targets?: TargetInstance[] | null
+  /** ComponentIdentifier content hash. Targets with the same hash resolve to the
+   *  same backend configuration and are treated as duplicates for RoundRobinTarget grouping. */
+  identifier_hash?: string | null
 }
 
 export interface TargetListResponse {
@@ -167,22 +177,24 @@ export interface CreateAttackResponse {
 // --- Messages ---
 
 export interface BackendScore {
-  score_id: string
+  id: string
   scorer_type: string
   score_type: string
   score_value: string
   score_category?: string[] | null
   score_rationale?: string | null
-  scored_at: string
+  timestamp: string
 }
 
 export interface BackendMessagePiece {
-  piece_id: string
+  id: string
   original_value_data_type: string
   converted_value_data_type: string
   original_value?: string | null
+  original_value_url?: string | null
   original_value_mime_type?: string | null
   converted_value: string
+  converted_value_url?: string | null
   converted_value_mime_type?: string | null
   original_filename?: string | null
   converted_filename?: string | null
@@ -195,7 +207,7 @@ export interface BackendMessagePiece {
 export interface BackendMessage {
   turn_number: number
   role: string
-  pieces: BackendMessagePiece[]
+  message_pieces: BackendMessagePiece[]
   created_at: string
 }
 

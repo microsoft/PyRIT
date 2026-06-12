@@ -47,7 +47,7 @@ class TestSGXSTestDataset:
         loader = _SGXSTestDataset()
         assert loader.label == SGXSTestLabel.UNSAFE
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_sgxstest_data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_sgxstest_data)):
             dataset = await loader.fetch_dataset_async()
 
         assert isinstance(dataset, SeedDataset)
@@ -68,7 +68,7 @@ class TestSGXSTestDataset:
         """Loader with label=SAFE should return only the safe prompts."""
         loader = _SGXSTestDataset(label=SGXSTestLabel.SAFE)
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_sgxstest_data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_sgxstest_data)):
             dataset = await loader.fetch_dataset_async()
 
         assert len(dataset.seeds) == 2
@@ -82,7 +82,7 @@ class TestSGXSTestDataset:
         """Loader with label=ALL should return both safe and unsafe prompts."""
         loader = _SGXSTestDataset(label=SGXSTestLabel.ALL)
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=mock_sgxstest_data)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=mock_sgxstest_data)):
             dataset = await loader.fetch_dataset_async()
 
         assert len(dataset.seeds) == 4
@@ -95,16 +95,16 @@ class TestSGXSTestDataset:
         loader = _SGXSTestDataset(label=SGXSTestLabel.UNSAFE)
         only_safe = [{"prompt": "p", "label": "safe", "category": "Homonym"}]
 
-        with patch.object(loader, "_fetch_from_huggingface", new=AsyncMock(return_value=only_safe)):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=only_safe)):
             with pytest.raises(ValueError, match="empty after filtering"):
                 await loader.fetch_dataset_async()
 
     async def test_fetch_dataset_passes_token_and_split(self, mock_sgxstest_data):
-        """Test that the loader forwards token and split to _fetch_from_huggingface."""
-        loader = _SGXSTestDataset(split="train", token="hf_test_token")
+        """Test that the loader forwards token and the hardcoded 'train' split to _fetch_from_huggingface_async."""
+        loader = _SGXSTestDataset(token="hf_test_token")
 
         mock_fetch = AsyncMock(return_value=mock_sgxstest_data)
-        with patch.object(loader, "_fetch_from_huggingface", new=mock_fetch):
+        with patch.object(loader, "_fetch_from_huggingface_async", new=mock_fetch):
             await loader.fetch_dataset_async(cache=False)
 
         mock_fetch.assert_called_once()
@@ -113,6 +113,11 @@ class TestSGXSTestDataset:
         assert kwargs["split"] == "train"
         assert kwargs["cache"] is False
         assert kwargs["token"] == "hf_test_token"
+
+    def test_split_kwarg_emits_deprecation_warning(self):
+        """Passing the deprecated ``split`` kwarg emits a DeprecationWarning."""
+        with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
+            _SGXSTestDataset(split="train")
 
     def test_invalid_label_raises(self):
         """Passing a non-SGXSTestLabel value should raise."""

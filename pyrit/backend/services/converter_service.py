@@ -19,7 +19,7 @@ import re
 import uuid
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, Union, get_args, get_origin
+from typing import Any, ClassVar, Literal, Union, get_args, get_origin
 from urllib.parse import parse_qs, urlparse
 
 from pyrit import prompt_converter
@@ -36,18 +36,11 @@ from pyrit.backend.models.converters import (
     CreateConverterResponse,
     PreviewStep,
 )
+from pyrit.memory import data_serializer_factory
 from pyrit.models import PromptDataType
-from pyrit.models.data_type_serializer import data_serializer_factory
 from pyrit.prompt_converter import PromptConverter
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.object_registries import ConverterRegistry
-
-_DATA_TYPE_EXTENSION: dict[str, str] = {
-    "image_path": ".png",
-    "audio_path": ".wav",
-    "video_path": ".mp4",
-    "binary_path": ".bin",
-}
 
 
 def _build_converter_class_registry() -> dict[str, type]:
@@ -221,6 +214,13 @@ class ConverterService:
     API metadata is derived from the converter objects.
     """
 
+    _DATA_TYPE_EXTENSION: ClassVar[dict[str, str]] = {
+        "image_path": ".png",
+        "audio_path": ".wav",
+        "video_path": ".mp4",
+        "binary_path": ".bin",
+    }
+
     def __init__(self) -> None:
         """Initialize the converter service."""
         self._registry = ConverterRegistry.get_registry_singleton()
@@ -375,32 +375,32 @@ class ConverterService:
             elif original_value.startswith("data:"):
                 _, _, value = original_value.partition(",")
 
-                ext = _DATA_TYPE_EXTENSION.get(str(data_type), ".bin")
+                ext = self._DATA_TYPE_EXTENSION.get(str(data_type), ".bin")
 
                 serializer = data_serializer_factory(
                     category="prompt-memory-entries",
                     data_type=data_type,
                     extension=ext,
                 )
-                await serializer.save_b64_image(data=value)
+                await serializer.save_b64_image_async(data=value)
                 original_value = str(serializer.value)
             # Already an existing file on disk — keep as-is
             elif Path(original_value).is_file():
                 pass
             else:
                 # Treat as raw base64
-                ext = _DATA_TYPE_EXTENSION.get(str(data_type), ".bin")
+                ext = self._DATA_TYPE_EXTENSION.get(str(data_type), ".bin")
 
                 serializer = data_serializer_factory(
                     category="prompt-memory-entries",
                     data_type=data_type,
                     extension=ext,
                 )
-                await serializer.save_b64_image(data=original_value)
+                await serializer.save_b64_image_async(data=original_value)
                 original_value = str(serializer.value)
 
         converters = self._gather_converters(converter_ids=request.converter_ids)
-        steps, final_value, final_type = await self._apply_converters(
+        steps, final_value, final_type = await self._apply_converters_async(
             converters=converters, initial_value=original_value, initial_type=data_type
         )
 
@@ -501,7 +501,7 @@ class ConverterService:
                 continue
 
             origin = get_origin(annotation)
-            # Unwrap Optional[X] to X
+            # Unwrap X | None to X
             if origin is Union:
                 args = get_args(annotation)
                 non_none = [a for a in args if a is not type(None)]
@@ -567,7 +567,7 @@ class ConverterService:
                 data_type="binary_path",
                 extension=ext,
             )
-            await serializer.save_data(data=base64.b64decode(payload))
+            await serializer.save_data_async(data=base64.b64decode(payload))
             file_path = str(serializer.value)
 
             # Coerce to Path if the constructor expects it
@@ -602,7 +602,7 @@ class ConverterService:
             converters.append((conv_id, conv_type, conv_obj))
         return converters
 
-    async def _apply_converters(
+    async def _apply_converters_async(
         self,
         *,
         converters: list[tuple[str, str, Any]],

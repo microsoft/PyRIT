@@ -3,25 +3,23 @@
 
 import base64
 import json
-import os
-from typing import TYPE_CHECKING, Any, Union
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar
+
+import aiofiles
 
 from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
+from pyrit.memory import DataTypeSerializer
 from pyrit.message_normalizer.message_normalizer import (
     MessageListNormalizer,
     MessageStringNormalizer,
     SystemMessageBehavior,
-    apply_system_message_behavior,
+    apply_system_message_behavior_async,
 )
-from pyrit.models import ChatMessage, DataTypeSerializer, Message
-from pyrit.models.message_piece import MessagePiece
+from pyrit.models import ChatMessage, Message, MessagePiece
 
 if TYPE_CHECKING:
     from pyrit.models.literals import ChatMessageRole
-
-# Supported audio formats for OpenAI input_audio
-# https://platform.openai.com/docs/guides/audio
-SUPPORTED_AUDIO_FORMATS = {".wav": "wav", ".mp3": "mp3"}
 
 
 class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNormalizer):
@@ -41,6 +39,10 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
             - "squash": Merge system message into first user message
             - "ignore": Drop system messages entirely
     """
+
+    # Supported audio formats for OpenAI input_audio
+    # https://platform.openai.com/docs/guides/audio
+    SUPPORTED_AUDIO_FORMATS: ClassVar[dict[str, str]] = {".wav": "wav", ".mp3": "mp3"}
 
     def __init__(
         self,
@@ -78,7 +80,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
             raise ValueError("Messages list cannot be empty")
 
         # Apply system message preprocessing
-        processed_messages = await apply_system_message_behavior(messages, self.system_message_behavior)
+        processed_messages = await apply_system_message_behavior_async(messages, self.system_message_behavior)
 
         chat_messages: list[ChatMessage] = []
         for message in processed_messages:
@@ -91,7 +93,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
 
             # Use simple string for single text piece, otherwise use content list
             if len(pieces) == 1 and pieces[0].converted_value_data_type == "text":
-                content: Union[str, list[dict[str, Any]]] = pieces[0].converted_value
+                content: str | list[dict[str, Any]] = pieces[0].converted_value
             else:
                 content = [await self._piece_to_content_dict_async(piece) for piece in pieces]
 
@@ -144,13 +146,13 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
             return {"type": "image_url", "image_url": {"url": data_url}}
         if data_type == "audio_path":
             # Convert local audio to base64 for input_audio format
-            return await self._convert_audio_to_input_audio(content)
+            return await self._convert_audio_to_input_audio_async(content)
         if data_type == "url":
             # Direct URL (typically for images)
             return {"type": "image_url", "image_url": {"url": content}}
         raise ValueError(f"Data type '{data_type}' is not yet supported for chat message content.")
 
-    async def _convert_audio_to_input_audio(self, audio_path: str) -> dict[str, Any]:
+    async def _convert_audio_to_input_audio_async(self, audio_path: str) -> dict[str, Any]:
         """
         Convert a local audio file to OpenAI input_audio format.
 
@@ -165,18 +167,18 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
             FileNotFoundError: If the audio file does not exist.
         """
         ext = (DataTypeSerializer.get_extension(audio_path) or "").lower()
-        if ext not in SUPPORTED_AUDIO_FORMATS:
+        if ext not in self.SUPPORTED_AUDIO_FORMATS:
             raise ValueError(
-                f"Unsupported audio format: {ext}. Supported formats are: {list(SUPPORTED_AUDIO_FORMATS.keys())}"
+                f"Unsupported audio format: {ext}. Supported formats are: {list(self.SUPPORTED_AUDIO_FORMATS.keys())}"
             )
 
-        audio_format = SUPPORTED_AUDIO_FORMATS[ext]
+        audio_format = self.SUPPORTED_AUDIO_FORMATS[ext]
 
         # Read and encode the audio file
-        if not os.path.isfile(audio_path):
+        if not Path(audio_path).is_file():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        with open(audio_path, "rb") as f:
-            audio_data = base64.b64encode(f.read()).decode("utf-8")
+        async with aiofiles.open(audio_path, "rb") as f:
+            audio_data = base64.b64encode(await f.read()).decode("utf-8")
 
         return {"type": "input_audio", "input_audio": {"data": audio_data, "format": audio_format}}

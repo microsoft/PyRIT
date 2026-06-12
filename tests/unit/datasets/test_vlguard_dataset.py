@@ -380,3 +380,27 @@ class TestVLGuardDataset:
 
         assert metadata == test_metadata
         assert result_dir == cache_dir / "test"
+
+
+class TestVLGuardTokenResolution:
+    """Tests for HuggingFace token resolution on _VLGuardDataset."""
+
+    def test_explicit_token_kwarg_used(self):
+        with patch.dict("os.environ", {}, clear=True):
+            loader = _VLGuardDataset(token="kwarg_token")
+            assert loader.token == "kwarg_token"
+
+    def test_falls_back_to_huggingface_token_env(self):
+        with patch.dict("os.environ", {"HUGGINGFACE_TOKEN": "env_token"}):
+            loader = _VLGuardDataset()
+            assert loader.token == "env_token"
+
+    def test_explicit_kwarg_overrides_env(self):
+        with patch.dict("os.environ", {"HUGGINGFACE_TOKEN": "env_token"}):
+            loader = _VLGuardDataset(token="kwarg_token")
+            assert loader.token == "kwarg_token"
+
+    def test_token_is_none_when_neither_set(self):
+        with patch.dict("os.environ", {}, clear=True):
+            loader = _VLGuardDataset()
+            assert loader.token is None

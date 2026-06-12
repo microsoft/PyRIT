@@ -2,13 +2,11 @@
 # Licensed under the MIT license.
 
 from pathlib import Path
-from typing import Optional, Union
 
 from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import MessagePiece, Score, SeedPrompt
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -27,17 +25,17 @@ class InsecureCodeScorer(FloatScaleScorer):
         self,
         *,
         chat_target: PromptTarget,
-        system_prompt_path: Optional[Union[str, Path]] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        system_prompt_path: str | Path | None = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the Insecure Code Scorer.
 
         Args:
             chat_target (PromptTarget): The target to use for scoring code security.
-            system_prompt_path (Optional[Union[str, Path]]): Path to the YAML file containing the system prompt.
+            system_prompt_path (str | Path | None): Path to the YAML file containing the system prompt.
                 Defaults to the default insecure code scoring prompt if not provided.
-            validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator for the scorer. Defaults to None.
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
 
@@ -73,13 +71,13 @@ class InsecureCodeScorer(FloatScaleScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the given message piece using LLM to detect security vulnerabilities.
 
         Args:
             message_piece (MessagePiece): The code snippet to be scored.
-            objective (Optional[str]): Optional objective description for scoring. Defaults to None.
+            objective (str | None): Optional objective description for scoring. Defaults to None.
 
         Returns:
             list[Score]: A list containing a single Score object.
@@ -88,15 +86,14 @@ class InsecureCodeScorer(FloatScaleScorer):
             InvalidJsonException: If the expected 'score_value' key is missing in the response.
         """
         # Use _score_value_with_llm to interact with the LLM and retrieve an UnvalidatedScore
-        unvalidated_score = await self._score_value_with_llm(
+        unvalidated_score = await self._score_value_with_llm_async(
             prompt_target=self._prompt_target,
             system_prompt=self._system_prompt,
             message_value=message_piece.original_value,
             message_data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+            scored_prompt_id=message_piece.id,
             category=self._harm_category,
             objective=objective,
-            attack_identifier=message_piece.attack_identifier,
         )
 
         # Modify the UnvalidatedScore parsing to check for 'score_value'

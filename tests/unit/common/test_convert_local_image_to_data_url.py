@@ -50,7 +50,7 @@ async def test_convert_local_image_to_data_url_missing_file():
 
 @patch("os.path.exists", return_value=True)
 @patch("mimetypes.guess_type", return_value=("image/jpg", None))
-@patch("pyrit.models.data_type_serializer.ImagePathDataTypeSerializer")
+@patch("pyrit.memory.storage.serializers.ImagePathDataTypeSerializer")
 @patch("pyrit.memory.CentralMemory.get_memory_instance", return_value=SQLiteMemory(db_path=":memory:"))
 async def test_convert_image_to_data_url_success(
     mock_get_memory_instance, mock_serializer_class, mock_guess_type, mock_exists
@@ -58,7 +58,7 @@ async def test_convert_image_to_data_url_success(
     with NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_file:
         tmp_file_name = tmp_file.name
     mock_serializer_instance = MagicMock()
-    mock_serializer_instance.read_data_base64 = AsyncMock(return_value="encoded_base64_string")
+    mock_serializer_instance.read_data_base64_async = AsyncMock(return_value="encoded_base64_string")
     mock_serializer_class.return_value = mock_serializer_instance
 
     assert os.path.exists(tmp_file_name)
@@ -70,6 +70,6 @@ async def test_convert_image_to_data_url_success(
     mock_serializer_class.assert_called_once_with(
         category="prompt-memory-entries", prompt_text=tmp_file_name, extension=".jpg"
     )
-    mock_serializer_instance.read_data_base64.assert_called_once()
+    mock_serializer_instance.read_data_base64_async.assert_called_once()
 
     os.remove(tmp_file_name)

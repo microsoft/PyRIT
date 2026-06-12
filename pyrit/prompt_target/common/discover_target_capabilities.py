@@ -38,14 +38,20 @@ This module exposes two complementary probes:
 import asyncio
 import json
 import logging
-import os
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
+from pathlib import Path
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.models import Message, MessagePiece, PromptDataType
+from pyrit.models import (
+    JSON_SCHEMA_METADATA_KEY,
+    Conversation,
+    Message,
+    MessagePiece,
+    PromptDataType,
+)
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityName,
@@ -149,6 +155,7 @@ def _permissive_configuration(
         supports_json_output=True,
         supports_editable_history=True,
         supports_system_prompt=True,
+        supports_streaming_audio=True,
         input_modalities=merged_modalities,
     )
     # Rebuild a fresh configuration from the instance's native capabilities so
@@ -321,14 +328,17 @@ async def _probe_system_prompt_async(target: PromptTarget, timeout_s: float, ret
         prompt_metadata=_probe_metadata(),
     )
     try:
-        target._memory.add_message_to_memory(request=Message([system_piece]))
+        target._memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())
+        )
+        target._memory.add_message_to_memory(request=Message(message_pieces=[system_piece]))
     except Exception as exc:
         logger.debug("System-prompt probe could not seed system message: %s", exc)
         return False
     user_piece = _user_text_piece(value="hi", conversation_id=conversation_id)
     return await _send_and_check_async(
         target=target,
-        message=Message([user_piece]),
+        message=Message(message_pieces=[user_piece]),
         timeout_s=timeout_s,
         retries=retries,
         label="System-prompt probe",
@@ -356,7 +366,7 @@ async def _probe_multi_message_pieces_async(target: PromptTarget, timeout_s: flo
     ]
     return await _send_and_check_async(
         target=target,
-        message=Message(pieces),
+        message=Message(message_pieces=pieces),
         timeout_s=timeout_s,
         retries=retries,
         label="Multi-message-pieces probe",
@@ -395,13 +405,20 @@ async def _probe_multi_turn_async(target: PromptTarget, timeout_s: float, retrie
     conversation_id = _new_conversation_id()
     first = _user_text_piece(value="My favorite color is blue.", conversation_id=conversation_id)
     if not await _send_and_check_async(
-        target=target, message=Message([first]), timeout_s=timeout_s, retries=retries, label="Multi-turn probe (turn 1)"
+        target=target,
+        message=Message(message_pieces=[first]),
+        timeout_s=timeout_s,
+        retries=retries,
+        label="Multi-turn probe (turn 1)",
     ):
         return False
 
     # Seed memory so the second send sees real prior history.
     try:
-        target._memory.add_message_to_memory(request=Message([first]))
+        target._memory.add_conversation_to_memory(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())
+        )
+        target._memory.add_message_to_memory(request=Message(message_pieces=[first]))
         assistant_reply = MessagePiece(
             role="assistant",
             original_value="Got it.",
@@ -417,7 +434,7 @@ async def _probe_multi_turn_async(target: PromptTarget, timeout_s: float, retrie
     second = _user_text_piece(value="What did I just tell you?", conversation_id=conversation_id)
     return await _send_and_check_async(
         target=target,
-        message=Message([second]),
+        message=Message(message_pieces=[second]),
         timeout_s=timeout_s,
         retries=retries,
         label="Multi-turn probe (turn 2)",
@@ -452,7 +469,11 @@ async def _probe_json_output_async(target: PromptTarget, timeout_s: float, retri
         prompt_metadata=_probe_metadata({"response_format": "json"}),
     )
     return await _send_and_check_async(
-        target=target, message=Message([piece]), timeout_s=timeout_s, retries=retries, label="JSON-output probe"
+        target=target,
+        message=Message(message_pieces=[piece]),
+        timeout_s=timeout_s,
+        retries=retries,
+        label="JSON-output probe",
     )
 
 
@@ -490,12 +511,16 @@ async def _probe_json_schema_async(target: PromptTarget, timeout_s: float, retri
         prompt_metadata=_probe_metadata(
             {
                 "response_format": "json",
-                "json_schema": json.dumps(schema),
+                JSON_SCHEMA_METADATA_KEY: json.dumps(schema),
             }
         ),
     )
     return await _send_and_check_async(
-        target=target, message=Message([piece]), timeout_s=timeout_s, retries=retries, label="JSON-schema probe"
+        target=target,
+        message=Message(message_pieces=[piece]),
+        timeout_s=timeout_s,
+        retries=retries,
+        label="JSON-schema probe",
     )
 
 
@@ -823,7 +848,7 @@ def _create_test_message(
         asset_path = test_assets.get(modality)
         if asset_path is None:
             raise ValueError(f"No test asset configured for modality '{modality}'.")
-        if not os.path.isfile(asset_path):
+        if not Path(asset_path).is_file():
             raise FileNotFoundError(f"Test asset for modality '{modality}' not found at: {asset_path}")
 
         pieces.append(
@@ -836,4 +861,4 @@ def _create_test_message(
             )
         )
 
-    return Message(pieces)
+    return Message(message_pieces=pieces)

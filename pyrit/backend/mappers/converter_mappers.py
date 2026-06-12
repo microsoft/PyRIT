@@ -5,8 +5,6 @@
 Converter mappers – domain → DTO translation for converter-related models.
 """
 
-from typing import Optional
-
 from pyrit.backend.models.converters import ConverterInstance
 from pyrit.prompt_converter import PromptConverter
 
@@ -21,7 +19,7 @@ def converter_object_to_instance(
     converter_id: str,
     converter_obj: PromptConverter,
     *,
-    sub_converter_ids: Optional[list[str]] = None,
+    sub_converter_ids: list[str] | None = None,
 ) -> ConverterInstance:
     """
     Build a ConverterInstance DTO from a registry converter object.

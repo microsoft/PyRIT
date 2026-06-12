@@ -63,7 +63,7 @@ for result in results:
     await output_attack_async(result)
 
 # %% [markdown]
-# Because you have labeled `group1`, you can retrieve these prompts later. For example, you could score them as shown [here](../scoring/6_batch_scorer.ipynb). Or you could resend them as shown below; this script will resend any prompts with the label regardless of modality.
+# Because you have labeled `group1`, you can retrieve these prompts later. For example, you could score them as shown [here](../scoring/0_scoring.ipynb#batch-scoring). Or you could resend them as shown below; this script will resend any prompts with the label regardless of modality.
 
 # %%
 from pyrit.executor.attack import AttackConverterConfig
@@ -129,7 +129,7 @@ for result in results:
 # We can retrieve only the prompts that were sent to a specific target.
 
 # %%
-from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
+from pyrit.models import IdentifierFilter, IdentifierType
 
 filter_target_classes = ["OpenAIChatTarget", "TextTarget"]
 

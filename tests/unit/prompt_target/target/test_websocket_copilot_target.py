@@ -21,7 +21,7 @@ def mock_authenticator():
         mock_token = mock_token.decode("utf-8")
     authenticator = MagicMock(spec=CopilotAuthenticator)
     authenticator.get_token = AsyncMock(return_value=mock_token)
-    authenticator.get_claims = AsyncMock(return_value=token_payload)
+    authenticator.get_claims_async = AsyncMock(return_value=token_payload)
     return authenticator
 
 
@@ -121,7 +121,7 @@ def patch_convert_local_image_to_data_url():
 @pytest.fixture
 def mock_memory():
     memory = MagicMock()
-    memory.get_conversation.return_value = []
+    memory.get_conversation_messages.return_value = []
     memory.add_message_to_memory = AsyncMock()
     return memory
 
@@ -269,7 +269,7 @@ class TestBuildWebsocketUrl:
             if isinstance(mock_token, bytes):
                 mock_token = mock_token.decode("utf-8")
             mock_authenticator.get_token = AsyncMock(return_value=mock_token)
-            mock_authenticator.get_claims = AsyncMock(return_value=token_payload)
+            mock_authenticator.get_claims_async = AsyncMock(return_value=token_payload)
 
             target = mock_copilot_target
             with pytest.raises(ValueError, match="Failed to extract tenant_id \\(tid\\) or object_id \\(oid\\)"):
@@ -277,7 +277,7 @@ class TestBuildWebsocketUrl:
 
     async def test_build_websocket_url_with_invalid_token(self, mock_authenticator, mock_copilot_target):
         mock_authenticator.get_token = AsyncMock(return_value="invalid_token")
-        mock_authenticator.get_claims = AsyncMock(side_effect=ValueError("Failed to decode access token"))
+        mock_authenticator.get_claims_async = AsyncMock(side_effect=ValueError("Failed to decode access token"))
         target = mock_copilot_target
 
         with pytest.raises(ValueError, match="Failed to decode access token"):
@@ -428,7 +428,7 @@ class TestBuildPromptMessage:
     async def test_build_prompt_message_structure(self, mock_authenticator, sample_text_pieces, mock_copilot_target):
         target = mock_copilot_target
 
-        message = await target._build_prompt_message(
+        message = await target._build_prompt_message_async(
             message_pieces=sample_text_pieces,
             session_id="session_123",
             copilot_conversation_id="conv_456",
@@ -457,7 +457,7 @@ class TestBuildPromptMessage:
     ):
         target = mock_copilot_target
 
-        message = await target._build_prompt_message(
+        message = await target._build_prompt_message_async(
             message_pieces=sample_text_pieces,
             session_id="session_123",
             copilot_conversation_id="conv_456",
@@ -480,7 +480,7 @@ class TestBuildPromptMessage:
         with patch.object(
             target, "_process_image_piece_async", new=AsyncMock(return_value=expected_annotation)
         ) as mock_process:
-            message = await target._build_prompt_message(
+            message = await target._build_prompt_message_async(
                 message_pieces=sample_image_pieces,
                 session_id="session_123",
                 copilot_conversation_id="conv_456",
@@ -525,7 +525,7 @@ class TestBuildPromptMessage:
         with patch.object(
             target, "_process_image_piece_async", new=AsyncMock(side_effect=mock_annotations)
         ) as mock_process:
-            message = await target._build_prompt_message(
+            message = await target._build_prompt_message_async(
                 message_pieces=sample_mixed_pieces,
                 session_id="session_123",
                 copilot_conversation_id="conv_456",
@@ -559,7 +559,7 @@ class TestBuildPromptMessage:
         target = mock_copilot_target
         text_pieces = [make_message_piece("First line"), make_message_piece("Second line")]
 
-        message = await target._build_prompt_message(
+        message = await target._build_prompt_message_async(
             message_pieces=text_pieces,
             session_id="session_123",
             copilot_conversation_id="conv_456",
@@ -586,7 +586,7 @@ class TestConnectAndSend:
         )
 
         with patch("websockets.connect", return_value=mock_websocket):
-            response = await target._connect_and_send(
+            response = await target._connect_and_send_async(
                 message_pieces=sample_text_pieces,
                 session_id="session_123",
                 copilot_conversation_id="conv_456",
@@ -602,7 +602,7 @@ class TestConnectAndSend:
 
         with patch("websockets.connect", return_value=mock_websocket):
             with pytest.raises(TimeoutError, match="Timed out waiting for Copilot response"):
-                await target._connect_and_send(
+                await target._connect_and_send_async(
                     message_pieces=sample_text_pieces,
                     session_id="session_123",
                     copilot_conversation_id="conv_456",
@@ -615,7 +615,7 @@ class TestConnectAndSend:
 
         with patch("websockets.connect", return_value=mock_websocket):
             with pytest.raises(RuntimeError, match="WebSocket connection closed unexpectedly"):
-                await target._connect_and_send(
+                await target._connect_and_send_async(
                     message_pieces=sample_text_pieces,
                     session_id="session_123",
                     copilot_conversation_id="conv_456",
@@ -629,7 +629,7 @@ class TestConnectAndSend:
         mock_websocket.recv = AsyncMock(side_effect=['{"type":6}\x1e', '{"type":3}\x1e'])
 
         with patch("websockets.connect", return_value=mock_websocket):
-            response = await target._connect_and_send(
+            response = await target._connect_and_send_async(
                 message_pieces=sample_text_pieces,
                 session_id="sid",
                 copilot_conversation_id="cid",
@@ -646,7 +646,7 @@ class TestConnectAndSend:
 
         with patch("websockets.connect", return_value=mock_websocket):
             with pytest.raises(RuntimeError, match="Exceeded maximum message iterations"):
-                await target._connect_and_send(
+                await target._connect_and_send_async(
                     message_pieces=sample_text_pieces,
                     session_id="sid",
                     copilot_conversation_id="cid",
@@ -669,7 +669,7 @@ class TestConnectAndSend:
                     "pyrit.prompt_target.websocket_copilot_target.convert_local_image_to_data_url_async",
                     new=AsyncMock(return_value="data:image/png;base64,abc123"),
                 ):
-                    response = await target._connect_and_send(
+                    response = await target._connect_and_send_async(
                         message_pieces=sample_image_pieces,
                         session_id="sid",
                         copilot_conversation_id="cid",
@@ -694,7 +694,7 @@ class TestConnectAndSend:
                     "pyrit.prompt_target.websocket_copilot_target.convert_local_image_to_data_url_async",
                     new=AsyncMock(return_value="data:image/png;base64,abc123"),
                 ):
-                    response = await target._connect_and_send(
+                    response = await target._connect_and_send_async(
                         message_pieces=sample_mixed_pieces,
                         session_id="sid",
                         copilot_conversation_id="cid",
@@ -751,21 +751,21 @@ class TestIsStartOfSession:
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
 
         mock_memory = MagicMock()
-        mock_memory.get_conversation.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
         target._memory = mock_memory
 
         conversation_id = "test_conv_123"
         result = target._is_start_of_session(conversation_id=conversation_id)
 
         assert result is True
-        mock_memory.get_conversation.assert_called_once_with(conversation_id=conversation_id)
+        mock_memory.get_conversation_messages.assert_called_once_with(conversation_id=conversation_id)
 
     def test_is_start_of_session_with_existing_history(self, mock_authenticator):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
 
         mock_memory = MagicMock()
         mock_message = MagicMock()
-        mock_memory.get_conversation.return_value = [mock_message]
+        mock_memory.get_conversation_messages.return_value = [mock_message]
         target._memory = mock_memory
 
         conversation_id = "test_conv_123"
@@ -820,12 +820,22 @@ class TestSendPromptAsync:
         target._memory = mock_memory
         message = Message(message_pieces=[make_message_piece("Hello", conversation_id="conv_123")])
 
-        with patch.object(target, "_connect_and_send", new=AsyncMock(return_value="Response from Copilot")):
+        with patch.object(target, "_connect_and_send_async", new=AsyncMock(return_value="Response from Copilot")):
             responses = await target.send_prompt_async(message=message)
 
         assert len(responses) == 1
         assert responses[0].message_pieces[0].converted_value == "Response from Copilot"
         assert responses[0].message_pieces[0].api_role == "assistant"
+
+    async def test_send_prompt_to_target_raises_without_conversation_id(
+        self, mock_authenticator, make_message_piece, mock_memory
+    ):
+        target = WebSocketCopilotTarget(authenticator=mock_authenticator)
+        target._memory = mock_memory
+        message = Message(message_pieces=[make_message_piece("Hello", conversation_id=None)])
+
+        with pytest.raises(ValueError, match="requires a conversation_id"):
+            await target._send_prompt_to_target_async(normalized_conversation=[message])
 
     async def test_send_prompt_async_with_exceptions(self, mock_authenticator, make_message_piece, mock_memory):
         from pyrit.exceptions import EmptyResponseException
@@ -836,12 +846,12 @@ class TestSendPromptAsync:
 
         # Test for various empty responses
         for response in [None, "", "   \n\t  "]:
-            with patch.object(target, "_connect_and_send", new=AsyncMock(return_value=response)):
+            with patch.object(target, "_connect_and_send_async", new=AsyncMock(return_value=response)):
                 with pytest.raises(EmptyResponseException, match="Copilot returned an empty response"):
                     await target.send_prompt_async(message=message)
 
         # Test for generic exception during WebSocket communication
-        with patch.object(target, "_connect_and_send", new=AsyncMock(side_effect=Exception("Test error"))):
+        with patch.object(target, "_connect_and_send_async", new=AsyncMock(side_effect=Exception("Test error"))):
             with pytest.raises(RuntimeError, match="An error occurred during WebSocket communication"):
                 await target.send_prompt_async(message=message)
 
@@ -854,7 +864,7 @@ class TestSendPromptAsync:
             ]
         )
 
-        with patch.object(target, "_connect_and_send", new=AsyncMock(return_value="Image description response")):
+        with patch.object(target, "_connect_and_send_async", new=AsyncMock(return_value="Image description response")):
             responses = await target.send_prompt_async(message=message)
 
             assert len(responses) == 1
@@ -871,7 +881,7 @@ class TestSendPromptAsync:
         message = Message(message_pieces=message_pieces)
 
         with patch.object(
-            target, "_connect_and_send", new=AsyncMock(return_value="This image shows a beautiful landscape")
+            target, "_connect_and_send_async", new=AsyncMock(return_value="This image shows a beautiful landscape")
         ):
             responses = await target.send_prompt_async(message=message)
 

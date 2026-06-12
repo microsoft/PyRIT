@@ -11,8 +11,8 @@ from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt,
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.exceptions.exception_classes import _DynamicStopAfterAttempt, get_retry_max_num_attempts
 from pyrit.exceptions.exceptions_helpers import log_exception
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     MessagePiece,
     PromptDataType,
@@ -157,7 +157,6 @@ class LLMGenericTextConverter(PromptConverter):
             self._converter_target.set_system_prompt(
                 system_prompt=system_prompt,
                 conversation_id=conversation_id,
-                attack_identifier=None,
             )
 
         converted_prompt = prompt
@@ -168,14 +167,13 @@ class LLMGenericTextConverter(PromptConverter):
             )
 
         request = Message(
-            [
+            message_pieces=[
                 MessagePiece(
                     role="user",
                     original_value=prompt,
                     converted_value=converted_prompt,
                     conversation_id=conversation_id,
                     sequence=1,
-                    prompt_target_identifier=self._converter_target.get_identifier(),
                     original_value_data_type=input_type,
                     converted_value_data_type=input_type,
                     converter_identifiers=[self.get_identifier()],

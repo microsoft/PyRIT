@@ -6,7 +6,6 @@
 import json
 import logging
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -23,12 +22,12 @@ class VersionResponse(BaseModel):
     """Version information response model."""
 
     version: str
-    source: Optional[str] = None
-    commit: Optional[str] = None
-    modified: Optional[bool] = None
+    source: str | None = None
+    commit: str | None = None
+    modified: bool | None = None
     display: str
-    database_info: Optional[str] = None
-    default_labels: Optional[dict[str, str]] = None
+    database_info: str | None = None
+    default_labels: dict[str, str] | None = None
 
 
 @router.get("", response_model=VersionResponse)
@@ -62,7 +61,7 @@ async def get_version_async(request: Request) -> VersionResponse:
             logger.warning(f"Failed to load build info: {e}")
 
     # Detect current database backend
-    database_info: Optional[str] = None
+    database_info: str | None = None
     try:
         memory = CentralMemory.get_memory_instance()
         db_type = type(memory).__name__
@@ -74,7 +73,7 @@ async def get_version_async(request: Request) -> VersionResponse:
         logger.debug(f"Could not detect database info: {e}")
 
     # Read default labels from app state (set by pyrit_backend CLI)
-    default_labels: Optional[dict[str, str]] = getattr(request.app.state, "default_labels", None) or None
+    default_labels: dict[str, str] | None = getattr(request.app.state, "default_labels", None) or None
 
     return VersionResponse(
         version=version,

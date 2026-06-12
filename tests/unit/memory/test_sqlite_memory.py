@@ -7,7 +7,6 @@ import os
 import tempfile
 import uuid
 from collections.abc import Sequence
-from datetime import timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,7 +19,7 @@ from sqlalchemy.sql.sqltypes import NullType
 from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import INITIAL_METADATA
 from pyrit.memory.memory_models import EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.memory.migration import run_schema_migrations
-from pyrit.models import MessagePiece
+from pyrit.models import Conversation, MessagePiece
 from pyrit.prompt_converter.base64_converter import Base64Converter
 from pyrit.prompt_target.text_target import TextTarget
 from unit.mocks import get_sample_conversation_entries
@@ -58,7 +57,6 @@ def test_conversation_data_schema(sqlite_instance):
         "labels",
         "prompt_metadata",
         "converter_identifiers",
-        "prompt_target_identifier",
         "original_value_data_type",
         "original_value",
         "original_value_sha256",
@@ -97,8 +95,6 @@ def test_conversation_data_column_types(sqlite_instance):
         "labels": (String, JSON),
         "prompt_metadata": (String, JSON),
         "converter_identifiers": (String, JSON),
-        "prompt_target_identifier": (String, JSON),
-        "attack_identifier": (String, JSON),
         "response_error": String,
         "original_value_data_type": String,
         "original_value": String,
@@ -522,47 +518,79 @@ def test_get_memories_with_json_properties(sqlite_instance):
     converter_identifiers = [Base64Converter().get_identifier()]
     target = TextTarget()
 
-    # Start a session
-    with sqlite_instance.get_session() as session:
-        # Create a ConversationData entry with all attributes filled
-        piece = MessagePiece(
-            conversation_id=specific_conversation_id,
-            role="user",
-            sequence=1,
-            original_value="Test content",
-            converted_value="Test content",
-            labels={"normalizer_id": "id1"},
-            converter_identifiers=converter_identifiers,
-            prompt_target_identifier=target.get_identifier(),
-        )
-        entry = PromptMemoryEntry(entry=piece)
+    piece = MessagePiece(
+        conversation_id=specific_conversation_id,
+        role="user",
+        sequence=1,
+        original_value="Test content",
+        converted_value="Test content",
+        labels={"normalizer_id": "id1"},
+        converter_identifiers=converter_identifiers,
+    )
 
-        # Insert the ConversationData entry
-        session.add(entry)
-        session.commit()
+    sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id=specific_conversation_id, target_identifier=target.get_identifier())
+    )
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
 
-        # Use the get_memories_with_conversation_id method to retrieve entries with the specific conversation_id
-        retrieved_entries = sqlite_instance.get_conversation(conversation_id=specific_conversation_id)
+    # Use the get_memories_with_conversation_id method to retrieve entries with the specific conversation_id
+    retrieved_entries = sqlite_instance.get_conversation_messages(conversation_id=specific_conversation_id)
 
-        # Verify that the retrieved entry matches the inserted entry
-        assert len(retrieved_entries) == 1
-        retrieved_entry = retrieved_entries[0].message_pieces[0]
-        assert retrieved_entry.conversation_id == specific_conversation_id
-        assert retrieved_entry.api_role == "user"
-        assert retrieved_entry.original_value == "Test content"
-        # For timestamp, you might want to check if it's close to the current time instead of an exact match
-        assert abs((retrieved_entry.timestamp - piece.timestamp).total_seconds()) < 0.1
-        assert abs((retrieved_entry.timestamp - entry.timestamp.replace(tzinfo=timezone.utc)).total_seconds()) < 0.1
+    # Verify that the retrieved entry matches the inserted entry
+    assert len(retrieved_entries) == 1
+    retrieved_entry = retrieved_entries[0].message_pieces[0]
+    assert retrieved_entry.conversation_id == specific_conversation_id
+    assert retrieved_entry.api_role == "user"
+    assert retrieved_entry.original_value == "Test content"
+    # For timestamp, you might want to check if it's close to the current time instead of an exact match
+    assert abs((retrieved_entry.timestamp - piece.timestamp).total_seconds()) < 0.1
 
-        converter_identifiers = retrieved_entry.converter_identifiers
-        assert len(converter_identifiers) == 1
-        assert converter_identifiers[0].class_name == "Base64Converter"
+    converter_identifiers = retrieved_entry.converter_identifiers
+    assert len(converter_identifiers) == 1
+    assert converter_identifiers[0].class_name == "Base64Converter"
 
-        prompt_target = retrieved_entry.prompt_target_identifier
-        assert prompt_target.class_name == "TextTarget"
+    # The target identifier is conversation-scoped and stored in the Conversations table.
+    metadata = sqlite_instance._get_conversation(conversation_id=specific_conversation_id)
+    assert metadata is not None
+    assert metadata.target_identifier.class_name == "TextTarget"
 
-        labels = retrieved_entry.labels
-        assert labels["normalizer_id"] == "id1"
+    labels = retrieved_entry.labels
+    assert labels["normalizer_id"] == "id1"
+
+
+def test_register_conversation_none_target_does_not_clobber(sqlite_instance):
+    # A conversation is held with a single target. Registering it records the
+    # target; a later registration for the same conversation with no target (e.g.
+    # a branched copy whose source had no metadata) must NOT overwrite it with None.
+    conversation_id = "conv-none-clobber"
+    target = TextTarget()
+
+    request_piece = MessagePiece(
+        conversation_id=conversation_id,
+        role="user",
+        sequence=1,
+        original_value="hello",
+    )
+    sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())
+    )
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[request_piece])
+
+    response_piece = MessagePiece(
+        conversation_id=conversation_id,
+        role="assistant",
+        sequence=2,
+        original_value="world",
+    )
+    sqlite_instance.add_conversation_to_memory(
+        conversation=Conversation(conversation_id=conversation_id, target_identifier=None)
+    )
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[response_piece])
+
+    metadata = sqlite_instance._get_conversation(conversation_id=conversation_id)
+    assert metadata is not None
+    assert metadata.target_identifier is not None
+    assert metadata.target_identifier.class_name == "TextTarget"
 
 
 def test_update_entries(sqlite_instance):
@@ -793,19 +821,24 @@ def test_get_conversation_stats_returns_labels(sqlite_instance):
     assert result[conv_id].labels == {"env": "prod", "source": "gui"}
 
 
-def test_get_conversation_stats_preview_truncates(sqlite_instance):
-    """Test that last_message_preview is truncated to 100 chars + ellipsis."""
+def test_get_conversation_stats_preview_caps_raw_value_at_fetch_limit(sqlite_instance):
+    """Memory caps the raw last_message_preview at PREVIEW_FETCH_MAX_LEN.
+
+    Display-level truncation to PREVIEW_MAX_LEN happens later in the backend
+    mapper. This test verifies the storage-fetch contract: very long values
+    are bounded so a multi-MB text response doesn't bloat ``ConversationStats``.
+    """
     import uuid
 
-    from pyrit.models import MessagePiece
+    from pyrit.models import ConversationStats, MessagePiece
 
     conv_id = str(uuid.uuid4())
-    long_text = "x" * 200
+    huge_text = "x" * (ConversationStats.PREVIEW_FETCH_MAX_LEN * 3)
     piece = MessagePiece(
         role="assistant",
-        original_value=long_text,
+        original_value=huge_text,
         original_value_data_type="text",
-        converted_value=long_text,
+        converted_value=huge_text,
         converted_value_data_type="text",
         conversation_id=conv_id,
         sequence=0,
@@ -817,8 +850,9 @@ def test_get_conversation_stats_preview_truncates(sqlite_instance):
     assert conv_id in result
     preview = result[conv_id].last_message_preview
     assert preview is not None
-    assert len(preview) == 103  # 100 chars + "..."
-    assert preview.endswith("...")
+    assert len(preview) == ConversationStats.PREVIEW_FETCH_MAX_LEN
+    assert preview == "x" * ConversationStats.PREVIEW_FETCH_MAX_LEN
+    assert result[conv_id].last_message_data_type == "text"
 
 
 def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
@@ -850,6 +884,76 @@ def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
     assert result[conv_ids[0]].message_count == 1
     assert result[conv_ids[1]].message_count == 2
     assert result[conv_ids[2]].message_count == 3
+
+
+@pytest.mark.parametrize(
+    "data_type",
+    ["image_path", "audio_path", "video_path", "binary_path"],
+)
+def test_get_conversation_stats_returns_media_data_type(sqlite_instance, data_type):
+    """Memory exposes the raw value + data type for the last piece — the
+    backend mapper handles display formatting. Verifies the data type is
+    propagated so downstream consumers can render media previews safely."""
+    import uuid
+
+    from pyrit.models import MessagePiece
+
+    conv_id = str(uuid.uuid4())
+    path = r"C:\Users\someone\git\PyRIT\dbdata\prompt-memory-entries\media\1780010098266691.bin"
+    piece = MessagePiece(
+        role="assistant",
+        original_value=path,
+        original_value_data_type=data_type,
+        converted_value=path,
+        converted_value_data_type=data_type,
+        conversation_id=conv_id,
+        sequence=0,
+    )
+    sqlite_instance._insert_entry(PromptMemoryEntry(entry=piece))
+
+    result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
+    stats = result[conv_id]
+
+    assert stats.last_message_data_type == data_type
+    # Memory returns the raw value (truncated up to PREVIEW_FETCH_MAX_LEN);
+    # formatting/labeling is the backend mapper's responsibility.
+    assert stats.last_message_preview == path
+
+
+def test_get_conversation_stats_uses_last_piece_data_type(sqlite_instance):
+    """Stats reflect the data type of the most recent message, not the
+    first one, so the backend mapper picks the right rendering."""
+    import uuid
+
+    from pyrit.models import MessagePiece
+
+    conv_id = str(uuid.uuid4())
+    text_piece = MessagePiece(
+        role="user",
+        original_value="hi there",
+        original_value_data_type="text",
+        converted_value="hi there",
+        converted_value_data_type="text",
+        conversation_id=conv_id,
+        sequence=0,
+    )
+    audio_path = r"C:\dbdata\prompt-memory-entries\audio\response.mp3"
+    media_piece = MessagePiece(
+        role="assistant",
+        original_value=audio_path,
+        original_value_data_type="audio_path",
+        converted_value=audio_path,
+        converted_value_data_type="audio_path",
+        conversation_id=conv_id,
+        sequence=1,
+    )
+    sqlite_instance._insert_entries(entries=[PromptMemoryEntry(entry=text_piece), PromptMemoryEntry(entry=media_piece)])
+
+    result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
+    stats = result[conv_id]
+
+    assert stats.last_message_data_type == "audio_path"
+    assert stats.last_message_preview == audio_path
 
 
 def test_dispose_engine_tolerates_closed_log_stream(sqlite_instance, capsys):

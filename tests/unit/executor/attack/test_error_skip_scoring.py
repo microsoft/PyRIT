@@ -21,8 +21,7 @@ from pyrit.executor.attack import (
 )
 from pyrit.executor.attack.core import AttackAdversarialConfig, AttackScoringConfig
 from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece, SeedGroup, SeedPrompt
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, SeedGroup, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
 
@@ -65,7 +64,7 @@ def mock_scorer():
 def mock_memory():
     """Create a mock memory instance"""
     memory = MagicMock()
-    memory.get_conversation.return_value = []
+    memory.get_conversation_messages.return_value = []
     memory.add_message_to_memory = MagicMock()
     return memory
 

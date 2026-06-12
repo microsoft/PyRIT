@@ -11,11 +11,11 @@ from YAML files and initializes PyRIT accordingly.
 import pathlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common.path import DEFAULT_CONFIG_PATH
 from pyrit.common.yaml_loadable import YamlLoadable
-from pyrit.identifiers.class_name_utils import class_name_to_snake_case
+from pyrit.models import class_name_to_snake_case
 from pyrit.setup.initialization import (
     AZURE_SQL,
     IN_MEMORY,
@@ -29,15 +29,8 @@ if TYPE_CHECKING:
 
 # Type alias for YAML-serializable values that can be passed as initializer args
 # This matches what YAML can represent: primitives, lists, and nested dicts
-YamlPrimitive = Union[str, int, float, bool, None]
-YamlValue = Union[YamlPrimitive, list["YamlValue"], dict[str, "YamlValue"]]
-
-# Mapping from snake_case config values to internal constants
-_MEMORY_DB_TYPE_MAP: dict[str, str] = {
-    "in_memory": IN_MEMORY,
-    "sqlite": SQLITE,
-    "azure_sql": AZURE_SQL,
-}
+YamlPrimitive = str | int | float | bool | None
+YamlValue = YamlPrimitive | list["YamlValue"] | dict[str, "YamlValue"]
 
 
 @dataclass
@@ -51,7 +44,7 @@ class InitializerConfig:
     """
 
     name: str
-    args: Optional[dict[str, YamlValue]] = None
+    args: dict[str, YamlValue] | None = None
 
 
 @dataclass
@@ -77,7 +70,7 @@ class ScenarioConfig:
     """
 
     name: str
-    args: Optional[dict[str, YamlValue]] = None
+    args: dict[str, YamlValue] | None = None
 
 
 def _scenario_config_to_dict(config: ScenarioConfig) -> dict[str, Any]:
@@ -136,17 +129,25 @@ class ConfigurationLoader(YamlLoadable):
         operation: my_operation
     """
 
+    # Mapping from snake_case config values to internal constants
+    _MEMORY_DB_TYPE_MAP: ClassVar[dict[str, str]] = {
+        "in_memory": IN_MEMORY,
+        "sqlite": SQLITE,
+        "azure_sql": AZURE_SQL,
+    }
+
     memory_db_type: str = "sqlite"
-    initializers: list[Union[str, dict[str, Any]]] = field(default_factory=list)
-    initialization_scripts: Optional[list[str]] = None
-    env_files: Optional[list[str]] = None
+    initializers: list[str | dict[str, Any]] = field(default_factory=list)
+    initialization_scripts: list[str] | None = None
+    env_files: list[str] | None = None
+    env_akv_ref: list[str] | None = None
     silent: bool = False
-    operator: Optional[str] = None
-    operation: Optional[str] = None
-    scenario: Optional[Union[str, dict[str, Any]]] = None
+    operator: str | None = None
+    operation: str | None = None
+    scenario: str | dict[str, Any] | None = None
     max_concurrent_scenario_runs: int = 3
     allow_custom_initializers: bool = False
-    server: Optional[dict[str, Any]] = None
+    server: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -171,12 +172,12 @@ class ConfigurationLoader(YamlLoadable):
         normalized = self.memory_db_type.lower().replace("-", "_")
 
         # Also handle PascalCase inputs (e.g., "InMemory" -> "in_memory")
-        if normalized not in _MEMORY_DB_TYPE_MAP:
+        if normalized not in self._MEMORY_DB_TYPE_MAP:
             # Try converting from PascalCase
             normalized = class_name_to_snake_case(self.memory_db_type)
 
-        if normalized not in _MEMORY_DB_TYPE_MAP:
-            valid_types = list(_MEMORY_DB_TYPE_MAP.keys())
+        if normalized not in self._MEMORY_DB_TYPE_MAP:
+            valid_types = list(self._MEMORY_DB_TYPE_MAP.keys())
             raise ValueError(
                 f"Invalid memory_db_type '{self.memory_db_type}'. Must be one of: {', '.join(valid_types)}"
             )
@@ -229,7 +230,7 @@ class ConfigurationLoader(YamlLoadable):
             ValueError: For any other shape.
         """
         if self.scenario is None:
-            self._scenario_config: Optional[ScenarioConfig] = None
+            self._scenario_config: ScenarioConfig | None = None
             return
 
         if isinstance(self.scenario, str):
@@ -263,7 +264,7 @@ class ConfigurationLoader(YamlLoadable):
             ValueError: If ``server`` is not ``None`` or a dict, or if ``url`` is not a string.
         """
         if self.server is None:
-            self._server_config: Optional[ServerConfig] = None
+            self._server_config: ServerConfig | None = None
             return
 
         if isinstance(self.server, dict):
@@ -276,12 +277,12 @@ class ConfigurationLoader(YamlLoadable):
         raise ValueError(f"Server entry must be a dict, got: {type(self.server).__name__}")
 
     @property
-    def server_config(self) -> Optional[ServerConfig]:
+    def server_config(self) -> ServerConfig | None:
         """The normalized ``server:`` block, or ``None`` when not configured."""
         return self._server_config
 
     @property
-    def scenario_config(self) -> Optional[ScenarioConfig]:
+    def scenario_config(self) -> ScenarioConfig | None:
         """The normalized ``scenario:`` block, or ``None`` when not configured."""
         return self._scenario_config
 
@@ -313,12 +314,13 @@ class ConfigurationLoader(YamlLoadable):
 
     @staticmethod
     def load_with_overrides(
-        config_file: Optional[pathlib.Path] = None,
+        config_file: pathlib.Path | None = None,
         *,
-        memory_db_type: Optional[str] = None,
-        initializers: Optional[Sequence[Union[str, dict[str, Any]]]] = None,
-        initialization_scripts: Optional[Sequence[str]] = None,
-        env_files: Optional[Sequence[str]] = None,
+        memory_db_type: str | None = None,
+        initializers: Sequence[str | dict[str, Any]] | None = None,
+        initialization_scripts: Sequence[str] | None = None,
+        env_files: Sequence[str] | None = None,
+        env_akv_ref: Sequence[str] | None = None,
     ) -> "ConfigurationLoader":
         """
         Load configuration with optional overrides.
@@ -338,6 +340,7 @@ class ConfigurationLoader(YamlLoadable):
             initializers: Override for initializer list.
             initialization_scripts: Override for initialization script paths.
             env_files: Override for environment file paths.
+            env_akv_ref: Override for Azure Key Vault secret URLs.
 
         Returns:
             A merged ConfigurationLoader instance.
@@ -356,6 +359,7 @@ class ConfigurationLoader(YamlLoadable):
             "initializers": [],
             "initialization_scripts": None,  # None = use defaults
             "env_files": None,  # None = use defaults
+            "env_akv_ref": None,
             "silent": False,
         }
 
@@ -374,6 +378,7 @@ class ConfigurationLoader(YamlLoadable):
                 # Preserve None vs [] distinction from config file
                 config_data["initialization_scripts"] = default_config.initialization_scripts
                 config_data["env_files"] = default_config.env_files
+                config_data["env_akv_ref"] = default_config.env_akv_ref
                 config_data["silent"] = default_config.silent
                 if default_config.operator:
                     config_data["operator"] = default_config.operator
@@ -399,6 +404,7 @@ class ConfigurationLoader(YamlLoadable):
             # Preserve None vs [] distinction from config file
             config_data["initialization_scripts"] = explicit_config.initialization_scripts
             config_data["env_files"] = explicit_config.env_files
+            config_data["env_akv_ref"] = explicit_config.env_akv_ref
             config_data["silent"] = explicit_config.silent
             if explicit_config.operator:
                 config_data["operator"] = explicit_config.operator
@@ -430,6 +436,9 @@ class ConfigurationLoader(YamlLoadable):
 
         if env_files is not None:
             config_data["env_files"] = list(env_files)
+
+        if env_akv_ref is not None:
+            config_data["env_akv_ref"] = list(env_akv_ref)
 
         return ConfigurationLoader.from_dict(config_data)
 
@@ -487,7 +496,7 @@ class ConfigurationLoader(YamlLoadable):
 
         return resolved
 
-    def resolve_initialization_scripts(self) -> Optional[Sequence[pathlib.Path]]:
+    def resolve_initialization_scripts(self) -> Sequence[pathlib.Path] | None:
         """
         Resolve initialization script paths.
 
@@ -512,7 +521,7 @@ class ConfigurationLoader(YamlLoadable):
 
         return resolved
 
-    def resolve_env_files(self) -> Optional[Sequence[pathlib.Path]]:
+    def resolve_env_files(self) -> Sequence[pathlib.Path] | None:
         """
         Resolve environment file paths.
 
@@ -537,6 +546,15 @@ class ConfigurationLoader(YamlLoadable):
 
         return resolved
 
+    def resolve_env_akv_ref(self) -> list[str] | None:
+        """
+        Return the list of AKV secret URLs, or ``None`` when not configured.
+
+        Returns:
+            list[str] | None: The configured AKV secret URLs, or ``None``.
+        """
+        return self.env_akv_ref
+
     async def initialize_pyrit_async(self) -> None:
         """
         Initialize PyRIT with the loaded configuration.
@@ -552,19 +570,20 @@ class ConfigurationLoader(YamlLoadable):
         resolved_env_files = self.resolve_env_files()
 
         # Map snake_case memory_db_type to internal constant
-        internal_memory_db_type = _MEMORY_DB_TYPE_MAP[self.memory_db_type]
+        internal_memory_db_type = self._MEMORY_DB_TYPE_MAP[self.memory_db_type]
 
         await initialize_pyrit_async(
             memory_db_type=internal_memory_db_type,
             initialization_scripts=resolved_scripts,
             initializers=resolved_initializers if resolved_initializers else None,
             env_files=resolved_env_files,
+            env_akv_ref=self.env_akv_ref,
             silent=self.silent,
         )
 
 
 async def initialize_from_config_async(
-    config_path: Optional[Union[str, pathlib.Path]] = None,
+    config_path: str | pathlib.Path | None = None,
 ) -> ConfigurationLoader:
     """
     Initialize PyRIT from a configuration file.

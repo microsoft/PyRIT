@@ -15,8 +15,8 @@ from pyrit.executor.attack import (
     ContextComplianceAttack,
     SingleTurnAttackContext,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
+    ComponentIdentifier,
     Message,
     MessagePiece,
     SeedDataset,
@@ -568,7 +568,6 @@ class TestContextComplianceAttackExecution:
             call_args = mock_prompt_normalizer.send_prompt_async.call_args
 
             assert call_args.kwargs["target"] == attack._adversarial_chat
-            assert call_args.kwargs["attack_identifier"] == attack.get_identifier()
             assert call_args.kwargs["labels"] == basic_context.memory_labels
 
             # Verify message was created correctly (converted from seed group)
@@ -616,7 +615,6 @@ class TestContextComplianceAttackExecution:
             call_args = mock_prompt_normalizer.send_prompt_async.call_args
 
             assert call_args.kwargs["target"] == attack._adversarial_chat
-            assert call_args.kwargs["attack_identifier"] == attack.get_identifier()
             assert call_args.kwargs["labels"] == basic_context.memory_labels
 
             # Verify template was rendered with benign request
@@ -657,7 +655,6 @@ class TestContextComplianceAttackExecution:
             call_args = mock_prompt_normalizer.send_prompt_async.call_args
 
             assert call_args.kwargs["target"] == attack._adversarial_chat
-            assert call_args.kwargs["attack_identifier"] == attack.get_identifier()
             assert call_args.kwargs["labels"] == basic_context.memory_labels
 
             # Verify template was rendered
@@ -875,3 +872,40 @@ class TestContextComplianceAttackParamsType:
 
         fields = {f.name for f in dataclasses.fields(attack.params_type)}
         assert "objective" in fields
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestContextComplianceAttackAdversarialIdentity:
+    """Tests that the adversarial chat target is included in the attack identity."""
+
+    def test_get_attack_adversarial_config_returns_target_only(
+        self, mock_objective_target, mock_attack_adversarial_config, mock_adversarial_chat
+    ):
+        attack = ContextComplianceAttack(
+            objective_target=mock_objective_target, attack_adversarial_config=mock_attack_adversarial_config
+        )
+        config = attack.get_attack_adversarial_config()
+        assert config is not None
+        assert config.target is mock_adversarial_chat
+        assert config.seed_prompt is None
+
+    def test_get_attack_adversarial_config_returns_none_without_target(
+        self, mock_objective_target, mock_attack_adversarial_config
+    ):
+        attack = ContextComplianceAttack(
+            objective_target=mock_objective_target, attack_adversarial_config=mock_attack_adversarial_config
+        )
+        attack._adversarial_chat = None
+        assert attack.get_attack_adversarial_config() is None
+
+    def test_identifier_includes_adversarial_chat_child(
+        self, mock_objective_target, mock_attack_adversarial_config, mock_adversarial_chat
+    ):
+        """Regression: PromptSendingAttack caches the identifier in __init__, so the adversarial
+        target must be set BEFORE super().__init__() for the child to appear."""
+        attack = ContextComplianceAttack(
+            objective_target=mock_objective_target, attack_adversarial_config=mock_attack_adversarial_config
+        )
+        identifier = attack.get_identifier()
+        assert "adversarial_chat" in identifier.children
+        assert identifier.children["adversarial_chat"] == mock_adversarial_chat.get_identifier.return_value

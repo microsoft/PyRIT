@@ -3,14 +3,13 @@
 
 import enum
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 import yaml
 
 from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_SCALES_PATH
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import MessagePiece, Score, SeedPrompt, UnvalidatedScore
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt, UnvalidatedScore
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -45,20 +44,20 @@ class SelfAskScaleScorer(FloatScaleScorer):
         self,
         *,
         chat_target: PromptTarget,
-        scale_arguments_path: Optional[Union[Path, str]] = None,
-        system_prompt_path: Optional[Union[Path, str]] = None,
-        validator: Optional[ScorerPromptValidator] = None,
+        scale_arguments_path: Path | str | None = None,
+        system_prompt_path: Path | str | None = None,
+        validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the SelfAskScaleScorer.
 
         Args:
             chat_target (PromptTarget): The chat target to use for scoring.
-            scale_arguments_path (Optional[Union[Path, str]]): Path to the YAML file containing scale definitions.
+            scale_arguments_path (Path | str | None): Path to the YAML file containing scale definitions.
                 Defaults to TREE_OF_ATTACKS_SCALE if not provided.
-            system_prompt_path (Optional[Union[Path, str]]): Path to the YAML file containing the system prompt.
+            system_prompt_path (Path | str | None): Path to the YAML file containing the system prompt.
                 Defaults to GENERAL_SYSTEM_PROMPT if not provided.
-            validator (Optional[ScorerPromptValidator]): Custom validator for the scorer. Defaults to None.
+            validator (ScorerPromptValidator | None): Custom validator for the scorer. Defaults to None.
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
 
@@ -102,7 +101,7 @@ class SelfAskScaleScorer(FloatScaleScorer):
             },
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Scores the given message_piece using "self-ask" for the chat target.
 
@@ -130,16 +129,15 @@ class SelfAskScaleScorer(FloatScaleScorer):
             scoring_value = f"objective: {objective}\nresponse: {message_piece.converted_value}"
             scoring_data_type = "text"
 
-        unvalidated_score: UnvalidatedScore = await self._score_value_with_llm(
+        unvalidated_score: UnvalidatedScore = await self._score_value_with_llm_async(
             prompt_target=self._prompt_target,
             system_prompt=self._system_prompt,
             message_value=scoring_value,
             message_data_type=scoring_data_type,
-            scored_prompt_id=message_piece.id,  # type: ignore[ty:invalid-argument-type]
+            scored_prompt_id=message_piece.id,
             prepended_text_message_piece=prepended_text,
             category=self._category,
             objective=objective,
-            attack_identifier=message_piece.attack_identifier,
         )
 
         score = unvalidated_score.to_score(

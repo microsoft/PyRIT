@@ -38,10 +38,11 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional, overload
+from typing import Any, overload
 
 import numpy as np
 import torch.multiprocessing as mp
+from pydantic import Field
 
 import pyrit.auxiliary_attacks.gcg.attack.gcg.gcg_attack as attack_lib
 from pyrit.auxiliary_attacks.gcg.attack.base.attack_manager import (
@@ -62,7 +63,7 @@ from pyrit.executor.promptgen.core.prompt_generator_strategy import (
     PromptGeneratorStrategyContext,
     PromptGeneratorStrategyResult,
 )
-from pyrit.identifiers import ComponentIdentifier, Identifiable
+from pyrit.models import ComponentIdentifier, Identifiable
 
 logger = logging.getLogger(__name__)
 
@@ -92,11 +93,10 @@ class GCGContext(PromptGeneratorStrategyContext):
 
     workers: list[Any] = field(default_factory=list)
     test_workers: list[Any] = field(default_factory=list)
-    attack: Optional[Any] = None
-    logfile_path: Optional[str] = None
+    attack: Any | None = None
+    logfile_path: str | None = None
 
 
-@dataclass
 class GCGResult(PromptGeneratorStrategyResult):
     """Result of one GCGGenerator run.
 
@@ -117,10 +117,10 @@ class GCGResult(PromptGeneratorStrategyResult):
     final_suffix: str = ""
     final_loss: float = float("nan")
     step_count: int = 0
-    loss_history: list[float] = field(default_factory=list)
-    control_history: list[str] = field(default_factory=list)
-    log_path: Optional[str] = None
-    memory_labels: dict[str, str] = field(default_factory=dict)
+    loss_history: list[float] = Field(default_factory=list)
+    control_history: list[str] = Field(default_factory=list)
+    log_path: str | None = None
+    memory_labels: dict[str, str] = Field(default_factory=dict)
 
 
 class GCGGenerator(
@@ -138,11 +138,11 @@ class GCGGenerator(
         self,
         *,
         models: list[GCGModelConfig],
-        algorithm: Optional[GCGAlgorithmConfig] = None,
-        strategy: Optional[GCGStrategyConfig] = None,
-        output: Optional[GCGOutputConfig] = None,
-        test_models: Optional[list[GCGModelConfig]] = None,
-        hf_token: Optional[str] = None,
+        algorithm: GCGAlgorithmConfig | None = None,
+        strategy: GCGStrategyConfig | None = None,
+        output: GCGOutputConfig | None = None,
+        test_models: list[GCGModelConfig] | None = None,
+        hf_token: str | None = None,
     ) -> None:
         """
         Initialize the GCG generator.
@@ -307,9 +307,9 @@ class GCGGenerator(
         *,
         goals: list[str],
         targets: list[str],
-        test_goals: Optional[list[str]] = None,
-        test_targets: Optional[list[str]] = None,
-        memory_labels: Optional[dict[str, str]] = None,
+        test_goals: list[str] | None = None,
+        test_targets: list[str] | None = None,
+        memory_labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> GCGResult: ...
 

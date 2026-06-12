@@ -4,7 +4,9 @@
 import logging
 import uuid
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal
+
+from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
@@ -12,7 +14,7 @@ from pyrit.datasets.seed_datasets.remote._image_cache import (
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import Modality, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,34 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
     Paper: [@mazeika2024harmbench]
     """
 
+    _AUTHORS = [
+        "Mantas Mazeika",
+        "Long Phan",
+        "Xuwang Yin",
+        "Andy Zou",
+        "Zifan Wang",
+        "Norman Mu",
+        "Elham Sakhaee",
+        "Nathaniel Li",
+        "Steven Basart",
+        "Bo Li",
+        "David Forsyth",
+        "Dan Hendrycks",
+    ]
+
+    _GROUPS = [
+        "University of Illinois Urbana-Champaign",
+        "Center for AI Safety",
+        "Carnegie Mellon University",
+        "UC Berkeley",
+        "Microsoft",
+    ]
+
+    # Metadata
+    modalities: tuple[Modality, ...] = (Modality.TEXT, Modality.IMAGE)
+    size: str = "medium"  # 220 harmful multimodal behaviors
+    tags: frozenset[str] = frozenset({"safety", "jailbreak", "multimodal"})
+
     def __init__(
         self,
         *,
@@ -51,7 +81,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
             "harmbench_behaviors_multimodal_all.csv"
         ),
         source_type: Literal["public_url", "file"] = "public_url",
-        categories: Optional[list[SemanticCategory]] = None,
+        categories: list[SemanticCategory] | None = None,
     ) -> None:
         """
         Initialize the HarmBench multimodal dataset loader.
@@ -73,10 +103,12 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
             self._validate_enums(categories, SemanticCategory, "semantic category")
 
     @property
+    @override
     def dataset_name(self) -> str:
         """Return the dataset name."""
         return "harmbench_multimodal"
 
+    @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch HarmBench multimodal examples and return as SeedDataset.
@@ -164,6 +196,8 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
                     "redacted_image_description": redacted_description,
                     "original_image_url": image_url,
                 },
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
             prompts.append(image_prompt)
 
@@ -180,27 +214,8 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
                 metadata={
                     "behavior_id": behavior_id,
                 },
-                authors=[
-                    "Mantas Mazeika",
-                    "Long Phan",
-                    "Xuwang Yin",
-                    "Andy Zou",
-                    "Zifan Wang",
-                    "Norman Mu",
-                    "Elham Sakhaee",
-                    "Nathaniel Li",
-                    "Steven Basart",
-                    "Bo Li",
-                    "David Forsyth",
-                    "Dan Hendrycks",
-                ],
-                groups=[
-                    "University of Illinois Urbana-Champaign",
-                    "Center for AI Safety",
-                    "Carnegie Mellon University",
-                    "UC Berkeley",
-                    "Microsoft",
-                ],
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
             )
             prompts.append(text_prompt)
 

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -27,7 +26,7 @@ class ConversationReference(BaseModel):
 
     conversation_id: str
     conversation_type: ConversationType
-    description: Optional[str] = None
+    description: str | None = None
 
     def __hash__(self) -> int:
         """
@@ -57,7 +56,7 @@ class ConversationReference(BaseModel):
         Serialize to a JSON-compatible dictionary.
 
         .. deprecated::
-            Use :meth:`model_dump` with ``mode="json"`` instead. This method
+            Use ``model_dump`` with ``mode="json"`` instead. This method
             will be removed in version 0.16.0.
 
         Returns:
@@ -76,7 +75,7 @@ class ConversationReference(BaseModel):
         Reconstruct a ConversationReference from a dictionary.
 
         .. deprecated::
-            Use :meth:`model_validate` instead. This method will be removed
+            Use ``model_validate`` instead. This method will be removed
             in version 0.16.0.
 
         Args:

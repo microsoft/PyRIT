@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional, cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,9 +26,9 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TAPAttackScoringConfig,
     _TreeOfAttacksNode,
 )
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.models import (
     AttackOutcome,
+    ComponentIdentifier,
     ConversationReference,
     ConversationType,
     Message,
@@ -50,11 +50,11 @@ class NodeMockConfig:
     """Configuration for creating mock _TreeOfAttacksNode objects."""
 
     node_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    parent_id: Optional[str] = None
+    parent_id: str | None = None
     prompt_sent: bool = False
     completed: bool = True
     off_topic: bool = False
-    objective_score_value: Optional[float] = None
+    objective_score_value: float | None = None
     auxiliary_scores: dict[str, float] = field(default_factory=dict)
     objective_target_conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     adversarial_chat_conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -64,7 +64,7 @@ class MockNodeFactory:
     """Factory for creating mock _TreeOfAttacksNode objects."""
 
     @staticmethod
-    def create_node(config: Optional[NodeMockConfig] = None) -> "_TreeOfAttacksNode":
+    def create_node(config: NodeMockConfig | None = None) -> "_TreeOfAttacksNode":
         """Create a mock _TreeOfAttacksNode with the given configuration."""
         if config is None:
             config = NodeMockConfig()
@@ -95,7 +95,7 @@ class MockNodeFactory:
         # Set up objective score
         if config.objective_score_value is not None:
             node.objective_score = MagicMock(
-                get_value=MagicMock(return_value=config.objective_score_value), score_metadata=None
+                spec=Score, get_value=MagicMock(return_value=config.objective_score_value), score_metadata=None
             )
         else:
             node.objective_score = None
@@ -150,14 +150,14 @@ class AttackBuilder:
     """Builder for creating TreeOfAttacksWithPruningAttack instances with common configurations."""
 
     def __init__(self) -> None:
-        self.objective_target: Optional[PromptTarget] = None
-        self.adversarial_chat: Optional[PromptTarget] = None
-        self.objective_scorer: Optional[Scorer] = None
+        self.objective_target: PromptTarget | None = None
+        self.adversarial_chat: PromptTarget | None = None
+        self.objective_scorer: Scorer | None = None
         self.auxiliary_scorers: list[Scorer] = []
         self.tree_params: dict[str, Any] = {}
-        self.converters: Optional[AttackConverterConfig] = None
+        self.converters: AttackConverterConfig | None = None
         self.successful_threshold: float = 0.8
-        self.prompt_normalizer: Optional[PromptNormalizer] = None
+        self.prompt_normalizer: PromptNormalizer | None = None
         self._supports_multi_turn: bool = True
 
     def with_default_mocks(self) -> "AttackBuilder":
@@ -293,7 +293,6 @@ class TestHelpers:
     def create_score(value: float = 0.9) -> Score:
         """Create a mock Score object."""
         return Score(
-            id=None,
             score_type="float_scale",
             score_value=str(value),
             score_category=["test"],
@@ -332,7 +331,6 @@ class TestHelpers:
 
         # Create the float scale score that the mock scorer will return
         float_score = Score(
-            id=None,
             score_type="float_scale",
             score_value=str(original_float_value),
             score_category=["objective"],
@@ -1323,7 +1321,7 @@ class TestEndToEndExecution:
         mock_result.auxiliary_scores_summary = {}
 
         with patch.object(attack, "_perform_async", return_value=mock_result) as mock_perform:
-            with patch.object(attack._memory, "get_conversation", return_value=[]):
+            with patch.object(attack._memory, "get_conversation_messages", return_value=[]):
                 with patch.object(attack._memory, "get_message_pieces", return_value=[]):
                     with patch.object(attack._memory, "add_attack_results_to_memory", return_value=None):
                         result = await attack.execute_async(
@@ -1369,7 +1367,7 @@ class TestEndToEndExecution:
         mock_result.auxiliary_scores_summary = {}
 
         with patch.object(attack, "_perform_async", return_value=mock_result):
-            with patch.object(attack._memory, "get_conversation", return_value=[]):
+            with patch.object(attack._memory, "get_conversation_messages", return_value=[]):
                 with patch.object(attack._memory, "get_message_pieces", return_value=[]):
                     with patch.object(attack._memory, "add_attack_results_to_memory", return_value=None):
                         result = await attack.execute_async(objective="Test objective", memory_labels={"test": "label"})
@@ -1815,17 +1813,16 @@ class TestTreeOfAttacksPromptLoading:
         """Test loading prompts with default paths."""
         attack = attack_builder.with_default_mocks().build()
 
-        # Mock SeedPrompt loading
-        mock_system = MagicMock(spec=SeedPrompt)
+        # Mock SeedPrompt loading. The system seed prompt is resolved in __init__
+        # (via resolve_adversarial_system_prompt); _load_adversarial_prompts only
+        # loads the prompt template and the first-message seed prompt.
         mock_template = MagicMock(spec=SeedPrompt)
         mock_seed = MagicMock(spec=SeedPrompt)
 
-        with patch.object(SeedPrompt, "from_yaml_with_required_parameters", return_value=mock_system):
-            with patch.object(SeedPrompt, "from_yaml_file", side_effect=[mock_template, mock_seed]):
-                attack._load_adversarial_prompts()
+        with patch.object(SeedPrompt, "from_yaml_file", side_effect=[mock_template, mock_seed]):
+            attack._load_adversarial_prompts()
 
         # Verify prompts were loaded and stored
-        assert attack._adversarial_chat_system_seed_prompt == mock_system
         assert attack._adversarial_chat_prompt_template == mock_template
         assert attack._adversarial_chat_seed_prompt == mock_seed
 
@@ -2127,6 +2124,7 @@ def test_tap_init_raises_when_objective_scorer_is_none():
             objective_target=MagicMock(spec=PromptTarget),
             attack_adversarial_config=MagicMock(
                 target=MagicMock(spec=PromptTarget),
+                system_prompt=None,
                 system_prompt_path=None,
             ),
             attack_scoring_config=scoring_config,
@@ -2209,11 +2207,13 @@ def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _
         node.completed = True
         if b.error is not None:
             node.objective_score = MagicMock(
+                spec=Score,
                 get_value=MagicMock(return_value=0.0),
                 score_metadata=None,
             )
         elif b.score is not None:
             node.objective_score = MagicMock(
+                spec=Score,
                 get_value=MagicMock(return_value=b.score),
                 score_metadata=None,
             )
@@ -2480,3 +2480,43 @@ class TestTAPScenarios:
             assert abs(context.best_objective_score.get_value() - expected_best_score) < 0.01, (
                 f"Expected best score ~{expected_best_score}, got {context.best_objective_score.get_value()}"
             )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestTAPAdversarialIdentity:
+    """Tests for adversarial config in the TAP attack identity and inline system prompt."""
+
+    def test_get_attack_adversarial_config_includes_target_and_system_seed_only(self):
+        builder = AttackBuilder().with_default_mocks()
+        attack = builder.build()
+        config = attack.get_attack_adversarial_config()
+        assert config is not None
+        assert config.target is builder.adversarial_chat
+        assert config.system_prompt is attack._adversarial_chat_system_seed_prompt
+        # TAP's first-message seed prompt is a fixed default and is excluded from identity.
+        assert config.seed_prompt is None
+
+    def test_get_attack_adversarial_config_returns_none_without_target(self):
+        builder = AttackBuilder().with_default_mocks()
+        attack = builder.build()
+        attack._adversarial_chat = None
+        assert attack.get_attack_adversarial_config() is None
+
+    def test_identifier_includes_adversarial_chat_child(self):
+        builder = AttackBuilder().with_default_mocks()
+        attack = builder.build()
+        identifier = attack.get_identifier()
+        assert "adversarial_chat" in identifier.children
+        assert identifier.children["adversarial_chat"] == builder.adversarial_chat.get_identifier.return_value
+
+    def test_inline_system_prompt_string_resolved_and_in_identity(self):
+        objective_target = AttackBuilder._create_mock_target()
+        adversarial_chat = AttackBuilder._create_mock_chat()
+        attack = TreeOfAttacksWithPruningAttack(
+            objective_target=objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(
+                target=adversarial_chat, system_prompt="tap persona {{ desired_prefix }}"
+            ),
+        )
+        assert attack._adversarial_chat_system_seed_prompt.value == "tap persona {{ desired_prefix }}"
+        assert attack.get_identifier().params["adversarial_system_prompt"] == "tap persona {{ desired_prefix }}"

@@ -2,17 +2,17 @@
 # Licensed under the MIT license.
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 import pytest
 from unit.mocks import get_mock_scorer_identifier
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.identifiers.identifier_filters import IdentifierFilter, IdentifierType
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
+    IdentifierFilter,
+    IdentifierType,
     ScenarioIdentifier,
     ScenarioResult,
 )
@@ -41,7 +41,7 @@ def create_scenario_result(
     name: str = "Test Scenario",
     description: str = "Test Description",
     version: int = 1,
-    attack_results: Optional[dict[str, list[AttackResult]]] = None,
+    attack_results: dict[str, list[AttackResult]] | None = None,
 ):
     """Helper function to create ScenarioResult."""
     scenario_identifier = ScenarioIdentifier(

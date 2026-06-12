@@ -19,7 +19,7 @@ from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_attack_group import SeedAttackGroup
 from pyrit.models.seeds.seed_attack_technique_group import SeedAttackTechniqueGroup
 from pyrit.models.seeds.seed_dataset import SeedDataset
-from pyrit.models.seeds.seed_group import SeedGroup
+from pyrit.models.seeds.seed_group import SeedGroup, SeedUnion
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
 from pyrit.models.seeds.seed_simulated_conversation import (
@@ -27,16 +27,25 @@ from pyrit.models.seeds.seed_simulated_conversation import (
     SeedSimulatedConversation,
     SimulatedTargetSystemPromptPaths,
 )
+from pyrit.models.seeds.yaml_seed_loader import (
+    load_seed_dataset_from_yaml,
+    load_seed_from_yaml,
+    load_seed_prompt_from_yaml_with_required_parameters,
+)
 
 __all__ = [
+    "load_seed_dataset_from_yaml",
+    "load_seed_from_yaml",
+    "load_seed_prompt_from_yaml_with_required_parameters",
+    "NextMessageSystemPromptPaths",
     "Seed",
-    "SeedPrompt",
-    "SeedObjective",
-    "SeedGroup",
     "SeedAttackGroup",
     "SeedAttackTechniqueGroup",
-    "SeedSimulatedConversation",
-    "SimulatedTargetSystemPromptPaths",
-    "NextMessageSystemPromptPaths",
     "SeedDataset",
+    "SeedGroup",
+    "SeedObjective",
+    "SeedPrompt",
+    "SeedSimulatedConversation",
+    "SeedUnion",
+    "SimulatedTargetSystemPromptPaths",
 ]

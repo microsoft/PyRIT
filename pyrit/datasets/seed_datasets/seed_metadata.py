@@ -4,7 +4,7 @@
 import logging
 from dataclasses import dataclass, fields
 from enum import Enum
-from typing import Any, ClassVar, Literal, Optional
+from typing import Any, ClassVar, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,51 @@ SeedDatasetSizeCategory = Literal["tiny", "small", "medium", "large", "huge"]
 # tiny (<10), small (10-99), medium (100-499), large (500-4999), huge (5000+)
 
 SeedDatasetSourceType = Literal["remote", "local"]
+
+# Canonical, *advisory* tag vocabulary for SeedDatasetMetadata.tags.
+#
+# Loaders may set custom tags, but contributors should reuse this vocabulary
+# whenever it fits to keep `SeedDatasetFilter` discovery consistent across
+# datasets. The metadata parser does NOT enforce this list — it is enforced as
+# a soft contract via tests/unit/datasets/test_seed_dataset_provider.py.
+#
+# Rule for the special "default" tag (applied when authoring/registering a
+# loader, not enforced at runtime): a dataset should be tagged "default" only
+# when ALL of the following hold:
+#
+#   1. Ungated  — no HuggingFace token, API key, auth, or signup required.
+#   2. Citable  — peer-reviewed paper or established benchmark, not a personal
+#                 collection or unpublished registry.
+#   3. Single-call — `await loader.fetch_dataset_async()` works with no
+#                    manual download or setup (auto-cached per-asset fetches
+#                    are fine).
+#   4. Size >= medium (>=100 prompts).
+#   5. Broadly applicable — not narrowly scoped to a vertical-specific domain
+#                           (e.g., medical, legal, cybersecurity). Cross-cutting
+#                           axes like `privacy`, `bias`, `multimodal`,
+#                           `multilingual`, `refusal`, and `jailbreak` DO count
+#                           as broadly applicable.
+RECOMMENDED_TAGS: frozenset[str] = frozenset(
+    {
+        "default",  # see rule above
+        "safety",  # universal for any harm/red-team content
+        "multimodal",  # image+text, audio+text, etc.
+        "multilingual",  # multiple natural languages
+        "privacy",  # privacy / PII content
+        "jailbreak",  # adversarial / jailbreak templates
+        "bias",  # fairness / bias-focused
+        "medical",  # medical / health domain
+        "legal",  # legal domain
+        "cybersecurity",  # cybersecurity / malware domain
+        "refusal",  # refusal-evaluation oriented (over-refusal, false-refusal, etc.)
+        "synthetic",  # programmatically generated content
+        "multiturn",  # multi-turn conversations
+        "agent_security",  # agentic-AI threat models (tool poisoning, context exfiltration, etc.)
+        "prompt_injection",  # direct or indirect prompt-injection payloads
+        "ethics",  # moral-judgment / values evaluation (e.g., moral foundations theory)
+        "toxicity",  # toxicity / hate-speech / profanity (e.g., RealToxicityPrompts, Perspective API)
+    }
+)
 
 
 class SeedDatasetLoadTime(Enum):
@@ -49,12 +94,12 @@ class SeedDatasetMetadata:
     # All fields are optional sets to support both real metadata (single-element)
     # and filter criteria (multi-element). SINGULAR_FIELDS enforces that parsers
     # only produce single-element sets for size and source_type.
-    tags: Optional[set[str]] = None
-    size: Optional[set[str]] = None
-    modalities: Optional[set[str]] = None
-    source_type: Optional[set[str]] = None
-    load_time: Optional[set[SeedDatasetLoadTime]] = None
-    harm_categories: Optional[set[str]] = None
+    tags: set[str] | None = None
+    size: set[str] | None = None
+    modalities: set[str] | None = None
+    source_type: set[str] | None = None
+    load_time: set[SeedDatasetLoadTime] | None = None
+    harm_categories: set[str] | None = None
 
     # Fields that must have at most 1 element in real dataset metadata.
     SINGULAR_FIELDS: ClassVar[frozenset[str]] = frozenset({"size", "source_type"})
@@ -150,7 +195,7 @@ class SeedDatasetFilter:
     def __init__(
         self,
         *,
-        criteria: Optional[list[SeedDatasetMetadata]] = None,
+        criteria: list[SeedDatasetMetadata] | None = None,
         strict_match: bool = False,
         **kwargs: Any,
     ) -> None:

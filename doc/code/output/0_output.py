@@ -138,7 +138,7 @@ await output_attack_async(image_result, format="markdown", blur_images=True, blu
 from pyrit.output import output_conversation_async
 
 # get the conversation from memory using the conversation id from the attack result
-conversation = memory.get_conversation(conversation_id=attack_result.conversation_id)
+conversation = memory.get_conversation_messages(conversation_id=attack_result.conversation_id)
 
 # print the conversation using the print conversation helper
 await output_conversation_async(messages=conversation)  # type: ignore

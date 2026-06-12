@@ -87,10 +87,10 @@ def success_score():
     return Score(
         score_type="true_false",
         score_value="true",
-        score_category="test",
+        score_category=["test"],
         score_value_description="Test success score",
         score_rationale="Test rationale for success",
-        score_metadata="{}",
+        score_metadata={},
         message_piece_id=str(uuid.uuid4()),
         scorer_class_identifier=get_mock_scorer_identifier(),
     )
@@ -418,7 +418,6 @@ class TestPromptSending:
         assert call_args.kwargs["request_converter_configurations"] == request_converters
         assert call_args.kwargs["response_converter_configurations"] == response_converters
         assert call_args.kwargs["labels"] == {"test": "label"}
-        assert "attack_identifier" in call_args.kwargs
 
     async def test_send_prompt_handles_none_response(self, mock_target, mock_prompt_normalizer, basic_context):
         attack = PromptSendingAttack(objective_target=mock_target, prompt_normalizer=mock_prompt_normalizer)
@@ -846,10 +845,10 @@ class TestDetermineAttackOutcome:
         true_score = Score(
             score_type="true_false",
             score_value="true",
-            score_category="test",
+            score_category=["test"],
             score_value_description="Success",
             score_rationale="Objective achieved",
-            score_metadata="{}",
+            score_metadata={},
             message_piece_id=str(uuid.uuid4()),
             scorer_class_identifier=get_mock_scorer_identifier(),
         )
@@ -871,10 +870,10 @@ class TestDetermineAttackOutcome:
         false_score = Score(
             score_type="true_false",
             score_value="false",
-            score_category="test",
+            score_category=["test"],
             score_value_description="Failure",
             score_rationale="Objective not achieved",
-            score_metadata="{}",
+            score_metadata={},
             message_piece_id=str(uuid.uuid4()),
             scorer_class_identifier=get_mock_scorer_identifier(),
         )
@@ -896,10 +895,10 @@ class TestDetermineAttackOutcome:
         false_score = Score(
             score_type="true_false",
             score_value="False",
-            score_category="test",
+            score_category=["test"],
             score_value_description="Failure",
             score_rationale="Objective not achieved",
-            score_metadata="{}",
+            score_metadata={},
             message_piece_id=str(uuid.uuid4()),
             scorer_class_identifier=get_mock_scorer_identifier(),
         )

@@ -8,6 +8,7 @@ Target mappers – domain → DTO translation for target-related models.
 from pyrit.backend.models.targets import TargetCapabilitiesInfo, TargetInstance
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
+from pyrit.prompt_target.round_robin_target import RoundRobinTarget
 
 # Capability flag names that should never be surfaced as identifier-level params:
 # they are sourced from `target_obj.capabilities` instead.
@@ -77,15 +78,57 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
     extra = {k: v for k, v in params.items() if k not in extracted_keys and v is not None}
     combined_specific = {**extra, **explicit_specific} or None
 
+    inner_targets = _build_inner_targets(target_obj)
+
+    # For composite targets (RoundRobinTarget), hoist model_name from inner targets
+    # only when ALL inner targets share the same deployment name. When they differ
+    # (e.g. "gpt-4o-japan-nilfilter" vs "pyrit-github-gpt4"), show "—" for
+    # consistency with how other targets display model_name.
+    model_name = params.get("model_name") or None
+    underlying_model_name = params.get("underlying_model_name") or None
+    if model_name is None and inner_targets:
+        inner_models = {t.model_name for t in inner_targets}
+        model_name = inner_models.pop() if len(inner_models) == 1 else None
+    if underlying_model_name is None and inner_targets:
+        inner_underlying = {t.underlying_model_name for t in inner_targets}
+        underlying_model_name = inner_underlying.pop() if len(inner_underlying) == 1 else None
+
     return TargetInstance(
         target_registry_name=target_registry_name,
         target_type=identifier.class_name,
         endpoint=params.get("endpoint") or None,
-        model_name=params.get("model_name") or None,
-        underlying_model_name=params.get("underlying_model_name") or None,
+        model_name=model_name,
+        underlying_model_name=underlying_model_name,
         temperature=params.get("temperature"),
         top_p=params.get("top_p"),
         max_requests_per_minute=params.get("max_requests_per_minute"),
         capabilities=_target_capabilities_to_info(target_obj.capabilities),
         target_specific_params=combined_specific,
+        inner_targets=inner_targets,
+        identifier_hash=identifier.hash,
     )
+
+
+def _build_inner_targets(target_obj: PromptTarget) -> list[TargetInstance] | None:
+    """
+    Build inner target DTOs for composite targets like RoundRobinTarget.
+
+    For non-composite targets, returns None. For RoundRobinTarget, recursively
+    maps each inner target into a TargetInstance using the inner target's
+    ``unique_name`` as the registry name (inner targets may not be independently
+    registered in the registry, so we derive the name from the identifier).
+
+    Args:
+        target_obj: The domain PromptTarget object.
+
+    Returns:
+        A list of inner TargetInstance DTOs, or None for non-composite targets.
+    """
+    if not isinstance(target_obj, RoundRobinTarget):
+        return None
+
+    inner_instances: list[TargetInstance] = []
+    for inner_target in target_obj._targets:
+        inner_name = inner_target.get_identifier().unique_name
+        inner_instances.append(target_object_to_instance(inner_name, inner_target))
+    return inner_instances

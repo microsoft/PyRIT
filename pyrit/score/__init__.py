@@ -38,16 +38,25 @@ from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     get_all_harm_metrics,
     get_all_objective_metrics,
 )
+from pyrit.score.scorer_info import get_scorer_info
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.credential_leak_scorer import CredentialLeakScorer
+from pyrit.score.true_false.anthrax_keyword_scorer import AnthraxKeywordScorer
 from pyrit.score.true_false.decoding_scorer import DecodingScorer
+from pyrit.score.true_false.fentanyl_keyword_scorer import FentanylKeywordScorer
 from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
 from pyrit.score.true_false.gandalf_scorer import GandalfScorer
 from pyrit.score.true_false.llamaguard_parser import LLAMAGUARD_SYSTEM_PROMPT_PATH, parse_llamaguard_response
 from pyrit.score.true_false.markdown_injection import MarkdownInjectionScorer
+from pyrit.score.true_false.meth_keyword_scorer import MethKeywordScorer
+from pyrit.score.true_false.nerve_agent_keyword_scorer import NerveAgentKeywordScorer
 from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
 from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
-from pyrit.score.true_false.regex_scorer import RegexScorer
+from pyrit.score.true_false.regex.credential_leak_scorer import CredentialLeakScorer
+from pyrit.score.true_false.regex.path_traversal_output_scorer import PathTraversalOutputScorer
+from pyrit.score.true_false.regex.regex_scorer import RegexScorer
+from pyrit.score.true_false.regex.shell_command_output_scorer import ShellCommandOutputScorer
+from pyrit.score.true_false.regex.sql_injection_output_scorer import SQLInjectionOutputScorer
+from pyrit.score.true_false.regex.xss_output_scorer import XSSOutputScorer
 from pyrit.score.true_false.self_ask_category_scorer import ContentClassifierPaths, SelfAskCategoryScorer
 from pyrit.score.true_false.self_ask_general_true_false_scorer import SelfAskGeneralTrueFalseScorer
 from pyrit.score.true_false.self_ask_question_answer_scorer import SelfAskQuestionAnswerScorer
@@ -111,6 +120,7 @@ def __getattr__(name: str) -> object:
 
 
 __all__ = [
+    "AnthraxKeywordScorer",
     "AudioFloatScaleScorer",
     "AudioTrueFalseScorer",
     "AzureContentFilterScorer",
@@ -120,6 +130,7 @@ __all__ = [
     "ConversationScorer",
     "CredentialLeakScorer",
     "DecodingScorer",
+    "FentanylKeywordScorer",
     "create_conversation_scorer",
     "FloatScaleScoreAggregator",
     "FloatScaleScorerAllCategories",
@@ -137,11 +148,14 @@ __all__ = [
     "LikertScalePaths",
     "LLAMAGUARD_SYSTEM_PROMPT_PATH",
     "MarkdownInjectionScorer",
+    "MethKeywordScorer",
     "MetricsType",
+    "NerveAgentKeywordScorer",
     "ObjectiveHumanLabeledEntry",
     "ObjectiveScorerEvaluator",
     "ObjectiveScorerMetrics",
     "parse_llamaguard_response",
+    "PathTraversalOutputScorer",
     "PlagiarismMetric",
     "PlagiarismScorer",
     "PromptShieldScorer",
@@ -155,6 +169,7 @@ __all__ = [
     "ScorerMetricsWithIdentity",
     "get_all_harm_metrics",
     "get_all_objective_metrics",
+    "get_scorer_info",
     "find_objective_metrics_by_eval_hash",
     "ScorerPromptValidator",
     "SelfAskCategoryScorer",
@@ -167,6 +182,8 @@ __all__ = [
     "SelfAskScaleScorer",
     "SelfAskTrueFalseScorer",
     "ScorerPrinter",
+    "ShellCommandOutputScorer",
+    "SQLInjectionOutputScorer",
     "StaticPromptInjectionScorer",
     "SubStringScorer",
     "TrueFalseCompositeScorer",
@@ -178,4 +195,5 @@ __all__ = [
     "TrueFalseScorer",
     "VideoFloatScaleScorer",
     "VideoTrueFalseScorer",
+    "XSSOutputScorer",
 ]

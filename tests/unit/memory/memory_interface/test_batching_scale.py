@@ -11,10 +11,9 @@ import hashlib
 import uuid
 from unittest.mock import patch
 
-from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import PromptMemoryEntry
-from pyrit.models import AttackResult, MessagePiece, ScenarioIdentifier, ScenarioResult, Score
+from pyrit.models import AttackResult, ComponentIdentifier, MessagePiece, ScenarioIdentifier, ScenarioResult, Score
 
 # Use the class attribute for the batch limit in tests
 _MAX_BIND_VARS = MemoryInterface._MAX_BIND_VARS
@@ -37,7 +36,6 @@ def _create_message_piece(
         converted_value_sha256=sha256,
         sequence=0,
         conversation_id=conversation_id or str(uuid.uuid4()),
-        attack_identifier=ComponentIdentifier.from_dict({"id": str(uuid.uuid4())}),
     )
 
 
@@ -222,7 +220,7 @@ class TestBatchingScale:
 
         # Should return only user pieces (intersection of both filters)
         assert len(results) == num_pieces
-        assert all(r.get_role_for_storage() == "user" for r in results)
+        assert all(r.role == "user" for r in results)
 
         # Query with role filter and a subset of IDs
         subset_ids = user_ids[:10]

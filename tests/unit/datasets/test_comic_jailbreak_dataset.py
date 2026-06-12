@@ -147,8 +147,9 @@ class TestComicJailbreakDataset:
             dataset = await loader.fetch_dataset_async(cache=False)
 
         for seed in dataset.seeds:
-            assert "Zhiyuan Yu" in seed.authors
-            assert len(seed.authors) == 5
+            assert "Rui Yang Tan" in seed.authors
+            assert len(seed.authors) == 3
+            assert seed.groups == ["Singapore University of Technology and Design"]
 
     async def test_fetch_dataset_missing_goal_raises(self):
         mock_data = [{"Target": "Sure", "Behavior": "Test", "Category": "Test"}]
@@ -168,6 +169,27 @@ class TestComicJailbreakDataset:
         ):
             with pytest.raises(ValueError, match="SeedDataset cannot be empty"):
                 await loader.fetch_dataset_async()
+
+    async def test_fetch_dataset_respects_max_examples(self):
+        """max_examples caps the number of source goals that get rendered."""
+        mock_data = [_make_example(Goal=f"Goal {i}") for i in range(5)]
+        loader = _ComicJailbreakDataset(templates=["article"], max_examples=2)
+
+        with (
+            patch.object(loader, "_fetch_from_url", return_value=mock_data),
+            patch.object(loader, "_fetch_template_async", new_callable=AsyncMock, return_value="/fake/template.png"),
+            patch.object(loader, "_render_comic_async", new_callable=AsyncMock, return_value="/fake/rendered.png"),
+        ):
+            dataset = await loader.fetch_dataset_async(cache=False)
+
+        # 2 goals × 1 template × 3 seeds (objective + image + text) = 6
+        assert len(dataset.seeds) == 6
+        goals = {s.metadata["goal"] for s in dataset.seeds if isinstance(s, SeedPrompt)}
+        assert goals == {"Goal 0", "Goal 1"}
+
+    def test_init_default_max_examples_is_none(self):
+        loader = _ComicJailbreakDataset()
+        assert loader.max_examples is None
 
 
 class TestComicJailbreakTemplates:

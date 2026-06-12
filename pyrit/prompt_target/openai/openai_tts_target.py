@@ -2,17 +2,13 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import (
-    Message,
-    construct_response_from_request,
-    data_serializer_factory,
-)
+from pyrit.memory import data_serializer_factory
+from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
@@ -40,8 +36,8 @@ class OpenAITTSTarget(OpenAITarget):
         voice: TTSVoice = "alloy",
         response_format: TTSResponseFormat = "mp3",
         language: str = "en",
-        speed: Optional[float] = None,
-        custom_configuration: Optional[TargetConfiguration] = None,
+        speed: float | None = None,
+        custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -125,7 +121,7 @@ class OpenAITTSTarget(OpenAITarget):
         message = normalized_conversation[-1]
         message_piece = message.message_pieces[0]
 
-        logger.info(f"Sending the following prompt to the prompt target: {message_piece}")
+        logger.info(f"Sending the following prompt to the prompt target: {message_piece.converted_value}")
 
         # Construct request parameters for SDK
         body_parameters: dict[str, object] = {
@@ -140,19 +136,19 @@ class OpenAITTSTarget(OpenAITarget):
             body_parameters["speed"] = self._speed
 
         # Use unified error handler for consistent error handling
-        response = await self._handle_openai_request(
+        response = await self._handle_openai_request_async(
             api_call=lambda: self._client.audio.speech.create(
                 model=str(body_parameters["model"]),
                 voice=str(body_parameters["voice"]),
                 input=str(body_parameters["input"]),
-                response_format=body_parameters.get("response_format"),
-                speed=body_parameters.get("speed"),
+                response_format=body_parameters.get("response_format"),  # type: ignore[ty:invalid-argument-type]
+                speed=body_parameters.get("speed"),  # type: ignore[ty:invalid-argument-type]
             ),
             request=message,
         )
         return [response]
 
-    async def _construct_message_from_response(self, response: Any, request: Any) -> Message:
+    async def _construct_message_from_response_async(self, response: Any, request: Any) -> Message:
         """
         Construct a Message from a TTS audio response.
 
@@ -171,7 +167,7 @@ class OpenAITTSTarget(OpenAITarget):
             category="prompt-memory-entries", data_type="audio_path", extension=self._response_format
         )
 
-        await audio_response.save_data(data=audio_bytes)
+        await audio_response.save_data_async(data=audio_bytes)
 
         return construct_response_from_request(
             request=request, response_text_pieces=[str(audio_response.value)], response_type="audio_path"

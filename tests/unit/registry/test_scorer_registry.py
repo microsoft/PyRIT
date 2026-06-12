@@ -1,10 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Optional
 
-from pyrit.identifiers import ComponentIdentifier
-from pyrit.models import Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.registry.object_registries.scorer_registry import ScorerRegistry
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer import Scorer
@@ -36,10 +34,10 @@ class MockTrueFalseScorer(TrueFalseScorer):
         """
         return self._create_identifier()
 
-    async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
         return []
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         return []
 
     def validate_return_scores(self, scores: list[Score]):
@@ -60,10 +58,10 @@ class MockFloatScaleScorer(FloatScaleScorer):
         """
         return self._create_identifier()
 
-    async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
         return []
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         return []
 
     def validate_return_scores(self, scores: list[Score]):
@@ -84,16 +82,16 @@ class MockGenericScorer(Scorer):
         """
         return self._create_identifier()
 
-    async def _score_async(self, message: Message, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
         return []
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: Optional[str] = None) -> list[Score]:
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         return []
 
     def validate_return_scores(self, scores: list[Score]):
         pass
 
-    def _build_fallback_score(self, *, message: Message, objective: Optional[str]) -> list[Score]:
+    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         return [
             Score(
                 score_value="false",
