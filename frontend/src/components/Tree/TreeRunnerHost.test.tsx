@@ -725,3 +725,102 @@ describe('TreeRunnerHost — dirty-edit swap guard', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
+
+// ============================================================================
+// PR6a.2 — cost-modal suppression sourced from / persisted to WorkspaceSettings
+// ============================================================================
+
+describe('TreeRunnerHost — suppression persistence', () => {
+  beforeEach(() => {
+    jest.useFakeTimers()
+  })
+  afterEach(() => {
+    jest.runOnlyPendingTimers()
+    jest.useRealTimers()
+  })
+
+  it('honors persisted suppressConfirmModalThisSession from storage (no modal at threshold)', async () => {
+    const storage = new MemoryStorage()
+    storage.setItem(STORAGE_KEYS.schemaVersion, '1')
+    storage.setItem(
+      STORAGE_KEYS.settings,
+      JSON.stringify({ reflogCapPerNode: 50, confirmThresholdCount: 2, suppressConfirmModalThisSession: true }),
+    )
+    const { deps } = makePersistenceDeps(storage)
+    const tree = mkDispatchableTree('t-suppressed')
+    const starter = jest.fn(noopStarter)
+
+    let captured: RunnerShim | undefined
+    render(
+      <TreeRunnerHost
+        tree={tree}
+        operator="alice"
+        runWaveStarter={starter as unknown as RunWaveStarter}
+        workspacePersistenceDeps={deps}
+        onShimReady={(s) => {
+          captured = s
+        }}
+      />,
+    )
+    await waitFor(() => expect(captured).toBeDefined())
+
+    // The single edited send off the root estimates 2 calls; threshold 2 puts
+    // it in the suppression window [threshold, 2x), so persisted suppression
+    // auto-approves with no modal. Advance the lock-acquire timer, then settle.
+    await act(async () => {
+      const p = captured!.refreshNode(tree.id, nodeId('send-1'))
+      jest.advanceTimersByTime(60)
+      await p
+    })
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(starter).toHaveBeenCalledTimes(1)
+  })
+
+  it('persists suppression to storage when the operator commits "Don\u2019t ask again"', async () => {
+    const storage = new MemoryStorage()
+    storage.setItem(STORAGE_KEYS.schemaVersion, '1')
+    storage.setItem(
+      STORAGE_KEYS.settings,
+      JSON.stringify({ reflogCapPerNode: 50, confirmThresholdCount: 1, suppressConfirmModalThisSession: false }),
+    )
+    const { deps } = makePersistenceDeps(storage)
+    const tree = mkDispatchableTree('t-persist-suppress')
+    const starter = jest.fn(noopStarter)
+
+    let captured: RunnerShim | undefined
+    render(
+      <TreeRunnerHost
+        tree={tree}
+        operator="alice"
+        runWaveStarter={starter as unknown as RunWaveStarter}
+        workspacePersistenceDeps={deps}
+        onShimReady={(s) => {
+          captured = s
+        }}
+      />,
+    )
+    await waitFor(() => expect(captured).toBeDefined())
+
+    let refreshPromise!: Promise<void>
+    await act(async () => {
+      refreshPromise = captured!.refreshNode(tree.id, nodeId('send-1'))
+      jest.advanceTimersByTime(60)
+    })
+    // Modal shows (not yet suppressed).
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument())
+
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('checkbox', { name: /don't ask again/i }))
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^refresh$/i }))
+      await refreshPromise
+    })
+
+    // Debounced settings write flushes the new suppression flag to storage.
+    act(() => {
+      jest.advanceTimersByTime(600)
+    })
+    const persisted = JSON.parse(storage.getItem(STORAGE_KEYS.settings) ?? '{}')
+    expect(persisted.suppressConfirmModalThisSession).toBe(true)
+  })
+})

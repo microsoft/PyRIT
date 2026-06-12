@@ -64,7 +64,7 @@ import type {
   WorkspaceSettings,
 } from '../../runner/treeTypes'
 import type { WaveSummary } from '../../runner/wave'
-import { DEFAULT_WORKSPACE_SETTINGS } from '../../runner/workspacePersistence'
+import { loadWorkspaceFromStorage, wipeIfSchemaMismatch } from '../../runner/workspacePersistence'
 import { attacksApi } from '../../services/api'
 
 // ============================================================================
@@ -143,7 +143,6 @@ const EMPTY_SUMMARY: WaveSummary = {
 }
 
 const DEFAULT_RUN_WAVE_STARTER: RunWaveStarter = async () => EMPTY_SUMMARY
-const DEFAULT_CONFIRM_THRESHOLD = 20
 
 // ============================================================================
 // Component
@@ -169,10 +168,25 @@ export function TreeRunnerHost({
   const styles = useTreeRunnerHostStyles()
   const [waveEvents, setWaveEvents] = useState<WaveEvent[]>([])
 
-  // Cost-guardrail hook owns the modal's pending-decision state + the
-  // session suppression flag. PR7f rewires suppression to sessionStorage.
+  // Host-owned live WorkspaceSettings (spec §13.1): seeds the cost-modal
+  // suppression + the reflog cap, and is persisted to sessionStorage by
+  // useWorkspacePersistence's debounced write. Seeded from the injected
+  // settings prop (tests) or a direct storage load. The schema wipe is run
+  // first and is idempotent with useWorkspacePersistence's own boot wipe.
+  const settingsStorage = workspacePersistenceDeps?.storage ?? window.sessionStorage
+  const [settings, setSettings] = useState<WorkspaceSettings>(() => {
+    if (workspaceSettings !== undefined) return workspaceSettings
+    wipeIfSchemaMismatch(settingsStorage)
+    return loadWorkspaceFromStorage(settingsStorage).settings
+  })
+
+  // Cost-guardrail hook: suppression is sourced from (and committed back to)
+  // WorkspaceSettings so it survives reload via sessionStorage (PR6a.2).
   const { guardrail, modalElement } = useCostGuardrailModal({
-    confirmThresholdCount: confirmThresholdCount ?? DEFAULT_CONFIRM_THRESHOLD,
+    confirmThresholdCount: confirmThresholdCount ?? settings.confirmThresholdCount,
+    suppressed: settings.suppressConfirmModalThisSession,
+    onChangeSuppressed: (next) =>
+      setSettings((s) => ({ ...s, suppressConfirmModalThisSession: next })),
   })
 
   // PR7h: in-app tree-swap guard (spec §13.1a). The host exposes
@@ -192,7 +206,7 @@ export function TreeRunnerHost({
   const { boot } = useWorkspacePersistence({
     tree,
     recentTreeIds: workspaceRecentTreeIds ?? [],
-    settings: workspaceSettings ?? DEFAULT_WORKSPACE_SETTINGS,
+    settings,
     deps: workspacePersistenceDeps,
   })
 
@@ -212,10 +226,8 @@ export function TreeRunnerHost({
   const operatorRef = useRef<string | null>(operator ?? null)
   const onTreeChangeRef = useRef(onTreeChange)
   // Effective per-node reflog cap: the explicit `reflogCap` override wins
-  // (tests), else the spec-canonical WorkspaceSettings.reflogCapPerNode
-  // (§13.1), else the reducer default. Threading workspaceSettings here is
-  // what makes the operator's tuned cap actually take effect.
-  const effectiveReflogCap = reflogCap ?? workspaceSettings?.reflogCapPerNode
+  // (tests), else the host-owned WorkspaceSettings.reflogCapPerNode (§13.1).
+  const effectiveReflogCap = reflogCap ?? settings.reflogCapPerNode
   const reflogCapRef = useRef(effectiveReflogCap)
   const costGuardrailRef = useRef<CostGuardrail>(guardrail)
   const runWaveStarterRef = useRef<RunWaveStarter>(runWaveStarter ?? DEFAULT_RUN_WAVE_STARTER)
