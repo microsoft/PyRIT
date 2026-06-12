@@ -211,7 +211,12 @@ export function TreeRunnerHost({
   const treeRef = useRef(tree)
   const operatorRef = useRef<string | null>(operator ?? null)
   const onTreeChangeRef = useRef(onTreeChange)
-  const reflogCapRef = useRef(reflogCap)
+  // Effective per-node reflog cap: the explicit `reflogCap` override wins
+  // (tests), else the spec-canonical WorkspaceSettings.reflogCapPerNode
+  // (§13.1), else the reducer default. Threading workspaceSettings here is
+  // what makes the operator's tuned cap actually take effect.
+  const effectiveReflogCap = reflogCap ?? workspaceSettings?.reflogCapPerNode
+  const reflogCapRef = useRef(effectiveReflogCap)
   const costGuardrailRef = useRef<CostGuardrail>(guardrail)
   const runWaveStarterRef = useRef<RunWaveStarter>(runWaveStarter ?? DEFAULT_RUN_WAVE_STARTER)
   useEffect(() => {
@@ -224,8 +229,8 @@ export function TreeRunnerHost({
     onTreeChangeRef.current = onTreeChange
   }, [onTreeChange])
   useEffect(() => {
-    reflogCapRef.current = reflogCap
-  }, [reflogCap])
+    reflogCapRef.current = effectiveReflogCap
+  }, [effectiveReflogCap])
   useEffect(() => {
     costGuardrailRef.current = guardrail
   }, [guardrail])

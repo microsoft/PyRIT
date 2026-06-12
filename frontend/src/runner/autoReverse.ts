@@ -243,7 +243,16 @@ export interface LeafForFanDetection {
 export interface ImplicitFan {
   parent_path: TreePathSegment[]
   axis: string
+  /** One entry per contributing leaf, parallel to `member_slot_indices`. */
   member_ars: LeafForFanDetection[]
+  /**
+   * Per-leaf slot contributions, parallel to `member_ars` (NOT a list of
+   * distinct slots). A nested fan's leaves repeat the same slot index once
+   * per descendant leaf, so this array can contain duplicates — callers
+   * computing slot COUNT must dedupe (e.g. `new Set(member_slot_indices).size`),
+   * and callers sizing the variant array use `Math.max(...)+1`.
+   * `reconstructVariantPayloads` relies on the duplicates as per-slot votes.
+   */
   member_slot_indices: number[]
 }
 
