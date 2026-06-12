@@ -7,6 +7,7 @@ import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
 import AttackHistory from './components/History/AttackHistory'
 import { TreeRunnerHost } from './components/Tree/TreeRunnerHost'
+import { guardedNavigate } from './components/Tree/navigationGuard'
 import { DEFAULT_HISTORY_FILTERS } from './components/History/historyFilters'
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
@@ -217,6 +218,26 @@ function App() {
   )
   /* eslint-enable react-hooks/refs */
 
+  // PR7h/PR7i.3: the tree host's dirty-edit guardedSwap, captured via
+  // onGuardedSwapReady. Navigating away from the tree view routes through it
+  // so unrefreshed edits prompt a confirm (spec §13.1a). Held in a ref since
+  // the host fires the callback after mount.
+  const treeGuardedSwapRef = useRef<
+    ((tree: ConversationTree | null, swap: () => void) => void) | null
+  >(null)
+  const handleNavigate = useCallback(
+    (target: ViewName) => {
+      guardedNavigate({
+        currentView,
+        target,
+        tree: currentTree,
+        guardedSwap: treeGuardedSwapRef.current,
+        navigate: setCurrentView,
+      })
+    },
+    [currentView, currentTree],
+  )
+
   return (
     <ErrorBoundary>
       <ConnectionHealthProvider>
@@ -224,7 +245,7 @@ function App() {
           <ConnectionBannerContainer />
           <MainLayout
             currentView={currentView}
-            onNavigate={setCurrentView}
+            onNavigate={handleNavigate}
             onToggleTheme={toggleTheme}
             isDarkMode={isDarkMode}
           >
@@ -289,6 +310,9 @@ function App() {
                     setCurrentTree(next)
                   }}
                   onReconstructionDegraded={(info) => setTreeReloadDegraded(info.fanCount)}
+                  onGuardedSwapReady={(guardedSwap) => {
+                    treeGuardedSwapRef.current = guardedSwap
+                  }}
                 />
               </>
             )}
