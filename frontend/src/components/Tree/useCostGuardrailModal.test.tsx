@@ -288,6 +288,83 @@ describe('useCostGuardrailModal — 2× safety floor', () => {
 })
 
 // ============================================================================
+// Concurrent approve() — sync-reject the second caller (PR6.4)
+// ============================================================================
+
+describe('useCostGuardrailModal — concurrent approve guard', () => {
+  let consoleErrorSpy: jest.SpyInstance
+  beforeEach(() => {
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+  })
+  afterEach(() => {
+    consoleErrorSpy.mockRestore()
+  })
+
+  it('approve() resolves false synchronously and logs error when a decision is already pending', async () => {
+    const h = mountHook({ confirmThresholdCount: 20 })
+
+    let firstResolved: boolean | null = null
+    await act(async () => {
+      void h.current.guardrail.approve(60, 'refresh_tree').then((v) => {
+        firstResolved = v
+      })
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(firstResolved).toBeNull()
+
+    // Second concurrent approve() — must reject without overwriting the
+    // first's pending resolver. The Promise resolves on the very next
+    // microtask, which a single await Promise.resolve() flushes.
+    let secondResolved: boolean | null = null
+    await act(async () => {
+      void h.current.guardrail.approve(80, 'refresh_node').then((v) => {
+        secondResolved = v
+      })
+      await Promise.resolve()
+    })
+    expect(secondResolved).toBe(false)
+    expect(consoleErrorSpy).toHaveBeenCalled()
+
+    // First decision must still be pending — modal still rendered, its
+    // promise unresolved.
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(firstResolved).toBeNull()
+    // Modal text still reflects the FIRST call (count=60, refresh_tree)
+    // — proving the resolver wasn't overwritten.
+    expect(screen.getByRole('dialog').textContent).toMatch(/60/)
+    expect(screen.getByRole('dialog').textContent).toMatch(/refresh tree/i)
+  })
+
+  it('after a rejected concurrent call, the FIRST approve still resolves on Refresh click', async () => {
+    const h = mountHook({ confirmThresholdCount: 20 })
+
+    let firstResolved: boolean | null = null
+    let firstPromise: Promise<void>
+    await act(async () => {
+      firstPromise = h.current.guardrail
+        .approve(60, 'refresh_tree')
+        .then((v) => {
+          firstResolved = v
+        })
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      void h.current.guardrail.approve(80, 'refresh_node')
+      await Promise.resolve()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /^refresh$/i }))
+    await act(async () => {
+      await firstPromise
+    })
+    expect(firstResolved).toBe(true)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+// ============================================================================
 // Stability under re-render — guardrail identity
 // ============================================================================
 

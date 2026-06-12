@@ -47,6 +47,9 @@ export function useCostGuardrailModal(
   // context. Mutated only from button click handlers — never from render
   // — to keep the new react-hooks/refs rule happy.
   const suppressedRef = useRef<boolean>(false)
+  // Mirrors `pending` so the stable approve() closure can sync-reject a
+  // concurrent caller without overwriting an in-flight resolver.
+  const pendingRef = useRef<PendingDecision | null>(null)
 
   const guardrail = useMemo<CostGuardrail>(
     () => ({
@@ -61,7 +64,16 @@ export function useCostGuardrailModal(
             resolve(true)
             return
           }
-          setPending({ count, kind, resolve })
+          if (pendingRef.current !== null) {
+            console.error(
+              'useCostGuardrailModal: concurrent approve() call rejected — a decision is already pending',
+            )
+            resolve(false)
+            return
+          }
+          const decision: PendingDecision = { count, kind, resolve }
+          pendingRef.current = decision
+          setPending(decision)
         }),
     }),
     [confirmThresholdCount],
@@ -71,11 +83,13 @@ export function useCostGuardrailModal(
     if (pending === null) return
     if (commitSuppression) suppressedRef.current = true
     pending.resolve(true)
+    pendingRef.current = null
     setPending(null)
   }
   const onCancel = () => {
     if (pending === null) return
     pending.resolve(false)
+    pendingRef.current = null
     setPending(null)
   }
 
