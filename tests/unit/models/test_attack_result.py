@@ -290,6 +290,7 @@ def test_to_dict_from_dict_roundtrip():
         },
         metadata={"model": "gpt-4", "temperature": 0.7},
         labels={"category": "violence", "severity": "high"},
+        targeted_harm_categories=["violence", "hate"],
         error_message="partial error",
         error_type="RuntimeError",
         error_traceback="Traceback ...\n  File ...",
