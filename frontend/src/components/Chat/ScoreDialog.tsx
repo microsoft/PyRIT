@@ -22,7 +22,12 @@ import {
   MessageBarBody,
   tokens,
 } from '@fluentui/react-components'
-import { InfoRegular } from '@fluentui/react-icons'
+import {
+  AddRegular,
+  DeleteRegular,
+  EditRegular,
+  InfoRegular,
+} from '@fluentui/react-icons'
 
 import { attacksApi, scorersApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
@@ -31,6 +36,7 @@ import type {
   ScoreConversationMode,
   ScorerSummary,
 } from '../../types'
+import CustomScorerDialog from './CustomScorerDialog'
 
 type ScoreTarget =
   | { kind: 'conversation'; attackResultId: string; conversationId: string }
@@ -124,6 +130,9 @@ export default function ScoreDialog({
   const [objective, setObjective] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [customDialogOpen, setCustomDialogOpen] = useState(false)
+  const [editingScorer, setEditingScorer] = useState<ScorerSummary | null>(null)
+  const [deletingName, setDeletingName] = useState<string | null>(null)
 
   const isConversationScope = target?.kind === 'conversation'
 
@@ -150,6 +159,42 @@ export default function ScoreDialog({
 
   // Fetch scorers when the dialog opens; cheap enough to refetch each time so
   // newly-registered scorers show up without a manual refresh.
+  const fetchScorers = (preserveSelection?: string) => {
+    setLoadingScorers(true)
+    setLoadError(null)
+    return scorersApi
+      .listScorers()
+      .then((response) => {
+        setScorers(response.items)
+        if (response.items.length > 0) {
+          const wantedName =
+            preserveSelection &&
+            response.items.some((s) => s.scorer_registry_name === preserveSelection)
+              ? preserveSelection
+              : null
+          setSelectedScorerName((current) => {
+            if (wantedName) return wantedName
+            return current && response.items.some((s) => s.scorer_registry_name === current)
+              ? current
+              : response.items[0].scorer_registry_name
+          })
+          setScorerQuery((current) => {
+            if (wantedName) return wantedName
+            return current || response.items[0].scorer_registry_name
+          })
+        } else {
+          setSelectedScorerName('')
+          setScorerQuery('')
+        }
+        return response
+      })
+      .catch((err) => {
+        setLoadError(toApiError(err).detail)
+        throw err
+      })
+      .finally(() => setLoadingScorers(false))
+  }
+
   useEffect(() => {
     if (!open) return
     let cancelled = false
@@ -182,7 +227,28 @@ export default function ScoreDialog({
     }
   }, [open])
 
-  const groupedScorers = useMemo(() => groupScorers(scorers), [scorers])
+  const filteredScorers = useMemo(() => {
+    const q = scorerQuery.trim().toLowerCase()
+    if (!q) return scorers
+    // Don't filter while the input still shows the already-selected scorer's
+    // name — otherwise opening the dropdown right after picking would only
+    // ever show that one option, breaking "click then browse" UX.
+    if (selectedScorerName && q === selectedScorerName.toLowerCase()) return scorers
+    return scorers.filter((s) => {
+      const haystack = [
+        s.scorer_registry_name,
+        s.scorer_type,
+        s.description ?? '',
+        ...(s.tags ?? []),
+      ]
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(q)
+    })
+  }, [scorers, scorerQuery, selectedScorerName])
+
+  const groupedScorers = useMemo(() => groupScorers(filteredScorers), [filteredScorers])
+  const hasNoMatches = scorers.length > 0 && filteredScorers.length === 0
   const selectedScorer = useMemo(
     () => scorers.find((s) => s.scorer_registry_name === selectedScorerName) ?? null,
     [scorers, selectedScorerName]
@@ -248,14 +314,53 @@ export default function ScoreDialog({
     }
   }
 
+  const handleOpenCreate = () => {
+    setEditingScorer(null)
+    setCustomDialogOpen(true)
+  }
+
+  const handleOpenEdit = (scorer: ScorerSummary) => {
+    setEditingScorer(scorer)
+    setCustomDialogOpen(true)
+  }
+
+  const handleCustomSaved = async (summary: ScorerSummary) => {
+    setCustomDialogOpen(false)
+    setEditingScorer(null)
+    try {
+      await fetchScorers(summary.scorer_registry_name)
+      onScorerSelected?.(summary.scorer_registry_name)
+    } catch {
+      // fetchScorers already surfaced the error in loadError.
+    }
+  }
+
+  const handleDelete = async (scorer: ScorerSummary) => {
+    const confirmed = window.confirm(
+      `Delete custom scorer "${scorer.scorer_registry_name}"? Existing Score rows are preserved.`
+    )
+    if (!confirmed) return
+    setDeletingName(scorer.scorer_registry_name)
+    setSubmitError(null)
+    try {
+      await scorersApi.deleteCustomScorer(scorer.scorer_registry_name)
+      await fetchScorers()
+    } catch (err) {
+      setSubmitError(toApiError(err).detail)
+    } finally {
+      setDeletingName(null)
+    }
+  }
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(_, data) => {
-        if (!data.open && !submitting) onClose()
-      }}
-    >
-      <DialogSurface style={{ maxWidth: 560 }}>
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(_, data) => {
+          if (!data.open && !submitting) onClose()
+        }}
+      >
+        <DialogSurface style={{ maxWidth: 560 }}>
         <DialogBody>
           <DialogTitle>
             {isConversationScope ? 'Score conversation' : 'Score message'}
@@ -309,6 +414,7 @@ export default function ScoreDialog({
                   required
                 >
                   <Combobox
+                    freeform
                     value={scorerQuery}
                     selectedOptions={selectedScorerName ? [selectedScorerName] : []}
                     onOptionSelect={(_, data) => {
@@ -343,8 +449,32 @@ export default function ScoreDialog({
                         ))}
                       </OptionGroup>
                     ))}
+                    {hasNoMatches && (
+                      <Option
+                        key="__no_matches__"
+                        value=""
+                        text=""
+                        disabled
+                        data-testid="score-dialog-no-matches"
+                      >
+                        No scorers match "{scorerQuery}"
+                      </Option>
+                    )}
                   </Combobox>
                 </Field>
+              )}
+
+              {!loadingScorers && !loadError && (
+                <div>
+                  <Button
+                    appearance="subtle"
+                    icon={<AddRegular />}
+                    onClick={handleOpenCreate}
+                    data-testid="score-dialog-create-custom-btn"
+                  >
+                    New custom scorer
+                  </Button>
+                </div>
               )}
 
               {selectedScorer && (
@@ -366,6 +496,11 @@ export default function ScoreDialog({
                     {(selectedScorer.tags ?? []).map((t) => (
                       <Badge key={t} appearance="tint" size="small" data-testid={`scorer-tag-${t}`}>{t}</Badge>
                     ))}
+                    {selectedScorer.editable && (
+                      <Badge appearance="tint" color="brand" size="small" data-testid="scorer-tag-custom">
+                        custom
+                      </Badge>
+                    )}
                   </div>
                   {selectedScorer.description ? (
                     <Text size={200} data-testid="score-dialog-scorer-description">
@@ -375,6 +510,29 @@ export default function ScoreDialog({
                     <Text size={200} italic style={{ color: tokens.colorNeutralForeground3 }}>
                       No description available for this scorer.
                     </Text>
+                  )}
+                  {selectedScorer.editable && (
+                    <div style={{ display: 'flex', gap: tokens.spacingHorizontalXS }}>
+                      <Button
+                        appearance="subtle"
+                        size="small"
+                        icon={<EditRegular />}
+                        onClick={() => handleOpenEdit(selectedScorer)}
+                        data-testid="score-dialog-edit-custom-btn"
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        appearance="subtle"
+                        size="small"
+                        icon={<DeleteRegular />}
+                        disabled={deletingName === selectedScorer.scorer_registry_name}
+                        onClick={() => handleDelete(selectedScorer)}
+                        data-testid="score-dialog-delete-custom-btn"
+                      >
+                        {deletingName === selectedScorer.scorer_registry_name ? 'Deleting...' : 'Delete'}
+                      </Button>
+                    </div>
                   )}
                 </div>
               )}
@@ -445,7 +603,18 @@ export default function ScoreDialog({
           </DialogActions>
         </DialogBody>
       </DialogSurface>
-    </Dialog>
+      </Dialog>
+      <CustomScorerDialog
+        open={customDialogOpen}
+        editing={editingScorer}
+        availableScorers={scorers}
+        onClose={() => {
+          setCustomDialogOpen(false)
+          setEditingScorer(null)
+        }}
+        onSaved={handleCustomSaved}
+      />
+    </>
   )
 }
 

@@ -24,6 +24,9 @@ import type {
   ScoreConversationRequest,
   ScoreMessageRequest,
   ScoreResponse,
+  CreateCustomScorerRequest,
+  UpdateCustomScorerRequest,
+  CustomScorerResponse,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -312,6 +315,26 @@ export const scorersApi = {
   listScorers: async (): Promise<ScorerListResponse> => {
     const response = await apiClient.get('/scorers')
     return response.data
+  },
+
+  createCustomScorer: async (request: CreateCustomScorerRequest): Promise<CustomScorerResponse> => {
+    const response = await apiClient.post('/scorers/custom', request)
+    return response.data
+  },
+
+  updateCustomScorer: async (
+    scorerId: string,
+    request: UpdateCustomScorerRequest
+  ): Promise<CustomScorerResponse> => {
+    const response = await apiClient.put(
+      `/scorers/custom/${encodeURIComponent(scorerId)}`,
+      request
+    )
+    return response.data
+  },
+
+  deleteCustomScorer: async (scorerId: string): Promise<void> => {
+    await apiClient.delete(`/scorers/custom/${encodeURIComponent(scorerId)}`)
   },
 }
 

@@ -4,7 +4,7 @@ import {
   Text,
   Tooltip,
 } from '@fluentui/react-components'
-import { AddRegular, PanelRightRegular, ClipboardTaskRegular } from '@fluentui/react-icons'
+import { AddRegular, PanelRightRegular, DataBarVerticalRegular } from '@fluentui/react-icons'
 import MessageList from './MessageList'
 import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
@@ -606,7 +606,7 @@ export default function ChatWindow({
             >
               <Button
                 appearance="subtle"
-                icon={<ClipboardTaskRegular />}
+                icon={<DataBarVerticalRegular />}
                 onClick={() => {
                   if (!attackResultId || !activeConversationId) return
                   setScoreTarget({

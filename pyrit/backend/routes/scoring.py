@@ -24,10 +24,13 @@ from fastapi import APIRouter, HTTPException, status
 
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.scoring import (
+    CreateCustomScorerRequest,
+    CustomScorerResponse,
     ScoreConversationRequest,
     ScoreMessageRequest,
     ScoreResponse,
     ScorerListResponse,
+    UpdateCustomScorerRequest,
 )
 from pyrit.backend.services.scoring_service import get_scoring_service
 
@@ -50,6 +53,96 @@ async def list_scorers() -> ScorerListResponse:  # pyrit-async-suffix-exempt
     """
     service = get_scoring_service()
     return await service.list_scorers_async()
+
+
+@scorers_router.post(
+    "/custom",
+    response_model=CustomScorerResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid config or duplicate name"},
+    },
+)
+async def create_custom_scorer(  # pyrit-async-suffix-exempt
+    request: CreateCustomScorerRequest,
+) -> CustomScorerResponse:
+    """
+    Create and register a user-defined scorer (general float-scale, general true/false,
+    or threshold-wrapper).
+
+    Returns:
+        CustomScorerResponse: Summary of the newly registered scorer.
+    """
+    service = get_scoring_service()
+    try:
+        return await service.create_custom_scorer_async(request=request)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Failed to create custom scorer '%s'", request.name)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error. Check server logs for details.",
+        ) from e
+
+
+@scorers_router.put(
+    "/custom/{scorer_id}",
+    response_model=CustomScorerResponse,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid config or scorer not editable"},
+        404: {"model": ProblemDetail, "description": "Scorer not found"},
+    },
+)
+async def update_custom_scorer(  # pyrit-async-suffix-exempt
+    scorer_id: str,
+    request: UpdateCustomScorerRequest,
+) -> CustomScorerResponse:
+    """
+    Replace the config of an existing user-defined scorer.
+
+    Past Score rows are preserved untouched — only future scoring calls use the new config.
+
+    Returns:
+        CustomScorerResponse: Summary of the re-registered scorer.
+    """
+    service = get_scoring_service()
+    try:
+        return await service.update_custom_scorer_async(scorer_id=scorer_id, request=request)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Failed to update custom scorer '%s'", scorer_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error. Check server logs for details.",
+        ) from e
+
+
+@scorers_router.delete(
+    "/custom/{scorer_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        400: {"model": ProblemDetail, "description": "Scorer not editable (built-in)"},
+    },
+)
+async def delete_custom_scorer(scorer_id: str) -> None:  # pyrit-async-suffix-exempt
+    """
+    Remove a user-defined scorer from the registry.
+
+    Built-in scorers cannot be deleted via this endpoint.
+    """
+    service = get_scoring_service()
+    try:
+        await service.delete_custom_scorer_async(scorer_id=scorer_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Failed to delete custom scorer '%s'", scorer_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error. Check server logs for details.",
+        ) from e
 
 
 @attack_scoring_router.post(
@@ -90,9 +183,7 @@ async def score_conversation(  # pyrit-async-suffix-exempt
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
-        logger.exception(
-            "Failed to score conversation '%s' on attack '%s'", conversation_id, attack_result_id
-        )
+        logger.exception("Failed to score conversation '%s' on attack '%s'", conversation_id, attack_result_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error. Check server logs for details.",

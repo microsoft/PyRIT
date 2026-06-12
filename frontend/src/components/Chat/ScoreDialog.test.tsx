@@ -11,6 +11,9 @@ jest.mock("../../services/api", () => ({
   },
   scorersApi: {
     listScorers: jest.fn(),
+    createCustomScorer: jest.fn(),
+    updateCustomScorer: jest.fn(),
+    deleteCustomScorer: jest.fn(),
   },
 }));
 
@@ -451,5 +454,191 @@ describe("ScoreDialog", () => {
     await waitFor(() =>
       expect(onObjectiveChange).toHaveBeenLastCalledWith("new goal")
     );
+  });
+
+  it("filters the scorer combobox by typed query (name, type, tag, description)", async () => {
+    mockedScorersApi.listScorers.mockResolvedValue({
+      items: [FLOAT_SCORER, TRUE_FALSE_SCORER],
+    });
+
+    render(
+      <TestWrapper>
+        <ScoreDialog
+          open
+          target={{
+            kind: "conversation",
+            attackResultId: "ar-1",
+            conversationId: "conv-1",
+          }}
+          onClose={jest.fn()}
+          onScored={jest.fn()}
+        />
+      </TestWrapper>
+    );
+
+    const combobox = await screen.findByTestId("score-dialog-scorer-select");
+    const input = combobox.querySelector("input") ?? combobox;
+    fireEvent.click(input);
+    // Type a query that should match only the true_false scorer (by tag "refusal").
+    fireEvent.change(input, { target: { value: "refusal" } });
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("scorer-option-refusal_scorer")
+      ).toBeInTheDocument()
+    );
+    expect(
+      screen.queryByTestId("scorer-option-harm_scorer")
+    ).not.toBeInTheDocument();
+  });
+
+  // ----------------------------------------------------------------------- //
+  // Custom scorer affordances (create / edit / delete from ScoreDialog)
+  // ----------------------------------------------------------------------- //
+
+  const CUSTOM_FLOAT_SCORER = {
+    scorer_registry_name: "user_scale",
+    scorer_type: "SelfAskGeneralFloatScaleScorer",
+    score_type: "float_scale" as const,
+    tags: [],
+    description: "User-created scale scorer.",
+    uses_objective: false,
+    editable: true,
+    custom_config: {
+      kind: "general_float_scale" as const,
+      system_prompt_format_string: "Score it.",
+      prompt_format_string: null,
+      category: null,
+      min_value: 0,
+      max_value: 10,
+    },
+  };
+
+  it("opens the custom scorer dialog from the 'New custom scorer' button", async () => {
+    mockedScorersApi.listScorers.mockResolvedValue({
+      items: [FLOAT_SCORER],
+    });
+
+    render(
+      <TestWrapper>
+        <ScoreDialog
+          open
+          target={null}
+          onClose={jest.fn()}
+          onScored={jest.fn()}
+        />
+      </TestWrapper>
+    );
+
+    const createBtn = await screen.findByTestId("score-dialog-create-custom-btn");
+    fireEvent.click(createBtn);
+
+    expect(await screen.findByText("Create custom scorer")).toBeInTheDocument();
+  });
+
+  it("shows Edit/Delete only for editable scorers", async () => {
+    mockedScorersApi.listScorers.mockResolvedValue({
+      items: [FLOAT_SCORER, CUSTOM_FLOAT_SCORER],
+    });
+
+    render(
+      <TestWrapper>
+        <ScoreDialog
+          open
+          target={null}
+          onClose={jest.fn()}
+          onScored={jest.fn()}
+          initialScorerName={FLOAT_SCORER.scorer_registry_name}
+        />
+      </TestWrapper>
+    );
+
+    // Built-in selected: no edit/delete affordances.
+    await waitFor(() =>
+      expect(screen.getByTestId("score-dialog-scorer-info")).toBeInTheDocument()
+    );
+    expect(
+      screen.queryByTestId("score-dialog-edit-custom-btn")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("score-dialog-delete-custom-btn")
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows Edit and Delete buttons for an editable scorer", async () => {
+    mockedScorersApi.listScorers.mockResolvedValue({
+      items: [CUSTOM_FLOAT_SCORER],
+    });
+
+    render(
+      <TestWrapper>
+        <ScoreDialog
+          open
+          target={null}
+          onClose={jest.fn()}
+          onScored={jest.fn()}
+          initialScorerName={CUSTOM_FLOAT_SCORER.scorer_registry_name}
+        />
+      </TestWrapper>
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("score-dialog-edit-custom-btn")).toBeInTheDocument()
+    );
+    expect(screen.getByTestId("score-dialog-delete-custom-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("scorer-tag-custom")).toBeInTheDocument();
+  });
+
+  it("calls deleteCustomScorer after confirming delete", async () => {
+    mockedScorersApi.listScorers
+      .mockResolvedValueOnce({ items: [CUSTOM_FLOAT_SCORER] })
+      .mockResolvedValueOnce({ items: [] });
+    mockedScorersApi.deleteCustomScorer.mockResolvedValue(undefined);
+    const confirmSpy = jest.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(
+      <TestWrapper>
+        <ScoreDialog
+          open
+          target={null}
+          onClose={jest.fn()}
+          onScored={jest.fn()}
+          initialScorerName={CUSTOM_FLOAT_SCORER.scorer_registry_name}
+        />
+      </TestWrapper>
+    );
+
+    const deleteBtn = await screen.findByTestId("score-dialog-delete-custom-btn");
+    fireEvent.click(deleteBtn);
+
+    await waitFor(() =>
+      expect(mockedScorersApi.deleteCustomScorer).toHaveBeenCalledWith("user_scale")
+    );
+    expect(mockedScorersApi.listScorers).toHaveBeenCalledTimes(2);
+    confirmSpy.mockRestore();
+  });
+
+  it("aborts delete when the user cancels the confirm", async () => {
+    mockedScorersApi.listScorers.mockResolvedValue({ items: [CUSTOM_FLOAT_SCORER] });
+    const confirmSpy = jest.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(
+      <TestWrapper>
+        <ScoreDialog
+          open
+          target={null}
+          onClose={jest.fn()}
+          onScored={jest.fn()}
+          initialScorerName={CUSTOM_FLOAT_SCORER.scorer_registry_name}
+        />
+      </TestWrapper>
+    );
+
+    const deleteBtn = await screen.findByTestId("score-dialog-delete-custom-btn");
+    fireEvent.click(deleteBtn);
+
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
+    expect(mockedScorersApi.deleteCustomScorer).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
   });
 });

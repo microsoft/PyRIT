@@ -293,6 +293,8 @@ export interface ScorerSummary {
   description?: string | null
   tags?: string[]
   uses_objective?: boolean
+  editable?: boolean
+  custom_config?: CustomScorerConfig | null
 }
 
 export interface ScorerListResponse {
@@ -314,4 +316,54 @@ export interface ScoreMessageRequest {
 
 export interface ScoreResponse {
   scores: BackendScore[]
+}
+
+// --- Custom (user-created) scorers ---
+
+export type CustomScorerKind =
+  | 'general_float_scale'
+  | 'general_true_false'
+  | 'threshold_wrapper'
+
+export type TrueFalseAggregator = 'OR' | 'AND' | 'MAJORITY'
+
+export interface GeneralFloatScaleConfig {
+  kind: 'general_float_scale'
+  system_prompt_format_string: string
+  prompt_format_string?: string | null
+  category?: string | null
+  min_value: number
+  max_value: number
+}
+
+export interface GeneralTrueFalseConfig {
+  kind: 'general_true_false'
+  system_prompt_format_string: string
+  prompt_format_string?: string | null
+  category?: string | null
+  score_aggregator: TrueFalseAggregator
+}
+
+export interface ThresholdWrapperConfig {
+  kind: 'threshold_wrapper'
+  wrapped_scorer_registry_name: string
+  threshold: number
+}
+
+export type CustomScorerConfig =
+  | GeneralFloatScaleConfig
+  | GeneralTrueFalseConfig
+  | ThresholdWrapperConfig
+
+export interface CreateCustomScorerRequest {
+  name: string
+  config: CustomScorerConfig
+}
+
+export interface UpdateCustomScorerRequest {
+  config: CustomScorerConfig
+}
+
+export interface CustomScorerResponse {
+  summary: ScorerSummary
 }

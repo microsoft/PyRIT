@@ -10,7 +10,7 @@ read-only scorer-introspection surface (eval metrics, etc.) — this file only
 covers the inputs and outputs needed to *invoke* a registered scorer.
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -23,10 +23,87 @@ __all__ = [
     "ScoreConversationRequest",
     "ScoreMessageRequest",
     "ScoreResponse",
+    "CustomScorerKind",
+    "GeneralFloatScaleConfig",
+    "GeneralTrueFalseConfig",
+    "ThresholdWrapperConfig",
+    "CustomScorerConfig",
+    "CreateCustomScorerRequest",
+    "UpdateCustomScorerRequest",
+    "CustomScorerResponse",
 ]
 
 
 ScoreConversationMode = Literal["last_message", "whole_conversation"]
+CustomScorerKind = Literal["general_float_scale", "general_true_false", "threshold_wrapper"]
+TrueFalseAggregator = Literal["OR", "AND", "MAJORITY"]
+
+
+class GeneralFloatScaleConfig(BaseModel):
+    """Form-driven config for a ``SelfAskGeneralFloatScaleScorer`` instance."""
+
+    kind: Literal["general_float_scale"] = "general_float_scale"
+    system_prompt_format_string: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "System prompt template. Placeholders: {objective}, {prompt}, {message_piece}. "
+            "Must instruct the LLM to reply with JSON containing 'score_value' (numeric in "
+            "[min_value, max_value]) and 'rationale'."
+        ),
+    )
+    prompt_format_string: str | None = Field(
+        None,
+        description="Optional user-prompt template with the same placeholders.",
+    )
+    category: str | None = Field(
+        None, description="Category label applied to resulting Score rows when the LLM omits one."
+    )
+    min_value: int = Field(0, description="Minimum of the LLM's native scale.")
+    max_value: int = Field(100, description="Maximum of the LLM's native scale; must be > min_value.")
+
+
+class GeneralTrueFalseConfig(BaseModel):
+    """Form-driven config for a ``SelfAskGeneralTrueFalseScorer`` instance."""
+
+    kind: Literal["general_true_false"] = "general_true_false"
+    system_prompt_format_string: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "System prompt template. Placeholders: {objective}, {task}, {prompt}, {message_piece}. "
+            "Must instruct the LLM to reply with JSON containing 'score_value' ('true'/'false') "
+            "and 'rationale'."
+        ),
+    )
+    prompt_format_string: str | None = Field(
+        None, description="Optional user-prompt template with the same placeholders."
+    )
+    category: str | None = Field(
+        None, description="Category label applied to resulting Score rows when the LLM omits one."
+    )
+    score_aggregator: TrueFalseAggregator = Field(
+        "OR",
+        description="How to combine multiple bool scores when the scorer runs more than one trial.",
+    )
+
+
+class ThresholdWrapperConfig(BaseModel):
+    """Form-driven config for a ``FloatScaleThresholdScorer`` wrapping an existing float scorer."""
+
+    kind: Literal["threshold_wrapper"] = "threshold_wrapper"
+    wrapped_scorer_registry_name: str = Field(
+        ...,
+        min_length=1,
+        description="Registry name of the float-scale scorer to wrap.",
+    )
+    threshold: float = Field(..., ge=0.0, le=1.0, description="Cut-off in [0, 1]. Scores >= threshold map to True.")
+
+
+CustomScorerConfig = Annotated[
+    GeneralFloatScaleConfig | GeneralTrueFalseConfig | ThresholdWrapperConfig,
+    Field(discriminator="kind"),
+]
 
 
 class ScorerSummary(BaseModel):
@@ -53,6 +130,20 @@ class ScorerSummary(BaseModel):
             "judge LLM is conditioned on it. When False, the objective is only stored on the resulting "
             "Score row as metadata and has no effect on the scorer's verdict. Read off "
             "``Scorer.uses_objective``. The GUI hides the objective input for scorers where this is False."
+        ),
+    )
+    editable: bool = Field(
+        False,
+        description=(
+            "True for user-created scorers that can be edited or deleted via the custom-scorer API. "
+            "Built-in (initializer-registered) scorers are always False."
+        ),
+    )
+    custom_config: CustomScorerConfig | None = Field(
+        None,
+        description=(
+            "When ``editable`` is True, the original form config used to build this scorer. Returned so "
+            "the GUI can pre-fill the edit dialog. Null for built-in scorers."
         ),
     )
 
@@ -92,3 +183,35 @@ class ScoreResponse(BaseModel):
     """Response containing the scores produced by an on-demand scoring call."""
 
     scores: list[Score] = Field(default_factory=list, description="Scores produced by the scorer")
+
+
+class CreateCustomScorerRequest(BaseModel):
+    """Request to instantiate and register a new user-defined scorer."""
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[a-zA-Z0-9_\-]+$",
+        description=(
+            "Registry name for the new scorer (alphanumeric, dash, underscore). Must not collide "
+            "with an existing scorer."
+        ),
+    )
+    config: CustomScorerConfig = Field(..., description="Type-discriminated scorer config.")
+
+
+class UpdateCustomScorerRequest(BaseModel):
+    """
+    Request to replace the config of an existing user-defined scorer.
+
+    The registry name does not change; only the underlying ``config`` is rebuilt.
+    """
+
+    config: CustomScorerConfig = Field(..., description="Replacement type-discriminated scorer config.")
+
+
+class CustomScorerResponse(BaseModel):
+    """Response returned after create/update of a user-defined scorer."""
+
+    summary: ScorerSummary = Field(..., description="Fresh summary of the (re)registered scorer.")

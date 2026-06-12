@@ -15,9 +15,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.backend.models.scoring import (
+    CreateCustomScorerRequest,
+    GeneralFloatScaleConfig,
+    GeneralTrueFalseConfig,
     ScoreConversationRequest,
     ScoreMessageRequest,
+    ThresholdWrapperConfig,
+    UpdateCustomScorerRequest,
 )
+from pyrit.backend.services import scoring_service as scoring_service_module
 from pyrit.backend.services.scoring_service import (
     ScoringService,
     get_scoring_service,
@@ -363,3 +369,370 @@ class TestScoreMessage:
                 piece_id="missing-piece",
                 request=ScoreMessageRequest(scorer_registry_name="x"),
             )
+
+
+# --------------------------------------------------------------------------- #
+# Custom (user-created) scorers
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def clear_custom_scorers():
+    """Reset the module-level custom-scorer state before and after each test."""
+    scoring_service_module._CUSTOM_SCORER_CONFIGS.clear()
+    yield
+    scoring_service_module._CUSTOM_SCORER_CONFIGS.clear()
+
+
+@pytest.fixture
+def custom_registry(mock_registry):
+    """Configure the mocked registry so `name in registry` reads from a backing dict."""
+    backing: dict[str, MagicMock] = {}
+    mock_registry._registry_items = backing
+    mock_registry._metadata_cache = MagicMock()
+    mock_registry.__contains__ = lambda self, key: key in backing
+
+    def _register_instance(instance, *, name, tags=None):
+        backing[name] = instance
+
+    def _get(name):
+        return backing.get(name)
+
+    def _get_all_instances():
+        entries = []
+        for n, inst in backing.items():
+            entry = MagicMock()
+            entry.name = n
+            entry.instance = inst
+            entry.tags = {}
+            entries.append(entry)
+        return entries
+
+    mock_registry.register_instance = MagicMock(side_effect=_register_instance)
+    mock_registry.get = MagicMock(side_effect=_get)
+    mock_registry.get_all_instances = MagicMock(side_effect=_get_all_instances)
+    return mock_registry
+
+
+def _patch_default_target():
+    """Helper: patch `_get_default_chat_target` to return a benign MagicMock."""
+    return patch.object(ScoringService, "_get_default_chat_target", return_value=MagicMock())
+
+
+class TestCreateCustomScorer:
+    async def test_general_float_scale_registers_scorer(
+        self, scoring_service, custom_registry, clear_custom_scorers
+    ) -> None:
+        cfg = GeneralFloatScaleConfig(
+            system_prompt_format_string="Score {prompt} from 0-10",
+            category="harm",
+            min_value=0,
+            max_value=10,
+        )
+        with (
+            _patch_default_target(),
+            patch(
+                "pyrit.score.float_scale.self_ask_general_float_scale_scorer.SelfAskGeneralFloatScaleScorer"
+            ) as mock_cls,
+        ):
+            built = MagicMock(spec=FloatScaleScorer)
+            built.scorer_type = "float_scale"
+            built.uses_objective = False
+            mock_cls.return_value = built
+
+            response = await scoring_service.create_custom_scorer_async(
+                request=CreateCustomScorerRequest(name="my_scale", config=cfg),
+            )
+
+        assert response.summary.scorer_registry_name == "my_scale"
+        assert response.summary.editable is True
+        assert response.summary.custom_config == cfg
+        assert "my_scale" in scoring_service_module._CUSTOM_SCORER_CONFIGS
+        custom_registry.register_instance.assert_called_once()
+        mock_cls.assert_called_once()
+        # min_value/max_value/category propagated
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["min_value"] == 0
+        assert call_kwargs["max_value"] == 10
+        assert call_kwargs["category"] == "harm"
+
+    async def test_general_true_false_registers_scorer(
+        self, scoring_service, custom_registry, clear_custom_scorers
+    ) -> None:
+        cfg = GeneralTrueFalseConfig(
+            system_prompt_format_string="Is {prompt} bad?",
+            score_aggregator="AND",
+        )
+        with (
+            _patch_default_target(),
+            patch(
+                "pyrit.score.true_false.self_ask_general_true_false_scorer.SelfAskGeneralTrueFalseScorer"
+            ) as mock_cls,
+            patch("pyrit.score.true_false.true_false_score_aggregator.TrueFalseScoreAggregator") as mock_aggregator_ns,
+        ):
+            mock_aggregator_ns.AND = "AND_FUNC"
+            built = MagicMock(spec=TrueFalseScorer)
+            built.scorer_type = "true_false"
+            built.uses_objective = False
+            mock_cls.return_value = built
+
+            response = await scoring_service.create_custom_scorer_async(
+                request=CreateCustomScorerRequest(name="my_tf", config=cfg),
+            )
+
+        assert response.summary.scorer_registry_name == "my_tf"
+        assert response.summary.editable is True
+        assert mock_cls.call_args.kwargs["score_aggregator"] == "AND_FUNC"
+
+    async def test_threshold_wrapper_registers_scorer(
+        self, scoring_service, custom_registry, clear_custom_scorers
+    ) -> None:
+        # Pre-seed the registry with a float-scale scorer to wrap.
+        wrapped = MagicMock(spec=FloatScaleScorer)
+        wrapped.scorer_type = "float_scale"
+        wrapped.uses_objective = False
+        custom_registry._registry_items["base_float"] = wrapped
+
+        cfg = ThresholdWrapperConfig(
+            wrapped_scorer_registry_name="base_float",
+            threshold=0.75,
+        )
+        with patch("pyrit.score.true_false.float_scale_threshold_scorer.FloatScaleThresholdScorer") as mock_cls:
+            built = MagicMock(spec=TrueFalseScorer)
+            built.scorer_type = "true_false"
+            built.uses_objective = False
+            mock_cls.return_value = built
+
+            response = await scoring_service.create_custom_scorer_async(
+                request=CreateCustomScorerRequest(name="my_thresh", config=cfg),
+            )
+
+        assert response.summary.scorer_registry_name == "my_thresh"
+        mock_cls.assert_called_once_with(scorer=wrapped, threshold=0.75)
+
+    async def test_rejects_duplicate_name(self, scoring_service, custom_registry, clear_custom_scorers) -> None:
+        # Pre-populate the registry with the same name.
+        custom_registry._registry_items["taken"] = MagicMock()
+        cfg = GeneralFloatScaleConfig(
+            system_prompt_format_string="x",
+            min_value=0,
+            max_value=10,
+        )
+        with pytest.raises(ValueError, match="already registered"):
+            await scoring_service.create_custom_scorer_async(
+                request=CreateCustomScorerRequest(name="taken", config=cfg),
+            )
+        # No state pollution.
+        assert "taken" not in scoring_service_module._CUSTOM_SCORER_CONFIGS
+
+    async def test_rejects_max_value_not_greater_than_min(
+        self, scoring_service, custom_registry, clear_custom_scorers
+    ) -> None:
+        cfg = GeneralFloatScaleConfig(
+            system_prompt_format_string="x",
+            min_value=5,
+            max_value=5,
+        )
+        with _patch_default_target(), pytest.raises(ValueError, match="max_value must be strictly greater"):
+            await scoring_service.create_custom_scorer_async(
+                request=CreateCustomScorerRequest(name="bad", config=cfg),
+            )
+        assert "bad" not in scoring_service_module._CUSTOM_SCORER_CONFIGS
+
+    async def test_threshold_wrapper_rejects_missing_wrapped(
+        self, scoring_service, custom_registry, clear_custom_scorers
+    ) -> None:
+        cfg = ThresholdWrapperConfig(wrapped_scorer_registry_name="does_not_exist", threshold=0.5)
+        with pytest.raises(ValueError, match="is not registered"):
+            await scoring_service.create_custom_scorer_async(
+                request=CreateCustomScorerRequest(name="thresh", config=cfg),
+            )
+
+    async def test_threshold_wrapper_rejects_non_float_scale_wrapped(
+        self, scoring_service, custom_registry, clear_custom_scorers
+    ) -> None:
+        wrapped = MagicMock(spec=TrueFalseScorer)
+        custom_registry._registry_items["tf_scorer"] = wrapped
+        cfg = ThresholdWrapperConfig(wrapped_scorer_registry_name="tf_scorer", threshold=0.5)
+        with pytest.raises(ValueError, match="requires a FloatScaleScorer"):
+            await scoring_service.create_custom_scorer_async(
+                request=CreateCustomScorerRequest(name="thresh", config=cfg),
+            )
+
+
+class TestUpdateCustomScorer:
+    async def test_replaces_instance_and_preserves_name(
+        self, scoring_service, custom_registry, clear_custom_scorers
+    ) -> None:
+        original_cfg = GeneralFloatScaleConfig(
+            system_prompt_format_string="orig",
+            min_value=0,
+            max_value=10,
+        )
+        new_cfg = GeneralFloatScaleConfig(
+            system_prompt_format_string="updated",
+            min_value=0,
+            max_value=100,
+            category="bias",
+        )
+
+        with (
+            _patch_default_target(),
+            patch(
+                "pyrit.score.float_scale.self_ask_general_float_scale_scorer.SelfAskGeneralFloatScaleScorer"
+            ) as mock_cls,
+        ):
+            orig_built = MagicMock(spec=FloatScaleScorer)
+            orig_built.scorer_type = "float_scale"
+            orig_built.uses_objective = False
+            updated_built = MagicMock(spec=FloatScaleScorer)
+            updated_built.scorer_type = "float_scale"
+            updated_built.uses_objective = False
+            mock_cls.side_effect = [orig_built, updated_built]
+
+            await scoring_service.create_custom_scorer_async(
+                request=CreateCustomScorerRequest(name="ed", config=original_cfg),
+            )
+            response = await scoring_service.update_custom_scorer_async(
+                scorer_id="ed",
+                request=UpdateCustomScorerRequest(config=new_cfg),
+            )
+
+        assert response.summary.scorer_registry_name == "ed"
+        assert response.summary.custom_config == new_cfg
+        # New instance replaced the old one in the registry.
+        assert custom_registry._registry_items["ed"] is updated_built
+        assert scoring_service_module._CUSTOM_SCORER_CONFIGS["ed"] == new_cfg
+
+    async def test_rejects_non_custom_name(self, scoring_service, custom_registry, clear_custom_scorers) -> None:
+        custom_registry._registry_items["builtin"] = MagicMock(spec=TrueFalseScorer)
+        cfg = GeneralTrueFalseConfig(system_prompt_format_string="x")
+        with pytest.raises(ValueError, match="not a user-created scorer"):
+            await scoring_service.update_custom_scorer_async(
+                scorer_id="builtin",
+                request=UpdateCustomScorerRequest(config=cfg),
+            )
+
+
+class TestDeleteCustomScorer:
+    async def test_removes_from_registry_and_config_dict(
+        self, scoring_service, custom_registry, clear_custom_scorers
+    ) -> None:
+        cfg = GeneralTrueFalseConfig(system_prompt_format_string="x")
+        with (
+            _patch_default_target(),
+            patch(
+                "pyrit.score.true_false.self_ask_general_true_false_scorer.SelfAskGeneralTrueFalseScorer"
+            ) as mock_cls,
+        ):
+            built = MagicMock(spec=TrueFalseScorer)
+            built.scorer_type = "true_false"
+            built.uses_objective = False
+            mock_cls.return_value = built
+            await scoring_service.create_custom_scorer_async(
+                request=CreateCustomScorerRequest(name="goner", config=cfg),
+            )
+
+        assert "goner" in custom_registry._registry_items
+        assert "goner" in scoring_service_module._CUSTOM_SCORER_CONFIGS
+
+        await scoring_service.delete_custom_scorer_async(scorer_id="goner")
+
+        assert "goner" not in custom_registry._registry_items
+        assert "goner" not in scoring_service_module._CUSTOM_SCORER_CONFIGS
+        assert custom_registry._metadata_cache is None
+
+    async def test_rejects_non_custom_name(self, scoring_service, custom_registry, clear_custom_scorers) -> None:
+        custom_registry._registry_items["builtin"] = MagicMock(spec=TrueFalseScorer)
+        with pytest.raises(ValueError, match="not a user-created scorer"):
+            await scoring_service.delete_custom_scorer_async(scorer_id="builtin")
+        # Built-in remains in the registry.
+        assert "builtin" in custom_registry._registry_items
+
+
+class TestListScorersWithCustom:
+    async def test_marks_user_created_as_editable(self, scoring_service, custom_registry, clear_custom_scorers) -> None:
+        # Pre-seed a built-in scorer (no entry in _CUSTOM_SCORER_CONFIGS).
+        builtin = MagicMock(spec=TrueFalseScorer)
+        builtin.scorer_type = "true_false"
+        builtin.uses_objective = False
+        custom_registry._registry_items["builtin_one"] = builtin
+
+        # Then create a custom one.
+        cfg = GeneralFloatScaleConfig(system_prompt_format_string="x", min_value=0, max_value=10)
+        with (
+            _patch_default_target(),
+            patch(
+                "pyrit.score.float_scale.self_ask_general_float_scale_scorer.SelfAskGeneralFloatScaleScorer"
+            ) as mock_cls,
+        ):
+            built = MagicMock(spec=FloatScaleScorer)
+            built.scorer_type = "float_scale"
+            built.uses_objective = False
+            mock_cls.return_value = built
+            await scoring_service.create_custom_scorer_async(
+                request=CreateCustomScorerRequest(name="user_one", config=cfg),
+            )
+
+        response = await scoring_service.list_scorers_async()
+        by_name = {item.scorer_registry_name: item for item in response.items}
+
+        assert by_name["builtin_one"].editable is False
+        assert by_name["builtin_one"].custom_config is None
+        assert by_name["user_one"].editable is True
+        assert by_name["user_one"].custom_config == cfg
+
+
+class TestGetDefaultChatTarget:
+    def test_returns_first_preferred_target(self) -> None:
+        from pyrit.prompt_target import PromptChatTarget
+
+        preferred = MagicMock(spec=PromptChatTarget)
+        target_registry = MagicMock()
+
+        def _get(name):
+            return preferred if name == "azure_openai_gpt4o_temp9" else None
+
+        target_registry.get = MagicMock(side_effect=_get)
+        target_registry.get_all_instances = MagicMock(return_value=[])
+
+        with patch(
+            "pyrit.registry.TargetRegistry.get_registry_singleton",
+            return_value=target_registry,
+        ):
+            result = ScoringService._get_default_chat_target()
+
+        assert result is preferred
+
+    def test_falls_back_to_first_chat_capable(self) -> None:
+        from pyrit.prompt_target import PromptChatTarget
+
+        fallback = MagicMock(spec=PromptChatTarget)
+        non_chat = MagicMock()  # not a PromptChatTarget
+        target_registry = MagicMock()
+        target_registry.get = MagicMock(return_value=None)
+        entry_bad = MagicMock()
+        entry_bad.instance = non_chat
+        entry_good = MagicMock()
+        entry_good.instance = fallback
+        target_registry.get_all_instances = MagicMock(return_value=[entry_bad, entry_good])
+
+        with patch(
+            "pyrit.registry.TargetRegistry.get_registry_singleton",
+            return_value=target_registry,
+        ):
+            result = ScoringService._get_default_chat_target()
+
+        assert result is fallback
+
+    def test_raises_when_no_chat_target_registered(self) -> None:
+        target_registry = MagicMock()
+        target_registry.get = MagicMock(return_value=None)
+        target_registry.get_all_instances = MagicMock(return_value=[])
+
+        with patch(
+            "pyrit.registry.TargetRegistry.get_registry_singleton",
+            return_value=target_registry,
+        ):
+            with pytest.raises(ValueError, match="No PromptChatTarget"):
+                ScoringService._get_default_chat_target()

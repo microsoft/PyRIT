@@ -17,7 +17,7 @@ import {
   DismissRegular,
   StarRegular,
   StarFilled,
-  ClipboardTaskRegular,
+  DataBarVerticalRegular,
 } from '@fluentui/react-icons'
 import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
@@ -212,7 +212,7 @@ export default function ConversationPanel({
                     <Button
                       appearance="subtle"
                       size="small"
-                      icon={<ClipboardTaskRegular />}
+                      icon={<DataBarVerticalRegular />}
                       disabled={!attackResultId}
                       onClick={(e) => {
                         e.stopPropagation()

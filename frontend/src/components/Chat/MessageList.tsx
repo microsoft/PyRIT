@@ -11,7 +11,7 @@ import {
   Badge,
   mergeClasses,
 } from '@fluentui/react-components'
-import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular, OpenRegular, ClipboardTaskRegular } from '@fluentui/react-icons'
+import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular, OpenRegular, DataBarVerticalRegular } from '@fluentui/react-icons'
 import { Message, MessageAttachment } from '../../types'
 import { useMessageListStyles } from './MessageList.styles'
 
@@ -435,7 +435,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                       <Button
                         appearance="subtle"
                         size="small"
-                        icon={<ClipboardTaskRegular />}
+                        icon={<DataBarVerticalRegular />}
                         disabled={!message.pieceId}
                         onClick={() => onScoreMessage(index)}
                         data-testid={`score-msg-btn-${index}`}
