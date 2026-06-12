@@ -27,7 +27,9 @@ export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolea
   // currentView in their dependency arrays (which would cause Joyride to
   // see a new onEvent reference and potentially drop events).
   const currentViewRef = useRef(currentView)
-  currentViewRef.current = currentView
+  useEffect(() => {
+    currentViewRef.current = currentView
+  })
 
   // Holds the step index to advance to after a view switch completes.
   // null means "nothing pending". The useEffect below reads and clears this.
