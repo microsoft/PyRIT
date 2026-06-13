@@ -442,3 +442,33 @@ export function applySetFanPromotedChild(
     } satisfies FanNode
   })
 }
+
+export function applyDeleteSubtree(
+  tree: ConversationTree,
+  nodeId: ConversationTreeNodeId,
+): ConversationTree {
+  if (nodeId === tree.rootId) return tree
+  if (!tree.nodes.some((node) => node.id === nodeId)) return tree
+  const toDelete = descendantIds(tree, nodeId)
+  toDelete.add(nodeId)
+  return {
+    ...tree,
+    nodes: tree.nodes.filter((node) => !toDelete.has(node.id)),
+    edges: tree.edges.filter((candidate) => !toDelete.has(candidate.parentId) && !toDelete.has(candidate.childId)),
+  }
+}
+
+export function applyCloneTree(
+  tree: ConversationTree,
+  uuid: () => string,
+): ConversationTree {
+  return {
+    ...tree,
+    id: uuid() as ConversationTree['id'],
+    displayName: `${tree.displayName || 'Tree'} (clone)`,
+    parentConversationTreeId: tree.id,
+    nodes: tree.nodes.map((node) => ({ ...node })),
+    edges: tree.edges.map((candidate) => ({ ...candidate })),
+    undoStack: [...tree.undoStack],
+  }
+}

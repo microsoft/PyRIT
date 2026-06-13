@@ -1032,6 +1032,58 @@ describe('TreeRunnerHost — integrated editing', () => {
     expect(fan?.kind === 'fan' ? fan.params.promotedChildSlotIndex : null).toBe(1)
   })
 
+  it('clones the current tree when Branch/Clone is clicked', async () => {
+    const tree = mkTree('root', [mkRoot('root'), mkSend('s1', 'root')], { id: 't-clone-source' })
+    const onTreeChange = jest.fn()
+
+    render(<TreeRunnerHost tree={tree} onTreeChange={onTreeChange} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /clone tree/i }))
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    const next = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree
+    expect(next.id).not.toBe(tree.id)
+    expect(next.parentConversationTreeId).toBe(tree.id)
+    expect(next.nodes.map((node) => node.id)).toEqual(tree.nodes.map((node) => node.id))
+  })
+
+  it('deletes a non-root subtree from the canvas', async () => {
+    const tree = mkTree('root', [
+      mkRoot('root'),
+      mkUserTurn('u1', 'root'),
+      mkSend('s1', 'u1'),
+    ], { id: 't-delete' })
+    const onTreeChange = jest.fn()
+
+    const { container } = render(<TreeRunnerHost tree={tree} onTreeChange={onTreeChange} />)
+
+    const sendCard = container.querySelector('[data-tree-node-id="s1"]')!
+    fireEvent.click(within(sendCard as HTMLElement).getByRole('button', { name: /^delete$/i }))
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    const next = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree
+    expect(next.nodes.some((node) => node.id === nodeId('s1'))).toBe(false)
+    expect(next.nodes.some((node) => node.id === nodeId('u1'))).toBe(true)
+  })
+
+  it('opens a linear path drawer for the selected node', () => {
+    const tree = mkTree('root', [
+      mkRoot('root', { text: 'root text' }),
+      mkUserTurn('u1', 'root', { text: 'turn text' }),
+      mkSend('s1', 'u1', { responsePreview: 'response text' }),
+    ], { id: 't-open-linear' })
+
+    const { container } = render(<TreeRunnerHost tree={tree} />)
+
+    const sendCard = container.querySelector('[data-tree-node-id="s1"]')!
+    fireEvent.click(within(sendCard as HTMLElement).getByRole('button', { name: /open in linear view/i }))
+
+    expect(screen.getByText('Path')).toBeInTheDocument()
+    expect(screen.getAllByText('root text').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('turn text').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('response text').length).toBeGreaterThanOrEqual(1)
+  })
+
   it('adds a follow-up prompt under a response card', async () => {
     const tree = mkTree('root', [mkRoot('root'), mkSend('s1', 'root')], { id: 't-add-follow-up' })
     const onTreeChange = jest.fn()

@@ -28,6 +28,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Button } from '@fluentui/react-components'
 
 import { TreeCanvas } from './TreeCanvas'
 import { WaveStatusRibbon } from './WaveStatusRibbon'
@@ -48,8 +49,10 @@ import type { AvailableConvertersValue } from './availableConvertersContext'
 import {
   applyClearExecution,
   applyAppendChild,
+  applyCloneTree,
   applyEditRootPromptParams,
   applyEditUserTurnText,
+  applyDeleteSubtree,
   applyInsertBetween,
   applyWrapWithFan,
   applyRecordExecution,
@@ -188,6 +191,7 @@ export function TreeRunnerHost({
 }: TreeRunnerHostProps) {
   const styles = useTreeRunnerHostStyles()
   const [waveEvents, setWaveEvents] = useState<WaveEvent[]>([])
+  const [linearNodeId, setLinearNodeId] = useState<ConversationTreeNodeId | null>(null)
 
   // Host-owned live WorkspaceSettings (spec §13.1): seeds the cost-modal
   // suppression + the reflog cap, and is persisted to sessionStorage by
@@ -495,6 +499,27 @@ export function TreeRunnerHost({
           onTreeChangeRef.current?.(next)
         }
       },
+      onBranch: () => {
+        const current = treeRef.current
+        if (current === null) return
+        const next = applyCloneTree(current, () => crypto.randomUUID())
+        treeRef.current = next
+        setLinearNodeId(null)
+        onTreeChangeRef.current?.(next)
+      },
+      onDelete: (nodeIdArg) => {
+        const current = treeRef.current
+        if (current === null) return
+        const next = applyDeleteSubtree(current, nodeIdArg)
+        if (next !== current) {
+          treeRef.current = next
+          if (linearNodeId === nodeIdArg) setLinearNodeId(null)
+          onTreeChangeRef.current?.(next)
+        }
+      },
+      onOpenLinear: (nodeIdArg) => {
+        setLinearNodeId(nodeIdArg)
+      },
     }
     if (actionCallbacks === undefined) return defaults
     return { ...defaults, ...actionCallbacks }
@@ -544,13 +569,86 @@ export function TreeRunnerHost({
           </div>
         )}
       </div>
-      <div data-slot="drawer" className={styles.drawer} />
+      <div data-slot="drawer" className={linearNodeId !== null ? styles.drawerOpen : styles.drawer}>
+        {tree !== null && linearNodeId !== null && (
+          <LinearPathDrawer
+            tree={tree}
+            nodeId={linearNodeId}
+            onClose={() => setLinearNodeId(null)}
+            styles={styles}
+          />
+        )}
+      </div>
       <div data-slot="toast" className={styles.toast} />
       <div data-slot="modal" className={styles.modal}>
         {modalElement ?? dirtyEditModalElement}
       </div>
     </div>
   )
+}
+
+function LinearPathDrawer({
+  tree,
+  nodeId,
+  onClose,
+  styles,
+}: {
+  tree: ConversationTree
+  nodeId: ConversationTreeNodeId
+  onClose: () => void
+  styles: ReturnType<typeof useTreeRunnerHostStyles>
+}) {
+  const byId = new Map(tree.nodes.map((node) => [node.id, node]))
+  const path = pathToNode(tree, nodeId)
+  return (
+    <aside data-tree-linear-drawer>
+      <div className={styles.drawerHeader}>
+        <strong>Path</strong>
+        <Button size="small" appearance="subtle" onClick={onClose}>Close</Button>
+      </div>
+      {path.map((id) => {
+        const node = byId.get(id)
+        if (node === undefined) return null
+        return (
+          <section key={id} data-tree-linear-node className={styles.drawerNode}>
+            <div className={styles.drawerNodeKind}>{node.kind.replace('_', ' ')}</div>
+            <div className={styles.drawerNodeState}>{node.state}</div>
+            <pre className={styles.drawerNodeText}>
+              {nodeText(node)}
+            </pre>
+          </section>
+        )
+      })}
+    </aside>
+  )
+}
+
+function pathToNode(tree: ConversationTree, nodeId: ConversationTreeNodeId): ConversationTreeNodeId[] {
+  const byId = new Map(tree.nodes.map((node) => [node.id, node]))
+  const out: ConversationTreeNodeId[] = []
+  let cursor = byId.get(nodeId)
+  while (cursor !== undefined) {
+    out.push(cursor.id)
+    cursor = cursor.parentId === null ? undefined : byId.get(cursor.parentId)
+  }
+  return out.reverse()
+}
+
+function nodeText(node: ConversationTree['nodes'][number]): string {
+  switch (node.kind) {
+    case 'root_prompt':
+      return node.params.text
+    case 'user_turn':
+      return node.params.text
+    case 'send':
+      return node.params.responsePreview ?? ''
+    case 'fan':
+      return `axis: ${node.params.axis}\nvariants: ${node.params.variants.length}`
+    case 'score':
+      return node.params.scorerType
+    case 'import_message':
+      return node.params.sourceConversationId
+  }
 }
 
 function applyEdgeInsert(

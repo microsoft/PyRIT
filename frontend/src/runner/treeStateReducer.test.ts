@@ -23,8 +23,10 @@ import {
   applyWrapWithFan,
   applySetUserTurnConverterPipeline,
   applySetFanPromotedChild,
+  applyDeleteSubtree,
+  applyCloneTree,
 } from './treeStateReducer'
-import { mkFan, mkRoot, mkSend, mkTree, mkUserTurn, nodeId } from './testHelpers'
+import { mkFan, mkRoot, mkSend, mkTree, mkUserTurn, nodeId, treeId } from './testHelpers'
 import type {
   ConversationTree,
   ExecutionRecord,
@@ -419,5 +421,44 @@ describe('applySetFanPromotedChild', () => {
 
     expect(fan?.state).toBe('clean')
     expect(fan?.kind === 'fan' ? fan.params.promotedChildSlotIndex : null).toBe(1)
+  })
+})
+
+describe('applyDeleteSubtree', () => {
+  it('deletes the selected node, descendants, and their edges', () => {
+    const before = mkTree('root', [
+      mkRoot('root'),
+      mkUserTurn('u1', 'root'),
+      mkSend('s1', 'u1'),
+      mkUserTurn('u2', 's1'),
+      mkSend('s2', 'u2'),
+    ])
+
+    const after = applyDeleteSubtree(before, nodeId('s1'))
+
+    expect(after.nodes.map((node) => node.id)).toEqual([nodeId('root'), nodeId('u1')])
+    expect(after.edges).toHaveLength(1)
+    expect(after.edges[0]).toMatchObject({ parentId: nodeId('root'), childId: nodeId('u1') })
+  })
+
+  it('does not delete the root node', () => {
+    const before = tree1()
+    const after = applyDeleteSubtree(before, nodeId('root'))
+
+    expect(after).toBe(before)
+  })
+})
+
+describe('applyCloneTree', () => {
+  it('creates a new tree id and records parentConversationTreeId', () => {
+    const before = mkTree('root', [mkRoot('root'), mkSend('s1', 'root')], { id: 'source-tree' })
+
+    const after = applyCloneTree(before, () => 'clone-tree')
+
+    expect(after.id).toBe(treeId('clone-tree'))
+    expect(after.parentConversationTreeId).toBe(treeId('source-tree'))
+    expect(after.nodes.map((node) => node.id)).toEqual(before.nodes.map((node) => node.id))
+    expect(after.edges).toEqual(before.edges)
+    expect(after.nodes).not.toBe(before.nodes)
   })
 })

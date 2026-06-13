@@ -31,6 +31,42 @@ export const useTreeRunnerHostStyles = makeStyles({
     gridArea: 'drawer',
     width: '0px',
   },
+  drawerOpen: {
+    gridArea: 'drawer',
+    width: '360px',
+    minWidth: '320px',
+    borderLeft: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    color: tokens.colorNeutralForeground1,
+    overflow: 'auto',
+    padding: tokens.spacingHorizontalM,
+  },
+  drawerHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalS,
+  },
+  drawerNode: {
+    marginTop: tokens.spacingVerticalM,
+    paddingTop: tokens.spacingVerticalS,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  drawerNodeKind: {
+    fontWeight: tokens.fontWeightSemibold,
+    textTransform: 'capitalize',
+  },
+  drawerNodeState: {
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase100,
+  },
+  drawerNodeText: {
+    whiteSpace: 'pre-wrap',
+    margin: 0,
+    marginTop: tokens.spacingVerticalXS,
+    fontFamily: tokens.fontFamilyBase,
+    fontSize: tokens.fontSizeBase200,
+  },
   toast: {
     position: 'absolute',
     bottom: tokens.spacingVerticalM,
