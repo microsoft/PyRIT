@@ -132,7 +132,9 @@ describe('RootPromptCard', () => {
   it('renders a bottom (source) handle for downstream edges', () => {
     const node = mkRoot('r')
     const { container } = renderCard(<RootPromptCard {...rootPromptProps(node)} />)
-    expect(container.querySelector('.react-flow__handle.source')).not.toBeNull()
+    const handle = container.querySelector('.react-flow__handle.source')
+    expect(handle).not.toBeNull()
+    expect(handle?.getAttribute('data-tree-node-handle')).toBe('source')
   })
 })
 

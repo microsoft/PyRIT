@@ -17,11 +17,19 @@ import { makeStyles, tokens } from '@fluentui/react-components'
 
 export const useActionRailStyles = makeStyles({
   rail: {
+    position: 'absolute',
+    left: '50%',
+    bottom: '-38px',
+    transform: 'translateX(-50%)',
+    zIndex: 5,
     display: 'flex',
     gap: tokens.spacingHorizontalXXS,
-    marginTop: tokens.spacingVerticalXS,
-    paddingTop: tokens.spacingVerticalXS,
-    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalXS}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    boxShadow: tokens.shadow8,
+    minWidth: 'max-content',
     opacity: 0,
     transitionProperty: 'opacity',
     transitionDuration: '120ms',

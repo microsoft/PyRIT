@@ -78,7 +78,14 @@ export function CardFrame({
         promoted && styles.framePromoted,
       )}
     >
-      {showTargetHandle && <Handle type="target" position={Position.Top} />}
+      {showTargetHandle && (
+        <Handle
+          type="target"
+          position={Position.Top}
+          className={mergeClasses(styles.handle, styles.handleTarget)}
+          data-tree-node-handle="target"
+        />
+      )}
       <div className={styles.header}>
         <span className={styles.kindLabel}>{kindLabel}</span>
         <span
@@ -99,7 +106,14 @@ export function CardFrame({
           kindActions={kindActions}
         />
       )}
-      {showSourceHandle && <Handle type="source" position={Position.Bottom} />}
+      {showSourceHandle && (
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          className={mergeClasses(styles.handle, styles.handleSource)}
+          data-tree-node-handle="source"
+        />
+      )}
     </div>
   )
 }
