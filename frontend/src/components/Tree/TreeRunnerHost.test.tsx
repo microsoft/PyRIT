@@ -1060,10 +1060,22 @@ describe('TreeRunnerHost — integrated editing', () => {
     const sendCard = container.querySelector('[data-tree-node-id="s1"]')!
     fireEvent.click(within(sendCard as HTMLElement).getByRole('button', { name: /^delete$/i }))
 
+    expect(screen.getByRole('dialog', { name: /delete subtree/i })).toBeInTheDocument()
+    expect(onTreeChange).not.toHaveBeenCalled()
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^delete$/i }))
+
     await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
     const next = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree
     expect(next.nodes.some((node) => node.id === nodeId('s1'))).toBe(false)
     expect(next.nodes.some((node) => node.id === nodeId('u1'))).toBe(true)
+  })
+
+  it('does not render Delete on the root card', () => {
+    const tree = mkTree('root', [mkRoot('root'), mkSend('s1', 'root')], { id: 't-root-no-delete' })
+    const { container } = render(<TreeRunnerHost tree={tree} />)
+
+    const rootCard = container.querySelector('[data-tree-node-id="root"]')!
+    expect(within(rootCard as HTMLElement).queryByRole('button', { name: /^delete$/i })).toBeNull()
   })
 
   it('opens a linear path drawer for the selected node', () => {

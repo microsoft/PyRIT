@@ -43,6 +43,7 @@ export interface CardFrameProps {
    * for cards with no per-kind actions in V1.0.
    */
   kindActions?: React.ReactNode
+  canDelete?: boolean
   showTargetHandle?: boolean // top (parent connection)
   showSourceHandle?: boolean // bottom (child connection)
   children: React.ReactNode
@@ -56,6 +57,7 @@ export function CardFrame({
   branchLabel,
   fanChildInfo,
   kindActions,
+  canDelete = true,
   showTargetHandle = true,
   showSourceHandle = true,
   children,
@@ -102,6 +104,7 @@ export function CardFrame({
           nodeId={nodeId}
           callbacks={callbacks}
           branchLabel={branchLabel}
+          canDelete={canDelete}
           fanChildInfo={fanChildInfo}
           kindActions={kindActions}
         />

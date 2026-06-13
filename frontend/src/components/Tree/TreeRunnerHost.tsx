@@ -28,7 +28,15 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button } from '@fluentui/react-components'
+import {
+  Button,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+} from '@fluentui/react-components'
 
 import { TreeCanvas } from './TreeCanvas'
 import { WaveStatusRibbon } from './WaveStatusRibbon'
@@ -192,6 +200,7 @@ export function TreeRunnerHost({
   const styles = useTreeRunnerHostStyles()
   const [waveEvents, setWaveEvents] = useState<WaveEvent[]>([])
   const [linearNodeId, setLinearNodeId] = useState<ConversationTreeNodeId | null>(null)
+  const [pendingDeleteNodeId, setPendingDeleteNodeId] = useState<ConversationTreeNodeId | null>(null)
 
   // Host-owned live WorkspaceSettings (spec §13.1): seeds the cost-modal
   // suppression + the reflog cap, and is persisted to sessionStorage by
@@ -510,12 +519,8 @@ export function TreeRunnerHost({
       onDelete: (nodeIdArg) => {
         const current = treeRef.current
         if (current === null) return
-        const next = applyDeleteSubtree(current, nodeIdArg)
-        if (next !== current) {
-          treeRef.current = next
-          if (linearNodeId === nodeIdArg) setLinearNodeId(null)
-          onTreeChangeRef.current?.(next)
-        }
+        if (nodeIdArg === current.rootId) return
+        setPendingDeleteNodeId(nodeIdArg)
       },
       onOpenLinear: (nodeIdArg) => {
         setLinearNodeId(nodeIdArg)
@@ -524,6 +529,48 @@ export function TreeRunnerHost({
     if (actionCallbacks === undefined) return defaults
     return { ...defaults, ...actionCallbacks }
   }, [actionCallbacks, tree, shim])
+
+  const confirmDelete = () => {
+    const current = treeRef.current
+    const nodeIdToDelete = pendingDeleteNodeId
+    if (current === null || nodeIdToDelete === null) {
+      setPendingDeleteNodeId(null)
+      return
+    }
+    const next = applyDeleteSubtree(current, nodeIdToDelete)
+    if (next !== current) {
+      treeRef.current = next
+      if (linearNodeId === nodeIdToDelete) setLinearNodeId(null)
+      onTreeChangeRef.current?.(next)
+    }
+    setPendingDeleteNodeId(null)
+  }
+
+  const deleteModalElement = pendingDeleteNodeId !== null ? (
+    <Dialog
+      open
+      onOpenChange={(_event, data) => {
+        if (!data.open) setPendingDeleteNodeId(null)
+      }}
+    >
+      <DialogSurface>
+        <DialogBody>
+          <DialogTitle>Delete subtree?</DialogTitle>
+          <DialogContent>
+            <p>This removes the selected node and all of its descendants from this tree.</p>
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="secondary" onClick={() => setPendingDeleteNodeId(null)}>
+              Cancel
+            </Button>
+            <Button appearance="primary" onClick={confirmDelete}>
+              Delete
+            </Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  ) : null
 
   const ribbonState = useMemo(() => summarizeWaveEvents(waveEvents), [waveEvents])
 
@@ -581,7 +628,7 @@ export function TreeRunnerHost({
       </div>
       <div data-slot="toast" className={styles.toast} />
       <div data-slot="modal" className={styles.modal}>
-        {modalElement ?? dirtyEditModalElement}
+        {modalElement ?? dirtyEditModalElement ?? deleteModalElement}
       </div>
     </div>
   )

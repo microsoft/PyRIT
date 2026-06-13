@@ -154,6 +154,7 @@ export interface ActionCallbacks {
 export interface ActionRailProps {
   nodeId: ConversationTreeNodeId
   callbacks: ActionCallbacks
+  canDelete?: boolean
   /**
    * Display text for the Branch button. "Clone tree" on a root node,
    * "Branch from here" elsewhere. The card chooses; the rail honors.
@@ -184,7 +185,7 @@ export interface ActionRailProps {
   kindActions?: React.ReactNode
 }
 
-export function ActionRail({ nodeId, callbacks, branchLabel, fanChildInfo, kindActions }: ActionRailProps) {
+export function ActionRail({ nodeId, callbacks, branchLabel, canDelete = true, fanChildInfo, kindActions }: ActionRailProps) {
   const styles = useActionRailStyles()
   const { onRefresh, onBranch, onDelete, onOpenLinear, onPickFanChild, getRefreshCost } = callbacks
   const showPick = fanChildInfo !== undefined && onPickFanChild !== undefined
@@ -251,7 +252,7 @@ export function ActionRail({ nodeId, callbacks, branchLabel, fanChildInfo, kindA
           />
         </Tooltip>
       )}
-      {onDelete !== undefined && (
+      {onDelete !== undefined && canDelete && (
         <Tooltip content="Delete" relationship="description">
           <Button
             size="small"

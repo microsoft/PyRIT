@@ -46,6 +46,7 @@ export function RootPromptCard({ data, selected }: RootPromptProps) {
       branchLabel="Clone tree"
       fanChildInfo={data.fanChildInfo}
       kindActions={kindActions}
+      canDelete={false}
       showTargetHandle={false}
     >
       {isEditing && onEditParams !== undefined ? (
