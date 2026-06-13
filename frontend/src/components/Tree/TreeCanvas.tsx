@@ -43,6 +43,7 @@ import {
 } from './stackCollapseContext'
 import { treeEdgeTypes } from './treeEdgeTypes'
 import { treeNodeTypes } from './treeNodeTypes'
+import { useTreeCanvasStyles } from './TreeCanvas.styles'
 import { useMemoizedActionCallbacks } from './useMemoizedActionCallbacks'
 import type {
   ConversationTree,
@@ -69,6 +70,7 @@ export interface TreeCanvasProps {
 }
 
 export function TreeCanvas({ tree, actionCallbacks, availableConverters }: TreeCanvasProps) {
+  const styles = useTreeCanvasStyles()
   // PR5h.11: stabilize the actionCallbacks bag reference across renders.
   // Without this, a host passing a fresh object literal each render forces
   // every card to re-render through the ActionCallbacksContext.
@@ -154,7 +156,7 @@ export function TreeCanvas({ tree, actionCallbacks, availableConverters }: TreeC
     <div
       data-testid="tree-canvas"
       data-tree-id={decorated.treeId}
-      style={{ width: '100%', height: '100%' }}
+      className={styles.root}
     >
       <ActionCallbacksContext.Provider value={memoizedCallbacks}>
         <AvailableConvertersContext.Provider value={availableConverters ?? null}>
