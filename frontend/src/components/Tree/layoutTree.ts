@@ -33,12 +33,12 @@ export interface LayoutNode {
 export interface LayoutOptions {
   /** Default 220 — wider than the card's min-width (220) to keep cards from touching. */
   horizontalSpacing?: number
-  /** Default 140 — generous enough for the card height (~80) plus action rail + meta rows. */
+  /** Default 260 — leaves room for inline editors and response previews without card overlap. */
   verticalSpacing?: number
 }
 
 const DEFAULT_HORIZONTAL_SPACING = 220
-const DEFAULT_VERTICAL_SPACING = 140
+const DEFAULT_VERTICAL_SPACING = 260
 
 /**
  * Compute Buchheim-Walker tree-layout coordinates for the adapter's

@@ -151,6 +151,7 @@ describe('linearChainFromMessages', () => {
     // One Send (the assistant reply).
     const sends = tree.nodes.filter((n) => n.kind === 'send')
     expect(sends).toHaveLength(1)
+    expect(sends[0].params.responsePreview).toBe('Hi there')
   })
 
   it('produces alternating UserTurn → Send → UserTurn → Send for multi-turn', () => {
@@ -166,6 +167,8 @@ describe('linearChainFromMessages', () => {
     expect(tree.nodes[1].kind).toBe('send')
     expect(tree.nodes[2].kind).toBe('user_turn')
     expect(tree.nodes[3].kind).toBe('send')
+    expect(tree.nodes[1].kind === 'send' ? tree.nodes[1].params.responsePreview : null).toBe('A1')
+    expect(tree.nodes[3].kind === 'send' ? tree.nodes[3].params.responsePreview : null).toBe('A2')
     // Edge slot indices all 0 (linear chain, no fans).
     expect(tree.edges.every((e) => e.slotIndex === 0)).toBe(true)
   })

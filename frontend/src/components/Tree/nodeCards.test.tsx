@@ -227,16 +227,54 @@ describe('UserTurnCard', () => {
 // ============================================================================
 
 describe('SendCard', () => {
-  it('renders the kind label "Send"', () => {
-    const node = mkSend('s', 'u')
+  it('renders draft/edited sends as "Send"', () => {
+    const node = mkSend('s', 'u', undefined, { state: 'edited' })
     const { getByText } = renderCard(<SendCard {...sendProps(node)} />)
     expect(getByText('Send')).toBeInTheDocument()
+  })
+
+  it('renders clean sends as assistant responses', () => {
+    const node = mkSend('s', 'u')
+    const { getByText, queryByText } = renderCard(<SendCard {...sendProps(node)} />)
+
+    expect(getByText('Assistant response')).toBeInTheDocument()
+    expect(queryByText('Send')).not.toBeInTheDocument()
+  })
+
+  it('also renders sends with execution records as assistant responses', () => {
+    const node = mkSend('s', 'u', undefined, {
+      execution: {
+        executionId: 'exec-1',
+        attemptedAt: '2026-06-10T00:00:00.000Z',
+        attackResultId: 'ar-1',
+        conversationId: 'conv-1',
+        pieceIds: ['piece-1'],
+        outcome: 'success',
+        resolvedInputHashAtExecution: 'sha256:s',
+        waveId: null,
+        waveTriggerKind: null,
+        dispatchedAt: null,
+        targetFirstByteAt: null,
+        completedAt: null,
+      },
+    })
+    const { getByText, queryByText } = renderCard(<SendCard {...sendProps(node)} />)
+
+    expect(getByText('Assistant response')).toBeInTheDocument()
+    expect(queryByText('Send')).not.toBeInTheDocument()
   })
 
   it('renders the per-node target override when set', () => {
     const node = mkSend('s', 'u', { targetRegistryName: 'claude-opus' })
     const { getByText } = renderCard(<SendCard {...sendProps(node)} />)
     expect(getByText('claude-opus')).toBeInTheDocument()
+  })
+
+  it('renders reconstructed assistant response preview text', () => {
+    const node = mkSend('s', 'u', { responsePreview: 'Here is the target response.' })
+    const { getByText } = renderCard(<SendCard {...sendProps(node)} />)
+
+    expect(getByText('Here is the target response.')).toBeInTheDocument()
   })
 
   it('renders the state badge', () => {
@@ -398,7 +436,7 @@ describe('treeNodeTypes registry', () => {
     expect(getByText('Root prompt')).toBeInTheDocument()
     expect(getByText('pinned content')).toBeInTheDocument()
     expect(getByText('tree-canvas integration')).toBeInTheDocument()
-    expect(getByText('Send')).toBeInTheDocument()
+    expect(getByText('Assistant response')).toBeInTheDocument()
   })
 
   it('TreeCanvas renders FanCard + ScoreCard + ImportMessageCard via the registry', () => {

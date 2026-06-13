@@ -123,6 +123,8 @@ export interface ExecutionRecord {
   conversationId: string | null
   /** MessagePiece ids produced by this execution. */
   pieceIds: string[]
+  /** Best-effort text preview from assistant pieces produced by this execution. */
+  responsePreview?: string
   outcome: 'success' | 'failure' | 'error' | 'cancelled' | 'pending'
   errorMessage?: string
   /** For replay / debugging — the hash that was current when this execution started. */
@@ -242,6 +244,8 @@ export interface SendNode extends ConversationTreeNodeBase {
     targetRegistryName?: string
     /** Optional send-time converters; merged after the upstream UserTurn's pipeline. */
     converterPipeline?: ConverterRef[]
+    /** Best-effort assistant/target response text reconstructed from backend history. */
+    responsePreview?: string
   }
 }
 

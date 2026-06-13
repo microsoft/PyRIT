@@ -92,6 +92,15 @@ describe('TreeCanvas — scaffold mount', () => {
     const { container } = render(<TreeCanvas tree={tree} />)
     expect(container.querySelectorAll('[data-tree-node-id]')).toHaveLength(6)
   })
+
+  it('renders viewport navigation controls and minimap', () => {
+    const tree = mkTree('r', [mkRoot('r'), mkUserTurn('u', 'r'), mkSend('s', 'u')])
+    const { container } = render(<TreeCanvas tree={tree} />)
+
+    expect(container.querySelector('.react-flow__controls')).not.toBeNull()
+    expect(container.querySelector('.react-flow__minimap')).not.toBeNull()
+  })
+
 })
 
 // ============================================================================

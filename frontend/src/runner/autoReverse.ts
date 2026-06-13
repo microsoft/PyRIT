@@ -177,7 +177,7 @@ export function linearChainFromMessages(
         createdAt: NOW,
         updatedAt: NOW,
         version: 1,
-        params: {},
+        params: { responsePreview: text },
       }
       nodes.push(send)
       edges.push({ id: `${parentId}->${sendId}`, parentId, childId: sendId, slotIndex: 0 })

@@ -219,9 +219,57 @@ describe('dispatchLeaf — happy path (single-Send chain)', () => {
     expect(execCalls[0].execution.attackResultId).toBe('ar-1')
     expect(execCalls[0].execution.conversationId).toBe('conv-1')
     expect(execCalls[0].execution.pieceIds).toEqual(['asst-0'])
+    expect(execCalls[0].execution.responsePreview).toBe('response text')
     expect(execCalls[0].execution.outcome).toBe('success')
     expect(execCalls[0].execution.waveId).toBe('wave-uuid-1')
     expect(execCalls[0].execution.waveTriggerKind).toBe('refresh_node')
+  })
+
+  it('cleans an edited UserTurn once its downstream Send succeeds', async () => {
+    const tree = mkTree('r', [
+      mkRoot('r', { targetRegistryName: 'gpt-4o' }),
+      mkUserTurn('u', 'r', { text: 'hi' }, { state: 'edited' }),
+      mkSend('s', 'u', undefined, { state: 'stale' }),
+    ])
+    const { sink, callsOf } = mkMockSink()
+    const { api } = mkApiMock()
+
+    const outcome = await dispatchLeaf({
+      treeId: treeId('t-1'),
+      tree,
+      leafId: nodeId('s'),
+      sink,
+      api,
+      ...STANDARD_CTX,
+      parentConversationTreeId: null,
+    })
+
+    expect(outcome.kind).toBe('success')
+    const userTurnStates = callsOf('setNodeState').filter((c) => c.nodeId === nodeId('u')).map((c) => c.state)
+    expect(userTurnStates).toContain('clean')
+  })
+
+  it('cleans an edited root prompt when it is the Send input', async () => {
+    const tree = mkTree('r', [
+      mkRoot('r', { text: 'hi', targetRegistryName: 'gpt-4o' }, { state: 'edited' }),
+      mkSend('s', 'r', undefined, { state: 'stale' }),
+    ])
+    const { sink, callsOf } = mkMockSink()
+    const { api } = mkApiMock()
+
+    const outcome = await dispatchLeaf({
+      treeId: treeId('t-1'),
+      tree,
+      leafId: nodeId('s'),
+      sink,
+      api,
+      ...STANDARD_CTX,
+      parentConversationTreeId: null,
+    })
+
+    expect(outcome.kind).toBe('success')
+    const rootStates = callsOf('setNodeState').filter((c) => c.nodeId === nodeId('r')).map((c) => c.state)
+    expect(rootStates).toContain('clean')
   })
 })
 

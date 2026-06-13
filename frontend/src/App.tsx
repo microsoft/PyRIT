@@ -8,6 +8,8 @@ import TargetConfig from './components/Config/TargetConfig'
 import AttackHistory from './components/History/AttackHistory'
 import { TreeRunnerHost } from './components/Tree/TreeRunnerHost'
 import { guardedNavigate } from './components/Tree/navigationGuard'
+import { useDirtyEditModal } from './components/Tree/useDirtyEditModal'
+import { parseTreeIdFromUrlFragment } from './runner/workspacePersistence'
 import { DEFAULT_HISTORY_FILTERS } from './components/History/historyFilters'
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
@@ -47,8 +49,12 @@ function ConnectionBannerContainer() {
 
 function App() {
   const { instance } = useMsal()
+  const treeUiEnabled = isTreeUiEnabled()
   const [isDarkMode, setIsDarkMode] = useState(true)
-  const [currentView, setCurrentView] = useState<ViewName>('home')
+  const [currentView, setCurrentView] = useState<ViewName>(() => {
+    if (treeUiEnabled && parseTreeIdFromUrlFragment(window.location.hash) !== null) return 'tree'
+    return 'home'
+  })
   const [activeTarget, setActiveTarget] = useState<TargetInstance | null>(null)
   const [globalLabels, setGlobalLabels] = useState<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
   /** True while loading a historical attack from the history view */
@@ -187,7 +193,6 @@ function App() {
   }
 
   // --- Tree view (PR7i.2) — gated behind VITE_ENABLE_TREE_UI -----------------
-  const treeUiEnabled = isTreeUiEnabled()
   /** The foregrounded ConversationTree; null = greenfield. */
   const [currentTree, setCurrentTree] = useState<ConversationTree | null>(null)
   /**
@@ -225,6 +230,8 @@ function App() {
   const treeGuardedSwapRef = useRef<
     ((tree: ConversationTree | null, swap: () => void) => void) | null
   >(null)
+  const { guardedSwap: guardedOpenTreeSwap, modalElement: openTreeDirtyModalElement } =
+    useDirtyEditModal()
   const handleNavigate = useCallback(
     (target: ViewName) => {
       guardedNavigate({
@@ -240,10 +247,15 @@ function App() {
 
   /** AR id to auto-reverse into the tree view (spec §5.12 "Open as tree"). */
   const [openTreeFromArId, setOpenTreeFromArId] = useState<string | null>(null)
-  const handleOpenAttackAsTree = useCallback((arId: string) => {
-    setOpenTreeFromArId(arId)
-    setCurrentView('tree')
-  }, [])
+  const handleOpenAttackAsTree = useCallback(
+    (arId: string) => {
+      guardedOpenTreeSwap(currentTree, () => {
+        setOpenTreeFromArId(arId)
+        setCurrentView('tree')
+      })
+    },
+    [currentTree, guardedOpenTreeSwap],
+  )
 
   return (
     <ErrorBoundary>
@@ -326,6 +338,7 @@ function App() {
               </>
             )}
           </MainLayout>
+          {openTreeDirtyModalElement}
         </FluentProvider>
       </ConnectionHealthProvider>
     </ErrorBoundary>

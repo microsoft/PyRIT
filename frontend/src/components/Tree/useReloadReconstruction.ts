@@ -37,6 +37,7 @@ import type {
 export interface ReloadReconstructionApi {
   listAttacks(params?: {
     limit?: number
+    cursor?: string
     label?: string[]
   }): Promise<AttackListResponse>
   getMessages(attackResultId: string, conversationId: string): Promise<ConversationMessagesResponse>
@@ -46,6 +47,8 @@ export interface ReloadReconstructionApi {
 export interface ReconstructionDegradedInfo {
   /** Number of fans detected in the AR set that the linear reload could not represent. */
   fanCount: number
+  /** Why the reconstruction was degraded. Omitted by older callers. */
+  reason?: 'topology' | 'converter_resolution'
 }
 
 export interface UseReloadReconstructionArgs {
@@ -87,6 +90,24 @@ function pickParentConversationTreeId(items: AttackSummary[]): ConversationTreeI
   return winner as ConversationTreeId
 }
 
+async function listTreeAttacks(
+  reloadApi: ReloadReconstructionApi,
+  fragmentTreeId: string,
+): Promise<AttackSummary[]> {
+  const items: AttackSummary[] = []
+  let cursor: string | null | undefined
+  do {
+    const page = await reloadApi.listAttacks({
+      limit: 100,
+      label: [`conversation_tree_id:${fragmentTreeId}`],
+      ...(cursor ? { cursor } : {}),
+    })
+    items.push(...page.items)
+    cursor = page.pagination.has_more ? page.pagination.next_cursor : null
+  } while (cursor)
+  return items
+}
+
 export function useReloadReconstruction({
   fragmentTreeId,
   currentTree,
@@ -99,18 +120,15 @@ export function useReloadReconstruction({
     if (currentTree !== null && currentTree.id === fragmentTreeId) return
     let cancelled = false
     ;(async () => {
-      const list = await reloadApi.listAttacks({
-        limit: 200,
-        label: [`conversation_tree_id:${fragmentTreeId}`],
-      })
+      const items = await listTreeAttacks(reloadApi, fragmentTreeId)
       if (cancelled) return
-      if (list.items.length === 0) return
+      if (items.length === 0) return
 
-      const base = pickBaseAttack(list.items)
+      const base = pickBaseAttack(items)
       const msgs = await reloadApi.getMessages(base.attack_result_id, base.conversation_id)
       if (cancelled) return
 
-      const leaves = list.items.map((ar) => ({
+      const leaves = items.map((ar) => ({
         attack_result_id: ar.attack_result_id,
         labels: ar.labels,
       }))
@@ -120,8 +138,8 @@ export function useReloadReconstruction({
       // root-level converter fan, pre-fetch each member's messages and build
       // a resolver keyed by AR id. Other shapes (no fan, attempt fan) don't
       // need it; nested/multi-axis still degrade.
-      const { converterResolver, onConverterDivergence, divergedSlots } =
-        await buildConverterResolver({ leaves, items: list.items, reloadApi })
+      const { converterResolver, onConverterDivergence, divergedSlots, converterResolutionFailed } =
+        await buildConverterResolver({ leaves, items, reloadApi })
       if (cancelled) return
 
       // Fan-aware reconstruction: reconstructTreeWithFans fully rebuilds the
@@ -134,7 +152,7 @@ export function useReloadReconstruction({
         converterResolver,
         onConverterDivergence,
       })
-      const parentId = pickParentConversationTreeId(list.items)
+      const parentId = pickParentConversationTreeId(items)
       const next: ConversationTree = {
         ...recon.tree,
         id: fragmentTreeId as ConversationTreeId,
@@ -152,7 +170,7 @@ export function useReloadReconstruction({
             `${recon.fanCount} fan(s) in the saved tree are not shown (nested / multi-axis ` +
             `fan-aware reload is deferred)`,
         )
-        onReconstructionDegraded?.({ fanCount: recon.fanCount })
+        onReconstructionDegraded?.({ fanCount: recon.fanCount, reason: 'topology' })
       } else if (recon.fullyReconstructed && divergedSlots.length > 0) {
         // Reconstructed, but some converter slots had disagreeing leaves.
         console.warn(
@@ -160,6 +178,14 @@ export function useReloadReconstruction({
             `${divergedSlots.length} slot(s) where member leaves disagreed on the converter ` +
             `pipeline; showing the most-frequent value per slot`,
         )
+      }
+      if (recon.fullyReconstructed && converterResolutionFailed) {
+        console.warn(
+          `useReloadReconstruction: converter fan in tree '${fragmentTreeId}' had ` +
+            `one or more member leaves whose converter pipeline could not be fetched; ` +
+            `showing those slots without converters`,
+        )
+        onReconstructionDegraded?.({ fanCount: 1, reason: 'converter_resolution' })
       }
     })().catch(() => {
       // Fail soft on reload reconstruction errors.
@@ -184,32 +210,49 @@ async function buildConverterResolver(args: {
   converterResolver: ConverterResolver | undefined
   onConverterDivergence: (slotIndex: number) => void
   divergedSlots: number[]
+  converterResolutionFailed: boolean
 }> {
   const divergedSlots: number[] = []
+  let converterResolutionFailed = false
   const onConverterDivergence = (slot: number): void => {
     divergedSlots.push(slot)
   }
   const fans = detectFansV10Plus(args.leaves)
   const single = fans.length === 1 ? fans[0] : null
   if (single === null || single.parent_path.length !== 0 || single.axis !== 'converter') {
-    return { converterResolver: undefined, onConverterDivergence, divergedSlots }
+    return {
+      converterResolver: undefined,
+      onConverterDivergence,
+      divergedSlots,
+      converterResolutionFailed,
+    }
   }
 
   const convIdByArId = new Map(args.items.map((it) => [it.attack_result_id, it.conversation_id]))
   const convertersByArId = new Map<string, ComponentIdentifier[]>()
-  await Promise.all(
+  const results = await Promise.allSettled(
     single.member_ars.map(async (leaf) => {
       const conversationId = convIdByArId.get(leaf.attack_result_id)
-      if (conversationId === undefined) return
+      if (conversationId === undefined) {
+        converterResolutionFailed = true
+        convertersByArId.set(leaf.attack_result_id, [])
+        return
+      }
       const m = await args.reloadApi.getMessages(leaf.attack_result_id, conversationId)
       const firstUser = m.messages
         .slice()
         .sort((a, b) => a.turn_number - b.turn_number)
         .find((msg) => msg.role === 'user')
+      if (firstUser === undefined) converterResolutionFailed = true
       convertersByArId.set(leaf.attack_result_id, firstUser?.pieces[0]?.converter_identifiers ?? [])
     }),
   )
+  results.forEach((result, index) => {
+    if (result.status === 'fulfilled') return
+    converterResolutionFailed = true
+    convertersByArId.set(single.member_ars[index].attack_result_id, [])
+  })
   const converterResolver: ConverterResolver = (leaf) =>
     convertersByArId.get(leaf.attack_result_id) ?? []
-  return { converterResolver, onConverterDivergence, divergedSlots }
+  return { converterResolver, onConverterDivergence, divergedSlots, converterResolutionFailed }
 }

@@ -14,7 +14,13 @@
  */
 
 import { useCallback, useMemo, useState } from 'react'
-import { ReactFlow, ReactFlowProvider } from '@xyflow/react'
+import {
+  Controls,
+  MiniMap,
+  ReactFlow,
+  ReactFlowProvider,
+  type OnNodesChange,
+} from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
 import type { ActionCallbacks } from './actionRail'
@@ -75,10 +81,14 @@ export function TreeCanvas({ tree, actionCallbacks, availableConverters }: TreeC
   const [collapsedFanIds, setCollapsedFanIds] = useState<Set<ConversationTreeNodeId>>(
     () => defaultCollapsedFanIds(tree),
   )
+  const [manualPositions, setManualPositions] = useState<Map<string, { x: number; y: number }>>(
+    () => new Map(),
+  )
   const [lastTreeId, setLastTreeId] = useState<ConversationTreeId>(tree.id)
   if (lastTreeId !== tree.id) {
     setLastTreeId(tree.id)
     setCollapsedFanIds(defaultCollapsedFanIds(tree))
+    setManualPositions(new Map())
   }
 
   const toggleStack = useCallback((fanNodeId: ConversationTreeNodeId) => {
@@ -120,11 +130,25 @@ export function TreeCanvas({ tree, actionCallbacks, availableConverters }: TreeC
   const nodes = useMemo(
     () =>
       decorated.nodes.map((n) => {
+        const manual = manualPositions.get(n.id)
+        if (manual !== undefined) return { ...n, position: manual }
         const p = positions.get(n.id)
         return p === undefined ? n : { ...n, position: { x: p.x, y: p.y } }
       }),
-    [decorated.nodes, positions],
+    [decorated.nodes, manualPositions, positions],
   )
+
+  const onNodesChange = useCallback<OnNodesChange<TreeFlowNode>>((changes) => {
+    setManualPositions((prev) => {
+      let next: Map<string, { x: number; y: number }> | null = null
+      for (const change of changes) {
+        if (change.type !== 'position' || change.position === undefined) continue
+        next ??= new Map(prev)
+        next.set(change.id, change.position)
+      }
+      return next ?? prev
+    })
+  }, [])
 
   return (
     <div
@@ -142,7 +166,14 @@ export function TreeCanvas({ tree, actionCallbacks, availableConverters }: TreeC
                 nodeTypes={treeNodeTypes}
                 edgeTypes={treeEdgeTypes}
                 fitView
-              />
+                nodesDraggable
+                onNodesChange={onNodesChange}
+                nodesConnectable={false}
+                edgesFocusable={false}
+              >
+                <MiniMap pannable zoomable />
+                <Controls showInteractive={false} />
+              </ReactFlow>
             </ReactFlowProvider>
           </StackCollapseContext.Provider>
         </AvailableConvertersContext.Provider>

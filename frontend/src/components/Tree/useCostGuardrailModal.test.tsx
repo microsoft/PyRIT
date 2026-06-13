@@ -34,9 +34,10 @@ function mountHook(opts: Parameters<typeof useCostGuardrailModal>[0]) {
     latest = useCostGuardrailModal(opts)
     return <>{latest.modalElement}</>
   }
-  render(<Harness />)
+  const view = render(<Harness />)
   if (latest === null) throw new Error('Harness did not render')
   return {
+    unmount: view.unmount,
     get current() {
       if (latest === null) throw new Error('hook unmounted')
       return latest
@@ -440,6 +441,34 @@ describe('useCostGuardrailModal — concurrent approve guard', () => {
       await firstPromise
     })
     expect(firstResolved).toBe(true)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+// ============================================================================
+// Unmount cleanup — pending approve must not leak the runner shim
+// ============================================================================
+
+describe('useCostGuardrailModal — unmount cleanup', () => {
+  it('resolves a pending approve() to false on unmount', async () => {
+    const h = mountHook({ confirmThresholdCount: 20 })
+    let resolved: boolean | null = null
+    let promise: Promise<void>
+
+    await act(async () => {
+      promise = h.current.guardrail.approve(60, 'refresh_tree').then((v) => {
+        resolved = v
+      })
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    h.unmount()
+    await act(async () => {
+      await promise
+    })
+
+    expect(resolved).toBe(false)
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 })

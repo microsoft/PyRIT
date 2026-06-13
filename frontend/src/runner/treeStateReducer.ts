@@ -24,6 +24,8 @@ import type {
   ExecutionRecord,
   NodeState,
   ReflogEntry,
+  RootPromptNode,
+  UserTurnNode,
 } from './treeTypes'
 
 const DEFAULT_REFLOG_CAP = 50
@@ -112,6 +114,14 @@ export function applyRecordExecution(
       const entry: ReflogEntry = { execution: prior, pinned: false }
       history = trimReflog([entry, ...history], cap)
     }
+    if (node.kind === 'send' && record.responsePreview !== undefined) {
+      return {
+        ...bumpBase(node),
+        execution: record,
+        executionHistory: history,
+        params: { ...node.params, responsePreview: record.responsePreview },
+      }
+    }
     return {
       ...bumpBase(node),
       execution: record,
@@ -168,4 +178,88 @@ export function applySetReflogPinned(
   const nodes = tree.nodes.slice()
   nodes[idx] = { ...bumpBase(node), executionHistory: history }
   return { ...tree, nodes }
+}
+
+// ============================================================================
+// applyEdit*Params — operator-authored edits + stale propagation
+// ============================================================================
+
+export function applyEditUserTurnText(
+  tree: ConversationTree,
+  nodeId: ConversationTreeNodeId,
+  text: string,
+): ConversationTree {
+  return applyEditParams(tree, nodeId, (node) => {
+    if (node.kind !== 'user_turn') return null
+    if (node.params.text === text) return undefined
+    return { ...node, params: { ...node.params, text } } satisfies UserTurnNode
+  })
+}
+
+export function applyEditRootPromptParams(
+  tree: ConversationTree,
+  nodeId: ConversationTreeNodeId,
+  patch: { text: string; systemPrompt: string; targetRegistryName: string },
+): ConversationTree {
+  return applyEditParams(tree, nodeId, (node) => {
+    if (node.kind !== 'root_prompt') return null
+    const nextParams: RootPromptNode['params'] = {
+      ...node.params,
+      text: patch.text,
+      systemPrompt: patch.systemPrompt === '' ? undefined : patch.systemPrompt,
+      targetRegistryName: patch.targetRegistryName,
+    }
+    if (
+      node.params.text === nextParams.text &&
+      (node.params.systemPrompt ?? '') === (nextParams.systemPrompt ?? '') &&
+      node.params.targetRegistryName === nextParams.targetRegistryName
+    ) {
+      return undefined
+    }
+    return { ...node, params: nextParams } satisfies RootPromptNode
+  })
+}
+
+function applyEditParams(
+  tree: ConversationTree,
+  nodeId: ConversationTreeNodeId,
+  edit: (node: ConversationTreeNode) => ConversationTreeNode | null | undefined,
+): ConversationTree {
+  const idx = tree.nodes.findIndex((n) => n.id === nodeId)
+  if (idx === -1) return tree
+  const edited = edit(tree.nodes[idx])
+  if (edited === null || edited === undefined) return tree
+
+  const descendants = descendantIds(tree, nodeId)
+  const nodes = tree.nodes.map((node, i) => {
+    if (i === idx) {
+      return { ...bumpBase(edited), state: 'edited' as NodeState, lastError: null }
+    }
+    if (!descendants.has(node.id)) return node
+    if (node.state === 'draft' || node.state === 'edited') return node
+    return { ...bumpBase(node), state: 'stale' as NodeState, lastError: null }
+  })
+  return { ...tree, nodes }
+}
+
+function descendantIds(
+  tree: ConversationTree,
+  nodeId: ConversationTreeNodeId,
+): Set<ConversationTreeNodeId> {
+  const childrenByParent = new Map<ConversationTreeNodeId, ConversationTreeNodeId[]>()
+  for (const node of tree.nodes) {
+    if (node.parentId === null) continue
+    const children = childrenByParent.get(node.parentId) ?? []
+    children.push(node.id)
+    childrenByParent.set(node.parentId, children)
+  }
+  const out = new Set<ConversationTreeNodeId>()
+  const queue = [...(childrenByParent.get(nodeId) ?? [])]
+  while (queue.length > 0) {
+    const id = queue.shift()!
+    if (out.has(id)) continue
+    out.add(id)
+    queue.push(...(childrenByParent.get(id) ?? []))
+  }
+  return out
 }

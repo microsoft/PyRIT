@@ -73,6 +73,9 @@ jest.mock("./components/Layout/MainLayout", () => {
         <button onClick={() => onNavigate("history")} data-testid="nav-history">
           History
         </button>
+        <button onClick={() => onNavigate("tree")} data-testid="nav-tree">
+          Tree
+        </button>
         {children}
       </div>
     );
@@ -176,8 +179,10 @@ jest.mock("./components/Config/TargetConfig", () => {
 jest.mock("./components/History/AttackHistory", () => {
   const MockAttackHistory = ({
     onOpenAttack,
+    onOpenAttackAsTree,
   }: {
     onOpenAttack: (attackResultId: string) => void;
+    onOpenAttackAsTree?: (attackResultId: string) => void;
   }) => {
     return (
       <div data-testid="attack-history">
@@ -193,6 +198,14 @@ jest.mock("./components/History/AttackHistory", () => {
         >
           Open Attack 2
         </button>
+        {onOpenAttackAsTree && (
+          <button
+            onClick={() => onOpenAttackAsTree("ar-tree-1")}
+            data-testid="open-attack-as-tree"
+          >
+            Open Attack As Tree
+          </button>
+        )}
       </div>
     );
   };
@@ -201,6 +214,78 @@ jest.mock("./components/History/AttackHistory", () => {
     __esModule: true,
     default: MockAttackHistory,
   };
+});
+
+jest.mock("./components/Tree/TreeRunnerHost", () => {
+  const React = jest.requireActual("react") as typeof import("react");
+  const dirtyTree = {
+    id: "dirty-tree",
+    rootId: "root",
+    nodes: [
+      { id: "root", kind: "root_prompt", parentId: null, state: "clean", params: {} },
+      { id: "send-1", kind: "send", parentId: "root", state: "edited", params: {} },
+    ],
+    parentConversationTreeId: null,
+  };
+  const hasDirty = (tree: { nodes?: Array<{ state?: string }> } | null) =>
+    tree?.nodes?.some((node) => node.state === "edited" || node.state === "draft") === true;
+
+  const MockTreeRunnerHost = ({
+    tree,
+    onTreeChange,
+    onGuardedSwapReady,
+    openFromAttackResultId,
+  }: {
+    tree: typeof dirtyTree | null;
+    onTreeChange?: (tree: typeof dirtyTree) => void;
+    onGuardedSwapReady?: (guardedSwap: (tree: typeof dirtyTree | null, swap: () => void) => void) => void;
+    openFromAttackResultId?: string | null;
+  }) => {
+    const [pendingSwap, setPendingSwap] = React.useState<(() => void) | null>(null);
+    const lastOpenedArIdRef = React.useRef<string | null>(null);
+
+    const guardedSwap = React.useCallback((candidateTree: typeof dirtyTree | null, swap: () => void) => {
+      if (hasDirty(candidateTree)) setPendingSwap(() => swap);
+      else swap();
+    }, []);
+
+    React.useEffect(() => {
+      onGuardedSwapReady?.(guardedSwap);
+    }, [guardedSwap, onGuardedSwapReady]);
+
+    React.useEffect(() => {
+      if (!openFromAttackResultId) return;
+      if (lastOpenedArIdRef.current === openFromAttackResultId) return;
+      lastOpenedArIdRef.current = openFromAttackResultId;
+      onTreeChange?.({ ...dirtyTree, id: `opened-${openFromAttackResultId}`, nodes: [dirtyTree.nodes[0]] });
+    }, [openFromAttackResultId, onTreeChange]);
+
+    return (
+      <div data-testid="tree-runner-host" data-tree-id={tree?.id ?? "none"}>
+        <button data-testid="make-dirty-tree" onClick={() => onTreeChange?.(dirtyTree)}>
+          Make Dirty Tree
+        </button>
+        <span data-testid="open-from-ar-id">{openFromAttackResultId ?? "none"}</span>
+        <span data-testid="tree-is-dirty">{hasDirty(tree) ? "yes" : "no"}</span>
+        {pendingSwap && (
+          <div role="dialog" aria-label="Discard unsaved edits?">
+            <button onClick={() => setPendingSwap(null)}>Cancel</button>
+            <button
+              onClick={() => {
+                const swap = pendingSwap;
+                setPendingSwap(null);
+                swap();
+              }}
+            >
+              Discard and continue
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+  MockTreeRunnerHost.displayName = "MockTreeRunnerHost";
+  return { TreeRunnerHost: MockTreeRunnerHost };
 });
 
 jest.mock("./components/Home/Home", () => {
@@ -239,9 +324,14 @@ jest.mock("./components/Home/Home", () => {
 });
 
 describe("App", () => {
+  const originalTreeFlag = process.env.VITE_ENABLE_TREE_UI;
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetActiveAccount.mockReturnValue(null);
+    if (originalTreeFlag === undefined) delete process.env.VITE_ENABLE_TREE_UI;
+    else process.env.VITE_ENABLE_TREE_UI = originalTreeFlag;
+    window.history.replaceState(window.history.state, "", "/");
   });
 
   it("renders with FluentProvider and MainLayout", () => {
@@ -370,6 +460,44 @@ describe("App", () => {
       "history"
     );
     expect(screen.getByTestId("attack-history")).toBeInTheDocument();
+  });
+
+  it("guards Open as tree from History when the current tree has unsaved edits", async () => {
+    process.env.VITE_ENABLE_TREE_UI = "true";
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId("nav-tree"));
+    fireEvent.click(screen.getByTestId("make-dirty-tree"));
+    expect(screen.getByTestId("tree-is-dirty")).toHaveTextContent("yes");
+
+    fireEvent.click(screen.getByTestId("nav-history"));
+    fireEvent.click(screen.getByRole("button", { name: /discard and continue/i }));
+    expect(screen.getByTestId("attack-history")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("open-attack-as-tree"));
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "history");
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "history");
+
+    fireEvent.click(screen.getByTestId("open-attack-as-tree"));
+    fireEvent.click(screen.getByRole("button", { name: /discard and continue/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "tree");
+    });
+    expect(screen.getByTestId("open-from-ar-id")).toHaveTextContent("ar-tree-1");
+  });
+
+  it("starts in tree view when the URL carries a conversation_tree_id fragment", () => {
+    process.env.VITE_ENABLE_TREE_UI = "true";
+    window.history.replaceState(window.history.state, "", "/#conversation_tree_id=tree-from-url");
+
+    render(<App />);
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "tree");
+    expect(screen.getByTestId("tree-runner-host")).toBeInTheDocument();
   });
 
   it("opens attack from history and switches to chat", async () => {

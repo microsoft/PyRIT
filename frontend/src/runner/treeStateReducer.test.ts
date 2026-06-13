@@ -16,8 +16,10 @@ import {
   applyRecordExecution,
   applyClearExecution,
   applySetReflogPinned,
+  applyEditRootPromptParams,
+  applyEditUserTurnText,
 } from './treeStateReducer'
-import { mkRoot, mkSend, mkTree, nodeId } from './testHelpers'
+import { mkRoot, mkSend, mkTree, mkUserTurn, nodeId } from './testHelpers'
 import type {
   ConversationTree,
   ExecutionRecord,
@@ -124,6 +126,15 @@ describe('applyRecordExecution', () => {
     const send = after.nodes.find((n) => n.id === nodeId('send-1'))!
     expect(send.execution?.executionId).toBe('e1')
     expect(send.executionHistory).toEqual([])
+  })
+
+  it('recording a Send execution updates the response preview', () => {
+    const exec = { ...mkExec('e1'), responsePreview: 'fresh assistant text' }
+    const after = applyRecordExecution(tree1(), nodeId('send-1'), exec)
+    const send = after.nodes.find((n) => n.id === nodeId('send-1'))
+
+    expect(send?.kind).toBe('send')
+    expect(send?.kind === 'send' ? send.params.responsePreview : undefined).toBe('fresh assistant text')
   })
 
   it('subsequent execution: prior moves to reflog with pinned=false', () => {
@@ -238,5 +249,65 @@ describe('applySetReflogPinned', () => {
     const before = tree1()
     const after = applySetReflogPinned(before, nodeId('nonexistent'), 'e0', true)
     expect(after).toBe(before)
+  })
+})
+
+// ============================================================================
+// applyEdit*Params
+// ============================================================================
+
+describe('applyEditUserTurnText', () => {
+  it('edits the user turn and marks clean descendants stale', () => {
+    const before = mkTree('root', [
+      mkRoot('root'),
+      mkUserTurn('u1', 'root', { text: 'before' }),
+      mkSend('s1', 'u1'),
+      mkUserTurn('u2', 's1'),
+      mkSend('s2', 'u2'),
+    ])
+
+    const after = applyEditUserTurnText(before, nodeId('u1'), 'after')
+
+    const byId = new Map(after.nodes.map((n) => [n.id, n]))
+    expect(byId.get(nodeId('u1'))?.state).toBe('edited')
+    expect(byId.get(nodeId('u1'))?.params).toMatchObject({ text: 'after' })
+    expect(byId.get(nodeId('s1'))?.state).toBe('stale')
+    expect(byId.get(nodeId('u2'))?.state).toBe('stale')
+    expect(byId.get(nodeId('s2'))?.state).toBe('stale')
+  })
+
+  it('preserves already edited descendants so dirty state is not hidden', () => {
+    const before = mkTree('root', [
+      mkRoot('root'),
+      mkUserTurn('u1', 'root', { text: 'before' }),
+      mkUserTurn('u2', 'u1', undefined, { state: 'edited' }),
+    ])
+
+    const after = applyEditUserTurnText(before, nodeId('u1'), 'after')
+
+    expect(after.nodes.find((n) => n.id === nodeId('u2'))?.state).toBe('edited')
+  })
+})
+
+describe('applyEditRootPromptParams', () => {
+  it('edits root prompt params and stales descendants', () => {
+    const before = mkTree('root', [
+      mkRoot('root', { text: 'before', systemPrompt: 'sys', targetRegistryName: 'old-target' }),
+      mkUserTurn('u1', 'root'),
+      mkSend('s1', 'u1'),
+    ])
+
+    const after = applyEditRootPromptParams(before, nodeId('root'), {
+      text: 'after',
+      systemPrompt: '',
+      targetRegistryName: 'new-target',
+    })
+
+    const root = after.nodes.find((n) => n.id === nodeId('root'))
+    expect(root?.state).toBe('edited')
+    expect(root?.params).toMatchObject({ text: 'after', targetRegistryName: 'new-target' })
+    expect(root?.params.systemPrompt).toBeUndefined()
+    expect(after.nodes.find((n) => n.id === nodeId('u1'))?.state).toBe('stale')
+    expect(after.nodes.find((n) => n.id === nodeId('s1'))?.state).toBe('stale')
   })
 })

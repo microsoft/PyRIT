@@ -197,11 +197,13 @@ export async function dispatchLeaf(args: DispatchLeafArgs): Promise<LeafDispatch
       attackResultId: createResp.attack_result_id,
       conversationId: createResp.conversation_id,
       newPieces,
+      responsePreview: responsePreviewFromPieces(newPieces),
       hashAtExecution: entry.sendNode.resolvedInputHash,
       waveId: args.waveId,
       waveTriggerKind: args.waveTriggerKind,
     })
     args.sink.recordExecution(args.treeId, entry.sendNode.id, record)
+    args.sink.setNodeState(args.treeId, entry.userTurn.id, 'clean', { reason: null })
     args.sink.setNodeState(args.treeId, entry.sendNode.id, 'clean')
   }
 
@@ -285,6 +287,7 @@ function buildExecutionRecord(args: {
   attackResultId: string
   conversationId: string
   newPieces: BackendMessagePiece[]
+  responsePreview: string | undefined
   hashAtExecution: string
   waveId: string
   waveTriggerKind: WaveTriggerKind
@@ -296,6 +299,7 @@ function buildExecutionRecord(args: {
     attackResultId: args.attackResultId,
     conversationId: args.conversationId,
     pieceIds: args.newPieces.map((p) => p.piece_id),
+    ...(args.responsePreview !== undefined ? { responsePreview: args.responsePreview } : {}),
     outcome: 'success',
     resolvedInputHashAtExecution: args.hashAtExecution,
     waveId: args.waveId,
@@ -304,6 +308,14 @@ function buildExecutionRecord(args: {
     targetFirstByteAt: now,
     completedAt: now,
   }
+}
+
+function responsePreviewFromPieces(pieces: BackendMessagePiece[]): string | undefined {
+  const text = pieces
+    .map((piece) => piece.converted_value ?? piece.original_value ?? '')
+    .filter((value) => value.length > 0)
+    .join('\n')
+  return text.length > 0 ? text : undefined
 }
 
 // Re-exported for callers that build PathPartition externally (e.g., tests

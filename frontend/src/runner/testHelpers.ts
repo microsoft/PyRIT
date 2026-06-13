@@ -132,6 +132,7 @@ export function mkSend(
     params: {
       targetRegistryName: params?.targetRegistryName,
       converterPipeline: params?.converterPipeline,
+      responsePreview: params?.responsePreview,
     },
   }
 }

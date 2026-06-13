@@ -16,7 +16,7 @@
  * in-session) per spec §13.1.
  */
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { DirtyEditModal } from './DirtyEditModal'
 import { countUnrefreshedEdits, hasUnrefreshedEdits } from '../../runner/workspacePersistence'
@@ -31,15 +31,32 @@ export interface UseDirtyEditModalResult {
   /** Run `swap()` now if clean; else defer behind the confirm modal. */
   guardedSwap: (tree: ConversationTree | null, swap: () => void) => void
   modalElement: React.ReactElement | null
+  isPending: boolean
 }
 
-export function useDirtyEditModal(): UseDirtyEditModalResult {
+export interface UseDirtyEditModalOptions {
+  /** Reject new dirty-swap prompts while another modal owns the slot. */
+  blocked?: boolean
+}
+
+export function useDirtyEditModal(options: UseDirtyEditModalOptions = {}): UseDirtyEditModalResult {
+  const { blocked = false } = options
   const [pending, setPending] = useState<PendingSwap | null>(null)
   // Mirrors `pending` so the stable guardedSwap closure can detect an
   // in-flight decision without depending on render state.
   const pendingRef = useRef<PendingSwap | null>(null)
+  const blockedRef = useRef(blocked)
+  useEffect(() => {
+    blockedRef.current = blocked
+  }, [blocked])
 
   const guardedSwap = useCallback((tree: ConversationTree | null, swap: () => void) => {
+    if (blockedRef.current) {
+      console.error(
+        'useDirtyEditModal: guardedSwap ignored — another modal decision is already pending',
+      )
+      return
+    }
     if (!hasUnrefreshedEdits(tree)) {
       swap()
       return
@@ -74,5 +91,5 @@ export function useDirtyEditModal(): UseDirtyEditModalResult {
       <DirtyEditModal count={pending.count} onDiscard={onDiscard} onCancel={onCancel} />
     ) : null
 
-  return { guardedSwap, modalElement }
+  return { guardedSwap, modalElement, isPending: pending !== null }
 }

@@ -13,13 +13,14 @@
  */
 
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { StrictMode } from 'react'
 
 import { TreeRunnerHost } from './TreeRunnerHost'
 import type { ConversationTree } from '../../runner/treeTypes'
 import type { RunnerShim, RunWaveStarter, RunWaveStarterArgs } from '../../runner/shim'
 import type { WorkspacePersistenceDeps } from './useWorkspacePersistence'
 import type { WaveSummary } from '../../runner/wave'
-import { mkRoot, mkSend, mkTree, nodeId, treeId } from '../../runner/testHelpers'
+import { mkRoot, mkSend, mkTree, mkUserTurn, nodeId, treeId } from '../../runner/testHelpers'
 import { STORAGE_KEYS } from '../../runner/workspacePersistence'
 
 // ============================================================================
@@ -120,6 +121,11 @@ function bookendedStarter(
 
 /** Resolves immediately; the shim emits start + complete around it. */
 const noopStarter: RunWaveStarter = bookendedStarter()
+
+beforeEach(() => {
+  window.history.replaceState(window.history.state, '', '/')
+  window.sessionStorage.clear()
+})
 
 /**
  * Mount harness that captures the shim instance via onShimReady so
@@ -312,6 +318,46 @@ describe('TreeRunnerHost — shim wiring', () => {
     expect(updatedSend?.state).toBe('running')
   })
 
+  it('composes sequential sink mutations before React commits state', async () => {
+    const tree = mkDispatchableTree('t-compose-sink')
+    const onTreeChange = jest.fn()
+    const starter = bookendedStarter(async (args: RunWaveStarterArgs) => {
+      args.sink.recordExecution(args.treeId, nodeId('send-1'), {
+        executionId: 'exec-compose',
+        attemptedAt: '2026-06-11T00:00:00Z',
+        attackResultId: 'ar-compose',
+        conversationId: 'conv-compose',
+        pieceIds: ['piece-compose'],
+        responsePreview: 'fresh response preview',
+        outcome: 'success',
+        resolvedInputHashAtExecution: 'hash-compose',
+        waveId: args.waveId,
+        waveTriggerKind: args.waveTriggerKind,
+        dispatchedAt: '2026-06-11T00:00:00Z',
+        targetFirstByteAt: '2026-06-11T00:00:00Z',
+        completedAt: '2026-06-11T00:00:00Z',
+      })
+      args.sink.setNodeState(args.treeId, nodeId('send-1'), 'clean')
+      return emptySummary
+    })
+
+    const { shim } = await mountAndCaptureShim({
+      tree,
+      operator: 'alice',
+      runWaveStarter: starter,
+      onTreeChange,
+    })
+
+    await act(async () => {
+      await shim.refreshNode(tree.id, nodeId('send-1'))
+    })
+
+    const lastCall = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree
+    const send = lastCall.nodes.find((n) => n.id === nodeId('send-1'))
+    expect(send?.state).toBe('clean')
+    expect(send?.kind === 'send' ? send.params.responsePreview : undefined).toBe('fresh response preview')
+  })
+
   it('clicking the ribbon Cancel button calls shim.cancelWave', async () => {
     const tree = mkEmptyTree('t-cancel')
     let starterCancelled = false
@@ -424,8 +470,9 @@ describe('TreeRunnerHost — shim wiring', () => {
     await waitFor(() => expect(captured).toBeDefined())
 
     // Start a wave on tree A and let it enter the running state.
+    let refreshPromise!: Promise<void>
     await act(async () => {
-      void captured!.refreshNode(treeA.id, nodeId('send-1'))
+      refreshPromise = captured!.refreshNode(treeA.id, nodeId('send-1'))
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -452,6 +499,81 @@ describe('TreeRunnerHost — shim wiring', () => {
 
     // The prior tree's wave must be cancelled rather than left running.
     await waitFor(() => expect(aCancelled).toBe(true))
+    await act(async () => {
+      await refreshPromise
+    })
+  })
+
+  it('auto-cancels the active wave when the host unmounts', async () => {
+    const tree = mkDispatchableTree('t-unmount-active')
+    const { deps: persistDeps } = makePersistenceDeps()
+    let controller: RunWaveStarterArgs['controller'] | null = null
+    let resolveStarter: ((s: WaveSummary) => void) | null = null
+    const starter = bookendedStarter(
+      (args: RunWaveStarterArgs) =>
+        new Promise<WaveSummary>((resolve) => {
+          controller = args.controller
+          resolveStarter = resolve
+        }),
+    )
+
+    let captured: RunnerShim | undefined
+    const view = render(
+      <TreeRunnerHost
+        tree={tree}
+        operator="alice"
+        runWaveStarter={starter}
+        workspacePersistenceDeps={persistDeps}
+        onShimReady={(s) => {
+          captured = s
+        }}
+      />,
+    )
+    await waitFor(() => expect(captured).toBeDefined())
+
+    await act(async () => {
+      void captured!.refreshNode(tree.id, nodeId('send-1'))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(
+        view.container.querySelector('[data-tree-wave-status]')?.getAttribute('data-status'),
+      ).toBe('running')
+    })
+
+    view.unmount()
+    await waitFor(() => expect(controller?.isCancelled()).toBe(true))
+    await act(async () => {
+      resolveStarter?.(emptySummary)
+      await Promise.resolve()
+    })
+  })
+
+  it('keeps the lock manager usable after StrictMode effect replay', async () => {
+    const tree = mkDispatchableTree('t-strict-lock')
+    const starter = jest.fn(noopStarter)
+    let captured: RunnerShim | undefined
+
+    render(
+      <StrictMode>
+        <TreeRunnerHost
+          tree={tree}
+          operator="alice"
+          runWaveStarter={starter as unknown as RunWaveStarter}
+          onShimReady={(s) => {
+            captured = s
+          }}
+        />
+      </StrictMode>,
+    )
+    await waitFor(() => expect(captured).toBeDefined())
+
+    await act(async () => {
+      await captured!.refreshNode(tree.id, nodeId('send-1'))
+    })
+
+    expect(starter).toHaveBeenCalled()
   })
 })
 
@@ -509,6 +631,33 @@ describe('TreeRunnerHost — cost-guardrail modal', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
+  it('default Refresh on an interior stale response refreshes its subtree', async () => {
+    const tree = mkTree('root', [
+      mkRoot('root'),
+      mkUserTurn('u1', 'root'),
+      mkSend('s1', 'u1', undefined, { state: 'stale' }),
+      mkUserTurn('u2', 's1', undefined, { state: 'stale' }),
+      mkSend('s2', 'u2', undefined, { state: 'stale' }),
+    ], { id: 't-interior-refresh' })
+    const starter = jest.fn(noopStarter)
+
+    const { container } = render(
+      <TreeRunnerHost
+        tree={tree}
+        operator="alice"
+        runWaveStarter={starter as unknown as RunWaveStarter}
+      />,
+    )
+
+    const button = container.querySelector('[data-tree-node-id="s1"] button[aria-label="Refresh"]')
+    if (button === null) throw new Error('refresh button missing')
+
+    await act(async () => {
+      fireEvent.click(button)
+      await waitFor(() => expect(starter).toHaveBeenCalled())
+    })
+  })
+
   it('clicking Cancel in the cost-guardrail dialog aborts the wave', async () => {
     const tree = mkDispatchableTree('t-cancel-modal')
     const starter = jest.fn(noopStarter)
@@ -534,6 +683,70 @@ describe('TreeRunnerHost — cost-guardrail modal', () => {
 
     expect(starter).not.toHaveBeenCalled()
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('unmounting with a pending cost decision aborts the wave instead of leaking it', async () => {
+    const tree = mkDispatchableTree('t-cost-unmount')
+    const starter = jest.fn(noopStarter)
+    const { view, shim } = await mountAndCaptureShim({
+      tree,
+      operator: 'alice',
+      confirmThresholdCount: 1,
+      runWaveStarter: starter as unknown as RunWaveStarter,
+    })
+
+    let settled = false
+    await act(async () => {
+      void shim.refreshNode(tree.id, nodeId('send-1')).then(() => {
+        settled = true
+      })
+    })
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument())
+
+    view.unmount()
+    await waitFor(() => expect(settled).toBe(true))
+    expect(starter).not.toHaveBeenCalled()
+  })
+
+  it('does not stack the dirty-edit modal while the cost modal is pending', async () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const tree = mkDispatchableTree('t-modal-stack')
+      const starter = jest.fn(noopStarter)
+      let guardedSwap: ((tree: ConversationTree | null, swap: () => void) => void) | undefined
+      const { shim } = await mountAndCaptureShim({
+        tree,
+        operator: 'alice',
+        confirmThresholdCount: 1,
+        runWaveStarter: starter as unknown as RunWaveStarter,
+        onGuardedSwapReady: (g) => {
+          guardedSwap = g
+        },
+      })
+
+      let refreshPromise!: Promise<void>
+      await act(async () => {
+        refreshPromise = shim.refreshNode(tree.id, nodeId('send-1'))
+      })
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument())
+
+      act(() => {
+        guardedSwap?.(tree, jest.fn())
+      })
+
+      expect(screen.getAllByRole('dialog')).toHaveLength(1)
+      expect(screen.getByRole('dialog').textContent).toMatch(/refresh node/i)
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        'useDirtyEditModal: guardedSwap ignored — another modal decision is already pending',
+      )
+
+      await act(async () => {
+        fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^cancel$/i }))
+        await refreshPromise
+      })
+    } finally {
+      consoleErrorSpy.mockRestore()
+    }
   })
 })
 
@@ -670,7 +883,7 @@ describe('TreeRunnerHost — workspace persistence wiring', () => {
 
     await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
     expect(reloadApi.listAttacks).toHaveBeenCalledWith({
-      limit: 200,
+      limit: 100,
       label: ['conversation_tree_id:frag-id'],
     })
   })
@@ -723,6 +936,35 @@ describe('TreeRunnerHost — dirty-edit swap guard', () => {
     })
     expect(swap).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+// ============================================================================
+// Integrated editing — card affordances wired through host reducers
+// ============================================================================
+
+describe('TreeRunnerHost — integrated editing', () => {
+  it('editing a UserTurn marks it edited and stales downstream nodes', async () => {
+    const tree = mkTree('root', [
+      mkRoot('root'),
+      mkUserTurn('u1', 'root', { text: 'old text' }),
+      mkSend('s1', 'u1'),
+    ], { id: 't-edit' })
+    const onTreeChange = jest.fn()
+
+    render(<TreeRunnerHost tree={tree} onTreeChange={onTreeChange} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /edit text inline/i }))
+    const editor = screen.getByRole('textbox', { name: /edit user turn text/i })
+    fireEvent.change(editor, { target: { value: 'new text' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    const next = onTreeChange.mock.calls.at(-1)?.[0] as ConversationTree
+    const byId = new Map(next.nodes.map((node) => [node.id, node]))
+    expect(byId.get(nodeId('u1'))?.state).toBe('edited')
+    expect(byId.get(nodeId('u1'))?.params).toMatchObject({ text: 'new text' })
+    expect(byId.get(nodeId('s1'))?.state).toBe('stale')
   })
 })
 
@@ -899,6 +1141,37 @@ describe('TreeRunnerHost — open from attack result', () => {
     expect(autoReverseApi.getMessages).toHaveBeenCalledWith('ar-open', 'conv-open')
     const tree = onTreeChange.mock.calls[0][0] as ConversationTree
     expect(tree.nodes.find((n) => n.id === tree.rootId)?.kind).toBe('root_prompt')
+  })
+
+  it('suppresses stale URL-fragment reload while opening an explicit AR as tree', async () => {
+    const { deps } = makePersistenceDeps(new MemoryStorage(), '#conversation_tree_id=stale-tree')
+    const onTreeChange = jest.fn()
+    const autoReverseApi = {
+      getAttack: jest.fn(async () => fakeAr),
+      getMessages: jest.fn(async () => fakeMessages),
+    }
+    const reloadApi = {
+      listAttacks: jest.fn(async () => ({
+        items: [],
+        pagination: { limit: 100, has_more: false, next_cursor: null, prev_cursor: null },
+      })),
+      getMessages: jest.fn(async () => fakeMessages),
+    }
+
+    render(
+      <TreeRunnerHost
+        tree={null}
+        onTreeChange={onTreeChange}
+        openFromAttackResultId="ar-open"
+        autoReverseApi={autoReverseApi}
+        reloadApi={reloadApi}
+        workspacePersistenceDeps={deps}
+      />,
+    )
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    expect(autoReverseApi.getAttack).toHaveBeenCalledWith('ar-open')
+    expect(reloadApi.listAttacks).not.toHaveBeenCalled()
   })
 
   it('does not auto-reverse when openFromAttackResultId is null', async () => {

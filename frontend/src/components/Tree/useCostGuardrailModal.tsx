@@ -44,6 +44,7 @@ export interface UseCostGuardrailModalOptions {
 export interface UseCostGuardrailModalResult {
   guardrail: CostGuardrail
   modalElement: React.ReactElement | null
+  isPending: boolean
 }
 
 interface PendingDecision {
@@ -75,6 +76,16 @@ export function useCostGuardrailModal(
   // Mirrors `pending` so the stable approve() closure can sync-reject a
   // concurrent caller without overwriting an in-flight resolver.
   const pendingRef = useRef<PendingDecision | null>(null)
+
+  useEffect(
+    () => () => {
+      const decision = pendingRef.current
+      if (decision === null) return
+      pendingRef.current = null
+      decision.resolve(false)
+    },
+    [],
+  )
 
   const guardrail = useMemo<CostGuardrail>(
     () => ({
@@ -134,5 +145,5 @@ export function useCostGuardrailModal(
       />
     ) : null
 
-  return { guardrail, modalElement }
+  return { guardrail, modalElement, isPending: pending !== null }
 }

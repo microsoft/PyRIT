@@ -4,7 +4,12 @@
 import { renderHook, waitFor } from '@testing-library/react'
 
 import { useReloadReconstruction } from './useReloadReconstruction'
-import type { AttackListResponse, AttackSummary, ConversationMessagesResponse } from '../../types'
+import type {
+  AttackListResponse,
+  AttackSummary,
+  ComponentIdentifier,
+  ConversationMessagesResponse,
+} from '../../types'
 import { mkRoot, mkSend, mkTree } from '../../runner/testHelpers'
 import type { ConversationTree } from '../../runner/treeTypes'
 
@@ -70,6 +75,27 @@ function mkMessages(conv = 'conv-1'): ConversationMessagesResponse {
   }
 }
 
+function mkMessagesWithConverters(
+  conv: string,
+  converters: ComponentIdentifier[] = [],
+): ConversationMessagesResponse {
+  const base = mkMessages(conv)
+  return {
+    ...base,
+    messages: base.messages.map((msg) =>
+      msg.role === 'user'
+        ? {
+            ...msg,
+            pieces: msg.pieces.map((piece) => ({
+              ...piece,
+              converter_identifiers: converters,
+            })),
+          }
+        : msg,
+    ),
+  }
+}
+
 describe('useReloadReconstruction', () => {
   it('no-op when fragment tree id is null', async () => {
     const onTreeChange = jest.fn()
@@ -110,7 +136,7 @@ describe('useReloadReconstruction', () => {
 
     await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
     expect(api.listAttacks).toHaveBeenCalledWith({
-      limit: 200,
+      limit: 100,
       label: ['conversation_tree_id:t-frag'],
     })
     expect(api.getMessages).toHaveBeenCalledWith('ar-1', 'conv-1')
@@ -193,6 +219,56 @@ describe('useReloadReconstruction', () => {
     expect(onTreeChange).not.toHaveBeenCalled()
   })
 
+  it('paginates reload lookup using the backend max page size', async () => {
+    const onTreeChange = jest.fn()
+    const first = mkAttack({
+      attack_result_id: 'ar-page-1',
+      conversation_id: 'conv-page-1',
+      labels: { conversation_tree_id: 't-paged' },
+    })
+    const second = mkAttack({
+      attack_result_id: 'ar-page-2',
+      conversation_id: 'conv-page-2',
+      created_at: '2026-06-11T00:01:00Z',
+      labels: { conversation_tree_id: 't-paged' },
+    })
+    const api = {
+      listAttacks: jest.fn(async (params?: { cursor?: string }) =>
+        params?.cursor === 'next-page'
+          ? {
+              items: [second],
+              pagination: { has_more: false, next_cursor: null, prev_cursor: null, limit: 100 },
+            }
+          : {
+              items: [first],
+              pagination: { has_more: true, next_cursor: 'next-page', prev_cursor: null, limit: 100 },
+            },
+      ),
+      getMessages: jest.fn(async () => mkMessages('conv-page-1')),
+    }
+
+    renderHook(() =>
+      useReloadReconstruction({
+        fragmentTreeId: 't-paged',
+        currentTree: null,
+        onTreeChange,
+        reloadApi: api,
+      }),
+    )
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    expect(api.listAttacks).toHaveBeenNthCalledWith(1, {
+      limit: 100,
+      label: ['conversation_tree_id:t-paged'],
+    })
+    expect(api.listAttacks).toHaveBeenNthCalledWith(2, {
+      limit: 100,
+      label: ['conversation_tree_id:t-paged'],
+      cursor: 'next-page',
+    })
+    expect(api.getMessages).toHaveBeenCalledWith('ar-page-1', 'conv-page-1')
+  })
+
   it('fully reconstructs a root-level attempt fan (no degradation banner)', async () => {
     // PR7g slice 2: a single root-level attempt fan reconstructs fully —
     // root → fan(attempt) → send×2 — so the degraded banner must NOT fire.
@@ -273,6 +349,60 @@ describe('useReloadReconstruction', () => {
     // resolver — at least the 2 member fetches happened.
     expect(getMessages).toHaveBeenCalledWith('ar-0', 'conv-0')
     expect(getMessages).toHaveBeenCalledWith('ar-1', 'conv-1')
+  })
+
+  it('reconstructs remaining converter-fan slots when one member message fetch fails', async () => {
+    const onTreeChange = jest.fn()
+    const onReconstructionDegraded = jest.fn()
+    const converter: ComponentIdentifier = {
+      class_name: 'PrefixConverter',
+      class_module: 'pyrit.prompt_converter',
+      params: { prefix: 'safe' },
+    }
+    const getMessages = jest.fn(async (arId: string, convId: string) => {
+      if (arId === 'ar-1') throw new Error('transient leaf fetch')
+      return mkMessagesWithConverters(convId, [converter])
+    })
+    const api = {
+      listAttacks: jest.fn(async () =>
+        mkList([
+          mkAttack({
+            attack_result_id: 'ar-0',
+            conversation_id: 'conv-0',
+            labels: { conversation_tree_id: 't-conv-partial', tree_path: '[["converter",0]]' },
+          }),
+          mkAttack({
+            attack_result_id: 'ar-1',
+            conversation_id: 'conv-1',
+            labels: { conversation_tree_id: 't-conv-partial', tree_path: '[["converter",1]]' },
+          }),
+        ]),
+      ),
+      getMessages,
+    }
+
+    renderHook(() =>
+      useReloadReconstruction({
+        fragmentTreeId: 't-conv-partial',
+        currentTree: null,
+        onTreeChange,
+        onReconstructionDegraded,
+        reloadApi: api,
+      }),
+    )
+
+    await waitFor(() => expect(onTreeChange).toHaveBeenCalled())
+    expect(onReconstructionDegraded).toHaveBeenCalledWith({
+      fanCount: 1,
+      reason: 'converter_resolution',
+    })
+    const tree = onTreeChange.mock.calls[0][0] as ConversationTree
+    const userTurns = tree.nodes.filter((n) => n.kind === 'user_turn')
+    expect(userTurns).toHaveLength(2)
+    expect(userTurns[0].params.converterPipeline).toEqual([
+      { inline: { type: converter.class_name, params: converter.params } },
+    ])
+    expect(userTurns[1].params.converterPipeline).toBeUndefined()
   })
 
   it('discloses degraded reconstruction for a NESTED fan (deferred topology)', async () => {

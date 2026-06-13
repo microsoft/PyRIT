@@ -47,6 +47,8 @@ import type { ActionCallbacks } from './actionRail'
 import type { AvailableConvertersValue } from './availableConvertersContext'
 import {
   applyClearExecution,
+  applyEditRootPromptParams,
+  applyEditUserTurnText,
   applyRecordExecution,
   applySetNodeState,
   applySetReflogPinned,
@@ -194,7 +196,7 @@ export function TreeRunnerHost({
 
   // Cost-guardrail hook: suppression is sourced from (and committed back to)
   // WorkspaceSettings so it survives reload via sessionStorage (PR6a.2).
-  const { guardrail, modalElement } = useCostGuardrailModal({
+  const { guardrail, modalElement, isPending: isCostModalPending } = useCostGuardrailModal({
     confirmThresholdCount: confirmThresholdCount ?? settings.confirmThresholdCount,
     suppressed: settings.suppressConfirmModalThisSession,
     onChangeSuppressed: (next) =>
@@ -204,7 +206,8 @@ export function TreeRunnerHost({
   // PR7h: in-app tree-swap guard (spec §13.1a). The host exposes
   // guardedSwap to App via onGuardedSwapReady; its modal renders in the
   // modal slot alongside the cost-guardrail modal.
-  const { guardedSwap, modalElement: dirtyEditModalElement } = useDirtyEditModal()
+  const { guardedSwap, modalElement: dirtyEditModalElement, isPending: isDirtyModalPending } =
+    useDirtyEditModal({ blocked: isCostModalPending })
   const onGuardedSwapReadyRef = useRef(onGuardedSwapReady)
   useEffect(() => {
     onGuardedSwapReadyRef.current = onGuardedSwapReady
@@ -223,7 +226,7 @@ export function TreeRunnerHost({
   })
 
   useReloadReconstruction({
-    fragmentTreeId: boot.treeIdFromFragment,
+    fragmentTreeId: openFromAttackResultId ? null : boot.treeIdFromFragment,
     currentTree: tree,
     onTreeChange,
     onReconstructionDegraded,
@@ -250,6 +253,7 @@ export function TreeRunnerHost({
   const effectiveReflogCap = reflogCap ?? settings.reflogCapPerNode
   const reflogCapRef = useRef(effectiveReflogCap)
   const costGuardrailRef = useRef<CostGuardrail>(guardrail)
+  const dirtyModalPendingRef = useRef(isDirtyModalPending)
   const runWaveStarterRef = useRef<RunWaveStarter>(runWaveStarter ?? DEFAULT_RUN_WAVE_STARTER)
   useEffect(() => {
     treeRef.current = tree
@@ -277,20 +281,26 @@ export function TreeRunnerHost({
     costGuardrailRef.current = guardrail
   }, [guardrail])
   useEffect(() => {
+    dirtyModalPendingRef.current = isDirtyModalPending
+  }, [isDirtyModalPending])
+  useEffect(() => {
     runWaveStarterRef.current = runWaveStarter ?? DEFAULT_RUN_WAVE_STARTER
   }, [runWaveStarter])
 
   // Lock manager + sink + shim constructed once via useState lazy
   // initializers (stable, no useRef-during-render writes).
   const [lockManager] = useState(() => createBroadcastChannelLockManager())
-  useEffect(() => () => lockManager.close(), [lockManager])
+  const lockCleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [sink] = useState<RunnerStateSink>(() => ({
     setNodeState: (treeIdArg, nodeIdArg, state, opts) => {
       const current = treeRef.current
       if (current === null || current.id !== treeIdArg) return
       const next = applySetNodeState(current, nodeIdArg, state, opts ?? {})
-      if (next !== current) onTreeChangeRef.current?.(next)
+      if (next !== current) {
+        treeRef.current = next
+        onTreeChangeRef.current?.(next)
+      }
     },
     recordExecution: (treeIdArg, nodeIdArg, record) => {
       const current = treeRef.current
@@ -298,19 +308,28 @@ export function TreeRunnerHost({
       const next = applyRecordExecution(current, nodeIdArg, record, {
         reflogCap: reflogCapRef.current,
       })
-      if (next !== current) onTreeChangeRef.current?.(next)
+      if (next !== current) {
+        treeRef.current = next
+        onTreeChangeRef.current?.(next)
+      }
     },
     clearExecution: (treeIdArg, nodeIdArg) => {
       const current = treeRef.current
       if (current === null || current.id !== treeIdArg) return
       const next = applyClearExecution(current, nodeIdArg)
-      if (next !== current) onTreeChangeRef.current?.(next)
+      if (next !== current) {
+        treeRef.current = next
+        onTreeChangeRef.current?.(next)
+      }
     },
     setReflogPinned: (treeIdArg, nodeIdArg, executionId, pinned) => {
       const current = treeRef.current
       if (current === null || current.id !== treeIdArg) return
       const next = applySetReflogPinned(current, nodeIdArg, executionId, pinned)
-      if (next !== current) onTreeChangeRef.current?.(next)
+      if (next !== current) {
+        treeRef.current = next
+        onTreeChangeRef.current?.(next)
+      }
     },
     emitWaveEvent: (event) => {
       setWaveEvents((prev) => appendWaveEvent(prev, event))
@@ -333,7 +352,15 @@ export function TreeRunnerHost({
       sink,
       lockManager,
       costGuardrail: {
-        approve: (count, kind) => costGuardrailRef.current.approve(count, kind),
+        approve: (count, kind) => {
+          if (dirtyModalPendingRef.current) {
+            console.error(
+              'TreeRunnerHost: cost guardrail rejected — dirty-edit modal is already pending',
+            )
+            return Promise.resolve(false)
+          }
+          return costGuardrailRef.current.approve(count, kind)
+        },
       },
       runWaveStarter: (args) => runWaveStarterRef.current(args),
       uuid: () => crypto.randomUUID(),
@@ -362,6 +389,26 @@ export function TreeRunnerHost({
     }
     prevTreeIdRef.current = curr
   }, [tree?.id, shim])
+  useEffect(
+    () => {
+      if (lockCleanupTimerRef.current !== null) {
+        clearTimeout(lockCleanupTimerRef.current)
+        lockCleanupTimerRef.current = null
+      }
+      return () => {
+        lockCleanupTimerRef.current = setTimeout(() => {
+          lockCleanupTimerRef.current = null
+          const activeTreeId = treeRef.current?.id ?? prevTreeIdRef.current
+          if (activeTreeId === null) {
+            lockManager.close()
+            return
+          }
+          void shim.cancelWave(activeTreeId).finally(() => lockManager.close())
+        }, 0)
+      }
+    },
+    [lockManager, shim],
+  )
 
   // Compose action callbacks: default onRefresh routes to shim.refreshNode
   // for whichever tree is current. Host-supplied callbacks (if any) win.
@@ -370,7 +417,25 @@ export function TreeRunnerHost({
     const treeIdForCallbacks: ConversationTreeId = tree.id
     const defaults: ActionCallbacks = {
       onRefresh: (nodeIdArg: ConversationTreeNodeId) => {
-        void shim.refreshNode(treeIdForCallbacks, nodeIdArg)
+        void shim.refreshSubtree(treeIdForCallbacks, nodeIdArg)
+      },
+      onEditUserTurnText: (nodeIdArg, newText) => {
+        const current = treeRef.current
+        if (current === null) return
+        const next = applyEditUserTurnText(current, nodeIdArg, newText)
+        if (next !== current) {
+          treeRef.current = next
+          onTreeChangeRef.current?.(next)
+        }
+      },
+      onEditRootPromptParams: (nodeIdArg, patch) => {
+        const current = treeRef.current
+        if (current === null) return
+        const next = applyEditRootPromptParams(current, nodeIdArg, patch)
+        if (next !== current) {
+          treeRef.current = next
+          onTreeChangeRef.current?.(next)
+        }
       },
     }
     if (actionCallbacks === undefined) return defaults
@@ -424,8 +489,7 @@ export function TreeRunnerHost({
       <div data-slot="drawer" className={styles.drawer} />
       <div data-slot="toast" className={styles.toast} />
       <div data-slot="modal" className={styles.modal}>
-        {modalElement}
-        {dirtyEditModalElement}
+        {modalElement ?? dirtyEditModalElement}
       </div>
     </div>
   )
